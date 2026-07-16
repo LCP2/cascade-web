@@ -1474,6 +1474,14 @@ function loadCascades(){
   }catch(e){ return []; }
 }
 function saveCascades(){ try{ localStorage.setItem("cascade_cascades", JSON.stringify(cascades)); }catch(e){} }
+// New Cascade ids are UUIDs so they drop straight into the account table's uuid primary key (CAS-83).
+// crypto.randomUUID is available on the live https site and on localhost; the string fallback covers
+// any non-secure context so guest mode never breaks.
+function cascadeNewId(){
+  try{ if(crypto && crypto.randomUUID) return crypto.randomUUID(); }catch(e){}
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,ch=>{
+    const r=Math.random()*16|0, v=ch==="x"?r:(r&0x3|0x8); return v.toString(16); });
+}
 const cascades = loadCascades();
 let activeId = null;
 try{ activeId = localStorage.getItem("cascade_active") || null; }catch(e){}
@@ -3414,7 +3422,7 @@ function commitDraft(){
       return {c:twin, isNew:false, dup:true};
     }
   }
-  const c=isNew ? {id:"c"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)} : cascades.find(x=>x.id===draft.id);
+  const c=isNew ? {id:cascadeNewId()} : cascades.find(x=>x.id===draft.id);
   Object.assign(c, {name, icon:draft.icon, template:draft.template, status:draft.status, genre:draft.genre,
     exclude:draft.exclude,
     age:draft.age, lang:draft.lang, culture:draft.culture, year:draft.year, imdb:draft.imdb, rt:draft.rt,
@@ -5040,6 +5048,126 @@ else if(dedupedN)
 // nothing else owns the screen (a shared link, or first-run setup).
 else if(freshFound.length && !openedShared && !$("onb").classList.contains("open"))
   toast(`🔔 Cascade found ${freshFound.length} film${freshFound.length===1?"":"s"} for you since you last looked.`);
+
+// ============================================================================
+// Per-account Cascade persistence (CAS-83 / spec 26771457 §3-§4)
+// ----------------------------------------------------------------------------
+// Signed-in: the `cascades` table (Supabase, via window.CascadeAuth.client) is the store — every
+//   edit upserts and prunes so the account mirrors the on-screen list; RLS returns only the user's
+//   rows, so there's no cross-account leakage. The guest localStorage key is left untouched while
+//   signed in, so signing out returns you to your own on-device set (not the account's).
+// Guest: unchanged — localStorage, exactly as before.
+// First sign-in with on-device Cascades and an empty account: offer to copy them up.
+// ============================================================================
+(function(){
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const isUuid = s => typeof s==="string" && UUID_RE.test(s);
+  const acct = () => window.CascadeAuth;
+  const client = () => { const a=acct(); return (a && a.enabled && a.client) ? a.client : null; };
+  const uid = () => { const a=acct(); return (a && a.session && a.session.user) ? a.session.user.id : null; };
+  const accountActive = () => !!(client() && uid());
+
+  // ---- shape mapping: local Cascade <-> table row --------------------------
+  // criteria (jsonb) carries the whole local Cascade minus the columns stored on their own
+  // (id, name, paused->active). alert_moments (text[]) is DERIVED from the local alerts object for
+  // the monitor (CAS-84/85). pvod has no monitor moment, so it stays UI-only inside criteria.
+  const ALERT_TO_MOMENT = { cinema:"hits_cinema", rental:"hits_rent", included_streaming:"hits_stream" };
+  function momentsOf(c){
+    const a=c.alerts||{}, out=[];
+    for(const k in ALERT_TO_MOMENT) if(a[k]) out.push(ALERT_TO_MOMENT[k]);
+    return out;
+  }
+  function cascadeToRow(c){
+    const criteria={}; for(const k in c){ if(k!=="id"&&k!=="name"&&k!=="paused") criteria[k]=c[k]; }
+    return { id:c.id, user_id:uid(), name:c.name||"My Cascade",
+             criteria, alert_moments:momentsOf(c), active:!c.paused };
+  }
+  function rowToCascade(row){
+    const c = Object.assign({}, row.criteria||{}, { id:row.id, name:row.name, paused:row.active===false });
+    return normCascade(c);
+  }
+  // expose the pure mappers for the monitor stories / tests to mirror
+  window.CascadeShape = { cascadeToRow, rowToCascade, momentsOf };
+
+  // ---- in-memory array swap + repaint --------------------------------------
+  function replaceCascades(list){
+    cascades.length = 0;
+    list.forEach(c => cascades.push(c));
+    if(activeId && !cascades.some(c=>c.id===activeId)) setActive(null);
+    if(typeof render==="function") render();
+  }
+  function loadGuest(){ replaceCascades(loadCascades()); }
+
+  // ---- write path: upsert current, prune the rest --------------------------
+  let syncTimer=null, syncing=false, syncAgain=false;
+  function scheduleSync(){ clearTimeout(syncTimer); syncTimer=setTimeout(runSync, 400); }
+  async function runSync(){
+    if(!accountActive()) return;
+    if(syncing){ syncAgain=true; return; }
+    syncing=true;
+    try{ await syncToAccount(); }
+    catch(err){ console.warn("Cascade: account sync failed", err); }
+    finally{ syncing=false; if(syncAgain){ syncAgain=false; scheduleSync(); } }
+  }
+  async function syncToAccount(){
+    const c=client(), owner=uid(); if(!c||!owner) return;
+    const rows = cascades.map(cascadeToRow);
+    if(rows.length){
+      const { error } = await c.from("cascades").upsert(rows, { onConflict:"id" });
+      if(error){ console.warn("Cascade upsert", error); return; }
+    }
+    // Delete any of my rows that are no longer on screen (covers the Delete button).
+    const ids = cascades.map(x=>x.id).filter(isUuid);
+    let del = c.from("cascades").delete().eq("user_id", owner);
+    if(ids.length) del = del.not("id","in","("+ids.join(",")+")");
+    const { error } = await del;
+    if(error) console.warn("Cascade prune", error);
+  }
+
+  // ---- read path: adopt the account, offering migration on first sign-in ----
+  async function loadAccount(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("cascades").select("*");   // RLS: only mine
+    if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); return; }
+    const remote = (data||[]).map(rowToCascade);
+    const localOnes = cascades.slice();
+
+    if(remote.length===0 && localOnes.length>0){
+      const n=localOnes.length;
+      if(confirm(`Add your ${n} on-device Cascade${n===1?"":"s"} to your account, so ${n===1?"it syncs":"they sync"} across devices?`)){
+        await runSync();                       // uploads the current (on-device) list to the account
+        toast(`☁️ ${n} Cascade${n===1?"":"s"} saved to your account.`);
+        return;                                // keep them on screen; they're now in the account
+      }
+      // declined → adopt the (empty) account; the on-device set stays in localStorage for guest mode
+    }
+    replaceCascades(remote);
+  }
+
+  // ---- wrap the one save chokepoint ----------------------------------------
+  // Guest: write localStorage as before. Signed-in: don't touch the guest key (so sign-out returns
+  // the user to their own on-device set) — schedule an account sync instead.
+  const saveCascadesLocal = saveCascades;
+  saveCascades = function(){
+    if(accountActive()) scheduleSync();
+    else saveCascadesLocal();
+  };
+
+  // ---- react to auth state --------------------------------------------------
+  let currentUser = null;
+  window.addEventListener("cascade-auth-change", () => {
+    const owner = uid();
+    if(acct() && acct().status==="signed-in" && owner){
+      if(owner !== currentUser){ currentUser = owner; loadAccount(); }
+    } else if(currentUser !== null){
+      currentUser = null; loadGuest();       // signed out → back to the on-device set
+    }
+  });
+  // If a session was already restored before this listener attached, adopt it now.
+  if(accountActive()){ currentUser = uid(); loadAccount(); }
+
+  window.CascadePersistence = { loadAccount, syncNow: runSync, accountActive, isUuid };
+})();
 </script>
 
 <!-- ACCOUNT / MAGIC-LINK AUTH (CAS-82 / spec 26771457 §4).
