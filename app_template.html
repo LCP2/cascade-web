@@ -10,6 +10,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
+<!-- Account config (CAS-82 / spec 26771457 §4): a git-ignored config.js sets
+     window.CASCADE_CONFIG = { SUPABASE_URL, SUPABASE_ANON_KEY } (anon key only — public-safe).
+     It is optional: if the file is absent this 404s harmlessly and the page loads in guest
+     mode (localStorage), so CI / the dry-run build work with no keys. See config.example.js. -->
+<script src="config.js"></script>
 <style>
   :root{
     /* ---- Cascade brand system (CAS-73 / spec 26640386 §1) ----
@@ -893,6 +898,8 @@
         <div class="updated" id="updated"></div>
       </div>
       <div class="hdr-actions">
+        <!-- Account (CAS-82): magic-link sign-in. Guest until signed in; turns green when signed in. -->
+        <div class="iconbtn" id="accountBtn" title="Account — sign in" role="button" tabindex="0" aria-label="Account">👤</div>
         <div class="iconbtn" id="prefBtn" title="My streaming services">⚙️</div>
         <div class="iconbtn" id="bell">🔔<div class="badge" id="badge" style="display:none">0</div></div>
       </div>
@@ -1053,6 +1060,44 @@
   <div class="pnote">Adds a savings line to cards where a genuinely cheaper path exists, a live result count on
     the Find button, and loss-framed alert copy. Switch it off for the plain version — that's the A/B control.
     Every figure is read from the real offer prices; we never show a saving or a countdown we can't back up.</div>
+</div>
+
+<!-- ACCOUNT modal (CAS-82 / spec 26771457 §4) — magic-link sign-in. Three states, toggled by
+     the auth module at the end of <body>: #authGuest (no config), #authSignedOut (config present,
+     not signed in), #authSignedIn (session active). -->
+<div class="modal" id="authModal">
+  <div class="modalhead"><h3>Your account</h3><button class="donebtn" id="authDone">Done</button></div>
+
+  <!-- No config.js → guest only. Honest about what's missing and why the app still works. -->
+  <div id="authGuest" style="display:none">
+    <div class="pnote">You're using Cascade as a <b>guest</b>. Your Cascades are saved in this browser
+      only (via localStorage) — they won't follow you to another device.</div>
+    <div class="flabel">Connect your account</div>
+    <div class="pnote">To sign in and sync across devices, this site needs a <code>config.js</code> with your
+      Supabase project URL and anon key. Until it's added, guest mode is the whole app — nothing here is
+      broken, it just stays on this device. See <code>config.example.js</code> in the repo for the one-line setup.</div>
+  </div>
+
+  <!-- config present, signed out → email → magic link -->
+  <div id="authSignedOut" style="display:none">
+    <div class="pnote">Sign in with a one-tap link — no password. Enter your email and we'll send you a
+      link that signs you straight in. Your Cascades then sync to your account across devices.</div>
+    <div class="flabel">Email</div>
+    <input id="authEmail" class="namein" type="email" inputmode="email" autocomplete="email"
+           placeholder="you@example.com">
+    <div class="cascfoot" style="margin-top:12px">
+      <button class="applybtn" id="authSendLink">Send my sign-in link</button>
+    </div>
+    <div id="authMsg" class="pnote" style="margin-top:10px"></div>
+  </div>
+
+  <!-- signed in → who, and sign out -->
+  <div id="authSignedIn" style="display:none">
+    <div class="pnote">Signed in as <b id="authWho"></b>. Your Cascades sync to this account.</div>
+    <div class="cascfoot" style="margin-top:12px">
+      <button class="dangerbtn" id="authSignOut">Sign out</button>
+    </div>
+  </div>
 </div>
 
 <!-- DEBUG LOG modal — local-only usage log. Opened with ?log=1, or 5 taps on the "updated" line. -->
@@ -4995,6 +5040,109 @@ else if(dedupedN)
 // nothing else owns the screen (a shared link, or first-run setup).
 else if(freshFound.length && !openedShared && !$("onb").classList.contains("open"))
   toast(`🔔 Cascade found ${freshFound.length} film${freshFound.length===1?"":"s"} for you since you last looked.`);
+</script>
+
+<!-- ACCOUNT / MAGIC-LINK AUTH (CAS-82 / spec 26771457 §4).
+     Self-contained ES module (deferred, runs after the DOM + the classic script above).
+     - Reads window.CASCADE_CONFIG from the optional git-ignored config.js.
+     - NO network import in guest mode (no/placeholder config) → the page works fully offline,
+       which is what lets CI and the dry-run build pass without keys.
+     - Only the anon key is ever used here (public-safe; RLS protects the data). The service_role
+       key must never reach the front-end.
+     - Exposes window.CascadeAuth { enabled, client, user, session, status } and dispatches a
+       'cascade-auth-change' event so the persistence story (CAS-83) can hook in without edits here. -->
+<script type="module">
+(() => {
+  const gid = id => document.getElementById(id);
+  const modal = gid('authModal'), btn = gid('accountBtn');
+  const toastSafe = m => { try{ if(typeof window.toast === 'function') window.toast(m); }catch(e){} };
+
+  const openAuth  = () => { modal.classList.add('open'); document.body.style.overflow = 'hidden'; };
+  const closeAuth = () => { modal.classList.remove('open');
+    if(!document.querySelector('.modal.open')) document.body.style.overflow = ''; };
+  const showPanel = which => ['authGuest','authSignedOut','authSignedIn']
+    .forEach(p => gid(p).style.display = (p === which ? 'block' : 'none'));
+
+  // Header button opens the panel in every mode (guest included).
+  btn.addEventListener('click', openAuth);
+  btn.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openAuth(); } });
+  gid('authDone').addEventListener('click', closeAuth);
+
+  // A config is only "real" if both fields are filled and not the example placeholders.
+  const cfg = window.CASCADE_CONFIG || {};
+  const url = (cfg.SUPABASE_URL || '').trim(), key = (cfg.SUPABASE_ANON_KEY || '').trim();
+  const placeholder = v => !v || /YOUR|your-|example/i.test(v);
+  const configured = !placeholder(url) && !placeholder(key);
+
+  const api = window.CascadeAuth = { enabled: configured, client: null, user: null, session: null, status: 'guest' };
+  const announce = () => window.dispatchEvent(new CustomEvent('cascade-auth-change',
+    { detail: { user: api.user, session: api.session, status: api.status } }));
+
+  const setSignedIn = user => {
+    api.user = user; api.status = 'signed-in';
+    gid('authWho').textContent = (user && user.email) || 'your account';
+    btn.classList.add('on'); btn.title = 'Account — ' + ((user && user.email) || 'signed in');
+    showPanel('authSignedIn');
+  };
+  const setSignedOut = () => {
+    api.user = null; api.session = null; api.status = 'signed-out';
+    btn.classList.remove('on'); btn.title = 'Account — sign in';
+    showPanel('authSignedOut');
+  };
+  const setGuest = () => {
+    api.enabled = false; api.user = null; api.session = null; api.status = 'guest';
+    btn.classList.remove('on'); btn.title = 'Account — guest (connect to sync)';
+    showPanel('authGuest');
+  };
+
+  if(!configured){ setGuest(); announce(); return; }   // guest: never touch the network
+
+  (async () => {
+    const msg = gid('authMsg');
+    let supa;
+    try {
+      const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
+      supa = api.client = createClient(url, key);   // defaults: persistSession + detectSessionInUrl
+    } catch(err){
+      console.warn('Cascade: Supabase client unavailable — staying in guest mode.', err);
+      setGuest(); announce(); return;
+    }
+
+    // Reflect the current session (survives reloads; also catches the magic-link return),
+    // then keep the UI in step with every auth event.
+    try {
+      const { data: { session } } = await supa.auth.getSession();
+      api.session = session || null;
+      session ? setSignedIn(session.user) : setSignedOut();
+    } catch(err){ console.warn(err); setSignedOut(); }
+    announce();
+
+    supa.auth.onAuthStateChange((event, session) => {
+      api.session = session || null;
+      if(session){ setSignedIn(session.user); if(event === 'SIGNED_IN') toastSafe('Signed in — your Cascades now sync to your account.'); }
+      else setSignedOut();
+      announce();
+    });
+
+    gid('authSendLink').addEventListener('click', async () => {
+      const email = (gid('authEmail').value || '').trim();
+      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ msg.textContent = 'Please enter a valid email address.'; return; }
+      msg.textContent = 'Sending…';
+      try {
+        const { error } = await supa.auth.signInWithOtp({ email,
+          options: { emailRedirectTo: location.href.split('#')[0] } });
+        msg.textContent = error
+          ? 'Could not send the link: ' + error.message
+          : 'Check your email — we sent a one-tap sign-in link to ' + email + '.';
+      } catch(err){ msg.textContent = 'Could not send the link: ' + ((err && err.message) || err); }
+    });
+
+    gid('authSignOut').addEventListener('click', async () => {
+      try { await supa.auth.signOut(); } catch(err){ console.warn(err); }
+      closeAuth(); toastSafe('Signed out.');
+    });
+  })();
+})();
 </script>
 </body>
 </html>
