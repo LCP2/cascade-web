@@ -78,12 +78,39 @@ The fixtures (`monitor/fixtures/`) are a yesterday/today pair engineered so a ru
 `2026-07-16` exercises each of the four moments once, plus the first-sighting and
 no-change negatives.
 
+## Email digest (CAS-86)
+
+Matched hits become **one consolidated email per user per run**, sent via **Resend**. Each item
+names the film, its transition in the agent's voice (`Now on Stan`, `Dropped to rent — $6.99`,
+`In cinemas now`, `Past its opening weekend`), which Cascade caught it, and a link back to the
+site. Every line is built from real data only — no invented urgency (honesty guardrail).
+`RESEND_API_KEY` is read from the environment; `--dry-run` prints the HTML and sends nothing.
+`CASCADE_EMAIL_FROM` and `CASCADE_SITE_URL` override the sender and the link target.
+
+## Daily automation (CAS-87)
+
+`.github/workflows/daily.yml` runs once a day (and on demand via **Run workflow**):
+
+1. `poc_pipeline.py` rebuilds today's `movies.json`;
+2. the refreshed files are committed (so git history holds "yesterday" for the diff);
+3. `python -m monitor` runs — diff → match → de-dupe → email.
+
+Secrets come from **GitHub Actions secrets only** (never hardcoded). With `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY` and `RESEND_API_KEY` present it does the real thing; when any is
+absent (e.g. before you've added them) it runs `--dry-run`, so the workflow still passes.
+
+**One-time test email (Lee):** add the three secrets in **Settings → Secrets and variables →
+Actions**, then **Actions → “Daily AU movie refresh + Cascade monitor” → Run workflow**. With a
+signed-in account holding an active Cascade and a real catalogue change in the window, you'll get
+the digest. (No change on the day → no email; that's correct, not a failure.)
+
 ## Files
 
 - `transitions.py` — pure diff logic (`compute_transitions`, `Transition`).
 - `matching.py` — match transitions to Cascades + de-dupe (`match`, `matches_criteria`, `scale_tiers`).
-- `store.py` — Cascade/notification access: `InMemoryStore` (dry-run/tests) + `SupabaseStore` (service_role, dependency-free urllib).
+- `emailer.py` — render the digest (`render_digest`, `moment_phrase`) + send via Resend (`send_via_resend`).
+- `store.py` — Cascade/notification/email access: `InMemoryStore` (dry-run/tests) + `SupabaseStore` (service_role, dependency-free urllib).
 - `catalogue.py` — load today's `movies.json` and yesterday's via `git show HEAD~1`.
 - `__main__.py` — the `python -m monitor` CLI (`--dry-run`).
-- `fixtures/` — deterministic catalogues + cascades for the demo + tests.
-- `tests/` — unit tests (transitions + matching).
+- `fixtures/` — deterministic catalogues + cascades + emails for the demo + tests.
+- `tests/` — unit tests (transitions + matching + emailer).
