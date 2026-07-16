@@ -1,0 +1,33 @@
+"""Cascade Web — daily monitoring package (spec 26771457 §5).
+
+Build order 4 of 7 (CAS-84): the *diff* engine. After ``poc_pipeline.py`` builds
+today's ``movies.json``, this package loads yesterday's catalogue and computes the
+per-movie *transitions* (the "moments" a user's Cascade can alert on):
+
+    newly available to rent        -> hits_rent
+    newly on a streaming service   -> hits_stream
+    theatrical opening date reached -> hits_cinema
+    today == opening_date + N (=4)  -> past_opening_weekend   (honest, computed)
+
+Matching those transitions to users' Cascades, de-duping, and emailing land in the
+later stories (CAS-85 / CAS-86); this package does no network I/O and no writes.
+"""
+import os
+import sys
+
+# The window thresholds and offer-classification live in poc_pipeline (the single source
+# of truth for the app's business logic). Make the repo root importable so `import
+# poc_pipeline` works whether this package is run as `python -m monitor` from the repo
+# root, imported by the tests, or invoked from the daily Action.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from .transitions import (  # noqa: E402  (import after sys.path shim, by design)
+    Transition,
+    compute_transitions,
+    DEFAULT_WEEKEND_N,
+    MOMENTS,
+)
+
+__all__ = ["Transition", "compute_transitions", "DEFAULT_WEEKEND_N", "MOMENTS"]
