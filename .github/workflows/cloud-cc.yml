@@ -1,0 +1,100 @@
+name: Cloud CC — autonomous build & deploy
+
+# Relocates the "CC" autonomous builder from Lee's PC into GitHub's cloud so new
+# development + deployment happen with no desktop and no button presses.
+#
+# Each run: reads the top `needs-cc-web` ticket from Jira (REST API, token in a
+# secret), implements it on the checked-out repo per CLOUD_CC.md, rebuilds the
+# front-end, verifies with dry-runs, then this workflow commits the result to
+# `main` — which redeploys GitHub Pages. The agent updates the Jira ticket.
+#
+# Lee feeds work by grooming the Jira `needs-cc-web` queue from anywhere (mobile).
+# Pause anytime by adding an empty file `cloud-cc/PAUSED` to the repo.
+#
+# One-time secrets required (Settings → Secrets and variables → Actions):
+#   ANTHROPIC_API_KEY  — pay-per-use Claude API key (console.anthropic.com)
+#   JIRA_API_TOKEN     — Atlassian API token (id.atlassian.com/manage-profile/security/api-tokens)
+
+on:
+  schedule:
+    - cron: "0 17 * * *"      # ~daily, 17:00 UTC (well clear of the 20:00 data refresh). Tunable.
+  workflow_dispatch: {}        # manual "Run workflow" button for on-demand builds / testing
+
+permissions:
+  contents: write              # commit the built change to main (= deploy via Pages)
+
+concurrency:
+  group: cloud-cc
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [ -f cloud-cc/PAUSED ]; then
+            echo "Cloud CC is paused (cloud-cc/PAUSED present). Skipping."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      JIRA_BASE_URL: https://codynamics.atlassian.net
+      JIRA_EMAIL: lee@codynamics.com.au
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # full history; the front-end build + monitor read prior state
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run the Cloud CC agent
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Follow CLOUD_CC.md in the repository root exactly — it is the full contract
+            for this run. In short: use the Jira REST API (credentials are in the
+            JIRA_* environment variables) to find the single top-priority open ticket
+            labelled `needs-cc-web` in project CAS. If there is none, change nothing and
+            stop. Otherwise implement that one ticket against this checked-out repo per
+            its acceptance criteria and the repo's conventions, rebuild the front-end
+            with `python poc_pipeline.py --build-html`, and VERIFY (build exits 0; the
+            monitor `python -m monitor --dry-run` still passes). Leave your changes
+            staged in the working tree — do NOT git commit or push; a later workflow
+            step does that. Then transition the Jira ticket to reflect it is built and
+            add a comment summarising what shipped and any live step Lee must do.
+            Never touch secrets, `.github/workflows/*`, or the daily data pipeline keys.
+          claude_args: |
+            --allowed-tools Read,Write,Edit,Bash,Glob,Grep
+            --permission-mode bypassPermissions
+            --max-turns 60
+
+      - name: Commit & deploy if the agent changed anything
+        run: |
+          git config user.name  "cloud-cc[bot]"
+          git config user.email "actions@users.noreply.github.com"
+          # Never let the agent smuggle a workflow edit through (GITHUB_TOKEN can't push those anyway).
+          git checkout -- .github/workflows 2>/dev/null || true
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -m "Cloud CC autonomous build $(date -u +%F)"
+            git push
+            echo "Committed to main — GitHub Pages will redeploy."
+          else
+            echo "No changes produced (queue empty or nothing to build) — nothing to deploy."
+          fi
+
