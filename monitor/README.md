@@ -5,8 +5,9 @@ after `poc_pipeline.py` rebuilds today's `movies.json`, it compares today's cata
 **yesterday's** and reports the per-movie *transitions* — the moments a user's Cascade can
 alert on.
 
-It does **no network I/O and no writes**. Matching transitions to users' Cascades, de-duping,
-and sending the email arrive in the later stories (CAS-85 / CAS-86).
+The diff itself does no network I/O. The **matching** stage (CAS-85) reads the `cascades` and
+`notifications` tables with the Supabase **service_role** key and — off `--dry-run` — writes the
+notifications ledger. Sending the email arrives in CAS-86.
 
 ## Transitions (moments)
 
@@ -42,10 +43,35 @@ Flags: `--date YYYY-MM-DD` overrides the run date (drives `past_opening_weekend`
 `--weekend-n N` tunes the opening-weekend window; `--today` / `--yesterday` point at explicit
 catalogue files instead of the defaults.
 
+## Matching + de-dupe (CAS-85)
+
+For each **active** Cascade, a transition fires an alert when: its `moment` is in the Cascade's
+`alert_moments`; the film matches the Cascade's taste `criteria` (genre / exclude / age / language
+/ culture / awards / imdb / rt / budget / tentpole — the same rules as the front-end's
+`matchesCriteria`, minus the window/status test the transition already establishes); for a
+streaming moment, the arrival is on a service the Cascade named (`criteria.services`, when set);
+and it isn't already in the `notifications` ledger. Hits are grouped per user for one digest each.
+
+```bash
+# full diff -> match -> de-dupe against fixtures (deterministic, no keys):
+python -m monitor --dry-run \
+  --today monitor/fixtures/today.json --yesterday monitor/fixtures/yesterday.json \
+  --date 2026-07-16 --cascades monitor/fixtures/cascades.json \
+  --notifications monitor/fixtures/notifications.json
+```
+
+With no `--cascades`, the Cascade + notifications source is Supabase via `SUPABASE_URL` /
+`SUPABASE_SERVICE_ROLE_KEY` (read from the environment — never hardcoded). `--dry-run` prints the
+per-user hit list and writes nothing; without it, the matched rows are written to `notifications`.
+
+> `criteria.services` is the per-Cascade service filter. The current front-end keeps the user's
+> service list in device-local prefs, so it's usually absent — meaning streaming arrivals aren't
+> service-filtered yet. Populate it (a later story) to switch that on; the matcher already honours it.
+
 ## Tests
 
 ```bash
-python -m unittest monitor.tests.test_transitions
+python -m unittest discover -s monitor/tests
 ```
 
 The fixtures (`monitor/fixtures/`) are a yesterday/today pair engineered so a run dated
@@ -55,7 +81,9 @@ no-change negatives.
 ## Files
 
 - `transitions.py` — pure diff logic (`compute_transitions`, `Transition`).
+- `matching.py` — match transitions to Cascades + de-dupe (`match`, `matches_criteria`, `scale_tiers`).
+- `store.py` — Cascade/notification access: `InMemoryStore` (dry-run/tests) + `SupabaseStore` (service_role, dependency-free urllib).
 - `catalogue.py` — load today's `movies.json` and yesterday's via `git show HEAD~1`.
 - `__main__.py` — the `python -m monitor` CLI (`--dry-run`).
-- `fixtures/` — deterministic yesterday/today catalogues for the demo + tests.
-- `tests/` — unit tests.
+- `fixtures/` — deterministic catalogues + cascades for the demo + tests.
+- `tests/` — unit tests (transitions + matching).

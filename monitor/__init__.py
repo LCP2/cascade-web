@@ -29,5 +29,18 @@ from .transitions import (  # noqa: E402  (import after sys.path shim, by design
     DEFAULT_WEEKEND_N,
     MOMENTS,
 )
+from .matching import (  # noqa: E402
+    Hit,
+    match,
+    matches_criteria,
+    service_ok,
+    scale_tiers,
+    notification_rows,
+)
+from .store import InMemoryStore, SupabaseStore, store_from_env  # noqa: E402
 
-__all__ = ["Transition", "compute_transitions", "DEFAULT_WEEKEND_N", "MOMENTS"]
+__all__ = [
+    "Transition", "compute_transitions", "DEFAULT_WEEKEND_N", "MOMENTS",
+    "Hit", "match", "matches_criteria", "service_ok", "scale_tiers", "notification_rows",
+    "InMemoryStore", "SupabaseStore", "store_from_env",
+]
