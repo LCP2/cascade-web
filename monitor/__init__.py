@@ -38,9 +38,16 @@ from .matching import (  # noqa: E402
     notification_rows,
 )
 from .store import InMemoryStore, SupabaseStore, store_from_env  # noqa: E402
+from .emailer import (  # noqa: E402
+    render_digest,
+    moment_phrase,
+    digest_subject,
+    send_via_resend,
+)
 
 __all__ = [
     "Transition", "compute_transitions", "DEFAULT_WEEKEND_N", "MOMENTS",
     "Hit", "match", "matches_criteria", "service_ok", "scale_tiers", "notification_rows",
     "InMemoryStore", "SupabaseStore", "store_from_env",
+    "render_digest", "moment_phrase", "digest_subject", "send_via_resend",
 ]

@@ -28,9 +28,10 @@ SERVICE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
 class InMemoryStore:
     """A store backed by plain Python lists — used for dry-run and tests."""
 
-    def __init__(self, cascades=None, notifications=None):
+    def __init__(self, cascades=None, notifications=None, emails=None):
         self._cascades = list(cascades or [])
         self._notifications = list(notifications or [])
+        self._emails = dict(emails or {})
 
     def fetch_active_cascades(self) -> list:
         return [c for c in self._cascades if c.get("active", True)]
@@ -42,6 +43,9 @@ class InMemoryStore:
     def insert_notifications(self, rows) -> int:
         self._notifications.extend(rows)
         return len(rows)
+
+    def fetch_user_email(self, user_id: str):
+        return self._emails.get(user_id)
 
 
 class SupabaseStore:
@@ -73,6 +77,21 @@ class SupabaseStore:
     def fetch_notification_keys(self) -> set:
         rows = self._get("/notifications?select=cascade_id,movie_id,moment")
         return {(r.get("cascade_id"), str(r.get("movie_id")), r.get("moment")) for r in rows}
+
+    def fetch_user_email(self, user_id: str):
+        """Resolve a user_id to their email via the Auth admin API (service_role only).
+        Returns None if it can't be found."""
+        base = self._base[: -len("/rest/v1")]   # strip the PostgREST suffix
+        req = urllib.request.Request(
+            f"{base}/auth/v1/admin/users/{urllib.parse.quote(user_id)}",
+            headers=self._headers(), method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, json.JSONDecodeError):
+            return None
+        return data.get("email") or (data.get("user") or {}).get("email")
 
     def insert_notifications(self, rows) -> int:
         rows = list(rows)
