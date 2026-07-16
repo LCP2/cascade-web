@@ -1,0 +1,85 @@
+name: Daily AU movie refresh
+
+# Runs the pipeline once a day in the cloud, commits the refreshed app + data
+# back to the repo (so GitHub Pages serves the latest), and emails you any
+# availability changes. Also runnable on demand from the Actions tab.
+
+on:
+  schedule:
+    - cron: "0 20 * * *"        # 20:00 UTC ≈ 6–7am Sydney. Fixed to UTC; drifts 1h with AU daylight saving.
+  workflow_dispatch: {}          # manual "Run workflow" button
+
+permissions:
+  contents: write                # allow the job to commit the refreshed files
+
+concurrency:                     # never let two daily runs overlap
+  group: daily-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo (carries yesterday's state for change-detection)
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run the pipeline (ingest → enrich → poll → diff → build)
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
+          WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
+        run: python poc_pipeline.py
+
+      - name: Prepare alert e-mail body
+        id: alerts
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json, os
+          f = "state/last_run_events.json"
+          ev = json.load(open(f)) if os.path.exists(f) else []
+          print(f"ALERT_COUNT={len(ev)}")
+          lines = []
+          for e in ev:
+              svc = (" on " + ", ".join(e.get("services", []))) if e.get("services") else ""
+              lines.append(f"• {e['title']}  →  {e['label']}{svc}")
+          body = "\n".join(lines) if lines else "No availability changes today."
+          # multiline env var
+          print("ALERT_BODY<<__EOF__")
+          print(body)
+          print("__EOF__")
+          PY
+
+      - name: Commit refreshed app + data
+        run: |
+          git config user.name  "cascade-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add index.html movies.json state
+          git commit -m "Daily refresh $(date -u +%F)" || echo "nothing to commit"
+          git push
+
+      - name: Email me if anything changed
+        # runs only when there are changes AND you've configured the mail secrets
+        if: env.ALERT_COUNT != '0' && env.MAIL_USER != ''
+        env:
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.MAIL_SERVER }}   # e.g. smtp.gmail.com  or  smtp.office365.com
+          server_port: ${{ secrets.MAIL_PORT }}        # 465 (SSL) or 587 (STARTTLS)
+          secure: true
+          username: ${{ secrets.MAIL_USER }}
+          password: ${{ secrets.MAIL_PASS }}           # app password, NOT your normal password
+          from: Cascade Movies <${{ secrets.MAIL_USER }}>
+          to: ${{ secrets.MAIL_TO }}
+          subject: "🎬 Cascade: ${{ env.ALERT_COUNT }} movie availability change(s)"
+          body: |
+            AU titles that moved to a new availability window today:
+
+            ${{ env.ALERT_BODY }}
+
+            View the app: ${{ secrets.SITE_URL }}
