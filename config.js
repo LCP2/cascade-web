@@ -1,0 +1,4 @@
+window.CASCADE_CONFIG = {
+  SUPABASE_URL: "https://ypccfyatejejslzlfrbf.supabase.co",
+  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlwY2NmeWF0ZWplanNsemxmcmJmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxNjY4ODEsImV4cCI6MjA5OTc0Mjg4MX0.P32M3PTqMKOu5DVEkIdaFAxiSOoXxqNbA6YIklgwrE4",
+};
