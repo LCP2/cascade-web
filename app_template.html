@@ -669,6 +669,17 @@
     border-radius:10px;padding:12px 13px;font-size:16px;font-weight:600}
   .wizsum{margin:15px 0 2px;background:linear-gradient(135deg,rgba(124,92,255,.16),rgba(34,211,238,.06));
     border:1px solid var(--violet);border-radius:12px;padding:11px 12px;font-size:12.5px;line-height:1.5;color:#e8ecf2}
+  /* ---- Agent instructions box (CAS-91) — one condensed bullet per wizard page. ---- */
+  .wizinh{font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--cyan);
+    margin-bottom:7px}
+  .wizinlist{list-style:none;margin:0;padding:0;display:grid;gap:5px}
+  .wizinlist li{display:flex;gap:8px;font-size:12.5px;line-height:1.45;font-weight:600}
+  .wizinlist li::before{content:"•";color:var(--accenttext);font-weight:800;flex:none}
+  .wizincount{margin:8px 0 0;font-size:11.5px;color:var(--dim)}
+  .wizinp{margin:0;font-size:12.5px;color:var(--dim);font-style:italic}
+  /* Checkbox-style tick for multi-select cards — square, versus the radio card's round .wo-tick. */
+  .wizopt .wo-tick.wo-check{border-radius:6px}
+  .wiznext[disabled]{opacity:.45;cursor:not-allowed;box-shadow:none}
   .wizfoot{display:flex;gap:8px;margin-top:16px;flex:none}
   .wiznext{flex:1;background:var(--grad);color:#fff;border:none;border-radius:12px;padding:32px 15px;font-size:15px;
     font-weight:800;cursor:pointer;text-shadow:0 1px 2px rgba(10,14,26,.55)}
@@ -4131,17 +4142,23 @@ window.pickStarter=key=>{
 const WIZ_DEFAULT_NAME = {cinema:"Big screen scout", rentals:"Bargain radar", streaming:"Friday night finder"};
 // Per-starter step order. Steps 1 (love) and the skip step are shared; the middle steps are the starter's own.
 const WIZ_STEPS = {
-  cinema:    ["love","tellWhen","bigScreen","skip","name"],
+  // CAS-91: "interest" leads the cinema flow — it's the first thing asked after picking the starter.
+  cinema:    ["interest","love","bigScreen","skip","name"],
   rentals:   ["love","price","worthTime","skip","name"],
   streaming: ["love","services","worthTime","skip","name"],
 };
-// Cinema — "when should I tell you?" maps to the real alert moments (there is no fabricated "announced"
-// bell: the earliest honest signal is the film reaching cinemas, so "announced" simply also watches from
-// the upcoming stage; "before it leaves" is the past-opening-weekend moment from CAS-68).
-const TELL_OPTS = [
-  {key:"announced", label:"As soon as it's announced", status:["upcoming","opening_week","in_cinema"], alerts:{cinema:true}},
-  {key:"opens",     label:"When it opens",             status:["opening_week","in_cinema"], alerts:{cinema:true}},
-  {key:"leaving",   label:"Before it leaves — last chance", status:["opening_week","in_cinema"], alerts:{past_opening:true}},
+// Cinema — "I'm interested in:" (CAS-91). MULTI-select: each chosen option contributes its statuses and
+// its alert moment, and the selections are unioned. The mapping stays honest — every alert below is a
+// moment the monitor actually fires: `cinema` is the film reaching cinemas (the earliest real signal,
+// which is what an "upcoming" pick can truthfully promise), `past_opening` is the past-opening-weekend
+// moment from CAS-68. There is no fabricated "announced" bell.
+const CINEMA_INTEREST_OPTS = [
+  {key:"upcoming", label:"Upcoming movies",  sub:"Announced or coming soon — I'll tell you when it reaches a cinema",
+   status:["upcoming","opening_week","in_cinema"], alerts:{cinema:true},      bullet:"upcoming"},
+  {key:"now",      label:"In cinemas now",   sub:"On the big screen right now",
+   status:["opening_week","in_cinema"],           alerts:{cinema:true},      bullet:"in cinemas now"},
+  {key:"leaving",  label:"Leaving soon",     sub:"A heads-up before it's gone from cinemas",
+   status:["opening_week","in_cinema"],           alerts:{past_opening:true}, bullet:"leaving soon"},
 ];
 // Rentals — the price ceiling decides which windows the agent watches and rings.
 const PRICE_OPTS = [
@@ -4164,7 +4181,9 @@ const WORTH_OPTS = [
 // Streaming — the "where do you watch?" services, using the real catalogue service names so the scope works.
 const WIZ_SERVICES = ["Netflix","Disney+","Prime Video","Stan","BINGE","AppleTV+","Paramount Plus"];
 const WIZ_SVC_DEFAULT = ["Netflix","Disney+","Prime Video"];
-const wiz = {starter:"streaming", genres:[], exclude:[], name:"", tellWhen:"opens", ratingKey:"crowd",
+// `interest` starts EMPTY (CAS-91 AC3): the Agent-instructions box must claim nothing before a choice,
+// and the cinema step won't let you continue until at least one is picked.
+const wiz = {starter:"streaming", genres:[], exclude:[], name:"", interest:[], ratingKey:"crowd",
              price:"cheap", services:[...WIZ_SVC_DEFAULT], step:0};
 
 // Build the agent as it stands from the wizard answers (optionally with an override, for live option counts).
@@ -4179,8 +4198,12 @@ function wizDraft(over){
   const r = ropts.find(o=>o.key===w.ratingKey) || ropts[1];
   c.imdb = RATING_STOPS[r.ratingStop].imdb; c.ratingStop=r.ratingStop; c.sort=r.sort;
   if(w.starter==="cinema"){
-    const t=TELL_OPTS.find(o=>o.key===w.tellWhen)||TELL_OPTS[1];
-    c.status=[...t.status]; Object.assign(c.alerts, t.alerts);
+    // Union every selected interest (CAS-91). Before anything is picked, fall back to the in-cinema set
+    // for the live count only — no alert is claimed, and the step blocks Continue until a real choice.
+    const picked=CINEMA_INTEREST_OPTS.filter(o=>w.interest.includes(o.key));
+    const src = picked.length ? picked : [CINEMA_INTEREST_OPTS[1]];
+    c.status=[...new Set(src.flatMap(o=>o.status))];
+    if(picked.length) picked.forEach(o=>Object.assign(c.alerts, o.alerts));
   } else if(w.starter==="rentals"){
     const p=PRICE_OPTS.find(o=>o.key===w.price)||PRICE_OPTS[0];
     c.status=[...p.status]; Object.assign(c.alerts, p.alerts);
@@ -4191,17 +4214,56 @@ function wizDraft(over){
   return normCascade(c);
 }
 const wizFinds = over => watchCount(wizDraft(over));
-// The agent in plain English, read off the answers — with the live count, so it never promises what it won't do.
-function wizSummary(){
-  const c=wizDraft(), n=watchCount(c);
-  const ropts = wiz.starter==="cinema"?BIG_SCREEN_OPTS:WORTH_OPTS;
-  const r=ropts.find(o=>o.key===wiz.ratingKey);
-  const bits=[wiz.genres.length ? `<b>${wiz.genres.map(esc).join(", ")}</b>` : `<b>anything you'll love</b>`];
-  if(r && r.ratingStop>0) bits.push(`${esc(RATING_STOPS[r.ratingStop].label.toLowerCase())}+`);
-  if(wiz.exclude.length) bits.push(`never <b>${wiz.exclude.map(esc).join(" or ")}</b>`);
-  return `${c.icon} <b>${esc(c.name)}</b> watches for ${bits.join(" · ")} — <b>${n} film${n===1?"":"s"}</b> so far. ${alertPromise(c)}`;
+// "a, b & c" — the join CAS-91 asks for on the condensed cinema bullet.
+function wizJoin(list){
+  if(list.length<2) return list.join("");
+  return list.slice(0,-1).join(", ")+" & "+list[list.length-1];
 }
-function refreshWizLive(){ const s=$("wizSum"); if(s) s.innerHTML=wizSummary(); }
+// ---- Agent instructions (CAS-91 AC3) ----
+// EXACTLY ONE bullet per wizard page, condensing that page's whole answer into a single line. Pages the
+// person hasn't reached yet contribute nothing, and a page they left blank (the optional ones) stays out
+// — the box claims only what's actually been chosen.
+function wizBulletFor(key){
+  if(key==="interest"){
+    const picked=CINEMA_INTEREST_OPTS.filter(o=>wiz.interest.includes(o.key));
+    return picked.length ? `Cinema — ${wizJoin(picked.map(o=>o.bullet))}` : "";
+  }
+  if(key==="love")   return wiz.genres.length  ? `Looks for ${wizJoin(wiz.genres)}` : "";
+  if(key==="skip")   return wiz.exclude.length ? `Never ${wizJoin(wiz.exclude)}` : "";
+  if(key==="name")   return wiz.name.trim()    ? `Called “${wiz.name.trim()}”` : "";
+  if(key==="services") return wiz.services.length ? `Watches ${wizJoin(wiz.services)}` : "";
+  if(key==="price"){
+    const p=PRICE_OPTS.find(o=>o.key===wiz.price);
+    return p ? `Price — ${p.label.toLowerCase()}` : "";
+  }
+  if(key==="bigScreen" || key==="worthTime"){
+    const ropts = key==="bigScreen" ? BIG_SCREEN_OPTS : WORTH_OPTS;
+    const r=ropts.find(o=>o.key===wiz.ratingKey);
+    if(!r) return "";
+    return r.ratingStop>0 ? `Only ${RATING_STOPS[r.ratingStop].label.toLowerCase()} or better`
+                          : "Any rating — not fussy";
+  }
+  return "";
+}
+// The bullets so far: every page up to and including the one being shown.
+function wizInstructions(){
+  const steps=WIZ_STEPS[wiz.starter];
+  const bullets=steps.slice(0, wiz.step+1).map(wizBulletFor).filter(Boolean);
+  if(!bullets.length) return `<p class="wizinp">Your instructions appear here as you answer.</p>`;
+  const n=watchCount(wizDraft());
+  return `<ul class="wizinlist">${bullets.map(b=>`<li>${esc(b)}</li>`).join("")}</ul>`
+    + `<p class="wizincount"><b>${n} film${n===1?"":"s"}</b> ${n===1?"matches":"match"} so far.</p>`;
+}
+function refreshWizLive(){ const s=$("wizSum"); if(s) s.innerHTML=wizInstructions(); syncWizNext(); }
+// Continue is blocked until the cinema interest step has at least one selection (CAS-91 AC1).
+function wizStepReady(){
+  return !(WIZ_STEPS[wiz.starter][wiz.step]==="interest" && !wiz.interest.length);
+}
+function syncWizNext(){
+  const b=$("wizNext"); if(!b) return;
+  const ok=wizStepReady();
+  b.disabled=!ok; b.setAttribute("aria-disabled", String(!ok));
+}
 // Chip toggler (love / skip / services) — mirrors onbChips but drives the wizard's live summary.
 function wizChips(elId, values, arr, label){
   const box=$(elId); if(!box) return;
@@ -4234,20 +4296,38 @@ function wizOptCards(field, opts, showCount){
       </button>`;
   }).join("")+`</div>`;
 }
+// Multi-select option cards (CAS-91) — same furniture as wizOptCards, but a checkbox not a radio:
+// aria-pressed reflects state and every card toggles independently.
+function wizCheckCards(field, opts){
+  return `<div class="wizopts">`+opts.map(o=>{
+    const on=wiz[field].includes(o.key);
+    return `<button class="wizopt ${on?"on":""}" type="button" aria-pressed="${on}"
+        onclick="wizToggle('${field}','${o.key}')">
+        <span class="wo-main"><span class="wo-name">${o.label}</span>
+          ${o.sub?`<span class="wo-sub">${o.sub}</span>`:""}</span>
+        <span class="wo-tick wo-check">✓</span>
+      </button>`;
+  }).join("")+`</div>`;
+}
 function wizStepHTML(key){
   const steps=WIZ_STEPS[wiz.starter], last=wiz.step===steps.length-1;
-  const foot = `<div class="wizsum" id="wizSum">${wizSummary()}</div>
-    <div class="wizfoot"><button class="wiznext" type="button" onclick="wizNext()">${last?"Show me what it found":"Continue"}</button></div>
+  const ready=wizStepReady();
+  // The title sits OUTSIDE #wizSum — refreshWizLive() rewrites that node, and the heading must survive it.
+  const foot = `<div class="wizsum">
+      <div class="wizinh">Agent instructions</div>
+      <div id="wizSum">${wizInstructions()}</div></div>
+    <div class="wizfoot"><button class="wiznext" id="wizNext" type="button" onclick="wizNext()"
+      ${ready?"":`disabled aria-disabled="true"`}>${last?"Show me what it found":"Continue"}</button></div>
     <button class="wizskip" type="button" onclick="wizSkip()">Skip — I'll set this up later</button>`;
+  if(key==="interest") return `<div class="wizh">I'm interested in:</div>
+    <p class="wizp">Pick one or more — your agent watches for all of them.</p>
+    ${wizCheckCards("interest", CINEMA_INTEREST_OPTS)}${foot}`;
   if(key==="love") return `<div class="wizh">What do you love watching?</div>
     <p class="wizp">Pick as many as you like — your agent goes out and finds these for you. Skip it and it watches everything.</p>
     <div class="chips" id="wizLoveChips"></div>${foot}`;
   if(key==="skip") return `<div class="wizh">Anything to skip?</div>
     <p class="wizp">Optional. Tell me what you never want to see and I'll keep it away — a skip beats a match, so it holds even when a film ticks another box.</p>
     <div class="chips" id="wizSkipChips"></div>${foot}`;
-  if(key==="tellWhen") return `<div class="wizh">When should I tell you?</div>
-    <p class="wizp">Cinema films move fast. Pick the moment that matters and your agent watches for exactly that.</p>
-    ${wizOptCards("tellWhen", TELL_OPTS, false)}${foot}`;
   if(key==="bigScreen") return `<div class="wizh">Worth the big screen?</div>
     <p class="wizp">The bar your agent holds cinema films to. The numbers are real — that's how many clear it.</p>
     ${wizOptCards("ratingKey", BIG_SCREEN_OPTS, true)}${foot}`;
@@ -4284,11 +4364,13 @@ function renderWiz(dir){
 }
 function openWizard(starter){
   const D={
-    cinema:   {genres:["Science Fiction","Thriller","Action"], ratingKey:"block", tellWhen:"opens"},
+    // Cinema opens on the interest step with nothing pre-selected (CAS-91): the box starts empty and
+    // the person makes the first real choice themselves.
+    cinema:   {genres:["Science Fiction","Thriller","Action"], ratingKey:"block", interest:[]},
     rentals:  {genres:[], ratingKey:"crowd", price:"cheap"},
     streaming:{genres:[], ratingKey:"crowd", services:[...WIZ_SVC_DEFAULT]},
   }[starter] || {};
-  Object.assign(wiz, {starter, genres:[], exclude:[], name:"", tellWhen:"opens", ratingKey:"crowd",
+  Object.assign(wiz, {starter, genres:[], exclude:[], name:"", interest:[], ratingKey:"crowd",
     price:"cheap", services:[...WIZ_SVC_DEFAULT], step:0}, D);
   $("wiz").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("wizard_opened",{starter});
@@ -4299,7 +4381,16 @@ $("wizBack").onclick=()=>{
   wiz.step--; logEvent("wiz_back",{starter:wiz.starter, step:wiz.step}); renderWiz("back");
 };
 window.wizPick=(field,key)=>{ wiz[field]=key; logEvent("wiz_pick",{starter:wiz.starter, field, key}); renderWiz("none"); };
+// Multi-select toggle (CAS-91) — add/remove, then repaint in place so the instructions bullet and the
+// Continue button's enabled state both follow the selection.
+window.wizToggle=(field,key)=>{
+  const arr=wiz[field], i=arr.indexOf(key);
+  i<0?arr.push(key):arr.splice(i,1);
+  logEvent("wiz_toggle",{starter:wiz.starter, field, key, on:i<0});
+  renderWiz("none");
+};
 window.wizNext=()=>{
+  if(!wizStepReady()) return;   // CAS-91: guards keyboard/programmatic activation, not just the click
   const steps=WIZ_STEPS[wiz.starter];
   if(wiz.step>=steps.length-1){ wizCreateAgent(); return; }
   wiz.step++; logEvent("wiz_step",{starter:wiz.starter, step:wiz.step}); renderWiz("fwd");
