@@ -1340,6 +1340,10 @@ if(didReset || forceSetup){
 }
 
 // ---- persisted user state (localStorage, with graceful fallback) ----
+// Does this browser actually keep anything for us? Every save below is wrapped in try/catch, so a blocked or
+// private-mode store fails silently and the app still runs. The setup meter reads this: it must not tell you
+// your work is "saved on this device" when nothing is being saved (honesty guardrail).
+const storageWorks = (()=>{ try{ localStorage.setItem("cascade_probe","1"); localStorage.removeItem("cascade_probe"); return true; }catch(e){ return false; } })();
 function loadSet(k){ try{ return new Set(JSON.parse(localStorage.getItem(k)||"[]")); }catch(e){ return new Set(); } }
 function saveSet(k,set){ try{ localStorage.setItem(k, JSON.stringify([...set])); }catch(e){} }
 const watched = loadSet("cascade_watched");
@@ -3961,7 +3965,7 @@ function renderServiceAdvice(){
 function setupItems(){
   return [
     {label:"📍 Region: Australia", done:true},
-    {label:"💾 Saved on this device", done:true},
+    {label:"💾 Saved on this device", done:storageWorks},
     // The services step is the "finish your agent" one now — it is no longer asked for on the way in (CAS-71),
     // so the meter names it for what it is: the last thing left, not a gate you failed to pass.
     {label:"📺 Finish it — your services", done:servicesPicked()},
@@ -3974,7 +3978,11 @@ function setupItems(){
 function setupHTML(){
   const items=setupItems(), done=items.filter(i=>i.done).length;
   const pct=Math.round(done/items.length*100);
-  return `<div class="setuptop"><span>Setup · ${done} of ${items.length} done</span><span class="setuppct">${pct}%</span></div>
+  // Goal-gradient framing: state the distance already covered, not the tally you have yet to fill in.
+  // "0 of 5" reads as a form you have not started; "already 2 of 5 there" reads as progress worth finishing.
+  const lead = done>=items.length ? `Setup · all ${items.length} done`
+             : `You're already ${done} of ${items.length} there`;
+  return `<div class="setuptop"><span>${lead}</span><span class="setuppct">${pct}%</span></div>
     <div class="setupbar"><div class="setupfill" style="width:${pct}%"></div></div>
     <div class="setuplist">${items.map(i=>`<span class="setupitem ${i.done?"done":""}">${i.done?"✓ ":""}${i.label}</span>`).join("")}</div>`;
 }
