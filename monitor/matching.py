@@ -178,7 +178,26 @@ def service_ok(transition, criteria: dict) -> bool:
     return any(s in services for s in (transition.services or []))
 
 
-def match(cascades: list, transitions: list, already=None, catalogue=None) -> dict:
+def suppressed_pairs(picks) -> set:
+    """Normalise a personal-override list into the ``{(user_id, movie_id)}`` set ``match`` filters on.
+
+    A "pick" row is one film one user has answered for, mirroring the front-end's ``cascade_notify``
+    entry: ``{user_id, movie_id, state}`` where state is ``"mine"`` (My Pick — the user keeps it) or
+    ``"off"`` (the user took it off, and it stays off). Only ``"off"`` suppresses. ``"mine"`` needs no
+    rule here: a My Pick film the Cascade also matches would fire anyway, and one it does NOT match is
+    kept surfaced by the app, not by an email the monitor was never going to send.
+    """
+    out = set()
+    for p in picks or ():
+        if not isinstance(p, dict):        # a JSON object instead of a list would iterate its keys as strings
+            raise TypeError("picks must be a list of {user_id, movie_id, state} objects, "
+                            f"got a {type(p).__name__} element")
+        if (p.get("state") or "").lower() == "off":
+            out.add((str(p.get("user_id")), str(p.get("movie_id"))))
+    return out
+
+
+def match(cascades: list, transitions: list, already=None, catalogue=None, suppressed=None) -> dict:
     """Return {user_id: [Hit, ...]} — one entry per (cascade, transition) that fires and hasn't
     been sent before.
 
@@ -187,8 +206,13 @@ def match(cascades: list, transitions: list, already=None, catalogue=None) -> di
     already     : iterable of (cascade_id, movie_id, moment) already in the notifications ledger
     catalogue   : today's movie list, for the tentpole tiers (optional; only needed if a Cascade
                   uses a tentpole filter)
+    suppressed  : iterable of (user_id, movie_id) the user has turned OFF by hand (see
+                  ``suppressed_pairs``). The personal override outranks the Cascade: it goes on
+                  matching the film and we go on saying nothing about it, every run, until the user
+                  changes their mind. Empty/None -> nothing is suppressed.
     """
     seen = set(already or ())
+    off = {(str(u), str(m)) for u, m in (suppressed or ())}
     tiers = scale_tiers(catalogue) if catalogue else {}
     by_user: dict = {}
 
@@ -200,6 +224,8 @@ def match(cascades: list, transitions: list, already=None, catalogue=None) -> di
         for t in transitions:
             if t.moment not in moments:
                 continue
+            if (str(c["user_id"]), str(t.movie_id)) in off:
+                continue                                    # your answer outranks your Cascade
             if not matches_criteria(t.movie, criteria, tier=tiers.get(t.movie_id)):
                 continue
             if not service_ok(t, criteria):

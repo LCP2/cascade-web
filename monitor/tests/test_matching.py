@@ -7,7 +7,8 @@ import json
 import os
 import unittest
 
-from monitor import compute_transitions, match, matches_criteria, service_ok, notification_rows
+from monitor import (compute_transitions, match, matches_criteria, service_ok,
+                     notification_rows, suppressed_pairs)
 from monitor.catalogue import load_catalogue_file
 from monitor.store import InMemoryStore
 
@@ -93,6 +94,38 @@ class MatchTests(unittest.TestCase):
                    for hits in first.values() for h in hits}
         second = self._match(already=already)
         self.assertEqual(second, {})
+
+    # ---- personal Pick overrides outrank the Cascade (CAS-100 AC5) ----
+    def test_pick_off_suppresses_that_users_alert(self):
+        # user-A took 5001 off by hand. cascade-A1 goes on matching it; we go on saying nothing.
+        keys = self._keys(match(self.cascades, self.transitions, catalogue=self.today,
+                                suppressed={("user-A", "5001")}))
+        self.assertNotIn(("cascade-A1", "5001", "hits_rent"), keys)
+        self.assertIn(("cascade-A2", "5003", "hits_cinema"), keys)     # user-A's other alerts stand
+
+    def test_pick_off_is_per_user_not_global(self):
+        # user-B turning 5001 off must not silence user-A's alert for the same film.
+        keys = self._keys(match(self.cascades, self.transitions, catalogue=self.today,
+                                suppressed={("user-B", "5001")}))
+        self.assertIn(("cascade-A1", "5001", "hits_rent"), keys)
+
+    def test_suppressed_pairs_reads_only_off(self):
+        pairs = suppressed_pairs([
+            {"user_id": "user-A", "movie_id": 5001, "state": "off"},
+            {"user_id": "user-A", "movie_id": 5003, "state": "mine"},   # My Pick suppresses nothing
+            {"user_id": "user-B", "movie_id": 5002},                    # no state -> not an override
+        ])
+        self.assertEqual(pairs, {("user-A", "5001")})
+
+    def test_suppressed_pairs_rejects_a_json_object(self):
+        # A dict here would silently iterate its KEYS and suppress nothing — fail loudly instead.
+        with self.assertRaises(TypeError):
+            suppressed_pairs({"user-A": "5001"})
+
+    def test_no_overrides_changes_nothing(self):
+        self.assertEqual(self._keys(match(self.cascades, self.transitions, catalogue=self.today,
+                                          suppressed=None)),
+                         self._keys(self._match()))
 
     # ---- ledger rows ----
     def test_notification_rows_shape(self):

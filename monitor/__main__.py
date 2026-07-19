@@ -28,7 +28,7 @@ import json
 import sys
 
 from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notification_rows,
-               render_digest, send_via_resend)
+               render_digest, send_via_resend, suppressed_pairs)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
 from .store import InMemoryStore, store_from_env
 
@@ -49,6 +49,10 @@ def _parse_args(argv):
                    help="Existing notifications JSON for de-dupe (default: Supabase).")
     p.add_argument("--emails", metavar="PATH",
                    help="user_id -> email JSON map (dry-run/fixtures; default: Supabase auth).")
+    p.add_argument("--picks", metavar="PATH",
+                   help="Personal Pick overrides JSON: [{user_id, movie_id, state}] where state "
+                        "'off' suppresses that film for that user (CAS-100). Device-local until the "
+                        "picks are account-synced, so there is no Supabase default yet.")
     p.add_argument("--print-html", action="store_true",
                    help="With --dry-run, print the full digest HTML (default: subject + text preview).")
     return p.parse_args(argv)
@@ -90,10 +94,13 @@ def main(argv=None) -> int:
 
     cascades = store.fetch_active_cascades()
     already = store.fetch_notification_keys()
-    by_user = match(cascades, transitions, already=already, catalogue=today_movies)
+    # A film the user has taken off by hand stays off — their answer outranks their own Cascade, in the
+    # email as well as in the app (CAS-100 AC5).
+    off = suppressed_pairs(_load_json(args.picks)) if args.picks else set()
+    by_user = match(cascades, transitions, already=already, catalogue=today_movies, suppressed=off)
 
     print(f"[monitor] matching against {len(cascades)} active cascade(s) from {source}; "
-          f"{len(already)} already-sent ledger entries.")
+          f"{len(already)} already-sent ledger entries; {len(off)} personal override(s) suppressing.")
     if not by_user:
         print("[monitor] no new alerts for anyone — no email will be sent.")
         return 0
