@@ -2858,6 +2858,12 @@ function matchesCriteria(m,c,ignoreBlocked){
 }
 const countCriteria = c => MOVIES.filter(m=>matchesCriteria(m,c)).length;
 
+// The live match count as a CTA suffix (CAS-98). The count reads as a recommendation — the button
+// tells you what pressing it is worth before you press it. Real numbers only: at zero we drop the
+// suffix rather than print "· 0 films", so a proceed button never reads as a dead end. Each caller
+// passes the count its own step already shows, so the button and the summary above it never disagree.
+const ctaCount = n => n ? ` · ${n} film${n===1?"":"s"}` : "";
+
 // ---- What a Cascade WATCHES vs what it SHOWS you (CAS-67) -----------------------
 // These are two different questions, and keeping them apart is the whole of this ticket:
 //
@@ -3838,7 +3844,7 @@ function buildEditorChips(el, values, key, label, cls){
 function refreshDraft(){
   const n=countCriteria(draft);
   const verb=draft.id ? "Save" : "Continue";           // never "Sign up" — you're building your thing, not an account
-  $("cApply").textContent = n ? `${verb} · ${n} film${n===1?"":"s"}` : "No films match — loosen it";
+  $("cApply").textContent = n ? `${verb}${ctaCount(n)}` : "No films match — loosen it";
   $("cApply").disabled = n===0;
   syncMineWarn();
 }
@@ -4162,7 +4168,13 @@ function wizSummary(){
   if(wiz.exclude.length) bits.push(`never <b>${wiz.exclude.map(esc).join(" or ")}</b>`);
   return `${c.icon} <b>${esc(c.name)}</b> watches for ${bits.join(" · ")} — <b>${n} film${n===1?"":"s"}</b> so far. ${alertPromise(c)}`;
 }
-function refreshWizLive(){ const s=$("wizSum"); if(s) s.innerHTML=wizSummary(); }
+function refreshWizLive(){
+  const s=$("wizSum"); if(s) s.innerHTML=wizSummary();
+  // Same live count on the CTA (CAS-98). The last step's button is the reveal — leave its
+  // wording alone so the number still lands there rather than being given away early.
+  const steps=WIZ_STEPS[wiz.starter], b=$("wizNextBtn");
+  if(b && steps && wiz.step!==steps.length-1) b.textContent=`Continue${ctaCount(wizFinds())}`;
+}
 // Chip toggler (love / skip / services) — mirrors onbChips but drives the wizard's live summary.
 function wizChips(elId, values, arr, label){
   const box=$(elId); if(!box) return;
@@ -4198,7 +4210,7 @@ function wizOptCards(field, opts, showCount){
 function wizStepHTML(key){
   const steps=WIZ_STEPS[wiz.starter], last=wiz.step===steps.length-1;
   const foot = `<div class="wizsum" id="wizSum">${wizSummary()}</div>
-    <div class="wizfoot"><button class="wiznext" type="button" onclick="wizNext()">${last?"Show me what it found":"Continue"}</button></div>
+    <div class="wizfoot"><button class="wiznext" id="wizNextBtn" type="button" onclick="wizNext()">${last?"Show me what it found":`Continue${ctaCount(wizFinds())}`}</button></div>
     <button class="wizskip" type="button" onclick="wizSkip()">Skip — I'll set this up later</button>`;
   if(key==="love") return `<div class="wizh">What do you love watching?</div>
     <p class="wizp">Pick as many as you like — your agent goes out and finds these for you. Skip it and it watches everything.</p>
@@ -4476,6 +4488,9 @@ function refreshOnboarding(){
   if(!$("onb").classList.contains("open")) return;
   $("onbSetup").innerHTML=setupHTML();
   const live=$("onbLive"); if(live) live.innerHTML=onbLiveHTML();
+  // The CTA's count is live too (CAS-98) — textContent only, so the button itself is never
+  // re-created out from under a finger that's already on it.
+  const next=$("onbNext"); if(next) next.textContent=`Continue${ctaCount(agentFinds())}`;
 }
 function onbLiveHTML(){
   const n=agentFinds();
@@ -4531,7 +4546,7 @@ function renderOnboarding(){
         watches everything. You can change any of this later.</p>
       <div class="chips" id="onbGenreChips"></div>
       ${live}
-      <div class="onbfoot"><button class="onbnext" onclick="onbGo(1)">Continue</button></div>
+      <div class="onbfoot"><button class="onbnext" id="onbNext" onclick="onbGo(1)">Continue${ctaCount(agentFinds())}</button></div>
       ${skip}`;
     onbChips("onbGenreChips", ONB_GENRES, onb.genres, "gen", g=>`${g} · ${GENRE_COUNT[g]}`);
     return;
@@ -4553,7 +4568,7 @@ function renderOnboarding(){
       <div class="intent">${cards}</div>
       <div class="onbfoot">
         <button class="onbnext ghost" onclick="onbGo(0)">Back</button>
-        <button class="onbnext" onclick="onbGo(2)">Continue</button></div>
+        <button class="onbnext" id="onbNext" onclick="onbGo(2)">Continue${ctaCount(agentFinds())}</button></div>
       ${skip}`;
     return;
   }
@@ -4568,7 +4583,7 @@ function renderOnboarding(){
       ${live}
       <div class="onbfoot">
         <button class="onbnext ghost" onclick="onbGo(1)">Back</button>
-        <button class="onbnext" onclick="onbGo(3)">Continue</button></div>
+        <button class="onbnext" id="onbNext" onclick="onbGo(3)">Continue${ctaCount(agentFinds())}</button></div>
       ${skip}`;
     onbChips("onbExclChips", ONB_GENRES, onb.exclude, "exc", g=>`${g} · ${GENRE_COUNT[g]}`);
     return;
