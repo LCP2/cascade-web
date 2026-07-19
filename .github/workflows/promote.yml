@@ -1,0 +1,35 @@
+name: Promote staging → production
+
+# The single human gate. Click "Run workflow" to merge staging into main —
+# which is what deploys production (main → GitHub Pages → cascademovies.com).
+# Nothing else pushes main. CC only ever writes to staging.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Merge staging into main and deploy
+        run: |
+          git config user.name  "cascade-promote"
+          git config user.email "promote@users.noreply.github.com"
+          git fetch origin staging
+          echo "Promoting these commits to production:"
+          git log --oneline main..origin/staging || true
+          git merge --ff-only origin/staging || git merge --no-ff origin/staging -m "Promote staging → production"
+          git push origin main
+          git push origin main:staging
