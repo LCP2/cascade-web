@@ -424,6 +424,11 @@
   .dcard.is-centre.is-active .dc-acts,.dcard.new.is-centre .dc-acts{display:flex}
   .dcard.new .dc-in{border-style:dashed;border-color:#4c4270}
   .dcard.new .dc-icon,.dcard.new .dc-name{color:var(--accenttext)}
+  /* The built-in All card: home base. Reads as belonging to the deck but not as one of YOUR agents — it
+     has no actions row, so it sits shorter than the rest and needs its own bottom padding. */
+  .dcard.all .dc-in{border-color:#3a4a63;padding-bottom:14px}
+  .dcard.all .dc-name{color:var(--dim)}
+  .dcard.all.is-centre .dc-name{color:var(--ink)}
   .casccta{font-size:12px;color:var(--faint);line-height:1.5;margin:0 12px}
   .ca-btn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;
     padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
@@ -900,6 +905,9 @@
     </div>
     <div class="filtoggle" id="findTools">
       <button class="btn" id="filterBtn" title="Find something to watch — the selection engine">≡ Find</button>
+      <!-- Save as (CAS-101) lives HERE, not in the deck: this row is where the filter gets built, so this is
+           where turning it into a standing Cascade is the obvious next move. -->
+      <button class="btn" id="saveAsBtn" title="Save these filters as a Cascade">＋ Save as…</button>
       <div style="flex:1"></div>
       <select id="sort">
         <option value="imdb">IMDb ▾</option>
@@ -913,11 +921,11 @@
   </header>
 
   <div class="cascbar" id="cascbar">
-    <div class="casclbl" id="cascLbl">My Cascades</div>
+    <div class="casclbl" id="cascLbl">Cascades</div>
     <div class="deck">
       <!-- Not a listbox: an option is not allowed to contain buttons, and the centre card carries
            Edit / Share / Close. A group of groups keeps those buttons reachable to a screen reader. -->
-      <div class="deckstrip" id="cascStrip" role="group" aria-label="My Cascades — use the arrow keys to move between them"
+      <div class="deckstrip" id="cascStrip" role="group" aria-label="Cascades — use the arrow keys to move between them"
            aria-keyshortcuts="ArrowLeft ArrowRight Home End"></div>
     </div>
     <div id="cascDetail"></div>
@@ -1082,6 +1090,20 @@
       <button class="dangerbtn" id="authSignOut">Sign out</button>
     </div>
   </div>
+</div>
+
+<!-- SAVE AS modal (CAS-101) — turn the filter you just built into a standing Cascade. It lists the criteria
+     being saved BEFORE you name it, so you're agreeing to something specific rather than to a black box. -->
+<div class="modal" id="saveAs">
+  <div class="modalhead"><h3>Save as a Cascade</h3><button class="donebtn" id="saveAsClose">Cancel</button></div>
+  <div class="pnote">A Cascade keeps going after you close this: it watches the catalogue for these criteria
+    and tells you when something new matches them. You can change or delete it any time.</div>
+  <div class="flabel">What it will watch for</div>
+  <div class="nlread" id="saveAsCrit"></div>
+  <div class="flabel">Name it</div>
+  <input id="saveAsName" class="namein" type="text" maxlength="40" autocomplete="off"
+         placeholder="e.g. Sci-fi worth renting">
+  <div class="cascfoot"><button class="applybtn" id="saveAsGo">Save Cascade</button></div>
 </div>
 
 <!-- DEBUG LOG modal — local-only usage log. Opened with ?log=1, or 5 taps on the "updated" line. -->
@@ -1489,11 +1511,20 @@ function cascadeNewId(){
     const r=Math.random()*16|0, v=ch==="x"?r:(r&0x3|0x8); return v.toString(16); });
 }
 const cascades = loadCascades();
-let activeId = null;
-try{ activeId = localStorage.getItem("cascade_active") || null; }catch(e){}
-function setActive(id){ activeId=id; try{ id?localStorage.setItem("cascade_active",id):localStorage.removeItem("cascade_active"); }catch(e){} }
+// ---- The built-in "All" Cascade (CAS-101) --------------------------------------
+// Home base, and the deck's first card. It is NOT a saved Cascade: it never enters `cascades`, so it is
+// never persisted, edited, deleted, synced or alerted on. It IS the no-Cascade-open state — which the app
+// already had — given a card of its own, so the whole catalogue is something you can CHOOSE rather than
+// only fall back to. activeCascade() returning null for it is the point, not an oversight: every scope,
+// dirty-check and alert path downstream already means "no Cascade open" by that null.
+const ALL_ID = "__all__";
+const ALL_ICON = "🎞️";
+let activeId = ALL_ID;
+try{ activeId = localStorage.getItem("cascade_active") || ALL_ID; }catch(e){}
+function setActive(id){ activeId=id||ALL_ID; try{ localStorage.setItem("cascade_active",activeId); }catch(e){} }
 const activeCascade = () => cascades.find(c=>c.id===activeId) || null;
-if(activeId && !activeCascade()) setActive(null);   // stale pointer from a deleted Cascade
+// Stale pointer from a deleted Cascade → home base, not nowhere.
+if(activeId!==ALL_ID && !activeCascade()) setActive(ALL_ID);
 
 $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 
@@ -1764,7 +1795,7 @@ function syncFilterUI(){
   $("search").value=filt.search; $("searchClear").classList.toggle("show", !!filt.search);
   $("sort").value=filt.sort;
 }
-$("resetBtn").onclick=()=>{ setActive(null); clearFilters(); syncFilterUI(); render(); };
+$("resetBtn").onclick=()=>{ setActive(ALL_ID); clearFilters(); syncFilterUI(); render(); };
 
 $("bell").onclick=()=>{$("overlay").classList.add("open");setTimeout(()=>$("drawer").classList.add("open"),10);
   logEvent("alerts_opened",{unread:alerts.length});
@@ -2908,6 +2939,15 @@ function applyCascade(c){
 // Opening is idempotent: landing a card in the deck's centre IS selecting it, so this can be called
 // with the already-open Cascade. Closing is the centre card's × — never a side-effect of selection.
 window.openCascade=id=>{
+  // "All" is the reset view: choosing it drops every filter and shows the whole catalogue. No count in the
+  // toast — the count line under the results is the one that's already true.
+  if(id===ALL_ID){
+    if(activeId===ALL_ID) return;
+    setActive(ALL_ID); clearFilters(); syncFilterUI(); render();
+    logEvent("cascade_opened", {key:"all"});
+    toast(`${ALL_ICON} “All” — the whole catalogue, with nothing filtered out.`);
+    return;
+  }
   const c=cascades.find(x=>x.id===id); if(!c || activeId===id) return;
   setActive(id); applyCascade(c); render();
   logEvent("cascade_opened", {key:c.template||"custom"});
@@ -2915,7 +2955,8 @@ window.openCascade=id=>{
   // watching (that's the Found list). So this line says "showing", and only the value lines say "found".
   toast(`${c.icon} “${c.name}” — showing you ${countCriteria(c)} films right now · ${alertSummary(c)}`);
 };
-window.closeCascade=()=>{ setActive(null); clearFilters(); syncFilterUI(); render(); };
+// Closing a Cascade lands you on All rather than on nothing — same films as before, now with a card lit.
+window.closeCascade=()=>{ setActive(ALL_ID); clearFilters(); syncFilterUI(); render(); };
 // Filters touched by hand while a Cascade is open → offer to save them back into it.
 const sameSet=(s,a)=> s.size===a.length && a.every(v=>s.has(v));
 function cascadeDirty(){
@@ -2949,7 +2990,12 @@ window.saveCascadeEdits=()=>{
 const deckStrip=$("cascStrip");
 const deckMotion=matchMedia("(prefers-reduced-motion: reduce)");
 const deckCards=()=>[...deckStrip.children];
-const deckCount=()=>cascades.length+1;              // +1 = the "+ New Cascade" card
+// Deck order: [0] the built-in All card, [1 … n] your Cascades, [n+1] "+ New Cascade". Every index that
+// crosses into `cascades` goes through deckAt() rather than doing the ±1 by hand at each call site.
+const deckCount=()=>cascades.length+2;
+const deckAt=i=>(i>=1 && i<=cascades.length) ? cascades[i-1] : null;   // null = the All card or the New card
+const deckIsAll=i=>i===0;
+const deckIsNew=i=>i>=cascades.length+1;
 const cascSig=()=>cascades.map(c=>c.id+"|"+c.icon+"|"+c.name).join("~");
 let deckIdx=0;          // centred card
 let deckSig=null;       // cards are rebuilt only when the Cascade list itself changes — never mid-scroll
@@ -2997,7 +3043,8 @@ function deckFocus(i,moveDom){
   if(moveDom) deckCards()[deckIdx]?.focus({preventScroll:true});
 }
 // Centring the "+ New" card selects nothing — browsing past your Cascades must not close the open one.
-const deckSelect=i=>{ if(i<cascades.length) openCascade(cascades[i].id); };
+// Centring All DOES select: it is a real view, and landing on it is how you get back to the whole catalogue.
+const deckSelect=i=>{ if(deckIsAll(i)) return openCascade(ALL_ID); const c=deckAt(i); if(c) openCascade(c.id); };
 // The hybrid-discoverability question in one line: did they ever touch My Cascades at all, and by what?
 // Logged once per session per method, so the log shows discovery rather than drowning in scroll events.
 const deckSeen=new Set();
@@ -3007,7 +3054,15 @@ function deckGo(i,moveDom){
   deckFocus(n,moveDom); deckCentre(n,true); deckSelect(n);
 }
 function deckBuild(){
-  deckStrip.innerHTML=cascades.map(c=>`
+  // All carries no Edit / Share / × — "cannot be deleted or edited" is a card with nothing to press,
+  // not a button that refuses you.
+  deckStrip.innerHTML=`
+    <div class="dcard all" role="group" aria-label="All — the whole catalogue" tabindex="-1" data-id="${ALL_ID}"><div class="dc-in">
+      <div class="dc-icon">${ALL_ICON}</div>
+      <div class="dc-name">All</div>
+      <div class="dc-sub"></div>
+    </div></div>`
+  + cascades.map(c=>`
     <div class="dcard" role="group" aria-label="${esc(c.name)}" tabindex="-1" data-id="${c.id}"><div class="dc-in">
       <div class="dc-icon">${c.icon}</div>
       <div class="dc-name">${esc(c.name)}</div>
@@ -3031,15 +3086,29 @@ function deckSync(shown){
   if(sig!==deckSig){
     deckSig=sig; deckBuild();
     const ai=cascades.findIndex(c=>c.id===activeId);
-    deckFocus(ai>=0?ai:Math.min(deckIdx,deckCount()-1),false);
+    // +1 for the All card ahead of them; All itself (and a first load with nothing open) centres on 0.
+    deckFocus(ai>=0 ? ai+1 : activeId===ALL_ID ? 0 : Math.min(deckIdx,deckCount()-1),false);
     deckCentre(deckIdx,false);
   } else {
     deckFocus(deckIdx,false);
   }
   const dirty=cascadeDirty();
   deckCards().forEach((el,i)=>{
-    if(i>=cascades.length) return;
-    const c=cascades[i], on=c.id===activeId;
+    if(deckIsAll(i)){
+      const on=activeId===ALL_ID;
+      // `shown` is whatever the CURRENT view is showing, which on the Found view is the Found list — not the
+      // catalogue All stands for. So All only borrows it on the Find view; anywhere else it states the
+      // catalogue total, which is true from wherever you're standing. And never an alert promise: All is a
+      // view, not a standing watch, and saying otherwise would be an alert we'd never send.
+      const live=on && view==="find";
+      const n=live?shown:MOVIES.length;
+      el.classList.toggle("is-active",on);
+      el.querySelector(".dc-sub").textContent=
+        `${n} film${n===1?"":"s"} ${live?"right now":"in the catalogue"} · a view, not a watch — it never alerts you`;
+      return;
+    }
+    const c=deckAt(i); if(!c) return;                // the "+ New" card paints nothing
+    const on=c.id===activeId;
     const n=on?shown:countCriteria(c);               // real counts on every card — the open one shows what's on screen
     el.classList.toggle("is-active",on);
     el.querySelector(".dc-icon").textContent=c.icon;
@@ -3064,9 +3133,10 @@ deckStrip.addEventListener("keydown",e=>{
   const last=deckCount()-1;
   if(e.key==="Enter"||e.key===" "){
     e.preventDefault();
-    if(deckIdx>=cascades.length) newCascade();
-    else if(cascades[deckIdx].id===activeId) editCascade();   // already centred + open → Enter edits it
-    else deckSelect(deckIdx);
+    const c=deckAt(deckIdx);
+    if(deckIsNew(deckIdx)) newCascade();
+    else if(c && c.id===activeId) editCascade();   // already centred + open → Enter edits it
+    else deckSelect(deckIdx);                      // All has nothing to edit, so it always just selects
     return;
   }
   const to=e.key==="ArrowRight"?deckIdx+1 : e.key==="ArrowLeft"?deckIdx-1
@@ -3118,12 +3188,81 @@ deckStrip.addEventListener("click",e=>{
   if(deckDragged) return;                            // that click was the end of a drag
   const i=deckCards().indexOf(card);
   deckUsed(deckDragged?"drag":"tap");
-  if(i>=cascades.length){ deckFocus(i,true); deckCentre(i,true); return newCascade(); }
+  if(deckIsNew(i)){ deckFocus(i,true); deckCentre(i,true); return newCascade(); }
   deckGo(i,true);
 });
 let deckResizeT=null;
 addEventListener("resize",()=>{ clearTimeout(deckResizeT); deckResizeT=setTimeout(()=>{ deckCentre(deckIdx,false); deckPaint(); },140); });
 deckMotion.addEventListener("change",()=>{ deckCentre(deckIdx,false); deckPaint(); });
+
+// ---- Save as… — the filter you just built, as a standing Cascade (CAS-101) ------
+// Read straight off the live `filt`, so the list the dialog shows IS what gets saved. Only criteria that
+// are actually ON appear: padding it out to look thorough would be describing a radar that doesn't exist.
+function filtCriteria(){
+  const b=[];
+  if(filt.genre.size)   b.push([...filt.genre].join(", "));
+  if(filt.exclude.size) b.push(`never ${[...filt.exclude].join(" or ")}`);
+  if(filt.status.size)  b.push([...filt.status].map(w=>STATUS_LABEL[w]||w).join(" or "));
+  if(filt.imdb)         b.push(`rating ${filt.imdb.toFixed(1)}+`);
+  if(filt.rt)           b.push(`critics ${filt.rt}%+`);
+  if(filt.lang.size)    b.push([...filt.lang].map(langName).join(" or "));
+  if(filt.culture.size) b.push([...filt.culture].join(" or "));
+  if(filt.age.size)     b.push(`rated ${[...filt.age].join(", ")}`);
+  if(filt.year.size)    b.push(`released ${[...filt.year].sort().reverse().join(", ")}`);
+  if(filt.budget)       b.push(`budget ${BUDGET_BANDS[filt.budget].hint}`);
+  if(filt.tentpole!=="any") b.push((TENTPOLE_STOPS.find(t=>t.key===filt.tentpole)||{label:filt.tentpole}).label);
+  if(filt.awards)       b.push("award winners only");
+  return b;
+}
+// A Cascade has no search box and no box-office floor, so those two DON'T come along. Saying so here is
+// cheaper than letting someone discover it later from a Cascade that finds more than they asked for.
+const filtNotSaved = () => [
+  filt.search ? `the search “${filt.search}”` : null,
+  filt.gross  ? `the box-office floor (${money(filt.gross)})` : null,
+].filter(Boolean);
+function saveAsSuggest(){
+  if(filt.genre.size)  return [...filt.genre].slice(0,2).join(" + ");
+  if(filt.status.size) return STATUS_LABEL[[...filt.status][0]] || "My Cascade";
+  if(filt.awards)      return "Award winners";
+  return "My picks";
+}
+function openSaveAs(){
+  const bits=filtCriteria(), skipped=filtNotSaved();
+  // Counted with search and gross cleared — the number has to be the number the SAVED Cascade will find,
+  // not the one on screen behind a search box that isn't coming with it.
+  const n=countIf(()=>{ filt.search=""; filt.gross=0; });
+  $("saveAsCrit").innerHTML =
+      (bits.length ? bits.map(t=>`<b>${esc(t)}</b>`).join(" · ")
+                   : `<b>Everything</b> — you haven't narrowed anything yet, so this would watch the whole catalogue.`)
+    + `<div class="advfoot">${n} film${n===1?"":"s"} match${n===1?"es":""} right now.</div>`
+    + (skipped.length ? `<div class="advfoot">A Cascade can't carry ${skipped.join(" or ")} — that part won't be saved.</div>` : "");
+  $("saveAsName").value=saveAsSuggest();
+  logEvent("saveas_opened",{crit:bits.length});
+  openModal($("saveAs"));
+  setTimeout(()=>{ $("saveAsName").focus(); $("saveAsName").select(); },60);
+}
+$("saveAsBtn").onclick=openSaveAs;
+$("saveAsClose").onclick=()=>closeModal($("saveAs"));
+$("saveAsName").onkeydown=e=>{ if(e.key==="Enter") $("saveAsGo").click(); };
+$("saveAsGo").onclick=()=>{
+  const name=($("saveAsName").value||"").trim();
+  if(!name){ $("saveAsName").focus(); toast("Give it a name — that's how you'll tell it apart in the deck."); return; }
+  // Reuse the builder's own save path rather than pushing a hand-rolled object: commitDraft() normalises it,
+  // blocks an exact twin (CAS-72), opens it, and logs it — so a Cascade made here behaves in every later
+  // screen exactly like one built in the editor. Guests included: it lands in the same localStorage list.
+  draft=normCascade({id:null, template:null, icon:"🔍", name,
+    status:[...filt.status], genre:[...filt.genre], exclude:[...filt.exclude], age:[...filt.age],
+    lang:[...filt.lang], culture:[...filt.culture], year:[...filt.year],
+    imdb:filt.imdb, rt:filt.rt, ratingStop:stopFor(filt.imdb), includeUnrated:filt.includeUnrated,
+    budget:filt.budget, includeUnbudgeted:filt.includeUnbudgeted, tentpole:filt.tentpole,
+    awards:filt.awards, myServices:{}, excludeWatched:filt.hideWatched, excludeBlocked:!filt.showHidden,
+    sort:filt.sort, alerts:{...ALERT_DEFAULTS}});
+  const {c, isNew, dup}=commitDraft();
+  closeModal($("saveAs")); render();
+  logEvent("saveas_saved",{dup:!!dup});
+  toast(dup ? `${c.icon} You already have “${c.name}” watching exactly this — I've opened it rather than making a second copy.`
+            : `✓ ${c.icon} “${c.name}” saved — it's watching ${watchCount(c)} films. ${alertPromise(c)}`);
+};
 
 // ---- No results: name what's narrowing it, and price the way out ---------------
 // Above-zero framing, honestly: each suggestion is measured by ACTUALLY re-running the filter with that one
@@ -3849,7 +3988,7 @@ $("cDelete").onclick=()=>{
             : "")
     + `Anything you added by hand stays, and your watched / not-interested marks aren't touched.`)) return;
   cascades.splice(cascades.indexOf(c),1); saveCascades();
-  if(activeId===c.id){ setActive(null); clearFilters(); syncFilterUI(); }
+  if(activeId===c.id){ setActive(ALL_ID); clearFilters(); syncFilterUI(); }
   closeModal($("builder")); render();
   toast(`🗑️ Deleted “${c.name}”` + (mine?` — ${mine} film${mine===1?"":"s"} left your Found list`:""));
 };
@@ -5120,7 +5259,7 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
   function replaceCascades(list){
     cascades.length = 0;
     list.forEach(c => cascades.push(c));
-    if(activeId && !cascades.some(c=>c.id===activeId)) setActive(null);
+    if(activeId!==ALL_ID && !cascades.some(c=>c.id===activeId)) setActive(ALL_ID);
     if(typeof render==="function") render();
   }
   function loadGuest(){ replaceCascades(loadCascades()); }
