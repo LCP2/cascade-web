@@ -60,6 +60,11 @@ OMDB_KEY      = os.environ.get("OMDB_API_KEY")
 WATCHMODE_KEY = os.environ.get("WATCHMODE_API_KEY")
 LIVE = bool(TMDB_KEY and OMDB_KEY and WATCHMODE_KEY)
 
+# CAS-109 — poll-tiering + free-tier-capped scheduler (staging prototype).
+import poll_scheduler as ps
+CATALOGUE_TARGET = 300   # persistent browsable catalogue size (grows over runs);
+                         # the DAILY poll set is capped separately (ps.ACTIVE_CAP) to stay free-tier.
+
 
 # ---------------------------------------------------------------------------
 # tiny HTTP helper
@@ -360,33 +365,85 @@ def today_records_date(): return _RUN_DATE
 
 
 # ---------------------------------------------------------------------------
+# CAS-109 — build the persistent catalogue, poll only the daily set, carry the rest
+# ---------------------------------------------------------------------------
+def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_ids=None):
+    """Merge new TMDB ingest into the persistent base, choose the free-tier-capped
+    daily poll set, poll ONLY that set (+ brand-new titles to establish state), and
+    carry forward last-known status / estimate for everything else.
+
+    Deps (ingest_tmdb / ingest_tmdb_upcoming / enrich_omdb / poll_watchmode /
+    derive_status) are module functions so tests can monkeypatch them. No file IO
+    here — run() persists the result. Returns (catalogue_records, poll_counts)."""
+    offsets = offsets or ps.DEFAULT_OFFSETS
+    base = {m["tmdb_id"]: m for m in base_records}
+    seen = set(base)
+
+    # grow the catalogue with new titles TMDB surfaces that we don't already hold
+    new = []
+    if len(base) < CATALOGUE_TARGET:
+        new = ingest_tmdb(seen) + ingest_tmdb_upcoming(seen)
+    catalogue = list(base.values()) + [m for m in new if m["tmdb_id"] not in base]
+    catalogue.sort(key=lambda m: m.get("popularity") or 0, reverse=True)
+    catalogue = catalogue[:CATALOGUE_TARGET]
+
+    # New titles are NOT force-polled — they flow through the same capped scheduler
+    # (active-and-within-cap get polled; the rest show an estimate until their turn),
+    # so catalogue growth can never breach the free-tier daily budget.
+    sched = ps.select_daily_poll_set(catalogue, today, ondemand_ids=ondemand_ids)
+    poll_ids = {m["tmdb_id"] for m in sched["active"] + sched["slow"] + sched["ondemand"]}
+
+    for m in catalogue:
+        tier = ps.classify_tier(m, today)
+        m["poll_tier"] = tier
+        must_poll = tier != "none" and m["tmdb_id"] in poll_ids
+        if tier == "none":                                   # upcoming — known from TMDB date
+            m["offers"] = []
+            m["status"] = ["upcoming"]
+            m["availability_confidence"] = "confirmed"
+        elif must_poll:                                      # spend a Watchmode call
+            if not m.get("imdb_rating"):
+                enrich_omdb(m)
+            m["offers"] = poll_watchmode(m, wm_cache)
+            m["status"] = derive_status(m, m["offers"], today)
+            m["last_polled"] = today.isoformat()
+            m["availability_confidence"] = "confirmed"
+            time.sleep(0.25)
+        elif m.get("last_polled"):                           # carry forward last confirmed truth
+            m["availability_confidence"] = "confirmed"       # (as of last_polled)
+        else:                                                # never polled -> honest estimate
+            w, conf = ps.estimate_status(m, today, offsets)
+            m["offers"] = []
+            m["status"] = [w]
+            m["availability_confidence"] = conf
+
+        st = set(m.get("status", []))
+        if "included_streaming" in st and not (st & ps.ACTIVE_WINDOW):
+            m.setdefault("settled_since", today.isoformat())
+        else:
+            m.pop("settled_since", None)
+
+    return catalogue, sched["counts"]
+
+
+# ---------------------------------------------------------------------------
 # orchestration
 # ---------------------------------------------------------------------------
 def run(simulate_day: bool = False):
     today = datetime.date.today()
 
     if LIVE:
-        print(f"[live] ingesting AU cinema releases from TMDB ...")
+        print(f"[live] CAS-109 tiered poll — persistent catalogue, daily-active capped ...")
         wm_cache = json.load(open(WM_CACHE_FILE)) if os.path.exists(WM_CACHE_FILE) else {}
-        seen: set = set()
-        records = ingest_tmdb(seen)
-        for m in records:
-            enrich_omdb(m)
-            m["offers"] = poll_watchmode(m, wm_cache)
-            m["status"] = derive_status(m, m["offers"], today)
-            time.sleep(0.25)  # be polite to free tiers
-
-        # Films announced for AU cinemas but not open yet. They have no home offers to
-        # poll, so they never touch Watchmode — the free tier stays with the catalogue above.
-        upcoming = ingest_tmdb_upcoming(seen)
-        print(f"[live] + {len(upcoming)} upcoming AU theatrical release(s) (no Watchmode calls)")
-        for m in upcoming:
-            enrich_omdb(m)                       # ratings/awards if the title already has them
-            m["offers"] = []
-            m["status"] = derive_status(m, [], today)
-            time.sleep(0.25)
-        records += upcoming
-
+        base_records = json.load(open(SNAPSHOT_FILE)) if os.path.exists(SNAPSHOT_FILE) else []
+        wd_seed = json.load(open(WINDOW_DATES_FILE)) if os.path.exists(WINDOW_DATES_FILE) else {}
+        offsets = ps.compute_median_offsets(wd_seed)
+        ondemand_file = os.path.join(STATE_DIR, "ondemand.json")
+        ondemand_ids = json.load(open(ondemand_file)) if os.path.exists(ondemand_file) else []
+        records, counts = build_live_catalogue(today, base_records, wm_cache,
+                                               offsets=offsets, ondemand_ids=ondemand_ids)
+        print(f"[live] catalogue {len(records)} | daily-active {counts['active']} "
+              f"(+{counts['slow_today']} sweep) | est {counts['est_monthly']}/mo vs free {ps.FREE_MONTHLY}")
         os.makedirs(STATE_DIR, exist_ok=True)
         json.dump(wm_cache, open(WM_CACHE_FILE, "w"), indent=2)
     else:
@@ -408,6 +465,8 @@ def run(simulate_day: bool = False):
             rec.setdefault(w, tstamp)
         wd[key] = rec
         m["window_dates"] = rec
+        m.setdefault("availability_confidence", "confirmed")   # CAS-109 (sample/legacy default)
+        m.setdefault("poll_tier", ps.classify_tier(m, today))
     os.makedirs(STATE_DIR, exist_ok=True)
     json.dump(wd, open(WINDOW_DATES_FILE, "w"), indent=2)
 
