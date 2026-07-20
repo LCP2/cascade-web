@@ -4933,6 +4933,75 @@ function render(){
   });
   wrap.innerHTML=html;
 }
+// ---- Collapsing in place (CAS-108) ---------------------------------------------
+// A verdict folds the card to its one-line stub WHERE IT IS. The list order can't move it (availability then
+// rating, CAS-107), but a full repaint still can, in two ways that have nothing to do with the film:
+//   1. something ABOVE the list changes height — the first answer you ever give is exactly this, because it
+//      makes "Finish your agent" appear and shoves everything under it down the screen;
+//   2. the page gets SHORTER — a card is ~280px and its stub ~40px, so answering one near the foot of the
+//      list drops the document out from under the scroll offset, the browser clamps it, and the row you just
+//      tapped slides down the screen with the whole view.
+// So: measure the row, repaint, then put it back under the finger. Both fixes below are about the screen,
+// never about the list — nothing is re-sorted or re-grouped, and the row keeps its index either way.
+const REDUCE_MOTION = matchMedia("(prefers-reduced-motion: reduce)");
+// Both views are in the DOM at once (one is display:none), so the card and its stub share an id across two
+// copies. Take the one that is actually on screen.
+const rowFor = id => [...document.querySelectorAll(`[id="card-${id}"]`)].find(e=>e.offsetParent!==null);
+// The page's floor. Holds the height a collapse is about to give back, so the scroll offset stays valid and
+// the browser has nothing to clamp; it is pure empty space below the app, and it trims itself back to
+// whatever is still needed on every scroll, so it lets go on its own as you move up the list.
+let footPad=null;
+// While a row is mid-shrink it is still at its OLD height, so the floor is not needed YET and a trim would
+// hand back the very height the animation is about to give up — and the clamp we just prevented would happen
+// halfway through the fold instead. Hold the floor until the row has actually finished shrinking.
+let footHold=0;
+function padFoot(px){
+  if(!px) return;
+  if(!footPad){ footPad=document.createElement("div"); footPad.id="footpad";
+                footPad.setAttribute("aria-hidden","true"); document.body.appendChild(footPad); }
+  footPad.style.height=(footPad.offsetHeight+px)+"px";
+}
+function trimFoot(){
+  if(footHold || !footPad || !footPad.offsetHeight) return;
+  const content=document.documentElement.scrollHeight - footPad.offsetHeight;
+  const need=Math.max(0, Math.ceil(scrollY + innerHeight - content));
+  footPad.style.height = need ? need+"px" : "";
+}
+addEventListener("scroll", trimFoot, {passive:true});
+// Repaint, and leave the film's row exactly where it was on screen — then animate it between the height it
+// had and the height it now has, so the change reads as a shrink (or an unfold) rather than a swap. Under
+// prefers-reduced-motion it lands at its new height instantly, still without moving.
+function keepRowInPlace(id, repaint){
+  const row=rowFor(id);
+  if(!row){ repaint(); return; }
+  const wasTop=row.getBoundingClientRect().top, wasH=row.offsetHeight;
+  repaint();
+  const now=rowFor(id);
+  if(!now) return;
+  const toH=now.offsetHeight;
+  const moving=Math.abs(toH-wasH)>1;
+  const animate=moving && !REDUCE_MOTION.matches;
+  // Freeze at the old height first: with the row still its old size, nothing below it has moved yet, so the
+  // drift we measure next is only ever what happened ABOVE it.
+  if(animate){ now.style.overflow="hidden"; now.style.height=wasH+"px"; footHold++; }
+  padFoot(Math.max(0, wasH-toH));
+  const drift=now.getBoundingClientRect().top - wasTop;
+  if(Math.abs(drift)>0.5) scrollBy(0, drift);
+  if(!animate){ trimFoot(); return; }
+  requestAnimationFrame(()=>{
+    now.style.transition="height .26s ease";
+    now.style.height=toH+"px";
+    let done=false;
+    const settle=()=>{ if(done) return; done=true;
+      now.style.transition=""; now.style.height=""; now.style.overflow="";
+      now.removeEventListener("transitionend", settle);
+      footHold--;
+      trimFoot();                  // the height is really gone now — give back whatever the floor no longer needs
+    };
+    now.addEventListener("transitionend", settle);
+    setTimeout(settle, 500);       // a transition that never fires must not leave the row frozen at a fixed height
+  });
+}
 // ---- Saying what you think of a film (CAS-100) ---------------------------------
 // One answer per film: Liked, Disliked, or Not for me. Setting one clears the other two and drops the Pick
 // (what you've SEEN or waved off outranks what anything picked for you) — the pin underneath is left alone,
@@ -4954,7 +5023,9 @@ window.setOpinion=(id,kind)=>{
   } else heldOpen.delete(id);
   saveSet("cascade_watched",watched); saveSet("cascade_disliked",disliked); saveSet("cascade_blocked",blocked);
   logEvent("opinion",{key: on?kind:"cleared"});
-  render();                        // FIRST — so the toast reports what actually happened, not what we assumed
+  // FIRST — so the toast reports what actually happened, not what we assumed. The repaint runs inside
+  // keepRowInPlace so the card folds (or unfolds, on the tap that clears it) exactly where you tapped it.
+  keepRowInPlace(id, render);
   opinionToast(id, on?kind:was, on, wasFound);
 };
 // The toast says the two things a one-tap answer really did: it folded the card (and how to undo that), and —
