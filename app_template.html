@@ -352,6 +352,10 @@
   .mlbtn{width:34px;height:30px;border-radius:9px;background:var(--panel)}
   .mlbtn svg{width:16px;height:16px}
   .mlempty{color:var(--faint);font-size:12.5px;line-height:1.6;text-align:center;padding:34px 12px}
+  /* CAS-102: the starter block now lives HERE, in the empty Found view. The empty state centres its text;
+     the block is a read-and-choose panel, so it keeps its own left alignment and drops the side margin it
+     needed when it sat loose in the Cascades bar. */
+  .mlempty .cascstart{margin:16px 0 0;text-align:left}
   /* ---- the provenance sheet (CAS-67) ---- */
   /* Tap the megaphone anywhere and this is what opens: who put the film on your Found list, which Cascade is
      watching it, what that Cascade will actually tell you about — and the one control that changes any of it. */
@@ -439,6 +443,22 @@
   #cascDetail{margin-top:2px}
   #cascDetail .warnnote{margin:0 12px 6px}
   @media (max-width:400px){ .cascbar{--dcw:178px} }
+  /* Find view (CAS-102): the deck drops to a compact RAIL so "N of N titles" and the first film sit directly
+     under the controls instead of ~1.5 screens down. Same cards, same data, same Edit / Share / × / Create —
+     the icon just moves up beside the name, the sub-line clamps to one line, and the padding tightens.
+     Nothing is hidden: this is the tall card made short, not a card with its controls taken away. */
+  .cascbar.rail{--dcw:196px;padding:6px 0 0}
+  .cascbar.rail .casclbl{margin-bottom:2px}
+  .cascbar.rail .deckstrip{padding:8px calc(50% - var(--dcw)/2) 10px}
+  .cascbar.rail .dcard{min-height:0}
+  .cascbar.rail .dc-in{padding:8px 10px;flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:7px}
+  .cascbar.rail .dc-icon{font-size:15px}
+  .cascbar.rail .dc-name{margin-top:0;font-size:12.5px;flex:1 1 auto;min-width:0}
+  .cascbar.rail .dc-sub{flex:1 0 100%;margin-top:3px;font-size:10.5px;line-height:1.35;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cascbar.rail .dc-acts{flex:1 0 100%;padding-top:7px}
+  .cascbar.rail .ca-btn{padding:4px 8px;font-size:11px}
+  .cascbar.rail .dcard.all .dc-in{padding-bottom:8px}
   /* Reduced motion: no coverflow transform — a plain horizontal snap-scroll (the JS clears the inline styles too) */
   @media (prefers-reduced-motion:reduce){
     .deckstrip{scroll-behavior:auto}
@@ -904,7 +924,9 @@
       <button class="vbtn" id="vFind" role="tab" aria-selected="false">🔍 Find</button>
     </div>
     <div class="filtoggle" id="findTools">
-      <button class="btn" id="filterBtn" title="Find something to watch — the selection engine">≡ Find</button>
+      <!-- "Filters", not "Find" (CAS-102): the Found/Find switch above is the view toggle, so a second
+           control also called Find was the same word doing two different jobs. Same function as before. -->
+      <button class="btn" id="filterBtn" title="Filters — the selection engine that finds something to watch">≡ Filters</button>
       <!-- Save as (CAS-101) lives HERE, not in the deck: this row is where the filter gets built, so this is
            where turning it into a standing Cascade is the obvious next move. -->
       <button class="btn" id="saveAsBtn" title="Save these filters as a Cascade">＋ Save as…</button>
@@ -1050,7 +1072,7 @@
   <div class="flabel">Experiment — value framing</div>
   <div class="switch" id="uxSwitch"><span>Show savings &amp; alert framing</span><span class="knob"></span></div>
   <div class="pnote">Adds a savings line to cards where a genuinely cheaper path exists, a live result count on
-    the Find button, and loss-framed alert copy. Switch it off for the plain version — that's the A/B control.
+    the Filters apply button, and loss-framed alert copy. Switch it off for the plain version — that's the A/B control.
     Every figure is read from the real offer prices; we never show a saving or a countdown we can't back up.</div>
 </div>
 
@@ -1665,7 +1687,7 @@ addChips("genreChips", ALL_GENRES, filt.genre, "gen");
 addChips("excludeChips", ALL_GENRES, filt.exclude, "exc");
 // The watched / not-interested chips are gone from this row (CAS-100). Since your ANSWER on a film is what
 // collapses it and what takes it off your Found list, neither chip could change a single row any more — and a
-// chip that filters nothing while still counting toward "≡ Find (n)" is a control lying about its own effect.
+// chip that filters nothing while still counting toward "≡ Filters (n)" is a control lying about its own effect.
 // The underlying fields live on: they are how a Cascade's Exclude switches round-trip through the editor.
 [["🏆 Award winners & nominees","awards"]].forEach(([lbl,key])=>{
   const c=document.createElement("div"); c.className="chip"; c.textContent=lbl; c.dataset.val=key;
@@ -1757,7 +1779,13 @@ function syncView(){
   $("vFind").setAttribute("aria-selected", String(!isFound));
   $("foundView").style.display = isFound ? "" : "none";
   $("findView").style.display  = isFound ? "none" : "";
-  $("findTools").style.display = isFound ? "none" : "";   // the sort + Find controls belong to the engine
+  $("findTools").style.display = isFound ? "none" : "";   // the sort + Filters controls belong to the engine
+  // CAS-102: compact deck on Find, so results lead. The rail changes the card WIDTH, which moves the snap
+  // points out from under the current scroll offset — so whenever the state actually flips, put the centred
+  // card back in the centre rather than leaving the deck resting between two cards.
+  const bar=$("cascbar"), flipped=bar.classList.contains("rail")===isFound;
+  bar.classList.toggle("rail", !isFound);
+  if(flipped) deckCentre(deckIdx,false);
   $("search").placeholder = isFound ? "🔍  Search what Cascade found…" : "🔍  Search titles…";
 }
 $("vFound").onclick=()=>setView("found");
@@ -2399,6 +2427,21 @@ function agentHeadHTML(films){
     <div class="ap">${learnedNote(learnedTaste())}</div>
   </div>`;
 }
+// First run: the deck is just the "+ New" card, which asks for a decision without offering a reason. Give them
+// three real starting points instead — each with the number of films it catches TODAY, so the payoff is visible
+// before they commit to anything (goal-gradient, and nothing to sign up for).
+function cascadeStartHTML(){
+  if(cascades.length) return "";
+  return `<div class="cascstart">
+    <div class="csh">Put your first Cascade to work</div>
+    <div class="csp">Cascade does the watching for you — set one going and it finds the films while you get on
+      with your life. Start from one of these (you can change every part of it):</div>
+    <div class="cschips">${QUICK_STARTS.map(t=>{
+      const n=countCriteria(t.crit);
+      return `<button class="cschip" onclick="quickStart('${t.key}')">${t.icon} ${t.name} <b>${n}</b></button>`;
+    }).join("")}</div>
+  </div>`;
+}
 function foundEmptyHTML(){
   return `<div class="mlempty">
     <div style="font-size:30px;margin-bottom:10px">🔔</div>
@@ -2413,6 +2456,7 @@ function foundEmptyHTML(){
       You can pick a film by hand too — the <b>Pick</b> button on any card under 🔍 Find. Yours read
       <b style="color:#ffd79a">My Pick</b>, the ones Cascade found read <b style="color:#d8c9ff">Agent Pick</b>.
       Nothing here needs an account.</div>
+    ${cascadeStartHTML()}
     <div class="ebtns" style="margin-top:14px">
       <button class="ebtn ghost" onclick="setView('find')">Have a look around yourself →</button>
     </div></div>`;
@@ -3348,19 +3392,10 @@ function renderCascadeBar(shown){
   deckSync(shown);
   const c=activeCascade();
   let html="";
-  // First run: the deck is just the "+ New" card, which asks for a decision without offering a reason.
-  // Give them three real starting points instead — each with the number of films it catches TODAY, so the
-  // payoff is visible before they commit to anything (goal-gradient, and nothing to sign up for).
-  if(!cascades.length)
-    html+=`<div class="cascstart">
-      <div class="csh">Put your first Cascade to work</div>
-      <div class="csp">Cascade does the watching for you — set one going and it finds the films while you get on
-        with your life. Start from one of these (you can change every part of it):</div>
-      <div class="cschips">${QUICK_STARTS.map(t=>{
-        const n=countCriteria(t.crit);
-        return `<button class="cschip" onclick="quickStart('${t.key}')">${t.icon} ${t.name} <b>${n}</b></button>`;
-      }).join("")}</div>
-    </div>`;
+  // The starter block used to sit here, above BOTH views (CAS-102 moved it into the empty Found view). It was
+  // pushing the Find view's results ~1.5 screens down for the one user who is on Find precisely to look at
+  // results. Its home is foundEmptyHTML(): an empty Found list is the moment a new user has nothing and needs
+  // the nudge, so it now appears where the need is instead of on every screen.
   // Guest mode (CAS-79): the agent is saved but paused. Show its honest status, an honest re-invite tied to a
   // REAL current moment (only if one exists), and the way to turn it on. Never a wall — browsing stays free.
   const pausedAgent = cascades.find(x=>x.paused);
@@ -4743,7 +4778,7 @@ function render(){
   const shown=rows.filter(m=>!taggedOut(m));
   const stubbed=rows.length-shown.length;
   const n=activeCount();
-  $("filterBtn").textContent = "≡ Find" + (n?` (${n})`:"");
+  $("filterBtn").textContent = "≡ Filters" + (n?` (${n})`:"");
   $("filterBtn").classList.toggle("active", n>0);
   renderCascadeBar(shown.length);
   syncView();
