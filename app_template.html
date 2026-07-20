@@ -251,6 +251,17 @@
   .cstage.current.st-included_streaming .cnode{background:linear-gradient(0deg,rgba(72,199,142,.2),rgba(72,199,142,.2)),var(--panel2);border-color:var(--green);color:#a7eccb}
   .cdate{font-size:8px;color:var(--faint);margin-top:3px;white-space:nowrap;line-height:1}
   .cdate.est{font-style:italic;opacity:.75}
+  /* ---- Estimated availability (CAS-110) ----
+     A window Cascade has NOT confirmed must not be able to pass for one it has. The lit node loses its solid
+     border and its fill and goes dashed and grey — the same shape, visibly not the same claim — and the line
+     underneath says so in words. Colour alone would leave the difference invisible to anyone who can't see it. */
+  .cascade.est .cstage.current .cnode{background:var(--panel2)!important;border-style:dashed!important;
+    border-color:var(--line)!important;color:var(--dim)!important}
+  .estline{display:flex;align-items:center;gap:7px;margin-top:9px;padding:6px 10px;border-radius:9px;
+    border:1px dashed var(--line);background:transparent;color:var(--dim);font-size:11.5px;font-weight:600;cursor:help}
+  .esttag{font-size:9.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--faint);
+    border:1px dashed var(--line);border-radius:6px;padding:1px 5px}
+  .mlwin.est{border-style:dashed!important;opacity:.8}
   .pills{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
   .pill{font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:8px;border:1px solid}
   .pill.opening_week{background:rgba(255,107,107,.14);border-color:rgba(255,107,107,.55);color:#ffc2c2}
@@ -1318,7 +1329,20 @@ function esc(s){ return (s||"").replace(/</g,"&lt;"); }
 // Cascade names are the one string in this app the user types, and they land in exactly such an attribute.
 function escA(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;"); }
 
+// ---- Confirmed vs estimated (CAS-110) ------------------------------------------
+// CAS-109 widened the catalogue past what the free Watchmode tier can poll in a day, so a title now arrives in
+// one of two states. CONFIRMED: Cascade has actually read its listings, and the offers below are real.
+// ESTIMATED: it has never been polled, and the pipeline has worked its window out from how long ago it opened
+// in cinemas — an educated guess, with no offers and no price attached to it, ever.
+const isEstimated = m => m.availability_confidence==="estimated";
+// The window the pipeline estimated, kept safe before deriveStatus() overwrites m.status below.
+MOVIES.forEach(m=>{ m.claimedStatus=(m.status||[]).slice(); });
 function deriveStatus(m){
+  // An estimated title has no offers to read, so there is nothing here to derive FROM: falling through to the
+  // rules below would read "released, but no offers" as "in cinemas", and for a film that opened two years ago
+  // that is simply false. Take the window the pipeline estimated — it is at least reasoned from the real
+  // cinema date, and the card says out loud that it's an estimate.
+  if(isEstimated(m) && m.claimedStatus.length) return CASCADE.filter(x=>m.claimedStatus.includes(x));
   const o = m.offers||[]; const s = new Set();
   const hasSub = o.some(x=>x.type==="sub"||x.type==="free");
   const rents = o.filter(x=>x.type==="rent"&&x.price!=null).map(x=>x.price);
@@ -2064,7 +2088,22 @@ function cascadeHTML(m){
       <div class="cdate${estCls}">${dateStr||"&nbsp;"}</div></div>`;
   }).join("");
   // --cx marks the current stage's centre so the connector line stops there (no line through un-reached stages)
-  return `<div class="cascade" style="--cx:${cur*25+12.5}%">${nodes}</div>`;
+  return `<div class="cascade${isEstimated(m)?" est":""}" style="--cx:${cur*25+12.5}%">${nodes}</div>`;
+}
+// ---- Saying "estimate" out loud (CAS-110) --------------------------------------
+// An estimate reads as a likelihood, never as a fact: "Likely on streaming", not "Stream (included)". The
+// tooltip gives the whole basis for it, because a user is entitled to know exactly how much of this Cascade
+// checked and how much it worked out.
+const ESTIMATE_SAYS = {
+  upcoming:"Likely still to come", opening_week:"Likely in cinemas", in_cinema:"Likely still in cinemas",
+  pvod:"Likely to buy or rent at premium", rental:"Likely to rent", included_streaming:"Likely on streaming"};
+const ESTIMATE_WHY = `Cascade hasn't read this title's listings yet, so this window is worked out from how long
+  ago it opened in cinemas — not from a live listing. No price and no service until it's confirmed.`;
+function estimateHTML(m){
+  if(!isEstimated(m)) return "";
+  return `<div class="estline" title="${escA(ESTIMATE_WHY.replace(/\s+/g," ").trim())}">
+    <span>≈ ${ESTIMATE_SAYS[primaryStatus(m)]||"Likely available"}</span>
+    <span class="esttag">estimate</span></div>`;
 }
 // ---- Contrast / anchoring: what you'd otherwise pay ----------------------------
 // Honesty guardrail: a saving is only shown when the cheaper path is GENUINELY cheap —
@@ -2079,6 +2118,10 @@ function cascadeHTML(m){
 // facts, not persuasion. The A/B flag still adds the psychology on top: the endowment nudge when it's a
 // service you already pay for, and the buy-vs-rent contrast where a genuinely cheaper path exists.
 function savingsHTML(m){
+  // CAS-110: never a price against a window nobody confirmed. An estimated title has no offers today, and if
+  // one ever arrives on a title still marked estimated it is not evidence of anything — the price line waits
+  // for the poll that confirms the window it belongs to.
+  if(isEstimated(m)) return "";
   const offers=dedupOffers(m.offers||[]);
   if(!offers.length) return "";
   const subs =offers.filter(o=>o.type==="sub"||o.type==="free");
@@ -2191,7 +2234,8 @@ function pickBtnHTML(id, cls=""){
 // action row, instead of by a paragraph repeating it above.
 function cardHTML(m, markNew=false){
   const id=m.tmdb_id;
-  let offers=dedupOffers(m.offers);
+  // CAS-110: an estimated title shows no offers and no prices — see savingsHTML.
+  let offers=isEstimated(m) ? [] : dedupOffers(m.offers);
   if(prefsActive()) offers=offers.filter(myService);
   const wtw = offers.length ? `<div class="wtw">${offers.map(o=>`<div class="wtwrow">
       <span class="svc"><span class="tt ${o.type}">${TYPE_LABEL[o.type]||o.type}</span>${svcName(o.service)}</span>
@@ -2202,7 +2246,8 @@ function cardHTML(m, markNew=false){
   const poster = m.poster ? `background-image:url(https://image.tmdb.org/t/p/w185${m.poster})` : "";
   const wtwBtn = offers.length
     ? `<button class="actbtn wtwbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')" title="Where to watch (${offers.length})">${ICON.chev}</button>`
-    : `<button class="actbtn wtwbtn off" disabled title="No home offers yet">${ICON.chev}</button>`;
+    : `<button class="actbtn wtwbtn off" disabled
+        title="${isEstimated(m)?"Not confirmed yet — there's no listing to show":"No home offers yet"}">${ICON.chev}</button>`;
   // What's new is a fact about the film — the day Cascade first picked it up — so it is stated ON the film,
   // and nowhere else (CAS-107). It no longer decides where the film sits in the list, and the header no longer
   // dresses the whole list up as news; the chip just tells you which of these you haven't seen before.
@@ -2223,6 +2268,7 @@ function cardHTML(m, markNew=false){
     ${scaleBadge(m)}
     ${ratingsHTML(m)}
     ${cascadeHTML(m)}
+    ${estimateHTML(m)}
     <div class="expand">${creditsHTML(m)}${trailersHTML(m)}</div>
     ${savingsHTML(m)}
     ${wtw}
@@ -2298,7 +2344,12 @@ const WIN_COLOUR = {opening_week:"var(--open)", in_cinema:"var(--amber)", pvod:"
                     rental:"var(--blue)", included_streaming:"var(--green)", upcoming:"var(--grey)"};
 function mlOffersHTML(m){
   const w=primaryStatus(m);
-  const offers=dedupOffers(m.offers);
+  const offers=isEstimated(m) ? [] : dedupOffers(m.offers);
+  // CAS-110: an unconfirmed title must not be told "in cinemas" on the strength of having no offers — that is
+  // exactly the false claim the estimate exists to avoid. It says what it is: a guess, and where the guess came from.
+  if(isEstimated(m))
+    return `<div class="mloffers">≈ ${ESTIMATE_SAYS[w]||"Likely available"} — estimated from its cinema date, not
+      confirmed. No price until Cascade reads its listings.</div>`;
   if(!offers.length)
     return `<div class="mloffers">${w==="upcoming" ? "Not out yet — no way to watch it at home."
       : "In cinemas. No home offer yet — that's what the Cascade is waiting for."}</div>`;
@@ -2347,7 +2398,9 @@ function mlRowHTML(m, groupKey){
     <div class="mlposter" style="${poster}"></div>
     <div class="mlmain">
       <div class="mltitle">${esc(m.title)}</div>
-      <span class="mlwin" style="background:${WIN_COLOUR[w]}22;border:1px solid ${WIN_COLOUR[w]}88;color:${WIN_COLOUR[w]}">${STATUS_LABEL[w]}</span>
+      ${isEstimated(m)
+        ? `<span class="mlwin est" style="border:1px dashed var(--line);color:var(--dim)">${ESTIMATE_SAYS[w]||"Likely available"} · estimate</span>`
+        : `<span class="mlwin" style="background:${WIN_COLOUR[w]}22;border:1px solid ${WIN_COLOUR[w]}88;color:${WIN_COLOUR[w]}">${STATUS_LABEL[w]}</span>`}
       ${mlOffersHTML(m)}
       <div class="mlfrom">${mlWhyHTML(m, groupKey)}</div>
     </div>
@@ -5072,6 +5125,11 @@ window.cyclePick=id=>{
 let dayCounter=0;
 function advanceOneWindow(m){
   const st=new Set(m.status);
+  // CAS-110: a title whose CURRENT window is only an estimate has no confirmed state to move out of, so the
+  // sim must not announce a move for it — "it's on Netflix now" about a film Cascade has never actually read
+  // the listings for is precisely the fabricated alert the estimate exists to prevent. It rejoins the sim as
+  // soon as a poll confirms it.
+  if(isEstimated(m)) return false;
   if(st.has("included_streaming")) return false;
   // An upcoming film's next window is the cinema — which is what the Upcoming/In-cinema row alerts on.
   // Without this the sim could only ever move films between home windows, and that row's 🔔 would be a
