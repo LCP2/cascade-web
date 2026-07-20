@@ -1827,7 +1827,7 @@ try{ const v=localStorage.getItem("cascade_view"); if(v==="find"||v==="found") v
 window.setView=v=>{
   if(v===view) return;
   view=v;
-  if(v==="found") refreshTasteOrder();   // a fresh visit re-reads what it has learned; a tap mid-visit doesn't
+  if(v==="found") settleFoundView();   // a fresh visit lets the films you answered settle into the receipts
   try{ localStorage.setItem("cascade_view", v); }catch(e){}
   logEvent("view_switched",{key:v});
   render();
@@ -1938,6 +1938,27 @@ function passes(m){
   return true;
 }
 const byPopularity=(a,b)=>(b.popularity||0)-(a.popularity||0);
+// ---- The one order (CAS-107) ---------------------------------------------------
+// Both lists — the agent's Found feed and the Find results — are ordered on the same two keys, in the same
+// order: where the film has got to in its availability journey, then what IMDb thinks of it. Nothing else.
+// Not recency (the day Cascade happened to pick a film up says nothing about the film), and not taste
+// weighting (what you keep and what you wave off decides what is ON the list, it does not quietly reshuffle
+// what's on it). Two keys, both of them things you can check for yourself.
+const stageIdx = m => CASCADE.indexOf(primaryStatus(m));
+// primaryStatus() is the LAST window a film holds, i.e. the furthest it has travelled — a film that is both
+// rentable and included with a subscription sorts as streaming, its most-progressed window.
+const ratingOf = m => (typeof m.imdb_rating==="number" && m.imdb_rating>0) ? m.imdb_rating : null;
+// Highest rating first. A film with no rating isn't a bad film, it's an unknown one, so it sits at the bottom
+// of its stage instead of being scored as a zero and buried under genuinely low-rated films. Among the
+// unrated (nearly all of Upcoming) anticipation is the only real signal there is, so it breaks the tie.
+function byRatingDesc(a,b){
+  const ra=ratingOf(a), rb=ratingOf(b);
+  if(ra===null && rb===null) return byPopularity(a,b);
+  if(ra===null) return 1;
+  if(rb===null) return -1;
+  return rb-ra;
+}
+const byStageThenRating = (a,b) => (stageIdx(a)-stageIdx(b)) || byRatingDesc(a,b);
 function sortMovies(a,b){
   switch(filt.sort){
     case "rt": return (b.rt_critic||0)-(a.rt_critic||0);
@@ -1952,7 +1973,12 @@ function sortMovies(a,b){
 // have just sorts noise (which is how genuine tentpoles ended up at the bottom of the budget sort). So the
 // Upcoming group always ranks by anticipation, except under the two sorts that DO mean something pre-release.
 const PRE_RELEASE_SORTS=new Set(["title","cinema"]);
-const sortFor = g => (g==="upcoming" && !PRE_RELEASE_SORTS.has(filt.sort)) ? byPopularity : sortMovies;
+// CAS-107: under the default rating order every group ranks the same way — rated first, highest first,
+// unrated last — Upcoming included; byRatingDesc already falls back to anticipation for the unrated, so the
+// group keeps a meaningful order without pretending it has scores it doesn't have. The other sorts are an
+// explicit choice from the sort control, and they keep the anticipation fallback pre-release.
+const sortFor = g => filt.sort==="imdb" ? byRatingDesc
+  : (g==="upcoming" && !PRE_RELEASE_SORTS.has(filt.sort)) ? byPopularity : sortMovies;
 const CSTAGE_LABEL = {pvod:"Premium", rental:"Rent", included_streaming:"Stream"};
 const EST_OFFSET = {pvod:90, rental:120, included_streaming:180};   // days after cinema (rough AU windows)
 // The first cascade slot is the CINEMA slot, tri-state: Upcoming -> Opening -> Cinema.
@@ -2177,9 +2203,9 @@ function cardHTML(m, markNew=false){
   const wtwBtn = offers.length
     ? `<button class="actbtn wtwbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')" title="Where to watch (${offers.length})">${ICON.chev}</button>`
     : `<button class="actbtn wtwbtn off" disabled title="No home offers yet">${ICON.chev}</button>`;
-  // The chip is a DISCRIMINATOR, not a decoration: it's painted only when some of the films on screen are new
-  // and some aren't. On a first run every film is new, and marking all of them would be noise dressed up as
-  // news — the agent header says "all of them this week" in words instead.
+  // What's new is a fact about the film — the day Cascade first picked it up — so it is stated ON the film,
+  // and nowhere else (CAS-107). It no longer decides where the film sits in the list, and the header no longer
+  // dresses the whole list up as news; the chip just tells you which of these you haven't seen before.
   const isNew = markNew ? `<span class="newchip">🆕 New this week</span>` : "";
   // The opening-weekend state, on the card, in both views (CAS-68). Computed from the real opening date, so it
   // says how long the film has actually been out — never how long it has left, which nobody knows.
@@ -2377,8 +2403,9 @@ function foundValueHTML(){
 }
 // ================= The Found view — the hero (CAS-70) =======================================================
 // The front door. Not a filtered list you have to work: a SELECTION, presented — the agent says what it found
-// up top, marks what's new since it last reported, gives a reason on every card, and orders the lot by what it
-// has learned about you. Every word of it is read off real data; there is no LLM anywhere in here.
+// up top, marks what's new since it last reported, gives a reason on every card, and orders the lot by where
+// each film is in its availability journey, then by its IMDb rating (CAS-107) — two keys you can check for
+// yourself. Every word of it is read off real data; there is no LLM anywhere in here.
 
 // ---- Freshness ----------------------------------------------------------------
 // "New this week" needs a first-found date per film, so we record one the moment a film enters the Found list.
@@ -2404,42 +2431,15 @@ function trackFirstFound(){
 const daysSince = iso => Math.round((Date.parse(REAL_TODAY) - Date.parse(iso)) / 864e5);
 const isNewFound = id => { const d=firstFound[id]; return !!d && daysSince(d) < NEW_DAYS; };
 
-// ---- It learns you (CAS-70) ----------------------------------------------------
-// Behavioural weighting — algorithmic, no LLM, and every input is something you actually DID. A film you pin
-// by hand is the strongest statement of taste you can make; one you take off the list, or wave away, is the
-// strongest statement against. Those weights land on the film's genres, and the Found view orders by them, so
-// keeping and removing visibly changes what Cascade puts in front of you next.
-// CAS-100 splits what "watched" was telling us in two. Seeing a film and LIKING it is a statement for its
-// kind; seeing it and not liking it is a statement against — counting both as +1, as we did while there was
-// only one tick, was reading a complaint as a compliment.
-const TASTE_W = {pinned:2, liked:1, disliked:-2, removed:-2, blocked:-2};
-function learnedTaste(){
-  const w={};
-  const add=(m,n)=>(m.genres||[]).forEach(g=>{ w[g]=(w[g]||0)+n; });
-  MOVIES.forEach(m=>{
-    const e=notify[m.tmdb_id];
-    if(e && e.source==="manual" && !e.removed) add(m, TASTE_W.pinned);
-    if(e && e.removed)                         add(m, TASTE_W.removed);
-    if(isLiked(m.tmdb_id))                     add(m, TASTE_W.liked);
-    if(isDisliked(m.tmdb_id))                  add(m, TASTE_W.disliked);
-    if(blocked.has(m.tmdb_id))                 add(m, TASTE_W.blocked);
-  });
-  return w;
-}
-const tasteScore = (m,w) => (m.genres||[]).reduce((s,g)=>s+(w[g]||0), 0);
-const topTaste = (w,dir) => Object.entries(w).filter(([,v])=>dir>0 ? v>0 : v<0)
-  .sort((a,b)=>dir>0 ? b[1]-a[1] : a[1]-b[1]).slice(0,2).map(([g])=>g.toLowerCase());
-function learnedNote(w){
-  const up=topTaste(w,1), down=topTaste(w,-1);
-  if(!up.length && !down.length)
-    return `Keep the ones you like and take off the ones you don't — I read that, and the kind of film you keep
-            comes up the list next time.`;
-  const bits=[];
-  if(up.length)   bits.push(`I'm leading with <b>${up.join(" and ")}</b> — that's the kind you keep`);
-  if(down.length) bits.push(`${up.length?"and ":"I'm "}pushing <b>${down.join(" and ")}</b> down — you've waved
-    ${down.length===1?"that one":"those"} off`);
-  return bits.join(", ")+".";
-}
+// ---- What your answers do (CAS-107) --------------------------------------------
+// They decide what is ON the list, and nothing else. Liking, disliking, taking a film off and excluding a
+// genre all act as filters and excludes — visible rules you set and can see the effect of. What they no
+// longer do is silently re-rank the list: a genre you waved off used to get pushed DOWN the order, which is
+// an invisible hand on a list whose whole promise is that you can check it. Order is availability, then
+// rating (byStageThenRating), for everyone, always.
+// One sentence, said the same way wherever the order is described. It states the two keys and the direction
+// of the first one, because "by availability" alone doesn't tell you which end cinema is at.
+const ORDER_NOTE = `Ordered by availability — upcoming and cinema first, streaming last — then IMDb rating.`;
 
 
 // ---- The view ------------------------------------------------------------------
@@ -2450,43 +2450,36 @@ function learnedNote(w){
 // Only a film that WAS on the Found list is held here — answering something in the Find view that the agent
 // never picked must not float it into "Found for you", which is the agent's own claim about its own work.
 const heldOpen = new Map();      // id -> {fresh} as it was at the moment of the answer
-// The list is ordered by what we've learned about you — but it is ordered by what we had learned WHEN YOU
-// OPENED IT, not by what we learn from the tap you are making right now. Answering a film moves that film's
-// genres in the weighting, which would re-sort the list under your finger and slide the card you just
-// answered (and its neighbours) somewhere else on the screen. A card must collapse where it is (CAS-100 AC4),
-// so the sort key is snapshotted per visit: come back to the view and it has learned from everything you said.
-let tasteOrder = learnedTaste();
-// Leaving the view and coming back is the moment everything settles: the order re-reads what it has learned,
-// and the films you answered let go of their places and drop into the receipts groups below, where their undo
-// lives from then on. Within one visit nothing moves; between visits, everything catches up. EVERY route into
-// the view calls this — setView plus the three that assign `view` directly (the reveal, the invite exit and
-// the onboarding commit), or a share link opened mid-session would land on stale held stubs.
-const refreshTasteOrder = () => { tasteOrder = learnedTaste(); heldOpen.clear(); };
+// Leaving the view and coming back is the moment the held films settle: they let go of their places and drop
+// into the receipts groups below, where their undo lives from then on. Within one visit nothing moves.
+// EVERY route into the view calls this — setView plus the three that assign `view` directly (the reveal, the
+// invite exit and the onboarding commit), or a share link opened mid-session would land on stale held stubs.
+// The ORDER needs no snapshot any more (CAS-107): availability and rating are facts about the film, so an
+// answer you give can't move the list under your finger the way the old taste weighting could.
+const settleFoundView = () => { heldOpen.clear(); };
 function foundFilms(){
   return MOVIES.filter(m=>found.has(m.tmdb_id) || heldOpen.has(m.tmdb_id))
     .filter(m=>!filt.search || m.title.toLowerCase().includes(filt.search))
-    .sort((a,b)=> tasteScore(b,tasteOrder)-tasteScore(a,tasteOrder)
-               || (b.rt_critic||0)-(a.rt_critic||0)
-               || (b.imdb_rating||0)-(a.imdb_rating||0));
+    .sort(byStageThenRating);
 }
 function agentHeadHTML(films){
   const auto=films.filter(m=>foundSource(m.tmdb_id)==="auto");
   const mine=films.filter(m=>foundSource(m.tmdb_id)==="manual");
-  const fresh=auto.filter(m=>isNewFound(m.tmdb_id)).length;
-  // Honest to the last clause: it claims only what IT found (yours are counted separately), and "new this week"
-  // is a count of first-found dates, not a vibe. On the first run everything is new, and it says exactly that
-  // rather than dressing the whole list up as news.
+  // A count and the order it's in — nothing else (CAS-107). It claims only what IT found; yours are counted
+  // separately. The old header talked about "this week", which read as a claim about the ORDER of the list
+  // and wasn't one, and narrated a taste re-ranking that no longer happens. What IS new still says so on the
+  // film it belongs to — the 🆕 chip on the card — where it's a fact about that film rather than a headline.
   const n=auto.length;
   const line = !n
     ? (mine.length ? `Nothing found yet — but I'm watching. The ${mine.length} below ${mine.length===1?"is":"are"} yours.`
                    : `Nothing yet — but I'm watching.`)
-    : fresh===n ? `I've found <b>${n} film${n===1?"":"s"}</b> for you — all of ${n===1?"it":"them"} this week.`
-    : fresh     ? `I've found <b>${n} films</b> for you — <b>${fresh} new this week</b>.`
-                : `I've found <b>${n} film${n===1?"":"s"}</b> for you. Nothing new this week — I'll keep watching.`;
+    : `I've found <b>${n} film${n===1?"":"s"}</b> for you.`;
   const yours = mine.length && n ? ` You've added <b>${mine.length}</b> yourself.` : "";
   return `<div class="agenthead">
     <div class="ah">📣 ${line}${yours}</div>
-    <div class="ap">${learnedNote(learnedTaste())}</div>
+    <div class="ap">${n||mine.length
+      ? `Everything I find lands here on its own — you never have to come and look.`
+      : `I'll keep watching.`}</div>
   </div>`;
 }
 // First run: the deck is just the "+ New" card, which asks for a decision without offering a reason. Give them
@@ -2571,41 +2564,23 @@ function renderFound(){
          <div class="ep">Clear the search and the whole selection comes back.</div></div>`+saidHTML;
     return;
   }
-  // "New" means new FROM THE AGENT. A film you pinned yourself this morning is not news to you, and counting it
-  // here would also put the group's number at odds with the header's (which only ever claims what Cascade found).
-  // A held film keeps the group it was in when you answered it — answering must not make the stub jump groups.
+  // ONE list, in the one order (CAS-107). Splitting "new this week" off the top was a recency ordering by
+  // another name: it decided where a film sat by the day Cascade happened to pick it up. What's new still
+  // says so, on the card it belongs to — "New" meaning new FROM THE AGENT, since a film you pinned yourself
+  // this morning is not news to you. A held film keeps the answer it had when you tapped it, so the chip on a
+  // stub doesn't flicker.
   const isFresh = m => heldOpen.has(m.tmdb_id) ? heldOpen.get(m.tmdb_id).fresh
                                               : (foundSource(m.tmdb_id)==="auto" && isNewFound(m.tmdb_id));
-  const fresh=films.filter(isFresh);
-  const rest =films.filter(m=>!isFresh(m));
-  // The count on a group counts FILMS THE AGENT IS STILL OFFERING you. A held stub is one you've answered — it
-  // is on screen only so you can undo it, and counting it would put these numbers at odds with the header and
-  // with the "Found for you" tab, both of which read the real membership. Same for the split: a group whose
-  // films you have all answered is not a group worth a heading of its own.
+  // The count counts FILMS THE AGENT IS STILL OFFERING you. A held stub is one you've answered — it is on
+  // screen only so you can undo it, and counting it would put this number at odds with the header and with
+  // the "Found for you" tab, both of which read the real membership.
   const live = list => list.filter(m=>!taggedOut(m)).length;
-  const split=live(fresh)>0 && live(rest)>0;           // "new" only means something when some of them aren't
-  const cards=(list,markNew)=>`<div class="list">${list.map(m=>
-    taggedOut(m) ? stubHTML(m) : cardHTML(m, markNew)).join("")}</div>`;
-  const learned=Object.values(tasteOrder).some(v=>v!==0);   // the order ON SCREEN, not the one we'd use next visit
-  const order = learned
-    ? `Ordered by what I've learned about you — not by what a database sorted first.`
-    : `Ordered by how well they score for now. Keep the ones you like and take off the ones you don't, and I'll
-       order by <i>you</i> instead.`;
+  const cards=list=>`<div class="list">${list.map(m=>
+    taggedOut(m) ? stubHTML(m) : cardHTML(m, isFresh(m))).join("")}</div>`;
   let html=agentHeadHTML(films)+finishAgentHTML();
-  // The "new this week" group only exists when it tells you something. On the first run EVERY film is new, and
-  // a group holding all of them would say nothing — the header says it plainly instead.
-  if(split){
-    html+=`<div class="fglabel" style="color:var(--green)">🆕 New this week<span class="n">${live(fresh)}</span></div>
-      <div class="fgnote">Found since I last reported — ${live(fresh)===1?"this is":"these are"} the ${live(fresh)===1?"one":"ones"} you haven't seen.</div>
-      ${cards(fresh,true)}
-      <div class="fglabel" style="color:var(--purple)">🔔 Everything else I've found<span class="n">${live(rest)}</span></div>
-      <div class="fgnote">${order}</div>
-      ${cards(rest,false)}`;
-  } else {
-    html+=`<div class="fglabel" style="color:var(--purple)">🔔 Found for you<span class="n">${live(films)}</span></div>
-      <div class="fgnote">${order}</div>
-      ${cards(films,false)}`;
-  }
+  html+=`<div class="fglabel" style="color:var(--purple)">🔔 Found for you<span class="n">${live(films)}</span></div>
+    <div class="fgnote">${ORDER_NOTE}</div>
+    ${cards(films)}`;
   el.innerHTML=html+`<div style="padding:0 12px">${foundValueHTML()}</div>`+saidHTML;
   markFoundSeen();   // you are looking at it — so the next visit's "since you last looked" counts from here
 }
@@ -4643,7 +4618,7 @@ function showReveal(c){
 }
 function closeRevealToApp(){
   $("reveal").classList.remove("open"); document.body.style.overflow="";
-  view="found"; refreshTasteOrder(); try{ localStorage.setItem("cascade_view","found"); }catch(e){}
+  view="found"; settleFoundView(); try{ localStorage.setItem("cascade_view","found"); }catch(e){}
   render();
   const c=revealCascade;
   if(c) toast(`✓ ${c.icon} ${c.name}'s on it — ${watchCount(c)} films found already. ${alertPromise(c)}`);
@@ -4768,7 +4743,7 @@ function inviteFinish(){
   if(unpaused) saveCascades();
   try{ localStorage.removeItem("cascade_guest"); }catch(e){}
   $("invite").classList.remove("open"); $("reveal").classList.remove("open"); document.body.style.overflow="";
-  view="found"; refreshTasteOrder(); try{ localStorage.setItem("cascade_view","found"); }catch(e){}
+  view="found"; settleFoundView(); try{ localStorage.setItem("cascade_view","found"); }catch(e){}
   render();
   const c=revealCascade;
   if(c) toast(`✓ ${c.icon} ${c.name}'s on the job — alerts ${agentState.alerts?"on":"off"}${agentState.learning?", learning on":""}. ${alertPromise(c)}`);
@@ -4908,7 +4883,7 @@ window.onbCreateAgent=()=>{
   logEvent("agent_created",{genres:onb.genres.length, key:onb.standard, skips:onb.exclude.length,
                             named:onb.name.trim()?1:0, matches:watchCount(c)});
   finishOnboarding();
-  view="found"; refreshTasteOrder();              // the payoff IS the front door
+  view="found"; settleFoundView();              // the payoff IS the front door
   try{ localStorage.setItem("cascade_view","found"); }catch(e){}
   render();
   toast(`✓ ${c.icon} ${c.name}'s on it — ${watchCount(c)} films found already. ${alertPromise(c)}`);
@@ -4965,8 +4940,8 @@ function render(){
 // and the full card comes back. Persisted immediately, so it survives a reload.
 window.setOpinion=(id,kind)=>{
   const was=opinionOf(id), on=was!==kind, wasFound=found.has(id);
-  // Read the film's Found-view group BEFORE the answer changes it — a stub must not jump from "New this week"
-  // into "Everything else" just because you answered it. (The ORDER is held by tasteOrder, see foundFilms.)
+  // Read the film's freshness BEFORE the answer changes it, so the 🆕 chip on the stub doesn't flicker off
+  // under the tap. (The ORDER can't move at all now — availability then rating, see byStageThenRating.)
   const held = wasFound ? {fresh: foundSource(id)==="auto" && isNewFound(id)} : null;
   watched.delete(id); disliked.delete(id); blocked.delete(id);
   if(on){
