@@ -8,7 +8,7 @@ import os
 import unittest
 
 from monitor import (compute_transitions, match, matches_criteria, service_ok,
-                     notification_rows, suppressed_pairs)
+                     notification_rows, suppressed_pairs, excluded_moments)
 from monitor.catalogue import load_catalogue_file
 from monitor.store import InMemoryStore
 
@@ -53,6 +53,39 @@ class MatchTests(unittest.TestCase):
         self.assertEqual(set(by_user), {"user-A", "user-B"})
         self.assertEqual(len(by_user["user-A"]), 2)
         self.assertEqual(len(by_user["user-B"]), 2)
+
+    # ---- global alert-type exclude (CAS-103 AC4) ----
+    # The preference outranks the Cascade: a muted TYPE never fires for that user, however their
+    # own Cascades are set, and it must not leak across to anyone else.
+    def test_global_exclude_mutes_that_type_for_that_user(self):
+        by_user = match(self.cascades, self.transitions, catalogue=self.today,
+                        excluded={"user-A": ["hits_rent"]})
+        keys = self._keys(by_user)
+        self.assertNotIn(("cascade-A1", "5001", "hits_rent"), keys)
+        self.assertIn(("cascade-A2", "5003", "hits_cinema"), keys)      # A's other type is untouched
+        self.assertIn(("cascade-B1", "5002", "hits_stream"), keys)      # B is unaffected
+
+    def test_global_exclude_can_silence_a_user_entirely(self):
+        by_user = match(self.cascades, self.transitions, catalogue=self.today,
+                        excluded={"user-A": ["hits_rent", "hits_cinema"]})
+        self.assertNotIn("user-A", by_user)
+        self.assertIn("user-B", by_user)
+
+    def test_global_exclude_absent_changes_nothing(self):
+        self.assertEqual(self._keys(match(self.cascades, self.transitions, catalogue=self.today,
+                                          excluded={})),
+                         self._keys(self._match()))
+
+    def test_excluded_moments_accepts_both_shapes(self):
+        rows = [{"user_id": "user-A", "excluded_moments": ["hits_rent"]}]
+        self.assertEqual(excluded_moments(rows), {"user-A": {"hits_rent"}})
+        self.assertEqual(excluded_moments({"user-A": ["hits_rent"]}), {"user-A": {"hits_rent"}})
+        self.assertEqual(excluded_moments(None), {})
+
+    def test_excluded_moments_keeps_unknown_names(self):
+        # Dropping a name we don't recognise would make a future rename fail OPEN — i.e. resume
+        # emailing about the very thing the user muted.
+        self.assertEqual(excluded_moments({"u": ["hits_teleport"]}), {"u": {"hits_teleport"}})
 
     def test_rating_bar_excludes(self):
         # cascade-A3 wants Drama at imdb>=8; 5001 is 7.2 -> excluded.

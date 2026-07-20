@@ -493,6 +493,16 @@
     border-radius:20px;padding:5px 9px;font-size:11px;font-weight:700;color:var(--faint);cursor:pointer}
   .abell.on{background:rgba(240,163,54,.14);border-color:var(--amber);color:#ffce8f}
   .abell .bl{font-size:10px;letter-spacing:.3px}
+  /* A bell that cannot ring for this Cascade (CAS-103 AC2/AC3): dimmed, struck through, and not
+     clickable — but still THERE, with its reason on the line below. Hiding it would leave the user
+     wondering where Purchase went; showing it live would be promising an email we'd never send. */
+  .abell[disabled]{opacity:.42;cursor:not-allowed;text-decoration:line-through}
+  .abell[disabled]:hover{border-color:var(--line)}
+  .awhy{font-size:10.5px;line-height:1.45;color:var(--faint);padding:0 10px 8px;margin-top:-3px}
+  .awhy b{color:var(--dim);font-weight:700}
+  /* The past-opening bell is a mini switch rather than a pill, but it obeys the same rule. */
+  .switch.mini.blocked{opacity:.45;cursor:not-allowed}
+  .switch.mini.blocked .knob{pointer-events:none}
   /* the reveal: 0fr→1fr animates the row's options open without hard-coding a height */
   .aopts{display:grid;grid-template-rows:0fr;transition:grid-template-rows .24s ease,opacity .2s ease;opacity:0}
   .aopts>div{overflow:hidden;min-height:0}
@@ -1069,6 +1079,14 @@
   <div class="chips" id="prefStoreChips"></div>
   <div class="flabel">Which service covers what Cascade found?</div>
   <div id="svcAdvice"></div>
+  <!-- Global alert-type exclude (CAS-103 AC4). The one place to stop a KIND of alert without
+       editing every Cascade one at a time. -->
+  <div class="flabel">Never alert me about</div>
+  <div class="chips" id="prefAlertChips"></div>
+  <div class="pnote">A type switched off here is off for <b>every</b> Cascade, whatever each one has
+    set — and the daily email respects it too. Your Cascades keep their own settings: turn a type
+    back on and each one goes straight back to what you chose.</div>
+  <div id="prefAlertNote"></div>
   <div class="flabel">Experiment — value framing</div>
   <div class="switch" id="uxSwitch"><span>Show savings &amp; alert framing</span><span class="knob"></span></div>
   <div class="pnote">Adds a savings line to cards where a genuinely cheaper path exists, a live result count on
@@ -1489,11 +1507,16 @@ const removedByHand = id => !!(notify[id] && notify[id].removed);
 const cascadesFor = id => ((notify[id]||{}).cascadeIds||[])
   .map(cid=>cascades.find(c=>c.id===cid)).filter(Boolean);
 // `touched` = the user has worked the my-services switch by hand, so we stop auto-defaulting it for them.
+// alertsOff (CAS-103 AC4) is the GLOBAL alert-type exclude: types muted here are off across every
+// Cascade, whatever each one has switched on. It rides in cascade_prefs with the rest of the
+// device-local preferences.
 function loadPrefs(){ try{ const p=JSON.parse(localStorage.getItem("cascade_prefs")||"{}");
-  return {on:!!p.on, touched:!!p.touched, sub:new Set(p.sub||[]), store:new Set(p.store||[])}; }
-  catch(e){ return {on:false,touched:false,sub:new Set(),store:new Set()}; } }
+  return {on:!!p.on, touched:!!p.touched, sub:new Set(p.sub||[]), store:new Set(p.store||[]),
+          alertsOff:new Set(p.alertsOff||[])}; }
+  catch(e){ return {on:false,touched:false,sub:new Set(),store:new Set(),alertsOff:new Set()}; } }
 function savePrefs(){ try{ localStorage.setItem("cascade_prefs",
-  JSON.stringify({on:prefs.on,touched:prefs.touched,sub:[...prefs.sub],store:[...prefs.store]})); }catch(e){} }
+  JSON.stringify({on:prefs.on,touched:prefs.touched,sub:[...prefs.sub],store:[...prefs.store],
+                  alertsOff:[...prefs.alertsOff]})); }catch(e){} }
 const prefs = loadPrefs();
 // How many times this browser has opened the app. It exists for one reason: "Finish your agent" (CAS-71) must
 // arrive AFTER the agent has proved itself, not on the first screen — so we need to know this isn't the first.
@@ -1697,6 +1720,45 @@ addChips("excludeChips", ALL_GENRES, filt.exclude, "exc");
 // preferences service chips
 addChips("prefSubChips", SUB_SERVICES, prefs.sub, "svc", svcName);
 addChips("prefStoreChips", STORE_SERVICES, prefs.store, "svc", svcName);
+
+// ---- Global alert-type exclude (CAS-103 AC4) -----------------------------------
+// Chip ON = this type never alerts me, matching the "Never show me" genre chips in the Find panel:
+// the app already teaches that a lit chip in a "never" list is something being kept OUT.
+const ALERT_TYPES = [
+  {key:"cinema",             label:"🎬 Cinema"},
+  {key:"past_opening",       label:"📣 Past opening weekend"},
+  {key:"pvod",               label:"💳 Purchase"},
+  {key:"rental",             label:"📼 Rent"},
+  {key:"included_streaming", label:"📺 Stream"},
+];
+function syncAlertPrefChips(){
+  const box=$("prefAlertChips"); if(!box) return;
+  [...box.children].forEach(c=>c.classList.toggle("on", prefs.alertsOff.has(c.dataset.val)));
+  // Say what it's actually doing right now, counted off the real Cascades — never a bare "3 muted".
+  const n=prefs.alertsOff.size;
+  const hit=cascades.filter(c=>[...prefs.alertsOff].some(k=>(c.alerts||ALERT_DEFAULTS)[k])).length;
+  $("prefAlertNote").innerHTML = !n ? ""
+    : `<div class="warnnote">${n} alert type${n===1?"":"s"} switched off everywhere${
+        hit ? ` — ${hit} of your ${cascades.length} Cascade${cascades.length===1?"":"s"} had ${
+          hit===1?"it":"one of them"} switched on, and won't alert you about ${n===1?"it":"them"} while this stands.`
+            : `. None of your Cascades had ${n===1?"it":"any of them"} on, so nothing changes today.`}</div>`;
+}
+ALERT_TYPES.forEach(t=>{
+  const c=document.createElement("div");
+  c.className="chip exc"; c.textContent=t.label; c.dataset.val=t.key;
+  c.setAttribute("role","button"); c.tabIndex=0;
+  c.onclick=()=>{
+    prefs.alertsOff.has(t.key) ? prefs.alertsOff.delete(t.key) : prefs.alertsOff.add(t.key);
+    savePrefs();
+    // Re-save the Cascades so the alert_moments handed to the monitor pick the change up: momentsOf()
+    // strips muted types, so the daily job stops firing them without needing its own copy of prefs.
+    saveCascades();
+    logEvent("alert_type_muted",{key:t.key, off:prefs.alertsOff.has(t.key)});
+    syncAlertPrefChips(); render();
+  };
+  c.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); c.onclick(); } };
+  $("prefAlertChips").appendChild(c);
+});
 
 // ---- modals ----
 // Every .switch in the app is a div with role="switch" — which a mouse can use and a keyboard cannot.
@@ -2612,20 +2674,24 @@ const ALERT_DEFAULTS = {cinema:false, past_opening:false, pvod:false, rental:tru
 // ---- The availability spine ---------------------------------------------------
 // One row per window a film can be in. "All" is not a window — it's the empty status set, i.e. any window.
 // Each row owns its alert toggle; the window→row map is what the poll sim consults.
+// `alertName` (CAS-103 AC1) is what the BELL is called — Cinema · Purchase · Rent · Stream. It is
+// deliberately not always the window's own title: the window is a place a film sits ("Premium"),
+// the bell is the thing you're told about ("Purchase"). Naming the bell after the moment is what
+// makes four identical "Alert" switches legible as four different promises.
 const AVAIL_ROWS = [
   // The cinema row owns TWO moments, because the big screen has two: the film arriving, and the film having
   // had its weekend. The second is a moment, not a window — a film doesn't move anywhere when it crosses it —
   // so it rides here as an extra bell rather than as a row of its own with nothing to switch on.
   {key:"cinema", alert:"cinema", windows:["upcoming","opening_week","in_cinema"], pill:"in_cinema",
-   title:"Upcoming / In cinema", sub:"Announced, and on the big screen",
+   title:"Upcoming / In cinema", sub:"Announced, and on the big screen", alertName:"Cinema",
    extraAlert:{key:"past_opening", label:"📣 Past opening weekend",
                sub:`opening + ${PAST_OPENING_DAYS} days · it's had its moment, catch it before it's gone`}},
   {key:"pvod", alert:"pvod", windows:["pvod"], pill:"pvod",
-   title:"Premium", sub:"Buy or rent early, ~$30", home:true},
+   title:"Premium", sub:"Buy or rent early, ~$30", home:true, alertName:"Purchase"},
   {key:"rental", alert:"rental", windows:["rental"], pill:"rental",
-   title:"Rent", sub:"Rental drops to ~$7", home:true},
+   title:"Rent", sub:"Rental drops to ~$7", home:true, alertName:"Rent"},
   {key:"included_streaming", alert:"included_streaming", windows:["included_streaming"], pill:"included_streaming",
-   title:"Stream", sub:"Included on a subscription", home:true},
+   title:"Stream", sub:"Included on a subscription", home:true, alertName:"Stream"},
 ];
 const WINDOW_ROW = {};
 AVAIL_ROWS.forEach(r=>r.windows.forEach(w=>{ WINDOW_ROW[w]=r.alert; }));
@@ -2777,6 +2843,10 @@ function normCascade(c){
   c.excludeWatched = c.excludeWatched===undefined ? true : !!c.excludeWatched;
   c.excludeBlocked = c.excludeBlocked===undefined ? true : !!c.excludeBlocked;
   c.alerts = {...ALERT_DEFAULTS, ...(c.alerts||{})};
+  // Which bells the user has pressed BY HAND this editing session (CAS-103 AC2). Editor-only — it is
+  // never persisted (commitDraft copies a named field list), because it answers "did you choose this,
+  // or did we?", and once a Cascade is saved every setting on it is a choice.
+  c.alertsTouched = c.alertsTouched || {};
   return c;
 }
 const CASCADE_TEMPLATES = [
@@ -2946,9 +3016,21 @@ const reachableRows = c => {
   if(rows.has("cinema")) rows.add("past_opening");
   return rows;
 };
+// ---- Global alert-type exclude (CAS-103 AC4) -----------------------------------
+// One switch that outranks every Cascade: "never alert me about Purchase" means no Cascade alerts
+// you about Purchase, whatever its own bells say. It deliberately does NOT rewrite those bells —
+// un-mute the type and each Cascade goes back to exactly what you set it to.
+const alertMuted = k => prefs.alertsOff.has(k);
+// The ONE test for "will this bell ever actually ring": switched on, reachable for the scope, and
+// not muted globally. Every promise the app makes — the deck's "alerts on…" line, the agent's
+// voice, the editor's own paint, and the alert_moments we hand the monitor — reads off this, so
+// they cannot drift apart and start promising an email that will never arrive.
+function alertLive(c,k){
+  return !!(c.alerts||ALERT_DEFAULTS)[k] && reachableRows(c).has(k) && !alertMuted(k);
+}
+const liveAlerts = c => Object.keys(ALERT_SHORT).filter(k=>alertLive(c,k));
 function alertSummary(c){
-  const reach=reachableRows(c);
-  const on=Object.keys(ALERT_SHORT).filter(k=>(c.alerts||ALERT_DEFAULTS)[k] && reach.has(k));
+  const on=liveAlerts(c);
   return on.length ? "alerts on "+on.map(k=>ALERT_SHORT[k]).join(" + ") : "alerts off";
 }
 // The same fact, said in the agent's voice — what it will actually come back to you about. Read off the same
@@ -2957,8 +3039,7 @@ const ALERT_MOMENT = {cinema:"reaches a cinema", past_opening:"is past its openi
                       pvod:"hits premium", rental:"drops to a rental price",
                       included_streaming:"lands on a service"};
 function alertPromise(c){
-  const reach=reachableRows(c);
-  const on=Object.keys(ALERT_SHORT).filter(k=>(c.alerts||ALERT_DEFAULTS)[k] && reach.has(k));
+  const on=liveAlerts(c);
   return on.length
     ? `I'll tell you the moment one ${on.map(k=>ALERT_MOMENT[k]).join(" or ")}.`
     : `Its alerts are off, so it'll keep watching quietly — nothing will interrupt you.`;
@@ -3589,6 +3670,10 @@ window.editCascade=()=>{
   const c=activeCascade(); if(!c) return;
   draft=JSON.parse(JSON.stringify(c));
   draft.alerts={...ALERT_DEFAULTS, ...(draft.alerts||{})};
+  // Editing something you already saved: every bell on it is already YOUR decision, so mark them all
+  // touched. The auto-select then only ever forces off what has become unreachable — it will not
+  // re-light alerts you deliberately turned off the last time you were in here (CAS-103 AC2).
+  draft.alertsTouched={}; Object.keys(draft.alerts).forEach(k=>{ draft.alertsTouched[k]=true; });
   openEditor("Edit Cascade");
   openModal($("builder"));
 };
@@ -3620,8 +3705,9 @@ function buildSpine(){
     el.innerHTML=`<div class="arow-main">
         <button class="atog" role="switch"><span class="adot"></span>
           <span class="alab"><span class="pill ${r.pill}">${r.title}</span><small>${r.sub}</small></span></button>
-        <button class="abell" role="switch"><span>📣</span><span class="bl">Alert</span></button>
+        <button class="abell" role="switch"><span>📣</span><span class="bl">${r.alertName}</span></button>
       </div>
+      <div class="awhy" id="why-${r.key}" hidden></div>
       ${(r.home || r.extraAlert) ? `<div class="aopts" id="opt-${r.key}"><div><div class="inner" style="padding-top:6px">
         ${r.home ? `<div class="switch mini" id="mine-${r.key}" role="switch">
           <span>Only what I can watch <small style="color:var(--faint)">(my services)</small></span>
@@ -3629,13 +3715,25 @@ function buildSpine(){
         ${r.extraAlert ? `<div class="switch mini" id="moment-${r.extraAlert.key}" role="switch">
           <span>${r.extraAlert.label} <small style="color:var(--faint)">— ${r.extraAlert.sub}</small></span>
           <span class="knob"></span></div>` : ""}</div></div></div>` : ""}`;
-    el.querySelector(".atog").onclick=()=>{ setRow(r, rowState(r)==="off"); syncSpine(); refreshDraft(); };
-    el.querySelector(".abell").onclick=()=>{ draft.alerts[r.alert]=!draft.alerts[r.alert]; syncSpine(); };
+    // Changing the scope changes which bells can ever ring, so re-run the auto-select right here
+    // rather than leaving the user to notice for themselves (CAS-103 AC2).
+    el.querySelector(".atog").onclick=()=>{ setRow(r, rowState(r)==="off"); autoSelectAlerts(); syncSpine(); refreshDraft(); };
+    el.querySelector(".abell").onclick=()=>{
+      if(bellBlocked(r.alert)) return;               // disabled anyway; never silently flip hidden state
+      draft.alerts[r.alert]=!draft.alerts[r.alert];
+      draft.alertsTouched[r.alert]=true;             // an explicit choice the auto-select must not overwrite
+      syncSpine();
+    };
     const mine=r.home ? el.querySelector("#mine-"+r.key) : null;
     if(mine) mine.onclick=()=>{ draft.myServices[r.key]=!draft.myServices[r.key]; syncSpine(); refreshDraft(); };
     if(r.extraAlert){
       const mo=el.querySelector("#moment-"+r.extraAlert.key);
-      mo.onclick=()=>{ draft.alerts[r.extraAlert.key]=!draft.alerts[r.extraAlert.key]; syncSpine(); };
+      mo.onclick=()=>{
+        if(bellBlocked(r.extraAlert.key)) return;
+        draft.alerts[r.extraAlert.key]=!draft.alerts[r.extraAlert.key];
+        draft.alertsTouched[r.extraAlert.key]=true;
+        syncSpine();
+      };
     }
     spine.appendChild(el);
   });
@@ -3648,6 +3746,35 @@ function buildSpine(){
   warn.id="cMineWarn";
   spine.appendChild(warn);
 }
+// ---- Alert reachability, auto-select, and the reason a bell is off (CAS-103 AC2/AC3) -----------
+// Why this bell can't ring for the Cascade being edited — "" when it can. Two reasons, kept apart
+// because the fix is different: widen the scope, versus un-mute the type in Preferences.
+function bellBlocked(key){
+  if(alertMuted(key)) return "muted";
+  if(!reachableRows(draft).has(key)) return "unreachable";
+  return "";
+}
+const BLOCK_WHY = {
+  muted: name => `<b>${name}</b> is switched off for every Cascade in Preferences — un-mute it there
+    and this comes back to whatever you set it to.`,
+  unreachable: name => `This Cascade stops watching a film before it reaches <b>${name}</b>, so this
+    alert could never fire. Widen the windows above to turn it on.`,
+};
+// Auto-select the alerts still AHEAD of this Cascade's scope, and force off the ones behind it.
+// Two rules keep it honest rather than merely convenient:
+//   · an unreachable bell is switched OFF in the data, not just greyed — leaving it true would let
+//     a widened scope silently resurrect an alert the user never asked for;
+//   · a bell the user has actually pressed is never overwritten (draft.alertsTouched), which is
+//     what makes an auto-selected one deselectable instead of springing back on.
+function autoSelectAlerts(){
+  const reach=reachableRows(draft);
+  AVAIL_ROWS.concat(AVAIL_ROWS.filter(r=>r.extraAlert).map(r=>({alert:r.extraAlert.key})))
+    .forEach(r=>{
+      const k=r.alert;
+      if(!reach.has(k)){ draft.alerts[k]=false; return; }
+      if(!draft.alertsTouched[k]) draft.alerts[k]=true;
+    });
+}
 // State lives in `draft`; the DOM is only ever synced to it — so the reveal transition survives a toggle.
 function syncSpine(){
   AVAIL_ROWS.forEach(r=>{
@@ -3658,14 +3785,23 @@ function syncSpine(){
     // A half-filled row says which windows it actually holds — the label must not overstate the radar.
     const part = st==="part" ? r.windows.filter(w=>draft.status.includes(w)).map(w=>STATUS_LABEL[w]).join(" + ") : "";
     el.querySelector(".alab small").textContent = part ? `Currently: ${part} only — tap for the whole window` : r.sub;
-    bellPaint(el, !!draft.alerts[r.alert], r.title);
+    bellPaint(el, r);
     // The second moment on the cinema row (CAS-68). It's a bell, not a window: it never narrows what the
     // Cascade finds, it only decides whether you're told when a film it already watches has had its weekend.
     if(r.extraAlert){
       $("opt-"+r.key).classList.toggle("open", st!=="off" || allOn());
-      const mo=$("moment-"+r.extraAlert.key), on=!!draft.alerts[r.extraAlert.key];
+      // Same honesty rule as the four main bells: if it can't fire, it doesn't read as on, and it
+      // says which of the two reasons applies (CAS-103 AC3).
+      const ek=r.extraAlert.key, mo=$("moment-"+ek), ewhy=bellBlocked(ek);
+      const on=!!draft.alerts[ek] && !ewhy;
       mo.classList.toggle("on", on);
+      mo.classList.toggle("blocked", !!ewhy);
       mo.setAttribute("aria-checked", String(on));
+      mo.setAttribute("aria-disabled", String(!!ewhy));
+      mo.querySelector("small").textContent = ewhy
+        ? (ewhy==="muted" ? "— muted for every Cascade in Preferences"
+                          : "— this Cascade stops watching before the big screen, so it can't fire")
+        : "— "+r.extraAlert.sub;
     }
     if(!r.home) return;
     // Each home window owns its own scope now, and it only appears while that window is being watched.
@@ -3773,14 +3909,24 @@ function syncScale(){
     ? `<b>Any.</b> No size filter.`
     : `<b>${TENTPOLE_STOPS.find(x=>x.key===t).label} — ${n} title${n===1?"":"s"}.</b> ${TENT_DESC[t]}`;
 }
-function bellPaint(row, on, label){
-  const b=row.querySelector(".abell");
+function bellPaint(row, r){
+  const key=r.alert, name=r.alertName, b=row.querySelector(".abell");
+  const why=bellBlocked(key);
+  // A blocked bell reads OFF whatever the stored flag says — AC3: a button that can't fire is never
+  // presented as active. The flag itself is left alone so un-muting restores the user's own setting.
+  const on=!!draft.alerts[key] && !why;
   b.classList.toggle("on", on);
+  b.disabled = !!why;
   b.setAttribute("aria-checked", String(on));
-  b.setAttribute("aria-label", `Alert me when a film reaches ${label}`);
-  // The control reads "📣 Alert". State can't be carried by colour alone (WCAG 1.4.1), so the off state
-  // says so in words as well as going grey.
-  b.querySelector(".bl").textContent = on ? "Alert" : "Alert · off";
+  b.setAttribute("aria-disabled", String(!!why));
+  b.setAttribute("aria-label", why
+    ? `${name} alert — unavailable: ${why==="muted" ? "muted for every Cascade in Preferences"
+                                                    : "outside this Cascade's windows"}`
+    : `Alert me the moment a film ${ALERT_MOMENT[key]}`);
+  // State can't be carried by colour alone (WCAG 1.4.1), so the off state says so in words too.
+  b.querySelector(".bl").textContent = on ? name : `${name} · off`;
+  const w=row.querySelector(".awhy");
+  if(w){ w.hidden=!why; w.innerHTML = why ? BLOCK_WHY[why](name) : ""; }
 }
 function syncMineWarn(){
   const w=$("cMineWarn"); if(!w) return;
@@ -3960,6 +4106,9 @@ function openEditor(title){
   normCascade(draft);
   $("cName").value=draft.name;
   $("cDelete").style.display = draft.id ? "" : "none";
+  // Auto-select before the first paint, so the editor OPENS showing what this Cascade will actually
+  // tell you about rather than a default set the scope may already have ruled out (CAS-103 AC2).
+  autoSelectAlerts();
   buildSpine(); syncSpine();
   buildQuality();
   buildEditorChips("cGenreChips", ALL_GENRES, "genre", null, ()=>"gen");
@@ -4784,6 +4933,7 @@ function render(){
   syncView();
   renderFound();    // membership changes from a card, from the Found view itself, or from a Cascade — one repaint covers all
   updatePrefSwitch(); updatePrefBtn(); updateUxSwitch(); refreshSetupMeters(); renderServiceAdvice();
+  syncAlertPrefChips();
   // Smart defaults: label the apply control with its payoff, not a bare "Done".
   $("filtersDone").textContent = ux.on
     ? (shown.length ? `Show ${shown.length} film${shown.length===1?"":"s"}` : "No films match")
@@ -5270,12 +5420,18 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
   // ---- shape mapping: local Cascade <-> table row --------------------------
   // criteria (jsonb) carries the whole local Cascade minus the columns stored on their own
   // (id, name, paused->active). alert_moments (text[]) is DERIVED from the local alerts object for
-  // the monitor (CAS-84/85). pvod has no monitor moment, so it stays UI-only inside criteria.
+  // the monitor (CAS-84/85). pvod now has a real monitor moment too (hits_pvod, CAS-103) — before
+  // that the Purchase bell was UI-only, a switch the daily job could never act on.
   const ALERT_TO_MOMENT = { cinema:"hits_cinema", past_opening:"past_opening_weekend",
-                            rental:"hits_rent", included_streaming:"hits_stream" };
+                            pvod:"hits_pvod", rental:"hits_rent",
+                            included_streaming:"hits_stream" };
+  // What we write here is the promise the monitor will keep, so it has to survive the same two
+  // tests the UI applies: the bell must be REACHABLE for this Cascade's scope, and the type must
+  // not be muted globally in Preferences. Writing a moment that fails either would have the daily
+  // job email about something the app is simultaneously telling the user it will never mention.
   function momentsOf(c){
     const a=c.alerts||{}, out=[];
-    for(const k in ALERT_TO_MOMENT) if(a[k]) out.push(ALERT_TO_MOMENT[k]);
+    for(const k in ALERT_TO_MOMENT) if(alertLive(c,k)) out.push(ALERT_TO_MOMENT[k]);
     return out;
   }
   function cascadeToRow(c){

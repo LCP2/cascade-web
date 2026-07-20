@@ -40,6 +40,34 @@ class TransitionTests(unittest.TestCase):
             ("5004", "past_opening_weekend"),   # today == opening (07-12) + 4
         })
 
+    # ---- hits_pvod (CAS-103): the Purchase bell's moment ----
+    # Built inline rather than in the shared fixtures so the expected-set test above keeps asserting
+    # an exact set — a new fixture film would quietly widen it.
+    def _pvod_case(self, offers):
+        prev = [{"tmdb_id": 7001, "title": "Premium Riser", "status": ["in_cinema"]}]
+        today = [{"tmdb_id": 7001, "title": "Premium Riser", "status": ["in_cinema", "pvod"],
+                  "offers": offers}]
+        return compute_transitions(prev, today, RUN_DATE)
+
+    def test_pvod_arrival_fires(self):
+        ts = self._pvod_case([{"type": "buy", "service": "Apple TV", "price": 24.99}])
+        self.assertEqual(self._pairs(ts), {("7001", "hits_pvod")})
+
+    def test_pvod_detail_has_services_and_cheapest_price(self):
+        ts = self._pvod_case([
+            {"type": "buy", "service": "Apple TV", "price": 24.99},
+            {"type": "rent", "service": "Prime Video", "price": 19.99},   # > rental ceiling -> pvod
+            {"type": "rent", "service": "Cheap Rents", "price": 4.99},    # standard rental, not pvod
+        ])
+        t = ts[0]
+        self.assertEqual(t.moment, "hits_pvod")
+        self.assertEqual(t.services, ["Apple TV", "Prime Video"])
+        self.assertEqual(t.price, 19.99)          # cheapest PREMIUM offer, not the $4.99 rental
+
+    def test_pvod_first_sighting_never_fires(self):
+        today = [{"tmdb_id": 7002, "title": "Brand New", "status": ["pvod"], "offers": []}]
+        self.assertEqual(compute_transitions([], today, RUN_DATE), [])
+
     # ---- honesty guardrails: no false positives ----
     def test_first_sighting_never_fires(self):
         # 5005 is brand-new today (rental) and absent yesterday -> not a transition.

@@ -15,7 +15,7 @@ the daily monitoring job writes.
 
 | Object | Purpose |
 | --- | --- |
-| `public.cascades` | One row per saved agent, per user. `criteria` (jsonb) holds the filter (genres, minRating, services, maxPrice, ageMax…); `alert_moments` (text[]) is the subset of `hits_cinema \| past_opening_weekend \| hits_rent \| hits_stream` the agent should fire on. |
+| `public.cascades` | One row per saved agent, per user. `criteria` (jsonb) holds the filter (genres, minRating, services, maxPrice, ageMax…); `alert_moments` (text[]) is the subset of `hits_cinema \| past_opening_weekend \| hits_pvod \| hits_rent \| hits_stream` the agent should fire on. |
 | `public.notifications` | The sent-email ledger. The daily job writes it and de-dupes against it so the same `(cascade, movie, moment)` is never emailed twice. |
 
 **Row-level security**

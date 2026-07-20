@@ -8,6 +8,10 @@ A *transition* is one movie crossing into one *moment*. The four moments mirror 
 ``CascadeShape`` mapping in app_template.html):
 
     hits_cinema           — the film's theatrical window opened (status gained "in_cinema")
+    hits_pvod             — it reached premium home video: buy, or rent above the standard rental
+                            ceiling (status gained "pvod"). Added by CAS-103 so the editor's
+                            Purchase button drives a moment that can really fire — before that it
+                            was a UI-only toggle wired to nothing.
     hits_rent             — it became available to rent (status gained "rental")
     hits_stream           — it landed on an included/free streaming service (status gained
                             "included_streaming")
@@ -36,10 +40,11 @@ DEFAULT_WEEKEND_N = 4  # days after opening that "past opening weekend" fires (t
 # here because it is date-computed, not status-derived.
 _STATUS_MOMENTS = (
     ("hits_cinema", "in_cinema"),
+    ("hits_pvod", "pvod"),
     ("hits_rent", "rental"),
     ("hits_stream", "included_streaming"),
 )
-MOMENTS = ("hits_cinema", "hits_rent", "hits_stream", "past_opening_weekend")
+MOMENTS = ("hits_cinema", "hits_pvod", "hits_rent", "hits_stream", "past_opening_weekend")
 
 
 @dataclass
@@ -108,6 +113,13 @@ def _detail_for(moment: str, movie: dict):
         rents = [o for o in offers if _offer_window(o) == "rental"]
         svcs = [o.get("service") for o in rents]
         prices = [o.get("price") for o in rents if o.get("price") is not None]
+        return _dedupe(svcs), (min(prices) if prices else None)
+    if moment == "hits_pvod":
+        # Premium covers both shapes of early home release — a buy, and a rent priced above the
+        # standard rental ceiling — so read the price off whichever offers actually landed.
+        prem = [o for o in offers if _offer_window(o) == "pvod"]
+        svcs = [o.get("service") for o in prem]
+        prices = [o.get("price") for o in prem if o.get("price") is not None]
         return _dedupe(svcs), (min(prices) if prices else None)
     # cinema moments carry no service/price
     return [], None

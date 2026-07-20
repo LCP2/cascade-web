@@ -14,11 +14,12 @@ notifications ledger. Sending the email arrives in CAS-86.
 | Moment | Fires when |
 | --- | --- |
 | `hits_cinema` | the film's status newly gains `in_cinema` (theatrical window opened) |
+| `hits_pvod` | status newly gains `pvod` (premium home video — a buy, or a rent above the rental price ceiling) |
 | `hits_rent` | status newly gains `rental` (available to rent, ≤ the rental price ceiling) |
 | `hits_stream` | status newly gains `included_streaming` (on an included/free service) |
 | `past_opening_weekend` | today is exactly `cinema_date + N` days (N=4, tunable) — **computed from the film's real opening date**, not a catalogue diff |
 
-**Honesty guardrail.** The three status moments only fire on a *genuine transition*: the film
+**Honesty guardrail.** The four status moments only fire on a *genuine transition*: the film
 must have been in yesterday's catalogue and not already in that window, so a film's first
 sighting never produces an alert. `past_opening_weekend` only fires on a real, parseable
 `cinema_date` (ref CAS-68) — never on a missing or invented date.

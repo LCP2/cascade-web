@@ -28,7 +28,7 @@ import json
 import sys
 
 from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notification_rows,
-               render_digest, send_via_resend, suppressed_pairs)
+               render_digest, send_via_resend, suppressed_pairs, excluded_moments)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
 from .store import InMemoryStore, store_from_env
 
@@ -53,6 +53,12 @@ def _parse_args(argv):
                    help="Personal Pick overrides JSON: [{user_id, movie_id, state}] where state "
                         "'off' suppresses that film for that user (CAS-100). Device-local until the "
                         "picks are account-synced, so there is no Supabase default yet.")
+    p.add_argument("--excluded", metavar="PATH",
+                   help="Global alert-type excludes JSON: {user_id: [moment, ...]} (or a list of "
+                        "{user_id, excluded_moments}). A muted TYPE never fires for that user, "
+                        "whatever their Cascades say (CAS-103 AC4). Device-local in Preferences "
+                        "until prefs are account-synced, so there is no Supabase default yet — the "
+                        "front-end also strips muted types out of alert_moments when it saves.")
     p.add_argument("--print-html", action="store_true",
                    help="With --dry-run, print the full digest HTML (default: subject + text preview).")
     return p.parse_args(argv)
@@ -97,10 +103,15 @@ def main(argv=None) -> int:
     # A film the user has taken off by hand stays off — their answer outranks their own Cascade, in the
     # email as well as in the app (CAS-100 AC5).
     off = suppressed_pairs(_load_json(args.picks)) if args.picks else set()
-    by_user = match(cascades, transitions, already=already, catalogue=today_movies, suppressed=off)
+    # An alert TYPE the user muted everywhere in Preferences outranks their Cascades (CAS-103 AC4).
+    muted = excluded_moments(_load_json(args.excluded)) if args.excluded else {}
+    by_user = match(cascades, transitions, already=already, catalogue=today_movies, suppressed=off,
+                    excluded=muted)
 
     print(f"[monitor] matching against {len(cascades)} active cascade(s) from {source}; "
-          f"{len(already)} already-sent ledger entries; {len(off)} personal override(s) suppressing.")
+          f"{len(already)} already-sent ledger entries; {len(off)} personal override(s) suppressing; "
+          f"{sum(len(v) for v in muted.values())} global alert-type exclude(s) across "
+          f"{len(muted)} user(s).")
     if not by_user:
         print("[monitor] no new alerts for anyone — no email will be sent.")
         return 0

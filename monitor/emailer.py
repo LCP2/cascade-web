@@ -49,6 +49,11 @@ def moment_phrase(transition) -> str:
         where = (" on " + " / ".join(services)) if services else ""
         return (f"Dropped to rent — {price}{where}" if price
                 else f"Now available to rent{where}")
+    if m == "hits_pvod":
+        price = _money(transition.price)
+        where = (" on " + " / ".join(services)) if services else ""
+        return (f"Out early on premium — {price}{where}" if price
+                else f"Out early on premium{where}")
     if m == "hits_cinema":
         return "In cinemas now"
     if m == "past_opening_weekend":
@@ -59,6 +64,7 @@ def moment_phrase(transition) -> str:
 # A short, honest sub-line per moment (no invented urgency).
 _MOMENT_NOTE = {
     "hits_stream": "You can watch it now at no extra cost.",
+    "hits_pvod": "It's available at home early, at the premium price.",
     "hits_rent": "It's reached the standard rental window.",
     "hits_cinema": "Its cinema run has begun.",
     "past_opening_weekend": "The opening weekend has passed — often a quieter time to see it.",

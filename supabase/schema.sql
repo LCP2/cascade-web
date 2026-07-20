@@ -21,7 +21,10 @@ create table if not exists public.cascades (
   name          text not null default 'My agent',
   criteria      jsonb not null default '{}'::jsonb,   -- {genres:[], minRating, services:[], maxPrice, ageMax, ...}
   alert_moments text[] not null default '{hits_rent,hits_stream}',
-                 -- subset of: hits_cinema | past_opening_weekend | hits_rent | hits_stream
+                 -- subset of: hits_cinema | past_opening_weekend | hits_pvod | hits_rent | hits_stream
+                 -- hits_pvod added by CAS-103 (the editor's Purchase bell). No migration is needed:
+                 -- the column is an unconstrained text[], so existing rows stay valid and simply
+                 -- never carry the new value until the user switches Purchase on.
   active        boolean not null default true,
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()

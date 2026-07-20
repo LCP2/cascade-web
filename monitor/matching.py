@@ -197,7 +197,31 @@ def suppressed_pairs(picks) -> set:
     return out
 
 
-def match(cascades: list, transitions: list, already=None, catalogue=None, suppressed=None) -> dict:
+def excluded_moments(prefs) -> dict:
+    """Normalise the global alert-type exclude (CAS-103 AC4) into ``{user_id: {moment, ...}}``.
+
+    A user can switch an alert TYPE off everywhere — "never alert me about Purchase" — and that
+    preference outranks every one of their Cascades. `prefs` is an iterable of
+    ``{user_id, excluded_moments: [...]}`` rows, or a plain ``{user_id: [moments]}`` mapping.
+
+    Unknown moment names are kept rather than dropped: an exclude naming a moment we don't emit is
+    inert, and silently discarding it would make a future rename fail open (i.e. start emailing
+    about the very thing the user muted).
+    """
+    out: dict = {}
+    if not prefs:
+        return out
+    items = prefs.items() if isinstance(prefs, dict) else (
+        (p.get("user_id"), p.get("excluded_moments")) for p in prefs)
+    for user_id, moments in items:
+        if user_id is None:
+            continue
+        out.setdefault(str(user_id), set()).update(str(m) for m in (moments or ()) if m)
+    return out
+
+
+def match(cascades: list, transitions: list, already=None, catalogue=None, suppressed=None,
+          excluded=None) -> dict:
     """Return {user_id: [Hit, ...]} — one entry per (cascade, transition) that fires and hasn't
     been sent before.
 
@@ -210,9 +234,14 @@ def match(cascades: list, transitions: list, already=None, catalogue=None, suppr
                   ``suppressed_pairs``). The personal override outranks the Cascade: it goes on
                   matching the film and we go on saying nothing about it, every run, until the user
                   changes their mind. Empty/None -> nothing is suppressed.
+    excluded    : {user_id: {moment, ...}} of alert TYPES the user has muted globally in
+                  Preferences (see ``excluded_moments``). Like `suppressed`, it outranks the
+                  Cascade — a muted type never fires for that user, whatever their Cascades say.
+                  Empty/None -> nothing is globally muted.
     """
     seen = set(already or ())
     off = {(str(u), str(m)) for u, m in (suppressed or ())}
+    muted = excluded_moments(excluded)
     tiers = scale_tiers(catalogue) if catalogue else {}
     by_user: dict = {}
 
@@ -220,6 +249,9 @@ def match(cascades: list, transitions: list, already=None, catalogue=None, suppr
         if not c.get("active", True):
             continue
         moments = set(c.get("alert_moments") or [])
+        # The global exclude is applied to the Cascade's own list, so everything downstream —
+        # the de-dupe key, the ledger, the digest — simply never sees a muted moment.
+        moments -= muted.get(str(c["user_id"]), set())
         criteria = c.get("criteria") or {}
         for t in transitions:
             if t.moment not in moments:
