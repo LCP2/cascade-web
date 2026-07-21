@@ -770,6 +770,13 @@
   .osagent p{margin:0;font-size:11.5px;line-height:1.5;color:var(--dim)}
   .osagent b{color:var(--ink);font-weight:600}
   .osagent .cnt{color:var(--green);font-weight:700}
+  /* years slider (#6) — the app's native range control, tick labels, and a live explainer under it */
+  .osrange{width:calc(100% - 16px);margin:24px 8px 10px;accent-color:var(--violet);cursor:pointer}
+  .osrange:focus-visible{outline:2px solid var(--cyan);outline-offset:4px}
+  .osticks{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);margin:0 2px}
+  .osticks .here{color:var(--accenttext);font-weight:700}
+  .osexplain{font-size:11.5px;color:var(--dim);margin:12px 2px 0;line-height:1.45}
+  .osexplain b{color:var(--ink)}
   .osfoot{margin-top:18px}
   .oscta{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
     font-size:15px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 8px 26px rgba(124,92,255,.3)}
@@ -4753,24 +4760,50 @@ function onbSeedDraft(){
 // The sharpening flow's working state. Genre selection is held as the set of genres still ON (all to start);
 // the draft's genre filter is DERIVED from it — all-on means "any" (empty filter), so the count is the true
 // catalogue, exactly the mock's "leave them and it watches everything". Drop one and it narrows to the rest.
-const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME};
+const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME, yearStop:0};
 function onbApply(){
   const d=onbFlow.draft;
   d.genre = onbFlow.genresOn.size===ONB_GENRES.length ? [] : [...onbFlow.genresOn];
+  d.year = onbYearsApply();
   d.name = (onbFlow.name||"").trim() || ONB_DEFAULT_NAME;
   return normCascade(d);
 }
 const onbCount = () => watchCount(onbApply());
-// The agent-voice summary, read off the current selection — with the live count so it never over-promises.
+// The genre clause, shared by the summary and the genres step. All-on and all-off both mean "any" here — an
+// empty include-list matches every genre — so both read as "anything you'll love", and the copy never
+// disagrees with the count (honesty guardrail).
+function onbGenrePhrase(){
+  const anyGenre = onbFlow.genresOn.size===ONB_GENRES.length || onbFlow.genresOn.size===0;
+  return anyGenre ? "anything you'll love" : [...onbFlow.genresOn].map(esc).join(", ");
+}
+// ---- Release years (#6) ---------------------------------------------------------------------------
+// "How far back" — a floor year the agent won't look past. Any = every year in. The draft's year filter is
+// an explicit include-list, so a floor becomes "every catalogue year at or after it" (the top stop lands on
+// this year alone). Counts are real, straight off the catalogue.
+const YEAR_STOPS = [
+  {label:"Any",     floor:null},
+  {label:"2000s",   floor:2000},
+  {label:"2010s",   floor:2010},
+  {label:"2020s",   floor:2020},
+  {label:"This yr", floor:+CURRENT_YEAR},
+];
+function onbYearsApply(){
+  const st=YEAR_STOPS[onbFlow.yearStop||0];
+  return st.floor==null ? [] : ALL_YEARS.filter(y=>+y>=st.floor);
+}
+function onbYearPhrase(){
+  const i=onbFlow.yearStop||0;
+  if(i===0) return "from any year";
+  if(i===YEAR_STOPS.length-1) return "released this year";
+  return `from the ${YEAR_STOPS[i].label} on`;
+}
+// The agent-voice summary. Each step supplies its own "watches …" lead so the isolated preview reads like its
+// mock; the default is the genre clause. The count is always live so the copy can't over-promise.
 function onbSummary(){
   const d=onbApply(), n=onbCount();
-  // All-on and all-off both mean "any" here — an empty include-list matches every genre — so both read as
-  // "anything you'll love", and the copy never disagrees with the count (honesty guardrail).
-  const anyGenre = onbFlow.genresOn.size===ONB_GENRES.length || onbFlow.genresOn.size===0;
-  const g = anyGenre
-    ? "<b>anything you'll love</b>"
-    : [...onbFlow.genresOn].map(x=>`<b>${esc(x)}</b>`).join(", ");
-  return `📓 <b>${esc(d.name)}</b> watches for ${g} · above average+ — <span class="cnt">${n} film${n===1?"":"s"}</span> so far. I'll tell you the moment one lands on a service.`;
+  const step=SHARP_STEPS[onbStepKey];
+  const lead=(step && step.lead) ? step.lead() : `watches for <b>${onbGenrePhrase()}</b>`;
+  return `📓 <b>${esc(d.name)}</b> ${lead} · above average+ — <span class="cnt">${n} film${n===1?"":"s"}</span> so far. I'll tell you the moment one lands on a service.`;
 }
 // Step registry — each ticket adds one entry. `progress` is the mock's fill %; `body()` builds the control;
 // `wire()` attaches the live control once it's in the DOM.
@@ -4803,7 +4836,35 @@ const SHARP_STEPS = {
       });
     },
   },
+  years: {
+    progress: 48,
+    lead(){ return `watches films <b>${onbYearPhrase()}</b>`; },
+    body(){
+      const i=onbFlow.yearStop||0;
+      return `<h2 class="osh">How far back?</h2>
+        <p class="ossub">From all-time classics to this week's releases — everything's in by default.</p>
+        <input class="osrange" id="onbStepYears" type="range" min="0" max="${YEAR_STOPS.length-1}" step="1"
+               value="${i}" aria-label="How far back should your agent look?">
+        <div class="osticks">${YEAR_STOPS.map((s,k)=>`<span class="${k===i?'here':''}">${s.label}</span>`).join("")}</div>
+        <p class="osexplain" id="onbStepYearExplain">${onbYearExplain(i)}</p>`;
+    },
+    wire(){
+      const r=$("onbStepYears"); if(!r) return;
+      r.oninput=()=>{
+        onbFlow.yearStop=+r.value;
+        const ex=$("onbStepYearExplain"); if(ex) ex.innerHTML=onbYearExplain(onbFlow.yearStop);
+        document.querySelectorAll("#onbStep .osticks span").forEach((t,k)=>t.classList.toggle("here", k===onbFlow.yearStop));
+        onbRefresh();
+      };
+    },
+  },
 };
+// The one-line explainer under the years slider — honest about what a floor sets aside.
+function onbYearExplain(i){
+  if(i===0) return "<b>Any year.</b> Every release qualifies — nothing's ruled out by age.";
+  const p=onbYearPhrase();
+  return `<b>${p.charAt(0).toUpperCase()+p.slice(1)}.</b> Older films are set aside until you widen it again.`;
+}
 let onbStepKey=null;
 function renderOnbStep(key){
   const step=SHARP_STEPS[key]; if(!step) return;
@@ -4830,7 +4891,7 @@ function onbRefresh(){
 // Standalone preview: seed a fresh draft and open one step. Lee wires the real step→step→reveal sequence later.
 function openOnbStep(key){
   if(!SHARP_STEPS[key]) return false;
-  onbFlow.draft=onbSeedDraft(); onbFlow.genresOn=new Set(ONB_GENRES); onbFlow.name=ONB_DEFAULT_NAME;
+  onbFlow.draft=onbSeedDraft(); onbFlow.genresOn=new Set(ONB_GENRES); onbFlow.name=ONB_DEFAULT_NAME; onbFlow.yearStop=0;
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("onbstep_shown",{step:key});
   renderOnbStep(key);
