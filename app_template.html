@@ -4760,11 +4760,12 @@ function onbSeedDraft(){
 // The sharpening flow's working state. Genre selection is held as the set of genres still ON (all to start);
 // the draft's genre filter is DERIVED from it — all-on means "any" (empty filter), so the count is the true
 // catalogue, exactly the mock's "leave them and it watches everything". Drop one and it narrows to the rest.
-const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME, yearStop:0};
+const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME, yearStop:0, langsOn:new Set(["en"])};
 function onbApply(){
   const d=onbFlow.draft;
   d.genre = onbFlow.genresOn.size===ONB_GENRES.length ? [] : [...onbFlow.genresOn];
   d.year = onbYearsApply();
+  d.lang = [...onbFlow.langsOn];
   d.name = (onbFlow.name||"").trim() || ONB_DEFAULT_NAME;
   return normCascade(d);
 }
@@ -4797,6 +4798,15 @@ function onbYearPhrase(){
   if(i===YEAR_STOPS.length-1) return "released this year";
   return `from the ${YEAR_STOPS[i].label} on`;
 }
+// ---- Language (#7) --------------------------------------------------------------------------------
+// English is on by default; the rest are opt-in. Uses the app's real language codes so the scope works,
+// and an empty selection means "any language" — so deselecting even English widens rather than dead-ends.
+const LANG_OPTS = ["en","ko","ja","zh","fr","es","hi","it","de","th","sv","pt"];
+function onbLangPhrase(){
+  const on=[...onbFlow.langsOn];
+  if(!on.length) return "films in <b>any language</b>";
+  return `<b>${on.map(langName).join(", ")}-language</b> films`;
+}
 // The agent-voice summary. Each step supplies its own "watches …" lead so the isolated preview reads like its
 // mock; the default is the genre clause. The count is always live so the copy can't over-promise.
 function onbSummary(){
@@ -4828,6 +4838,35 @@ const SHARP_STEPS = {
         c.onclick=()=>{
           onbFlow.genresOn.has(g) ? onbFlow.genresOn.delete(g) : onbFlow.genresOn.add(g);
           const nowOn=onbFlow.genresOn.has(g);
+          c.classList.toggle("on", nowOn);
+          c.setAttribute("aria-pressed", String(nowOn));
+          onbRefresh();
+        };
+        box.appendChild(c);
+      });
+    },
+  },
+  language: {
+    progress: 65,
+    lead(){ return `watches ${onbLangPhrase()}`; },
+    body(){
+      return `<h2 class="osh">Which languages?</h2>
+        <p class="ossub">English is on. Add any others you watch — or leave it as-is.</p>
+        <div class="chips" id="onbStepLangs"></div>`;
+    },
+    wire(){
+      const box=$("onbStepLangs"); if(!box) return;
+      box.innerHTML="";
+      LANG_OPTS.forEach(code=>{
+        const on=onbFlow.langsOn.has(code);
+        const c=document.createElement("button");
+        c.type="button";
+        c.className="chip gen"+(on?" on":"");
+        c.setAttribute("aria-pressed", String(on));
+        c.textContent=langName(code);
+        c.onclick=()=>{
+          onbFlow.langsOn.has(code) ? onbFlow.langsOn.delete(code) : onbFlow.langsOn.add(code);
+          const nowOn=onbFlow.langsOn.has(code);
           c.classList.toggle("on", nowOn);
           c.setAttribute("aria-pressed", String(nowOn));
           onbRefresh();
@@ -4891,7 +4930,8 @@ function onbRefresh(){
 // Standalone preview: seed a fresh draft and open one step. Lee wires the real step→step→reveal sequence later.
 function openOnbStep(key){
   if(!SHARP_STEPS[key]) return false;
-  onbFlow.draft=onbSeedDraft(); onbFlow.genresOn=new Set(ONB_GENRES); onbFlow.name=ONB_DEFAULT_NAME; onbFlow.yearStop=0;
+  onbFlow.draft=onbSeedDraft(); onbFlow.genresOn=new Set(ONB_GENRES); onbFlow.name=ONB_DEFAULT_NAME;
+  onbFlow.yearStop=0; onbFlow.langsOn=new Set(["en"]);
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("onbstep_shown",{step:key});
   renderOnbStep(key);
