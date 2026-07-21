@@ -788,6 +788,41 @@
     color:var(--ink);font-size:15px;font-weight:600;font-family:var(--font-body)}
   .osfield::placeholder{color:var(--faint);font-weight:500}
   .osfield:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+  /* ---- Cascade Membership conversion page (CAS-120 / mock: 11-membership.html) ----
+     The post-reveal conversion moment: offer-led, benefits under the button. Built standalone/previewable
+     (?step=membership[&agent=<key>]) per Lee's wire-later call; the reveal→invite path is left as-is. */
+  .memb{position:fixed;inset:0;z-index:86;display:none;flex-direction:column;padding:24px 20px 22px;overflow-y:auto;
+    background:radial-gradient(120% 40% at 50% 0%,#141b30 0%,var(--bg) 44%,#080b14 100%)}
+  .memb.open{display:flex}
+  .membinner{width:100%;max-width:360px;margin:auto;display:flex;flex-direction:column;animation:splashIn .45s ease both}
+  @media (prefers-reduced-motion:reduce){ .membinner{animation:none} }
+  .membbadge{display:inline-block;font-family:var(--font-display);font-size:11px;font-weight:700;letter-spacing:.14em;
+    color:#fff;background:var(--grad);border-radius:999px;padding:5px 12px;align-self:flex-start}
+  .membh{font-family:var(--font-display);font-size:23px;font-weight:700;margin:16px 0 4px;line-height:1.2;color:var(--ink)}
+  .membsub{color:var(--dim);font-size:13px;line-height:1.5;margin:0 0 18px}
+  .membhero{border:1px solid rgba(124,92,255,.5);border-radius:16px;padding:16px 16px 14px;
+    background:linear-gradient(180deg,rgba(124,92,255,.14),rgba(124,92,255,.04))}
+  .membhero .free{font-family:var(--font-display);font-size:22px;font-weight:700;color:#fff}
+  .membhero .then{color:var(--dim);font-size:13px;font-weight:500;margin-left:6px}
+  .membhero .lt{display:block;color:var(--accenttext);font-size:12.5px;font-weight:600;margin-top:4px}
+  .membhero .cancel{display:flex;align-items:center;gap:7px;margin-top:12px;padding-top:12px;
+    border-top:1px solid rgba(124,92,255,.28);color:var(--ink);font-size:12.5px;font-weight:600}
+  .membhero .cancel svg{flex:0 0 auto}
+  .membreassure{color:var(--faint);font-size:11.5px;line-height:1.5;margin:12px 2px 16px;text-align:center}
+  .membcta{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
+    font-size:16px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 10px 30px rgba(124,92,255,.32)}
+  .membcta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+  .membeyebrow{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--faint);text-transform:uppercase;margin:22px 2px 12px}
+  .memben{display:flex;gap:13px;align-items:flex-start;margin-bottom:16px}
+  .memben .ic{flex:0 0 auto;width:40px;height:40px;border-radius:11px;background:#0E1320;border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:19px}
+  .memben .t b{font-family:var(--font-display);font-size:14.5px;font-weight:600;color:var(--ink)}
+  .memben .t p{margin:2px 0 0;color:var(--dim);font-size:12px;line-height:1.45}
+  .membskip{display:block;width:100%;text-align:center;margin-top:6px;color:var(--dim);font-size:12.5px;
+    background:none;border:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+  .membskip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
+  .membproto{color:var(--faint);font-size:10px;text-align:center;margin-top:14px;line-height:1.5}
   .osfoot{margin-top:18px}
   .oscta{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
     font-size:15px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 8px 26px rgba(124,92,255,.3)}
@@ -1319,6 +1354,13 @@
      rendered by renderOnbStep(); progress + summary + count come from the live engine. -->
 <div class="sharpstep" id="onbStep" role="dialog" aria-modal="true" aria-label="Set up your agent">
   <div class="osinner" id="onbStepInner"></div>
+</div>
+
+<!-- CASCADE MEMBERSHIP (CAS-120 / mock: 11-membership.html) — the post-reveal conversion page: offer-led,
+     benefits under the button. Built standalone/previewable (?step=membership[&agent=<key>]); Lee wires it
+     in after the reveal (#10) when ready. -->
+<div class="memb" id="membScreen" role="dialog" aria-modal="true" aria-label="Cascade Membership">
+  <div class="membinner" id="membBody"></div>
 </div>
 
 <!-- STARTER-AWARE CONFIG WIZARD (CAS-76) — supersedes the CAS-71 modal as the first-run setup.
@@ -5014,6 +5056,52 @@ window.onbStepSkip=()=>{ logEvent("onbstep_skipped",{step:onbStepKey}); closeOnb
 // Standalone for now — Continue just closes. Lee wires step→step→reveal when the sequence lands.
 window.onbStepContinue=()=>{ logEvent("onbstep_continue",{step:onbStepKey, matches:onbCount()}); closeOnbStep(); };
 
+// ================= Cascade Membership conversion page (CAS-120 / mock: 11-membership.html) =================
+// The post-reveal conversion moment: lead with the free-month offer, keep the agent's name in the opening
+// line, put the four membership benefits UNDER the button. No card, no charge — a prototype page. Built
+// standalone/previewable (?step=membership[&agent=<key>]); the existing reveal→invite path is untouched, so
+// Lee can swap this in after the reveal (#10) when ready.
+const MEMB_BENEFITS = [
+  {ic:"🔔", name:"Film alerts", sub:"The moment a match hits cinema, rental or streaming."},
+  {ic:"🎚️", name:"Streaming service filtering", sub:"Only show films on the services you actually have."},
+  {ic:"✨", name:"AI preference learning", sub:"It learns what you watch and sharpens every pick."},
+  {ic:"💳", name:"Streaming service utilisation", sub:"Get more from the subscriptions you already pay for."},
+];
+function openMembership(agentKey){
+  const picked = agentKey && STARTERS.find(x=>x.key===agentKey);
+  const name = picked ? picked.name : ONB_DEFAULT_NAME;   // the agent's name stays in the opening line
+  const tick = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5" stroke="#48c78e" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  $("membBody").innerHTML = `
+    <span class="membbadge">CASCADE</span>
+    <h2 class="membh">Become a Cascade member</h2>
+    <p class="membsub">Keep <b>${esc(name)}</b> running. It never stops — it finds new films the moment they
+      match, in every window, every day, so you don't have to look.</p>
+    <div class="membhero">
+      <div><span class="free">Free for a month</span><span class="then">then $3/month</span></div>
+      <span class="lt">≈ less than half a rental</span>
+      <div class="cancel">${tick} Cancel any time — one tap, no questions</div>
+    </div>
+    <p class="membreassure">No card needed. We'll always ask before anything is ever charged.</p>
+    <button class="membcta" type="button" onclick="membStart()">Start my free month</button>
+    <div class="membeyebrow">What membership gives you</div>
+    ${MEMB_BENEFITS.map(b=>`<div class="memben"><div class="ic">${b.ic}</div>
+      <div class="t"><b>${esc(b.name)}</b><p>${esc(b.sub)}</p></div></div>`).join("")}
+    <button class="membskip" type="button" onclick="membSkip()">Not now — just let me browse</button>
+    <p class="membproto">Prototype — no account, no payment, no real charge.</p>`;
+  $("membScreen").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("membership_shown",{agent:agentKey||null});
+  return true;
+}
+function closeMembership(){ $("membScreen").classList.remove("open"); document.body.style.overflow=""; }
+window.membStart=()=>{ logEvent("membership_start"); closeMembership(); };   // prototype — no real charge
+window.membSkip=()=>{ logEvent("membership_skip"); closeMembership(); };
+// One entry point for ?step=<name> previews — sharpening steps, then the standalone conversion pages.
+function openPreviewStep(name, agent){
+  if(openOnbStep(name, agent)) return true;
+  if(name==="membership") return openMembership(agent);
+  return false;
+}
+
 // ================= Value-first reveal (CAS-77 / spec 26640386 §2/§3) =================
 // The reciprocity moment: show the agent's REAL haul (posters straight from the live engine) + provenance,
 // with no account asked for. "Available now" is what the agent can show you today (matchesCriteria, which
@@ -5878,7 +5966,7 @@ const openedShared = openSharedFromURL();
 // SEE the first run again, not to fake being a new user (that's ?reset, which really does clear the slate).
 // ?step=<name> previews one north-star sharpening step (CAS-115+) in isolation; it wins over the splash
 // so the screen can be reviewed on its own before Lee wires the sequence.
-if(!openedShared && previewStep && openOnbStep(previewStep, previewAgent)){/* previewing a single step */}
+if(!openedShared && previewStep && openPreviewStep(previewStep, previewAgent)){/* previewing a single step */}
 else if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
 // One screen, one message. Priority: the reset notice, then the duplicate clean-up (it changed your Cascades,
 // so it has to be said out loud), then the agent's report on what it found while you weren't looking.
