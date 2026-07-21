@@ -743,6 +743,41 @@
   .wizskip{display:block;width:100%;margin-top:10px;background:none;border:none;color:var(--dim);
     font-size:12.5px;font-weight:600;cursor:pointer;text-decoration:underline;padding:6px 0}
 
+  /* ---- north-star sharpening steps (CAS-115+ / mock: 05to09-genres-years-language-age-name.html) ----
+     The #5–#9 steps (genres, years, language, age, name) that sit between agent-select and the reveal.
+     Built self-contained and previewable in isolation (?step=<name>) until Lee wires the sequence. One
+     shared full-screen frame — top bar (back + progress + LAST ONE), heading, control, live agent-voice
+     summary, and a footer that carries the real running count. Chips/slider reuse the app's live controls. */
+  .sharpstep{position:fixed;inset:0;z-index:82;display:none;flex-direction:column;padding:22px 20px 20px;
+    overflow-y:auto;background:radial-gradient(120% 45% at 50% 0%,#141b30 0%,var(--bg) 42%,#080b14 100%)}
+  .sharpstep.open{display:flex}
+  .osinner{width:100%;max-width:360px;margin:auto;display:flex;flex-direction:column;min-height:0;
+    animation:splashIn .4s ease both}
+  @media (prefers-reduced-motion:reduce){ .osinner{animation:none} }
+  .ostop{display:flex;align-items:center;gap:11px;margin-bottom:20px}
+  .osback{width:34px;height:34px;border-radius:10px;background:var(--panel);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:15px;flex:0 0 auto;cursor:pointer}
+  .osback:hover{border-color:var(--violet)}
+  .osback:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .osprog{flex:1;height:6px;border-radius:999px;background:#20263a;overflow:hidden}
+  .osprog i{display:block;height:100%;border-radius:999px;background:var(--grad);transition:width .4s ease}
+  .oslast{font-size:10.5px;font-weight:700;letter-spacing:.06em;color:var(--accenttext);flex:0 0 auto}
+  .osh{font-family:var(--font-display);font-size:20px;font-weight:700;margin:0 0 6px;color:var(--ink)}
+  .ossub{color:var(--dim);font-size:12.5px;line-height:1.5;margin:0 0 16px}
+  .osagent{display:flex;gap:9px;background:rgba(124,92,255,.08);border:1px solid rgba(124,92,255,.42);
+    border-radius:14px;padding:12px;margin:16px 0 0}
+  .osagent .i{font-size:15px;line-height:1.2;flex:0 0 auto}
+  .osagent p{margin:0;font-size:11.5px;line-height:1.5;color:var(--dim)}
+  .osagent b{color:var(--ink);font-weight:600}
+  .osagent .cnt{color:var(--green);font-weight:700}
+  .osfoot{margin-top:18px}
+  .oscta{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
+    font-size:15px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 8px 26px rgba(124,92,255,.3)}
+  .oscta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+  .osskip{display:block;width:100%;text-align:center;margin-top:12px;color:var(--dim);font-size:12.5px;
+    background:none;border:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+  .osskip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
+
   /* ---- value-first reveal (CAS-77 / spec 26640386 §2/§3) ----
      The reciprocity moment: the agent's real haul (posters from the live engine) + provenance,
      before any ask. Two CTAs — keep it running (→ invite), or just browse (→ guest). No account. */
@@ -1260,6 +1295,14 @@
   </div>
 </div>
 
+<!-- NORTH-STAR SHARPENING STEP (CAS-115+ / mock: 05to09-genres-years-language-age-name.html) — one
+     shared frame for the #5–#9 steps. Built self-contained and previewable in isolation (?step=<name>)
+     until Lee wires the full sequence between agent-select (#2) and the reveal (#10). Body per step is
+     rendered by renderOnbStep(); progress + summary + count come from the live engine. -->
+<div class="sharpstep" id="onbStep" role="dialog" aria-modal="true" aria-label="Set up your agent">
+  <div class="osinner" id="onbStepInner"></div>
+</div>
+
 <!-- STARTER-AWARE CONFIG WIZARD (CAS-76) — supersedes the CAS-71 modal as the first-run setup.
      One thing per step, no numbers, slide transitions, live agent-voice summary. Body per step
      is rendered by renderWiz(); the final step lands on the reveal (CAS-77). -->
@@ -1430,6 +1473,10 @@ const svcName=s=>SVC_DISPLAY[s]||s;
 // cleared by this too, rather than surviving a "clean slate" that quietly wasn't one.
 const URLQ = new URLSearchParams(location.search);
 const forceSetup = URLQ.has("setup") || URLQ.has("onboard");   // read before the params are stripped
+// Standalone preview of a single onboarding step (CAS-115+). The new north-star sharpening steps
+// (#5 genres, #6 years, …) are built self-contained and previewable in isolation until Lee wires the
+// full sequence; ?step=<name> opens just that screen. Read before the params are stripped.
+const previewStep = URLQ.get("step");
 const didReset = URLQ.has("reset");
 if(didReset){
   try{
@@ -1438,8 +1485,8 @@ if(didReset){
 }
 // Strip only what we consumed. `?c=` (a shared Cascade) and `?log` are read further down and clean up after
 // themselves — taking the whole query string here would swallow a share link that arrived alongside ?setup.
-if(didReset || forceSetup){
-  ["reset","setup","onboard"].forEach(k=>URLQ.delete(k));
+if(didReset || forceSetup || previewStep){
+  ["reset","setup","onboard","step"].forEach(k=>URLQ.delete(k));
   const q=URLQ.toString();
   history.replaceState(null, "", location.pathname + (q?"?"+q:"") + location.hash);
 }
@@ -4689,6 +4736,111 @@ window.wizCreateAgent=()=>{
   showReveal(c);
 };
 
+// ================= North-star sharpening steps (CAS-115+ / mock: 05to09-genres-years-language-age-name.html) =================
+// The #5–#9 steps (genres, years, language, age, name) that sit between agent-select (#2) and the reveal
+// (#10). Each is built self-contained and previewable in isolation (?step=<name>) until Lee wires the full
+// sequence; its own ticket adds one renderer to SHARP_STEPS. Every screen renders into one shared frame from
+// a single draft agent, and the live agent-voice summary + the CTA count come straight from the engine
+// (watchCount) — never the mock's illustrative figure (honesty guardrail).
+const ONB_DEFAULT_NAME = "Friday night finder";
+// A representative agent to seed a standalone step: watches everything it can, above-average bar, all genres
+// — the "leave it and it watches everything" baseline the mocks open on.
+function onbSeedDraft(){
+  return normCascade({id:null, template:"agent", icon:"📓", name:ONB_DEFAULT_NAME,
+    status:[], genre:[], exclude:[], age:[], lang:["en"], culture:[], year:[],
+    imdb:RATING_STOPS[1].imdb, ratingStop:1, rt:0, awards:false, myServices:false, sort:"imdb"});
+}
+// The sharpening flow's working state. Genre selection is held as the set of genres still ON (all to start);
+// the draft's genre filter is DERIVED from it — all-on means "any" (empty filter), so the count is the true
+// catalogue, exactly the mock's "leave them and it watches everything". Drop one and it narrows to the rest.
+const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME};
+function onbApply(){
+  const d=onbFlow.draft;
+  d.genre = onbFlow.genresOn.size===ONB_GENRES.length ? [] : [...onbFlow.genresOn];
+  d.name = (onbFlow.name||"").trim() || ONB_DEFAULT_NAME;
+  return normCascade(d);
+}
+const onbCount = () => watchCount(onbApply());
+// The agent-voice summary, read off the current selection — with the live count so it never over-promises.
+function onbSummary(){
+  const d=onbApply(), n=onbCount();
+  // All-on and all-off both mean "any" here — an empty include-list matches every genre — so both read as
+  // "anything you'll love", and the copy never disagrees with the count (honesty guardrail).
+  const anyGenre = onbFlow.genresOn.size===ONB_GENRES.length || onbFlow.genresOn.size===0;
+  const g = anyGenre
+    ? "<b>anything you'll love</b>"
+    : [...onbFlow.genresOn].map(x=>`<b>${esc(x)}</b>`).join(", ");
+  return `📓 <b>${esc(d.name)}</b> watches for ${g} · above average+ — <span class="cnt">${n} film${n===1?"":"s"}</span> so far. I'll tell you the moment one lands on a service.`;
+}
+// Step registry — each ticket adds one entry. `progress` is the mock's fill %; `body()` builds the control;
+// `wire()` attaches the live control once it's in the DOM.
+const SHARP_STEPS = {
+  genres: {
+    progress: 30,
+    body(){
+      return `<h2 class="osh">What do you love watching?</h2>
+        <p class="ossub">All genres are on — tap any to drop it. Leave them and your agent watches everything.</p>
+        <div class="chips" id="onbStepGenres"></div>`;
+    },
+    wire(){
+      const box=$("onbStepGenres"); if(!box) return;
+      box.innerHTML="";
+      ONB_GENRES.forEach(g=>{
+        const on=onbFlow.genresOn.has(g);
+        const c=document.createElement("button");
+        c.type="button";
+        c.className="chip gen"+(on?" on":"");
+        c.setAttribute("aria-pressed", String(on));
+        c.innerHTML=`${esc(g)} <span style="opacity:.55">· ${GENRE_COUNT[g]||0}</span>`;
+        c.onclick=()=>{
+          onbFlow.genresOn.has(g) ? onbFlow.genresOn.delete(g) : onbFlow.genresOn.add(g);
+          const nowOn=onbFlow.genresOn.has(g);
+          c.classList.toggle("on", nowOn);
+          c.setAttribute("aria-pressed", String(nowOn));
+          onbRefresh();
+        };
+        box.appendChild(c);
+      });
+    },
+  },
+};
+let onbStepKey=null;
+function renderOnbStep(key){
+  const step=SHARP_STEPS[key]; if(!step) return;
+  onbStepKey=key;
+  const last = step.progress>=100;
+  $("onbStepInner").innerHTML = `
+    <div class="ostop">
+      <button class="osback" type="button" onclick="closeOnbStep()" aria-label="Back">←</button>
+      <div class="osprog"><i style="width:${step.progress}%"></i></div>
+      ${last?`<span class="oslast">LAST ONE</span>`:""}
+    </div>
+    ${step.body()}
+    <div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>
+    <div class="osfoot">
+      <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">Continue${ctaCount(onbCount())}</button>
+      <button class="osskip" type="button" onclick="onbStepSkip()">Skip — I'll set this up later</button>
+    </div>`;
+  if(step.wire) step.wire();
+}
+function onbRefresh(){
+  const s=$("onbStepSum"); if(s) s.innerHTML=onbSummary();
+  const b=$("onbStepCta"); if(b) b.textContent=`Continue${ctaCount(onbCount())}`;
+}
+// Standalone preview: seed a fresh draft and open one step. Lee wires the real step→step→reveal sequence later.
+function openOnbStep(key){
+  if(!SHARP_STEPS[key]) return false;
+  onbFlow.draft=onbSeedDraft(); onbFlow.genresOn=new Set(ONB_GENRES); onbFlow.name=ONB_DEFAULT_NAME;
+  $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("onbstep_shown",{step:key});
+  renderOnbStep(key);
+  return true;
+}
+window.closeOnbStep=()=>{ $("onbStep").classList.remove("open"); document.body.style.overflow=""; };
+window.onbStepSkip=()=>{ logEvent("onbstep_skipped",{step:onbStepKey}); closeOnbStep(); };
+// Standalone for now — Continue just closes. Lee wires step→step→reveal when the sequence lands.
+window.onbStepContinue=()=>{ logEvent("onbstep_continue",{step:onbStepKey, matches:onbCount()}); closeOnbStep(); };
+
 // ================= Value-first reveal (CAS-77 / spec 26640386 §2/§3) =================
 // The reciprocity moment: show the agent's REAL haul (posters straight from the live engine) + provenance,
 // with no account asked for. "Available now" is what the agent can show you today (matchesCriteria, which
@@ -5551,7 +5703,10 @@ const openedShared = openSharedFromURL();
 // First run only — the "seen" flag is set by finishing OR skipping, so returning visitors go straight to the app.
 // ?setup replays it on demand: the flag stays set, and the rest of your state is untouched — this is a way to
 // SEE the first run again, not to fake being a new user (that's ?reset, which really does clear the slate).
-if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
+// ?step=<name> previews one north-star sharpening step (CAS-115+) in isolation; it wins over the splash
+// so the screen can be reviewed on its own before Lee wires the sequence.
+if(!openedShared && previewStep && openOnbStep(previewStep)){/* previewing a single step */}
+else if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
 // One screen, one message. Priority: the reset notice, then the duplicate clean-up (it changed your Cascades,
 // so it has to be said out loud), then the agent's report on what it found while you weren't looking.
 if(didReset) toast("🧹 Local state cleared — this is a clean first run.");
