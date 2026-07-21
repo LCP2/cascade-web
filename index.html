@@ -666,9 +666,9 @@
   .splashcta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
   @media (prefers-reduced-motion:reduce){ .splashinner{animation:none} }
 
-  /* ---- starter shortlist (CAS-75 / spec 26640386 §2) ----
-     "Give your agent its first job": three tappable starter cards with live match counts,
-     one badged Recommended. Sits between the splash and the setup flow. */
+  /* ---- starter shortlist (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
+     "Select your first agent": the mock's list of tappable agent cards, each with a live green
+     "N films match now" count, one badged RECOMMENDED. Sits between the splash and the reveal. */
   .shortlist{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;padding:34px 24px 40px;
     overflow-y:auto;background:radial-gradient(130% 90% at 50% -10%, rgba(76,125,255,.18),
     rgba(34,211,238,.05) 45%, rgba(10,14,26,0) 70%), var(--bg)}
@@ -679,21 +679,19 @@
   .slback:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
   .slh{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.2px;color:var(--ink);margin:4px 0 6px}
   .slp{font-size:13.5px;color:var(--dim);line-height:1.5;margin:0 0 20px}
-  .scards{display:grid;gap:12px}
-  .scard{display:flex;align-items:center;gap:14px;text-align:left;cursor:pointer;width:100%;
-    background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:16px;color:var(--ink);transition:.15s}
+  .scards{display:grid;gap:11px}
+  .scard{display:flex;align-items:flex-start;gap:13px;text-align:left;cursor:pointer;width:100%;
+    background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;color:var(--ink);transition:border-color .15s}
   .scard:hover{border-color:var(--violet);background:rgba(124,92,255,.08)}
   .scard:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  .sc-ic{font-size:28px;line-height:1;flex:none}
-  .sc-main{flex:1;display:flex;flex-direction:column;gap:3px;min-width:0}
-  .sc-name{font-size:15.5px;font-weight:800;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .sc-rec{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#fff;
-    background:var(--accentdeep);border-radius:20px;padding:2px 8px}
-  .sc-blurb{font-size:12.5px;color:var(--dim);line-height:1.4}
-  .sc-n{font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--accenttext);
-    flex:none;min-width:34px;text-align:right}
-  .sc-n small{display:block;font-family:var(--font-body);font-size:9.5px;font-weight:700;letter-spacing:.4px;
-    text-transform:uppercase;color:var(--faint);margin-top:-2px}
+  .sc-ic{flex:0 0 auto;width:42px;height:42px;border-radius:12px;background:#0E1320;border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:21px;line-height:1}
+  .sc-main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .sc-name{font-family:var(--font-display);font-size:15.5px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .sc-rec{font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--accenttext);
+    background:rgba(124,92,255,.16);border:1px solid rgba(124,92,255,.45);border-radius:999px;padding:2px 8px}
+  .sc-blurb{font-size:12.5px;color:var(--dim);line-height:1.4;margin:3px 0 8px}
+  .sc-match{color:var(--green);font-size:12.5px;font-weight:600}
 
   /* ---- starter-aware config wizard (CAS-76 / spec 26640386 §3) ----
      One thing per step, no step numbers: a slim progress bar + an "almost done / last one" cue.
@@ -1247,13 +1245,15 @@
   </div>
 </div>
 
-<!-- STARTER SHORTLIST (CAS-75) — "give your agent its first job": three starter cards with live
-     counts. Shown after the splash; a card launches the setup flow pre-set for that starter.
-     CAS-76 replaces that setup sheet with the full starter-aware wizard. -->
-<div class="shortlist" id="shortlist" role="dialog" aria-modal="true" aria-label="Give your agent its first job">
+<!-- AGENT SELECT (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) — "Select your first agent":
+     the mock's list of agent cards with live "N films match now" counts, one RECOMMENDED. Shown after
+     the splash; a card builds that agent and hands to the value-first reveal (CAS-106, the agent's haul).
+     No membership gate on any card — service-scoped agents run against the whole catalogue until the
+     user adds their own services (the #12 setup step). -->
+<div class="shortlist" id="shortlist" role="dialog" aria-modal="true" aria-label="Select your first agent">
   <div class="slinner">
     <button class="slback" id="shortlistBack" type="button">← Back</button>
-    <h2 class="slh">Give your agent its first job</h2>
+    <h2 class="slh">Select your first agent</h2>
     <p class="slp">Pick where it should start watching. It goes out and finds these for you, day after day —
       you can change every part of it next.</p>
     <div class="scards" id="shortlistCards"></div>
@@ -4405,32 +4405,49 @@ function splashGo(){
 }
 $("splashCta").onclick=splashGo;
 
-// ---- Starter shortlist (CAS-75) — three starter cards with live counts ----
-// The three starters are the on-ramps the wizard (CAS-76) is built around. Each carries the criteria that
-// define "what's here now" for its lane, so the card count is the REAL number of films it catches today
-// (countCriteria) — never a mock (honesty guardrail). The full 12-template library still lives in the
-// Cascade Builder for later; this is just the first job.
+// ---- Agent select (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
+// The mock's ten first-agent cards. Each carries real criteria, so its green "N films match now" is the
+// live number it catches today (countCriteria) — never the mock's illustrative figure (honesty guardrail).
+// The first three are the cinema/rentals/streaming lanes; the other seven reuse the shipped CASCADE_TEMPLATES
+// criteria so the card and the built agent can never drift. No membership gate: service-scoped agents
+// (Watch tonight, Date night) count against the whole catalogue because no services are picked yet at
+// first run — matchesCriteria only scopes to "my services" once servicesPicked() is true.
+const _tplCrit = k => CASCADE_TEMPLATES.find(t=>t.key===k);
 const STARTERS = [
-  {key:"cinema",    icon:"🎬", name:"In cinema",          blurb:"Big-screen films, out now or opening soon",
+  {key:"cinema",    icon:"🎬", name:"In cinema",           blurb:"Big-screen films, out now or opening soon",
    crit:{status:["opening_week","in_cinema"], genre:[], lang:[], imdb:0}},
-  {key:"rentals",   icon:"🍿", name:"Top rentals",         blurb:"Great films that just dropped to rent",
+  {key:"rentals",   icon:"🎟️", name:"Top rentals",         blurb:"Great films that just dropped to rent",
    crit:{status:["rental"], genre:[], lang:[], imdb:0}},
   {key:"streaming", icon:"📺", name:"Must-watch streaming", blurb:"Streaming now on the big services", recommended:true,
    crit:{status:["included_streaming"], genre:[], lang:[], imdb:0}},
+  {key:"watch_tonight", icon:"🍿", name:"Watch tonight",   blurb:"Included on services I already have",
+   crit:_tplCrit("watch_tonight").crit, alerts:_tplCrit("watch_tonight").alerts},
+  {key:"rent_radar", icon:"🎫", name:"Rent radar",         blurb:"Good films that reach Rent (~$7)",
+   crit:_tplCrit("rent_radar").crit, alerts:_tplCrit("rent_radar").alerts},
+  {key:"bargain", icon:"🏷️", name:"Bargain hunter",       blurb:"Never overpay — tell me when it drops below premium",
+   crit:_tplCrit("bargain").crit, alerts:_tplCrit("bargain").alerts},
+  {key:"family", icon:"👨‍👩‍👧", name:"Family fun",           blurb:"Cert-appropriate films for me and the kids",
+   crit:_tplCrit("family").crit, alerts:_tplCrit("family").alerts},
+  {key:"prestige", icon:"🏆", name:"Awards & prestige",    blurb:"Winners and nominees, as they become watchable",
+   crit:_tplCrit("prestige").crit, alerts:_tplCrit("prestige").alerts},
+  {key:"blockbuster", icon:"📽️", name:"Blockbuster radar", blurb:"The films heading for cinemas, most anticipated first",
+   crit:_tplCrit("blockbuster").crit, alerts:_tplCrit("blockbuster").alerts},
+  {key:"date_night", icon:"🍷", name:"Date night",         blurb:"Crowd-pleasers you both agree on, on your services",
+   crit:_tplCrit("date_night").crit, alerts:_tplCrit("date_night").alerts},
 ];
 STARTERS.forEach(s=>normCascade(s.crit));
 const starterCount = s => countCriteria(s.crit);
-let pendingStarter = null;   // the starter the person chose — CAS-76's wizard will read this
+let pendingStarter = null;   // the agent the person chose
 function renderShortlist(){
   $("shortlistCards").innerHTML = STARTERS.map(s=>{
     const n=starterCount(s);
     return `<button class="scard" type="button" onclick="pickStarter('${s.key}')">
         <span class="sc-ic">${s.icon}</span>
         <span class="sc-main">
-          <span class="sc-name">${s.name}${s.recommended?` <b class="sc-rec">Recommended</b>`:""}</span>
+          <span class="sc-name">${s.name}${s.recommended?` <b class="sc-rec">RECOMMENDED</b>`:""}</span>
           <span class="sc-blurb">${s.blurb}</span>
+          ${n?`<span class="sc-match">${n} film${n===1?"":"s"} match now</span>`:""}
         </span>
-        <span class="sc-n">${n}<small>films</small></span>
       </button>`;
   }).join("");
 }
@@ -4440,11 +4457,22 @@ function showShortlist(){
   logEvent("shortlist_shown");
 }
 $("shortlistBack").onclick=()=>{ $("shortlist").classList.remove("open"); showSplash(); };
+// Picking an agent builds it straight from the card's real criteria and hands to the value-first reveal
+// (CAS-106, "the agent's haul") — the honest payoff of the north-star flow: pick, see what it found, keep
+// it running. The per-agent sharpening steps (#4–#9) slot in between select and reveal as their tickets
+// land. No membership gate here — a service-scoped agent runs against the whole catalogue until the user
+// adds their own services in the #12 setup step. (The CAS-76 wizard is kept for reference, no longer the
+// first-run path.)
 window.pickStarter=key=>{
   const s=STARTERS.find(x=>x.key===key); if(!s) return;
-  pendingStarter=key; logEvent("starter_picked",{key});
+  pendingStarter=key; wiz.starter=key;   // wiz.starter feeds the reveal's lead phrase (falls back gracefully)
+  logEvent("starter_picked",{key});
+  draft=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
+  const {c}=commitDraft();
+  try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
+  logEvent("agent_created",{starter:key, matches:countCriteria(c)});
   $("shortlist").classList.remove("open");
-  openWizard(key);
+  showReveal(c);
 };
 
 // ================= Starter-aware config wizard (CAS-76 / spec 26640386 §3) =================
