@@ -777,6 +777,12 @@
   .osticks .here{color:var(--accenttext);font-weight:700}
   .osexplain{font-size:11.5px;color:var(--dim);margin:12px 2px 0;line-height:1.45}
   .osexplain b{color:var(--ink)}
+  /* age segmented control (#8) — up-to-and-including ladder, gradient on the chosen level */
+  .osseg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px;gap:2px}
+  .osseg-s{flex:1;text-align:center;padding:10px 0;border-radius:999px;font-size:13px;font-weight:600;
+    color:var(--dim);background:none;border:0;cursor:pointer;transition:.15s}
+  .osseg-s.on{background:var(--grad);color:#fff}
+  .osseg-s:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .osfoot{margin-top:18px}
   .oscta{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
     font-size:15px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 8px 26px rgba(124,92,255,.3)}
@@ -4760,12 +4766,14 @@ function onbSeedDraft(){
 // The sharpening flow's working state. Genre selection is held as the set of genres still ON (all to start);
 // the draft's genre filter is DERIVED from it — all-on means "any" (empty filter), so the count is the true
 // catalogue, exactly the mock's "leave them and it watches everything". Drop one and it narrows to the rest.
-const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME, yearStop:0, langsOn:new Set(["en"])};
+const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME, yearStop:0,
+                 langsOn:new Set(["en"]), ageStop:AGE_LEVELS.length-1};
 function onbApply(){
   const d=onbFlow.draft;
   d.genre = onbFlow.genresOn.size===ONB_GENRES.length ? [] : [...onbFlow.genresOn];
   d.year = onbYearsApply();
   d.lang = [...onbFlow.langsOn];
+  d.age = AGE_LEVELS.slice(0, onbFlow.ageStop+1);   // up to and including; the top stop is all ratings (open)
   d.name = (onbFlow.name||"").trim() || ONB_DEFAULT_NAME;
   return normCascade(d);
 }
@@ -4806,6 +4814,16 @@ function onbLangPhrase(){
   const on=[...onbFlow.langsOn];
   if(!on.length) return "films in <b>any language</b>";
   return `<b>${on.map(langName).join(", ")}-language</b> films`;
+}
+// ---- Age rating (#8) ------------------------------------------------------------------------------
+// "Up to and including" the chosen level; the top stop (R 18+) includes everything, which is the default.
+// The ladder is the catalogue's real ratings, so the include-list always lines up with the data.
+function onbAgePhrase(){
+  return onbFlow.ageStop>=AGE_LEVELS.length-1 ? "all ratings" : `up to ${AGE_LEVELS[onbFlow.ageStop]}`;
+}
+function onbAgeExplain(i){
+  if(i>=AGE_LEVELS.length-1) return `<b>${esc(AGE_LEVELS[AGE_LEVELS.length-1])}.</b> Everything qualifies — nothing's held back for rating.`;
+  return `<b>${esc(AGE_LEVELS[i])}.</b> Up to and including ${esc(AGE_LEVELS[i])} — anything higher is set aside.`;
 }
 // The agent-voice summary. Each step supplies its own "watches …" lead so the isolated preview reads like its
 // mock; the default is the genre clause. The count is always live so the copy can't over-promise.
@@ -4875,6 +4893,31 @@ const SHARP_STEPS = {
       });
     },
   },
+  age: {
+    progress: 82,
+    lead(){ return `watches <b>${onbAgePhrase()}</b>`; },
+    body(){
+      const i=onbFlow.ageStop;
+      return `<h2 class="osh">Age rating</h2>
+        <p class="ossub">Picks everything up to and including the level you choose.</p>
+        <div class="osseg" id="onbStepAges" role="group" aria-label="Highest age rating to include">
+          ${AGE_LEVELS.map((a,k)=>`<button type="button" class="osseg-s${k===i?' on':''}" data-i="${k}" aria-pressed="${k===i}">${esc(a)}</button>`).join("")}
+        </div>
+        <p class="osexplain" id="onbStepAgeExplain">${onbAgeExplain(i)}</p>`;
+    },
+    wire(){
+      const box=$("onbStepAges"); if(!box) return;
+      box.querySelectorAll(".osseg-s").forEach(b=>{
+        b.onclick=()=>{
+          onbFlow.ageStop=+b.dataset.i;
+          box.querySelectorAll(".osseg-s").forEach((x,k)=>{ const on=k===onbFlow.ageStop;
+            x.classList.toggle("on",on); x.setAttribute("aria-pressed",String(on)); });
+          const ex=$("onbStepAgeExplain"); if(ex) ex.innerHTML=onbAgeExplain(onbFlow.ageStop);
+          onbRefresh();
+        };
+      });
+    },
+  },
   years: {
     progress: 48,
     lead(){ return `watches films <b>${onbYearPhrase()}</b>`; },
@@ -4931,7 +4974,7 @@ function onbRefresh(){
 function openOnbStep(key){
   if(!SHARP_STEPS[key]) return false;
   onbFlow.draft=onbSeedDraft(); onbFlow.genresOn=new Set(ONB_GENRES); onbFlow.name=ONB_DEFAULT_NAME;
-  onbFlow.yearStop=0; onbFlow.langsOn=new Set(["en"]);
+  onbFlow.yearStop=0; onbFlow.langsOn=new Set(["en"]); onbFlow.ageStop=AGE_LEVELS.length-1;
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("onbstep_shown",{step:key});
   renderOnbStep(key);
