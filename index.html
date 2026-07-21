@@ -783,6 +783,11 @@
     color:var(--dim);background:none;border:0;cursor:pointer;transition:.15s}
   .osseg-s.on{background:var(--grad);color:#fff}
   .osseg-s:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* name field (#9) */
+  .osfield{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;
+    color:var(--ink);font-size:15px;font-weight:600;font-family:var(--font-body)}
+  .osfield::placeholder{color:var(--faint);font-weight:500}
+  .osfield:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .osfoot{margin-top:18px}
   .oscta{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
     font-size:15px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 8px 26px rgba(124,92,255,.3)}
@@ -1490,6 +1495,9 @@ const forceSetup = URLQ.has("setup") || URLQ.has("onboard");   // read before th
 // (#5 genres, #6 years, …) are built self-contained and previewable in isolation until Lee wires the
 // full sequence; ?step=<name> opens just that screen. Read before the params are stripped.
 const previewStep = URLQ.get("step");
+// Optional agent for a step preview — seeds the dynamic default name (CAS-119) so the standalone name step
+// shows the default following the picked agent (?step=name&agent=date_night), as it will once #2 is wired.
+const previewAgent = URLQ.get("agent");
 const didReset = URLQ.has("reset");
 if(didReset){
   try{
@@ -1499,7 +1507,7 @@ if(didReset){
 // Strip only what we consumed. `?c=` (a shared Cascade) and `?log` are read further down and clean up after
 // themselves — taking the whole query string here would swallow a share link that arrived alongside ?setup.
 if(didReset || forceSetup || previewStep){
-  ["reset","setup","onboard","step"].forEach(k=>URLQ.delete(k));
+  ["reset","setup","onboard","step","agent"].forEach(k=>URLQ.delete(k));
   const q=URLQ.toString();
   history.replaceState(null, "", location.pathname + (q?"?"+q:"") + location.hash);
 }
@@ -4893,6 +4901,23 @@ const SHARP_STEPS = {
       });
     },
   },
+  name: {
+    progress: 100,
+    cta: "Show me what it found",
+    // No custom lead — the summary recaps the choices so far (genres/years/language/age) via the default
+    // genre lead plus the live count, which is exactly the #8 mock's "here's what it'll do" box.
+    body(){
+      return `<h2 class="osh">Name your agent.</h2>
+        <p class="ossub">Optional — but it's yours, and it's about to go to work for you.</p>
+        <input class="osfield" id="onbStepName" type="text" maxlength="40" autocomplete="off"
+               placeholder="${escA(onbFlow.name||ONB_DEFAULT_NAME)}" value="${escA(onbFlow.name)}"
+               aria-label="Name your agent">`;
+    },
+    wire(){
+      const el=$("onbStepName"); if(!el) return;
+      el.oninput=()=>{ onbFlow.name=el.value; onbRefresh(); };
+    },
+  },
   age: {
     progress: 82,
     lead(){ return `watches <b>${onbAgePhrase()}</b>`; },
@@ -4961,22 +4986,26 @@ function renderOnbStep(key){
     ${step.body()}
     <div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>
     <div class="osfoot">
-      <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">Continue${ctaCount(onbCount())}</button>
+      <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${step.cta || `Continue${ctaCount(onbCount())}`}</button>
       <button class="osskip" type="button" onclick="onbStepSkip()">Skip — I'll set this up later</button>
     </div>`;
   if(step.wire) step.wire();
 }
 function onbRefresh(){
   const s=$("onbStepSum"); if(s) s.innerHTML=onbSummary();
-  const b=$("onbStepCta"); if(b) b.textContent=`Continue${ctaCount(onbCount())}`;
+  const step=SHARP_STEPS[onbStepKey];
+  const b=$("onbStepCta"); if(b) b.textContent = (step && step.cta) ? step.cta : `Continue${ctaCount(onbCount())}`;
 }
 // Standalone preview: seed a fresh draft and open one step. Lee wires the real step→step→reveal sequence later.
-function openOnbStep(key){
+// agentKey (optional) seeds the dynamic default name from a picked agent — how #2 will feed the flow.
+function openOnbStep(key, agentKey){
   if(!SHARP_STEPS[key]) return false;
   onbFlow.draft=onbSeedDraft(); onbFlow.genresOn=new Set(ONB_GENRES); onbFlow.name=ONB_DEFAULT_NAME;
   onbFlow.yearStop=0; onbFlow.langsOn=new Set(["en"]); onbFlow.ageStop=AGE_LEVELS.length-1;
+  const picked = agentKey && STARTERS.find(x=>x.key===agentKey);
+  if(picked){ onbFlow.name=picked.name; onbFlow.draft.icon=picked.icon; }   // default name follows the pick
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
-  logEvent("onbstep_shown",{step:key});
+  logEvent("onbstep_shown",{step:key, agent:agentKey||null});
   renderOnbStep(key);
   return true;
 }
@@ -5849,7 +5878,7 @@ const openedShared = openSharedFromURL();
 // SEE the first run again, not to fake being a new user (that's ?reset, which really does clear the slate).
 // ?step=<name> previews one north-star sharpening step (CAS-115+) in isolation; it wins over the splash
 // so the screen can be reviewed on its own before Lee wires the sequence.
-if(!openedShared && previewStep && openOnbStep(previewStep)){/* previewing a single step */}
+if(!openedShared && previewStep && openOnbStep(previewStep, previewAgent)){/* previewing a single step */}
 else if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
 // One screen, one message. Priority: the reset notice, then the duplicate clean-up (it changed your Cascades,
 // so it has to be said out loud), then the agent's report on what it found while you weren't looking.
