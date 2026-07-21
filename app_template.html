@@ -814,8 +814,11 @@
   .osdh b{font-family:var(--font-display);font-size:14px;font-weight:600;color:var(--ink)}
   .osdset{font-size:11.5px;color:var(--accenttext);font-weight:600;flex:0 0 auto}
   .oscap{font-size:11px;color:var(--faint);margin:2px 2px 0}
-  .osdial .osticks{font-size:9px}
+  .osdial .osticks{font-size:9px;align-items:flex-start}
   .osdial .osticks span{flex:1;text-align:center}
+  .osdial .osticks .thr{display:block;font-size:8px;font-weight:700;opacity:.7;margin-top:1px}
+  .osdial .osticks .here .thr{opacity:1;color:var(--accenttext)}
+  .osaside{display:block;margin-top:7px;font-size:11px;color:var(--dim);font-style:italic}
   .osexplain2{background:rgba(124,92,255,.09);border:1px solid rgba(124,92,255,.42);border-radius:14px;
     padding:13px;margin:22px 0 0}
   .osexplain2 .oseh{font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--accenttext);
@@ -3256,17 +3259,18 @@ function matchesCriteria(m,c,ignoreBlocked){
   if((c.culture||[]).length && !c.culture.includes(m.culture)) return false;
   if(c.awards && !m.award) return false;
   if(!ratingOK(m, c.imdb||0, c.includeUnrated)) return false;
-  // Selectivity dials (CAS-114). The three gates AND together when set by hand; the "very best" shortcut
-  // (c.selOr) combines them with OR so a film exceptional on ANY one axis qualifies. Skipped wholesale unless
-  // a dial is set, so every Cascade that predates this keeps matching identically.
-  if(c.selCrowd || c.selCritics || c.selScale || c.selOr){
-    const cr=selCrowdOK(m,c), ct=selCriticsOK(m,c), scale=selScaleMatch(m,c);
-    if(c.selOr){
-      if(!(cr || ct || scale===true)) return false;   // OR: exceptional on any axis; unknown scale doesn't count
-    }else{
-      if(!cr || !ct) return false;
-      if(scale===false) return false;                 // AND lean: only a KNOWN out-of-band scale drops the film
-    }
+  // Selectivity dials (CAS-114, reworked 2026-07-21). Each dial is an independent idea of "good", combined
+  // with OR: a film qualifies if it clears ANY active dial, so raising one dial never collapses the set — it
+  // only ADDS a way in. A dial left open (0) is switched OFF and contributes no criterion; all three off ⇒
+  // whole catalogue, so every Cascade that predates the dials keeps matching identically. The two score dials
+  // (crowd, critics-review) can only admit titles that carry that score; the budget dial is a lean — an
+  // unknown scale is never the reason a film is dropped, so it rides along as a qualifying pass.
+  if(c.selCrowd || c.selCritics || c.selScale){
+    let pass=false;
+    if(c.selCrowd)   pass = pass || selCrowdOK(m,c);
+    if(c.selCritics) pass = pass || selCriticsOK(m,c);
+    if(c.selScale)   pass = pass || (selScaleMatch(m,c)!==false);   // true or unknown(null) qualifies; scale never drops
+    if(!pass) return false;
   }
   if(!budgetOK(m, c.budget||0, c.includeUnbudgeted)) return false;
   if(c.tentpole && c.tentpole!=="any" && !tentpoleIs(m,c.tentpole)) return false;
@@ -5038,39 +5042,61 @@ function onbAgeExplain(i){
 // Three ideas of "worth watching", each defaulting fully open. People's vote is a raw IMDb bar; the other
 // two are stop ladders read by matchesCriteria (selCritics / selScale). Thresholds are the ticket's, confirmed.
 const CROWD_STOPS = [
-  {label:"Anything",   imdb:0,   say:null},
-  {label:"Liked",      imdb:6.0, say:"the crowd liked (IMDb 6.0+)"},
-  {label:"Well-liked", imdb:7.0, say:"the crowd well-liked (7.0+)"},
-  {label:"Loved",      imdb:7.5, say:"the crowd loved (7.5+)"},
-  {label:"Adored",     imdb:8.2, say:"the crowd adored (8.2+)"},
+  {label:"Anything",   thr:null,     imdb:0,   say:null},
+  {label:"Liked",      thr:"6.0",    imdb:6.0, say:"the crowd liked (IMDb 6.0+)"},
+  {label:"Well-liked", thr:"7.0",    imdb:7.0, say:"the crowd well-liked (7.0+)"},
+  {label:"Loved",      thr:"7.5",    imdb:7.5, say:"the crowd loved (7.5+)"},
+  {label:"Adored",     thr:"8.2",    imdb:8.2, say:"the crowd adored (8.2+)"},
 ];
 const CRITICS_STOPS = [
-  {label:"Any",           say:null},
-  {label:"Well-reviewed", say:"well-reviewed by critics (Metacritic 60+)"},
-  {label:"Acclaimed",     say:"critically acclaimed (Metacritic 80+)"},
-  {label:"🏆 Nominee",    say:"award nominees"},
-  {label:"🏆 Winner",     say:"award winners"},
+  {label:"Any",           thr:null,   say:null},
+  {label:"Well-reviewed", thr:"MC 60", say:"well-reviewed by critics (Metacritic 60+)"},
+  {label:"Acclaimed",     thr:"MC 80", say:"critically acclaimed (Metacritic 80+)"},
+  {label:"🏆 Nominee",    thr:null,   say:"award nominees"},
+  {label:"🏆 Winner",     thr:null,   say:"award winners"},
 ];
 const SCALE_STOPS = [
-  {label:"Any size",    say:null},
-  {label:"Indie",       say:"indie-scale (under $15M)"},
-  {label:"Studio",      say:"studio-scale ($15–100M)"},
-  {label:"Blockbuster", say:"blockbuster-scale (over $100M)"},
+  {label:"Any size",    thr:null,        say:null},
+  {label:"Indie",       thr:"<$15M",     say:"indie-scale (under $15M)"},
+  {label:"Studio",      thr:"$15–100M",  say:"studio-scale ($15–100M)"},
+  {label:"Blockbuster", thr:">$100M",    say:"blockbuster-scale (over $100M)"},
 ];
-// The combined "What this does" line. Honest and live: it names only the dials that are set, joins them the way
-// they actually combine (AND by hand, OR under the "very best" shortcut), and always carries the real count.
+// The combined "What this does" line (CAS-114, reworked). Honest and live: names only the dials that are set,
+// joins them with "or" (they combine with OR — a film needs to clear only one), and always carries the real
+// count. When a score dial is active it appends a set-aside note, because a score dial can only judge titles
+// that carry that score — so the count silently excludes unscored titles, and that must be explained.
 function selSayHtml(){
   const n=onbCount(), cnt=`<span class="cnt">${n} film${n===1?"":"s"}</span>`;
-  if(onbFlow.selOr){
-    return `Your agent brings you the very best — films <b>the crowd adored</b>, <b>award winners</b>, or <b>blockbusters</b> (exceptional on any one count). ${cnt} right now.`;
-  }
   const parts=[];
   const c=CROWD_STOPS[onbFlow.crowdStop||0].say; if(c) parts.push(c);
   const cr=CRITICS_STOPS[onbFlow.criticsStop||0].say; if(cr) parts.push(cr);
   const sc=SCALE_STOPS[onbFlow.scaleStop||0].say; if(sc) parts.push(sc);
   if(!parts.length) return `Your agent watches the <b>whole catalogue</b> — any score, any critics, any size. Turn a dial up to sharpen. ${cnt} right now.`;
-  const joined = parts.map(p=>`<b>${p}</b>`).reduce((a,p,i)=> i===0 ? p : (i===parts.length-1 ? `${a} and ${p}` : `${a}, ${p}`), "");
-  return `Your agent brings you films that are ${joined}. ${cnt} right now.`;
+  const joined = parts.map(p=>`<b>${p}</b>`).reduce((a,p,i)=> i===0 ? p : `${a} <u>or</u> ${p}`, "");
+  const aside = selSetAside();
+  const asideHtml = aside ? ` <span class="osaside">${aside} title${aside===1?"":"s"} have no score yet and aren't counted here.</span>` : "";
+  return `Your agent brings you films that are ${joined}. ${cnt} right now.${asideHtml}`;
+}
+// The set-aside count the "What this does" box owns. A score dial (People's vote, or a Critics REVIEW rung —
+// not the award rungs) can only admit titles carrying that score, so it silently drops the unscored. N is the
+// honest number: taste-matched titles NOT in the final count that carry none of the scores the active score
+// dials read (so no active score dial could have let them in). Award and budget dials don't gate on a score
+// and never add to this number. This is the explanation for the 190→51 drop Lee flagged.
+function selSetAside(){
+  const crowdOn = !!(onbFlow.crowdStop);
+  const critStop = onbFlow.criticsStop||0;
+  const critScoreOn = critStop===1 || critStop===2;   // review rungs read a score; award rungs (3/4) don't
+  if(!crowdOn && !critScoreOn) return 0;
+  const d = onbApply();
+  const dOpen = {...d, selCrowd:0, selCritics:0, selScale:0, selOr:false};   // the taste base, dials off
+  const inFinal = new Set(MOVIES.filter(m=>watchesFilm(m,d)));
+  return MOVIES.filter(m=>{
+    if(!watchesFilm(m,dOpen)) return false;   // must be in the taste base to begin with
+    if(inFinal.has(m)) return false;          // already counted — not set aside
+    const noCrowd = crowdOn ? !m.imdb_rating : true;
+    const noCrit  = critScoreOn ? (critScore(m)==null) : true;
+    return noCrowd && noCrit;                 // excluded AND unscorable by every active score dial
+  }).length;
 }
 // The agent-voice summary. Each step supplies its own "watches …" lead so the isolated preview reads like its
 // mock; the default is the genre clause. The count is always live so the copy can't over-promise.
@@ -5118,34 +5144,34 @@ const SHARP_STEPS = {
         </div>`;
     },
   },
-  // #4 selectivity — three dials (CAS-114 / mock: 04-selectivity-three-dials.html). Its own "What this does"
-  // box carries the combined live count (noAgent drops the shared summary). Dials default fully open; moving
-  // one by hand combines with AND, the "very best" shortcut pre-sets the top tiers and combines with OR.
+  // #4 selectivity — three dials (CAS-114, reworked 2026-07-21). Its own "What this does" box carries the
+  // combined live count (noAgent drops the shared summary). Dials default fully open and combine with OR — turn
+  // up the ones that matter and each ADDS a way in. Each dial shows a one-line "how it's worked out" note and
+  // thresholds on its tick labels; there is no "very best" shortcut and no right-hand value readout.
   selectivity: {
     progress: 21,
     noAgent: true,
     body(){
-      const dial = (id, icon, name, cap, stops, cur, four) => `
+      const tick = s => `${s.label}${s.thr?`<span class="thr">${s.thr}</span>`:""}`;
+      const dial = (id, icon, name, how, stops, cur, four) => `
         <div class="osdial">
-          <div class="osdh"><b>${icon} ${esc(name)}</b><span class="osdset" id="${id}Set">${stops[cur].label}</span></div>
-          <p class="oscap">${cap}</p>
+          <div class="osdh"><b>${icon} ${esc(name)}</b></div>
+          <p class="oscap">${how}</p>
           <input class="osrange" id="${id}" type="range" min="0" max="${stops.length-1}" step="1" value="${cur}" aria-label="${escA(name)}">
-          <div class="osticks${four?' four':''}">${stops.map((s,k)=>`<span class="${k===cur?'here':''}">${s.label}</span>`).join("")}</div>
+          <div class="osticks${four?' four':''}">${stops.map((s,k)=>`<span class="${k===cur?'here':''}">${tick(s)}</span>`).join("")}</div>
         </div>`;
       return `<h2 class="osh">Set your bar</h2>
-        <p class="ossub">Three dials, three different ideas of "worth watching." Turn up the ones that matter to you — leave the rest wide open.</p>
-        <button type="button" class="osbest${onbFlow.selOr?' on':''}" id="onbSelBest" aria-pressed="${!!onbFlow.selOr}">✨ The very best</button>
-        ${dial("onbSelCrowd","👥","People's vote","What the crowd scored it (IMDb).", CROWD_STOPS, onbFlow.crowdStop||0)}
-        ${dial("onbSelCritics","🎬","Critics & awards","Up the critical ladder — reviews, then nominees, then winners.", CRITICS_STOPS, onbFlow.criticsStop||0)}
-        ${dial("onbSelScale","💰","Budget & scale","Arthouse indie through to tentpole blockbuster (a lean, not a hard cut).", SCALE_STOPS, onbFlow.scaleStop||0, true)}
+        <p class="ossub">Three bars, three different ideas of "good." Turn up the ones that matter — your agent will keep finding films that meet your standard.</p>
+        ${dial("onbSelCrowd","👥","People's vote","How it's worked out: the IMDb crowd score.", CROWD_STOPS, onbFlow.crowdStop||0)}
+        ${dial("onbSelCritics","🎬","Critics &amp; awards","How it's worked out: Metacritic first, Rotten Tomatoes as a fallback (never blended), then award status.", CRITICS_STOPS, onbFlow.criticsStop||0)}
+        ${dial("onbSelScale","💰","Budget &amp; scale","How it's worked out: the TMDB production budget — a lean, not a hard cut; unknown budgets are never dropped.", SCALE_STOPS, onbFlow.scaleStop||0, true)}
         <div class="osexplain2"><div class="oseh">What this does</div><p id="onbSelSay">${selSayHtml()}</p></div>`;
     },
     wire(){
       const bind=(id, key, stops)=>{
         const r=$(id); if(!r) return;
         r.oninput=()=>{
-          onbFlow[key]=+r.value; onbFlow.selOr=false;   // a hand-set dial drops OR back to AND
-          $(id+"Set").textContent=stops[+r.value].label;
+          onbFlow[key]=+r.value;
           const ticks=r.parentElement.querySelector(".osticks");
           if(ticks) [...ticks.children].forEach((t,k)=>t.classList.toggle("here", k===+r.value));
           selRefresh();
@@ -5154,13 +5180,6 @@ const SHARP_STEPS = {
       bind("onbSelCrowd","crowdStop",CROWD_STOPS);
       bind("onbSelCritics","criticsStop",CRITICS_STOPS);
       bind("onbSelScale","scaleStop",SCALE_STOPS);
-      const best=$("onbSelBest");
-      if(best) best.onclick=()=>{
-        onbFlow.crowdStop=CROWD_STOPS.length-1; onbFlow.criticsStop=CRITICS_STOPS.length-1;
-        onbFlow.scaleStop=SCALE_STOPS.length-1; onbFlow.selOr=true;
-        logEvent("onbsel_verybest",{});
-        renderOnbStep("selectivity");   // re-render: moves every knob, label and tick to the top tier at once
-      };
     },
   },
   genres: {
@@ -5321,11 +5340,10 @@ function onbRefresh(){
   const step=SHARP_STEPS[onbStepKey];
   const b=$("onbStepCta"); if(b) b.textContent = (step && step.cta) ? step.cta : `Continue${ctaCount(onbCount())}`;
 }
-// #4 selectivity refresh (CAS-114): update the "What this does" line + count, keep the very-best chip's active
-// state honest, and let onbRefresh update the CTA count from the same live figure.
+// #4 selectivity refresh (CAS-114): update the "What this does" line + count, and let onbRefresh update the
+// CTA count from the same live figure.
 function selRefresh(){
   const say=$("onbSelSay"); if(say) say.innerHTML=selSayHtml();
-  const best=$("onbSelBest"); if(best){ best.classList.toggle("on", !!onbFlow.selOr); best.setAttribute("aria-pressed", String(!!onbFlow.selOr)); }
   onbRefresh();
 }
 // Standalone preview: seed a fresh draft and open one step. Lee wires the real step→step→reveal sequence later.
