@@ -925,19 +925,23 @@
     overflow-y:auto;background:radial-gradient(130% 80% at 50% -5%, rgba(124,92,255,.22),
     rgba(34,211,238,.06) 50%, rgba(10,14,26,0) 75%), var(--bg)}
   .reveal.open{display:flex}
-  .rvinner{width:100%;max-width:440px;margin:auto;animation:splashIn .5s ease both}
+  .rvinner{width:100%;max-width:440px;margin:0 auto;animation:splashIn .5s ease both}
   @media (prefers-reduced-motion:reduce){ .rvinner{animation:none} }
   .rvhero{text-align:center;margin-bottom:18px}
+  /* CAS-123: the count + copy + single CTA are pinned to the top; the poster grid scrolls under them, so the
+     user can act without scrolling past posters. A gradient fade lets posters peek through as they pass under. */
+  .rvtop{position:sticky;top:0;z-index:3;text-align:center;padding:6px 0 16px;
+    background:linear-gradient(var(--bg) 82%, rgba(10,14,26,0))}
   .rvcount{font-family:var(--font-display);font-size:64px;font-weight:700;line-height:1;
     background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
   .rvh{font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--ink);margin:2px 0 9px}
-  .rvsub{font-size:13.5px;color:var(--dim);line-height:1.55;margin:0}
+  .rvsub{font-size:13.5px;color:var(--dim);line-height:1.55;margin:0 0 14px}
   .rvgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:15px}
   .rvposter{aspect-ratio:2/3;border-radius:10px;background:#0c0f14 center/cover no-repeat;border:1px solid var(--line)}
   .rvprov{font-size:12px;color:var(--faint);text-align:center;line-height:1.5;margin-bottom:20px}
   .rvfoot{display:grid;gap:9px}
-  .rvkeep{background:var(--grad);color:#fff;border:none;border-radius:13px;padding:15px;font-size:15px;font-weight:800;
-    cursor:pointer;text-shadow:0 1px 2px rgba(10,14,26,.55);box-shadow:0 8px 22px rgba(124,92,255,.28)}
+  .rvkeep{display:block;width:100%;background:var(--grad);color:#fff;border:none;border-radius:13px;padding:15px;
+    font-size:15px;font-weight:800;cursor:pointer;text-shadow:0 1px 2px rgba(10,14,26,.55);box-shadow:0 8px 22px rgba(124,92,255,.28)}
   .rvbrowse{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:13px;padding:14px;
     font-size:14px;font-weight:700;cursor:pointer}
   .rvbrowse:hover{border-color:var(--violet)}
@@ -5580,44 +5584,52 @@ function openPreviewStep(name, agent){
   return false;
 }
 
-// ================= Value-first reveal (CAS-77 / spec 26640386 §2/§3) =================
-// The reciprocity moment: show the agent's REAL haul (posters straight from the live engine) + provenance,
-// with no account asked for. "Available now" is what the agent can show you today (matchesCriteria, which
-// respects your services); if nothing is available this second we fall back — honestly — to what's on its
-// radar (watchCount) rather than trumpet a zero. Both CTAs are wired; CAS-78/79 fill in what they open.
+// ================= Value-first reveal (CAS-77, reworked CAS-123 2026-07-21) =================
+// The reciprocity moment: the agent's REAL haul, no account asked for. Reworked per Lee's staging review:
+//   · a FULL scrollable poster grid of ALL matches (not a 6-poster teaser),
+//   · the CTA PINNED at the top (above the grid) so the user can act without scrolling past posters,
+//   · no "just let me browse" escape hatch — the one CTA is "Cascade Membership" (→ CAS-120),
+//   · honest copy: the headline count is the availability-filtered subset (what's watchable RIGHT NOW,
+//     matchesCriteria), and the sub explains it against the wider taste-match total (the 190→114 drop).
+// If nothing is watchable this second we fall back — honestly — to the radar total rather than trumpet a zero.
+// Uses the live poster component as-is; the CAS-100 film card is never touched.
 let revealCascade=null;
 const REVEAL_LEAD_NOW   = {cinema:"in cinemas or opening soon", rentals:"just dropped to a rental price", streaming:"streaming now on your services"};
 const REVEAL_LEAD_RADAR = {cinema:"on their way to the big screen", rentals:"on their way to rent", streaming:"on their way to your services"};
 function showReveal(c){
   revealCascade=c;
   const byRating=(a,b)=>(b.imdb_rating||0)-(a.imdb_rating||0);
-  let films=MOVIES.filter(m=>matchesCriteria(m,c)).sort(byRating), live=true;
+  const tasteN=watchCount(c);   // the wider taste-match total the earlier dial/name steps showed (the radar)
+  let films=MOVIES.filter(m=>matchesCriteria(m,c)).sort(byRating), live=true;   // watchable RIGHT NOW
   if(!films.length){ films=MOVIES.filter(m=>watchesFilm(m,c)).sort(byRating); live=false; }
   const n=films.length;
   const lead=(live?REVEAL_LEAD_NOW:REVEAL_LEAD_RADAR)[wiz.starter] || (live?"ready for you":"on its radar");
-  const posters=films.slice(0,6).map(m=>{
+  // The full grid — every match, not a teaser. Posters come straight from the live engine.
+  const posters=films.map(m=>{
     const bg=m.poster?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
     return `<div class="rvposter" style="${bg}" title="${escA(m.title)}"></div>`;
   }).join("");
+  // Honest count copy: N is the watchable-now subset; when it's fewer than the taste total, say so plainly.
+  const subsetNote = (live && tasteN>n)
+    ? ` That's the slice you can watch this moment — it's matched <b>${tasteN}</b> to your taste in all, and it'll tell you the moment another lands.`
+    : ` It'll tell you the moment another lands.`;
   const sub = n
     ? (live
-        ? `${c.icon} <b>${esc(c.name)}</b> went looking and came back with <b>${n} film${n===1?"":"s"}</b> ${esc(lead)}, ready now — <b>no account needed</b>.`
-        : `${c.icon} <b>${esc(c.name)}</b> is watching <b>${n} film${n===1?"":"s"}</b> ${esc(lead)} — it'll tell you the moment one lands. <b>No account needed</b>.`)
+        ? `${c.icon} <b>${esc(c.name)}</b> came back with <b>${n} film${n===1?"":"s"}</b> ${esc(lead)}, ready to watch right now.${subsetNote} <b>No account needed.</b>`
+        : `${c.icon} <b>${esc(c.name)}</b> is watching <b>${n} film${n===1?"":"s"}</b> ${esc(lead)} — it'll tell you the moment one lands. <b>No account needed.</b>`)
     : `${c.icon} <b>${esc(c.name)}</b> is on the job and watching for you — <b>no account needed</b>.`;
   $("revealBody").innerHTML=`
-    <div class="rvhero">
+    <div class="rvtop">
       <div class="rvcount">${n}</div>
-      <h2 class="rvh">film${n===1?"":"s"} found for you</h2>
+      <h2 class="rvh">film${n===1?"":"s"} ${live?"ready to watch":"on the radar"}</h2>
       <p class="rvsub">${sub}</p>
+      <button class="rvkeep" type="button" onclick="revealKeep()">Cascade Membership</button>
     </div>
     ${posters?`<div class="rvgrid">${posters}</div>`:""}
-    <div class="rvprov">🔎 Found by ${c.icon} <b>${esc(c.name)}</b> — it keeps watching, every day, without you.</div>
-    <div class="rvfoot">
-      <button class="rvkeep" type="button" onclick="revealKeep()">Cascade Membership</button>
-      <button class="rvbrowse" type="button" onclick="revealBrowse()">Not now — just let me browse</button>
-    </div>`;
+    <div class="rvprov">🔎 Found by ${c.icon} <b>${esc(c.name)}</b> — it keeps watching, every day, without you.</div>`;
+  $("reveal").scrollTop=0;
   $("reveal").classList.add("open"); document.body.style.overflow="hidden";
-  logEvent("reveal_shown",{starter:wiz.starter, n, live});
+  logEvent("reveal_shown",{starter:wiz.starter, n, tasteN, live});
 }
 function closeRevealToApp(){
   $("reveal").classList.remove("open"); document.body.style.overflow="";
