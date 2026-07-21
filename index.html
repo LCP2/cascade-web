@@ -5264,24 +5264,37 @@ const SHARP_STEPS = {
   age: {
     progress: 82,
     lead(){ return `watches <b>${onbAgePhrase()}</b>`; },
+    // The app's cumulative gradient segmented control (CAS-118): a joined `.loz` lozenge where every level up
+    // to the chosen one is filled and the chosen level is gradient-filled (--grad via .edge) — so the
+    // "everything up to and including" semantics reads straight off the control.
     body(){
       const i=onbFlow.ageStop;
+      const cls=k=> k<i ? "fill" : k===i ? "fill edge" : "";
       return `<h2 class="osh">Age rating</h2>
         <p class="ossub">Picks everything up to and including the level you choose.</p>
-        <div class="osseg" id="onbStepAges" role="group" aria-label="Highest age rating to include">
-          ${AGE_LEVELS.map((a,k)=>`<button type="button" class="osseg-s${k===i?' on':''}" data-i="${k}" aria-pressed="${k===i}">${esc(a)}</button>`).join("")}
+        <div class="loz" id="onbStepAges" role="radiogroup" aria-label="Highest age rating to include">
+          ${AGE_LEVELS.map((a,k)=>`<button type="button" class="${cls(k)}" role="radio" data-i="${k}" aria-checked="${k===i}" tabindex="${k===i?0:-1}">${esc(a)}</button>`).join("")}
         </div>
         <p class="osexplain" id="onbStepAgeExplain">${onbAgeExplain(i)}</p>`;
     },
     wire(){
       const box=$("onbStepAges"); if(!box) return;
-      box.querySelectorAll(".osseg-s").forEach(b=>{
-        b.onclick=()=>{
-          onbFlow.ageStop=+b.dataset.i;
-          box.querySelectorAll(".osseg-s").forEach((x,k)=>{ const on=k===onbFlow.ageStop;
-            x.classList.toggle("on",on); x.setAttribute("aria-pressed",String(on)); });
-          const ex=$("onbStepAgeExplain"); if(ex) ex.innerHTML=onbAgeExplain(onbFlow.ageStop);
-          onbRefresh();
+      const paint=()=>{
+        [...box.children].forEach(b=>{ const k=+b.dataset.i, sel=onbFlow.ageStop;
+          b.className = k<sel ? "fill" : k===sel ? "fill edge" : "";
+          b.setAttribute("aria-checked", String(k===sel)); b.tabIndex = k===sel?0:-1; });
+        const ex=$("onbStepAgeExplain"); if(ex) ex.innerHTML=onbAgeExplain(onbFlow.ageStop);
+        onbRefresh();
+      };
+      const setAge=k=>{ onbFlow.ageStop=k; paint(); };
+      [...box.children].forEach(b=>{
+        b.onclick=()=>setAge(+b.dataset.i);
+        b.onkeydown=e=>{
+          const sel=onbFlow.ageStop;
+          const to = e.key==="ArrowRight" ? Math.min(AGE_LEVELS.length-1, sel+1)
+                   : e.key==="ArrowLeft"  ? Math.max(0, sel-1) : null;
+          if(to===null) return;
+          e.preventDefault(); setAge(to); box.querySelector('[tabindex="0"]')?.focus();
         };
       });
     },
