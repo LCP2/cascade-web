@@ -5444,45 +5444,58 @@ window.onbHubToSelectivity=()=>{
   openOnbStep("selectivity");
 };
 
-// ================= Cascade Membership conversion page (CAS-120 / mock: 11-membership.html) =================
-// The post-reveal conversion moment: lead with the free-month offer, keep the agent's name in the opening
-// line, put the four membership benefits UNDER the button. No card, no charge — a prototype page. Built
-// standalone/previewable (?step=membership[&agent=<key>]); the existing reveal→invite path is untouched, so
-// Lee can swap this in after the reveal (#10) when ready.
+// ================= Cascade Membership conversion page (CAS-120, reworked 2026-07-21 / mock: 11-membership.html) =====
+// The post-reveal conversion moment: lead with the free-month offer, keep the agent's name in the opening line,
+// list the four "Become a Service Member" benefits as icon+title+blurb rows. No card, no charge — a prototype.
+// There is NO escape hatch on this page (per the correction), and no alert/email toggles. Starting the free
+// month wires straight through to the #12 listing + finish-setup bar (CAS-121) — the legacy "Let it learn you"
+// invite (CAS-78) is no longer part of the flow. Previewable at ?step=membership[&agent=<key>].
 const MEMB_BENEFITS = [
-  {ic:"🔔", name:"Film alerts", sub:"The moment a match hits cinema, rental or streaming."},
+  {ic:"🔔", name:"Film Alerts", sub:"The moment a match hits cinema, rental or streaming."},
   {ic:"🎚️", name:"Streaming service filtering", sub:"Only show films on the services you actually have."},
-  {ic:"✨", name:"AI preference learning", sub:"It learns what you watch and sharpens every pick."},
+  {ic:"✨", name:"AI preference learning", sub:"Learns what you watch and sharpens every pick."},
   {ic:"💳", name:"Streaming service utilisation", sub:"Get more from the subscriptions you already pay for."},
 ];
-function openMembership(agentKey){
+function openMembership(agentKey, nameOverride){
   const picked = agentKey && STARTERS.find(x=>x.key===agentKey);
-  const name = picked ? picked.name : ONB_DEFAULT_NAME;   // the agent's name stays in the opening line
+  // The committed agent's real (possibly user-named) name leads the line; fall back to the starter's default.
+  const name = (nameOverride && nameOverride.trim()) || (picked ? picked.name : ONB_DEFAULT_NAME);
   const tick = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5" stroke="#48c78e" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   $("membBody").innerHTML = `
     <span class="membbadge">CASCADE</span>
-    <h2 class="membh">Become a Cascade member</h2>
+    <h2 class="membh">Cascade Membership</h2>
     <p class="membsub">Keep <b>${esc(name)}</b> running. It never stops — it finds new films the moment they
       match, in every window, every day, so you don't have to look.</p>
     <div class="membhero">
-      <div><span class="free">Free for a month</span><span class="then">then $3/month</span></div>
-      <span class="lt">≈ less than half a rental</span>
+      <div><span class="free">Free for a month</span><span class="then">then $4.99/month</span></div>
       <div class="cancel">${tick} Cancel any time — one tap, no questions</div>
     </div>
     <p class="membreassure">No card needed. We'll always ask before anything is ever charged.</p>
     <button class="membcta" type="button" onclick="membStart()">Start my free month</button>
-    <div class="membeyebrow">What membership gives you</div>
+    <div class="membeyebrow">Become a Service Member</div>
     ${MEMB_BENEFITS.map(b=>`<div class="memben"><div class="ic">${b.ic}</div>
       <div class="t"><b>${esc(b.name)}</b><p>${esc(b.sub)}</p></div></div>`).join("")}
-    <button class="membskip" type="button" onclick="membSkip()">Not now — just let me browse</button>
     <p class="membproto">Prototype — no account, no payment, no real charge.</p>`;
   $("membScreen").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("membership_shown",{agent:agentKey||null});
   return true;
 }
 function closeMembership(){ $("membScreen").classList.remove("open"); document.body.style.overflow=""; }
-window.membStart=()=>{ logEvent("membership_start"); closeMembership(); };   // prototype — no real charge
-window.membSkip=()=>{ logEvent("membership_skip"); closeMembership(); };
+// Starting the free month goes straight to the #12 listing with the finish-setup bar (CAS-121) — no invite,
+// no learn step. In the real flow the sharpened agent is already committed; on the ?step=membership preview we
+// seed one so the listing has cards. Prototype — no real charge is ever made.
+window.membStart=()=>{
+  logEvent("membership_start");
+  closeMembership();
+  try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
+  if(!cascades.length){
+    const s=STARTERS.find(x=>x.key==="watch_tonight");
+    if(s){ draft=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts})); commitDraft(); }
+  }
+  showSetupBar=true;
+  view="found"; settleFoundView(); try{ localStorage.setItem("cascade_view","found"); }catch(e){}
+  render();
+};
 // ================= Membership setup — persistent bar + setup sheet (CAS-121 / mock: 12-listing-and-setup.html) =================
 // Adds ONLY the surrounding chrome: a sticky "Complete your membership setup" bar at the top of the listing
 // and a setup sheet for services + alerts. The production CAS-100 card is never touched — renderFound still
@@ -5600,7 +5613,7 @@ function showReveal(c){
     ${posters?`<div class="rvgrid">${posters}</div>`:""}
     <div class="rvprov">🔎 Found by ${c.icon} <b>${esc(c.name)}</b> — it keeps watching, every day, without you.</div>
     <div class="rvfoot">
-      <button class="rvkeep" type="button" onclick="revealKeep()">Keep it running — meet your agent</button>
+      <button class="rvkeep" type="button" onclick="revealKeep()">Cascade Membership</button>
       <button class="rvbrowse" type="button" onclick="revealBrowse()">Not now — just let me browse</button>
     </div>`;
   $("reveal").classList.add("open"); document.body.style.overflow="hidden";
@@ -5613,8 +5626,14 @@ function closeRevealToApp(){
   const c=revealCascade;
   if(c) toast(`✓ ${c.icon} ${c.name}'s on it — ${watchCount(c)} films found already. ${alertPromise(c)}`);
 }
-// "Keep it running" opens the agent invite (CAS-78).
-window.revealKeep=()=>{ logEvent("reveal_keep",{starter:wiz.starter}); $("reveal").classList.remove("open"); openInvite(); };
+// "Cascade Membership" takes the sharpened agent to the membership conversion page (CAS-120), which then wires
+// straight through to the #12 listing + finish-setup. The legacy invite/"Let it learn you" step (CAS-78) is no
+// longer part of the onboarding flow; openInvite survives only for the guest re-invite path (enableAgent).
+window.revealKeep=()=>{
+  logEvent("reveal_membership",{starter:wiz.starter});
+  $("reveal").classList.remove("open"); document.body.style.overflow="";
+  openMembership(wiz.starter, revealCascade && revealCascade.name);
+};
 // "Just browse" → guest mode (CAS-79): the agent is saved on-device but PAUSED — no watching, no alerts —
 // while manual search stays free. Value first, wall never: declining never blocks results.
 window.revealBrowse=()=>{
