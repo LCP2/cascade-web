@@ -797,6 +797,26 @@
     font-size:14px;flex:0 0 auto}
   .osstep b{font-size:13.5px;font-weight:600;color:var(--ink)}
   .osstep span{display:block;color:var(--dim);font-size:11.5px}
+  /* selectivity: three dials (#4 / CAS-114) — reuse the range control; each dial gets a header, caption and
+     its own tick row, plus a combined "What this does" box and the "very best" OR shortcut chip */
+  .osbest{display:inline-flex;align-items:center;gap:6px;margin:2px 0 2px;padding:7px 13px;border-radius:999px;
+    border:1px solid rgba(124,92,255,.5);background:rgba(124,92,255,.12);color:var(--accenttext);
+    font-size:12px;font-weight:600;cursor:pointer}
+  .osbest.on{background:var(--grad);color:#fff;border-color:transparent}
+  .osbest:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .osdial{margin-top:18px}
+  .osdh{display:flex;align-items:baseline;justify-content:space-between;margin:0 2px;gap:8px}
+  .osdh b{font-family:var(--font-display);font-size:14px;font-weight:600;color:var(--ink)}
+  .osdset{font-size:11.5px;color:var(--accenttext);font-weight:600;flex:0 0 auto}
+  .oscap{font-size:11px;color:var(--faint);margin:2px 2px 0}
+  .osdial .osticks{font-size:9px}
+  .osdial .osticks span{flex:1;text-align:center}
+  .osexplain2{background:rgba(124,92,255,.09);border:1px solid rgba(124,92,255,.42);border-radius:14px;
+    padding:13px;margin:22px 0 0}
+  .osexplain2 .oseh{font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--accenttext);
+    text-transform:uppercase;margin-bottom:5px}
+  .osexplain2 p{margin:0;font-size:12.5px;line-height:1.5;color:var(--ink)}
+  .osexplain2 .cnt{color:var(--green);font-weight:700}
 
   /* ---- Cascade Membership conversion page (CAS-120 / mock: 11-membership.html) ----
      The post-reveal conversion moment: offer-led, benefits under the button. Built standalone/previewable
@@ -3067,6 +3087,7 @@ function normCascade(c){
   c.includeUnbudgeted = !!c.includeUnbudgeted;
   c.tentpole = c.tentpole||"any";
   c.awards = !!c.awards;
+  c.selCrowd = c.selCrowd||0; c.selCritics = c.selCritics||0; c.selScale = c.selScale||0; c.selOr = !!c.selOr;   // CAS-114 dials
   // myServices was one boolean for the whole Cascade; it's now one flag per home window. A Cascade saved
   // under the old shape meant "scope everywhere", so that's exactly what it keeps meaning.
   if(typeof c.myServices!=="object" || c.myServices===null){
@@ -3139,6 +3160,7 @@ cascades.forEach(normCascade);   // saved Cascades are filled out here, not at l
 // Only EXACT twins collapse. Two Cascades that differ anywhere — even one genre chip — are two real radars.
 const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.age, c.lang, c.culture, c.year,
   c.imdb, c.rt, c.awards, c.budget, c.includeUnbudgeted, c.includeUnrated, c.tentpole,
+  c.selCrowd||0, c.selCritics||0, c.selScale||0, !!c.selOr,
   c.myServices, c.alerts, c.sort||"imdb", c.excludeWatched, c.excludeBlocked]);
 function dedupeCascades(){
   const firstBySig=new Map(); const drop=[];
@@ -3185,6 +3207,37 @@ function ratingOK(m, min, includeUnrated){          // declared, not const — p
 // behave like one — including for the 2 titles that carry no certificate at all. Otherwise the default
 // would quietly drop films nobody asked to drop.
 const ageOpen = c => !(c.age||[]).length || c.age.length===AGE_LEVELS.length;
+// ---- Onboarding selectivity dials (CAS-114 / mock: 04-selectivity-three-dials.html) ----------------
+// Three independent gates the #4 step sets, each defaulting off (0/false) so a Cascade that never touched
+// them matches exactly as it did before. matchesCriteria wires them in below.
+//   · selCrowd  — a raw IMDb bar (People's vote). A set bar is crowd-score-only, so an unrated film drops.
+//   · selCritics — 0 any · 1 Metacritic≥60 · 2 MC≥80 · 3 award nominee-or-better · 4 award winner.
+//                  The two review rungs read Metacritic first, Rotten Tomatoes as a fallback — never blended.
+//   · selScale  — 0 any · 1 indie <$15M · 2 studio $15–100M · 3 blockbuster >$100M. A LEAN, not a hard cut:
+//                  only known budgets are gated; an unknown-budget title is never dropped for its scale.
+const critScore = m => (m.metacritic!=null ? m.metacritic : (m.rt_critic ? m.rt_critic : null));
+function selCrowdOK(m,c){
+  const min=c.selCrowd||0; if(!min) return true;
+  return m.imdb_rating ? m.imdb_rating>=min : false;   // a crowd bar is a score, and an unrated film has none
+}
+function selCriticsOK(m,c){
+  const s=c.selCritics||0; if(!s) return true;
+  if(s>=4) return m.award==="won";
+  if(s>=3) return !!m.award;
+  const sc=critScore(m); return sc!=null && sc >= (s===1 ? 60 : 80);
+}
+// Scale match, tri-state: true (in band) · false (known, out of band) · null (no budget AND no revenue → truly
+// unknown scale). Budget is the primary signal, worldwide gross the real fallback — so an unknown-budget film
+// is still placed by what it earned, and only a film with neither reads as unknown. The AND lean lets `null`
+// ride along (never dropped); OR requires an affirmative `true` (an unknown scale isn't "the very best").
+function selScaleMatch(m,c){
+  const s=c.selScale||0; if(!s) return true;
+  const dollars = m.budget || m.worldwide_gross || 0;
+  if(!dollars) return null;
+  if(s===1) return dollars < 15e6;
+  if(s===2) return dollars >= 15e6 && dollars <= 100e6;
+  return dollars > 100e6;
+}
 function matchesCriteria(m,c,ignoreBlocked){
   if(c.excludeBlocked!==false && !ignoreBlocked && blocked.has(m.tmdb_id)) return false;
   if(c.excludeWatched!==false && watched.has(m.tmdb_id)) return false;
@@ -3198,6 +3251,18 @@ function matchesCriteria(m,c,ignoreBlocked){
   if((c.culture||[]).length && !c.culture.includes(m.culture)) return false;
   if(c.awards && !m.award) return false;
   if(!ratingOK(m, c.imdb||0, c.includeUnrated)) return false;
+  // Selectivity dials (CAS-114). The three gates AND together when set by hand; the "very best" shortcut
+  // (c.selOr) combines them with OR so a film exceptional on ANY one axis qualifies. Skipped wholesale unless
+  // a dial is set, so every Cascade that predates this keeps matching identically.
+  if(c.selCrowd || c.selCritics || c.selScale || c.selOr){
+    const cr=selCrowdOK(m,c), ct=selCriticsOK(m,c), scale=selScaleMatch(m,c);
+    if(c.selOr){
+      if(!(cr || ct || scale===true)) return false;   // OR: exceptional on any axis; unknown scale doesn't count
+    }else{
+      if(!cr || !ct) return false;
+      if(scale===false) return false;                 // AND lean: only a KNOWN out-of-band scale drops the film
+    }
+  }
   if(!budgetOK(m, c.budget||0, c.includeUnbudgeted)) return false;
   if(c.tentpole && c.tentpole!=="any" && !tentpoleIs(m,c.tentpole)) return false;
   if((m.rt_critic||0) < (c.rt||0)) return false;
@@ -3891,6 +3956,7 @@ function commitDraft(){
     age:draft.age, lang:draft.lang, culture:draft.culture, year:draft.year, imdb:draft.imdb, rt:draft.rt,
     ratingStop:draft.ratingStop, includeUnrated:draft.includeUnrated,
     budget:draft.budget, includeUnbudgeted:draft.includeUnbudgeted, tentpole:draft.tentpole,
+    selCrowd:draft.selCrowd, selCritics:draft.selCritics, selScale:draft.selScale, selOr:draft.selOr,
     awards:draft.awards, myServices:{...draft.myServices},
     excludeWatched:draft.excludeWatched, excludeBlocked:draft.excludeBlocked,
     sort:draft.sort||"imdb", alerts:draft.alerts});
@@ -4656,6 +4722,11 @@ window.pickStarter=key=>{
   onbFlow.yearStop = 0;
   onbFlow.langsOn = new Set(["en"]);
   onbFlow.ageStop = AGE_LEVELS.length-1;
+  onbFlow.crowdStop = 0; onbFlow.criticsStop = 0; onbFlow.scaleStop = 0; onbFlow.selOr = false;   // dials open (CAS-114)
+  // The #4 selectivity dials own the crowd/critics/scale bars from here on, defaulting fully open, so zero the
+  // pick's own IMDb bar — otherwise its preset would mask the People's-vote dial. Same supersede rule the
+  // genres/age steps already follow: the sharpening screen is the single source for the axis it owns.
+  onbFlow.draft.imdb = 0;
   $("shortlist").classList.remove("open");
   startSharpSequence();
 };
@@ -4892,7 +4963,8 @@ function onbSeedDraft(){
 // the draft's genre filter is DERIVED from it — all-on means "any" (empty filter), so the count is the true
 // catalogue, exactly the mock's "leave them and it watches everything". Drop one and it narrows to the rest.
 const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME, yearStop:0,
-                 langsOn:new Set(["en"]), ageStop:AGE_LEVELS.length-1};
+                 langsOn:new Set(["en"]), ageStop:AGE_LEVELS.length-1,
+                 crowdStop:0, criticsStop:0, scaleStop:0, selOr:false};   // #4 selectivity dials (CAS-114)
 function onbApply(){
   const d=onbFlow.draft;
   d.genre = onbFlow.genresOn.size===ONB_GENRES.length ? [] : [...onbFlow.genresOn];
@@ -4900,6 +4972,13 @@ function onbApply(){
   d.lang = [...onbFlow.langsOn];
   d.age = AGE_LEVELS.slice(0, onbFlow.ageStop+1);   // up to and including; the top stop is all ratings (open)
   d.name = (onbFlow.name||"").trim() || ONB_DEFAULT_NAME;
+  // #4 selectivity (CAS-114): the dials own the crowd/critics/scale bars, as their own fields so the other
+  // steps' seed rating is untouched. selCrowd is a raw IMDb bar; the two stop fields and the OR flag drive
+  // matchesCriteria. Defaults are all-open, so touching nothing leaves the agent watching the whole catalogue.
+  d.selCrowd = CROWD_STOPS[onbFlow.crowdStop||0].imdb;
+  d.selCritics = onbFlow.criticsStop||0;
+  d.selScale = onbFlow.scaleStop||0;
+  d.selOr = !!onbFlow.selOr;
   return normCascade(d);
 }
 const onbCount = () => watchCount(onbApply());
@@ -4950,6 +5029,44 @@ function onbAgeExplain(i){
   if(i>=AGE_LEVELS.length-1) return `<b>${esc(AGE_LEVELS[AGE_LEVELS.length-1])}.</b> Everything qualifies — nothing's held back for rating.`;
   return `<b>${esc(AGE_LEVELS[i])}.</b> Up to and including ${esc(AGE_LEVELS[i])} — anything higher is set aside.`;
 }
+// ---- Selectivity: three dials (#4 / CAS-114) ------------------------------------------------------
+// Three ideas of "worth watching", each defaulting fully open. People's vote is a raw IMDb bar; the other
+// two are stop ladders read by matchesCriteria (selCritics / selScale). Thresholds are the ticket's, confirmed.
+const CROWD_STOPS = [
+  {label:"Anything",   imdb:0,   say:null},
+  {label:"Liked",      imdb:6.0, say:"the crowd liked (IMDb 6.0+)"},
+  {label:"Well-liked", imdb:7.0, say:"the crowd well-liked (7.0+)"},
+  {label:"Loved",      imdb:7.5, say:"the crowd loved (7.5+)"},
+  {label:"Adored",     imdb:8.2, say:"the crowd adored (8.2+)"},
+];
+const CRITICS_STOPS = [
+  {label:"Any",           say:null},
+  {label:"Well-reviewed", say:"well-reviewed by critics (Metacritic 60+)"},
+  {label:"Acclaimed",     say:"critically acclaimed (Metacritic 80+)"},
+  {label:"🏆 Nominee",    say:"award nominees"},
+  {label:"🏆 Winner",     say:"award winners"},
+];
+const SCALE_STOPS = [
+  {label:"Any size",    say:null},
+  {label:"Indie",       say:"indie-scale (under $15M)"},
+  {label:"Studio",      say:"studio-scale ($15–100M)"},
+  {label:"Blockbuster", say:"blockbuster-scale (over $100M)"},
+];
+// The combined "What this does" line. Honest and live: it names only the dials that are set, joins them the way
+// they actually combine (AND by hand, OR under the "very best" shortcut), and always carries the real count.
+function selSayHtml(){
+  const n=onbCount(), cnt=`<span class="cnt">${n} film${n===1?"":"s"}</span>`;
+  if(onbFlow.selOr){
+    return `Your agent brings you the very best — films <b>the crowd adored</b>, <b>award winners</b>, or <b>blockbusters</b> (exceptional on any one count). ${cnt} right now.`;
+  }
+  const parts=[];
+  const c=CROWD_STOPS[onbFlow.crowdStop||0].say; if(c) parts.push(c);
+  const cr=CRITICS_STOPS[onbFlow.criticsStop||0].say; if(cr) parts.push(cr);
+  const sc=SCALE_STOPS[onbFlow.scaleStop||0].say; if(sc) parts.push(sc);
+  if(!parts.length) return `Your agent watches the <b>whole catalogue</b> — any score, any critics, any size. Turn a dial up to sharpen. ${cnt} right now.`;
+  const joined = parts.map(p=>`<b>${p}</b>`).reduce((a,p,i)=> i===0 ? p : (i===parts.length-1 ? `${a} and ${p}` : `${a}, ${p}`), "");
+  return `Your agent brings you films that are ${joined}. ${cnt} right now.`;
+}
 // The agent-voice summary. Each step supplies its own "watches …" lead so the isolated preview reads like its
 // mock; the default is the genre clause. The count is always live so the copy can't over-promise.
 function onbSummary(){
@@ -4988,6 +5105,51 @@ const SHARP_STEPS = {
         <div class="ossteps">
           ${rows.map(([ic,t,s])=>`<div class="osstep"><div class="dot">${ic}</div><div><b>${t}</b><span>${s}</span></div></div>`).join("")}
         </div>`;
+    },
+  },
+  // #4 selectivity — three dials (CAS-114 / mock: 04-selectivity-three-dials.html). Its own "What this does"
+  // box carries the combined live count (noAgent drops the shared summary). Dials default fully open; moving
+  // one by hand combines with AND, the "very best" shortcut pre-sets the top tiers and combines with OR.
+  selectivity: {
+    progress: 21,
+    noAgent: true,
+    body(){
+      const dial = (id, icon, name, cap, stops, cur, four) => `
+        <div class="osdial">
+          <div class="osdh"><b>${icon} ${esc(name)}</b><span class="osdset" id="${id}Set">${stops[cur].label}</span></div>
+          <p class="oscap">${cap}</p>
+          <input class="osrange" id="${id}" type="range" min="0" max="${stops.length-1}" step="1" value="${cur}" aria-label="${escA(name)}">
+          <div class="osticks${four?' four':''}">${stops.map((s,k)=>`<span class="${k===cur?'here':''}">${s.label}</span>`).join("")}</div>
+        </div>`;
+      return `<h2 class="osh">Set your bar</h2>
+        <p class="ossub">Three dials, three different ideas of "worth watching." Turn up the ones that matter to you — leave the rest wide open.</p>
+        <button type="button" class="osbest${onbFlow.selOr?' on':''}" id="onbSelBest" aria-pressed="${!!onbFlow.selOr}">✨ The very best</button>
+        ${dial("onbSelCrowd","👥","People's vote","What the crowd scored it (IMDb).", CROWD_STOPS, onbFlow.crowdStop||0)}
+        ${dial("onbSelCritics","🎬","Critics & awards","Up the critical ladder — reviews, then nominees, then winners.", CRITICS_STOPS, onbFlow.criticsStop||0)}
+        ${dial("onbSelScale","💰","Budget & scale","Arthouse indie through to tentpole blockbuster (a lean, not a hard cut).", SCALE_STOPS, onbFlow.scaleStop||0, true)}
+        <div class="osexplain2"><div class="oseh">What this does</div><p id="onbSelSay">${selSayHtml()}</p></div>`;
+    },
+    wire(){
+      const bind=(id, key, stops)=>{
+        const r=$(id); if(!r) return;
+        r.oninput=()=>{
+          onbFlow[key]=+r.value; onbFlow.selOr=false;   // a hand-set dial drops OR back to AND
+          $(id+"Set").textContent=stops[+r.value].label;
+          const ticks=r.parentElement.querySelector(".osticks");
+          if(ticks) [...ticks.children].forEach((t,k)=>t.classList.toggle("here", k===+r.value));
+          selRefresh();
+        };
+      };
+      bind("onbSelCrowd","crowdStop",CROWD_STOPS);
+      bind("onbSelCritics","criticsStop",CRITICS_STOPS);
+      bind("onbSelScale","scaleStop",SCALE_STOPS);
+      const best=$("onbSelBest");
+      if(best) best.onclick=()=>{
+        onbFlow.crowdStop=CROWD_STOPS.length-1; onbFlow.criticsStop=CRITICS_STOPS.length-1;
+        onbFlow.scaleStop=SCALE_STOPS.length-1; onbFlow.selOr=true;
+        logEvent("onbsel_verybest",{});
+        renderOnbStep("selectivity");   // re-render: moves every knob, label and tick to the top tier at once
+      };
     },
   },
   genres: {
@@ -5121,10 +5283,9 @@ function onbYearExplain(i){
 let onbStepKey=null;
 // ---- Wired sharpening sequence (CAS-122) -----------------------------------------------------------
 // After agent-select (#2) the picked agent runs through the sharpening screens in order, then the reveal
-// (#10). The screens themselves are unchanged — this is only the spine that walks them: #3 framing → #5
-// genres → #6 years → #7 language → #8 age → #9 name → reveal. A #4 selectivity slot (CAS-114) will drop
-// in between "selective" and "genres" when Lee's decisions land; adding it here is the only change needed.
-const SHARP_SEQUENCE = ["selective", "genres", "years", "language", "age", "name"];
+// (#10). The screens themselves are unchanged — this is only the spine that walks them: #3 framing → #4
+// selectivity → #5 genres → #6 years → #7 language → #8 age → #9 name → reveal.
+const SHARP_SEQUENCE = ["selective", "selectivity", "genres", "years", "language", "age", "name"];
 let onbSeqIndex = -1;   // -1 = standalone ?step= preview (Continue/Back just close); ≥0 = live wired flow
 function renderOnbStep(key){
   const step=SHARP_STEPS[key]; if(!step) return;
@@ -5149,6 +5310,13 @@ function onbRefresh(){
   const step=SHARP_STEPS[onbStepKey];
   const b=$("onbStepCta"); if(b) b.textContent = (step && step.cta) ? step.cta : `Continue${ctaCount(onbCount())}`;
 }
+// #4 selectivity refresh (CAS-114): update the "What this does" line + count, keep the very-best chip's active
+// state honest, and let onbRefresh update the CTA count from the same live figure.
+function selRefresh(){
+  const say=$("onbSelSay"); if(say) say.innerHTML=selSayHtml();
+  const best=$("onbSelBest"); if(best){ best.classList.toggle("on", !!onbFlow.selOr); best.setAttribute("aria-pressed", String(!!onbFlow.selOr)); }
+  onbRefresh();
+}
 // Standalone preview: seed a fresh draft and open one step. Lee wires the real step→step→reveal sequence later.
 // agentKey (optional) seeds the dynamic default name from a picked agent — how #2 will feed the flow.
 function openOnbStep(key, agentKey){
@@ -5156,6 +5324,10 @@ function openOnbStep(key, agentKey){
   onbSeqIndex=-1;   // standalone preview — not part of the wired sequence
   onbFlow.draft=onbSeedDraft(); onbFlow.genresOn=new Set(ONB_GENRES); onbFlow.name=ONB_DEFAULT_NAME;
   onbFlow.yearStop=0; onbFlow.langsOn=new Set(["en"]); onbFlow.ageStop=AGE_LEVELS.length-1;
+  onbFlow.crowdStop=0; onbFlow.criticsStop=0; onbFlow.scaleStop=0; onbFlow.selOr=false;   // dials fully open (CAS-114)
+  // The selectivity page opens on the whole catalogue by design, so its preview must not inherit the seed's
+  // above-average bar — the dials are the only crowd bar here.
+  if(key==="selectivity") onbFlow.draft.imdb=0;
   const picked = agentKey && STARTERS.find(x=>x.key===agentKey);
   if(picked){ onbFlow.name=picked.name; onbFlow.draft.icon=picked.icon; }   // default name follows the pick
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
