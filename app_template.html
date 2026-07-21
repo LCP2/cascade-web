@@ -788,6 +788,15 @@
     color:var(--ink);font-size:15px;font-weight:600;font-family:var(--font-body)}
   .osfield::placeholder{color:var(--faint);font-weight:500}
   .osfield:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* framing interstitial (#3) — the "here's what the next steps set" list; no control, no agent box */
+  .ossteps{display:flex;flex-direction:column;gap:12px;margin:22px 0 0}
+  .osstep{display:flex;gap:12px;align-items:center;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:12px 13px}
+  .osstep .dot{width:26px;height:26px;border-radius:8px;background:rgba(124,92,255,.16);
+    border:1px solid rgba(124,92,255,.4);display:flex;align-items:center;justify-content:center;
+    font-size:14px;flex:0 0 auto}
+  .osstep b{font-size:13.5px;font-weight:600;color:var(--ink)}
+  .osstep span{display:block;color:var(--dim);font-size:11.5px}
 
   /* ---- Cascade Membership conversion page (CAS-120 / mock: 11-membership.html) ----
      The post-reveal conversion moment: offer-led, benefits under the button. Built standalone/previewable
@@ -4945,6 +4954,28 @@ function onbSummary(){
 // Step registry — each ticket adds one entry. `progress` is the mock's fill %; `body()` builds the control;
 // `wire()` attaches the live control once it's in the DOM.
 const SHARP_STEPS = {
+  // #3 framing interstitial — no control, no live count, no agent box. Just names the lenses the next steps
+  // set (taste, when, language, rating) and sends the user in. `noAgent` drops the summary box; its own CTA
+  // and skip copy come straight from the mock ("Let's go" / "Skip — it'll watch everything").
+  selective: {
+    progress: 12,
+    noAgent: true,
+    cta: "Let's go",
+    skip: "Skip — it'll watch everything",
+    body(){
+      const rows = [
+        ["🎬","Genres &amp; taste","What you love watching"],
+        ["🗓️","Release years &amp; language","How far back, in which languages"],
+        ["🔞","Age rating","How far up the ratings to go"],
+        ["✍️","Name it","Then it goes to work"],
+      ];
+      return `<h2 class="osh">Let's get selective</h2>
+        <p class="ossub">Your agent's ready to hunt. A few quick choices sharpen what it brings you — skip any and it just watches everything.</p>
+        <div class="ossteps">
+          ${rows.map(([ic,t,s])=>`<div class="osstep"><div class="dot">${ic}</div><div><b>${t}</b><span>${s}</span></div></div>`).join("")}
+        </div>`;
+    },
+  },
   genres: {
     progress: 30,
     body(){
@@ -5085,10 +5116,10 @@ function renderOnbStep(key){
       ${last?`<span class="oslast">LAST ONE</span>`:""}
     </div>
     ${step.body()}
-    <div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>
+    ${step.noAgent ? "" : `<div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>`}
     <div class="osfoot">
       <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${step.cta || `Continue${ctaCount(onbCount())}`}</button>
-      <button class="osskip" type="button" onclick="onbStepSkip()">Skip — I'll set this up later</button>
+      <button class="osskip" type="button" onclick="onbStepSkip()">${step.skip || "Skip — I'll set this up later"}</button>
     </div>`;
   if(step.wire) step.wire();
 }
