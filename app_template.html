@@ -797,6 +797,11 @@
     font-size:14px;flex:0 0 auto}
   .osstep b{font-size:13.5px;font-weight:600;color:var(--ink)}
   .osstep span{display:block;color:var(--dim);font-size:11.5px}
+  /* the one routing row on the #3 hub — "Set your bar" jumps to the #4 dials (CAS-113) */
+  .osstep-go{width:100%;font:inherit;text-align:left;color:inherit;cursor:pointer;transition:border-color .15s}
+  .osstep-go:hover{border-color:var(--violet)}
+  .osstep-go:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .osstep-arr{margin-left:auto;flex:0 0 auto;color:var(--accenttext);font-size:16px;font-weight:700}
   /* selectivity: three dials (#4 / CAS-114) — reuse the range control; each dial gets a header, caption and
      its own tick row, plus a combined "What this does" box and the "very best" OR shortcut chip */
   .osbest{display:inline-flex;align-items:center;gap:6px;margin:2px 0 2px;padding:7px 13px;border-radius:999px;
@@ -5094,7 +5099,10 @@ const SHARP_STEPS = {
     cta: "Let's go",
     skip: "Skip — it'll watch everything",
     body(){
+      // The first row jumps straight to the three-dial selectivity page (#4 / CAS-114); the rest name the
+      // steps the sequence walks and stay non-interactive (Continue moves through them in turn).
       const rows = [
+        ["🎚️","Set your bar","People's vote, critics &amp; scale", true],
         ["🎬","Genres &amp; taste","What you love watching"],
         ["🗓️","Release years &amp; language","How far back, in which languages"],
         ["🔞","Age rating","How far up the ratings to go"],
@@ -5103,7 +5111,10 @@ const SHARP_STEPS = {
       return `<h2 class="osh">Let's get selective</h2>
         <p class="ossub">Your agent's ready to hunt. A few quick choices sharpen what it brings you — skip any and it just watches everything.</p>
         <div class="ossteps">
-          ${rows.map(([ic,t,s])=>`<div class="osstep"><div class="dot">${ic}</div><div><b>${t}</b><span>${s}</span></div></div>`).join("")}
+          ${rows.map(([ic,t,s,go])=> go
+            ? `<button type="button" class="osstep osstep-go" onclick="onbHubToSelectivity()"><div class="dot">${ic}</div><div><b>${t}</b><span>${s}</span></div><span class="osstep-arr" aria-hidden="true">→</span></button>`
+            : `<div class="osstep"><div class="dot">${ic}</div><div><b>${t}</b><span>${s}</span></div></div>`
+          ).join("")}
         </div>`;
     },
   },
@@ -5378,6 +5389,14 @@ window.onbStepContinue=()=>{
     return;
   }
   closeOnbStep();   // standalone preview
+};
+// The #3 hub's "Set your bar" row jumps straight to the #4 selectivity dials (CAS-113): inside the wired flow
+// it moves to that step in place; on the standalone ?step=selective preview it opens the selectivity preview.
+window.onbHubToSelectivity=()=>{
+  logEvent("onbhub_setbar",{wired:onbSeqIndex>=0});
+  const i=SHARP_SEQUENCE.indexOf("selectivity");
+  if(onbSeqIndex>=0 && i>=0){ onbSeqIndex=i; renderOnbStep("selectivity"); return; }
+  openOnbStep("selectivity");
 };
 
 // ================= Cascade Membership conversion page (CAS-120 / mock: 11-membership.html) =================
