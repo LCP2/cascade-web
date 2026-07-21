@@ -4645,12 +4645,19 @@ window.pickStarter=key=>{
   const s=STARTERS.find(x=>x.key===key); if(!s) return;
   pendingStarter=key; wiz.starter=key;   // wiz.starter feeds the reveal's lead phrase (falls back gracefully)
   logEvent("starter_picked",{key});
-  draft=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
-  const {c}=commitDraft();
-  try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
-  logEvent("agent_created",{starter:key, matches:countCriteria(c)});
+  // Seed the sharpening flow FROM the picked agent: its criteria (lane, alerts, rating) become the draft the
+  // sharpening screens refine, and its name is the dynamic default the #9 name step opens on. The taste dims
+  // start at the shipped generic defaults (all genres on, any year, English, all ratings) — exactly what each
+  // screen's copy assumes — and onbApply layers the user's choices back onto this draft. Commit is deferred
+  // to finishSharpSequence so the reveal shows the sharpened agent, not the raw card.
+  onbFlow.draft = normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
+  onbFlow.genresOn = new Set(ONB_GENRES);
+  onbFlow.name = s.name;
+  onbFlow.yearStop = 0;
+  onbFlow.langsOn = new Set(["en"]);
+  onbFlow.ageStop = AGE_LEVELS.length-1;
   $("shortlist").classList.remove("open");
-  showReveal(c);
+  startSharpSequence();
 };
 
 // ================= Starter-aware config wizard (CAS-76 / spec 26640386 §3) =================
@@ -4949,7 +4956,14 @@ function onbSummary(){
   const d=onbApply(), n=onbCount();
   const step=SHARP_STEPS[onbStepKey];
   const lead=(step && step.lead) ? step.lead() : `watches for <b>${onbGenrePhrase()}</b>`;
-  return `📓 <b>${esc(d.name)}</b> ${lead} · above average+ — <span class="cnt">${n} film${n===1?"":"s"}</span> so far. I'll tell you the moment one lands on a service.`;
+  return `📓 <b>${esc(d.name)}</b> ${lead}${onbRatingClause(d)} — <span class="cnt">${n} film${n===1?"":"s"}</span> so far. I'll tell you the moment one lands on a service.`;
+}
+// The quality-bar clause. The standalone previews seed an "above average+" agent, so it reads exactly like the
+// mock; but a picked agent (CAS-122) may watch every rating — and claiming "above average+" for one that
+// doesn't would be the fabricated copy the honesty guardrail forbids, so an all-ratings agent gets no clause.
+function onbRatingClause(d){
+  const stop = (typeof d.ratingStop==="number") ? d.ratingStop : stopFor(d.imdb);
+  return stop ? ` · ${RATING_STOPS[stop].label.toLowerCase()}+` : "";
 }
 // Step registry — each ticket adds one entry. `progress` is the mock's fill %; `body()` builds the control;
 // `wire()` attaches the live control once it's in the DOM.
@@ -5105,13 +5119,20 @@ function onbYearExplain(i){
   return `<b>${p.charAt(0).toUpperCase()+p.slice(1)}.</b> Older films are set aside until you widen it again.`;
 }
 let onbStepKey=null;
+// ---- Wired sharpening sequence (CAS-122) -----------------------------------------------------------
+// After agent-select (#2) the picked agent runs through the sharpening screens in order, then the reveal
+// (#10). The screens themselves are unchanged — this is only the spine that walks them: #3 framing → #5
+// genres → #6 years → #7 language → #8 age → #9 name → reveal. A #4 selectivity slot (CAS-114) will drop
+// in between "selective" and "genres" when Lee's decisions land; adding it here is the only change needed.
+const SHARP_SEQUENCE = ["selective", "genres", "years", "language", "age", "name"];
+let onbSeqIndex = -1;   // -1 = standalone ?step= preview (Continue/Back just close); ≥0 = live wired flow
 function renderOnbStep(key){
   const step=SHARP_STEPS[key]; if(!step) return;
   onbStepKey=key;
   const last = step.progress>=100;
   $("onbStepInner").innerHTML = `
     <div class="ostop">
-      <button class="osback" type="button" onclick="closeOnbStep()" aria-label="Back">←</button>
+      <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
       <div class="osprog"><i style="width:${step.progress}%"></i></div>
       ${last?`<span class="oslast">LAST ONE</span>`:""}
     </div>
@@ -5132,6 +5153,7 @@ function onbRefresh(){
 // agentKey (optional) seeds the dynamic default name from a picked agent — how #2 will feed the flow.
 function openOnbStep(key, agentKey){
   if(!SHARP_STEPS[key]) return false;
+  onbSeqIndex=-1;   // standalone preview — not part of the wired sequence
   onbFlow.draft=onbSeedDraft(); onbFlow.genresOn=new Set(ONB_GENRES); onbFlow.name=ONB_DEFAULT_NAME;
   onbFlow.yearStop=0; onbFlow.langsOn=new Set(["en"]); onbFlow.ageStop=AGE_LEVELS.length-1;
   const picked = agentKey && STARTERS.find(x=>x.key===agentKey);
@@ -5142,9 +5164,49 @@ function openOnbStep(key, agentKey){
   return true;
 }
 window.closeOnbStep=()=>{ $("onbStep").classList.remove("open"); document.body.style.overflow=""; };
-window.onbStepSkip=()=>{ logEvent("onbstep_skipped",{step:onbStepKey}); closeOnbStep(); };
-// Standalone for now — Continue just closes. Lee wires step→step→reveal when the sequence lands.
-window.onbStepContinue=()=>{ logEvent("onbstep_continue",{step:onbStepKey, matches:onbCount()}); closeOnbStep(); };
+// The live wired flow: agent-select seeds onbFlow (pickStarter), then we walk SHARP_SEQUENCE in order and
+// hand the sharpened agent to the reveal. Continue advances; the last step (name) finishes; Skip finishes
+// early with whatever's set so far ("watches everything" is the honest default); Back steps one screen up,
+// and stepping back off the first screen returns to agent-select.
+function startSharpSequence(){
+  onbSeqIndex=0;
+  $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("sharp_sequence_start",{agent:wiz.starter});
+  renderOnbStep(SHARP_SEQUENCE[0]);
+}
+function finishSharpSequence(){
+  onbSeqIndex=-1;
+  $("onbStep").classList.remove("open"); document.body.style.overflow="";
+  draft = onbApply();                       // layer the sharpening choices onto the picked agent
+  const {c} = commitDraft();
+  try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
+  logEvent("agent_created",{starter:wiz.starter, matches:countCriteria(c), sharpened:true});
+  showReveal(c);
+}
+window.onbStepBack=()=>{
+  if(onbSeqIndex>=0){
+    onbSeqIndex--;
+    if(onbSeqIndex<0){ onbSeqIndex=-1; closeOnbStep(); showShortlist(); return; }   // off the top → agent-select
+    renderOnbStep(SHARP_SEQUENCE[onbSeqIndex]);
+    return;
+  }
+  closeOnbStep();
+};
+window.onbStepSkip=()=>{
+  logEvent("onbstep_skipped",{step:onbStepKey, wired:onbSeqIndex>=0});
+  if(onbSeqIndex>=0){ finishSharpSequence(); return; }
+  closeOnbStep();
+};
+window.onbStepContinue=()=>{
+  logEvent("onbstep_continue",{step:onbStepKey, matches:onbCount()});
+  if(onbSeqIndex>=0){
+    onbSeqIndex++;
+    if(onbSeqIndex>=SHARP_SEQUENCE.length){ finishSharpSequence(); return; }
+    renderOnbStep(SHARP_SEQUENCE[onbSeqIndex]);
+    return;
+  }
+  closeOnbStep();   // standalone preview
+};
 
 // ================= Cascade Membership conversion page (CAS-120 / mock: 11-membership.html) =================
 // The post-reveal conversion moment: lead with the free-month offer, keep the agent's name in the opening
