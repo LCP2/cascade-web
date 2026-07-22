@@ -58,6 +58,14 @@
   .brand{font-size:18px;font-weight:700;letter-spacing:1.6px;color:var(--ink);text-transform:uppercase}
   .region{font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:20px;padding:2px 9px;margin-left:8px}
   .updated{font-size:10.5px;color:var(--faint);margin-top:3px}
+  /* Build stamp (CAS-124) — small, muted release/build provenance at the foot of the app.
+     env is rendered by JS from the hostname at runtime, and coloured so staging (amber) is
+     never mistaken for production (dim). */
+  .buildstamp{margin:26px 8px 6px;text-align:center;font-size:10.5px;line-height:1.5;
+    color:var(--faint);letter-spacing:.02em}
+  .buildstamp .env{font-weight:600}
+  .buildstamp .env.staging{color:var(--amber)}
+  .buildstamp .env.production{color:var(--dim)}
   .hdr-actions{display:flex;gap:8px}
   .iconbtn{position:relative;cursor:pointer;font-size:19px;background:var(--panel2);border:1px solid var(--line);
     border-radius:12px;width:40px;height:40px;display:grid;place-items:center}
@@ -1183,6 +1191,11 @@
     <div class="count" id="count"></div>
     <div id="groups"></div>
   </div>
+
+  <!-- BUILD STAMP (CAS-124) — release + build provenance so staging is never mistaken for live.
+       version/build/commit/builtAt are baked at build time (poc_pipeline.py --build-html, from the
+       committed VERSION file + git); env is derived from the hostname at runtime by the script. -->
+  <footer class="buildstamp" id="buildStamp" aria-label="App version"></footer>
 </div>
 
 <!-- CASCADE BUILDER modal — pane 1: template picker, pane 2: editor -->
@@ -1308,6 +1321,9 @@
   <div class="pnote">Adds a savings line to cards where a genuinely cheaper path exists, a live result count on
     the Filters apply button, and loss-framed alert copy. Switch it off for the plain version — that's the A/B control.
     Every figure is read from the real offer prices; we never show a saving or a countdown we can't back up.</div>
+  <!-- About / build provenance (CAS-124): the same stamp as the footer, in the settings surface. -->
+  <div class="flabel">About</div>
+  <div class="pnote" id="aboutBuild">—</div>
 </div>
 
 <!-- ACCOUNT modal (CAS-82 / spec 26771457 §4) — magic-link sign-in. Three states, toggled by
@@ -1835,6 +1851,35 @@ const activeCascade = () => cascades.find(c=>c.id===activeId) || null;
 if(activeId!==ALL_ID && !activeCascade()) setActive(ALL_ID);
 
 $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
+
+// ================= Build stamp (CAS-124) =================
+// version / build / commit / builtAt are baked at build time (from the committed VERSION file + git).
+// env is NOT baked: promote is a plain staging->main merge that ships the identical file, so the only
+// honest way for the live site and the preview to label themselves apart is to look at where they are
+// actually being served. So env is derived from the hostname here, at runtime — the served
+// /version.json still carries the build-branch env for machine consumers.
+const BUILD_INFO = {"version": "0.4.0", "major": 0, "minor": 4, "patch": 0, "build": 53, "commit": "5759200", "builtAt": "2026-07-22T00:23:18Z", "env": "staging"};
+const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
+  ? "production" : "staging";
+(function stampBuild(){
+  const b = BUILD_INFO || {};
+  const core = ["v" + (b.version || "0.0.0"),
+                "build " + (b.build != null ? b.build : "?"),
+                (b.commit || "unknown")].join(" · ");
+  const foot = $("buildStamp");
+  if(foot){
+    foot.append(core + " · ");
+    const env = document.createElement("span");
+    env.className = "env " + RUNTIME_ENV;
+    env.textContent = RUNTIME_ENV;
+    foot.appendChild(env);
+  }
+  const about = $("aboutBuild");
+  if(about){
+    about.textContent = core + " · env: " + RUNTIME_ENV
+                      + (b.builtAt ? " · built " + b.builtAt : "");
+  }
+})();
 
 // ================= Usage log (local only) =================
 // The question this exists to answer: does anyone FIND "My Cascades", and which templates resonate?

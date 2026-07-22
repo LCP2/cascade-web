@@ -24,7 +24,7 @@ to compare against. Output for the app front-end is written to movies.json.
 """
 
 from __future__ import annotations
-import os, sys, json, time, datetime, urllib.parse, urllib.request
+import os, sys, json, time, datetime, subprocess, urllib.parse, urllib.request
 
 REGION = "AU"                      # the country this instance tracks
 CURRENCY = "AUD"
@@ -54,6 +54,8 @@ OUTPUT_FILE   = os.path.join(os.path.dirname(__file__), "movies.json")
 SAMPLE_FILE   = os.path.join(os.path.dirname(__file__), "sample_data.json")
 TEMPLATE_FILE = os.path.join(os.path.dirname(__file__), "app_template.html")
 APP_FILE      = os.path.join(os.path.dirname(__file__), "index.html")
+VERSION_FILE  = os.path.join(os.path.dirname(__file__), "VERSION")        # hand-bumped SemVer (CAS-124)
+VERSION_JSON  = os.path.join(os.path.dirname(__file__), "version.json")   # machine-readable build stamp
 
 TMDB_KEY      = os.environ.get("TMDB_API_KEY")
 OMDB_KEY      = os.environ.get("OMDB_API_KEY")
@@ -496,17 +498,64 @@ def run(simulate_day: bool = False):
         print("   (none — run again with --simulate-day to see the alert path fire)")
 
 
+def _git(*args) -> str:
+    """Best-effort git call from the repo dir; '' on any failure (no git, detached, etc.)."""
+    try:
+        r = subprocess.run(["git", *args], cwd=os.path.dirname(__file__),
+                           capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def build_version_info() -> dict:
+    """Assemble the release + build stamp (CAS-124).
+    version              — hand-bumped SemVer from the committed VERSION file (the only manual step).
+    major/minor/patch    — parsed from version.
+    build/commit/builtAt — derived automatically from git at build time; never hand-edited.
+    env                  — the environment this artifact was BUILT for: CASCADE_ENV if set, else the
+                           branch (main -> production, else staging). NOTE: the visible in-app badge
+                           re-derives env from the hostname at RUNTIME, so the live site self-labels
+                           correctly even though promote is a plain staging->main merge (no rebuild).
+                           This baked value is the build-branch record for /version.json consumers."""
+    version = "0.0.0"
+    try:
+        version = (open(VERSION_FILE, encoding="utf-8").read().strip() or version)
+    except Exception:
+        pass
+    def _int(x):
+        try:    return int(x)
+        except Exception: return 0
+    major, minor, patch = ([_int(p) for p in version.split(".")] + [0, 0, 0])[:3]
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD")
+    env    = os.environ.get("CASCADE_ENV") or ("production" if branch == "main" else "staging")
+    return {
+        "version": version, "major": major, "minor": minor, "patch": patch,
+        "build":   _int(_git("rev-list", "--count", "HEAD")),
+        "commit":  _git("rev-parse", "--short", "HEAD") or "unknown",
+        "builtAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "env":     env,
+    }
+
+
 def build_html(records: list[dict] | None = None):
     """Inject the latest movies + date into app_template.html -> index.html.
-    Keeps the app a single double-clickable file (no server, no CORS)."""
+    Keeps the app a single double-clickable file (no server, no CORS).
+    Also stamps the release/build version (CAS-124) into the app and /version.json."""
     if records is None:  # --build-html on its own: rebuild from the last movies.json
         records = json.load(open(OUTPUT_FILE))["movies"]
     if not os.path.exists(TEMPLATE_FILE):
         print("! app_template.html not found — cannot build index.html"); return
+    info = build_version_info()
     html = open(TEMPLATE_FILE, encoding="utf-8").read()
     html = html.replace("__MOVIES_JSON__", json.dumps(records))
     html = html.replace("__TODAY__", datetime.date.today().isoformat())
+    html = html.replace("__BUILD_INFO__", json.dumps(info))
     open(APP_FILE, "w", encoding="utf-8").write(html)
+    # Machine-readable stamp served at /version.json (same origin as the app).
+    with open(VERSION_JSON, "w", encoding="utf-8") as f:
+        json.dump(info, f, separators=(",", ":")); f.write("\n")
+    print(f"stamped v{info['version']} · build {info['build']} · {info['commit']} · env {info['env']}")
 
 
 def _apply_scripted_change(records: list[dict]):
