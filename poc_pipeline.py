@@ -30,14 +30,17 @@ to compare against. Output for the app front-end is written to movies.json.
 """
 
 from __future__ import annotations
-import os, sys, json, time, datetime, subprocess, urllib.parse, urllib.request
+import os, sys, json, time, datetime, subprocess, urllib.parse, urllib.request, urllib.error
 
 REGION = "AU"                      # the country this instance tracks
 CURRENCY = "AUD"
 
 # --- catalogue scope: work BACKWARDS from cinema, not just "now playing" ---
-LOOKBACK_DAYS = 1095             # include films with an AU theatrical release in this trailing window (~3 years)
-MAX_TITLES    = 60               # cap tracked titles; Watchmode-id caching (below) keeps this within the free tier
+# CAS-128: the ~300 cap is lifted now that availability is free (TMDB Providers, CAS-127).
+# All three are env-driven so widening — including the Phase-3 "drop the cinema-release
+# requirement → all films" — is a one-line config change, no code edit.
+LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "1095"))   # AU theatrical release lookback (~3 years)
+MAX_TITLES    = int(os.getenv("MAX_TITLES", "5000"))      # ingest breadth: pull the full AU set in the window, not a top-N slice
 OPENING_WEEK_DAYS = 7            # a cinema release this recent counts as "opening week"
 
 # --- and FORWARDS from cinema: films announced for AU cinemas but not out yet ---
@@ -70,8 +73,10 @@ LIVE = bool(TMDB_KEY and OMDB_KEY and WATCHMODE_KEY)
 
 # CAS-109 — poll-tiering + free-tier-capped scheduler (staging prototype).
 import poll_scheduler as ps
-CATALOGUE_TARGET = 300   # persistent browsable catalogue size (grows over runs);
-                         # the DAILY poll set is capped separately (ps.ACTIVE_CAP) to stay free-tier.
+CATALOGUE_TARGET = int(os.getenv("CATALOGUE_TARGET", str(MAX_TITLES)))
+                         # CAS-128: persistent browsable catalogue size — defaults to MAX_TITLES so the
+                         # ~300 cap is gone and the full ingested AU set is held. Availability is free
+                         # (TMDB Providers), so catalogue size no longer gates the daily budget.
 
 # CAS-127 — TMDB Watch Providers is the primary availability source (free, no quota).
 # It runs once per released title per day across the WHOLE catalogue, so pace it politely
@@ -84,10 +89,22 @@ OMDB_DAILY_BUDGET = int(os.getenv("OMDB_DAILY_BUDGET", "900"))  # OMDb ratings e
 # ---------------------------------------------------------------------------
 # tiny HTTP helper
 # ---------------------------------------------------------------------------
-def get_json(url: str) -> dict:
+def get_json(url: str, retries: int = 4) -> dict:
+    """GET + parse JSON, with polite backoff on rate-limit / transient server errors.
+    CAS-128: the full-catalogue ingest + daily provider sweep make many calls, so honour
+    HTTP 429 (Retry-After when given, else exponential) and retry 5xx a few times."""
     req = urllib.request.Request(url, headers={"User-Agent": "cascade-poc/0.1"})
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.load(r)
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < retries:
+                wait = e.headers.get("Retry-After") if e.code == 429 else None
+                delay = float(wait) if (wait and str(wait).isdigit()) else min(30.0, 2.0 ** attempt)
+                time.sleep(delay)
+                continue
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -141,9 +158,14 @@ def _tmdb_record(detail: dict) -> dict:
 def _discover_au_theatrical(start: str, end: str, cap: int, seen: set) -> list[dict]:
     """AU theatrical (type 3) or limited (2) releases dated in [start, end],
     most-popular first, up to `cap`. `seen` carries tmdb_ids already taken by an
-    earlier pass so a title can't land in two groups."""
+    earlier pass so a title can't land in two groups.
+
+    CAS-128: page depth scales with `cap` (was a hard 10 pages ≈ 200 titles) so a big
+    cap pulls the full AU set, bounded by TMDB's 500-page discover limit. Detail calls
+    are paced politely; get_json handles 429/5xx backoff."""
     movies, page = [], 1
-    while len(movies) < cap and page <= 10:
+    max_pages = min(500, max(1, -(-cap // 20)))              # ~20 results/page; ceil, capped at TMDB's max
+    while len(movies) < cap and page <= max_pages:
         disc = get_json(
             f"{TMDB_BASE}/discover/movie?api_key={TMDB_KEY}&region={REGION}"
             f"&with_release_type=2|3"                         # AU theatrical (3) or limited (2)
@@ -161,6 +183,8 @@ def _discover_au_theatrical(start: str, end: str, cap: int, seen: set) -> list[d
                 f"{TMDB_BASE}/movie/{m['id']}?api_key={TMDB_KEY}&append_to_response=release_dates,videos,credits"
             )
             movies.append(_tmdb_record(detail))
+            if TMDB_PACING:
+                time.sleep(TMDB_PACING)                       # polite pacing on the detail-call loop
             if len(movies) >= cap:
                 break
         page += 1
