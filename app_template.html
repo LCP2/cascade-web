@@ -155,7 +155,7 @@
   .cert{display:inline-block;font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:5px;
     border:1px solid #5b6472;color:#d6dce6;background:#232a35;margin-left:6px;vertical-align:middle;letter-spacing:.3px;white-space:nowrap}
   .cert.mature{border-color:#c0563f;color:#ffb9a6;background:rgba(192,86,63,.16)}
-  .meta{font-size:12.5px;color:var(--dim);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .meta{font-size:13.5px;color:var(--dim);margin-top:7px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}   /* CAS-135/130: larger, more legible meta line */
   .culttag{color:var(--faint)}
   .synopsis{font-size:13px;color:#c4ccd6;line-height:1.5;margin:8px 0 0;
     display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
@@ -214,25 +214,30 @@
   /* Tagging something Watched / Not-interested used to delete it from the screen with no way back except a
      filter you'd have to go and find. Now the row stays, greyed, carrying the very icon that removed it —
      press it again and the full card comes back. Nothing silently disappears. */
-  .stub{display:flex;align-items:center;gap:9px;background:var(--panel);border:1px dashed var(--line);
-    border-radius:12px;padding:6px 7px 6px 12px;margin-bottom:8px;opacity:.6;transition:opacity .15s;
-    content-visibility:auto;contain-intrinsic-size:auto 44px}   /* CAS-129: windowing (see .card) */
-  .stub:hover,.stub:focus-within{opacity:.95}
-  .stubname{flex:1;min-width:0;font-size:13px;font-weight:700;color:var(--dim);
+  /* CAS-133: the collapsed row wears the SAME outline as the full card (solid, same colour/radius),
+     its title is bright and prominent, and it's only lightly dimmed so it reads as "collapsed", not
+     "gone". The shrink itself is animated by keepRowInPlace on deselect — the card visibly folds. */
+  .stub{display:flex;align-items:center;gap:9px;background:var(--panel);border:1px solid var(--line);
+    border-radius:16px;padding:9px 9px 9px 13px;margin-bottom:11px;opacity:.9;transition:opacity .18s;
+    content-visibility:auto;contain-intrinsic-size:auto 46px}   /* CAS-129: windowing (see .card) */
+  .stub:hover,.stub:focus-within{opacity:1}
+  .stubname{flex:1;min-width:0;font-size:14.5px;font-weight:750;color:var(--ink);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .stubwhy{font-size:10.5px;font-weight:700;color:var(--faint);white-space:nowrap;flex-shrink:0}
+  .stubwhy{font-size:11.5px;font-weight:700;color:var(--dim);white-space:nowrap;flex-shrink:0}
   .actbtn.stubbtn{width:32px;height:28px;border-radius:9px;flex-shrink:0}
   .actbtn.stubbtn svg{width:16px;height:16px}
   .ratings{margin-top:12px}
-  .rrow{display:flex;gap:3px;align-items:center;overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none}
+  /* CAS-135: the availability/ratings ("AS") line is enlarged and given more breathing room between
+     badges so the iconography no longer clusters. */
+  .rrow{display:flex;gap:7px;align-items:center;overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none}
   .rrow::-webkit-scrollbar{display:none}
-  .rb{flex-shrink:0;height:22px;font-size:10px;font-weight:700;padding:0 6px;border-radius:7px;display:flex;gap:3px;align-items:center;justify-content:flex-start;
+  .rb{flex-shrink:0;height:26px;font-size:11.5px;font-weight:700;padding:0 9px;border-radius:8px;display:flex;gap:4px;align-items:center;justify-content:flex-start;
     background:var(--panel2);border:1px solid var(--line);white-space:nowrap;overflow:hidden}
   /* content-sized so text never clips; a small min-width keeps the score lozenges balanced */
-  .rb.imdb,.rb.rt,.rb.mc{min-width:52px}
+  .rb.imdb,.rb.rt,.rb.mc{min-width:58px}
   .rb.muted{color:var(--faint)}
   .rb.muted b{color:var(--faint)}
-  .rb b{font-size:11px}
+  .rb b{font-size:12.5px}
   .rb.imdb b{color:var(--imdb)} .rb.rt b{color:var(--rt)} .rb.mc b{color:var(--meta)} .rb.budget b{color:#c9a2ff} .rb.gross b{color:#9fe6c4}
   /* Scale badge — its own row, directly under the description and above the ratings (CAS-64). It's a claim
      ABOUT the film, not another metric alongside IMDb/RT, so it gets its own line. Gold, and it names the
@@ -2542,7 +2547,9 @@ function cardHTML(m, markNew=false){
       <span class="off">${o.price!=null?"$"+o.price.toFixed(2):""}${o.fmt?" · "+o.fmt:""}</span></div>`).join("")}<div class="wtwrow jwrow">${jwAttr}</div></div>` : "";
   const syn = m.synopsis ? `<p class="synopsis">${esc(m.synopsis)}</p>` : "";
   const cert = m.age_rating ? `<span class="cert ${MATURE.has(m.age_rating)?'mature':''}">${m.age_rating}</span>` : "";
-  const cult = m.culture ? ` · <span class="culttag">${m.culture}</span>` : "";
+  // CAS-135: the chip reads the film's LANGUAGE (e.g. "English"), now that selection is language-based —
+  // not the old genre-ish "Western" culture bucket.
+  const cult = m.language ? ` · <span class="culttag">${langName(m.language)}</span>` : "";
   const poster = m.poster ? `background-image:url(https://image.tmdb.org/t/p/w185${m.poster})` : "";
   const wtwBtn = offers.length
     ? `<button class="actbtn wtwbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')" title="Where to watch (${offers.length})">${ICON.chev}</button>`
@@ -2551,16 +2558,14 @@ function cardHTML(m, markNew=false){
   // What's new is a fact about the film — the day Cascade first picked it up — so it is stated ON the film,
   // and nowhere else (CAS-107). It no longer decides where the film sits in the list, and the header no longer
   // dresses the whole list up as news; the chip just tells you which of these you haven't seen before.
-  const isNew = markNew ? `<span class="newchip">🆕 New this week</span>` : "";
-  // The opening-weekend state, on the card, in both views (CAS-68). Computed from the real opening date, so it
-  // says how long the film has actually been out — never how long it has left, which nobody knows.
-  const po = isPastOpening(m)
-    ? `<span class="newchip po" title="Opened ${daysOut(m)} days ago — past its opening weekend (opening + ${PAST_OPENING_DAYS} days). We don't know when it leaves the cinema; nobody publishes that.">🎬 Past opening weekend</span>` : "";
+  // CAS-135: the "New this week" and "Past opening weekend" chips are removed — too many tags. What's new
+  // is still tracked (freshness) but no longer chipped on the card title. (markNew is kept in the signature
+  // for callers but no longer rendered.)
   return `<div class="card ${expandedSet.has(id)?'expanded':''}" id="card-${id}">
     <div class="ctop">
       <div class="poster" style="${poster}" onclick="toggleExpand(${id})"></div>
       <div class="chead">
-        <div class="title" onclick="toggleExpand(${id})">${m.title}${cert}${isNew}${po}</div>
+        <div class="title" onclick="toggleExpand(${id})">${m.title}${cert}</div>
         <div class="meta">${m.cinema_date?fmtDate(m.cinema_date):""}${(m.genres||[]).length?(m.cinema_date?" · ":"")+(m.genres||[]).join(", "):""}${cult}</div>
         ${syn}
       </div>
