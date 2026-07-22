@@ -675,8 +675,30 @@
   @keyframes splashIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
   .splashmark{width:84px;height:84px;margin:6px auto 0;display:block;
     filter:drop-shadow(0 0 14px rgba(124,92,255,.55))}
-  .splashanim{width:300px;height:238px;margin:2px auto 4px;position:relative;overflow:hidden}
-  .splashanim iframe{position:absolute;top:0;left:0;width:1316px;height:1022px;border:0;transform:scale(.228);transform-origin:top left;background:transparent}
+  /* CAS-137 + CAS-131: the logo animation is now inline, crisp and lightweight — no iframe (which loaded
+     a whole second document with five heavy SVG blur filters and blocked first paint) and no 0.228 downscale
+     (which made the flying words ~7px and pixelated). It's a pure CSS cascade of the journey-coloured cards
+     rendered at native resolution, so it can't delay load and reads sharp. The journey wording lives in the
+     lozenges just below, so the illegible flying words are dropped rather than shrunk. */
+  .splashanim{height:132px;display:flex;align-items:center;justify-content:center;margin:8px auto 2px}
+  /* explicit width = the real overlapped span (62 + 4×38 = 214) so the flex centre isn't thrown off by
+     the cards' negative margins collapsing the container's computed width. */
+  .scasc{display:flex;align-items:center;height:96px;width:214px;margin:0 auto}
+  /* .jcard (journey card) — NOT .scard, which is already the starter-card class (width:100%). */
+  .jcard{width:62px;height:90px;border-radius:12px;margin-left:-24px;flex:0 0 auto;position:relative;
+    border:1.5px solid rgba(255,255,255,.9);box-shadow:0 10px 26px rgba(0,0,0,.45);
+    animation:scdrop .5s cubic-bezier(.2,.75,.3,1) both}
+  .jcard:first-child{margin-left:0}
+  .jcard.c0{background:linear-gradient(160deg,#8a93a3,#5b6473);animation-delay:.04s}
+  .jcard.c1{background:linear-gradient(160deg,#f6b74e,#e08b1e);animation-delay:.12s}
+  .jcard.c2{background:linear-gradient(160deg,#6fb6f4,#3f7fd8);animation-delay:.20s}
+  .jcard.c3{background:linear-gradient(160deg,#5ed6a0,#2fae78);animation-delay:.28s}
+  .jcard.c4{background:var(--grad);animation-delay:.36s;display:flex;align-items:center;justify-content:center;
+    box-shadow:0 12px 30px rgba(124,92,255,.5)}
+  .jcard.c4 svg{width:30px;height:30px;filter:drop-shadow(0 1px 2px rgba(10,14,26,.5))}
+  @keyframes scdrop{from{opacity:0;transform:translateX(46px) translateY(-6px) rotate(7deg) scale(.9)}
+                    to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){ .jcard{animation:none} }
   .splashword{font-family:var(--font-body);font-weight:500;letter-spacing:.44em;font-size:19px;
     padding-left:.44em;color:#fff;line-height:1;margin:16px 0 24px}
   .splashhero{font-family:var(--font-display);font-size:23px;font-weight:700;line-height:1.22;
@@ -1441,7 +1463,14 @@
      existing agent-setup sheet. -->
 <div class="splash" id="splash" role="dialog" aria-modal="true" aria-label="Welcome to Cascade">
   <div class="splashinner">
-    <div class="splashanim"><iframe src="splash_anim.html" title="Cascade" scrolling="no" aria-label="Cascade"></iframe></div>
+    <!-- CAS-137/131: inline, crisp, deferred-by-nature (pure CSS) logo cascade — no iframe, no downscale. -->
+    <div class="splashanim" aria-hidden="true">
+      <div class="scasc">
+        <span class="jcard c0"></span><span class="jcard c1"></span><span class="jcard c2"></span><span class="jcard c3"></span>
+        <span class="jcard c4"><svg viewBox="0 0 24 24" fill="none"><path d="M9 7.5 L9 16.5 L17 12 Z" fill="#fff"/></svg></span>
+      </div>
+    </div>
+    <div class="splashword">CASCADE</div>
     <h1 class="splashhero">Your own movie<br>search agents</h1>
     <div class="splashloz">
       <span class="splashpill"><span class="splashdot" style="background:var(--grey)"></span>Upcoming</span>
