@@ -5660,30 +5660,28 @@ const REVEAL_LEAD_NOW   = {cinema:"in cinemas or opening soon", rentals:"just dr
 const REVEAL_LEAD_RADAR = {cinema:"on their way to the big screen", rentals:"on their way to rent", streaming:"on their way to your services"};
 function showReveal(c){
   revealCascade=c;
-  const byRating=(a,b)=>(b.imdb_rating||0)-(a.imdb_rating||0);
-  const tasteN=watchCount(c);   // the wider taste-match total the earlier dial/name steps showed (the radar)
-  let films=MOVIES.filter(m=>matchesCriteria(m,c)).sort(byRating), live=true;   // watchable RIGHT NOW
-  if(!films.length){ films=MOVIES.filter(m=>watchesFilm(m,c)).sort(byRating); live=false; }
+  // CAS-132: the reveal previews EXACTLY the listing the user lands on. The Found listing's membership is
+  // watchesFilm (= watchCount) ordered by byStageThenRating — so the reveal draws from that same set, in
+  // that same order, with that same count. No divergent matchesCriteria/byRating path (that split was the
+  // ~292-vs-367 mismatch: matchesCriteria is only the watchable-RIGHT-NOW slice). That slice is still called
+  // out honestly, as a note under the same headline, not as a rival count.
+  const films=MOVIES.filter(m=>watchesFilm(m,c)).sort(byStageThenRating);   // == the Found listing set/order
   const n=films.length;
-  const lead=(live?REVEAL_LEAD_NOW:REVEAL_LEAD_RADAR)[wiz.starter] || (live?"ready for you":"on its radar");
-  // The full grid — every match, not a teaser. Posters come straight from the live engine.
+  const nowN=MOVIES.filter(m=>matchesCriteria(m,c)).length;                 // watchable this moment (a subset of n)
   const posters=films.map(m=>{
     const bg=m.poster?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
     return `<div class="rvposter" style="${bg}" title="${escA(m.title)}"></div>`;
   }).join("");
-  // Honest count copy: N is the watchable-now subset; when it's fewer than the taste total, say so plainly.
-  const subsetNote = (live && tasteN>n)
-    ? ` That's the slice you can watch this moment — it's matched <b>${tasteN}</b> to your taste in all, and it'll tell you the moment another lands.`
-    : ` It'll tell you the moment another lands.`;
+  const nowNote = nowN
+    ? ` <b>${nowN}</b> ${nowN===1?"is":"are"} ready to watch right now — it'll tell you the moment another lands.`
+    : ` It'll tell you the moment one lands.`;
   const sub = n
-    ? (live
-        ? `${c.icon} <b>${esc(c.name)}</b> came back with <b>${n} film${n===1?"":"s"}</b> ${esc(lead)}, ready to watch right now.${subsetNote} <b>No account needed.</b>`
-        : `${c.icon} <b>${esc(c.name)}</b> is watching <b>${n} film${n===1?"":"s"}</b> ${esc(lead)} — it'll tell you the moment one lands. <b>No account needed.</b>`)
+    ? `${c.icon} <b>${esc(c.name)}</b> is watching <b>${n} film${n===1?"":"s"}</b> for your taste.${nowNote} <b>No account needed.</b>`
     : `${c.icon} <b>${esc(c.name)}</b> is on the job and watching for you — <b>no account needed</b>.`;
   $("revealBody").innerHTML=`
     <div class="rvtop">
       <div class="rvcount">${n}</div>
-      <h2 class="rvh">film${n===1?"":"s"} ${live?"ready to watch":"on the radar"}</h2>
+      <h2 class="rvh">film${n===1?"":"s"} your agent's watching</h2>
       <p class="rvsub">${sub}</p>
       <button class="rvkeep" type="button" onclick="revealKeep()">Cascade Membership</button>
     </div>
@@ -5691,7 +5689,7 @@ function showReveal(c){
     <div class="rvprov">🔎 Found by ${c.icon} <b>${esc(c.name)}</b> — it keeps watching, every day, without you.</div>`;
   $("reveal").scrollTop=0;
   $("reveal").classList.add("open"); document.body.style.overflow="hidden";
-  logEvent("reveal_shown",{starter:wiz.starter, n, tasteN, live});
+  logEvent("reveal_shown",{starter:wiz.starter, n, nowN});
 }
 function closeRevealToApp(){
   $("reveal").classList.remove("open"); document.body.style.overflow="";
