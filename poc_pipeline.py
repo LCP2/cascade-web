@@ -5,8 +5,14 @@ Cascade Movies — proof-of-concept backend pipeline
 
 Demonstrates the full daily loop for the release-window tracker:
 
-    ingest (TMDB)  ->  enrich (OMDb)  ->  poll (Watchmode)
-        -> derive status set -> diff vs yesterday -> emit alerts
+    ingest (TMDB) -> enrich (OMDb) -> availability (TMDB Watch Providers, AU)
+        -> derive status -> diff vs yesterday -> emit alerts
+
+CAS-127: the PRIMARY availability source is TMDB Watch Providers (free, data by
+JustWatch — no monthly quota), one call per title per day across the whole
+catalogue. Watchmode is demoted to optional ON-DEMAND enrichment (exact rent/buy
+prices + verified deep-links) for titles a user opens or saves — never the daily
+sweep. This is what lets availability scale to a big catalogue (CAS-128).
 
 Run WITHOUT keys and it uses the bundled illustrative sample data so you can
 see the whole flow end-to-end. Set the three env vars and it hits the live
@@ -66,6 +72,13 @@ LIVE = bool(TMDB_KEY and OMDB_KEY and WATCHMODE_KEY)
 import poll_scheduler as ps
 CATALOGUE_TARGET = 300   # persistent browsable catalogue size (grows over runs);
                          # the DAILY poll set is capped separately (ps.ACTIVE_CAP) to stay free-tier.
+
+# CAS-127 — TMDB Watch Providers is the primary availability source (free, no quota).
+# It runs once per released title per day across the WHOLE catalogue, so pace it politely
+# (TMDB historically allows ~50 req/s and no daily cap). Watchmode is now on-demand only.
+TMDB_PACING      = float(os.getenv("TMDB_PACING", "0.05"))   # seconds between provider calls (~20/s)
+ONDEMAND_WM_CAP  = int(os.getenv("ONDEMAND_WM_CAP", str(ps.ONDEMAND_RESERVE)))  # Watchmode enrich/day ceiling
+OMDB_DAILY_BUDGET = int(os.getenv("OMDB_DAILY_BUDGET", "900"))  # OMDb ratings enrich/day (free tier ~1000/day)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +245,62 @@ def _oscar_status(awards: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# 3. POLL — current AU offers (service / type / price / format) via Watchmode
+# 3a. AVAILABILITY (PRIMARY) — AU watch providers via TMDB (free, data by JustWatch)
+# ---------------------------------------------------------------------------
+def tmdb_providers(tmdb_id, region=REGION, api_key=None) -> dict:
+    """AU watch-provider rows for one title from TMDB (data sourced from JustWatch).
+    FREE and unquota'd — this is the primary availability signal (CAS-127), replacing the
+    daily Watchmode poll. TMDB gives provider NAMES per category but no price or format;
+    Watchmode enrichment fills those on-demand for engaged titles."""
+    api_key = api_key or TMDB_KEY
+    data = get_json(f"{TMDB_BASE}/movie/{tmdb_id}/watch/providers?api_key={api_key}")
+    r = (data.get("results") or {}).get(region) or {}
+    return {
+        "flatrate": [p["provider_name"] for p in r.get("flatrate", [])],  # subscription/streaming
+        "rent":     [p["provider_name"] for p in r.get("rent", [])],
+        "buy":      [p["provider_name"] for p in r.get("buy", [])],
+        "ads":      [p["provider_name"] for p in r.get("ads", [])],       # ad-supported (free to watch)
+        "free":     [p["provider_name"] for p in r.get("free", [])],
+        "jw_link":  r.get("link"),        # JustWatch page for AU (attribution / deep-out)
+    }
+
+
+def provider_offers(prov: dict) -> list[dict]:
+    """Every AU provider row as a normalised offer (service/type/price/format).
+    TMDB carries no price or format, so those are None until Watchmode enriches an
+    engaged title. ads/free both map to a free-to-watch 'free' offer."""
+    rows  = [(s, "sub")  for s in prov.get("flatrate", [])]
+    rows += [(s, "free") for s in (prov.get("free", []) + prov.get("ads", []))]
+    rows += [(s, "rent") for s in prov.get("rent", [])]
+    rows += [(s, "buy")  for s in prov.get("buy", [])]
+    return [{"service": s, "type": t, "price": None, "format": None} for s, t in rows]
+
+
+def derive_from_providers(movie: dict, prov: dict, today: datetime.date) -> list[str]:
+    """Headline Cascade window from TMDB/JustWatch AU providers (CAS-127 cascade):
+      flatrate|free|ads  -> included_streaming
+      else rent|buy      -> rental (a rent offer exists) or pvod (buy-only, pre-rental).
+                            TMDB gives no price, so premium vs standard can't use
+                            PVOD_MIN_PRICE — a rentable title is the standard window,
+                            a buy-only title is the earlier premium/PVOD window.
+      else               -> in_cinema if it has opened, otherwise upcoming."""
+    if prov.get("flatrate") or prov.get("free") or prov.get("ads"):
+        return ["included_streaming"]
+    if prov.get("rent") or prov.get("buy"):
+        return ["rental"] if prov.get("rent") else ["pvod"]
+    cd = movie.get("cinema_date")
+    return ["in_cinema"] if (cd and cd <= today.isoformat()) else ["upcoming"]
+
+
+def has_provider_rows(prov: dict) -> bool:
+    """True if TMDB/JustWatch has ANY AU availability row for the title."""
+    return any(prov.get(k) for k in ("flatrate", "free", "ads", "rent", "buy"))
+
+
+# ---------------------------------------------------------------------------
+# 3b. ENRICHMENT (ON-DEMAND ONLY) — exact AU prices / deep-links via Watchmode
+#     Called for titles a user opens or saves, within a small bounded budget —
+#     NOT the daily sweep (CAS-127). Prices/formats/deep-links TMDB can't give.
 # ---------------------------------------------------------------------------
 def poll_watchmode(movie: dict, wm_cache: dict) -> list[dict]:
     """Return normalised offers: [{service, type, price, format}].
@@ -347,7 +415,10 @@ def _window_of(offer: dict) -> str:
     if offer["type"] in ("sub", "free"): return "included_streaming"
     if offer["type"] == "buy":  return "pvod"
     if offer["type"] == "rent":
-        return "rental" if (offer.get("price") or 99) <= RENTAL_MAX_PRICE else "pvod"
+        # A priced rent splits premium(pvod)/standard(rental) on PVOD_MIN_PRICE; a
+        # price-less rent (TMDB providers give no price) is the standard rental window,
+        # matching derive_from_providers so alert `services` line up with the window.
+        return "rental" if (offer.get("price") or 0) <= RENTAL_MAX_PRICE else "pvod"
     return ""
 
 
@@ -370,13 +441,15 @@ def today_records_date(): return _RUN_DATE
 # CAS-109 — build the persistent catalogue, poll only the daily set, carry the rest
 # ---------------------------------------------------------------------------
 def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_ids=None):
-    """Merge new TMDB ingest into the persistent base, choose the free-tier-capped
-    daily poll set, poll ONLY that set (+ brand-new titles to establish state), and
-    carry forward last-known status / estimate for everything else.
+    """Merge new TMDB ingest into the persistent base, then derive availability for the
+    WHOLE released catalogue from TMDB Watch Providers (free, one call/title/day — CAS-127).
+    Watchmode is spent only to ENRICH the on-demand set (titles a user opened/saved) with
+    exact prices + deep-links, within a small bounded budget. OMDb ratings are back-filled
+    for un-rated titles under a daily budget so new titles gain scores over runs.
 
-    Deps (ingest_tmdb / ingest_tmdb_upcoming / enrich_omdb / poll_watchmode /
-    derive_status) are module functions so tests can monkeypatch them. No file IO
-    here — run() persists the result. Returns (catalogue_records, poll_counts)."""
+    Deps (ingest_tmdb / ingest_tmdb_upcoming / enrich_omdb / poll_watchmode / tmdb_providers /
+    derive_from_providers / derive_status) are module functions so tests can monkeypatch them.
+    No file IO here — run() persists the result. Returns (catalogue_records, counts)."""
     offsets = offsets or ps.DEFAULT_OFFSETS
     base = {m["tmdb_id"]: m for m in base_records}
     seen = set(base)
@@ -389,35 +462,50 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     catalogue.sort(key=lambda m: m.get("popularity") or 0, reverse=True)
     catalogue = catalogue[:CATALOGUE_TARGET]
 
-    # New titles are NOT force-polled — they flow through the same capped scheduler
-    # (active-and-within-cap get polled; the rest show an estimate until their turn),
-    # so catalogue growth can never breach the free-tier daily budget.
+    # Watchmode is on-demand only now: the poll-set matters just for the engaged titles.
     sched = ps.select_daily_poll_set(catalogue, today, ondemand_ids=ondemand_ids)
-    poll_ids = {m["tmdb_id"] for m in sched["active"] + sched["slow"] + sched["ondemand"]}
+    ondemand_set = {m["tmdb_id"] for m in sched["ondemand"]}
+    provider_calls = wm_calls = omdb_calls = 0
+    omdb_budget, wm_budget = OMDB_DAILY_BUDGET, ONDEMAND_WM_CAP
 
     for m in catalogue:
         tier = ps.classify_tier(m, today)
         m["poll_tier"] = tier
-        must_poll = tier != "none" and m["tmdb_id"] in poll_ids
         if tier == "none":                                   # upcoming — known from TMDB date
             m["offers"] = []
             m["status"] = ["upcoming"]
             m["availability_confidence"] = "confirmed"
-        elif must_poll:                                      # spend a Watchmode call
-            if not m.get("imdb_rating"):
-                enrich_omdb(m)
-            m["offers"] = poll_watchmode(m, wm_cache)
-            m["status"] = derive_status(m, m["offers"], today)
+            m["availability_source"] = "tmdb_date"
+        else:
+            # PRIMARY availability: free TMDB Watch Providers (AU), every released title, daily.
+            prov = tmdb_providers(m["tmdb_id"]); provider_calls += 1
+            m["jw_link"] = prov.get("jw_link")               # JustWatch deep-out + attribution
+            if has_provider_rows(prov):
+                m["offers"] = provider_offers(prov)
+                m["status"] = derive_from_providers(m, prov, today)
+                m["availability_confidence"] = "confirmed"   # as of today's provider snapshot
+            else:                                            # JustWatch has no AU row -> honest estimate
+                w, conf = ps.estimate_status(m, today, offsets)
+                m["offers"] = []
+                m["status"] = [w]
+                m["availability_confidence"] = conf
             m["last_polled"] = today.isoformat()
-            m["availability_confidence"] = "confirmed"
-            time.sleep(0.25)
-        elif m.get("last_polled"):                           # carry forward last confirmed truth
-            m["availability_confidence"] = "confirmed"       # (as of last_polled)
-        else:                                                # never polled -> honest estimate
-            w, conf = ps.estimate_status(m, today, offsets)
-            m["offers"] = []
-            m["status"] = [w]
-            m["availability_confidence"] = conf
+            m["availability_source"] = "tmdb_providers"
+
+            # OMDb back-fill for un-rated titles, bounded to stay under the free tier.
+            if not m.get("imdb_rating") and m.get("imdb_id") and omdb_budget > 0:
+                enrich_omdb(m); omdb_calls += 1; omdb_budget -= 1
+
+            # ON-DEMAND Watchmode enrichment: exact prices + deep-links for engaged titles only.
+            if m["tmdb_id"] in ondemand_set and wm_budget > 0 and m.get("imdb_id"):
+                wm_offers = poll_watchmode(m, wm_cache); wm_calls += 1; wm_budget -= 1
+                if wm_offers:                                # richer than providers: real prices/formats
+                    m["offers"] = wm_offers
+                    m["status"] = derive_status(m, wm_offers, today)
+                    m["availability_source"] = "watchmode_enriched"
+                time.sleep(TMDB_PACING)
+            if TMDB_PACING:
+                time.sleep(TMDB_PACING)                      # polite pacing between provider calls
 
         st = set(m.get("status", []))
         if "included_streaming" in st and not (st & ps.ACTIVE_WINDOW):
@@ -425,7 +513,10 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
         else:
             m.pop("settled_since", None)
 
-    return catalogue, sched["counts"]
+    counts = dict(sched["counts"])
+    counts.update(provider_calls=provider_calls, wm_calls=wm_calls, omdb_calls=omdb_calls,
+                  ondemand=len(ondemand_set), catalogue=len(catalogue))
+    return catalogue, counts
 
 
 # ---------------------------------------------------------------------------
@@ -444,8 +535,8 @@ def run(simulate_day: bool = False):
         ondemand_ids = json.load(open(ondemand_file)) if os.path.exists(ondemand_file) else []
         records, counts = build_live_catalogue(today, base_records, wm_cache,
                                                offsets=offsets, ondemand_ids=ondemand_ids)
-        print(f"[live] catalogue {len(records)} | daily-active {counts['active']} "
-              f"(+{counts['slow_today']} sweep) | est {counts['est_monthly']}/mo vs free {ps.FREE_MONTHLY}")
+        print(f"[live] catalogue {len(records)} | TMDB provider calls {counts['provider_calls']} (free, no quota) "
+              f"| Watchmode on-demand {counts['wm_calls']}/{ONDEMAND_WM_CAP} | OMDb backfill {counts['omdb_calls']}")
         os.makedirs(STATE_DIR, exist_ok=True)
         json.dump(wm_cache, open(WM_CACHE_FILE, "w"), indent=2)
     else:

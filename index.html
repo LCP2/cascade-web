@@ -66,6 +66,8 @@
   .buildstamp .env{font-weight:600}
   .buildstamp .env.staging{color:var(--amber)}
   .buildstamp .env.production{color:var(--dim)}
+  /* App-wide data attribution (CAS-127) — required JustWatch/TMDB/OMDb credit. */
+  .appcredit{margin:22px 8px 2px;text-align:center;font-size:10.5px;line-height:1.5;color:var(--faint)}
   .hdr-actions{display:flex;gap:8px}
   .iconbtn{position:relative;cursor:pointer;font-size:19px;background:var(--panel2);border:1px solid var(--line);
     border-radius:12px;width:40px;height:40px;display:grid;place-items:center}
@@ -289,6 +291,11 @@
   .wtwrow:first-child{border-top:none}
   .wtwrow .svc{font-weight:600;color:var(--ink)}
   .wtwrow .off{color:var(--dim);white-space:nowrap}
+  /* JustWatch attribution (CAS-127) — required credit shown with the availability list,
+     deep-linking to the film's JustWatch AU page when we have it. */
+  .wtwrow.jwrow{justify-content:center;background:var(--panel2)}
+  .jwattr{font-size:10.5px;color:var(--faint);text-decoration:none}
+  a.jwattr:hover{color:var(--dim);text-decoration:underline}
   .tt{display:inline-block;box-sizing:border-box;min-width:46px;text-align:center;font-size:10px;font-weight:700;padding:2px 6px;border-radius:5px;margin-right:8px;vertical-align:middle}
   .tt.sub{background:rgba(72,199,142,.16);color:#a7eccb} .tt.free{background:rgba(72,199,142,.16);color:#a7eccb}
   .tt.rent{background:rgba(90,169,240,.16);color:#bcdcff} .tt.buy{background:rgba(164,134,240,.16);color:#d3c2ff}
@@ -1192,6 +1199,10 @@
     <div id="groups"></div>
   </div>
 
+  <!-- Data attribution (CAS-127): availability is TMDB Watch Providers, sourced from JustWatch —
+       the credit is required and shown app-wide, in addition to the per-title credit in each
+       "Where to watch" list. Ratings/metadata credits sit alongside. -->
+  <div class="appcredit" id="appCredit">Streaming availability by JustWatch · Film data by TMDB &amp; OMDb</div>
   <!-- BUILD STAMP (CAS-124) — release + build provenance so staging is never mistaken for live.
        version/build/commit/builtAt are baked at build time (poc_pipeline.py --build-html, from the
        committed VERSION file + git); env is derived from the hostname at runtime by the script. -->
@@ -1858,7 +1869,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.4.0", "major": 0, "minor": 4, "patch": 0, "build": 53, "commit": "5759200", "builtAt": "2026-07-22T00:23:18Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.4.0", "major": 0, "minor": 4, "patch": 0, "build": 54, "commit": "3c2c14b", "builtAt": "2026-07-22T00:46:59Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -2521,9 +2532,14 @@ function cardHTML(m, markNew=false){
   // CAS-110: an estimated title shows no offers and no prices — see savingsHTML.
   let offers=isEstimated(m) ? [] : dedupOffers(m.offers);
   if(prefsActive()) offers=offers.filter(myService);
+  // JustWatch attribution (CAS-127) — availability comes from TMDB Watch Providers (data by
+  // JustWatch); the credit is required, and deep-links to the film's JustWatch AU page when known.
+  const jwAttr = m.jw_link
+    ? `<a class="jwattr" href="${esc(m.jw_link)}" target="_blank" rel="noopener">Streaming data by JustWatch ↗</a>`
+    : `<span class="jwattr">Streaming data by JustWatch</span>`;
   const wtw = offers.length ? `<div class="wtw">${offers.map(o=>`<div class="wtwrow">
       <span class="svc"><span class="tt ${o.type}">${TYPE_LABEL[o.type]||o.type}</span>${svcName(o.service)}</span>
-      <span class="off">${o.price!=null?"$"+o.price.toFixed(2):""}${o.fmt?" · "+o.fmt:""}</span></div>`).join("")}</div>` : "";
+      <span class="off">${o.price!=null?"$"+o.price.toFixed(2):""}${o.fmt?" · "+o.fmt:""}</span></div>`).join("")}<div class="wtwrow jwrow">${jwAttr}</div></div>` : "";
   const syn = m.synopsis ? `<p class="synopsis">${esc(m.synopsis)}</p>` : "";
   const cert = m.age_rating ? `<span class="cert ${MATURE.has(m.age_rating)?'mature':''}">${m.age_rating}</span>` : "";
   const cult = m.culture ? ` · <span class="culttag">${m.culture}</span>` : "";
