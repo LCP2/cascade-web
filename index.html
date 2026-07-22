@@ -1877,7 +1877,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.4.0", "major": 0, "minor": 4, "patch": 0, "build": 63, "commit": "d61771f", "builtAt": "2026-07-22T12:42:47Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.4.0", "major": 0, "minor": 4, "patch": 0, "build": 64, "commit": "b8b32af", "builtAt": "2026-07-22T12:49:15Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3133,7 +3133,14 @@ const TENTPOLE_STOPS = [
 const tentpoleIs = (m,k) => scaleTier(m)===k;
 const tentpoleCount = k => MOVIES.filter(m=>tentpoleIs(m,k)).length;
 
-const AGE_LEVELS = [...ALL_AGES].sort((a,b)=>{
+// CAS-140: E (Exempt) and RC (Refused Classification) are NOT maturity rungs — E is a carve-out for
+// content that isn't classified at all, RC is prohibited content — so neither belongs on the ascending
+// "up to and including" ladder. Removed from the user-facing stops, leaving G · PG · M · MA 15+ · R 18+.
+// Films rated E/RC or unclassified are still handled in the FILTER, not dropped: at the default top level
+// (R 18+) ageOpen short-circuits and includes everything; only an explicit lower cap excludes an unknown
+// rating, which is the sensible behaviour for a maturity cap.
+const AGE_LADDER_EXCLUDE = new Set(["E","RC"]);
+const AGE_LEVELS = [...ALL_AGES].filter(a=>!AGE_LADDER_EXCLUDE.has(a)).sort((a,b)=>{
   const ia=AGE_ORDER.indexOf(a), ib=AGE_ORDER.indexOf(b);
   return (ia<0?99:ia)-(ib<0?99:ib) || a.localeCompare(b);
 });
@@ -5078,15 +5085,20 @@ function onbGenrePhrase(){
 // 5 · 10) opening out to Any. `years` is the width of the window in years (1 = this year only), null = Any.
 // A window becomes a floor = CURRENT_YEAR-(years-1) and an explicit include-list of every catalogue year at or
 // after it, so the count is real off the catalogue. Default is the last stop, Any (every year in).
+// CAS-139: stops run Any (left) → This year (right) so the most-recent window sits on the right. Same six
+// stops/labels/thresholds and the same recent-weighted values; only the left→right order is reversed. The
+// "lit" fill now runs k>=i (the selected window lights itself and every NARROWER window it contains, which
+// after the reversal are to its right) — so Any lights the whole track and This year just the tip, exactly
+// as before, and the default stays Any (now index 0, on the left).
 const YEAR_STOPS = [
-  {label:"This year", years:1},
-  {label:"Last 2",    years:2},
-  {label:"Last 3",    years:3},
-  {label:"Last 5",    years:5},
-  {label:"Last 10",   years:10},
   {label:"Any",       years:null},
+  {label:"Last 10",   years:10},
+  {label:"Last 5",    years:5},
+  {label:"Last 3",    years:3},
+  {label:"Last 2",    years:2},
+  {label:"This year", years:1},
 ];
-const YEAR_DEFAULT = YEAR_STOPS.length-1;   // Any — the open default
+const YEAR_DEFAULT = 0;   // Any — the open default, now on the LEFT
 function yearFloor(i){ const y=YEAR_STOPS[i].years; return y==null ? null : (+CURRENT_YEAR)-(y-1); }
 function onbYearsApply(){
   const fl=yearFloor(onbFlow.yearStop!=null?onbFlow.yearStop:YEAR_DEFAULT);
@@ -5386,7 +5398,7 @@ const SHARP_STEPS = {
         <p class="ossub">From all-time classics to this week's releases — everything's in by default.</p>
         <div class="osslider">
           <div class="rslider">
-            <div class="rstops" aria-hidden="true">${YEAR_STOPS.map((s,k)=>`<i class="${k<=i?'lit':''}"></i>`).join("")}</div>
+            <div class="rstops" aria-hidden="true">${YEAR_STOPS.map((s,k)=>`<i class="${k>=i?'lit':''}"></i>`).join("")}</div>
             <input id="onbStepYears" type="range" min="0" max="${YEAR_STOPS.length-1}" step="1"
                    value="${i}" aria-label="How recent should your agent look?">
           </div>
@@ -5400,7 +5412,7 @@ const SHARP_STEPS = {
         onbFlow.yearStop=+r.value;
         const ex=$("onbStepYearExplain"); if(ex) ex.innerHTML=onbYearExplain(onbFlow.yearStop);
         const dots=$("onbStep").querySelectorAll(".rstops i");
-        dots.forEach((el,k)=>el.classList.toggle("lit", k<=onbFlow.yearStop));
+        dots.forEach((el,k)=>el.classList.toggle("lit", k>=onbFlow.yearStop));   // CAS-139: fill toward the recent (right) end
         const labs=$("onbStepYearLabels"); if(labs) [...labs.children].forEach((el,k)=>el.classList.toggle("lit", k===onbFlow.yearStop));
         onbRefresh();
       };
