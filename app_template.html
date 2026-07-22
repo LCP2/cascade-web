@@ -140,7 +140,11 @@
   .gcount{color:var(--faint);font-weight:700}
   .list{padding:0 10px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:13px 13px;margin-bottom:11px;
-    transition:box-shadow .3s ease,border-color .3s ease}
+    transition:box-shadow .3s ease,border-color .3s ease;
+    /* CAS-129: windowing. The browser skips layout+paint for cards outside the viewport, so only the
+       visible handful of the ~2,000-card catalogue actually renders; contain-intrinsic-size:auto
+       remembers each card's real height once seen, keeping the scrollbar and offsets stable. */
+    content-visibility:auto;contain-intrinsic-size:auto 320px}
   .card.expanded{border-color:#3a3560;box-shadow:0 8px 30px rgba(0,0,0,.55)}
   .ctop{display:flex;gap:12px}
   .poster{width:78px;height:112px;flex-shrink:0;border-radius:10px;background:var(--panel2) center/cover no-repeat;
@@ -211,7 +215,8 @@
      filter you'd have to go and find. Now the row stays, greyed, carrying the very icon that removed it —
      press it again and the full card comes back. Nothing silently disappears. */
   .stub{display:flex;align-items:center;gap:9px;background:var(--panel);border:1px dashed var(--line);
-    border-radius:12px;padding:6px 7px 6px 12px;margin-bottom:8px;opacity:.6;transition:opacity .15s}
+    border-radius:12px;padding:6px 7px 6px 12px;margin-bottom:8px;opacity:.6;transition:opacity .15s;
+    content-visibility:auto;contain-intrinsic-size:auto 44px}   /* CAS-129: windowing (see .card) */
   .stub:hover,.stub:focus-within{opacity:.95}
   .stubname{flex:1;min-width:0;font-size:13px;font-weight:700;color:var(--dim);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -954,7 +959,8 @@
   .rvh{font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--ink);margin:2px 0 9px}
   .rvsub{font-size:13.5px;color:var(--dim);line-height:1.55;margin:0 0 14px}
   .rvgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:15px}
-  .rvposter{aspect-ratio:2/3;border-radius:10px;background:#0c0f14 center/cover no-repeat;border:1px solid var(--line)}
+  .rvposter{aspect-ratio:2/3;border-radius:10px;background:#0c0f14 center/cover no-repeat;border:1px solid var(--line);
+    content-visibility:auto;contain-intrinsic-size:auto 190px}   /* CAS-129: reveal grid windows too */
   .rvprov{font-size:12px;color:var(--faint);text-align:center;line-height:1.5;margin-bottom:20px}
   .rvfoot{display:grid;gap:9px}
   .rvkeep{display:block;width:100%;background:var(--grad);color:#fff;border:none;border-radius:13px;padding:15px;
@@ -2925,13 +2931,14 @@ function renderFound(){
   // screen only so you can undo it, and counting it would put this number at odds with the header and with
   // the "Found for you" tab, both of which read the real membership.
   const live = list => list.filter(m=>!taggedOut(m)).length;
-  const cards=list=>`<div class="list">${list.map(m=>
-    taggedOut(m) ? stubHTML(m) : cardHTML(m, isFresh(m))).join("")}</div>`;
+  // CAS-129: the found list is a placeholder here and its cards stream in (fillListChunked) after the
+  // chrome is placed, so a big haul (a starter cascade can find ~1,000 films) doesn't block interaction.
   let html=agentHeadHTML(films)+finishAgentHTML();
   html+=`<div class="fglabel" style="color:var(--purple)">🔔 Found for you<span class="n">${live(films)}</span></div>
     <div class="fgnote">${ORDER_NOTE}</div>
-    ${cards(films)}`;
+    <div class="list" id="foundListLive"></div>`;
   el.innerHTML=bar+html+`<div style="padding:0 12px">${foundValueHTML()}</div>`+saidHTML;
+  fillListChunked($("foundListLive"), films, renderGen, isFresh);
   markFoundSeen();   // you are looking at it — so the next visit's "since you last looked" counts from here
 }
 
@@ -5965,7 +5972,26 @@ window.onbCreateAgent=()=>{
   toast(`✓ ${c.icon} ${c.name}'s on it — ${watchCount(c)} films found already. ${alertPromise(c)}`);
 };
 
+// CAS-129: stream a list's cards in small batches across animation frames so building a big list
+// (the ~2,000-film catalogue, or a starter cascade's ~1,000-film haul) never blocks the main thread.
+// The first batch is inserted synchronously — so the screen is interactive at once — and the rest
+// fills in over the next frames. `gen` ties a fill to the render() that started it: a newer render()
+// bumps renderGen and any stale fill stops on its next frame instead of racing the new one.
+let renderGen=0;
+function fillListChunked(listEl, items, gen, freshFn){
+  let i=0; const BATCH=36;
+  const step=()=>{
+    if(gen!==renderGen || !listEl.isConnected) return;
+    let buf=""; const end=Math.min(items.length, i+BATCH);
+    for(; i<end; i++){ const m=items[i];
+      buf += taggedOut(m) ? stubHTML(m) : cardHTML(m, freshFn?freshFn(m):false); }
+    listEl.insertAdjacentHTML("beforeend", buf);
+    if(i<items.length) requestAnimationFrame(step);
+  };
+  step();
+}
 function render(){
+  renderGen++;   // CAS-129: supersede any card-fill still streaming from a previous render
   // The re-run. Every paint re-selects each Cascade's auto set from scratch and re-applies your overrides on
   // top — so a criteria edit, a new Cascade, a deleted one, a film you just marked watched, a service you just
   // picked, all land in the Found list immediately, and none of them can clobber an override. It's cheap
@@ -5993,21 +6019,51 @@ function render(){
     +(stubbed?` · ${stubbed} tagged out`:"");
   const wrap=$("groups");
   if(!rows.length){ wrap.innerHTML=emptyResultsHTML(); return; }
-  let html="";
+  // CAS-129: build the group shells now (cheap) but STREAM their cards in batches (fillListChunked)
+  // so a ~2,000-card listing never blocks. A film you answer still collapses WHERE IT IS (CAS-100 AC4):
+  // the stub is rendered in the sort's own order, and the count counts only films you haven't answered.
+  wrap.innerHTML="";
   CASCADE.forEach(g=>{
     const items=rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g));
     if(!items.length) return;
-    // A film you answer collapses WHERE IT IS (CAS-100 AC4) — so the stub is rendered in the sort's own order,
-    // not swept to the bottom of the group. The count still counts only the films you haven't answered: a stub
-    // is a receipt for a decision, not a result.
-    // NB: m=>cardHTML(m), never .map(cardHTML) — map's second argument is the index, and cardHTML's second
-    // parameter is markNew. Passing it bare would chip every card after the first as "new this week".
     const live=items.filter(m=>!taggedOut(m)).length;
-    html+=`<div class="group"><div class="grouphead"><span class="gdot ${g}"></span>${STATUS_LABEL[g]}
-      <span class="gcount">${live}</span></div>
-      <div class="list">${items.map(m=>taggedOut(m)?stubHTML(m):cardHTML(m)).join("")}</div></div>`;
+    const grp=document.createElement("div"); grp.className="group"; grp.dataset.g=g;
+    grp.innerHTML=`<div class="grouphead"><span class="gdot ${g}"></span>${STATUS_LABEL[g]}
+      <span class="gcount">${live}</span></div><div class="list"></div>`;
+    wrap.appendChild(grp);
+    fillListChunked(grp.querySelector(".list"), items, renderGen);
   });
-  wrap.innerHTML=html;
+}
+// ---- CAS-129: single-card updates (never rebuild the whole ~2,000-card list on one tap) --------
+// A "Not for me"/verdict in the Find view just folds that film to its stub where it is, so we swap
+// only that one node and patch the visible counters — no full render(). (The Found view keeps a full
+// renderFound(): its list is the agent's own selection, not the whole catalogue, and the first answer
+// there also reveals the "Finish your agent" chrome above the row.)
+function patchFindCounts(){
+  const rows=MOVIES.filter(passesOrStub);
+  const shown=rows.filter(m=>!taggedOut(m));
+  const stubbed=rows.length-shown.length;
+  $("count").textContent=`${shown.length} of ${MOVIES.length} titles`+(prefsActive()?" · my services":"")
+    +(stubbed?` · ${stubbed} tagged out`:"");
+  CASCADE.forEach(g=>{
+    const gc=document.querySelector(`#groups .group[data-g="${g}"] .gcount`);
+    if(gc) gc.textContent=rows.filter(m=>primaryStatus(m)===g && !taggedOut(m)).length;
+  });
+  renderCascadeBar(shown.length);
+}
+function fastPatchFindRow(id){
+  const m=MOVIES.find(x=>x.tmdb_id===id), row=rowFor(id);
+  if(!m || !row || !passesOrStub(m)) return false;   // film left the filtered set -> let render() handle it
+  const t=document.createElement("template");
+  t.innerHTML=(taggedOut(m)?stubHTML(m):cardHTML(m)).trim();
+  row.replaceWith(t.content.firstElementChild);
+  patchFindCounts();
+  return true;
+}
+function repaintAfterOpinion(id){
+  recomputeFound();
+  if(view==="find" && fastPatchFindRow(id)) return;   // instant single-node swap
+  render();                                            // Found view / fallback (off-screen cards skip layout, so cheap)
 }
 // ---- Collapsing in place (CAS-108) ---------------------------------------------
 // A verdict folds the card to its one-line stub WHERE IT IS. The list order can't move it (availability then
@@ -6101,7 +6157,7 @@ window.setOpinion=(id,kind)=>{
   logEvent("opinion",{key: on?kind:"cleared"});
   // FIRST — so the toast reports what actually happened, not what we assumed. The repaint runs inside
   // keepRowInPlace so the card folds (or unfolds, on the tap that clears it) exactly where you tapped it.
-  keepRowInPlace(id, render);
+  keepRowInPlace(id, ()=>repaintAfterOpinion(id));   // CAS-129: swap only the tapped row, not the whole list
   opinionToast(id, on?kind:was, on, wasFound);
 };
 // The toast says the two things a one-tap answer really did: it folded the card (and how to undo that), and —
