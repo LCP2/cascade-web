@@ -47,8 +47,11 @@ OPENING_WEEK_DAYS = 7            # a cinema release this recent counts as "openi
 # These fill the stepper's "Upcoming" slot and feed the Blockbuster-radar Cascade.
 # They cost ZERO Watchmode calls: a film that hasn't opened has no AU home offers to
 # poll, so the free-tier budget stays entirely with the released catalogue above.
-UPCOMING_LOOKAHEAD_DAYS = 120    # how far ahead to look for announced AU theatrical dates (~4 months)
-MAX_UPCOMING            = 12     # cap; TMDB detail calls only
+# CAS-125: widen the upcoming window so announced tentpoles (e.g. Avengers: Doomsday) appear.
+# Zero availability budget — an unreleased film has no AU home offers to poll (no provider/Watchmode
+# calls; TMDB detail only), so this never touches the free-tier availability sweep. Env-driven to widen further.
+UPCOMING_LOOKAHEAD_DAYS = int(os.getenv("UPCOMING_LOOKAHEAD_DAYS", "540"))   # ~18 months ahead
+MAX_UPCOMING            = int(os.getenv("MAX_UPCOMING", "100"))              # announced AU theatrical; TMDB detail calls only
 
 # --- window heuristics (this is YOUR business logic, not something an API gives you) ---
 PVOD_MIN_PRICE   = 19.99          # a buy/rent at or above this, with no subscription yet, = premium early window
