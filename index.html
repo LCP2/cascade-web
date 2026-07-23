@@ -1017,6 +1017,42 @@
   .mslater{display:block;width:100%;text-align:center;margin-top:12px;color:var(--dim);font-size:12.5px;
     background:none;border:0;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
   .osfoot{margin-top:18px}
+  /* ---- #3 Get-selective hub (CAS-144 / r5-prototype screenSelective) ---- */
+  /* The channel badge: the one thing on this screen that isn't a choice, and it says so. */
+  .oschan{display:inline-flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:20px;padding:6px 12px 6px 8px;font-size:12px;font-weight:700;color:var(--ink)}
+  .oschan .cd{width:9px;height:9px;border-radius:50%}
+  .oschan .lock{margin-left:4px;color:var(--faint);font-size:10px;font-weight:600}
+  .oschannote{font-size:11px;color:var(--faint);margin:6px 2px 0}
+  .osbignum{font-family:var(--font-display);font-weight:800;font-size:44px;line-height:1;letter-spacing:-.02em;
+    background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;margin:14px 2px 0}
+  .osbigl{color:var(--dim);font-size:12.5px;margin:4px 2px 14px}
+  /* The doors. "Boxes = tappable" (buildspec §8): these ARE the interactive things on the page, so they get
+     the box; the framing line above them is plain text and never does. */
+  .osdoor{display:flex;align-items:center;gap:13px;width:100%;text-align:left;cursor:pointer;
+    background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px;
+    color:var(--ink);transition:border-color .16s,background .16s}
+  .osdoor:hover{border-color:var(--accent)}
+  .osdoor:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .osdoor .di{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;font-size:19px;
+    flex:0 0 auto;background:var(--panel);border:1px solid var(--line)}
+  .osdoor .dt{flex:1;min-width:0;display:flex;flex-direction:column}
+  .osdoor .dh{font-weight:700;font-size:15px}
+  .osdoor .ds{color:var(--selink);font-size:12.5px;margin-top:2px;font-weight:600;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .osdoor .dc{color:var(--faint);font-size:16px}
+  /* Confirmed: green border + tint + tick. Green here is right and not a clash with the violet-count rule —
+     this is a completion state, not a count. */
+  .osdoor.done{border-color:rgba(72,199,142,.5);background:rgba(72,199,142,.07)}
+  .doneck{width:26px;height:26px;border-radius:50%;background:var(--green);display:grid;place-items:center;
+    color:#08210f;font-size:14px;font-weight:800;flex:0 0 auto}
+  @keyframes doorpulse{0%{transform:scale(.98)}40%{transform:scale(1.02)}100%{transform:scale(1)}}
+  .osdoor.pulse{animation:doorpulse .55s cubic-bezier(.34,1.56,.64,1);
+    box-shadow:0 0 0 2px rgba(72,199,142,.45),0 8px 26px rgba(72,199,142,.18)}
+  @media (prefers-reduced-motion:reduce){ .osdoor.pulse{animation:none} }
+  .oshint{text-align:center;color:var(--faint);font-size:12px;margin:14px 2px 0}
+  .oshint b{color:var(--selink)}
+  .osfinish{text-align:center;color:var(--green);font-size:13px;font-weight:800;margin:16px 2px 12px}
   .oscta{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
     font-size:15px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 8px 26px rgba(124,92,255,.3)}
   .oscta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
@@ -1988,7 +2024,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 72, "commit": "89fd500", "builtAt": "2026-07-23T04:46:35Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 73, "commit": "fa3f1d5", "builtAt": "2026-07-23T04:54:42Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -4966,21 +5002,25 @@ const _tplCrit = k => CASCADE_TEMPLATES.find(t=>t.key===k);
 const STARTERS = [
   {key:"cinema", icon:"🎬", name:"Must See at the Cinema",
    blurb:"Big-screen films everyone will be talking about.",
+   frame:"is holding out for the big ones — the films everyone will be talking about.",
    channel:"In cinemas", bar:"Blockbuster-scale",
    crit:{status:["opening_week","in_cinema"], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:0, selCritics:0, selScale:3}},
   {key:"rentals", icon:"🍿", name:"Awesome Movies for Rent",
    blurb:"Great films that just dropped to rent.",
+   frame:"is watching for the genuinely great films landing on rent.",
    channel:"New to rent", bar:"Loved & acclaimed",
    crit:{status:["rental"], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:7.5, selCritics:2, selScale:0}},
   {key:"date_night", icon:"🌙", name:"Date Night Rentals",
    blurb:"Easy crowd-pleasers for two on the couch.",
+   frame:"is after well-liked, feel-good films to rent tonight.",
    channel:"On rent", bar:"Well-liked",
    crit:{status:["rental"], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:7, selCritics:0, selScale:0}},
   {key:"streaming", icon:"📺", name:"My Day to Day Streaming", recommended:true,
    blurb:"Easy, fun watches on your services.",
+   frame:"keeps it easy and fun, and leans on what you like.",
    // Buildspec §10: never "your services" until services are actually added.
    channel:"Streaming", channelNote:"On the big streaming services until you add your own.",
    bar:"Fun-first",
@@ -4989,12 +5029,25 @@ const STARTERS = [
    alerts:{pvod:false, rental:false, included_streaming:true}},
   {key:"prestige", icon:"🏆", name:"Nominees & Awards",
    blurb:"Award-worthy films of any era — must-sees.",
+   frame:"collects the award nominees and winners worth seeing.",
    channel:"Anywhere", bar:"Award nominees & winners",
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:0, selCritics:3, selScale:0}},
 ];
 STARTERS.forEach(s=>normCascade(s.crit));
-const starterCount = s => countCriteria(s.crit);
+// CAS-143/144: ONE number for a preset, everywhere it is quoted. The card, the hub's hero figure and the
+// reveal must agree, so the card counts the agent it would actually BUILD — the preset's standard laid over
+// the shipped taste baseline (all genres, any year, English, all ages), measured with watchCount, which is
+// the same standing-watch set the listing and the reveal use (CAS-132). Counting the raw criteria with
+// countCriteria instead measured the narrower watchable-right-now slice, so the card said 14 where the hub
+// said 37 for the same agent.
+function starterPreview(s){
+  const d=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
+  d.genre=[]; d.year=[]; d.lang=["en"]; d.age=AGE_LEVELS.slice();   // the taste-baseline defaults, verbatim
+  d.selCrowd=s.crit.selCrowd||0; d.selCritics=s.crit.selCritics||0; d.selScale=s.crit.selScale||0; d.selOr=false;
+  return normCascade(d);
+}
+const starterCount = s => watchCount(starterPreview(s));
 let pendingStarter = null;   // the agent the person chose
 function renderShortlist(){
   $("shortlistCards").innerHTML = STARTERS.map(s=>{
@@ -5044,7 +5097,14 @@ window.pickStarter=key=>{
   onbFlow.yearStop = YEAR_DEFAULT;   // Any — every year in (CAS-116)
   onbFlow.langsOn = new Set(["en"]);
   onbFlow.ageStop = AGE_LEVELS.length-1;
-  onbFlow.crowdStop = 0; onbFlow.criticsStop = 0; onbFlow.scaleStop = 0; onbFlow.selOr = false;   // dials open (CAS-114)
+  // CAS-144: the dials OPEN ON THE AGENT'S OWN STANDARD, not fully open. The card you just tapped quoted a
+  // number ("14 films match now"); landing on a hub that says 442 because its dials were reset would make one
+  // of those two screens a liar. So the preset's standard seeds the stops, and the hub's count is the count
+  // the card promised. (The dials remain fully editable — this is where they START, not a floor.)
+  onbFlow.crowdStop   = Math.max(0, CROWD_STOPS.findIndex(x=>x.imdb===(s.crit.selCrowd||0)));
+  onbFlow.criticsStop = s.crit.selCritics||0;
+  onbFlow.scaleStop   = s.crit.selScale||0;
+  onbFlow.selOr = false;   // AND, per buildspec §1 (reverses the earlier OR default on CAS-114)
   // The #4 selectivity dials own the crowd/critics/scale bars from here on, defaulting fully open, so zero the
   // pick's own IMDb bar — otherwise its preset would mask the People's-vote dial. Same supersede rule the
   // genres/age steps already follow: the sharpening screen is the single source for the axis it owns.
@@ -5441,30 +5501,38 @@ const SHARP_STEPS = {
   // #3 framing interstitial — no control, no live count, no agent box. Just names the lenses the next steps
   // set (taste, when, language, rating) and sends the user in. `noAgent` drops the summary box; its own CTA
   // and skip copy come straight from the mock ("Let's go" / "Skip — it'll watch everything").
+  // #3 Get selective — the HUB (CAS-144 / r5-prototype screenSelective). It is a place you come BACK to, not
+  // a screen you pass through: two doors, each of which returns here marked done, and a payoff that only
+  // unlocks once both are confirmed. That is the whole mechanic — progress you can see, and a reward at the
+  // end of it — so there is deliberately no "keep it broad" escape any more (buildspec §7).
   selective: {
-    progress: 12,
+    progress(){ return 50 + (onbDone.bar?15:0) + (onbDone.taste?15:0); },
     noAgent: true,
-    cta: "Let's go",
-    skip: "Skip — it'll watch everything",
+    hub: true,          // the frame hides its footer: this screen builds its own CTA, and has no skip
     body(){
-      // The first row jumps straight to the three-dial selectivity page (#4 / CAS-114); the rest name the
-      // steps the sequence walks and stay non-interactive (Continue moves through them in turn).
-      const rows = [
-        ["🎚️","Set your bar","People's vote, critics &amp; scale", true],
-        ["🎬","Genres &amp; taste","What you love watching"],
-        ["🗓️","Release years &amp; language","How far back, in which languages"],
-        ["🔞","Age rating","How far up the ratings to go"],
-        ["✍️","Name it","Then it goes to work"],
-      ];
-      return `<h2 class="osh">Let's get selective</h2>
-        <p class="ossub">Your agent's ready to hunt. A few quick choices sharpen what it brings you — skip any and it just watches everything.</p>
-        <div class="ossteps">
-          ${rows.map(([ic,t,s,go])=> go
-            ? `<button type="button" class="osstep osstep-go" onclick="onbHubToSelectivity()"><div class="dot">${ic}</div><div><b>${t}</b><span>${s}</span></div><span class="osstep-arr" aria-hidden="true">→</span></button>`
-            : `<div class="osstep"><div class="dot">${ic}</div><div><b>${t}</b><span>${s}</span></div></div>`
-          ).join("")}
-        </div>`;
+      const a=hubAgent(), n=onbCount();
+      const done=onbDone, both=done.bar&&done.taste, c=(done.bar?1:0)+(done.taste?1:0);
+      // The channel is the one thing on this screen you cannot change: it is what the agent IS. Saying so
+      // (and locking it) is what makes the two dials below feel like a choice rather than a form.
+      const chan = a ? `<div class="oschan"><span class="cd" style="background:${a.cd||"var(--accent)"}"></span>
+          ${esc(a.channel)}<span class="lock">🔒 fixed</span></div>
+        ${a.channelNote?`<div class="oschannote">${esc(a.channelNote)}</div>`:""}` : "";
+      const framing = a
+        ? `<p class="ossub"><b>${esc(a.name)}</b> ${esc(a.frame)} Set the two below to lock it in.</p>`
+        : `<p class="ossub">Set the two below to lock in what your agent brings you.</p>`;
+      return `<h2 class="osh">Get selective</h2>
+        ${chan}
+        <div class="osbignum">${n}</div>
+        <div class="osbigl">film${n===1?"":"s"} found for you right now</div>
+        ${framing}
+        ${hubDoorHTML("🎚️","The bar",hubBarSummary(),"bar")}
+        ${hubDoorHTML("🧬","Your taste baseline",hubTasteSummary(),"taste")}
+        ${both
+          ? `<div class="osfinish">✓ You're all set</div>
+             <button class="oscta" type="button" onclick="onbHubFinish()">Show me my ${n} film${n===1?"":"s"} →</button>`
+          : `<div class="oshint"><b>${c} of 2</b> confirmed · set both to see your films</div>`}`;
     },
+    wire(){ onbDonePulse=null; },   // the pulse is a one-time thing: it has now played
   },
   // #4 selectivity — three dials (CAS-114, reworked 2026-07-21). Its own "What this does" box carries the
   // combined live count (noAgent drops the shared summary). Dials default fully open and combine with OR — turn
@@ -5657,28 +5725,33 @@ function onbYearExplain(i){
   return `<b>${p.charAt(0).toUpperCase()+p.slice(1)}.</b> Older films are set aside until you widen it again.`;
 }
 let onbStepKey=null;
-// ---- Wired sharpening sequence (CAS-122) -----------------------------------------------------------
-// After agent-select (#2) the picked agent runs through the sharpening screens in order, then the reveal
-// (#10). The screens themselves are unchanged — this is only the spine that walks them: #3 framing → #4
-// selectivity → #5 genres → #6 years → #7 language → #8 age → #9 name → reveal.
-const SHARP_SEQUENCE = ["selective", "selectivity", "genres", "years", "language", "age", "name"];
+// ---- Wired sharpening flow (CAS-122, reshaped into a hub by CAS-144) --------------------------------
+// It used to be a straight line: #3 framing → #4 selectivity → #5 genres → #6 years → #7 language → #8 age
+// → #9 name → reveal. It is now a hub with two doors (see HUB_DOORS): agent-select lands on #3, the doors go
+// out to those same screens and come back marked done, and the payoff CTA finishes the flow.
+// The #9 name screen is no longer in the wired flow — the R5 flow ends at the hub's payoff, and the agent
+// carries the preset's name (editable any time from Edit on its deck card). Its step is still registered and
+// still reachable at ?step=name.
 let onbSeqIndex = -1;   // -1 = standalone ?step= preview (Continue/Back just close); ≥0 = live wired flow
 function renderOnbStep(key){
   const step=SHARP_STEPS[key]; if(!step) return;
   onbStepKey=key;
-  const last = step.progress>=100;
+  // CAS-144: a step's progress may be a function — the hub's advances as its doors are confirmed, which is
+  // half the point of the hub (progress you can see).
+  const prog = typeof step.progress==="function" ? step.progress() : step.progress;
+  const last = prog>=100;
   $("onbStepInner").innerHTML = `
     <div class="ostop">
       <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
-      <div class="osprog"><i style="width:${step.progress}%"></i></div>
+      <div class="osprog"><i style="width:${prog}%"></i></div>
       ${last?`<span class="oslast">LAST ONE</span>`:""}
     </div>
     ${step.body()}
     ${step.noAgent ? "" : `<div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>`}
-    <div class="osfoot">
+    ${step.hub ? "" : `<div class="osfoot">
       <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${step.cta || `Continue${ctaCount(onbCount())}`}</button>
-      <button class="osskip" type="button" onclick="onbStepSkip()">${step.skip || "Skip — I'll set this up later"}</button>
-    </div>`;
+      ${step.noSkip ? "" : `<button class="osskip" type="button" onclick="onbStepSkip()">${step.skip || "Skip — I'll set this up later"}</button>`}
+    </div>`}`;
   if(step.wire) step.wire();
 }
 function onbRefresh(){
@@ -5711,15 +5784,15 @@ function openOnbStep(key, agentKey){
   return true;
 }
 window.closeOnbStep=()=>{ $("onbStep").classList.remove("open"); document.body.style.overflow=""; };
-// The live wired flow: agent-select seeds onbFlow (pickStarter), then we walk SHARP_SEQUENCE in order and
-// hand the sharpened agent to the reveal. Continue advances; the last step (name) finishes; Skip finishes
-// early with whatever's set so far ("watches everything" is the honest default); Back steps one screen up,
-// and stepping back off the first screen returns to agent-select.
+// The live wired flow: agent-select seeds onbFlow (pickStarter), then hands the sharpened agent to the reveal.
+// CAS-144: the spine is the HUB, not a straight line. It opens on "Get selective" and stays there — the doors
+// go out and come back — until both are confirmed and the payoff CTA finishes the flow.
 function startSharpSequence(){
   onbSeqIndex=0;
+  onbDone={bar:false, taste:false}; onbDoor=null; onbDoorIdx=0; onbDonePulse=null;
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("sharp_sequence_start",{agent:wiz.starter});
-  renderOnbStep(SHARP_SEQUENCE[0]);
+  renderOnbStep("selective");
 }
 function finishSharpSequence(){
   onbSeqIndex=-1;
@@ -5730,37 +5803,93 @@ function finishSharpSequence(){
   logEvent("agent_created",{starter:wiz.starter, matches:countCriteria(c), sharpened:true});
   showReveal(c);
 }
+// CAS-144: Back inside a door walks that door backwards and drops out onto the hub; Back on the hub itself
+// goes to agent-select. A door abandoned with Back is NOT marked done — you only confirm by going through it.
 window.onbStepBack=()=>{
-  if(onbSeqIndex>=0){
-    onbSeqIndex--;
-    if(onbSeqIndex<0){ onbSeqIndex=-1; closeOnbStep(); showShortlist(); return; }   // off the top → agent-select
-    renderOnbStep(SHARP_SEQUENCE[onbSeqIndex]);
+  if(onbDoor){
+    onbDoorIdx--;
+    if(onbDoorIdx<0) return onbCloseDoor(false);
+    renderOnbStep(HUB_DOORS[onbDoor][onbDoorIdx]);
     return;
   }
+  if(onbSeqIndex>=0){ onbSeqIndex=-1; closeOnbStep(); showShortlist(); return; }   // off the hub → agent-select
   closeOnbStep();
 };
 window.onbStepSkip=()=>{
   logEvent("onbstep_skipped",{step:onbStepKey, wired:onbSeqIndex>=0});
+  // Skipping a screen INSIDE a door leaves that door unconfirmed and returns you to the hub — it must not
+  // finish the whole flow, or "skip this one question" would silently mean "skip setting up the agent".
+  if(onbDoor) return onbCloseDoor(false);
   if(onbSeqIndex>=0){ finishSharpSequence(); return; }
   closeOnbStep();
 };
 window.onbStepContinue=()=>{
   logEvent("onbstep_continue",{step:onbStepKey, matches:onbCount()});
-  if(onbSeqIndex>=0){
-    onbSeqIndex++;
-    if(onbSeqIndex>=SHARP_SEQUENCE.length){ finishSharpSequence(); return; }
-    renderOnbStep(SHARP_SEQUENCE[onbSeqIndex]);
+  if(onbDoor){
+    onbDoorIdx++;
+    if(onbDoorIdx>=HUB_DOORS[onbDoor].length) return onbCloseDoor(true);   // through it → confirmed
+    renderOnbStep(HUB_DOORS[onbDoor][onbDoorIdx]);
     return;
   }
-  closeOnbStep();   // standalone preview
+  closeOnbStep();   // standalone preview of a single step
 };
-// The #3 hub's "Set your bar" row jumps straight to the #4 selectivity dials (CAS-113): inside the wired flow
-// it moves to that step in place; on the standalone ?step=selective preview it opens the selectivity preview.
-window.onbHubToSelectivity=()=>{
-  logEvent("onbhub_setbar",{wired:onbSeqIndex>=0});
-  const i=SHARP_SEQUENCE.indexOf("selectivity");
-  if(onbSeqIndex>=0 && i>=0){ onbSeqIndex=i; renderOnbStep("selectivity"); return; }
-  openOnbStep("selectivity");
+// ---- CAS-144: the hub's two doors ------------------------------------------------------------------
+// Each door is a little sub-flow that RETURNS here. "The bar" is the one selectivity screen; "your taste
+// baseline" is the four taste screens walked in turn (CAS-146 collapses those into a single accordion page,
+// at which point this list becomes one entry and nothing else here has to change).
+const HUB_DOORS = { bar:["selectivity"], taste:["genres","years","language","age"] };
+let onbDone = {bar:false, taste:false};
+let onbDoor = null;      // which door we're inside, null = standing on the hub
+let onbDoorIdx = 0;
+let onbDonePulse = null; // the door that JUST completed — pulses once, then clears
+const hubAgent = () => STARTERS.find(x=>x.key===wiz.starter) || null;
+function hubDoorHTML(icon,title,sum,key){
+  const done=onbDone[key];
+  return `<button type="button" class="osdoor${done?" done":""}${onbDonePulse===key?" pulse":""}"
+      onclick="onbOpenDoor('${key}')">
+    <span class="di">${icon}</span>
+    <span class="dt"><span class="dh">${title}</span><span class="ds">${sum}</span></span>
+    ${done?`<span class="doneck">✓</span>`:`<span class="dc">›</span>`}</button>`;
+}
+// Both summaries are read off the SAME live state the doors edit, so a door can never advertise something
+// different from what is behind it.
+function hubBarSummary(){
+  const parts=[];
+  const c=CROWD_STOPS[onbFlow.crowdStop||0].label;   if(onbFlow.crowdStop)   parts.push(c);
+  const cr=CRITICS_STOPS[onbFlow.criticsStop||0].label; if(onbFlow.criticsStop) parts.push(cr);
+  const sc=SCALE_STOPS[onbFlow.scaleStop||0].label;  if(onbFlow.scaleStop)   parts.push(sc);
+  return parts.length ? esc(parts.join(" · ")) : "Everything in this channel";
+}
+function hubTasteSummary(){
+  const g=onbFlow.genresOn ? onbFlow.genresOn.size : 0, all=ONB_GENRES.length;
+  const langs=onbFlow.langsOn ? onbFlow.langsOn.size : 0;
+  const yi=onbFlow.yearStop!=null?onbFlow.yearStop:YEAR_DEFAULT;
+  const ai=onbFlow.ageStop!=null?onbFlow.ageStop:AGE_LEVELS.length-1;
+  return esc([
+    (!g||g===all) ? "All genres" : `${g} genre${g===1?"":"s"}`,
+    YEAR_STOPS[yi].label,
+    langs===1 ? "English" : `${langs} languages`,
+    ai>=AGE_LEVELS.length-1 ? "all ages" : `up to ${AGE_LEVELS[ai]}`,
+  ].join(" · "));
+}
+window.onbOpenDoor=key=>{
+  const steps=HUB_DOORS[key]; if(!steps) return;
+  logEvent("onbhub_door",{key, wired:onbSeqIndex>=0});
+  onbDoor=key; onbDoorIdx=0;
+  renderOnbStep(steps[0]);
+};
+// Confirming the last screen of a door is what marks it done — and arms the one-time pulse that plays when
+// the hub redraws. Nothing is "done" until you have actually been through it and pressed Continue.
+function onbCloseDoor(completed){
+  const key=onbDoor;
+  onbDoor=null; onbDoorIdx=0;
+  if(completed && key){ onbDone[key]=true; onbDonePulse=key; logEvent("onbhub_door_done",{key}); }
+  renderOnbStep("selective");
+}
+window.onbHubFinish=()=>{
+  logEvent("onbhub_finish",{matches:onbCount()});
+  if(onbSeqIndex>=0){ finishSharpSequence(); return; }
+  closeOnbStep();                       // standalone ?step=selective preview
 };
 
 // ================= Cascade Membership conversion page (CAS-120, reworked 2026-07-21 / mock: 11-membership.html) =====
