@@ -1121,23 +1121,18 @@
   .nlchip{font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px;
     background:var(--panel2);border:1px solid var(--accent);color:#cfc2ff;white-space:nowrap}
   .nlmiss{font-size:11px;color:var(--faint);line-height:1.5;margin-top:8px;font-style:italic}
-  /* ---- Found view — where the agent shows its work (CAS-70) ---- */
-  /* Found is the front door now, not a drawer behind an icon: the first thing you meet is what Cascade went
-     and found for you, presented — a header in its voice, a reason on every card, and the new ones marked. */
-  .viewbar{display:flex;gap:8px;margin-top:10px}
-  .vbtn{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;background:var(--panel2);
-    border:1px solid var(--line);color:var(--dim);border-radius:11px;padding:9px 10px;font-size:13px;
+  /* ---- Per-cascade scope: New / All (CAS-134) ---- */
+  /* There is no Found-for-you / Find door any more. The Cascade you have open IS the context, and the only
+     question left is how much of its work you want to see: just what it has picked up lately, or everything
+     it matches. So the control belongs to the cascade, under the deck — not to the app, above everything. */
+  .scopebar{display:flex;gap:8px;margin:8px 12px 0}
+  .scbtn{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--dim);border-radius:11px;padding:8px 10px;font-size:13px;
     font-weight:700;cursor:pointer}
-  .vbtn.on{background:rgba(124,92,255,.16);border-color:var(--accent);color:#fff}
-  .vbtn .vn{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:0 7px;
+  .scbtn.on{background:rgba(124,92,255,.16);border-color:var(--accent);color:#fff}
+  .scbtn .scn{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:0 7px;
     font-size:11px;font-weight:800;color:var(--dim);line-height:17px}
-  .vbtn.on .vn{background:var(--accentdeep);border-color:var(--accentdeep);color:#fff}
-  .agenthead{margin:12px 12px 2px;background:linear-gradient(135deg,rgba(124,92,255,.14),rgba(72,199,142,.07));
-    border:1px solid #3b3560;border-radius:14px;padding:13px 14px}
-  .agenthead .ah{font-size:15px;font-weight:800;line-height:1.4;color:var(--ink)}
-  .agenthead .ah b{color:#cfc2ff}
-  .agenthead .ap{font-size:12px;color:var(--dim);line-height:1.55;margin-top:7px}
-  .agenthead .ap b{color:#cfc2ff}
+  .scbtn.on .scn{background:var(--accentdeep);border-color:var(--accentdeep);color:#fff}
   .fglabel{display:flex;align-items:center;gap:8px;padding:15px 12px 4px;font-size:13px;font-weight:800}
   .fglabel .n{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:1px 7px;
     font-size:10.5px;color:var(--dim);font-weight:700}
@@ -1196,15 +1191,10 @@
       <input id="search" class="search" type="text" inputmode="search" placeholder="🔍  Search titles…" autocomplete="off">
       <button class="searchclear" id="searchClear" aria-label="Clear search" type="button">×</button>
     </div>
-    <!-- The two doors, and Found is the one that opens (CAS-70): what Cascade found FOR you, or the engine
-         you drive yourself. -->
-    <div class="viewbar" role="tablist" aria-label="Found for you, or Find something yourself">
-      <button class="vbtn" id="vFound" role="tab" aria-selected="true">🔔 Found for you <span class="vn" id="vFoundN">0</span></button>
-      <button class="vbtn" id="vFind" role="tab" aria-selected="false">🔍 Find</button>
-    </div>
     <div class="filtoggle" id="findTools">
-      <!-- "Filters", not "Find" (CAS-102): the Found/Find switch above is the view toggle, so a second
-           control also called Find was the same word doing two different jobs. Same function as before. -->
+      <!-- "Filters", not "Find" (CAS-102): "Find" was the same word doing two different jobs. The view
+           toggle that owned the other job is gone (CAS-134); this row is the selection engine, and it is
+           on screen whichever cascade and whichever scope you are in. -->
       <button class="btn" id="filterBtn" title="Filters — the selection engine that finds something to watch">≡ Filters</button>
       <!-- Save as (CAS-101) lives HERE, not in the deck: this row is where the filter gets built, so this is
            where turning it into a standing Cascade is the obvious next move. -->
@@ -1229,12 +1219,20 @@
       <div class="deckstrip" id="cascStrip" role="group" aria-label="Cascades — use the arrow keys to move between them"
            aria-keyshortcuts="ArrowLeft ArrowRight Home End"></div>
     </div>
+    <!-- CAS-134: New / All belongs to the open Cascade, so it sits inside the cascade bar, under the deck. -->
+    <div class="scopebar" id="scopeBar" role="tablist" aria-label="How much of this Cascade to show">
+      <button class="scbtn" id="scNew" role="tab" aria-selected="true">🆕 New <span class="scn" id="scNewN">0</span></button>
+      <button class="scbtn" id="scAll" role="tab" aria-selected="false">🎞️ All <span class="scn" id="scAllN">0</span></button>
+    </div>
     <div id="cascDetail"></div>
   </div>
-  <div id="foundView"></div>
-  <div id="findView">
+  <!-- ONE listing (CAS-134). New and All are two scopes on the same list, drawn by the same code, with the
+       same chrome above and the same receipts below — so how you got here can no longer change how it looks. -->
+  <div id="listView">
+    <div id="listChrome"></div>
     <div class="count" id="count"></div>
     <div id="groups"></div>
+    <div id="listSaid"></div>
   </div>
 
   <!-- Data attribution (CAS-127): availability is TMDB Watch Providers, sourced from JustWatch —
@@ -1906,7 +1904,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 67, "commit": "0cc566c", "builtAt": "2026-07-23T03:59:04Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 69, "commit": "f03158f", "builtAt": "2026-07-23T04:12:49Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -2174,40 +2172,49 @@ $("uxSwitch").onclick=()=>{ ux.on=!ux.on; saveUx(); updateUxSwitch(); render(); 
 updatePrefSwitch(); updatePrefBtn(); updateUxSwitch();
 
 // ---- controls ----
-// ---- The two doors (CAS-70) ----------------------------------------------------
-// "found" is the front door: what Cascade went and found for you, presented. "find" is the selection engine you
-// drive yourself. The choice is remembered, so the app opens where you left it — but a new user always lands on
-// Found, because that is the product.
-let view = "found";
-try{ const v=localStorage.getItem("cascade_view"); if(v==="find"||v==="found") view=v; }catch(e){}
-window.setView=v=>{
-  if(v===view) return;
-  view=v;
-  if(v==="found") settleFoundView();   // a fresh visit lets the films you answered settle into the receipts
-  try{ localStorage.setItem("cascade_view", v); }catch(e){}
-  logEvent("view_switched",{key:v});
+// ---- One list, two scopes (CAS-134) --------------------------------------------
+// The Found-for-you / Find toggle is gone. It was a door in front of a door: you chose a Cascade in the deck
+// and THEN chose which of two different-looking screens to read it on, and the same selection looked like two
+// different products depending on which way you came in. The Cascade you have open is the context; the only
+// question left is how much of its work you want — "New" (what it has picked up lately) or "All" (everything
+// it matches). Both are the SAME list, drawn by the same code.
+// Per Cascade, because that is what the deck implies: the bar you set on one agent is not the bar on another,
+// and neither is how closely you are following it. Defaults to New — that is the agent's own work, and it is
+// the reason the app exists.
+const SCOPE_KEY = "cascade_scope";
+let scopeById = {};
+try{ const o=JSON.parse(localStorage.getItem(SCOPE_KEY)||"{}");
+     if(o && typeof o==="object" && !Array.isArray(o)) scopeById=o; }catch(e){}
+const curScope = () => scopeById[activeId]==="all" ? "all" : "new";
+window.setScope=s=>{
+  if(s===curScope()) return;
+  scopeById[activeId]=s;
+  if(s==="new") settleFoundView();   // a fresh look lets the films you answered settle into the receipts
+  try{ localStorage.setItem(SCOPE_KEY, JSON.stringify(scopeById)); }catch(e){}
+  logEvent("scope_switched",{key:s});
   render();
   scrollTo({top:0, behavior:"smooth"});
 };
-function syncView(){
-  const isFound = view==="found";
-  $("vFound").classList.toggle("on", isFound);
-  $("vFind").classList.toggle("on", !isFound);
-  $("vFound").setAttribute("aria-selected", String(isFound));
-  $("vFind").setAttribute("aria-selected", String(!isFound));
-  $("foundView").style.display = isFound ? "" : "none";
-  $("findView").style.display  = isFound ? "none" : "";
-  $("findTools").style.display = isFound ? "none" : "";   // the sort + Filters controls belong to the engine
-  // CAS-102: compact deck on Find, so results lead. The rail changes the card WIDTH, which moves the snap
-  // points out from under the current scroll offset — so whenever the state actually flips, put the centred
-  // card back in the centre rather than leaving the deck resting between two cards.
-  const bar=$("cascbar"), flipped=bar.classList.contains("rail")===isFound;
-  bar.classList.toggle("rail", !isFound);
-  if(flipped) deckCentre(deckIdx,false);
-  $("search").placeholder = isFound ? "🔍  Search what Cascade found…" : "🔍  Search titles…";
+// Landing somewhere on purpose (the reveal, the membership start, onboarding) means landing on the agent's
+// own work — which is now a scope on the open Cascade rather than a view of the whole app.
+function showNewScope(){ scopeById[activeId]="new"; settleFoundView();
+  try{ localStorage.setItem(SCOPE_KEY, JSON.stringify(scopeById)); }catch(e){} }
+function syncScope(newN, allN){
+  const isNew = curScope()==="new";
+  $("scNew").classList.toggle("on", isNew);
+  $("scAll").classList.toggle("on", !isNew);
+  $("scNew").setAttribute("aria-selected", String(isNew));
+  $("scAll").setAttribute("aria-selected", String(!isNew));
+  $("scNewN").textContent=newN;
+  $("scAllN").textContent=allN;
+  // CAS-102's compact deck was tied to the old Find view. With one listing there is one deck state: the rail,
+  // so the results lead wherever you are. (Kept as a class rather than deleted — the deck CSS still owns it.)
+  const bar=$("cascbar");
+  if(!bar.classList.contains("rail")){ bar.classList.add("rail"); deckCentre(deckIdx,false); }
+  $("search").placeholder = "🔍  Search titles…";
 }
-$("vFound").onclick=()=>setView("found");
-$("vFind").onclick=()=>setView("find");
+$("scNew").onclick=()=>setScope("new");
+$("scAll").onclick=()=>setScope("all");
 $("sort").onchange=e=>{filt.sort=e.target.value;render();};
 let searchLogged=false;
 $("search").oninput=e=>{filt.search=e.target.value.trim().toLowerCase();$("searchClear").classList.toggle("show", e.target.value.length>0);
@@ -2832,46 +2839,45 @@ const isNewFound = id => { const d=firstFound[id]; return !!d && daysSince(d) < 
 const ORDER_NOTE = `Ordered by availability — upcoming and cinema first, streaming last — then IMDb rating.`;
 
 
-// ---- The view ------------------------------------------------------------------
+// ---- The list ------------------------------------------------------------------
 // A film you have just answered stays in the list you answered it in, collapsed to its stub, instead of
 // jumping to the receipts groups below — a card must never vanish out from under the tap that tagged it
 // (CAS-100 AC4). Session-only: on the next load it has settled into the receipts group, where the undo also
 // lives. While a film is held here it is NOT repeated below, so it is never on screen twice.
-// Only a film that WAS on the Found list is held here — answering something in the Find view that the agent
-// never picked must not float it into "Found for you", which is the agent's own claim about its own work.
 const heldOpen = new Map();      // id -> {fresh} as it was at the moment of the answer
-// Leaving the view and coming back is the moment the held films settle: they let go of their places and drop
-// into the receipts groups below, where their undo lives from then on. Within one visit nothing moves.
-// EVERY route into the view calls this — setView plus the three that assign `view` directly (the reveal, the
-// invite exit and the onboarding commit), or a share link opened mid-session would land on stale held stubs.
+// Leaving and coming back is the moment the held films settle: they let go of their places and drop into the
+// receipts groups below, where their undo lives from then on. Within one visit nothing moves.
+// EVERY route in calls this — setScope plus showNewScope for the three that land you here on purpose (the
+// reveal, the membership start and the onboarding commit), or a share link opened mid-session would land on
+// stale held stubs.
 // The ORDER needs no snapshot any more (CAS-107): availability and rating are facts about the film, so an
 // answer you give can't move the list under your finger the way the old taste weighting could.
 const settleFoundView = () => { heldOpen.clear(); };
-function foundFilms(){
-  return MOVIES.filter(m=>found.has(m.tmdb_id) || heldOpen.has(m.tmdb_id))
-    .filter(m=>!filt.search || m.title.toLowerCase().includes(filt.search))
-    .sort(byStageThenRating);
+// ---- The two scopes (CAS-134) --------------------------------------------------
+// ONE result set, two scopes on it. Both start from passesOrStub — the same engine, the same filters, the
+// same Cascade criteria — so New is a strict SUBSET of All and the pair can never show you a "New" bigger
+// than the "All" it sits next to. That subset relationship is the whole reason the two words work together.
+//   All = everything this Cascade matches today (on the All card: the catalogue).
+//   New = the ones of those it picked up lately — first-found inside NEW_DAYS, which is a recorded fact
+//         about the day Cascade picked it up, not a guess — and scoped to the Cascade you have open,
+//         because that is the agent whose work you are reading.
+// Note this is narrower than the Cascade's WATCH set: a Cascade also follows films that haven't reached its
+// window yet, and those are what it alerts you about, but they are not what it is showing you today. The
+// alerts are unchanged; only the listing is scoped this way.
+// A held film stays put whichever scope you answered it in, so nothing vanishes under the tap.
+function newFilms(){
+  const c=activeCascade();
+  return MOVIES.filter(m=>{
+    const id=m.tmdb_id;
+    if(!passesOrStub(m)) return false;
+    if(heldOpen.has(id)) return true;
+    if(!found.has(id) || !isNewFound(id)) return false;
+    return !c || ((notify[id]||{}).cascadeIds||[]).includes(c.id);
+  });
 }
-function agentHeadHTML(films){
-  const auto=films.filter(m=>foundSource(m.tmdb_id)==="auto");
-  const mine=films.filter(m=>foundSource(m.tmdb_id)==="manual");
-  // A count and the order it's in — nothing else (CAS-107). It claims only what IT found; yours are counted
-  // separately. The old header talked about "this week", which read as a claim about the ORDER of the list
-  // and wasn't one, and narrated a taste re-ranking that no longer happens. What IS new still says so on the
-  // film it belongs to — the 🆕 chip on the card — where it's a fact about that film rather than a headline.
-  const n=auto.length;
-  const line = !n
-    ? (mine.length ? `Nothing found yet — but I'm watching. The ${mine.length} below ${mine.length===1?"is":"are"} yours.`
-                   : `Nothing yet — but I'm watching.`)
-    : `I've found <b>${n} film${n===1?"":"s"}</b> for you.`;
-  const yours = mine.length && n ? ` You've added <b>${mine.length}</b> yourself.` : "";
-  return `<div class="agenthead">
-    <div class="ah">📣 ${line}${yours}</div>
-    <div class="ap">${n||mine.length
-      ? `Everything I find lands here on its own — you never have to come and look.`
-      : `I'll keep watching.`}</div>
-  </div>`;
-}
+// The rows the current scope puts on screen — everything the scope allows through, tagged-out films included
+// (they stay as stubs; `shown` below is what still gets a full card).
+const scopeRows = () => curScope()==="new" ? newFilms() : MOVIES.filter(passesOrStub);
 // First run: the deck is just the "+ New" card, which asks for a decision without offering a reason. Give them
 // three real starting points instead — each with the number of films it catches TODAY, so the payoff is visible
 // before they commit to anything (goal-gradient, and nothing to sign up for).
@@ -2887,23 +2893,28 @@ function cascadeStartHTML(){
     }).join("")}</div>
   </div>`;
 }
-function foundEmptyHTML(){
+// The New scope with nothing in it. It says which of the two true things is the case — no Cascades at all, or
+// Cascades that simply haven't picked anything up lately — and the way out is the other scope on the same
+// cascade, not a different screen.
+function newEmptyHTML(){
+  const c=activeCascade();
+  const who = c ? `“${esc(c.name)}”` : `Your ${cascades.length} Cascade${cascades.length===1?"":"s"}`;
+  const has = (c || cascades.length===1) ? "hasn't" : "haven't";
   return `<div class="mlempty">
     <div style="font-size:30px;margin-bottom:10px">🔔</div>
-    <div style="font-size:15px;font-weight:800;color:var(--ink);margin-bottom:7px">Nothing yet — but Cascade's watching…</div>
+    <div style="font-size:15px;font-weight:800;color:var(--ink);margin-bottom:7px">Nothing new — but Cascade's watching…</div>
     ${cascades.length
-      ? `Your ${cascades.length} Cascade${cascades.length===1?"":"s"} ${cascades.length===1?"hasn't":"haven't"}
-         found anything in today's catalogue. Widen ${cascades.length===1?"it":"one of them"} and whatever
-         ${cascades.length===1?"it finds":"they find"} lands here on its own — you won't have to come and look.`
+      ? `${who} ${has} picked anything up in the last ${NEW_DAYS} days. Whatever
+         ${c||cascades.length===1?"it finds":"they find"} lands here on its own — you won't have to come and look.`
       : `Set a Cascade to work and it goes out and finds the films for you — everything it picks up lands here,
          with its window, its price, and the name of the Cascade that found it. You never tag a thing.`}
     <div style="margin-top:12px;font-size:11.5px;color:var(--faint)">
-      You can pick a film by hand too — the <b>Pick</b> button on any card under 🔍 Find. Yours read
+      You can pick a film by hand too — the <b>Pick</b> button on any card. Yours read
       <b style="color:#ffd79a">My Pick</b>, the ones Cascade found read <b style="color:#d8c9ff">Agent Pick</b>.
       Nothing here needs an account.</div>
     ${cascadeStartHTML()}
     <div class="ebtns" style="margin-top:14px">
-      <button class="ebtn ghost" onclick="setView('find')">Have a look around yourself →</button>
+      <button class="ebtn ghost" onclick="setScope('all')">Show me everything ${c?`${esc(c.name)} matches`:`in the catalogue`} →</button>
     </div></div>`;
 }
 // ---- "Finish your agent" (CAS-71) ----------------------------------------------
@@ -2923,60 +2934,34 @@ function finishAgentHTML(){
     <button class="ctabtn" onclick="openServices()">📺 Add my services</button>
   </div>`;
 }
-function renderFound(){
-  const el=$("foundView"); if(!el) return;
-  $("vFoundN").textContent=found.size;
+// A film is 🆕 if the AGENT picked it up lately — one you pinned yourself this morning is not news to you.
+// A held film keeps the answer it had when you tapped it, so the chip on a stub doesn't flicker.
+const isFresh = m => heldOpen.has(m.tmdb_id) ? heldOpen.get(m.tmdb_id).fresh
+                                            : (foundSource(m.tmdb_id)==="auto" && isNewFound(m.tmdb_id));
+// CAS-134: the chrome above the list and the receipts below it are drawn the SAME way in both scopes. That is
+// the whole point of the ticket — the listing must not look like a different product depending on how you got
+// to it, and the surest way to guarantee that is to have one function draw it.
+function renderListChrome(){
+  const el=$("listChrome"); if(!el) return;
   // CAS-121: the persistent membership-setup bar, prepended above the list as chrome (the card is untouched).
   // Off by default (showSetupBar) so the default listing is unchanged until Lee wires it in.
   const bar = (typeof showSetupBar!=="undefined" && showSetupBar) ? setupBarHTML() : "";
-  const films=foundFilms();
-  // The three things you've SAID about films (took off / watched / not interested) still live here — they're
-  // the undo for every one-tap decision — but they sit below the selection, as receipts, not as the headline.
+  el.innerHTML = bar + finishAgentHTML();
+}
+// The three things you've SAID about films (took off / watched / not interested) are the undo for every
+// one-tap decision, so they sit under the list as receipts — in both scopes, so the undo is never somewhere
+// you have to go and find.
+function renderSaid(){
+  const el=$("listSaid"); if(!el) return;
   const said=TAG_GROUPS.filter(g=>g.key!=="found")
     .map(g=>{ const ids=g.set();
               return {g, films:MOVIES.filter(m=>ids.has(m.tmdb_id) && !heldOpen.has(m.tmdb_id))}; })
     .filter(x=>x.films.length);
-  const saidHTML=said.map(({g,films})=>`<div class="mlgroup" style="padding:0 12px">
+  el.innerHTML=`<div style="padding:0 12px">${foundValueHTML()}</div>`
+    + said.map(({g,films})=>`<div class="mlgroup" style="padding:0 12px">
       <div class="mlhead" style="color:${g.colour}">${g.icon} ${g.title}<span class="n">${films.length}</span></div>
       <div class="pnote" style="margin:-4px 0 8px">${g.blurb}</div>
       ${films.map(m=>mlRowHTML(m,g.key)).join("")}</div>`).join("");
-  // `films`, not `found` — the last film on the list, once you answer it, leaves `found` but is still HELD on
-  // screen as its stub. Guarding on found.size would paint the empty state over the one stub carrying the undo,
-  // and the receipts groups below deliberately skip held films, so it would be on no list at all.
-  // ...and `!found.size` too: with nothing found at all, "clear the search and the whole selection comes back"
-  // would be promising a selection that does not exist. The search box is shared with the Find view, so a term
-  // typed over there arrives here — a brand-new user can reach this with an empty list and a live search.
-  if(!films.length && (!filt.search || !found.size)){
-    el.innerHTML=bar+foundEmptyHTML()+saidHTML;
-    return;
-  }
-  if(!films.length){                                   // the Found list isn't empty — the search box is hiding it
-    el.innerHTML=bar+agentHeadHTML(MOVIES.filter(m=>found.has(m.tmdb_id)))
-      +`<div class="empty"><div class="emoji">🔍</div>
-         <div class="eh">Nothing I've found matches “${esc(filt.search)}”.</div>
-         <div class="ep">Clear the search and the whole selection comes back.</div></div>`+saidHTML;
-    return;
-  }
-  // ONE list, in the one order (CAS-107). Splitting "new this week" off the top was a recency ordering by
-  // another name: it decided where a film sat by the day Cascade happened to pick it up. What's new still
-  // says so, on the card it belongs to — "New" meaning new FROM THE AGENT, since a film you pinned yourself
-  // this morning is not news to you. A held film keeps the answer it had when you tapped it, so the chip on a
-  // stub doesn't flicker.
-  const isFresh = m => heldOpen.has(m.tmdb_id) ? heldOpen.get(m.tmdb_id).fresh
-                                              : (foundSource(m.tmdb_id)==="auto" && isNewFound(m.tmdb_id));
-  // The count counts FILMS THE AGENT IS STILL OFFERING you. A held stub is one you've answered — it is on
-  // screen only so you can undo it, and counting it would put this number at odds with the header and with
-  // the "Found for you" tab, both of which read the real membership.
-  const live = list => list.filter(m=>!taggedOut(m)).length;
-  // CAS-129: the found list is a placeholder here and its cards stream in (fillListChunked) after the
-  // chrome is placed, so a big haul (a starter cascade can find ~1,000 films) doesn't block interaction.
-  let html=agentHeadHTML(films)+finishAgentHTML();
-  html+=`<div class="fglabel" style="color:var(--purple)">🔔 Found for you<span class="n">${live(films)}</span></div>
-    <div class="fgnote">${ORDER_NOTE}</div>
-    <div class="list" id="foundListLive"></div>`;
-  el.innerHTML=bar+html+`<div style="padding:0 12px">${foundValueHTML()}</div>`+saidHTML;
-  fillListChunked($("foundListLive"), films, renderGen, isFresh);
-  markFoundSeen();   // you are looking at it — so the next visit's "since you last looked" counts from here
 }
 
 
@@ -3488,22 +3473,24 @@ function applyCascade(c){
 window.openCascade=id=>{
   // "All" is the reset view: choosing it drops every filter and shows the whole catalogue. No count in the
   // toast — the count line under the results is the one that's already true.
+  // CAS-134: moving to another cascade is leaving this one's list, so its held stubs settle now — a film you
+  // answered under one agent must not turn up as a stub on another agent's New list.
   if(id===ALL_ID){
     if(activeId===ALL_ID) return;
-    setActive(ALL_ID); clearFilters(); syncFilterUI(); render();
+    setActive(ALL_ID); settleFoundView(); clearFilters(); syncFilterUI(); render();
     logEvent("cascade_opened", {key:"all"});
     toast(`${ALL_ICON} “All” — the whole catalogue, with nothing filtered out.`);
     return;
   }
   const c=cascades.find(x=>x.id===id); if(!c || activeId===id) return;
-  setActive(id); applyCascade(c); render();
+  setActive(id); settleFoundView(); applyCascade(c); render();
   logEvent("cascade_opened", {key:c.template||"custom"});
   // countCriteria() is what the Cascade SHOWS you right now, which is not the same as what it has found and is
   // watching (that's the Found list). So this line says "showing", and only the value lines say "found".
   toast(`${c.icon} “${c.name}” — showing you ${countCriteria(c)} films right now · ${alertSummary(c)}`);
 };
 // Closing a Cascade lands you on All rather than on nothing — same films as before, now with a card lit.
-window.closeCascade=()=>{ setActive(ALL_ID); clearFilters(); syncFilterUI(); render(); };
+window.closeCascade=()=>{ setActive(ALL_ID); settleFoundView(); clearFilters(); syncFilterUI(); render(); };
 // Filters touched by hand while a Cascade is open → offer to save them back into it.
 const sameSet=(s,a)=> s.size===a.length && a.every(v=>s.has(v));
 function cascadeDirty(){
@@ -3643,11 +3630,11 @@ function deckSync(shown){
   deckCards().forEach((el,i)=>{
     if(deckIsAll(i)){
       const on=activeId===ALL_ID;
-      // `shown` is whatever the CURRENT view is showing, which on the Found view is the Found list — not the
-      // catalogue All stands for. So All only borrows it on the Find view; anywhere else it states the
+      // `shown` is whatever the CURRENT scope is showing, which in the New scope is the recent pick-ups — not
+      // the catalogue All stands for. So All only borrows it in the All scope; anywhere else it states the
       // catalogue total, which is true from wherever you're standing. And never an alert promise: All is a
       // view, not a standing watch, and saying otherwise would be an alert we'd never send.
-      const live=on && view==="find";
+      const live=on && curScope()==="all";
       const n=live?shown:MOVIES.length;
       el.classList.toggle("is-active",on);
       el.querySelector(".dc-sub").textContent=
@@ -3895,10 +3882,10 @@ function renderCascadeBar(shown){
   deckSync(shown);
   const c=activeCascade();
   let html="";
-  // The starter block used to sit here, above BOTH views (CAS-102 moved it into the empty Found view). It was
-  // pushing the Find view's results ~1.5 screens down for the one user who is on Find precisely to look at
-  // results. Its home is foundEmptyHTML(): an empty Found list is the moment a new user has nothing and needs
-  // the nudge, so it now appears where the need is instead of on every screen.
+  // The starter block used to sit here, above the listing (CAS-102 moved it into the empty state). It was
+  // pushing results ~1.5 screens down for the one user who is here precisely to look at results. Its home is
+  // newEmptyHTML(): an empty New list is the moment a new user has nothing and needs the nudge, so it appears
+  // where the need is instead of on every screen.
   // Guest mode (CAS-79): the agent is saved but paused. Show its honest status, an honest re-invite tied to a
   // REAL current moment (only if one exists), and the way to turn it on. Never a wall — browsing stays free.
   const pausedAgent = cascades.find(x=>x.paused);
@@ -5610,12 +5597,12 @@ window.membStart=()=>{
     if(s){ draft=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts})); commitDraft(); }
   }
   showSetupBar=true;
-  view="found"; settleFoundView(); try{ localStorage.setItem("cascade_view","found"); }catch(e){}
+  showNewScope();
   render();
 };
 // ================= Membership setup — persistent bar + setup sheet (CAS-121 / mock: 12-listing-and-setup.html) =================
 // Adds ONLY the surrounding chrome: a sticky "Complete your membership setup" bar at the top of the listing
-// and a setup sheet for services + alerts. The production CAS-100 card is never touched — renderFound still
+// and a setup sheet for services + alerts. The production CAS-100 card is never touched — the listing still
 // draws it exactly as today; the bar is just prepended above the list. Selecting services writes the real
 // prefs, so the listing re-filters to what you can watch (the sharpening payoff). Gated by showSetupBar and
 // previewable at ?step=listing, so the default listing is unchanged until Lee wires it in.
@@ -5744,7 +5731,7 @@ function showReveal(c){
 }
 function closeRevealToApp(){
   $("reveal").classList.remove("open"); document.body.style.overflow="";
-  view="found"; settleFoundView(); try{ localStorage.setItem("cascade_view","found"); }catch(e){}
+  showNewScope();
   render();
   const c=revealCascade;
   if(c) toast(`✓ ${c.icon} ${c.name}'s on it — ${watchCount(c)} films found already. ${alertPromise(c)}`);
@@ -5765,8 +5752,10 @@ window.revealBrowse=()=>{
   if(c){ c.paused=true; saveCascades(); }
   try{ localStorage.setItem("cascade_guest","1"); }catch(e){}
   $("reveal").classList.remove("open"); document.body.style.overflow="";
-  // Land on manual search (Find), not the now-empty Found — browsing is the free thing they chose.
-  view="find"; try{ localStorage.setItem("cascade_view","find"); }catch(e){}
+  // Land on All, not the now-empty New — a paused agent picks nothing up, so New would be an empty screen
+  // reporting on work it isn't doing. Browsing is the free thing they chose, so give them the browse scope.
+  scopeById[activeId]="all";
+  try{ localStorage.setItem(SCOPE_KEY, JSON.stringify(scopeById)); }catch(e){}
   render();
   if(c) toast(`👍 Browsing as a guest — ${c.icon} ${c.name} is saved but paused. Turn it on any time.`);
 };
@@ -5875,7 +5864,7 @@ function inviteFinish(){
   if(unpaused) saveCascades();
   try{ localStorage.removeItem("cascade_guest"); }catch(e){}
   $("invite").classList.remove("open"); $("reveal").classList.remove("open"); document.body.style.overflow="";
-  view="found"; settleFoundView(); try{ localStorage.setItem("cascade_view","found"); }catch(e){}
+  showNewScope();
   render();
   const c=revealCascade;
   if(c) toast(`✓ ${c.icon} ${c.name}'s on the job — alerts ${agentState.alerts?"on":"off"}${agentState.learning?", learning on":""}. ${alertPromise(c)}`);
@@ -6015,8 +6004,7 @@ window.onbCreateAgent=()=>{
   logEvent("agent_created",{genres:onb.genres.length, key:onb.standard, skips:onb.exclude.length,
                             named:onb.name.trim()?1:0, matches:watchCount(c)});
   finishOnboarding();
-  view="found"; settleFoundView();              // the payoff IS the front door
-  try{ localStorage.setItem("cascade_view","found"); }catch(e){}
+  showNewScope();                               // the payoff IS the front door
   render();
   toast(`✓ ${c.icon} ${c.name}'s on it — ${watchCount(c)} films found already. ${alertPromise(c)}`);
 };
@@ -6046,32 +6034,45 @@ function render(){
   // picked, all land in the Found list immediately, and none of them can clobber an override. It's cheap
   // (Cascades × titles) and it means membership has exactly one definition, evaluated in exactly one place.
   recomputeFound();
-  // Two lists, one pass: `rows` is everything the filters allow THROUGH, `shown` is everything that still
-  // gets a full card. The difference is the films you tagged out — they stay on screen as stubs, and they
-  // don't count as results, because you told us you didn't want them.
-  const rows=MOVIES.filter(passesOrStub);
+  // Two lists, one pass: `rows` is everything the current SCOPE puts on screen, `shown` is everything that
+  // still gets a full card. The difference is the films you tagged out — they stay on screen as stubs, and
+  // they don't count as results, because you told us you didn't want them.
+  const rows=scopeRows();
   const shown=rows.filter(m=>!taggedOut(m));
   const stubbed=rows.length-shown.length;
   const n=activeCount();
   $("filterBtn").textContent = "≡ Filters" + (n?` (${n})`:"");
   $("filterBtn").classList.toggle("active", n>0);
   renderCascadeBar(shown.length);
-  syncView();
-  renderFound();    // membership changes from a card, from the Found view itself, or from a Cascade — one repaint covers all
+  // Both scope counts, always — the point of the pair is that you can see what the other one holds before you
+  // tap it. Held stubs are films you have already answered: on screen for their undo, not on offer, so they
+  // are not counted (that is the same rule the deck's own counts follow).
+  syncScope(newFilms().filter(m=>!taggedOut(m)).length,
+            MOVIES.filter(passesOrStub).filter(m=>!taggedOut(m)).length);
+  renderListChrome();
+  renderSaid();     // membership changes from a card, from the list itself, or from a Cascade — one repaint covers all
   updatePrefSwitch(); updatePrefBtn(); updateUxSwitch(); refreshSetupMeters(); renderServiceAdvice();
   syncAlertPrefChips();
   // Smart defaults: label the apply control with its payoff, not a bare "Done".
   $("filtersDone").textContent = ux.on
     ? (shown.length ? `Show ${shown.length} film${shown.length===1?"":"s"}` : "No films match")
     : "Done";
-  $("count").textContent=`${shown.length} of ${MOVIES.length} titles`+(prefsActive()?" · my services":"")
-    +(stubbed?` · ${stubbed} tagged out`:"");
+  const isNew=curScope()==="new";
+  $("count").textContent=(isNew ? `${shown.length} new in the last ${NEW_DAYS} days`
+                                : `${shown.length} of ${MOVIES.length} titles`)
+    +(prefsActive()&&!isNew?" · my services":"")+(stubbed?` · ${stubbed} tagged out`:"");
   const wrap=$("groups");
-  if(!rows.length){ wrap.innerHTML=emptyResultsHTML(); return; }
+  if(!rows.length){
+    // Two different empties, because they are two different facts. Nothing NEW is the agent reporting no
+    // pick-ups; nothing at ALL is the filters coming back empty, which has its own ways out.
+    wrap.innerHTML = isNew ? newEmptyHTML() : emptyResultsHTML();
+    if(isNew) markFoundSeen();
+    return;
+  }
   // CAS-129: build the group shells now (cheap) but STREAM their cards in batches (fillListChunked)
   // so a ~2,000-card listing never blocks. A film you answer still collapses WHERE IT IS (CAS-100 AC4):
   // the stub is rendered in the sort's own order, and the count counts only films you haven't answered.
-  wrap.innerHTML="";
+  wrap.innerHTML=`<div class="fgnote">${ORDER_NOTE}</div>`;
   CASCADE.forEach(g=>{
     const items=rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g));
     if(!items.length) return;
@@ -6080,14 +6081,16 @@ function render(){
     grp.innerHTML=`<div class="grouphead"><span class="gdot ${g}"></span>${STATUS_LABEL[g]}
       <span class="gcount">${live}</span></div><div class="list"></div>`;
     wrap.appendChild(grp);
-    fillListChunked(grp.querySelector(".list"), items, renderGen);
+    fillListChunked(grp.querySelector(".list"), items, renderGen, isFresh);
   });
+  // You are looking at it — so the next visit's "since you last looked" counts from here.
+  if(isNew) markFoundSeen();
 }
 // ---- CAS-129: single-card updates (never rebuild the whole ~2,000-card list on one tap) --------
-// A "Not for me"/verdict in the Find view just folds that film to its stub where it is, so we swap
-// only that one node and patch the visible counters — no full render(). (The Found view keeps a full
-// renderFound(): its list is the agent's own selection, not the whole catalogue, and the first answer
-// there also reveals the "Finish your agent" chrome above the row.)
+// A "Not for me"/verdict in the All scope just folds that film to its stub where it is, so we swap only that
+// one node and patch the visible counters — no full render(). The New scope keeps a full render(): its list
+// is the agent's own recent work rather than the whole catalogue, so it is cheap to redraw, and the first
+// answer there can also reveal the "Finish your agent" chrome above the row.
 function patchFindCounts(){
   const rows=MOVIES.filter(passesOrStub);
   const shown=rows.filter(m=>!taggedOut(m));
@@ -6099,19 +6102,20 @@ function patchFindCounts(){
     if(gc) gc.textContent=rows.filter(m=>primaryStatus(m)===g && !taggedOut(m)).length;
   });
   renderCascadeBar(shown.length);
+  syncScope(newFilms().filter(m=>!taggedOut(m)).length, shown.length);
 }
 function fastPatchFindRow(id){
   const m=MOVIES.find(x=>x.tmdb_id===id), row=rowFor(id);
   if(!m || !row || !passesOrStub(m)) return false;   // film left the filtered set -> let render() handle it
   const t=document.createElement("template");
-  t.innerHTML=(taggedOut(m)?stubHTML(m):cardHTML(m)).trim();
+  t.innerHTML=(taggedOut(m)?stubHTML(m):cardHTML(m, isFresh(m))).trim();
   row.replaceWith(t.content.firstElementChild);
   patchFindCounts();
   return true;
 }
 function repaintAfterOpinion(id){
   recomputeFound();
-  if(view==="find" && fastPatchFindRow(id)) return;   // instant single-node swap
+  if(curScope()==="all" && fastPatchFindRow(id)) return;   // instant single-node swap
   render();                                            // Found view / fallback (off-screen cards skip layout, so cheap)
 }
 // ---- Collapsing in place (CAS-108) ---------------------------------------------
