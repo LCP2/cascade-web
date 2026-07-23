@@ -1388,7 +1388,8 @@
       <button class="btn" id="saveAsBtn" title="Save these filters as a Cascade">＋ Save as…</button>
       <div style="flex:1"></div>
       <select id="sort">
-        <option value="imdb">IMDb ▾</option>
+        <option value="availability">Availability ▾</option>
+        <option value="imdb">IMDb rating</option>
         <option value="rt">RT critic</option>
         <option value="gross">Box office</option>
         <option value="popularity">Most anticipated</option>
@@ -2059,12 +2060,14 @@ function saveUx(){ try{ localStorage.setItem("cascade_ux", ux.on?"1":"0"); }catc
 const alerts=[];
 const filt={status:new Set(), year:new Set(), age:new Set(), culture:new Set(), lang:new Set(), genre:new Set(),
   exclude:new Set(),       // genres you never want to see — the ONE criterion that subtracts (CAS-71)
-  imdb:0, rt:0, gross:0, search:"", foundOnly:false, hideWatched:false, showHidden:false, awards:false, sort:"imdb",
+  imdb:0, rt:0, gross:0, search:"", foundOnly:false, hideWatched:false, showHidden:false, awards:false,
+  sort:"availability",     // CAS-148: the forward availability timeline is the default order (byTimeline)
   includeUnrated:false,    // set by the open Cascade's escape hatch; off by default = unrated titles drop out
   budget:0, includeUnbudgeted:false, tentpole:"any"};
 const $=id=>document.getElementById(id);
 
 // ---- My Cascades: saved living searches (prototype state — localStorage, per device) ----
+const SORT_MIG_KEY = "cascade_sortmig_148";   // one-shot: see the sort migration in loadCascades()
 function loadCascades(){
   try{
     const a=JSON.parse(localStorage.getItem("cascade_cascades")||"[]");
@@ -2072,6 +2075,16 @@ function loadCascades(){
     // The budget sort is gone (it buried tentpoles TMDB has no budget for). Carry old Blockbuster
     // Cascades over to the popularity sort rather than silently dropping them back to IMDb.
     a.forEach(c=>{ if(c.sort==="budget") c.sort="popularity"; });
+    // CAS-148: "imdb" used to BE the default order, so every Cascade ever saved carries it whether or not
+    // anyone chose it. The default is now the availability timeline, so that carried-over value is migrated
+    // — ONCE, and written back, so an IMDb order picked deliberately from here on is never overwritten.
+    try{
+      if(!localStorage.getItem(SORT_MIG_KEY)){
+        a.forEach(c=>{ if(!c.sort || c.sort==="imdb") c.sort="availability"; });
+        localStorage.setItem("cascade_cascades", JSON.stringify(a));
+        localStorage.setItem(SORT_MIG_KEY,"1");
+      }
+    }catch(e){}
     return a;   // filled out to the current shape by normCascade() below — a Cascade saved before the
                 // language/rating-stop controls existed still opens clean, and means what it always meant.
   }catch(e){ return []; }
@@ -2109,7 +2122,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 75, "commit": "3840417", "builtAt": "2026-07-23T05:07:49Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 76, "commit": "a433413", "builtAt": "2026-07-23T07:48:06Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -2480,6 +2493,20 @@ window.showAward=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id);
 const taggedOut = m => !!opinionOf(m.tmdb_id);
 let ignoreTagged=false;   // set only by passesOrStub(), so the counters that call passes() are unaffected
 const passesOrStub = m => { ignoreTagged=true; const ok=passes(m); ignoreTagged=false; return ok; };
+// ---- The status gate (CAS-148) -------------------------------------------------
+// A Cascade's window scope is a WATCH scope, not a display filter. "Must See at the Cinema" is watching 26
+// films — the 21 on screens now AND the ~5 still on their way to one — but the listing tested the film's
+// CURRENT window against that scope, so the 5 upcoming ones fell out and the list could never reconcile with
+// the deck count or the reveal (both watchesFilm). A film the open Cascade is still watching now passes,
+// which makes the listing set the watch set, sectioned by where each film actually is.
+// Status chips set BY HAND are untouched: those are an explicit "show me only this window", so they stay
+// exact. The widening applies only while the chips are still the open Cascade's own scope.
+function statusOK(m){
+  if(!filt.status.size) return true;
+  if(filt.status.has(primaryStatus(m))) return true;
+  const c=activeCascade();
+  return !!c && sameSet(filt.status, c.status||[]) && inScope(m,c);
+}
 function passes(m){
   const id=m.tmdb_id;
   if(!ignoreTagged && taggedOut(m)) return false;
@@ -2487,7 +2514,7 @@ function passes(m){
   if(!ignoreScope && servicesPicked() && scopedFor(primaryStatus(m)) && !matchesServices(m)) return false;
   if(filt.foundOnly && !found.has(id)) return false;
   if(filt.search && !m.title.toLowerCase().includes(filt.search)) return false;
-  if(filt.status.size && !filt.status.has(primaryStatus(m))) return false;
+  if(!statusOK(m)) return false;
   if(filt.year.size && !filt.year.has(yearOf(m))) return false;
   if(filt.age.size && !filt.age.has(m.age_rating)) return false;
   if(filt.culture.size && !filt.culture.has(m.culture)) return false;
@@ -2525,9 +2552,25 @@ function byRatingDesc(a,b){
   if(rb===null) return -1;
   return rb-ra;
 }
-const byStageThenRating = (a,b) => (stageIdx(a)-stageIdx(b)) || byRatingDesc(a,b);
+// ---- The forward availability timeline (CAS-148) -------------------------------
+// The default order inside every section. One key — the cinema date, latest first — read as a timeline you
+// are moving down: the films furthest from their next move sit at the top, the ones about to make it sit at
+// the bottom. So Upcoming leads with the far-future release and ends with the one about to open, and In
+// Cinema leads with the newest arrival and ends with the one about to leave the screen. The sections
+// themselves are already the journey (CASCADE order), so the two together read as one continuous line.
+// A film with no cinema date has no place on a timeline, so it sits at the foot of its section, ordered by
+// rating rather than by nothing at all.
+function byTimeline(a,b){
+  const da=a.cinema_date||"", db=b.cinema_date||"";
+  if(!da && !db) return byRatingDesc(a,b);
+  if(!da) return 1;
+  if(!db) return -1;
+  return db.localeCompare(da);
+}
+const byStageThenTimeline = (a,b) => (stageIdx(a)-stageIdx(b)) || byTimeline(a,b);
 function sortMovies(a,b){
   switch(filt.sort){
+    case "availability": return byTimeline(a,b);
     case "rt": return (b.rt_critic||0)-(a.rt_critic||0);
     case "gross": return (b.worldwide_gross||0)-(a.worldwide_gross||0);
     case "popularity": return byPopularity(a,b);
@@ -2539,12 +2582,16 @@ function sortMovies(a,b){
 // An un-released film has no rating, no box office and usually no budget — ranking it by a metric it doesn't
 // have just sorts noise (which is how genuine tentpoles ended up at the bottom of the budget sort). So the
 // Upcoming group always ranks by anticipation, except under the two sorts that DO mean something pre-release.
-const PRE_RELEASE_SORTS=new Set(["title","cinema"]);
-// CAS-107: under the default rating order every group ranks the same way — rated first, highest first,
-// unrated last — Upcoming included; byRatingDesc already falls back to anticipation for the unrated, so the
-// group keeps a meaningful order without pretending it has scores it doesn't have. The other sorts are an
-// explicit choice from the sort control, and they keep the anticipation fallback pre-release.
-const sortFor = g => filt.sort==="imdb" ? byRatingDesc
+// "availability" belongs here too: a release date is the one thing an unreleased film definitely HAS, so the
+// timeline is meaningful pre-release — it is the only order that is.
+const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
+// CAS-148: the default is the availability timeline, and it ranks every group the same way, Upcoming
+// included. CAS-107's rating order is still there as an explicit choice: rated first, highest first, unrated
+// last, with byRatingDesc falling back to anticipation for the unrated so a group keeps a meaningful order
+// without pretending it has scores it doesn't have. The other sorts are explicit choices from the sort
+// control too, and they keep the anticipation fallback pre-release.
+const sortFor = g => filt.sort==="availability" ? byTimeline
+  : filt.sort==="imdb" ? byRatingDesc
   : (g==="upcoming" && !PRE_RELEASE_SORTS.has(filt.sort)) ? byPopularity : sortMovies;
 const CSTAGE_LABEL = {pvod:"Premium", rental:"Rent", included_streaming:"Stream"};
 const EST_OFFSET = {pvod:90, rental:120, included_streaming:180};   // days after cinema (rough AU windows)
@@ -3036,11 +3083,13 @@ const isNewFound = id => { const d=firstFound[id]; return !!d && daysSince(d) < 
 // They decide what is ON the list, and nothing else. Liking, disliking, taking a film off and excluding a
 // genre all act as filters and excludes — visible rules you set and can see the effect of. What they no
 // longer do is silently re-rank the list: a genre you waved off used to get pushed DOWN the order, which is
-// an invisible hand on a list whose whole promise is that you can check it. Order is availability, then
-// rating (byStageThenRating), for everyone, always.
+// an invisible hand on a list whose whole promise is that you can check it. Order is the availability section,
+// then the availability timeline inside each section (byTimeline, CAS-148), for everyone, always.
 // One sentence, said the same way wherever the order is described. It states the two keys and the direction
 // of the first one, because "by availability" alone doesn't tell you which end cinema is at.
-const ORDER_NOTE = `Ordered by availability — upcoming and cinema first, streaming last — then IMDb rating.`;
+// CAS-148: the order is now a forward availability timeline — the sections are the journey, and inside each
+// one the newest date leads, so the film nearest its next move is always the last one in its section.
+const ORDER_NOTE = `Ordered as an availability timeline — upcoming first, then cinema, rent, stream — newest date first inside each.`;
 
 
 // ---- The list ------------------------------------------------------------------
@@ -3693,7 +3742,7 @@ function applyCascade(c){
   filt.budget=c.budget||0; filt.includeUnbudgeted=!!c.includeUnbudgeted; filt.tentpole=c.tentpole||"any";
   // The two Exclude toggles ARE the View chips — one state, two places to reach it.
   filt.hideWatched=c.excludeWatched!==false; filt.showHidden=c.excludeBlocked===false;
-  filt.sort=c.sort||"imdb";                                      // Blockbuster radar leads with popularity
+  filt.sort=c.sort||"availability";                                      // Blockbuster radar leads with popularity
   syncFilterUI();
 }
 // Opening is idempotent: landing a card in the deck's centre IS selecting it, so this can be called
@@ -3727,7 +3776,7 @@ function cascadeDirty(){
       || !sameSet(filt.exclude,c.exclude||[])
       || !sameSet(filt.lang,c.lang||[]) || !sameSet(filt.culture,c.culture||[]) || !sameSet(filt.year,c.year||[])
       || filt.imdb!==(c.imdb||0) || filt.rt!==(c.rt||0) || filt.awards!==!!c.awards
-      || filt.includeUnrated!==!!c.includeUnrated || filt.sort!==(c.sort||"imdb")
+      || filt.includeUnrated!==!!c.includeUnrated || filt.sort!==(c.sort||"availability")
       || filt.budget!==(c.budget||0) || filt.includeUnbudgeted!==!!c.includeUnbudgeted
       || filt.tentpole!==(c.tentpole||"any")
       || filt.hideWatched!==(c.excludeWatched!==false) || filt.showHidden!==(c.excludeBlocked===false);
@@ -5054,7 +5103,7 @@ function agentDraft(over){
   const a={...onb, ...(over||{})};
   const c={id:null, template:"agent", icon:"🎯", name:(a.name||"").trim() || "My agent",
     status:[], genre:[...a.genres], exclude:[...a.exclude], age:[], lang:[], culture:[], year:[],
-    imdb:0, rt:0, awards:false, budget:0, tentpole:"any", myServices:false, sort:"imdb",
+    imdb:0, rt:0, awards:false, budget:0, tentpole:"any", myServices:false, sort:"availability",
     alerts:{...ALERT_DEFAULTS}};
   (STANDARDS.find(s=>s.key===a.standard) || {apply(){}}).apply(c);
   return normCascade(c);
@@ -5249,14 +5298,14 @@ const PRICE_OPTS = [
 // Rating bars, as catalogue-percentile stops (RATING_STOPS): "great" = top tier, the crowd/blockbuster
 // default = above-average sorted by buzz, "not fussy" = no bar.
 const BIG_SCREEN_OPTS = [
-  {key:"great",  label:"Only the great stuff",  ratingStop:4, sort:"imdb"},
+  {key:"great",  label:"Only the great stuff",  ratingStop:4, sort:"availability"},
   {key:"block",  label:"Blockbusters & events", ratingStop:1, sort:"popularity"},
-  {key:"nofuss", label:"I'm not fussy",         ratingStop:0, sort:"imdb"},
+  {key:"nofuss", label:"I'm not fussy",         ratingStop:0, sort:"availability"},
 ];
 const WORTH_OPTS = [
-  {key:"great",  label:"Only the great stuff", ratingStop:4, sort:"imdb"},
+  {key:"great",  label:"Only the great stuff", ratingStop:4, sort:"availability"},
   {key:"crowd",  label:"Crowd-pleasers",       ratingStop:1, sort:"popularity"},
-  {key:"nofuss", label:"I'm not fussy",        ratingStop:0, sort:"imdb"},
+  {key:"nofuss", label:"I'm not fussy",        ratingStop:0, sort:"availability"},
 ];
 // Streaming — the "where do you watch?" services, using the real catalogue service names so the scope works.
 const WIZ_SERVICES = ["Netflix","Disney+","Prime Video","Stan","BINGE","AppleTV+","Paramount Plus"];
@@ -5271,7 +5320,7 @@ function wizDraft(over){
   const c={id:null, template:"agent", icon:st.icon, name:(w.name||"").trim()||WIZ_DEFAULT_NAME[w.starter],
     status:[], genre:[...w.genres], exclude:[...w.exclude], age:[], lang:[], culture:[], year:[],
     imdb:0, rt:0, awards:false, budget:0, includeUnbudgeted:false, tentpole:"any",
-    myServices:false, sort:"imdb", alerts:{cinema:false, past_opening:false, pvod:false, rental:false, included_streaming:false}};
+    myServices:false, sort:"availability", alerts:{cinema:false, past_opening:false, pvod:false, rental:false, included_streaming:false}};
   const ropts = w.starter==="cinema" ? BIG_SCREEN_OPTS : WORTH_OPTS;
   const r = ropts.find(o=>o.key===w.ratingKey) || ropts[1];
   c.imdb = RATING_STOPS[r.ratingStop].imdb; c.ratingStop=r.ratingStop; c.sort=r.sort;
@@ -5446,7 +5495,7 @@ const ONB_DEFAULT_NAME = "Friday night finder";
 function onbSeedDraft(){
   return normCascade({id:null, template:"agent", icon:"📓", name:ONB_DEFAULT_NAME,
     status:[], genre:[], exclude:[], age:[], lang:["en"], culture:[], year:[],
-    imdb:RATING_STOPS[1].imdb, ratingStop:1, rt:0, awards:false, myServices:false, sort:"imdb"});
+    imdb:RATING_STOPS[1].imdb, ratingStop:1, rt:0, awards:false, myServices:false, sort:"availability"});
 }
 // The sharpening flow's working state. Genre selection is held as the set of genres still ON (all to start);
 // the draft's genre filter is DERIVED from it — all-on means "any" (empty filter), so the count is the true
@@ -6420,11 +6469,13 @@ const REVEAL_LEAD_RADAR = {cinema:"on their way to the big screen", rentals:"on 
 function showReveal(c){
   revealCascade=c;
   // CAS-132: the reveal previews EXACTLY the listing the user lands on. The Found listing's membership is
-  // watchesFilm (= watchCount) ordered by byStageThenRating — so the reveal draws from that same set, in
+  // watchesFilm (= watchCount) ordered by byStageThenTimeline — so the reveal draws from that same set, in
   // that same order, with that same count. No divergent matchesCriteria/byRating path (that split was the
   // ~292-vs-367 mismatch: matchesCriteria is only the watchable-RIGHT-NOW slice). That slice is still called
   // out honestly, as a note under the same headline, not as a rival count.
-  const films=MOVIES.filter(m=>watchesFilm(m,c)).sort(byStageThenRating);   // == the Found listing set/order
+  // CAS-148 closed the other half of that promise: the listing's status gate now lets the whole watch set
+  // through, so this set and the one under it are the same films, not just the same number.
+  const films=MOVIES.filter(m=>watchesFilm(m,c)).sort(byStageThenTimeline);   // == the Found listing set/order
   const n=films.length;
   const nowN=MOVIES.filter(m=>matchesCriteria(m,c)).length;                 // watchable this moment (a subset of n)
   const posters=films.map(m=>{
@@ -6735,6 +6786,24 @@ window.onbCreateAgent=()=>{
 // The first batch is inserted synchronously — so the screen is interactive at once — and the rest
 // fills in over the next frames. `gen` ties a fill to the render() that started it: a newer render()
 // bumps renderGen and any stale fill stops on its next frame instead of racing the new one.
+// ---- The count line (CAS-148) --------------------------------------------------
+// It reconciles with the list under it, and with the deck card above it. One total, then how that total
+// splits across the sections you are about to scroll — so the agent's count, this line and the section
+// counts are three readings of one number. What it used to say was "21 new in the last 7 days": neither the
+// total (26) nor a fact about the films, just how recently Cascade happened to pick them up.
+const SECTION_SHORT = {upcoming:"upcoming", opening_week:"opening", in_cinema:"in cinema",
+                       pvod:"premium", rental:"rent", included_streaming:"stream"};
+function countLine(shown, stubbed){
+  const parts = CASCADE.map(g=>{
+    const n=shown.filter(m=>primaryStatus(m)===g).length;
+    return n ? `${n} ${SECTION_SHORT[g]}` : "";
+  }).filter(Boolean);
+  // One section = the breakdown just repeats the total, so it is left off.
+  return `${shown.length} film${shown.length===1?"":"s"}`
+    + (parts.length>1 ? ` · ${parts.join(" · ")}` : "")
+    + (prefsActive() ? " · my services" : "")
+    + (stubbed ? ` · ${stubbed} tagged out` : "");
+}
 let renderGen=0;
 function fillListChunked(listEl, items, gen, freshFn){
   let i=0; const BATCH=36;
@@ -6780,9 +6849,7 @@ function render(){
     ? (shown.length ? `Show ${shown.length} film${shown.length===1?"":"s"}` : "No films match")
     : "Done";
   const isNew=curScope()==="new";
-  $("count").textContent=(isNew ? `${shown.length} new in the last ${NEW_DAYS} days`
-                                : `${shown.length} of ${MOVIES.length} titles`)
-    +(prefsActive()&&!isNew?" · my services":"")+(stubbed?` · ${stubbed} tagged out`:"");
+  $("count").textContent=countLine(shown, stubbed);
   const wrap=$("groups");
   if(!rows.length){
     // Two different empties, because they are two different facts. Nothing NEW is the agent reporting no
@@ -6817,8 +6884,7 @@ function patchFindCounts(){
   const rows=MOVIES.filter(passesOrStub);
   const shown=rows.filter(m=>!taggedOut(m));
   const stubbed=rows.length-shown.length;
-  $("count").textContent=`${shown.length} of ${MOVIES.length} titles`+(prefsActive()?" · my services":"")
-    +(stubbed?` · ${stubbed} tagged out`:"");
+  $("count").textContent=countLine(shown, stubbed);
   CASCADE.forEach(g=>{
     const gc=document.querySelector(`#groups .group[data-g="${g}"] .gcount`);
     if(gc) gc.textContent=rows.filter(m=>primaryStatus(m)===g && !taggedOut(m)).length;
@@ -6917,7 +6983,7 @@ function keepRowInPlace(id, repaint){
 window.setOpinion=(id,kind)=>{
   const was=opinionOf(id), on=was!==kind, wasFound=found.has(id);
   // Read the film's freshness BEFORE the answer changes it, so the 🆕 chip on the stub doesn't flicker off
-  // under the tap. (The ORDER can't move at all now — availability then rating, see byStageThenRating.)
+  // under the tap. (The ORDER can't move at all now — availability section, then date, see byTimeline.)
   const held = wasFound ? {fresh: foundSource(id)==="auto" && isNewFound(id)} : null;
   watched.delete(id); disliked.delete(id); blocked.delete(id);
   if(on){
