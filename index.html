@@ -1063,6 +1063,45 @@
   .ossumline{font-size:13px;color:var(--dim);line-height:1.55;margin:6px 2px 14px}
   .ossumline b{color:var(--ink);font-weight:700}
   .ossumline .cnt{color:var(--green);font-weight:800}
+  /* ---- Taste baseline accordion (CAS-146 / r5-prototype screenTaste) ---- */
+  .tbrows{display:flex;flex-direction:column;gap:11px;margin-top:4px}
+  .tbrow{background:var(--panel2);border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    transition:border-color .22s,background .22s}
+  .tbrow.open{border-color:var(--accent);background:rgba(124,92,255,.06)}
+  .tbhead{display:flex;align-items:center;gap:13px;padding:14px 15px;cursor:pointer;user-select:none;
+    width:100%;background:none;border:0;color:var(--ink);text-align:left}
+  .tbhead:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+  .tbhead .ic{flex:0 0 auto;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+    font-size:18px;background:var(--panel);border:1px solid var(--line)}
+  .tbhead .rmid{flex:1;min-width:0;display:flex;flex-direction:column}
+  .tbhead .rlabel{font-weight:700;font-size:15px}
+  /* The collapsed value, in violet — this is what lets the page be read at a glance without opening a row. */
+  .tbhead .rval{color:var(--selink);font-weight:600;font-size:12.5px;margin-top:2px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tbhead .chev{flex:0 0 auto;color:var(--faint);transition:transform .3s;font-size:13px}
+  .tbrow.open .chev{transform:rotate(90deg)}
+  .tbpanel{max-height:0;overflow:hidden;transition:max-height .36s cubic-bezier(.4,0,.2,1)}
+  @media (prefers-reduced-motion:reduce){ .tbpanel{transition:none} }
+  .tbbody{padding:0 15px 17px}
+  .tbhint{color:var(--faint);font-size:12px;margin:0 0 12px;line-height:1.45}
+  .tbq{display:flex;gap:8px;margin-top:12px}
+  .tbq .q{flex:1;text-align:center;border:1px solid var(--line);background:var(--panel);color:var(--dim);
+    border-radius:10px;padding:8px;font-size:12px;font-weight:700;cursor:pointer}
+  .tbq .q:hover{border-color:var(--accent);color:var(--ink)}
+  .tbfoot{display:flex;align-items:center;gap:8px;justify-content:center;color:var(--faint);font-size:11.5px;
+    margin:16px 4px 2px;text-align:center}
+  .dotg{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+  /* The age RANGE band: one gradient fill across the chosen span, no handles and no dots (buildspec §6). */
+  .agebar{position:relative;height:48px;margin-top:6px;background:#151b28;border:1px solid var(--line);
+    border-radius:13px;touch-action:none;cursor:pointer;user-select:none;overflow:hidden}
+  .afill{position:absolute;top:5px;bottom:5px;border-radius:9px;background:var(--grad);
+    box-shadow:0 6px 18px rgba(90,80,200,.45);z-index:1;transition:left .16s,width .16s}
+  .agecells{position:absolute;inset:0;display:flex;z-index:2}
+  .acell{flex:1;display:grid;place-items:center;font-size:12.5px;font-weight:700;color:var(--dim);
+    transition:color .2s}
+  .acell.inr{color:#fff}
+  .uptag{font-size:11.5px;color:var(--faint);margin:12px 2px 0;text-align:center}
+  .uptag b{color:var(--selink)}
   /* ---- #3 Get-selective hub (CAS-144 / r5-prototype screenSelective) ---- */
   /* The channel badge: the one thing on this screen that isn't a choice, and it says so. */
   .oschan{display:inline-flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);
@@ -2070,7 +2109,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 74, "commit": "5da3bbf", "builtAt": "2026-07-23T05:03:14Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 75, "commit": "3840417", "builtAt": "2026-07-23T05:07:49Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3530,6 +3569,9 @@ function selBuzzOK(m,c){
   return typeof m.popularity==="number" && m.popularity >= BUZZ_CUTS[s];
 }
 function matchesCriteria(m,c,ignoreBlocked){
+  // CAS-146: the account-level taste baseline is inherited by every agent and applied first — it is the
+  // world they all search, so an agent can narrow inside it but never reach outside it.
+  if(!passesTasteBase(m)) return false;
   if(c.excludeBlocked!==false && !ignoreBlocked && blocked.has(m.tmdb_id)) return false;
   if(c.excludeWatched!==false && watched.has(m.tmdb_id)) return false;
   if(servicesPicked() && scopeOf(c)[primaryStatus(m)] && !matchesServices(m)) return false;
@@ -5453,10 +5495,10 @@ const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME
                  voteVal:VOTE_MIN, criticsStop:0, scaleStop:0, buzzStop:0, selOr:false};   // #4 dials (CAS-114/145)
 function onbApply(){
   const d=onbFlow.draft;
-  d.genre = onbFlow.genresOn.size===ONB_GENRES.length ? [] : [...onbFlow.genresOn];
-  d.year = onbYearsApply();
-  d.lang = [...onbFlow.langsOn];
-  d.age = AGE_LEVELS.slice(0, onbFlow.ageStop+1);   // up to and including; the top stop is all ratings (open)
+  // CAS-146: genres / how-far-back / language / age moved OUT of the per-agent draft and into the
+  // account-level taste baseline, which matchesCriteria applies to every agent. Writing them here too
+  // would apply the same narrowing twice and make the agent's own criteria look narrower than they are.
+  d.genre = []; d.year = []; d.lang = []; d.age = [];
   d.name = (onbFlow.name||"").trim() || ONB_DEFAULT_NAME;
   // #4 selectivity (CAS-114): the dials own the crowd/critics/scale bars, as their own fields so the other
   // steps' seed rating is untouched. selCrowd is a raw IMDb bar; the two stop fields and the OR flag drive
@@ -5495,6 +5537,32 @@ const YEAR_STOPS = [
   {label:"This year", years:1},
 ];
 const YEAR_DEFAULT = 0;   // Any — the open default, now on the LEFT
+// ---- The taste baseline (CAS-146) -----------------------------------------------------------------
+// The inherited "About me" layer: Genres, How-far-back, Language, Age, set ONCE at account level and
+// applied to every agent on top of that agent's own criteria. It is the world your agents search, so
+// narrowing it re-narrows all of them at once — that is the point of it being one thing rather than a
+// copy per agent. Defaults are permissive on purpose: it must never be the reason a new user sees nothing.
+const BASE_KEY = "cascade_taste_base";
+const baseDefaults = () => ({genres:[], year:YEAR_DEFAULT, langs:["en"],
+                             ageLo:0, ageHi:AGE_LEVELS.length-1});
+// genres:[] means "all" — an empty include-list matches everything, the same convention the cascade
+// criteria already use, so "all on" and "untouched" can't disagree.
+let tasteBase = baseDefaults();
+try{ const o=JSON.parse(localStorage.getItem(BASE_KEY)||"null");
+     if(o && typeof o==="object") tasteBase={...baseDefaults(), ...o}; }catch(e){}
+function saveTasteBase(){ try{ localStorage.setItem(BASE_KEY, JSON.stringify(tasteBase)); }catch(e){} }
+const baseAges = () => AGE_LEVELS.slice(tasteBase.ageLo, tasteBase.ageHi+1);
+const baseYearFloor = () => yearFloor(tasteBase.year||0);
+// Applied by matchesCriteria to every agent. Each dimension is skipped when it is at its open default, so
+// a fully permissive baseline is exactly a no-op and nothing that already matched stops matching.
+function passesTasteBase(m){
+  if(tasteBase.genres.length && !(m.genres||[]).some(g=>tasteBase.genres.includes(g))) return false;
+  const fl=baseYearFloor(); if(fl!=null && yearOf(m)<fl) return false;
+  if(tasteBase.langs.length && !tasteBase.langs.includes(m.language)) return false;
+  const ages=baseAges();
+  if(ages.length<AGE_LEVELS.length && !ages.includes(m.age_rating)) return false;
+  return true;
+}
 function yearFloor(i){ const y=YEAR_STOPS[i].years; return y==null ? null : (+CURRENT_YEAR)-(y-1); }
 function onbYearsApply(){
   const fl=yearFloor(onbFlow.yearStop!=null?onbFlow.yearStop:YEAR_DEFAULT);
@@ -5654,6 +5722,158 @@ function wireDials(){
     };
   });
 }
+// ---- Taste-baseline accordion (CAS-146) -----------------------------------------------------------
+let tbOpen = null;   // which row is expanded — exactly one, or none
+const tbGenreSet = () => new Set(tasteBase.genres.length ? tasteBase.genres : ONB_GENRES);
+function tbSumGenres(){
+  const n=tasteBase.genres.length;
+  return !n ? "All genres" : `${n} of ${ONB_GENRES.length}`;
+}
+function tbSumYear(){ return YEAR_STOPS[tasteBase.year||0].label; }
+function tbSumLangs(){
+  const l=tasteBase.langs;
+  if(!l.length) return "Any language";
+  const first=langName(l[0]);
+  return l.length===1 ? first : `${first} +${l.length-1}`;
+}
+function tbSumAge(){
+  const {ageLo:lo, ageHi:hi}=tasteBase, last=AGE_LEVELS.length-1;
+  if(lo===0 && hi===last) return `Anything (${AGE_LEVELS[0]} to ${AGE_LEVELS[last]})`;
+  return lo===hi ? `${AGE_LEVELS[lo]} only` : `${AGE_LEVELS[lo]} to ${AGE_LEVELS[hi]}`;
+}
+const TB_ROWS = [
+  {key:"genres", icon:"🎭", label:"Genres",        sum:tbSumGenres},
+  {key:"year",   icon:"🕰️", label:"How far back",  sum:tbSumYear},
+  {key:"langs",  icon:"💬", label:"Language",      sum:tbSumLangs},
+  {key:"age",    icon:"🔞", label:"Age rating",    sum:tbSumAge},
+];
+window.tbToggle=key=>{ tbOpen = tbOpen===key ? null : key; drawTasteRows(); };
+function drawTasteRows(){
+  const wrap=$("tbRows"); if(!wrap) return;
+  wrap.innerHTML=TB_ROWS.map(r=>`
+    <div class="tbrow${tbOpen===r.key?" open":""}" data-row="${r.key}">
+      <button type="button" class="tbhead" onclick="tbToggle('${r.key}')"
+              aria-expanded="${tbOpen===r.key}">
+        <span class="ic">${r.icon}</span>
+        <span class="rmid"><span class="rlabel">${r.label}</span><span class="rval">${esc(r.sum())}</span></span>
+        <span class="chev">▶</span>
+      </button>
+      <div class="tbpanel"><div class="tbbody"></div></div>
+    </div>`).join("");
+  if(tbOpen){
+    const row=wrap.querySelector(`.tbrow[data-row="${tbOpen}"]`);
+    const body=row.querySelector(".tbbody");
+    TB_BODIES[tbOpen](body, ()=>{
+      row.querySelector(".rval").textContent=(TB_ROWS.find(r=>r.key===tbOpen).sum)();
+      saveTasteBase(); onbRefresh();
+      const p=row.querySelector(".tbpanel"); p.style.maxHeight=p.scrollHeight+60+"px";
+    });
+    const p=row.querySelector(".tbpanel");
+    requestAnimationFrame(()=>{ p.style.maxHeight=p.scrollHeight+40+"px"; });
+  }
+  onbRefresh();
+}
+const TB_BODIES = {
+  genres(b, upd){
+    const on=tbGenreSet();
+    b.innerHTML=`<p class="tbhint">Everything's in by default. Switch off what you never want.</p>
+      <div class="chips" id="tbGenreChips"></div>
+      <div class="tbq"><button type="button" class="q" data-a="all">Select all</button>
+        <button type="button" class="q" data-a="none">Clear all</button></div>`;
+    const box=b.querySelector("#tbGenreChips");
+    ONB_GENRES.forEach(g=>{
+      const c=document.createElement("button");
+      c.type="button"; c.className="chip gen"+(on.has(g)?" on":"");
+      c.setAttribute("aria-pressed", String(on.has(g)));
+      c.innerHTML=`${esc(g)} <span style="opacity:.55">· ${GENRE_COUNT[g]||0}</span>`;
+      c.onclick=()=>{
+        on.has(g) ? on.delete(g) : on.add(g);
+        // Stored as "all" when every genre is on, so the open state has one representation, not two.
+        tasteBase.genres = on.size===ONB_GENRES.length ? [] : [...on];
+        c.classList.toggle("on", on.has(g)); c.setAttribute("aria-pressed", String(on.has(g)));
+        upd();
+      };
+      box.appendChild(c);
+    });
+    b.querySelector('[data-a="all"]').onclick =()=>{ tasteBase.genres=[]; drawTasteRows(); };
+    b.querySelector('[data-a="none"]').onclick=()=>{ tasteBase.genres=[...ONB_GENRES]; drawTasteRows(); };
+  },
+  year(b, upd){
+    const max=YEAR_STOPS.length-1, val=tasteBase.year||0;
+    b.innerHTML=`<p class="tbhint">Slide right for fresher films, left for the whole back-catalogue.</p>
+      <div class="vslider">
+        <div class="vtrack"><div class="vfillbar" style="width:${val/max*100}%"></div></div>
+        <div class="vnotches">${YEAR_STOPS.map((_,i)=>`<span class="vnotch ${i<=val?"lit":""}" style="left:${i/max*100}%"></span>`).join("")}</div>
+        <input type="range" id="tbYear" min="0" max="${max}" step="1" value="${val}" aria-label="How far back">
+      </div>
+      <div class="vlabels">${YEAR_STOPS.map((s,i)=>`<span class="${i===val?"on":""}" style="left:${i/max*100}%;transform:${edgeShift(i,YEAR_STOPS.length)}">${esc(s.label)}</span>`).join("")}</div>`;
+    const r=b.querySelector("#tbYear");
+    r.oninput=()=>{ const v=+r.value; tasteBase.year=v;
+      paintDial(b, v/max*100, i=>i<=v, i=>i===v); upd(); };
+  },
+  langs(b, upd){
+    b.innerHTML=`<p class="tbhint">English is on by default. Add any others you'll watch.</p>
+      <div class="chips" id="tbLangChips"></div>`;
+    const box=b.querySelector("#tbLangChips");
+    LANG_OPTS.forEach(code=>{
+      const on=tasteBase.langs.includes(code);
+      const c=document.createElement("button");
+      c.type="button"; c.className="chip"+(on?" on":"");
+      c.setAttribute("aria-pressed", String(on));
+      c.textContent=langName(code);
+      c.onclick=()=>{
+        const i=tasteBase.langs.indexOf(code);
+        i>=0 ? tasteBase.langs.splice(i,1) : tasteBase.langs.push(code);
+        const nowOn=tasteBase.langs.includes(code);
+        c.classList.toggle("on", nowOn); c.setAttribute("aria-pressed", String(nowOn));
+        upd();
+      };
+      box.appendChild(c);
+    });
+  },
+  // The age RANGE (buildspec §6, and the change to CAS-140): a lowest AND a highest, as one gradient-filled
+  // band with no handles and no dots. A floor now genuinely excludes what sits below it — "PG to MA 15+"
+  // means exactly that, where the old up-to-and-including ladder could only ever set a ceiling.
+  age(b, upd){
+    const n=AGE_LEVELS.length, cw=100/n;
+    b.innerHTML=`<p class="tbhint">Set the lowest and highest rating you want — tap a rating or drag across.</p>
+      <div class="agebar" id="tbAgeBar" role="group" aria-label="Age rating range">
+        <div class="afill"></div>
+        <div class="agecells">${AGE_LEVELS.map(a=>`<div class="acell">${esc(a)}</div>`).join("")}</div>
+      </div>
+      <div class="uptag" id="tbAgeTag"></div>`;
+    const bar=b.querySelector("#tbAgeBar"), fill=b.querySelector(".afill");
+    const cells=[...b.querySelectorAll(".acell")], tag=b.querySelector("#tbAgeTag");
+    const paint=()=>{
+      const {ageLo:lo, ageHi:hi}=tasteBase;
+      fill.style.left=(lo*cw)+"%"; fill.style.width=((hi-lo+1)*cw)+"%";
+      cells.forEach((c,i)=>c.classList.toggle("inr", i>=lo && i<=hi));
+      tag.innerHTML = (lo===0 && hi===n-1) ? "Includes <b>every rating</b>"
+        : (lo===hi ? `Only <b>${esc(AGE_LEVELS[lo])}</b>`
+                   : `From <b>${esc(AGE_LEVELS[lo])}</b> to <b>${esc(AGE_LEVELS[hi])}</b>`);
+      upd();
+    };
+    // Whichever end you grabbed nearest is the one that moves, so a drag never flips the range inside out.
+    let active=null;
+    const idxAt=cx=>{ const r=bar.getBoundingClientRect();
+      return Math.max(0, Math.min(n-1, Math.floor(Math.max(0,Math.min(.999,(cx-r.left)/r.width))*n))); };
+    const move=e=>{ if(!active) return; const i=idxAt(e.clientX);
+      if(active==="lo") tasteBase.ageLo=Math.min(i, tasteBase.ageHi);
+      else              tasteBase.ageHi=Math.max(i, tasteBase.ageLo);
+      paint(); };
+    bar.addEventListener("pointerdown",e=>{
+      const i=idxAt(e.clientX);
+      active = i<=tasteBase.ageLo ? "lo" : i>=tasteBase.ageHi ? "hi"
+             : (Math.abs(i-tasteBase.ageLo)<=Math.abs(i-tasteBase.ageHi) ? "lo" : "hi");
+      try{ bar.setPointerCapture(e.pointerId); }catch(_){}
+      move(e); e.preventDefault();
+    });
+    bar.addEventListener("pointermove",move);
+    bar.addEventListener("pointerup",()=>{ active=null; });
+    bar.addEventListener("pointercancel",()=>{ active=null; });
+    paint();
+  },
+};
 // Step registry — each ticket adds one entry. `progress` is the mock's fill %; `body()` builds the control;
 // `wire()` attaches the live control once it's in the DOM.
 const SHARP_STEPS = {
@@ -5720,6 +5940,24 @@ const SHARP_STEPS = {
         <p class="ossumline" id="onbSelSay">${selSayHtml()}</p>`;
     },
     wire(){ wireDials(); },
+  },
+  // ---- Your taste baseline (CAS-146 / r5-prototype screenTaste) ------------------------------------
+  // Four dimensions on ONE page, one open at a time. The old flow asked them as four separate screens,
+  // which made them feel like four decisions to get through rather than one thing you own and can come
+  // back to. The accordion is what turns them into a single page you can read at a glance: every row
+  // states its current value in violet, so the page answers "what is my baseline?" without opening a thing.
+  taste: {
+    progress: 70,
+    noAgent: true,
+    noSkip: true,       // inside the hub's door — Done confirms it, Back leaves it alone
+    cta: "Done",
+    body(){
+      return `<h2 class="osh">Your taste baseline</h2>
+        <p class="ossub">The world your agents search. Tap a row to change it — one opens at a time.</p>
+        <div class="tbrows" id="tbRows"></div>
+        <div class="tbfoot"><span class="dotg"></span>Set once — every agent inherits it</div>`;
+    },
+    wire(){ drawTasteRows(); },
   },
   genres: {
     progress: 30,
@@ -5984,7 +6222,7 @@ window.onbStepContinue=()=>{
 // Each door is a little sub-flow that RETURNS here. "The bar" is the one selectivity screen; "your taste
 // baseline" is the four taste screens walked in turn (CAS-146 collapses those into a single accordion page,
 // at which point this list becomes one entry and nothing else here has to change).
-const HUB_DOORS = { bar:["selectivity"], taste:["genres","years","language","age"] };
+const HUB_DOORS = { bar:["selectivity"], taste:["taste"] };
 let onbDone = {bar:false, taste:false};
 let onbDoor = null;      // which door we're inside, null = standing on the hub
 let onbDoorIdx = 0;
@@ -6009,16 +6247,7 @@ function hubBarSummary(){
   return parts.length ? esc(parts.join(" · ")) : "Everything in this channel";
 }
 function hubTasteSummary(){
-  const g=onbFlow.genresOn ? onbFlow.genresOn.size : 0, all=ONB_GENRES.length;
-  const langs=onbFlow.langsOn ? onbFlow.langsOn.size : 0;
-  const yi=onbFlow.yearStop!=null?onbFlow.yearStop:YEAR_DEFAULT;
-  const ai=onbFlow.ageStop!=null?onbFlow.ageStop:AGE_LEVELS.length-1;
-  return esc([
-    (!g||g===all) ? "All genres" : `${g} genre${g===1?"":"s"}`,
-    YEAR_STOPS[yi].label,
-    langs===1 ? "English" : `${langs} languages`,
-    ai>=AGE_LEVELS.length-1 ? "all ages" : `up to ${AGE_LEVELS[ai]}`,
-  ].join(" · "));
+  return esc([tbSumGenres(), tbSumYear(), tbSumLangs(), tbSumAge()].join(" · "));
 }
 window.onbOpenDoor=key=>{
   const steps=HUB_DOORS[key]; if(!steps) return;
