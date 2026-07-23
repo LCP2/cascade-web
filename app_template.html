@@ -41,6 +41,10 @@
     /* --accent as TEXT on the dark panels measures 4.35:1 (the "+ New Cascade" card) and 3.63:1 (the
        include-unrated hatch) — both under AA. Same hue, lifted until it clears: 7.3:1. */
     --accenttext:#b3a4ff;
+    /* R5 (CAS-143, buildspec §Colour rule): the selection ink — selections, values and the candy-shop
+       counts. Violet, not green: green is being kept for "films found", and a count on an agent card is a
+       selection preview, not a haul. 9.4:1 on --panel. */
+    --selink:#cfc2ff;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font-size:16px;
@@ -779,8 +783,18 @@
   .sc-name{font-family:var(--font-display);font-size:15.5px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .sc-rec{font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--accenttext);
     background:rgba(124,92,255,.16);border:1px solid rgba(124,92,255,.45);border-radius:999px;padding:2px 8px}
-  .sc-blurb{font-size:12.5px;color:var(--dim);line-height:1.4;margin:3px 0 8px}
-  .sc-match{color:var(--green);font-size:12.5px;font-weight:600}
+  .sc-blurb{font-size:12.5px;color:var(--dim);line-height:1.4;margin:3px 0 6px}
+  /* CAS-143: Channel × Standard, said plainly, so the card shows WHAT the agent is as well as what it
+     catches. Read off the same criteria as the count, so the words and the number can't disagree. */
+  .sc-chan{font-size:11.5px;color:var(--faint);line-height:1.4;margin-bottom:6px}
+  /* Violet, not green (buildspec §Colour rule): green is reserved for "films found". A count here is a
+     preview of a selection you haven't made yet, not a haul something went and got you. */
+  .sc-match{color:var(--selink);font-size:12.5px;font-weight:800}
+  .sc-note{font-size:11px;color:var(--faint);line-height:1.4;margin-top:5px}
+  .sc-arw{flex:0 0 auto;color:var(--faint);font-size:18px;align-self:center}
+  /* The step-progress rail (CAS-143) — shared shape with the prototype's .pbar. */
+  .pbar{height:5px;border-radius:3px;background:#1c2230;overflow:hidden;margin:2px 0 16px}
+  .pbar>i{display:block;height:100%;background:var(--grad);border-radius:3px;transition:width .3s}
 
   /* ---- starter-aware config wizard (CAS-76 / spec 26640386 §3) ----
      One thing per step, no step numbers: a slim progress bar + an "almost done / last one" cue.
@@ -1562,9 +1576,11 @@
 <div class="shortlist" id="shortlist" role="dialog" aria-modal="true" aria-label="Select your first agent">
   <div class="slinner">
     <button class="slback" id="shortlistBack" type="button">← Back</button>
-    <h2 class="slh">Select your first agent</h2>
-    <p class="slp">Pick where it should start watching. It goes out and finds these for you, day after day —
-      you can change every part of it next.</p>
+    <!-- CAS-143: the step-progress rail. This screen is step 1 of the R5 setup flow, and the rail is the
+         promise that there is an end to it — the goal-gradient only works if the goal is visible. -->
+    <div class="pbar" aria-hidden="true"><i style="width:22%"></i></div>
+    <h2 class="slh">Pick your first agent</h2>
+    <p class="slp">Each one goes out and finds films for you, day after day. You can change everything later.</p>
     <div class="scards" id="shortlistCards"></div>
   </div>
 </div>
@@ -4937,27 +4953,45 @@ $("splashCta").onclick=splashGo;
 // (Watch tonight, Date night) count against the whole catalogue because no services are picked yet at
 // first run — matchesCriteria only scopes to "my services" once servicesPicked() is true.
 const _tplCrit = k => CASCADE_TEMPLATES.find(t=>t.key===k);
+// ---- R5 agent presets (CAS-143 / onboarding-mocks/r5-prototype.html, buildspec §Per-agent defaults) ----
+// The candy shop. An agent = Channel × Standard: the CHANNEL is where and when it hunts (a hard
+// availability filter, fixed for that agent) and the STANDARD is the bar it holds them to. Each preset is
+// named for what it DOES rather than for the lane it watches — "Must See at the Cinema", not "In cinema" —
+// because the thing being chosen is a job you're giving something, not a filter you're setting.
+// The five and their defaults are locked in the buildspec; `bar` is the plain-English standard, shown to the
+// user, and it is read off the same criteria that produce the count, so the words and the number agree.
+// NOT here yet: the Buzz dial. It needs TMDB popularity in movies.json (CAS-147) and inventing a buzz
+// filter now would make every count on this screen a lie. The two agents whose locked defaults include buzz
+// carry the rest of their standard and pick buzz up when the data lands.
 const STARTERS = [
-  {key:"cinema",    icon:"🎬", name:"In cinema",           blurb:"Big-screen films, out now or opening soon",
-   crit:{status:["opening_week","in_cinema"], genre:[], lang:[], imdb:0}},
-  {key:"rentals",   icon:"🎟️", name:"Top rentals",         blurb:"Great films that just dropped to rent",
-   crit:{status:["rental"], genre:[], lang:[], imdb:0}},
-  {key:"streaming", icon:"📺", name:"Must-watch streaming", blurb:"Streaming now on the big services", recommended:true,
-   crit:{status:["included_streaming"], genre:[], lang:[], imdb:0}},
-  {key:"watch_tonight", icon:"🍿", name:"Watch tonight",   blurb:"Included on services I already have",
-   crit:_tplCrit("watch_tonight").crit, alerts:_tplCrit("watch_tonight").alerts},
-  {key:"rent_radar", icon:"🎫", name:"Rent radar",         blurb:"Good films that reach Rent (~$7)",
-   crit:_tplCrit("rent_radar").crit, alerts:_tplCrit("rent_radar").alerts},
-  {key:"bargain", icon:"🏷️", name:"Bargain hunter",       blurb:"Never overpay — tell me when it drops below premium",
-   crit:_tplCrit("bargain").crit, alerts:_tplCrit("bargain").alerts},
-  {key:"family", icon:"👨‍👩‍👧", name:"Family fun",           blurb:"Cert-appropriate films for me and the kids",
-   crit:_tplCrit("family").crit, alerts:_tplCrit("family").alerts},
-  {key:"prestige", icon:"🏆", name:"Awards & prestige",    blurb:"Winners and nominees, as they become watchable",
-   crit:_tplCrit("prestige").crit, alerts:_tplCrit("prestige").alerts},
-  {key:"blockbuster", icon:"📽️", name:"Blockbuster radar", blurb:"The films heading for cinemas, most anticipated first",
-   crit:_tplCrit("blockbuster").crit, alerts:_tplCrit("blockbuster").alerts},
-  {key:"date_night", icon:"🍷", name:"Date night",         blurb:"Crowd-pleasers you both agree on, on your services",
-   crit:_tplCrit("date_night").crit, alerts:_tplCrit("date_night").alerts},
+  {key:"cinema", icon:"🎬", name:"Must See at the Cinema",
+   blurb:"Big-screen films everyone will be talking about.",
+   channel:"In cinemas", bar:"Blockbuster-scale",
+   crit:{status:["opening_week","in_cinema"], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
+         myServices:false, selCrowd:0, selCritics:0, selScale:3}},
+  {key:"rentals", icon:"🍿", name:"Awesome Movies for Rent",
+   blurb:"Great films that just dropped to rent.",
+   channel:"New to rent", bar:"Loved & acclaimed",
+   crit:{status:["rental"], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
+         myServices:false, selCrowd:7.5, selCritics:2, selScale:0}},
+  {key:"date_night", icon:"🌙", name:"Date Night Rentals",
+   blurb:"Easy crowd-pleasers for two on the couch.",
+   channel:"On rent", bar:"Well-liked",
+   crit:{status:["rental"], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
+         myServices:false, selCrowd:7, selCritics:0, selScale:0}},
+  {key:"streaming", icon:"📺", name:"My Day to Day Streaming", recommended:true,
+   blurb:"Easy, fun watches on your services.",
+   // Buildspec §10: never "your services" until services are actually added.
+   channel:"Streaming", channelNote:"On the big streaming services until you add your own.",
+   bar:"Fun-first",
+   crit:{status:["included_streaming"], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
+         myServices:false, selCrowd:6, selCritics:0, selScale:0},
+   alerts:{pvod:false, rental:false, included_streaming:true}},
+  {key:"prestige", icon:"🏆", name:"Nominees & Awards",
+   blurb:"Award-worthy films of any era — must-sees.",
+   channel:"Anywhere", bar:"Award nominees & winners",
+   crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
+         myServices:false, selCrowd:0, selCritics:3, selScale:0}},
 ];
 STARTERS.forEach(s=>normCascade(s.crit));
 const starterCount = s => countCriteria(s.crit);
@@ -4965,13 +4999,21 @@ let pendingStarter = null;   // the agent the person chose
 function renderShortlist(){
   $("shortlistCards").innerHTML = STARTERS.map(s=>{
     const n=starterCount(s);
+    // The count is REAL — countCriteria against today's catalogue, the same call the deck cards use. The
+    // prototype's figures were synthetic placeholders; these move with the data, so a preset whose channel
+    // is empty today honestly says so instead of quoting a number that was true on a designer's screen.
     return `<button class="scard" type="button" onclick="pickStarter('${s.key}')">
         <span class="sc-ic">${s.icon}</span>
         <span class="sc-main">
           <span class="sc-name">${s.name}${s.recommended?` <b class="sc-rec">RECOMMENDED</b>`:""}</span>
-          <span class="sc-blurb">${s.blurb}</span>
-          ${n?`<span class="sc-match">${n} film${n===1?"":"s"} match now</span>`:""}
+          <span class="sc-blurb">${esc(s.blurb)}</span>
+          <span class="sc-chan">${esc(s.channel)} · ${esc(s.bar)}</span>
+          <span class="sc-match">${n
+            ? `${n} film${n===1?"":"s"} match${n===1?"es":""} now`
+            : `Nothing matches right now — it'll tell you the moment one does`}</span>
+          ${s.channelNote?`<span class="sc-note">${esc(s.channelNote)}</span>`:""}
         </span>
+        <span class="sc-arw">›</span>
       </button>`;
   }).join("");
 }
@@ -5766,7 +5808,7 @@ window.membStart=()=>{
   closeMembership();
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
   if(!cascades.length){
-    const s=STARTERS.find(x=>x.key==="watch_tonight");
+    const s=STARTERS.find(x=>x.key==="streaming");   // CAS-143: the R5 presets replaced watch_tonight
     if(s){ draft=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts})); commitDraft(); }
   }
   showSetupBar=true;
@@ -5839,7 +5881,7 @@ window.saveSetup=()=>{ savePrefs(); saveAgentState();
 // the bar. The default app load never sets showSetupBar, so nothing changes there.
 function openListingPreview(){
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
-  const s=STARTERS.find(x=>x.key==="watch_tonight");
+  const s=STARTERS.find(x=>x.key==="streaming");   // CAS-143: the R5 presets replaced watch_tonight
   if(s && !cascades.length){
     draft=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
     commitDraft();
