@@ -986,6 +986,33 @@
   .msgrab{width:38px;height:4px;border-radius:999px;background:#39414f;margin:0 auto 16px}
   .mssheetcard h2{font-family:var(--font-display);font-size:20px;font-weight:700;margin:0 0 4px;color:var(--ink)}
   .mssubh{color:var(--dim);font-size:12.5px;line-height:1.5;margin:0 0 18px}
+  /* ---- CAS-151: the sheet is four explicit steps, 1:1 with the bar's four segments ---- */
+  /* The bar said "1 of 4 done" over one undifferentiated screen, so there was no way to tell WHICH four, or
+     which one the 1 was. Each step is now a numbered, labelled section carrying its own done state, in the
+     same order as the segments — and the sheet repeats the tally at the top, over the same 4-segment bar,
+     so the two readings are visibly the same reading. */
+  .mstally{display:flex;flex-direction:column;gap:6px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:13px;padding:12px 13px;margin:0 0 18px}
+  .mstally .n{font-size:12.5px;font-weight:700;color:var(--ink)}
+  .mstally .n em{font-style:normal;color:var(--accenttext)}
+  .msstep{border:1px solid var(--line);border-radius:14px;padding:13px 13px 14px;margin-bottom:11px;
+    background:rgba(255,255,255,.015)}
+  .msstep.done{border-color:rgba(72,199,142,.45);background:rgba(72,199,142,.05)}
+  .msstephead{display:flex;align-items:center;gap:9px;margin-bottom:3px}
+  .msnum{flex:0 0 auto;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
+    font-size:11px;font-weight:800;background:var(--panel);border:1px solid var(--line);color:var(--faint)}
+  .msstep.done .msnum{background:var(--green);border-color:var(--green);color:#08130d}
+  .msstephead b{flex:1;min-width:0;font-size:13.5px;font-weight:700;color:var(--ink)}
+  .msstate{flex:0 0 auto;font-size:10.5px;font-weight:700;border-radius:999px;padding:2px 8px;
+    border:1px solid var(--line);color:var(--faint);background:var(--panel)}
+  .msstep.done .msstate{border-color:rgba(72,199,142,.55);color:#a7eccb;background:rgba(72,199,142,.14)}
+  .mssteph{margin:0 0 10px 31px;font-size:11.5px;color:var(--dim);line-height:1.5}
+  .msstepbody{margin-left:31px}
+  .msstepbody .msrow{margin-bottom:0}
+  .msfilter{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--ink);
+    border-radius:10px;padding:9px 11px;font-size:14px;margin-bottom:9px}
+  .msfilter::placeholder{color:var(--faint)}
+  .msnone{font-size:11.5px;color:var(--faint);padding:4px 2px}
   .mseyebrow{font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--faint);text-transform:uppercase;
     margin:18px 2px 10px;display:flex;justify-content:space-between}
   .mseyebrow span{color:var(--accenttext);font-weight:600;letter-spacing:0;text-transform:none}
@@ -6318,51 +6345,113 @@ window.membStart=()=>{
 // prefs, so the listing re-filters to what you can watch (the sharpening payoff). Gated by showSetupBar and
 // previewable at ?step=listing, so the default listing is unchanged until Lee wires it in.
 let showSetupBar=false;
-// Four setup facets, counted honestly off real state — never the mock's fixed "2 of 4".
-function setupDone(){
-  return [prefs.sub.size>0, prefs.store.size>0, agentState.alerts, agentState.email].filter(Boolean).length;
-}
+// ---- The four steps (CAS-151) --------------------------------------------------
+// ONE list, read by both the bar and the sheet, so "N of 4 done" can only ever mean the same four things in
+// both places. Before this the bar counted four facets and the sheet was a single undifferentiated screen:
+// you could see that one of four was done and had no way to find out WHICH, or what the other three were.
+// Each step declares its own done state, counted honestly off real state — never the mock's fixed "2 of 4".
+const SETUP_STEPS = [
+  {key:"store",  n:"Your rental services",   done:()=>prefs.store.size>0,
+   hint:"Where you rent from — so a rental price is one you can actually pay.",
+   state:()=>`${prefs.store.size} picked`},
+  {key:"sub",    n:"Your streaming services", done:()=>prefs.sub.size>0,
+   hint:"What you already pay for — so “included” means included for you.",
+   state:()=>`${prefs.sub.size} picked`},
+  {key:"alerts", n:"App alerts",             done:()=>agentState.alerts,
+   hint:"A nudge here when one of your films moves.", state:()=>agentState.alerts?"On":"Off"},
+  {key:"email",  n:"Email alerts",           done:()=>agentState.email,
+   hint:"The same alerts, in your inbox.",   state:()=>agentState.email?"On":"Off"},
+];
+const setupDone = () => SETUP_STEPS.filter(s=>s.done()).length;
+// Segment i IS step i — not "the first N lit". Lighting the first N would say a truthful number over a
+// picture that named the wrong steps, which is exactly the thing this ticket is about.
+const setupSegsHTML = () =>
+  SETUP_STEPS.map(st=>`<i class="${st.done()?"done":""}" title="${escA(st.n)}"></i>`).join("");
 function setupBarHTML(){
-  const done=setupDone(), total=4;
-  const steps=Array.from({length:total},(_,i)=>`<i class="${i<done?"done":""}"></i>`).join("");
+  const done=setupDone(), total=SETUP_STEPS.length;
+  const left=SETUP_STEPS.filter(s=>!s.done());
+  // Name what is actually outstanding. "add your services & alerts" was true whichever of the four was left.
+  const hint = left.length
+    ? `${done} of ${total} done — next: ${left[0].n.replace(/^Your /,"").toLowerCase()}`
+    : `All ${total} done`;
   return `<button class="msbar" type="button" onclick="openSetupSheet()">
     <span class="gic">⚙</span>
     <span class="t"><b>Complete your membership setup</b>
-      <span class="hint">${done} of ${total} done — add your services &amp; alerts</span>
-      <span class="mssteps">${steps}</span></span>
+      <span class="hint">${esc(hint)}</span>
+      <span class="mssteps">${setupSegsHTML()}</span></span>
     <span class="arw">›</span></button>`;
 }
 const msSvcChip = (svc,on) => {
   const tick=`<svg class="tk" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5" stroke="#b3a4ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   return `<button type="button" class="mschip${on?" on":""}" aria-pressed="${on}" data-svc="${escA(svc)}">${on?tick:""}${esc(svcName(svc))}</button>`;
 };
+// CAS-151: the streaming list runs to 50+ once the niche "… Amazon Channel" variants are in, which is a wall
+// rather than a question. The ones you have already picked lead (so a long list never hides your own answers)
+// and a filter box narrows the rest. Held here rather than in the markup so a repaint can't wipe what you
+// typed mid-search.
+const msFilter = {sub:"", store:""};
+function msChipsHTML(list, set, term){
+  const t=(term||"").trim().toLowerCase();
+  const shown=list.filter(s=>!t || svcName(s).toLowerCase().includes(t) || s.toLowerCase().includes(t));
+  // Picked first, then the rest alphabetically — the list is already sorted, so this only lifts your answers.
+  const rank=s=>set.has(s)?0:1;
+  const ordered=shown.slice().sort((a,b)=>rank(a)-rank(b));
+  return ordered.length
+    ? ordered.map(s=>msSvcChip(s,set.has(s))).join("")
+    : `<div class="msnone">Nothing matching “${esc(term)}”. Clear the box to see them all.</div>`;
+}
+// One step, drawn from SETUP_STEPS so its number, its name and its done state are the same ones the bar counts.
+function msStepHTML(i, body){
+  const st=SETUP_STEPS[i], done=st.done();
+  return `<div class="msstep${done?" done":""}">
+    <div class="msstephead"><span class="msnum">${done?"✓":i+1}</span><b>${esc(st.n)}</b>
+      <span class="msstate">${done?`Done · ${esc(st.state())}`:"Not yet"}</span></div>
+    <p class="mssteph">${esc(st.hint)}</p>
+    <div class="msstepbody">${body}</div>
+  </div>`;
+}
+const msSwitchHTML = (key,label) =>
+  `<div class="msrow"><div class="t"><b>${esc(label)}</b><p>${agentState[key]?"On — you'll hear about it.":"Off — nothing will reach you this way."}</p></div>
+    <button class="msswitch${agentState[key]?" on":""}" type="button" role="switch" aria-checked="${agentState[key]}"
+            aria-label="${escA(label)}" onclick="msToggleAlert('${key}')"></button></div>`;
 function renderSetupSheet(){
-  const chips=(list,set)=>list.map(s=>msSvcChip(s,set.has(s))).join("");
+  const done=setupDone(), total=SETUP_STEPS.length;
+  const left=SETUP_STEPS.filter(s=>!s.done());
   $("setupSheetBody").innerHTML=`
     <div class="msgrab"></div>
     <h2>Finish your setup</h2>
-    <p class="mssubh">Tell Cascade what you can already watch on, and how you want to hear about matches. Your list gets sharper straight away.</p>
-    <div class="mseyebrow">Your rental services <span>${prefs.store.size} selected</span></div>
-    <div class="mschips" id="msRental">${chips(STORE_SERVICES, prefs.store)}</div>
-    <div class="mseyebrow">Your streaming services <span>${prefs.sub.size} selected</span></div>
-    <div class="mschips" id="msStreaming">${chips(SUB_SERVICES, prefs.sub)}</div>
-    <div class="mseyebrow">Alerts</div>
-    <div class="msrow"><div class="t"><b>App alerts</b><p>A nudge here when one of your films moves.</p></div>
-      <button class="msswitch${agentState.alerts?" on":""}" type="button" role="switch" aria-checked="${agentState.alerts}" aria-label="App alerts" onclick="msToggleAlert('alerts')"></button></div>
-    <div class="msrow"><div class="t"><b>Email alerts</b><p>The same alerts, in your inbox.</p></div>
-      <button class="msswitch${agentState.email?" on":""}" type="button" role="switch" aria-checked="${agentState.email}" aria-label="Email alerts" onclick="msToggleAlert('email')"></button></div>
+    <p class="mssubh">Four things, and you can leave any of them. Tell Cascade what you can already watch on,
+      and how you want to hear about matches — your list gets sharper straight away.</p>
+    <div class="mstally">
+      <div class="n"><em>${done} of ${total} done</em>${left.length?` — still to do: ${esc(left.map(s=>s.n.replace(/^Your /,"").toLowerCase()).join(", "))}`:" — nothing left to set."}</div>
+      <div class="mssteps">${setupSegsHTML()}</div>
+    </div>
+    ${msStepHTML(0, `<input id="msStoreFilter" class="msfilter" type="text" inputmode="search" autocomplete="off"
+        placeholder="Filter rental services" value="${escA(msFilter.store)}">
+      <div class="mschips" id="msRental">${msChipsHTML(STORE_SERVICES, prefs.store, msFilter.store)}</div>`)}
+    ${msStepHTML(1, `<input id="msSubFilter" class="msfilter" type="text" inputmode="search" autocomplete="off"
+        placeholder="Filter streaming services" value="${escA(msFilter.sub)}">
+      <div class="mschips" id="msStreaming">${msChipsHTML(SUB_SERVICES, prefs.sub, msFilter.sub)}</div>`)}
+    ${msStepHTML(2, msSwitchHTML("alerts","App alerts"))}
+    ${msStepHTML(3, msSwitchHTML("email","Email alerts"))}
     <button class="mssave" type="button" onclick="saveSetup()">Save my setup</button>
     <button class="mslater" type="button" onclick="closeSetupSheet()">I'll finish this later</button>`;
   // Selecting a service writes the real prefs and re-filters the listing straight away (the payoff).
-  [["msRental",prefs.store],["msStreaming",prefs.sub]].forEach(([id,set])=>{
-    document.querySelectorAll(`#${id} .mschip`).forEach(ch=>{
+  [["msRental",prefs.store,STORE_SERVICES,"store"],["msStreaming",prefs.sub,SUB_SERVICES,"sub"]].forEach(([id,set,list,key])=>{
+    const wrap=$(id);
+    const repaintChips=()=>{ wrap.innerHTML=msChipsHTML(list,set,msFilter[key]); wire(); };
+    const wire=()=>wrap.querySelectorAll(".mschip").forEach(ch=>{
       ch.onclick=()=>{
-        const s=ch.dataset.svc; set.has(s)?set.delete(s):set.add(s);
+        const v=ch.dataset.svc; set.has(v)?set.delete(v):set.add(v);
         prefs.on=true; prefs.touched=true; savePrefs(); syncServiceChips();
         render();            // re-filter the listing behind the sheet (and repaint the bar's progress)
-        renderSetupSheet();  // repaint chips + "N selected"
+        renderSetupSheet();  // repaint the steps: the tally, this step's done state and its count all move
       };
     });
+    wire();
+    // Typing filters this step's chips ONLY — a full repaint here would take the focus out of the box.
+    const inp=$(key==="store"?"msStoreFilter":"msSubFilter");
+    if(inp) inp.oninput=e=>{ msFilter[key]=e.target.value; repaintChips(); };
   });
 }
 window.msToggleAlert=key=>{ agentState[key]=!agentState[key]; saveAgentState(); logEvent("setup_alert_toggle",{key, on:agentState[key]});
