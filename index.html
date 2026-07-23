@@ -1028,9 +1028,21 @@
     background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
   .rvh{font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--ink);margin:2px 0 9px}
   .rvsub{font-size:13.5px;color:var(--dim);line-height:1.55;margin:0 0 14px}
-  .rvgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:15px}
-  .rvposter{aspect-ratio:2/3;border-radius:10px;background:#0c0f14 center/cover no-repeat;border:1px solid var(--line);
-    content-visibility:auto;contain-intrinsic-size:auto 190px}   /* CAS-129: reveal grid windows too */
+  /* CAS-141: a min-tile-width grid rather than a fixed 3 columns, so the tile size is the thing that's
+     pinned and the column count follows the width it actually has. repeat(3,1fr) was not giving three even
+     columns at all — see the min-width note on .rvposter — and the result read as an oversized 2-up. */
+  .rvgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;margin-bottom:15px}
+  /* min-width:0 is load-bearing, not tidying. A grid item's automatic minimum size is its content size, and
+     with aspect-ratio in play that resolves against the row height instead of the column — so each tile
+     demanded ~192px inside a 327px grid and the track blew out to 596px, overflowing the panel. The
+     aspect-ratio keeps the posters undistorted; min-width:0 is what lets them actually shrink to the track. */
+  .rvposter{aspect-ratio:2/3;min-width:0;border-radius:10px;background:#0c0f14 center/cover no-repeat;
+    border:1px solid var(--line);
+    /* CAS-129 windows this grid; CAS-141 re-sizes the placeholder to match the tighter tile (84px min track
+       x 3/2), so an off-screen row reserves roughly the height it will really take and the scrollbar doesn't
+       jump as you scroll. Real layout still wins the moment a tile comes into view — the 2:3 is never a
+       placeholder's guess. */
+    content-visibility:auto;contain-intrinsic-size:auto 126px}
   .rvprov{font-size:12px;color:var(--faint);text-align:center;line-height:1.5;margin-bottom:20px}
   .rvfoot{display:grid;gap:9px}
   .rvkeep{display:block;width:100%;background:var(--grad);color:#fff;border:none;border-radius:13px;padding:15px;
@@ -1960,7 +1972,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 70, "commit": "0453675", "builtAt": "2026-07-23T04:37:34Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 71, "commit": "627a972", "builtAt": "2026-07-23T04:40:31Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
