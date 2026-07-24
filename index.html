@@ -1115,9 +1115,14 @@
     border:2px solid var(--selink);box-shadow:0 2px 8px rgba(0,0,0,.55);cursor:grab}
   .vslider input:focus-visible{outline:2px solid var(--cyan);outline-offset:3px;border-radius:12px}
   .vlabels{position:relative;height:30px;margin-top:9px}
-  .vlabels span{position:absolute;font-size:10px;color:var(--dim);line-height:1.2;white-space:nowrap}
-  .vlabels span.on{color:var(--selink);font-weight:700}
-  .vlabels span small{display:block;font-size:8.5px;color:var(--faint)}
+  .vlabels span,.vlabels .vsnap{position:absolute;font-size:10px;color:var(--dim);line-height:1.2;white-space:nowrap}
+  .vlabels span.on,.vlabels .vsnap.on{color:var(--selink);font-weight:700}
+  .vlabels span small,.vlabels .vsnap small{display:block;font-size:8.5px;color:var(--faint)}
+  /* CAS-166: a named stop is tappable now — the four sizes you used to pick from are still one tap away,
+     they just no longer bound what you can choose. Styled as the label it already was, not as a button. */
+  .vlabels .vsnap{background:none;border:0;padding:4px 2px;margin:-4px -2px;font-family:inherit;cursor:pointer;text-align:center}
+  .vlabels .vsnap:hover{color:var(--ink)}
+  .vlabels .vsnap:focus-visible{outline:2px solid var(--cyan);outline-offset:1px;border-radius:5px}
   .osmore{width:100%;text-align:center;background:var(--panel2);border:1px dashed var(--line);color:var(--dim);
     border-radius:12px;padding:15px 12px;font-size:12.5px;font-weight:700;cursor:pointer;margin-bottom:11px}
   .osmore:hover{border-color:var(--accent);color:var(--ink)}
@@ -2219,7 +2224,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.7.0", "major": 0, "minor": 7, "patch": 0, "build": 104, "commit": "ed4f366", "builtAt": "2026-07-24T10:29:14Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.7.0", "major": 0, "minor": 7, "patch": 0, "build": 105, "commit": "4fcb13b", "builtAt": "2026-07-24T10:36:28Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3549,6 +3554,11 @@ function normCascade(c){
   c.awards = !!c.awards;
   c.selCrowd = c.selCrowd||0; c.selCritics = c.selCritics||0; c.selScale = c.selScale||0;
   c.selBuzz = c.selBuzz||0; c.selOr = !!c.selOr;   // CAS-114 dials + CAS-145 buzz
+  // CAS-166: selScale used to be a band index 0-3 and is now a dollar floor. Nobody sets a floor of three
+  // dollars, so anything under $1000 is an agent saved under the old shape — carried over to the floor its
+  // band implied. Indie was a CEILING (<$15M) with no floor at all, so it maps to Any: the honest reading of
+  // an agent that asked for small films is that it never asked for a minimum.
+  if(c.selScale>0 && c.selScale<1000) c.selScale = [0, 0, 15e6, 100e6][Math.round(c.selScale)] || 0;
   // CAS-160 viewing windows. {} on everything saved before this ticket, which reads correctly: those agents
   // never expressed a preference, and their `status` still says where they hunt.
   if(typeof c.watchWindows!=="object" || c.watchWindows===null) c.watchWindows={};
@@ -3687,8 +3697,9 @@ const ageOpen = c => !(c.age||[]).length || c.age.length===AGE_LEVELS.length;
 //   · selCrowd  — a raw IMDb bar (People's vote). A set bar is crowd-score-only, so an unrated film drops.
 //   · selCritics — 0 any · 1 Metacritic≥60 · 2 MC≥80 · 3 award nominee-or-better · 4 award winner.
 //                  The two review rungs read Metacritic first, Rotten Tomatoes as a fallback — never blended.
-//   · selScale  — 0 any · 1 indie <$15M · 2 studio $15–100M · 3 blockbuster >$100M. A LEAN, not a hard cut:
-//                  only known budgets are gated; an unknown-budget title is never dropped for its scale.
+//   · selScale  — CAS-166: a dollar FLOOR now, not a band index. 0 = any; anything above is "made for (or
+//                  took) this much or more". A LEAN, not a hard cut: only known figures are gated; an
+//                  unknown-scale title is never dropped for its scale.
 const critScore = m => (m.metacritic!=null ? m.metacritic : (m.rt_critic ? m.rt_critic : null));
 function selCrowdOK(m,c){
   const min=c.selCrowd||0; if(!min) return true;
@@ -3705,17 +3716,18 @@ function selCriticsOK(m,c){
   if(s>=3) return !!m.award;
   const sc=critScore(m); return sc!=null && sc >= (s===1 ? 60 : 80);
 }
-// Scale match, tri-state: true (in band) · false (known, out of band) · null (no budget AND no revenue → truly
-// unknown scale). Budget is the primary signal, worldwide gross the real fallback — so an unknown-budget film
-// is still placed by what it earned, and only a film with neither reads as unknown. The AND lean lets `null`
-// ride along (never dropped); OR requires an affirmative `true` (an unknown scale isn't "the very best").
+// Scale match, tri-state: true (clears the floor) · false (known, below it) · null (no budget AND no revenue
+// → truly unknown scale). Budget is the primary signal, worldwide gross the real fallback — so an
+// unknown-budget film is still placed by what it earned, and only a film with neither reads as unknown. The
+// AND lean lets `null` ride along (never dropped); OR requires an affirmative `true`.
+// CAS-166: a floor, not a band. Four bands could only ever say "somewhere between these two numbers", which
+// is not how anyone thinks about how big a film they want — you want at least this big. It also fixes what
+// the bands got wrong at the edges: "Studio" excluded a $110M film for being too big, which no one asked for.
 function selScaleMatch(m,c){
-  const s=c.selScale||0; if(!s) return true;
+  const min=c.selScale||0; if(!min) return true;
   const dollars = m.budget || m.worldwide_gross || 0;
   if(!dollars) return null;
-  if(s===1) return dollars < 15e6;
-  if(s===2) return dollars >= 15e6 && dollars <= 100e6;
-  return dollars > 100e6;
+  return dollars >= min;
 }
 // ---- Buzz (CAS-145) -----------------------------------------------------------
 // How much a film is being talked about right now, off the TMDB popularity figure the pipeline already
@@ -5321,7 +5333,7 @@ const STARTERS = [
    frame:"wants the big, loud ones — the films everyone will be talking about.",
    bar:"Blockbuster · must-see buzz", cd:"var(--amber)", primary:["scale","buzz"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
-         myServices:false, selCrowd:0, selCritics:0, selScale:3, selBuzz:3}},
+         myServices:false, selCrowd:0, selCritics:0, selScale:100e6, selBuzz:3}},   // CAS-166: $100M+ floor
   {key:"rentals", icon:"🍿", name:"Loved & Acclaimed",
    blurb:"Genuinely great films — loved by crowds and critics both.",
    frame:"is watching for the genuinely great ones — the films that earn their reviews.",
@@ -5418,7 +5430,7 @@ window.pickStarter=key=>{
   // the card promised. (The dials remain fully editable — this is where they START, not a floor.)
   onbFlow.voteVal     = s.crit.selCrowd || VOTE_MIN;
   onbFlow.criticsStop = s.crit.selCritics||0;
-  onbFlow.scaleStop   = s.crit.selScale||0;
+  onbFlow.scaleVal    = s.crit.selScale||0;   // CAS-166: dollars now, not a band index
   onbFlow.buzzStop    = s.crit.selBuzz||0;
   onbFlow.selOr = false;   // AND, per buildspec §1 (reverses the earlier OR default on CAS-114)
   onbFlow.barTouched=false; onbFlow.barAutoRelaxed=null;   // CAS-158: a new agent gets its own first open
@@ -5683,12 +5695,47 @@ const CRITICS_STOPS = [
   {label:"Nominee",       thr:"🏆",        say:"award nominees"},
   {label:"Winner",        thr:"🏆",        say:"award winners"},
 ];
-const SCALE_STOPS = [
-  {label:"Any size",    thr:null,        say:null},
-  {label:"Indie",       thr:"small",     say:"small, independent films"},
-  {label:"Studio",      thr:"mid",       say:"mid-sized studio films"},
-  {label:"Blockbuster", thr:"huge",      say:"big blockbusters"},
+// CAS-166 (reverses buildspec decision #2): Budget & scale is continuous, like People's vote. Four bands
+// could only say "between these two numbers", which is not how anyone thinks about how big a film they want
+// — you want at least this big — and it misfired at the edges, dropping a $110M film from "Studio" for being
+// too big. The four old dots survive as the named stops on the track: they are what the readout is named
+// after, and tapping one still snaps to it, so nothing that could be chosen before has been taken away.
+// The slider carries a POSITION, not dollars, so each named stop gets an equal third of the track — money is
+// not linear to the eye, and a raw $0-100M range would bury every indie in the first millimetre.
+const SCALE_REF = [
+  {d:0,     label:"Any size"},
+  {d:1e6,   label:"Indie"},
+  {d:15e6,  label:"Studio"},
+  {d:100e6, label:"Blockbuster"},
 ];
+const SCALE_SEG = 100;                                    // slider units between one named stop and the next
+const SCALE_POS_MAX = SCALE_SEG*(SCALE_REF.length-1);
+const SCALE_OFF_POS = 5;                                  // a dead zone at the bottom, so "Any size" is gettable
+// Dollars for a position, rounded to a figure a person would actually say. Every value on the track is real
+// money that really filters — the readout never rounds to something the filter doesn't use.
+function scaleDollars(pos){
+  const p=Math.max(0, Math.min(SCALE_POS_MAX, +pos||0));
+  if(p<=SCALE_OFF_POS) return 0;
+  const i=Math.min(SCALE_REF.length-2, Math.floor(p/SCALE_SEG));
+  const t=(p - i*SCALE_SEG)/SCALE_SEG;
+  const raw=SCALE_REF[i].d + t*(SCALE_REF[i+1].d - SCALE_REF[i].d);
+  const step = raw<2e6 ? 1e5 : raw<10e6 ? 5e5 : 1e6;
+  return Math.round(raw/step)*step;
+}
+function scalePos(dollars){
+  const d=+dollars||0;
+  if(d<=0) return 0;
+  for(let i=0;i<SCALE_REF.length-1;i++){
+    const a=SCALE_REF[i].d, b=SCALE_REF[i+1].d;
+    if(d<=b) return i*SCALE_SEG + (d-a)/(b-a)*SCALE_SEG;
+  }
+  return SCALE_POS_MAX;
+}
+// "Any size" names the OFF position only — a $500K floor is still a floor, so it reads as the smallest named
+// band rather than claiming to be no restriction at all.
+const scaleBand    = d => (SCALE_REF.filter(r=>r.d>0 && d>=r.d).pop()||SCALE_REF[1]).label;
+const scaleReadout = d => d>0 ? `${scaleBand(d)} · ${money(d)}+` : "Any size";
+const scaleSay     = d => d>0 ? `made at ${money(d)} or more` : null;
 // CAS-145: the Buzz dial. Plain English on the face of it — the percentile machinery behind BUZZ_CUTS is
 // not something a person setting a bar should have to read about.
 const BUZZ_STOPS = [
@@ -5709,7 +5756,7 @@ const voteSay = v => v<VOTE_OFF ? null : `scored ${v.toFixed(1)}+ by viewers`;
 
 const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME, yearStop:null,
                  langsOn:new Set(["en"]), ageStop:AGE_LEVELS.length-1,
-                 voteVal:VOTE_MIN, criticsStop:0, scaleStop:0, buzzStop:0, selOr:false,   // #4 dials (CAS-114/145)
+                 voteVal:VOTE_MIN, criticsStop:0, scaleVal:0, buzzStop:0, selOr:false,   // #4 dials (CAS-114/145/166)
                  barTouched:false, barAutoRelaxed:null,   // CAS-158 first-open state
                  watch:{}};                                // CAS-160 viewing windows: {lane: [optKey,…]}
 
@@ -5854,19 +5901,25 @@ function barRelaxOrder(){
   const rest=["vote","crit","scale","buzz"].filter(k=>!primary.includes(k));
   return [...rest, ...primary.slice().reverse()];
 }
-const DIAL_STOP_KEY = {crit:"criticsStop", scale:"scaleStop", buzz:"buzzStop"};
-// The People's-vote dial is continuous, so its "notch" is the next marker DOWN the face of it — the same
-// 8.2/7.5/7.0/6.0 rungs the user can see and tap. Below the lowest it goes to Any.
+const DIAL_STOP_KEY = {crit:"criticsStop", buzz:"buzzStop"};   // CAS-166: scale is continuous now
+// The continuous dials relax to the next marker DOWN the face of them — the same rungs the user can see and
+// tap (8.2/7.5/7.0/6.0, and Blockbuster/Studio/Indie). Below the lowest they go to Any. CAS-166 brought
+// Budget & scale into that group; the stop ladders still step down one index at a time.
+const CONT_RUNGS = {vote: () => VOTE_REF.map(r=>r[0]).filter(v=>v>VOTE_MIN),
+                    scale:() => SCALE_REF.map(r=>r.d).filter(d=>d>0)};
+const CONT_FLOOR = {vote: VOTE_MIN, scale: 0};
 function barCanRelax(k){
-  return k==="vote" ? onbFlow.voteVal>=VOTE_OFF : (onbFlow[DIAL_STOP_KEY[k]]||0)>0;
+  if(CONT_DIALS[k]) return CONT_DIALS[k].get() > CONT_FLOOR[k] && (k!=="vote" || onbFlow.voteVal>=VOTE_OFF);
+  return (onbFlow[DIAL_STOP_KEY[k]]||0)>0;
 }
 function barRelaxOne(k){
-  if(k!=="vote"){ onbFlow[DIAL_STOP_KEY[k]] = Math.max(0, (onbFlow[DIAL_STOP_KEY[k]]||0)-1); return; }
-  const below = VOTE_REF.map(r=>r[0]).filter(v=>v < onbFlow.voteVal-1e-9);
-  onbFlow.voteVal = below.length ? below[below.length-1] : VOTE_MIN;
+  const cont=CONT_DIALS[k];
+  if(!cont){ onbFlow[DIAL_STOP_KEY[k]] = Math.max(0, (onbFlow[DIAL_STOP_KEY[k]]||0)-1); return; }
+  const below = CONT_RUNGS[k]().filter(v=>v < cont.get()-1e-9);
+  cont.set(below.length ? below[below.length-1] : CONT_FLOOR[k]);
 }
 const barDialSnapshot = () => ({vote:onbFlow.voteVal, crit:onbFlow.criticsStop||0,
-                                scale:onbFlow.scaleStop||0, buzz:onbFlow.buzzStop||0});
+                                scale:onbFlow.scaleVal||0, buzz:onbFlow.buzzStop||0});
 function autoRelaxBar(){
   if(onbFlow.barTouched || onbFlow.barAutoRelaxed) return;   // first open only, and the user owns it after
   const from=barDialSnapshot(), start=onbCount();
@@ -5892,7 +5945,7 @@ function onbApply(){
   // matchesCriteria. Defaults are all-open, so touching nothing leaves the agent watching the whole catalogue.
   d.selCrowd = (onbFlow.voteVal>=VOTE_OFF) ? onbFlow.voteVal : 0;   // continuous now (CAS-145)
   d.selCritics = onbFlow.criticsStop||0;
-  d.selScale = onbFlow.scaleStop||0;
+  d.selScale = onbFlow.scaleVal||0;           // CAS-166: a dollar floor
   d.selBuzz = onbFlow.buzzStop||0;
   d.selOr = !!onbFlow.selOr;
   // CAS-160: availability is the user's now, so the viewing door owns `status` the same way the dials own the
@@ -6054,7 +6107,7 @@ function selSayHtml(){
   const parts=[];
   const v=voteSay(onbFlow.voteVal); if(v) parts.push(v);
   const cr=CRITICS_STOPS[onbFlow.criticsStop||0].say; if(cr) parts.push(cr);
-  const sc=SCALE_STOPS[onbFlow.scaleStop||0].say; if(sc) parts.push(sc);
+  const sc=scaleSay(onbFlow.scaleVal||0); if(sc) parts.push(sc);
   const bz=BUZZ_STOPS[onbFlow.buzzStop||0].say; if(bz) parts.push(bz);
   if(!parts.length) return `No bar set, so everything qualifies — ${cnt} right now. Turn a dial up to get pickier.`;
   const joined = parts.reduce((a,p,i)=> i===0 ? p : `${a} <b>and</b> ${p}`, "");
@@ -6106,33 +6159,67 @@ function onbRatingClause(d){
 // Copy is plain English (buildspec §5) — no "TMDB", no "Metacritic", no "a lean, not a hard cut". Those are
 // implementation facts, and this screen is where someone decides what they want to watch.
 const DIAL_DEFS = {
-  vote:  {em:"👥", label:"People's vote", how:"What everyday viewers scored it, out of 10.", cont:true},
+  vote:  {em:"👥", label:"People's vote", how:"What everyday viewers scored it, out of 10.", cont:"vote"},
   crit:  {em:"🏅", label:"Critics & awards", how:"What professional critics and awards thought.",
           stops:CRITICS_STOPS, key:"criticsStop"},
   scale: {em:"🎬", label:"Budget & scale", how:"How big the film is — from a small indie to a huge blockbuster.",
-          stops:SCALE_STOPS, key:"scaleStop"},
+          cont:"scale"},
   buzz:  {em:"🔥", label:"Buzz", how:"How much people are talking about it right now.", isNew:true,
           stops:BUZZ_STOPS, key:"buzzStop"},
 };
 let onbMoreOpen=false;
 window.onbShowMore=()=>{ onbMoreOpen=true; logEvent("onbbar_more"); renderOnbStep(onbStepKey); };
 const edgeShift = (i,n) => i===0 ? "translateX(0)" : (i===n-1 ? "translateX(-100%)" : "translateX(-50%)");
+// CAS-166: the two continuous dials described in one shape, so Budget & scale gets the People's-vote
+// treatment (live header readout, markers you can tap) without a second copy of the slider.
+//   raw   — what the range input carries: the vote itself, or a POSITION for scale (see SCALE_REF)
+//   value — what the bar actually filters on, derived from raw
+//   marks — the named stops: where they sit on the track, what they say, and when they light
+const CONT_DIALS = {
+  vote: {
+    min:VOTE_MIN, max:VOTE_MAX, step:0.05, aria:"People's vote",
+    get:  () => onbFlow.voteVal,
+    set:  v => { onbFlow.voteVal=v; },
+    rawOf:v => Math.max(VOTE_MIN, v),      // value → what the input carries
+    value:raw => +raw,                     // input → value
+    read: v => voteReadout(v),
+    pos:  v => votePos(v),
+    marks:v => VOTE_REF.map(r=>({pos:votePos(r[0]), lit:v>=r[0], snap:r[0],
+                                 label:r[0].toFixed(1), sub:r[1]})),
+  },
+  scale: {
+    min:0, max:SCALE_POS_MAX, step:1, aria:"Budget and scale",
+    get:  () => onbFlow.scaleVal||0,
+    set:  v => { onbFlow.scaleVal=v; },
+    rawOf:v => scalePos(v),
+    value:raw => scaleDollars(raw),
+    read: v => scaleReadout(v),
+    pos:  v => scalePos(v)/SCALE_POS_MAX*100,
+    marks:v => SCALE_REF.map((r,i)=>({pos:i/(SCALE_REF.length-1)*100, lit:v>=r.d, snap:r.d,
+                                      label:r.label, sub:r.d?money(r.d)+"+":null})),
+  },
+};
 function dialCardHTML(k){
   const d=DIAL_DEFS[k];
+  const cont=d.cont && CONT_DIALS[d.cont];
+  const curV=cont ? cont.get() : 0;
   const head=`<div class="osdh"><span class="em">${d.em}</span><span class="dl">${esc(d.label)}</span>
     ${d.isNew?`<span class="tagnew">NEW</span>`:""}
-    ${d.cont?`<span class="dval" id="onbVoteVal">${voteReadout(onbFlow.voteVal)}</span>`:""}</div>
+    ${cont?`<span class="dval" id="onbVal_${d.cont}">${esc(cont.read(curV))}</span>`:""}</div>
     <p class="oscap">${esc(d.how)}</p>`;
-  if(d.cont){
-    const v=onbFlow.voteVal;
-    return `<div class="osdial" data-dial="vote">${head}
+  if(cont){
+    const marks=cont.marks(curV);
+    // The marker labels are buttons: "the existing dots become snap points" (CAS-166) means the four sizes
+    // you used to pick from are still one tap away, they just no longer bound what you can choose.
+    return `<div class="osdial" data-dial="${d.cont}">${head}
       <div class="vslider">
-        <div class="vtrack"><div class="vfillbar" style="width:${votePos(v)}%"></div></div>
-        <div class="vnotches">${VOTE_REF.map(r=>`<span class="vnotch ${v>=r[0]?"lit":""}" style="left:${votePos(r[0])}%"></span>`).join("")}</div>
-        <input type="range" id="onbDialVote" min="${VOTE_MIN}" max="${VOTE_MAX}" step="0.05"
-               value="${Math.max(VOTE_MIN,v)}" aria-label="People's vote">
+        <div class="vtrack"><div class="vfillbar" style="width:${cont.pos(curV)}%"></div></div>
+        <div class="vnotches">${marks.map(mk=>`<span class="vnotch ${mk.lit?"lit":""}" style="left:${mk.pos}%"></span>`).join("")}</div>
+        <input type="range" id="onbDial_${d.cont}" min="${cont.min}" max="${cont.max}" step="${cont.step}"
+               value="${cont.rawOf(curV)}" aria-label="${escA(cont.aria)}">
       </div>
-      <div class="vlabels">${VOTE_REF.map(r=>`<span class="${v>=r[0]?"on":""}" style="left:${votePos(r[0])}%;transform:translateX(-50%)">${r[0].toFixed(1)}<small>${r[1]}</small></span>`).join("")}</div>
+      <div class="vlabels">${marks.map(mk=>`<button type="button" class="vsnap ${mk.lit?"on":""}" data-snap="${mk.snap}"
+        style="left:${mk.pos}%;transform:${mk.pos<=0?"translateX(0)":mk.pos>=100?"translateX(-100%)":"translateX(-50%)"}">${esc(mk.label)}${mk.sub?`<small>${esc(mk.sub)}</small>`:""}</button>`).join("")}</div>
     </div>`;
   }
   const cur=onbFlow[d.key]||0, n=d.stops.length, max=n-1;
@@ -6150,18 +6237,29 @@ function dialCardHTML(k){
 function paintDial(card, fillPct, litFn, onFn){
   card.querySelector(".vfillbar").style.width=fillPct+"%";
   card.querySelectorAll(".vnotch").forEach((x,i)=>x.classList.toggle("lit", litFn(i)));
-  card.querySelectorAll(".vlabels span").forEach((l,i)=>l.classList.toggle("on", onFn(i)));
+  // CAS-166: the continuous dials' labels are <button> (tap to snap), the stop ladders' are <span> — so this
+  // reaches whatever the row is made of rather than only spans.
+  card.querySelectorAll(".vlabels > *").forEach((l,i)=>l.classList.toggle("on", onFn(i)));
 }
 function wireDials(){
-  const vote=$("onbDialVote");
-  if(vote) vote.oninput=()=>{
-    const v=+vote.value; onbFlow.voteVal=v; onbFlow.barTouched=true;   // CAS-158: from here the bar is theirs
-    const card=vote.closest(".osdial");
-    paintDial(card, votePos(v), i=>v>=VOTE_REF[i][0], i=>v>=VOTE_REF[i][0]);
-    const read=$("onbVoteVal"); if(read) read.textContent=voteReadout(v);
-    selRefresh();
-  };
-  ["crit","scale","buzz"].forEach(k=>{
+  // CAS-166: both continuous dials down one path — the vote dial's behaviour, now shared.
+  Object.keys(CONT_DIALS).forEach(key=>{
+    const cont=CONT_DIALS[key], r=$("onbDial_"+key); if(!r) return;
+    const card=r.closest(".osdial");
+    const apply=v=>{
+      cont.set(v); onbFlow.barTouched=true;                 // CAS-158: from here the bar is theirs
+      const marks=cont.marks(v);
+      paintDial(card, cont.pos(v), i=>marks[i].lit, i=>marks[i].lit);
+      const read=$("onbVal_"+key); if(read) read.textContent=cont.read(v);
+      selRefresh();
+    };
+    r.oninput=()=>apply(cont.value(+r.value));
+    // Tap a named stop to land exactly on it — the four old dots, still one tap away.
+    card.querySelectorAll(".vsnap").forEach(b=>{
+      b.onclick=()=>{ const v=+b.dataset.snap; r.value=cont.rawOf(v); apply(v); };
+    });
+  });
+  ["crit","buzz"].forEach(k=>{
     const r=$("onbDial_"+k); if(!r) return;
     const d=DIAL_DEFS[k], max=d.stops.length-1;
     r.oninput=()=>{
@@ -6664,7 +6762,7 @@ function openOnbStep(key, agentKey){
   onbSeqIndex=-1;   // standalone preview — not part of the wired sequence
   onbFlow.draft=onbSeedDraft(); onbFlow.genresOn=new Set(ONB_GENRES); onbFlow.name=ONB_DEFAULT_NAME;
   onbFlow.yearStop=YEAR_DEFAULT; onbFlow.langsOn=new Set(["en"]); onbFlow.ageStop=AGE_LEVELS.length-1;
-  onbFlow.voteVal=VOTE_MIN; onbFlow.criticsStop=0; onbFlow.scaleStop=0; onbFlow.buzzStop=0; onbFlow.selOr=false;   // dials open
+  onbFlow.voteVal=VOTE_MIN; onbFlow.criticsStop=0; onbFlow.scaleVal=0; onbFlow.buzzStop=0; onbFlow.selOr=false;   // dials open
   onbFlow.barTouched=false; onbFlow.barAutoRelaxed=null;   // CAS-158: a fresh preview is a fresh first open
   // CAS-160: seed the viewing box off whatever the seed draft already watches, so a ?step= preview round-trips
   // its own status rather than opening on "any window" and silently widening the draft through onbApply.
@@ -6756,7 +6854,7 @@ function hubBarSummary(){
   const parts=[];
   if(onbFlow.voteVal>=VOTE_OFF)  parts.push(voteBand(onbFlow.voteVal) || onbFlow.voteVal.toFixed(1)+"+");
   if(onbFlow.criticsStop) parts.push(CRITICS_STOPS[onbFlow.criticsStop].label);
-  if(onbFlow.scaleStop)   parts.push(SCALE_STOPS[onbFlow.scaleStop].label);
+  if(onbFlow.scaleVal)    parts.push(scaleReadout(onbFlow.scaleVal));
   if(onbFlow.buzzStop)    parts.push(BUZZ_STOPS[onbFlow.buzzStop].label+" buzz");
   return parts.length ? esc(parts.join(" · ")) : "No bar set — everything qualifies";
 }
