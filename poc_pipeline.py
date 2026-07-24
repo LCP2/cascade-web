@@ -86,14 +86,20 @@ CATALOGUE_TARGET = int(os.getenv("CATALOGUE_TARGET", str(MAX_TITLES)))
 # (TMDB historically allows ~50 req/s and no daily cap). Watchmode is now on-demand only.
 TMDB_PACING      = float(os.getenv("TMDB_PACING", "0.05"))   # seconds between provider calls (~20/s)
 ONDEMAND_WM_CAP  = int(os.getenv("ONDEMAND_WM_CAP", str(ps.ONDEMAND_RESERVE)))  # Watchmode enrich/day ceiling
-OMDB_DAILY_BUDGET = int(os.getenv("OMDB_DAILY_BUDGET", "900"))  # OMDb ratings enrich/day (free tier ~1000/day)
+# CAS-161: these two pots are spent against ONE shared free-tier allowance (~1000 requests/day, counted per
+# key per day, not per run), so what matters is their SUM. It was 900+150 = 1050, i.e. already over the cap
+# before a single retry — which is how the 2026-07-24 run earned a 401 the moment a second run happened the
+# same day. Now 800+100 = 900, leaving ~10% headroom for retries and for a manual staging run alongside the
+# scheduled one. Both stay env-overridable.
+OMDB_DAILY_BUDGET = int(os.getenv("OMDB_DAILY_BUDGET", "800"))  # OMDb ratings enrich/day (free tier ~1000/day)
 # CAS-156: a rating is only back-filled when a title has none, so the FIRST number OMDb ever returned was kept
 # for good. For an obscure title that first read lands while a handful of people have rated it, and it is wrong
 # almost immediately (Jellyfish: 9.4 off 8 votes, since settled to ~8.8). Titles under the vote bar are exactly
 # the ones whose score is still moving, so they get re-read — on their own small budget, so that back-filling
 # titles with NO rating at all keeps first claim on the free tier.
 IMDB_MIN_VOTES      = int(os.getenv("IMDB_MIN_VOTES", "1000"))   # keep in step with app_template.html
-OMDB_REFRESH_BUDGET = int(os.getenv("OMDB_REFRESH_BUDGET", "150"))
+OMDB_REFRESH_BUDGET = int(os.getenv("OMDB_REFRESH_BUDGET", "100"))
+OMDB_FREE_TIER_CAP  = int(os.getenv("OMDB_FREE_TIER_CAP", "1000"))   # what we believe the key is allowed/day
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +121,50 @@ def get_json(url: str, retries: int = 4) -> dict:
                 time.sleep(delay)
                 continue
             raise
+
+
+# ---------------------------------------------------------------------------
+# CAS-161: one bad API answer must not cost us the whole day's refresh
+# ---------------------------------------------------------------------------
+# enrich_omdb used to call get_json with no guard at all, so a single OMDb hiccup raised straight out of
+# build_live_catalogue and killed the run: no movies.json, no index.html, no version.json committed, for a
+# whole day, because one title out of ~1,950 failed. That is exactly what happened on 2026-07-24, when the
+# free tier's daily cap answered 401.
+#
+# The rule now: enrichment is BEST-EFFORT. A title whose enrichment fails keeps the data it already has —
+# which is real, just a day older — and the run carries on to derive, build and commit. Only two outcomes
+# are possible beyond success:
+#   · skip — this title only. Transient, could work next time.
+#   · stop — every remaining call to that API this run would get the same answer, so stop asking. A daily
+#     cap or a bad key is not per-title, and burning ~1,900 more requests to be told so again is pure waste.
+_LIMIT_MARKERS = ("limit reached", "request limit", "too many requests", "invalid api key")
+
+
+class ApiDeclined(RuntimeError):
+    """An API answered, but refused to give us data (OMDb's HTTP-200 `Response:"False"` shape)."""
+
+
+def _api_call(label: str, fn, *args):
+    """Run one enrichment call. Returns (value, outcome) with outcome in {'ok','skip','stop'}."""
+    try:
+        return fn(*args), "ok"
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = (e.read() or b"").decode("utf-8", "replace")[:200].strip()
+        except Exception:
+            pass
+        # 401/403 is the daily cap or a bad key — never a property of this one title.
+        stop = e.code in (401, 403) or any(k in body.lower() for k in _LIMIT_MARKERS)
+        detail = f" — {body}" if body else ""
+        print(f"[warn] {label}: HTTP {e.code}{detail}"
+              f"{f' — no further {label} calls this run' if stop else ' — skipping this title'}")
+        return None, ("stop" if stop else "skip")
+    except Exception as e:
+        stop = any(k in str(e).lower() for k in _LIMIT_MARKERS)
+        print(f"[warn] {label}: {type(e).__name__}: {e}"
+              f"{f' — no further {label} calls this run' if stop else ' — skipping this title'}")
+        return None, ("stop" if stop else "skip")
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +280,12 @@ def enrich_omdb(movie: dict) -> dict:
     if not movie.get("imdb_id"):
         return movie
     data = get_json(f"https://www.omdbapi.com/?i={movie['imdb_id']}&apikey={OMDB_KEY}")
+    # CAS-161: OMDb signals soft failures with HTTP 200 + {"Response":"False","Error":...} — an unknown id,
+    # and sometimes the daily cap. Every getter below would then return None and we would write "no rating"
+    # over a perfectly good stored one. Bail BEFORE touching `movie`, so a failed enrich leaves the record
+    # exactly as it was; _api_call turns the daily-cap wording into a stop and anything else into a skip.
+    if str(data.get("Response", "True")).lower() == "false":
+        raise ApiDeclined(data.get("Error") or "OMDb returned Response:False")
     movie["imdb_rating"] = _num(data.get("imdbRating"))
     movie["imdb_votes"]  = _int(data.get("imdbVotes"))
     for r in data.get("Ratings", []):
@@ -502,6 +558,21 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     provider_calls = wm_calls = omdb_calls = 0
     omdb_budget, wm_budget = OMDB_DAILY_BUDGET, ONDEMAND_WM_CAP
     omdb_refresh = OMDB_REFRESH_BUDGET          # CAS-156: separate pot, so back-fill is never crowded out
+    # CAS-161: per-API health for this run. `*_open` goes False the first time an API says something that is
+    # true of the whole run (cap hit, key rejected) rather than of one title; the `*_fails` tallies are the
+    # honest count of titles that kept yesterday's data, printed at the end so a degraded run is visible.
+    omdb_open = wm_open = prov_open = True
+    omdb_fails = wm_fails = prov_fails = 0
+
+    def _omdb(m):
+        """One guarded OMDb enrich. Returns True if the caller should count a spend."""
+        nonlocal omdb_open, omdb_fails
+        _, outcome = _api_call("OMDb", enrich_omdb, m)
+        if outcome == "stop":
+            omdb_open = False
+        if outcome != "ok":
+            omdb_fails += 1
+        return True
 
     for m in catalogue:
         tier = ps.classify_tier(m, today)
@@ -513,33 +584,59 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
             m["availability_source"] = "tmdb_date"
         else:
             # PRIMARY availability: free TMDB Watch Providers (AU), every released title, daily.
-            prov = tmdb_providers(m["tmdb_id"]); provider_calls += 1
-            m["jw_link"] = prov.get("jw_link")               # JustWatch deep-out + attribution
-            if has_provider_rows(prov):
-                m["offers"] = provider_offers(prov)
-                m["status"] = derive_from_providers(m, prov, today)
-                m["availability_confidence"] = "confirmed"   # as of today's provider snapshot
-            else:                                            # JustWatch has no AU row -> honest estimate
-                w, conf = ps.estimate_status(m, today, offsets)
-                m["offers"] = []
-                m["status"] = [w]
-                m["availability_confidence"] = conf
-            m["last_polled"] = today.isoformat()
-            m["availability_source"] = "tmdb_providers"
+            prov, prov_outcome = (_api_call("TMDB providers", tmdb_providers, m["tmdb_id"])
+                                  if prov_open else (None, "skip"))
+            if prov_open:
+                provider_calls += 1
+            if prov_outcome == "stop":
+                prov_open = False
+            if prov_outcome == "ok":
+                m["jw_link"] = prov.get("jw_link")           # JustWatch deep-out + attribution
+                if has_provider_rows(prov):
+                    m["offers"] = provider_offers(prov)
+                    m["status"] = derive_from_providers(m, prov, today)
+                    m["availability_confidence"] = "confirmed"   # as of today's provider snapshot
+                else:                                        # JustWatch has no AU row -> honest estimate
+                    w, conf = ps.estimate_status(m, today, offsets)
+                    m["offers"] = []
+                    m["status"] = [w]
+                    m["availability_confidence"] = conf
+                m["last_polled"] = today.isoformat()
+                m["availability_source"] = "tmdb_providers"
+            else:
+                # CAS-161: the call failed, so we know nothing new. Yesterday's confirmed window is worth far
+                # more than an estimate invented from a failed read, so keep it — and deliberately do NOT
+                # stamp last_polled, because the app's confirmed/estimated badge must never claim a read that
+                # did not happen. A title we have never successfully polled has nothing to keep, so it falls
+                # back to the honest date-based estimate rather than being left window-less.
+                prov_fails += 1
+                if not m.get("status"):
+                    w, conf = ps.estimate_status(m, today, offsets)
+                    m["offers"] = []
+                    m["status"] = [w]
+                    m["availability_confidence"] = conf
+                    m["availability_source"] = "estimated_unpolled"
 
             # OMDb back-fill for un-rated titles, bounded to stay under the free tier — plus a bounded re-read
             # of the thinly-voted (CAS-156), whose stored score is a first impression rather than a settled one.
-            if m.get("imdb_id"):
+            if m.get("imdb_id") and omdb_open:
                 if not m.get("imdb_rating"):
                     if omdb_budget > 0:
-                        enrich_omdb(m); omdb_calls += 1; omdb_budget -= 1
+                        _omdb(m); omdb_calls += 1; omdb_budget -= 1
                 elif (m.get("imdb_votes") or 0) < IMDB_MIN_VOTES and omdb_refresh > 0:
-                    enrich_omdb(m); omdb_calls += 1; omdb_refresh -= 1
+                    _omdb(m); omdb_calls += 1; omdb_refresh -= 1
 
             # ON-DEMAND Watchmode enrichment: exact prices + deep-links for engaged titles only.
-            if m["tmdb_id"] in ondemand_set and wm_budget > 0 and m.get("imdb_id"):
-                wm_offers = poll_watchmode(m, wm_cache); wm_calls += 1; wm_budget -= 1
-                if wm_offers:                                # richer than providers: real prices/formats
+            if m["tmdb_id"] in ondemand_set and wm_budget > 0 and m.get("imdb_id") and wm_open:
+                wm_offers, wm_outcome = _api_call("Watchmode", poll_watchmode, m, wm_cache)
+                wm_calls += 1; wm_budget -= 1
+                if wm_outcome == "stop":
+                    wm_open = False
+                if wm_outcome != "ok":
+                    # Keep the TMDB-provider answer already set above: less precise (no real prices), but
+                    # true. Watchmode only ever SHARPENS availability, so losing it is a downgrade, not a gap.
+                    wm_fails += 1
+                elif wm_offers:                              # richer than providers: real prices/formats
                     m["offers"] = wm_offers
                     m["status"] = derive_status(m, wm_offers, today)
                     m["availability_source"] = "watchmode_enriched"
@@ -555,7 +652,20 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
 
     counts = dict(sched["counts"])
     counts.update(provider_calls=provider_calls, wm_calls=wm_calls, omdb_calls=omdb_calls,
-                  ondemand=len(ondemand_set), catalogue=len(catalogue))
+                  ondemand=len(ondemand_set), catalogue=len(catalogue),
+                  # CAS-161: a degraded run must SAY it was degraded. Silence here would let the catalogue
+                  # quietly go stale for days while every run still reported success.
+                  omdb_fails=omdb_fails, wm_fails=wm_fails, provider_fails=prov_fails,
+                  omdb_stopped=not omdb_open, wm_stopped=not wm_open, providers_stopped=not prov_open)
+    if omdb_fails or wm_fails or prov_fails:
+        print(f"[warn] degraded enrichment: {prov_fails} TMDB-provider, {omdb_fails} OMDb, {wm_fails} "
+              f"Watchmode title(s) kept their previous data"
+              + (" — OMDb stopped early" if not omdb_open else "")
+              + (" — Watchmode stopped early" if not wm_open else "")
+              + (" — TMDB providers stopped early" if not prov_open else ""))
+    if OMDB_DAILY_BUDGET + OMDB_REFRESH_BUDGET > OMDB_FREE_TIER_CAP:
+        print(f"[warn] OMDb budgets total {OMDB_DAILY_BUDGET + OMDB_REFRESH_BUDGET} against a "
+              f"{OMDB_FREE_TIER_CAP}/day cap — a single run can exhaust the key.")
     return catalogue, counts
 
 
