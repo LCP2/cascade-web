@@ -2211,7 +2211,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.7.0", "major": 0, "minor": 7, "patch": 0, "build": 98, "commit": "30e455b", "builtAt": "2026-07-24T10:09:02Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.7.0", "major": 0, "minor": 7, "patch": 0, "build": 99, "commit": "e9187c8", "builtAt": "2026-07-24T10:11:10Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3678,11 +3678,22 @@ const BUZZ_CUTS = (()=>{
   const p=MOVIES.map(m=>m.popularity).filter(v=>typeof v==="number").sort((a,b)=>a-b);
   return BUZZ_PCTL.map(q=>q ? (p.length ? p[Math.min(p.length-1, Math.floor(p.length*q/100))] : Infinity) : 0);
 })();
+// CAS-168: popularity on its own is not evidence that anyone is watching. TMDB's figure spikes on release
+// for titles nobody has seen yet — Saccharine rides pop 36.2 to rank 38 of 1,954 on 186 IMDb votes, Forgive
+// Us All sits at 66.3 on 88 — so "Trending" and "Must-see" were putting obscure films in front of the user
+// under a label that claims a crowd. The upper two stops now want a second, independent signal that the
+// crowd is real: the CAS-156 votes floor, the same IMDB_MIN_VOTES bar that decides whether we'll show an
+// IMDb number at all. Both must clear, so a spike alone can no longer promote a title.
+// The lower stops are deliberately left open: "Talked-about" is a claim about attention, not about audience
+// size, and a film can honestly be talked about before many people have rated it. On today's catalogue the
+// floor takes Trending 196 → 174 and Must-see 59 → 50.
+const BUZZ_CORROBORATE_FROM = 2;   // index into BUZZ_STOPS: Trending and above
 function selBuzzOK(m,c){
   const s=c.selBuzz||0; if(!s) return true;
   // No popularity figure = no claim either way, and a buzz bar can only judge what carries the signal —
   // same rule the score dials follow.
-  return typeof m.popularity==="number" && m.popularity >= BUZZ_CUTS[s];
+  if(!(typeof m.popularity==="number" && m.popularity >= BUZZ_CUTS[s])) return false;
+  return s < BUZZ_CORROBORATE_FROM || imdbReliable(m);
 }
 function matchesCriteria(m,c,ignoreBlocked){
   // CAS-146: the account-level taste baseline is inherited by every agent and applied first — it is the
