@@ -2219,7 +2219,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.7.0", "major": 0, "minor": 7, "patch": 0, "build": 103, "commit": "6975ebc", "builtAt": "2026-07-24T10:25:08Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.7.0", "major": 0, "minor": 7, "patch": 0, "build": 104, "commit": "ed4f366", "builtAt": "2026-07-24T10:29:14Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5940,6 +5940,16 @@ const baseDefaults = () => ({genres:[], year:YEAR_DEFAULT, langs:["en"],
                              ageLo:0, ageHi:AGE_LEVELS.length-1});
 // genres:[] means "all" — an empty include-list matches everything, the same convention the cascade
 // criteria already use, so "all on" and "untouched" can't disagree.
+// CAS-165: [] carried BOTH "all" and "none", which is why "Clear all" looked like a no-op — it wrote an
+// empty list, the list read back as "all", and every chip lit up again. Turning off the last chip by hand
+// did the same thing silently. A set that can be empty needs three states, not two, so `null` is now the
+// third: EXPLICITLY NONE, and nothing matches it. [] still means "all", so nothing already saved changes
+// meaning, and "all on" still normalises to [] on both rows — so a row can never hold two representations
+// of the same world. The rule for both chip rows, in one line:
+//     null = none selected (0 films) · [] = every option, filter off · [a,b] = exactly those.
+// "Every option, filter off" is deliberately not the same as listing every option: 188 films carry no genre
+// at all and 186 are in a language outside the twelve we list, and a filter that is off must not drop them.
+const tbNone = v => v===null;                 // explicitly cleared
 let tasteBase = baseDefaults();
 try{ const o=JSON.parse(localStorage.getItem(BASE_KEY)||"null");
      if(o && typeof o==="object") tasteBase={...baseDefaults(), ...o}; }catch(e){}
@@ -5949,9 +5959,14 @@ const baseYearFloor = () => yearFloor(tasteBase.year||0);
 // Applied by matchesCriteria to every agent. Each dimension is skipped when it is at its open default, so
 // a fully permissive baseline is exactly a no-op and nothing that already matched stops matching.
 function passesTasteBase(m){
-  if(tasteBase.genres.length && !(m.genres||[]).some(g=>tasteBase.genres.includes(g))) return false;
+  // CAS-165: cleared means cleared. A row holding `null` admits nothing, and the count says 0 rather than
+  // quietly reverting to the whole catalogue behind a screen of switched-off chips.
+  const g=tasteBase.genres, l=tasteBase.langs;
+  if(tbNone(g)) return false;
+  if(g.length && !(m.genres||[]).some(x=>g.includes(x))) return false;
   const fl=baseYearFloor(); if(fl!=null && yearOf(m)<fl) return false;
-  if(tasteBase.langs.length && !tasteBase.langs.includes(m.language)) return false;
+  if(tbNone(l)) return false;
+  if(l.length && !l.includes(m.language)) return false;
   const ages=baseAges();
   if(ages.length<AGE_LEVELS.length && !ages.includes(m.age_rating)) return false;
   return true;
@@ -6158,14 +6173,26 @@ function wireDials(){
 }
 // ---- Taste-baseline accordion (CAS-146) -----------------------------------------------------------
 let tbOpen = null;   // which row is expanded — exactly one, or none
-const tbGenreSet = () => new Set(tasteBase.genres.length ? tasteBase.genres : ONB_GENRES);
+// CAS-165: which chips are lit. `null` lights none; `[]` lights them all, because "filter off" and
+// "everything ticked" are the same world and must not look like two different screens.
+const tbGenreSet = () => new Set(tbNone(tasteBase.genres) ? []
+                               : tasteBase.genres.length ? tasteBase.genres : ONB_GENRES);
+const tbLangSet  = () => new Set(tbNone(tasteBase.langs) ? []
+                               : tasteBase.langs.length ? tasteBase.langs : LANG_OPTS);
+// The one place a chip row decides what it just became. All on normalises back to [] so the open state has a
+// single representation; none at all becomes null rather than collapsing into it.
+const tbStore = (set, all) => set.size===all.length ? [] : set.size===0 ? null : [...set];
+// CAS-165: three states to say out loud, not two — a cleared row has to read as cleared on the closed row
+// too, or the page still claims a world it isn't searching.
 function tbSumGenres(){
-  const n=tasteBase.genres.length;
-  return !n ? "All genres" : `${n} of ${ONB_GENRES.length}`;
+  const g=tasteBase.genres;
+  if(tbNone(g)) return "None selected";
+  return !g.length ? "All genres" : `${g.length} of ${ONB_GENRES.length}`;
 }
 function tbSumYear(){ return YEAR_STOPS[tasteBase.year||0].label; }
 function tbSumLangs(){
   const l=tasteBase.langs;
+  if(tbNone(l)) return "None selected";
   if(!l.length) return "Any language";
   const first=langName(l[0]);
   return l.length===1 ? first : `${first} +${l.length-1}`;
@@ -6226,14 +6253,17 @@ const TB_BODIES = {
       c.onclick=()=>{
         on.has(g) ? on.delete(g) : on.add(g);
         // Stored as "all" when every genre is on, so the open state has one representation, not two.
-        tasteBase.genres = on.size===ONB_GENRES.length ? [] : [...on];
+        // CAS-165: and as null when none are, so switching the last one off means what it looks like.
+        tasteBase.genres = tbStore(on, ONB_GENRES);
         c.classList.toggle("on", on.has(g)); c.setAttribute("aria-pressed", String(on.has(g)));
         upd();
       };
       box.appendChild(c);
     });
-    b.querySelector('[data-a="all"]').onclick =()=>{ tasteBase.genres=[]; drawTasteRows(); };
-    b.querySelector('[data-a="none"]').onclick=()=>{ tasteBase.genres=[...ONB_GENRES]; drawTasteRows(); };
+    // CAS-165: "Clear all" wrote [...ONB_GENRES] — every genre — which read back as "all" and relit every
+    // chip: the button did the exact opposite of its label, and looked like it did nothing at all.
+    b.querySelector('[data-a="all"]').onclick =()=>{ tasteBase.genres=[];   saveTasteBase(); drawTasteRows(); };
+    b.querySelector('[data-a="none"]').onclick=()=>{ tasteBase.genres=null; saveTasteBase(); drawTasteRows(); };
   },
   year(b, upd){
     const max=YEAR_STOPS.length-1, val=tasteBase.year||0;
@@ -6249,24 +6279,30 @@ const TB_BODIES = {
       paintDial(b, v/max*100, i=>i<=v, i=>i===v); upd(); };
   },
   langs(b, upd){
+    // CAS-165: the same two controls Genres has, and the same three states behind them. "Select all" writes
+    // [] rather than the twelve codes, because 186 films are in a language we don't list and a filter that
+    // is off must not quietly drop them — that is why the row says "Any language" and not "12 of 12".
+    const on=tbLangSet();
     b.innerHTML=`<p class="tbhint">English is on by default. Add any others you'll watch.</p>
-      <div class="chips" id="tbLangChips"></div>`;
+      <div class="chips" id="tbLangChips"></div>
+      <div class="tbq"><button type="button" class="q" data-a="all">Select all</button>
+        <button type="button" class="q" data-a="none">Clear</button></div>`;
     const box=b.querySelector("#tbLangChips");
     LANG_OPTS.forEach(code=>{
-      const on=tasteBase.langs.includes(code);
       const c=document.createElement("button");
-      c.type="button"; c.className="chip"+(on?" on":"");
-      c.setAttribute("aria-pressed", String(on));
+      c.type="button"; c.className="chip"+(on.has(code)?" on":"");
+      c.setAttribute("aria-pressed", String(on.has(code)));
       c.textContent=langName(code);
       c.onclick=()=>{
-        const i=tasteBase.langs.indexOf(code);
-        i>=0 ? tasteBase.langs.splice(i,1) : tasteBase.langs.push(code);
-        const nowOn=tasteBase.langs.includes(code);
-        c.classList.toggle("on", nowOn); c.setAttribute("aria-pressed", String(nowOn));
+        on.has(code) ? on.delete(code) : on.add(code);
+        tasteBase.langs = tbStore(on, LANG_OPTS);
+        c.classList.toggle("on", on.has(code)); c.setAttribute("aria-pressed", String(on.has(code)));
         upd();
       };
       box.appendChild(c);
     });
+    b.querySelector('[data-a="all"]').onclick =()=>{ tasteBase.langs=[];   saveTasteBase(); drawTasteRows(); };
+    b.querySelector('[data-a="none"]').onclick=()=>{ tasteBase.langs=null; saveTasteBase(); drawTasteRows(); };
   },
   // The age RANGE (buildspec §6, and the change to CAS-140): a lowest AND a highest, as one gradient-filled
   // band with no handles and no dots. A floor now genuinely excludes what sits below it — "PG to MA 15+"
