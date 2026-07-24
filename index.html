@@ -791,7 +791,6 @@
   /* Violet, not green (buildspec §Colour rule): green is reserved for "films found". A count here is a
      preview of a selection you haven't made yet, not a haul something went and got you. */
   .sc-match{color:var(--selink);font-size:12.5px;font-weight:800}
-  .sc-note{font-size:11px;color:var(--faint);line-height:1.4;margin-top:5px}
   .sc-arw{flex:0 0 auto;color:var(--faint);font-size:18px;align-self:center}
   /* The step-progress rail (CAS-143) — shared shape with the prototype's .pbar. */
   .pbar{height:5px;border-radius:3px;background:#1c2230;overflow:hidden;margin:2px 0 16px}
@@ -1140,12 +1139,8 @@
   .uptag{font-size:11.5px;color:var(--faint);margin:12px 2px 0;text-align:center}
   .uptag b{color:var(--selink)}
   /* ---- #3 Get-selective hub (CAS-144 / r5-prototype screenSelective) ---- */
-  /* The channel badge: the one thing on this screen that isn't a choice, and it says so. */
-  .oschan{display:inline-flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);
-    border-radius:20px;padding:6px 12px 6px 8px;font-size:12px;font-weight:700;color:var(--ink)}
-  .oschan .cd{width:9px;height:9px;border-radius:50%}
-  .oschan .lock{margin-left:4px;color:var(--faint);font-size:10px;font-weight:600}
-  .oschannote{font-size:11px;color:var(--faint);margin:6px 2px 0}
+  /* CAS-160: the "🔒 fixed" channel badge that used to sit here is GONE. Availability is no longer a property
+     of the preset — it is the third door below, which the user sets. Its rules went with it. */
   .osbignum{font-family:var(--font-display);font-weight:800;font-size:44px;line-height:1;letter-spacing:-.02em;
     background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;margin:14px 2px 0}
   .osbigl{color:var(--dim);font-size:12.5px;margin:4px 2px 14px}
@@ -1181,6 +1176,38 @@
   .osskip{display:block;width:100%;text-align:center;margin-top:12px;color:var(--dim);font-size:12.5px;
     background:none;border:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
   .osskip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
+
+  /* ---- CAS-160: "Where & when you'll watch" — the hub's third door ----
+     One row per cascade stage, wearing that stage's own colour (amber/blue/green — the same hues the
+     availability system is tuned for, so the row and the film card mean the same thing). Ticking a stage
+     REVEALS its notify-me windows: a window is meaningless until the stage it belongs to is on, so the
+     windows live inside the row rather than beside it, and an untouched screen is three lines, not eleven.
+     `--wwc` is set inline per lane, so one rule set serves all three colours. */
+  .wwlane{border:1px solid var(--line);border-radius:14px;background:var(--panel2);margin-bottom:10px;
+    overflow:hidden;transition:border-color .16s}
+  .wwlane.on{border-color:var(--wwc)}
+  .wwhead{display:flex;align-items:center;gap:11px;width:100%;text-align:left;cursor:pointer;background:none;
+    border:0;padding:13px 14px;color:var(--ink);font-family:inherit;font-size:15px;font-weight:700}
+  .wwhead .cd{width:10px;height:10px;border-radius:50%;background:var(--wwc);flex:0 0 auto}
+  .wwhead .wwn{flex:1;min-width:0}
+  .wwtick{width:24px;height:24px;border-radius:7px;border:1.5px solid var(--line);background:var(--panel);
+    display:grid;place-items:center;font-size:13px;font-weight:800;color:transparent;flex:0 0 auto}
+  .wwlane.on .wwtick{background:var(--wwc);border-color:var(--wwc);color:#0b1016}
+  .wwopts{display:none;padding:2px 14px 12px 35px}
+  .wwlane.on .wwopts{display:block}
+  .wwnl{color:var(--faint);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    margin:0 0 4px}
+  .wwopt{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:none;border:0;
+    padding:7px 0;color:var(--dim);font-family:inherit;font-size:13px;cursor:pointer}
+  .wwopt .wwb{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line);flex:0 0 auto;
+    display:grid;place-items:center;font-size:10px;font-weight:800;color:transparent}
+  .wwopt.on{color:var(--ink)}
+  .wwopt.on .wwb{background:var(--wwc);border-color:var(--wwc);color:#0b1016}
+  .wwhead:focus-visible,.wwopt:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:8px}
+  /* The deferred ask, stated plainly rather than dressed as a warning — we are telling them what is still
+     missing, not blocking them on it (buildspec §8: only tappable things get a box). */
+  .wwfoot{display:flex;align-items:flex-start;gap:8px;color:var(--faint);font-size:11.5px;line-height:1.45;
+    margin:14px 2px 2px}
 
   /* ---- value-first reveal (CAS-77 / spec 26640386 §2/§3) ----
      The reciprocity moment: the agent's real haul (posters from the live engine) + provenance,
@@ -2161,7 +2188,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 89, "commit": "210731b", "builtAt": "2026-07-24T03:25:03Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.6.0", "major": 0, "minor": 6, "patch": 0, "build": 91, "commit": "cd6d6ad", "builtAt": "2026-07-24T05:42:49Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3460,6 +3487,9 @@ function normCascade(c){
   c.awards = !!c.awards;
   c.selCrowd = c.selCrowd||0; c.selCritics = c.selCritics||0; c.selScale = c.selScale||0;
   c.selBuzz = c.selBuzz||0; c.selOr = !!c.selOr;   // CAS-114 dials + CAS-145 buzz
+  // CAS-160 viewing windows. {} on everything saved before this ticket, which reads correctly: those agents
+  // never expressed a preference, and their `status` still says where they hunt.
+  if(typeof c.watchWindows!=="object" || c.watchWindows===null) c.watchWindows={};
   // myServices was one boolean for the whole Cascade; it's now one flag per home window. A Cascade saved
   // under the old shape meant "scope everywhere", so that's exactly what it keeps meaning.
   if(typeof c.myServices!=="object" || c.myServices===null){
@@ -3533,7 +3563,11 @@ cascades.forEach(normCascade);   // saved Cascades are filled out here, not at l
 const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.age, c.lang, c.culture, c.year,
   c.imdb, c.rt, c.awards, c.budget, c.includeUnbudgeted, c.includeUnrated, c.tentpole,
   c.selCrowd||0, c.selCritics||0, c.selScale||0, c.selBuzz||0, !!c.selOr,
-  c.myServices, c.alerts, c.sort||"imdb", c.excludeWatched, c.excludeBlocked]);
+  c.myServices, c.alerts, c.sort||"imdb", c.excludeWatched, c.excludeBlocked,
+  // CAS-160: the viewing windows are part of "the alert moments" too. Three of them (announced / 1 month /
+  // 1 week out) all resolve to the same `status`, so without this line two agents that differ only in when
+  // they'd tell you would read as exact twins and the second would be silently collapsed into the first.
+  c.watchWindows||{}]);
 function dedupeCascades(){
   const firstBySig=new Map(); const drop=[];
   cascades.forEach(c=>{
@@ -4472,7 +4506,7 @@ function commitDraft(){
     selCrowd:draft.selCrowd, selCritics:draft.selCritics, selScale:draft.selScale, selBuzz:draft.selBuzz, selOr:draft.selOr,
     awards:draft.awards, myServices:{...draft.myServices},
     excludeWatched:draft.excludeWatched, excludeBlocked:draft.excludeBlocked,
-    sort:draft.sort||"imdb", alerts:draft.alerts});
+    sort:draft.sort||"imdb", alerts:draft.alerts, watchWindows:draft.watchWindows});
   normCascade(c);
   if(isNew) cascades.push(c);
   saveCascades(); setActive(c.id); applyCascade(c);
@@ -5173,10 +5207,13 @@ $("splashCta").onclick=splashGo;
 // first run — matchesCriteria only scopes to "my services" once servicesPicked() is true.
 const _tplCrit = k => CASCADE_TEMPLATES.find(t=>t.key===k);
 // ---- R5 agent presets (CAS-143 / onboarding-mocks/r5-prototype.html, buildspec §Per-agent defaults) ----
-// The candy shop. An agent = Channel × Standard: the CHANNEL is where and when it hunts (a hard
-// availability filter, fixed for that agent) and the STANDARD is the bar it holds them to. Each preset is
-// named for what it DOES rather than for the lane it watches — "Must See at the Cinema", not "In cinema" —
-// because the thing being chosen is a job you're giving something, not a filter you're setting.
+// The candy shop. CAS-160 splits what used to be one thing in two: a preset is now a STANDARD only — the
+// taste and quality bar it holds films to — and WHERE/WHEN you'll watch is no longer baked into it. That
+// moved to the user, as the hub's third door, because "I want the great stuff" and "I go to the cinema" are
+// two different opinions and pinning the second to the first meant a person had to accept a viewing habit in
+// order to get a taste. So no preset carries a `channel` any more: the words below describe character, not a
+// lane. `crit.status` survives as the SEED for that door's defaults (see watchFromStatus) — pick the cinema
+// agent and the Cinema box opens ticked — but it is a starting point the user can change, not a fixed filter.
 // The five and their defaults are locked in the buildspec; `bar` is the plain-English standard, shown to the
 // user, and it is read off the same criteria that produce the count, so the words and the number agree.
 // NOT here yet: the Buzz dial. It needs TMDB popularity in movies.json (CAS-147) and inventing a buzz
@@ -5184,28 +5221,28 @@ const _tplCrit = k => CASCADE_TEMPLATES.find(t=>t.key===k);
 // carry the rest of their standard and pick buzz up when the data lands.
 const STARTERS = [
   {key:"cinema", icon:"🎬", name:"Must See at the Cinema",
-   blurb:"Big-screen films everyone will be talking about.",
+   blurb:"Big, loud films everyone will be talking about.",
    frame:"is holding out for the big ones — the films everyone will be talking about.",
-   channel:"In cinemas", bar:"Blockbuster · must-see buzz", cd:"var(--amber)", primary:["scale","buzz"],
+   bar:"Blockbuster · must-see buzz", cd:"var(--amber)", primary:["scale","buzz"],
    crit:{status:["opening_week","in_cinema"], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:0, selCritics:0, selScale:3, selBuzz:3}},
   {key:"rentals", icon:"🍿", name:"Awesome Movies for Rent",
-   blurb:"Great films that just dropped to rent.",
-   frame:"is watching for the genuinely great films landing on rent.",
-   channel:"New to rent", bar:"Loved & acclaimed", cd:"var(--blue)", primary:["vote","crit"],
+   blurb:"Genuinely great films — loved by crowds and critics both.",
+   frame:"is watching for the genuinely great ones — the films that earn their reviews.",
+   bar:"Loved & acclaimed", cd:"var(--blue)", primary:["vote","crit"],
    crit:{status:["rental"], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:7.5, selCritics:2, selScale:0, selBuzz:0}},
   {key:"date_night", icon:"🌙", name:"Date Night Rentals",
    blurb:"Easy crowd-pleasers for two on the couch.",
-   frame:"is after well-liked, feel-good films to rent tonight.",
-   channel:"On rent", bar:"Well-liked · a little buzz", cd:"var(--blue)", primary:["vote","buzz"],
+   frame:"is after the well-liked, feel-good ones you'll both enjoy.",
+   bar:"Well-liked · a little buzz", cd:"var(--blue)", primary:["vote","buzz"],
    crit:{status:["rental"], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:7, selCritics:0, selScale:0, selBuzz:1}},
   {key:"streaming", icon:"📺", name:"My Day to Day Streaming", recommended:true,
-   blurb:"Easy, fun watches on your services.",
+   // Buildspec §10 (never "your services" until services are actually added) used to need a footnote under
+   // this card. CAS-160 removes the need for one: the blurb no longer claims anything about your services.
+   blurb:"Easy, fun watches for a night in.",
    frame:"keeps it easy and fun, and leans on what you like.",
-   // Buildspec §10: never "your services" until services are actually added.
-   channel:"Streaming", channelNote:"On the big streaming services until you add your own.",
    bar:"Fun-first · a little buzz", cd:"var(--green)", primary:["vote","buzz"],
    crit:{status:["included_streaming"], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:6, selCritics:0, selScale:0, selBuzz:1},
@@ -5213,7 +5250,7 @@ const STARTERS = [
   {key:"prestige", icon:"🏆", name:"Nominees & Awards",
    blurb:"Award-worthy films of any era — must-sees.",
    frame:"collects the award nominees and winners worth seeing.",
-   channel:"Anywhere", bar:"Award nominees & winners", cd:"var(--accent)", primary:["crit"],
+   bar:"Award nominees & winners", cd:"var(--accent)", primary:["crit"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:0, selCritics:3, selScale:0, selBuzz:0}},
 ];
@@ -5244,11 +5281,10 @@ function renderShortlist(){
         <span class="sc-main">
           <span class="sc-name">${s.name}${s.recommended?` <b class="sc-rec">RECOMMENDED</b>`:""}</span>
           <span class="sc-blurb">${esc(s.blurb)}</span>
-          <span class="sc-chan">${esc(s.channel)} · ${esc(s.bar)}</span>
+          <span class="sc-chan">${esc(s.bar)}</span>
           <span class="sc-match">${n
             ? `${n} film${n===1?"":"s"} match${n===1?"es":""} now`
             : `Nothing matches right now — it'll tell you the moment one does`}</span>
-          ${s.channelNote?`<span class="sc-note">${esc(s.channelNote)}</span>`:""}
         </span>
         <span class="sc-arw">›</span>
       </button>`;
@@ -5291,6 +5327,10 @@ window.pickStarter=key=>{
   onbFlow.buzzStop    = s.crit.selBuzz||0;
   onbFlow.selOr = false;   // AND, per buildspec §1 (reverses the earlier OR default on CAS-114)
   onbFlow.barTouched=false; onbFlow.barAutoRelaxed=null;   // CAS-158: a new agent gets its own first open
+  // CAS-160: the viewing box opens on THIS preset's own windows, so the card you just tapped and the hub you
+  // land on quote the same number (the CAS-144 invariant). A previous answer for this same agent wins over
+  // the seed; a different agent's answer never leaks across.
+  onbFlow.watch = loadWatch(s.key) || watchFromStatus(s.crit.status);
   // The #4 selectivity dials own the crowd/critics/scale bars from here on, defaulting fully open, so zero the
   // pick's own IMDb bar — otherwise its preset would mask the People's-vote dial. Same supersede rule the
   // genres/age steps already follow: the sharpening screen is the single source for the axis it owns.
@@ -5572,7 +5612,126 @@ const voteSay = v => v<VOTE_OFF ? null : `scored ${v.toFixed(1)}+ by viewers`;
 const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME, yearStop:null,
                  langsOn:new Set(["en"]), ageStop:AGE_LEVELS.length-1,
                  voteVal:VOTE_MIN, criticsStop:0, scaleStop:0, buzzStop:0, selOr:false,   // #4 dials (CAS-114/145)
-                 barTouched:false, barAutoRelaxed:null};   // CAS-158 first-open state
+                 barTouched:false, barAutoRelaxed:null,   // CAS-158 first-open state
+                 watch:{}};                                // CAS-160 viewing windows: {lane: [optKey,…]}
+
+// ---- Where & when you'll watch (CAS-160) ----------------------------------------------------------------
+// The model change: availability stops being a fixed property of the preset and becomes the user's own
+// choice. Three lanes, in the cascade's own stage colours, each holding the moments you can be told about.
+//
+// Every option maps to REAL pipeline statuses (`status`) and to the alert keys the app already ships
+// (`alerts`), so nothing here is a decorative tickbox — `watchStatuses()` feeds the agent's own status
+// filter, which is what the counts on this screen are computed from. The finer windows fold in as the
+// ticket specifies: Upcoming is Cinema's announced/1-month/1-week, and PVOD is Rent's "for purchase".
+//
+// A note on the three cinema pre-release options: they all resolve to the SAME status (`upcoming`), because
+// "1 month out" is a moment in time, not a window a film sits in. They are captured faithfully and differ
+// only in when the monitor would fire — which is the downstream delivery ticket, not this one. That is also
+// why `alerts` is recorded but NOT written onto the agent here: promising delivery we haven't built would
+// be exactly the fabricated-capability the honesty guardrail forbids.
+const WATCH_LANES = [
+  {key:"cinema", label:"Cinema", cd:"var(--amber)", dflt:"release", opts:[
+    {key:"announced", label:"When announced",       status:["upcoming"],                 alerts:{cinema:true}},
+    {key:"month",     label:"1 month from release", status:["upcoming"],                 alerts:{cinema:true}},
+    {key:"week",      label:"1 week from release",  status:["upcoming"],                 alerts:{cinema:true}},
+    {key:"release",   label:"In cinema release",    status:["opening_week","in_cinema"], alerts:{cinema:true}},
+    {key:"past",      label:"Past opening weekend", status:["opening_week","in_cinema"], alerts:{past_opening:true}},
+  ]},
+  {key:"rent", label:"Rent", cd:"var(--blue)", dflt:"rent", opts:[
+    {key:"purchase", label:"When available for purchase", status:["pvod"],   alerts:{pvod:true}},
+    {key:"rent",     label:"When available for rent",     status:["rental"], alerts:{rental:true}},
+  ]},
+  {key:"stream", label:"Streaming", cd:"var(--green)", dflt:"stream", opts:[
+    {key:"stream", label:"When on streaming", status:["included_streaming"], alerts:{included_streaming:true}},
+  ]},
+];
+const watchLane = k => WATCH_LANES.find(l=>l.key===k);
+// Sets don't survive JSON.stringify, and this state rides to localStorage on the committed agent, so the
+// selection is held as plain arrays throughout.
+const watchOn = (lane,opt) => (onbFlow.watch[lane]||[]).includes(opt);
+const laneOn  = lane => (onbFlow.watch[lane]||[]).length>0;
+// The seed. A preset's `crit.status` is read BACK into lane/option ticks, which is what keeps this change
+// invisible on arrival: every shipped preset round-trips to exactly the statuses it had, so the card's
+// "N films match now" and the hub's hero figure are the same numbers they were before this ticket. An agent
+// with no status (Nominees & Awards) seeds empty — which still means "any window", as it always did.
+function watchFromStatus(status){
+  const st=new Set(status||[]), w={};
+  WATCH_LANES.forEach(l=>{
+    // `release` and `past` share a status pair; seeding both off one `in_cinema` would silently switch on an
+    // alert the preset never asked for, so only the plain-release option is ever seeded.
+    const picked=l.opts.filter(o=>o.key!=="past" && o.key!=="month" && o.key!=="week"
+                                  && o.status.some(s=>st.has(s)));
+    if(picked.length) w[l.key]=picked.map(o=>o.key);
+  });
+  return w;
+}
+// …and the way back out: the ticked options ARE the agent's availability filter now. Empty = every window,
+// which is the honest reading of "you haven't told me where you watch yet".
+function watchStatuses(){
+  const out=new Set();
+  WATCH_LANES.forEach(l=>(onbFlow.watch[l.key]||[]).forEach(k=>{
+    const o=l.opts.find(x=>x.key===k); if(o) o.status.forEach(s=>out.add(s));
+  }));
+  return [...out];
+}
+// Persisted per agent, so backing out to the shortlist and returning keeps your answer — but picking a
+// DIFFERENT agent gets that agent's own seed rather than the last one's leftovers.
+const WATCH_KEY="cascade_watchwins";
+function saveWatch(){
+  try{ localStorage.setItem(WATCH_KEY, JSON.stringify({agent:wiz.starter||null, watch:onbFlow.watch})); }catch(e){}
+}
+function loadWatch(agentKey){
+  try{
+    const s=JSON.parse(localStorage.getItem(WATCH_KEY)||"null");
+    if(s && s.agent===agentKey && s.watch && typeof s.watch==="object") return s.watch;
+  }catch(e){}
+  return null;
+}
+// Plain-English, read off the same state the door edits — so the hub row can never advertise something the
+// screen behind it doesn't say.
+function hubWatchSummary(){
+  const on=WATCH_LANES.filter(l=>laneOn(l.key));
+  if(!on.length) return "Any window — not set yet";
+  const n=on.reduce((a,l)=>a+(onbFlow.watch[l.key]||[]).length, 0);
+  return esc(`${on.map(l=>l.label).join(" · ")} — ${n} alert${n===1?"":"s"}`);
+}
+function drawWatchLanes(){
+  const box=$("wwLanes"); if(!box) return;
+  box.innerHTML = WATCH_LANES.map(l=>{
+    const on=laneOn(l.key);
+    return `<div class="wwlane${on?" on":""}" style="--wwc:${l.cd}">
+      <button type="button" class="wwhead" aria-pressed="${on}" onclick="wwToggleLane('${l.key}')">
+        <span class="cd"></span><span class="wwn">${esc(l.label)}</span><span class="wwtick">✓</span></button>
+      <div class="wwopts">
+        <p class="wwnl">Notify me</p>
+        ${l.opts.map(o=>{
+          const oo=watchOn(l.key,o.key);
+          return `<button type="button" class="wwopt${oo?" on":""}" aria-pressed="${oo}"
+            onclick="wwToggleOpt('${l.key}','${o.key}')"><span class="wwb">✓</span>${esc(o.label)}</button>`;
+        }).join("")}
+      </div></div>`;
+  }).join("");
+}
+// A lane IS its ticked windows — there is no "on with nothing selected", because that state would promise a
+// lane and then never fire. So switching a lane on arms its plain-release window, and un-ticking the last
+// window switches the lane back off. One meaning, whichever control you reach for.
+window.wwToggleLane=key=>{
+  const l=watchLane(key); if(!l) return;
+  onbFlow.watch[key] = laneOn(key) ? [] : [l.dflt];
+  wwChanged(key);
+};
+window.wwToggleOpt=(key,opt)=>{
+  const cur=(onbFlow.watch[key]||[]).slice(), i=cur.indexOf(opt);
+  if(i>=0) cur.splice(i,1); else cur.push(opt);
+  onbFlow.watch[key]=cur;
+  wwChanged(key);
+};
+function wwChanged(key){
+  saveWatch();
+  logEvent("watch_windows_changed",{lane:key, on:laneOn(key), n:(onbFlow.watch[key]||[]).length});
+  drawWatchLanes();   // the lane's own open/closed state and its ticks
+  onbRefresh();       // …and the CTA's live count, which really did just move
+}
 
 // ---- First-open auto-relax of the bar (CAS-158) ---------------------------------------------------------
 // A preset can open on a bar its own channel can barely fill — Awesome Movies for Rent lands on 36, the cinema
@@ -5634,6 +5793,12 @@ function onbApply(){
   d.selScale = onbFlow.scaleStop||0;
   d.selBuzz = onbFlow.buzzStop||0;
   d.selOr = !!onbFlow.selOr;
+  // CAS-160: availability is the user's now, so the viewing door owns `status` the same way the dials own the
+  // rating bars and the taste baseline owns genre/year/language/age — one screen per axis, no second writer.
+  // `watchWindows` carries the finer moments (1 month out, past opening weekend) that `status` cannot express;
+  // it rides on the agent so the monitor can read it once delivery is built.
+  d.status = watchStatuses();
+  d.watchWindows = JSON.parse(JSON.stringify(onbFlow.watch||{}));
   return normCascade(d);
 }
 const onbCount = () => watchCount(onbApply());
@@ -5751,7 +5916,7 @@ function selSayHtml(){
   const cr=CRITICS_STOPS[onbFlow.criticsStop||0].say; if(cr) parts.push(cr);
   const sc=SCALE_STOPS[onbFlow.scaleStop||0].say; if(sc) parts.push(sc);
   const bz=BUZZ_STOPS[onbFlow.buzzStop||0].say; if(bz) parts.push(bz);
-  if(!parts.length) return `Every film in this channel — ${cnt} right now. Turn a dial up to get pickier.`;
+  if(!parts.length) return `No bar set, so everything qualifies — ${cnt} right now. Turn a dial up to get pickier.`;
   const joined = parts.reduce((a,p,i)=> i===0 ? p : `${a} <b>and</b> ${p}`, "");
   const aside = selSetAside();
   const asideHtml = aside ? ` <span class="osaside">${aside} title${aside===1?"":"s"} have no score yet and aren't counted here.</span>` : "";
@@ -6029,31 +6194,31 @@ const SHARP_STEPS = {
   // unlocks once both are confirmed. That is the whole mechanic — progress you can see, and a reward at the
   // end of it — so there is deliberately no "keep it broad" escape any more (buildspec §7).
   selective: {
-    progress(){ return 50 + (onbDone.bar?15:0) + (onbDone.taste?15:0); },
+    // CAS-160: three doors, so the two 15-point steps become three 10s — same 50→80 span, same 100 at the end.
+    progress(){ return 50 + (onbDone.bar?10:0) + (onbDone.taste?10:0) + (onbDone.watch?10:0); },
     noAgent: true,
     hub: true,          // the frame hides its footer: this screen builds its own CTA, and has no skip
     body(){
       const a=hubAgent(), n=onbCount();
-      const done=onbDone, both=done.bar&&done.taste, c=(done.bar?1:0)+(done.taste?1:0);
-      // The channel is the one thing on this screen you cannot change: it is what the agent IS. Saying so
-      // (and locking it) is what makes the two dials below feel like a choice rather than a form.
-      const chan = a ? `<div class="oschan"><span class="cd" style="background:${a.cd||"var(--accent)"}"></span>
-          ${esc(a.channel)}<span class="lock">🔒 fixed</span></div>
-        ${a.channelNote?`<div class="oschannote">${esc(a.channelNote)}</div>`:""}` : "";
+      const done=onbDone, keys=HUB_DOOR_KEYS;
+      const c=keys.filter(k=>done[k]).length, all=c===keys.length;
+      // CAS-160: the locked channel badge that used to sit here is gone with the model it belonged to. It
+      // said "this is the one thing you cannot change"; the third door below is now exactly that thing,
+      // changed. Leaving the badge would have made the screen argue with itself.
       const framing = a
-        ? `<p class="ossub"><b>${esc(a.name)}</b> ${esc(a.frame)} Set the two below to lock it in.</p>`
-        : `<p class="ossub">Set the two below to lock in what your agent brings you.</p>`;
+        ? `<p class="ossub"><b>${esc(a.name)}</b> ${esc(a.frame)} Set the three below to lock it in.</p>`
+        : `<p class="ossub">Set the three below to lock in what your agent brings you.</p>`;
       return `<h2 class="osh">Get selective</h2>
-        ${chan}
         <div class="osbignum">${n}</div>
         <div class="osbigl">film${n===1?"":"s"} found for you right now</div>
         ${framing}
         ${hubDoorHTML("🎚️","The bar",hubBarSummary(),"bar")}
         ${hubDoorHTML("🧬","Your taste baseline",hubTasteSummary(),"taste")}
-        ${both
+        ${hubDoorHTML("📺","Where & when you'll watch",hubWatchSummary(),"watch")}
+        ${all
           ? `<div class="osfinish">✓ You're all set</div>
              <button class="oscta" type="button" onclick="onbHubFinish()">Show me my ${n} film${n===1?"":"s"} →</button>`
-          : `<div class="oshint"><b>${c} of 2</b> confirmed · set both to see your films</div>`}`;
+          : `<div class="oshint"><b>${c} of ${keys.length}</b> confirmed · set all three to see your films</div>`}`;
     },
     wire(){ onbDonePulse=null; },   // the pulse is a one-time thing: it has now played
   },
@@ -6067,14 +6232,12 @@ const SHARP_STEPS = {
     noSkip: true,     // inside the hub's door — the way out is Continue or Back, not a skip that means nothing
     body(){
       const a=hubAgent();
-      const chan = a ? `<div class="oschan"><span class="cd" style="background:${a.cd||"var(--accent)"}"></span>
-          ${esc(a.channel)}<span class="lock">🔒 fixed</span></div>
-        ${a.channelNote?`<div class="oschannote">${esc(a.channelNote)}</div>`:""}` : "";
+      // CAS-160: the locked channel badge is gone from here too — the bar is about quality, and where you
+      // watch is its own door now.
       const primary = (a && a.primary) || ["vote","crit"];
       const rest = ["vote","crit","scale","buzz"].filter(k=>!primary.includes(k));
       const dials = ks => ks.map(dialCardHTML).join("");
       return `<h2 class="osh">Set your bar</h2>
-        ${chan}
         <p class="ossub">Set the standards that matter here. A film has to meet <b>all</b> the ones you turn up.</p>
         ${dials(primary)}
         ${rest.length ? (onbMoreOpen
@@ -6107,6 +6270,26 @@ const SHARP_STEPS = {
         <div class="tbfoot"><span class="dotg"></span>Set once — every agent inherits it</div>`;
     },
     wire(){ drawTasteRows(); },
+  },
+  // ---- Where & when you'll watch (CAS-160) — the hub's third door ----------------------------------
+  // The screen the model change exists for. It reads as one sentence: your agent finds films to YOUR
+  // standard (the other two doors), and this is where it catches them and how loudly it tells you.
+  // The count moves live as lanes are ticked, because ticking a lane really does widen or narrow what the
+  // agent watches — a screen whose controls didn't move the number would be a form, not a choice.
+  watching: {
+    progress: 70,
+    noAgent: true,
+    noSkip: true,       // inside the hub's door — Done confirms it, Back leaves it alone
+    cta(){ return "Done"+ctaCount(onbCount()); },
+    body(){
+      return `<h2 class="osh">Where &amp; when you'll watch</h2>
+        <p class="ossub">Your agent will find movies that meet your criteria, and alert you when they become
+          available on your chosen viewing services.</p>
+        <div id="wwLanes"></div>
+        <p class="wwfoot"><span>ℹ️</span><span>To complete these alerts we'll need to know your current rental
+          and streaming services — we'll ask for this later.</span></p>`;
+    },
+    wire(){ drawWatchLanes(); },
   },
   genres: {
     progress: 30,
@@ -6308,6 +6491,9 @@ function openOnbStep(key, agentKey){
   onbFlow.yearStop=YEAR_DEFAULT; onbFlow.langsOn=new Set(["en"]); onbFlow.ageStop=AGE_LEVELS.length-1;
   onbFlow.voteVal=VOTE_MIN; onbFlow.criticsStop=0; onbFlow.scaleStop=0; onbFlow.buzzStop=0; onbFlow.selOr=false;   // dials open
   onbFlow.barTouched=false; onbFlow.barAutoRelaxed=null;   // CAS-158: a fresh preview is a fresh first open
+  // CAS-160: seed the viewing box off whatever the seed draft already watches, so a ?step= preview round-trips
+  // its own status rather than opening on "any window" and silently widening the draft through onbApply.
+  onbFlow.watch = watchFromStatus(onbFlow.draft.status);
   // The selectivity page opens on the whole catalogue by design, so its preview must not inherit the seed's
   // above-average bar — the dials are the only crowd bar here.
   if(key==="selectivity"){ onbFlow.draft.imdb=0; autoRelaxBar(); }
@@ -6324,7 +6510,7 @@ window.closeOnbStep=()=>{ $("onbStep").classList.remove("open"); document.body.s
 // go out and come back — until both are confirmed and the payoff CTA finishes the flow.
 function startSharpSequence(){
   onbSeqIndex=0;
-  onbDone={bar:false, taste:false}; onbDoor=null; onbDoorIdx=0; onbDonePulse=null;
+  onbDone=freshDone(); onbDoor=null; onbDoorIdx=0; onbDonePulse=null;
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("sharp_sequence_start",{agent:wiz.starter});
   renderOnbStep("selective");
@@ -6372,8 +6558,11 @@ window.onbStepContinue=()=>{
 // Each door is a little sub-flow that RETURNS here. "The bar" is the one selectivity screen; "your taste
 // baseline" is the four taste screens walked in turn (CAS-146 collapses those into a single accordion page,
 // at which point this list becomes one entry and nothing else here has to change).
-const HUB_DOORS = { bar:["selectivity"], taste:["taste"] };
-let onbDone = {bar:false, taste:false};
+// CAS-160 adds the third: "where & when you'll watch" is one screen, like the bar.
+const HUB_DOORS = { bar:["selectivity"], taste:["taste"], watch:["watching"] };
+const HUB_DOOR_KEYS = Object.keys(HUB_DOORS);
+const freshDone = () => { const d={}; HUB_DOOR_KEYS.forEach(k=>d[k]=false); return d; };
+let onbDone = freshDone();
 let onbDoor = null;      // which door we're inside, null = standing on the hub
 let onbDoorIdx = 0;
 let onbDonePulse = null; // the door that JUST completed — pulses once, then clears
@@ -6394,7 +6583,7 @@ function hubBarSummary(){
   if(onbFlow.criticsStop) parts.push(CRITICS_STOPS[onbFlow.criticsStop].label);
   if(onbFlow.scaleStop)   parts.push(SCALE_STOPS[onbFlow.scaleStop].label);
   if(onbFlow.buzzStop)    parts.push(BUZZ_STOPS[onbFlow.buzzStop].label+" buzz");
-  return parts.length ? esc(parts.join(" · ")) : "Everything in this channel";
+  return parts.length ? esc(parts.join(" · ")) : "No bar set — everything qualifies";
 }
 function hubTasteSummary(){
   return esc([tbSumGenres(), tbSumYear(), tbSumLangs(), tbSumAge()].join(" · "));
