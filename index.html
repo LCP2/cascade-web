@@ -242,6 +242,10 @@
   .rb.imdb,.rb.rt,.rb.mc{min-width:58px}
   .rb.muted{color:var(--faint)}
   .rb.muted b{color:var(--faint)}
+  /* CAS-156: a withheld rating is the one lozenge with something to explain, so it's a real button — a title=
+     on a phone is a tooltip nobody can reach (same lesson as the scale badge). Reset to look identical. */
+  button.rb{font-family:inherit;font-weight:700;cursor:pointer;-webkit-appearance:none;appearance:none}
+  button.rb:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .rb b{font-size:12.5px}
   .rb.imdb b{color:var(--imdb)} .rb.rt b{color:var(--rt)} .rb.mc b{color:var(--meta)} .rb.budget b{color:#c9a2ff} .rb.gross b{color:#9fe6c4}
   /* Scale badge — its own row, directly under the description and above the ratings (CAS-64). It's a claim
@@ -2134,7 +2138,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 85, "commit": "c061e76", "builtAt": "2026-07-24T03:04:00Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 86, "commit": "43e21e2", "builtAt": "2026-07-24T03:08:36Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -2518,7 +2522,20 @@ const byPopularity=(a,b)=>(b.popularity||0)-(a.popularity||0);
 const stageIdx = m => CASCADE.indexOf(primaryStatus(m));
 // primaryStatus() is the LAST window a film holds, i.e. the furthest it has travelled — a film that is both
 // rentable and included with a subscription sorts as streaming, its most-progressed window.
-const ratingOf = m => (typeof m.imdb_rating==="number" && m.imdb_rating>0) ? m.imdb_rating : null;
+// ---- Ratings we can stand behind (CAS-156) -------------------------------------
+// An IMDb score is a crowd average, and a crowd of eight is not a crowd. Jellyfish carried a headline 9.4 off
+// 8 votes — above The Godfather Part II's 9.0 off 1.49 million — and its real score has since settled to ~8.8.
+// Showing the raw number treats those two as the same kind of fact, which is exactly the misleading signal the
+// honesty guardrail exists to stop. Below the bar we hold the rating back rather than dress it up: the card
+// says "-" (the same thing it says for a film nobody has rated yet) and explains why on the lozenge itself.
+const IMDB_MIN_VOTES = 1000;   // keep in step with IMDB_MIN_VOTES in poc_pipeline.py, which re-polls under it
+const imdbVotesOf = m => (typeof m.imdb_votes==="number" && m.imdb_votes>0) ? m.imdb_votes : null;
+const imdbReliable = m => (imdbVotesOf(m)||0) >= IMDB_MIN_VOTES;
+// The one accessor every ORDER reads, so the gate reaches the sorts for free: a title we won't show a number
+// for must not be ranked by that number either, or the obscure high-variance titles keep the top of the list.
+// A gated film lands where an unrated one does — bottom of its stage, anticipation breaking the tie — which is
+// honest, because "we don't trust this number yet" and "there is no number" are the same claim to the reader.
+const ratingOf = m => (typeof m.imdb_rating==="number" && m.imdb_rating>0 && imdbReliable(m)) ? m.imdb_rating : null;
 // Highest rating first. A film with no rating isn't a bad film, it's an unknown one, so it sits at the bottom
 // of its stage instead of being scored as a zero and buried under genuinely low-rated films. Among the
 // unrated (nearly all of Upcoming) anticipation is the only real signal there is, so it breaks the tie.
@@ -2553,7 +2570,7 @@ function sortMovies(a,b){
     case "popularity": return byPopularity(a,b);
     case "cinema": return (b.cinema_date||"").localeCompare(a.cinema_date||"");
     case "title": return a.title.localeCompare(b.title);
-    default: return (b.imdb_rating||0)-(a.imdb_rating||0);
+    default: return (ratingOf(b)||0)-(ratingOf(a)||0);   // CAS-156: the same vote gate as byRatingDesc
   }
 }
 // An un-released film has no rating, no box office and usually no budget — ranking it by a metric it doesn't
@@ -2593,7 +2610,10 @@ function stageDate(m, key){
 function ratingsHTML(m){
   // fixed slots, left-aligned; a missing metric shows "Label -" greyed (award only if present)
   const cell=(cls,label,val,has)=>`<div class="rb ${cls}${has?"":" muted"}">${label} <b>${has?val:"-"}</b></div>`;
-  const imdb  =cell("imdb","IMDb",  m.imdb_rating!=null?m.imdb_rating.toFixed(1):"", m.imdb_rating!=null);
+  // CAS-156: below the vote bar the score is withheld, not shrunk — but a bare "-" would read as "nobody has
+  // rated this", which is a different (and equally untrue) claim. So the gated lozenge is a button that says
+  // what it is actually waiting for, on tap as well as on hover.
+  const imdb  = imdbGate(m);
   const rt    =cell("rt","🍅",       m.rt_critic!=null?m.rt_critic+"%":"",           m.rt_critic!=null);
   // .mc, not .meta: the card's date/genre line is ALSO .meta and carries a 5px top margin, which was
   // silently pushing this one lozenge 2.5px below the rest of the row. Same collision as .pill was.
@@ -2639,6 +2659,25 @@ function scaleBadge(m){
     title="${esc(scaleWhy(m))}">${b.ico} <b>${b.label}</b></button></div>`;
 }
 window.showScale=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(scaleWhy(m)); };
+// ---- The IMDb lozenge, vote-gated (CAS-156) ------------------------------------
+// Three states, and they are three different claims, so they don't share a rendering:
+//   trusted   -> the number
+//   withheld  -> "-", plus a button explaining that the score exists but is riding on too few votes
+//   unrated   -> "-", because there genuinely is no score
+function imdbWhy(m){
+  const v=imdbVotesOf(m);
+  return `IMDb has ${m.imdb_rating.toFixed(1)} for this, but off ${v===1?"a single vote":v.toLocaleString()+" votes"} `
+       + `— under the ${IMDB_MIN_VOTES.toLocaleString()} we need before an average means much. A score that thin `
+       + `moves a long way as more people rate it, so we're holding it back rather than showing you a number `
+       + `we don't trust yet.`;
+}
+function imdbGate(m){
+  if(m.imdb_rating==null) return `<div class="rb imdb muted">IMDb <b>-</b></div>`;
+  if(imdbReliable(m))     return `<div class="rb imdb">IMDb <b>${m.imdb_rating.toFixed(1)}</b></div>`;
+  return `<button class="rb imdb muted" type="button" onclick="showImdbWhy(${m.tmdb_id})"
+    title="${esc(imdbWhy(m))}">IMDb <b>-</b></button>`;
+}
+window.showImdbWhy=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(imdbWhy(m)); };
 function cascadeHTML(m){
   const slots=["cinema","pvod","rental","included_streaming"];
   const cur=curSlot(m);

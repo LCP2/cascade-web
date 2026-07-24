@@ -87,6 +87,13 @@ CATALOGUE_TARGET = int(os.getenv("CATALOGUE_TARGET", str(MAX_TITLES)))
 TMDB_PACING      = float(os.getenv("TMDB_PACING", "0.05"))   # seconds between provider calls (~20/s)
 ONDEMAND_WM_CAP  = int(os.getenv("ONDEMAND_WM_CAP", str(ps.ONDEMAND_RESERVE)))  # Watchmode enrich/day ceiling
 OMDB_DAILY_BUDGET = int(os.getenv("OMDB_DAILY_BUDGET", "900"))  # OMDb ratings enrich/day (free tier ~1000/day)
+# CAS-156: a rating is only back-filled when a title has none, so the FIRST number OMDb ever returned was kept
+# for good. For an obscure title that first read lands while a handful of people have rated it, and it is wrong
+# almost immediately (Jellyfish: 9.4 off 8 votes, since settled to ~8.8). Titles under the vote bar are exactly
+# the ones whose score is still moving, so they get re-read — on their own small budget, so that back-filling
+# titles with NO rating at all keeps first claim on the free tier.
+IMDB_MIN_VOTES      = int(os.getenv("IMDB_MIN_VOTES", "1000"))   # keep in step with app_template.html
+OMDB_REFRESH_BUDGET = int(os.getenv("OMDB_REFRESH_BUDGET", "150"))
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +501,7 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     ondemand_set = {m["tmdb_id"] for m in sched["ondemand"]}
     provider_calls = wm_calls = omdb_calls = 0
     omdb_budget, wm_budget = OMDB_DAILY_BUDGET, ONDEMAND_WM_CAP
+    omdb_refresh = OMDB_REFRESH_BUDGET          # CAS-156: separate pot, so back-fill is never crowded out
 
     for m in catalogue:
         tier = ps.classify_tier(m, today)
@@ -519,9 +527,14 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
             m["last_polled"] = today.isoformat()
             m["availability_source"] = "tmdb_providers"
 
-            # OMDb back-fill for un-rated titles, bounded to stay under the free tier.
-            if not m.get("imdb_rating") and m.get("imdb_id") and omdb_budget > 0:
-                enrich_omdb(m); omdb_calls += 1; omdb_budget -= 1
+            # OMDb back-fill for un-rated titles, bounded to stay under the free tier — plus a bounded re-read
+            # of the thinly-voted (CAS-156), whose stored score is a first impression rather than a settled one.
+            if m.get("imdb_id"):
+                if not m.get("imdb_rating"):
+                    if omdb_budget > 0:
+                        enrich_omdb(m); omdb_calls += 1; omdb_budget -= 1
+                elif (m.get("imdb_votes") or 0) < IMDB_MIN_VOTES and omdb_refresh > 0:
+                    enrich_omdb(m); omdb_calls += 1; omdb_refresh -= 1
 
             # ON-DEMAND Watchmode enrichment: exact prices + deep-links for engaged titles only.
             if m["tmdb_id"] in ondemand_set and wm_budget > 0 and m.get("imdb_id"):
