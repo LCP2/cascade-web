@@ -3655,10 +3655,16 @@ const CASCADE_TEMPLATES_SOON = [
 
 // A film with no IMDb score isn't a bad film — it's an unknown one (13 of them here, mostly unreleased).
 // It rides along at "All", and drops out the moment you raise the bar, unless you take the escape hatch.
+// CAS-171: ratingOf(), not m.imdb_rating. CAS-156 gated the DISPLAY at IMDB_MIN_VOTES but left the filters
+// reading the raw number, so a bar was matching scores the card then refused to print: at 8.2 you got
+// Skategoat (8.6 off 26 votes) and Jellyfish (9.4 off 8) back as "IMDb –" cards. A bar you can't see the
+// film clear is not a bar. Below the floor a film is unrated, exactly as CAS-156 says on the card, so it
+// takes the unrated path here too and includeUnrated is what decides it — one rule, one accessor.
 function ratingOK(m, min, includeUnrated){          // declared, not const — passes() is defined above this
   if(!min) return true;
-  if(!m.imdb_rating) return !!includeUnrated;
-  return m.imdb_rating >= min;
+  const r=ratingOf(m);
+  if(r==null) return !!includeUnrated;
+  return r >= min;
 }
 // Mirrors passes() for exactly the fields a Cascade owns — so the CTA's count is the number you get.
 // ignoreBlocked: My List asks "which Cascades would be watching this?" of films you've BLOCKED — and the
@@ -3678,7 +3684,12 @@ const ageOpen = c => !(c.age||[]).length || c.age.length===AGE_LEVELS.length;
 const critScore = m => (m.metacritic!=null ? m.metacritic : (m.rt_critic ? m.rt_critic : null));
 function selCrowdOK(m,c){
   const min=c.selCrowd||0; if(!min) return true;
-  return m.imdb_rating ? m.imdb_rating>=min : false;   // a crowd bar is a score, and an unrated film has none
+  // CAS-171: the People's vote dial is a claim about what a crowd thought, so it has to read the gated score.
+  // 22 of the 62 titles at 8.2+ carried fewer than IMDB_MIN_VOTES votes — a third of the results were films
+  // whose own card wouldn't show the number that got them there. ratingOf() is null below the floor, and a
+  // crowd bar is a score, so an unrated film has none and doesn't clear it.
+  const r=ratingOf(m);
+  return r!=null && r>=min;
 }
 function selCriticsOK(m,c){
   const s=c.selCritics||0; if(!s) return true;
