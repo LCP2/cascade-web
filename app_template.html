@@ -881,6 +881,14 @@
   .osprog{flex:1;height:6px;border-radius:999px;background:#20263a;overflow:hidden}
   .osprog i{display:block;height:100%;border-radius:999px;background:var(--grad);transition:width .4s ease}
   .oslast{font-size:10.5px;font-weight:700;letter-spacing:.06em;color:var(--accenttext);flex:0 0 auto}
+  /* CAS-164: the CTA's count, mirrored at the top of the page. The button sits at the bottom of a screen you
+     may be scrolled away from while you work the controls — so the number that tells you whether you are
+     narrowing too far was only visible once you had stopped narrowing. Same wording as the button's suffix,
+     so the two read as one statement; the count itself is one shared value, not two computations. */
+  .oscount{display:inline-flex;align-items:baseline;gap:6px;margin:0 0 14px;padding:6px 12px;border-radius:999px;
+    background:rgba(124,92,255,.10);border:1px solid rgba(124,92,255,.34);
+    font-size:12.5px;font-weight:600;color:var(--dim)}
+  .oscount b{font-family:var(--font-display);font-size:16px;font-weight:800;color:var(--ink)}
   .osh{font-family:var(--font-display);font-size:20px;font-weight:700;margin:0 0 6px;color:var(--ink)}
   .ossub{color:var(--dim);font-size:13px;line-height:1.5;margin:0 0 12px}   /* CAS-130 size / CAS-138 tighten */
   .osagent{display:flex;gap:9px;background:rgba(124,92,255,.08);border:1px solid rgba(124,92,255,.42);
@@ -5957,14 +5965,37 @@ function tbWorldHTML(){
   return `<span class="cnt">${n} film${n===1?"":"s"}</span> in your world${
     n===SHOWABLE_N ? " — the whole catalogue" : ` · of ${SHOWABLE_N}`}.`;
 }
-function tbPaintCount(){ const el=$("tbWorld"); if(el) el.innerHTML=tbWorldHTML(); }
+// CAS-164: the same sentence, wherever it is printed — the page's own count above the rows, and one inside
+// each row's panel. Opening Genres drops 19 chips below the fold, so the count that tells you what you are
+// doing to your world was out of sight exactly while you were changing it. All copies are painted from one
+// call, off one tasteBaseCount(), which is also what the Done button counts.
+function tbPaintCount(){
+  const html=tbWorldHTML();
+  document.querySelectorAll(".tbworld").forEach(el=>{ el.innerHTML=html; });
+}
 // CAS-159: a step's CTA may be a function, the same way its progress already may be — so a screen whose
 // button carries a live number computes it at paint time instead of being frozen at whatever it said when
 // the step object was declared. Both paint paths (first render and every refresh) go through here.
-function stepCtaText(step){
+// CAS-164: and now there are TWO places that print it — the button and the mirror at the top of the page —
+// so the number gets ONE source. stepCount() is it; the button and the header both read the value it
+// returns on the same paint, which is the only way "equal at all times" can be a property of the code
+// rather than a thing to remember. A step whose cta is a fixed STRING states no count, and returns null.
+function stepCount(step){
+  if(!step || typeof step.cta==="string") return null;
+  return (typeof step.count==="function") ? step.count() : onbCount();
+}
+function stepCtaText(step, n){
   const c = step && step.cta;
-  if(typeof c==="function") return c();
-  return c || `Continue${ctaCount(onbCount())}`;
+  if(typeof c==="string") return c;
+  if(n===undefined) n = stepCount(step);
+  return `${(step && step.ctaLabel) || "Continue"}${ctaCount(n)}`;
+}
+// The mirror itself. Same wording as the button's suffix so the two read as one statement, not two claims.
+// Steps that already open with a count of their own (the hub's big number, the baseline's "in your world"
+// line) opt out with topCount:false rather than printing a second one.
+function stepCountHTML(step, n){
+  if(n==null || step.topCount===false) return "";
+  return `<div class="oscount" id="onbStepCount" aria-live="polite"><b>${n}</b> film${n===1?"":"s"} match right now</div>`;
 }
 function yearFloor(i){ const y=YEAR_STOPS[i].years; return y==null ? null : (+CURRENT_YEAR)-(y-1); }
 function onbYearsApply(){
@@ -6161,7 +6192,10 @@ function drawTasteRows(){
         <span class="rmid"><span class="rlabel">${r.label}</span><span class="rval">${esc(r.sum())}</span></span>
         <span class="chev">▶</span>
       </button>
-      <div class="tbpanel"><div class="tbbody"></div></div>
+      <div class="tbpanel">
+        <p class="ossumline tbworld tbrowcount">${tbWorldHTML()}</p>
+        <div class="tbbody"></div>
+      </div>
     </div>`).join("");
   if(tbOpen){
     const row=wrap.querySelector(`.tbrow[data-row="${tbOpen}"]`);
@@ -6292,6 +6326,7 @@ const SHARP_STEPS = {
     progress(){ return 50 + (onbDone.bar?10:0) + (onbDone.taste?10:0) + (onbDone.watch?10:0); },
     noAgent: true,
     hub: true,          // the frame hides its footer: this screen builds its own CTA, and has no skip
+    topCount: false,    // CAS-164: it opens ON the count — osbignum below IS the mirror
     body(){
       const a=hubAgent(), n=onbCount();
       const done=onbDone, keys=HUB_DOOR_KEYS;
@@ -6351,7 +6386,9 @@ const SHARP_STEPS = {
     progress: 70,
     noAgent: true,
     noSkip: true,       // inside the hub's door — Done confirms it, Back leaves it alone
-    cta(){ return "Done"+ctaCount(tasteBaseCount()); },   // CAS-159: live, like the bar's "Continue · N films"
+    ctaLabel: "Done",                                     // CAS-159: live, like the bar's "Continue · N films"
+    count: () => tasteBaseCount(),                        // CAS-164: the baseline counts its own world
+    topCount: false,                                      // ...and already prints it, as tbWorld below
     // CAS-159: the count sits ABOVE the rows, not under them like the bar page's summary line. Opening the
     // Genres row pushes 19 chips down the page, and a count living below that is a count you cannot see
     // while you are changing the very thing it measures. Up here it also finishes the subtitle's sentence:
@@ -6374,7 +6411,7 @@ const SHARP_STEPS = {
     progress: 70,
     noAgent: true,
     noSkip: true,       // inside the hub's door — Done confirms it, Back leaves it alone
-    cta(){ return "Done"+ctaCount(onbCount()); },
+    ctaLabel: "Done",
     body(){
       // Both strings are VERBATIM from the ticket and are deliberately written on one source line each: wrapped
       // in the source they wrap in the built index.html too, and a wrapped string is not the string that was
@@ -6552,16 +6589,18 @@ function renderOnbStep(key){
   // half the point of the hub (progress you can see).
   const prog = typeof step.progress==="function" ? step.progress() : step.progress;
   const last = prog>=100;
+  const n = stepCount(step);            // CAS-164: one number, read by the mirror and the button below
   $("onbStepInner").innerHTML = `
     <div class="ostop">
       <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
       <div class="osprog"><i style="width:${prog}%"></i></div>
       ${last?`<span class="oslast">LAST ONE</span>`:""}
     </div>
+    ${stepCountHTML(step, n)}
     ${step.body()}
     ${step.noAgent ? "" : `<div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>`}
     ${step.hub ? "" : `<div class="osfoot">
-      <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${stepCtaText(step)}</button>
+      <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${stepCtaText(step, n)}</button>
       ${step.noSkip ? "" : `<button class="osskip" type="button" onclick="onbStepSkip()">${step.skip || "Skip — I'll set this up later"}</button>`}
     </div>`}`;
   if(step.wire) step.wire();
@@ -6569,7 +6608,12 @@ function renderOnbStep(key){
 function onbRefresh(){
   const s=$("onbStepSum"); if(s) s.innerHTML=onbSummary();
   const step=SHARP_STEPS[onbStepKey];
-  const b=$("onbStepCta"); if(b) b.textContent = stepCtaText(step);
+  // CAS-164: count once, then hand the SAME value to both printers. Recomputing per printer is how the two
+  // drift apart on a slow paint, and "equal at all times" is the whole acceptance criterion here.
+  const n = stepCount(step);
+  const b=$("onbStepCta"); if(b) b.textContent = stepCtaText(step, n);
+  const top=$("onbStepCount");
+  if(top && n!=null) top.innerHTML = `<b>${n}</b> film${n===1?"":"s"} match right now`;
 }
 // #4 selectivity refresh (CAS-114): update the "What this does" line + count, and let onbRefresh update the
 // CTA count from the same live figure.
