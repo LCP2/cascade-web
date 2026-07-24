@@ -455,33 +455,18 @@
     transition:all .25s ease;max-width:420px;text-align:center;line-height:1.4}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   /* ---- My Cascades — coverflow deck (the chip row clipped once you had a few) ---- */
-  /* CAS-136: the deck STICKS under the header and collapses as you scroll into the listing, so switching
-     cascade never means scrolling back to the top — but it stops eating a third of the screen while you read.
-     --hdrh is measured from the real header by JS, because the header's height changes with its contents. */
+  /* CAS-136: the deck STICKS under the header, so switching cascade never means scrolling back to the top.
+     --hdrh is measured from the real header by JS, because the header's height changes with its contents.
+     CAS-172 reverses CAS-136's third point (Lee, 2026-07-24): the deck no longer collapses on scroll. It kept
+     its full form — name, the "N films right now · alerts on …" line, and the Edit/actions row — at every
+     scroll position. The whole `.cascbar.collapsed` block is gone rather than left unreferenced: a class no
+     code can apply is a trap for the next person who finds it and assumes the behaviour still exists.
+     The trade-off CAS-136 was written to avoid is now real and accepted: the strip holds its full height for
+     the whole listing. Nothing else about the sticky pin changed. */
   .cascbar{--dcw:206px;--dgap:12px;padding:11px 0 2px;
-    position:sticky;top:var(--hdrh,0px);z-index:20;background:var(--bg);
-    transition:padding .18s ease}
+    position:sticky;top:var(--hdrh,0px);z-index:20;background:var(--bg)}
   .casclbl{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:700;
     margin:0 12px 4px}
-  /* Collapsed: the slim bar. The card's icon, its sub-line and its action buttons all drop away and the
-     eyebrow and the New/All pair go with them — what's left is a single thin strip of cascade names, which
-     is the least that still answers "which one am I looking at, and what else is there?". */
-  .cascbar.collapsed{padding:2px 0 0;box-shadow:0 6px 16px -8px rgba(0,0,0,.7)}
-  .cascbar.collapsed .casclbl,
-  .cascbar.collapsed .sortbar,
-  .cascbar.collapsed #cascDetail,
-  .cascbar.collapsed .dc-icon,
-  /* .dc-sub and .dc-acts are turned ON by longer selectors (.dcard.is-centre .dc-sub,
-     .dcard.is-centre.is-active .dc-acts), so the collapsed rules have to out-specify those exact
-     selectors rather than the bare class, or the centred card keeps its sub-line and its buttons. */
-  .cascbar.collapsed .dcard.is-centre .dc-sub{display:none}
-  .cascbar.collapsed .dcard.is-centre.is-active .dc-acts,
-  .cascbar.collapsed .dcard.new.is-centre .dc-acts{display:none}
-  .cascbar.collapsed{--dcw:150px}
-  .cascbar.collapsed .deckstrip{padding:5px calc(50% - var(--dcw)/2) 6px}
-  .cascbar.collapsed .dcard{min-height:0}
-  .cascbar.collapsed .dc-in{padding:5px 10px;box-shadow:none}
-  .cascbar.collapsed .dc-name{margin-top:0;font-size:12px}
   /* CAS-136: the per-cascade search box the 🔍 on a card reveals. */
   .cascsearch{display:flex;align-items:center;gap:6px;margin:8px 12px 0;position:relative}
   .cascsearch[hidden]{display:none}   /* a bare [hidden] loses to the class rule above — restate it */
@@ -1480,10 +1465,7 @@
        entirely. It is NOT sticky: it should be impossible to miss on arrival, not permanently in the way. -->
   <div id="membTop"></div>
 
-  <!-- A 1px marker in normal flow, purely so the collapse can be measured. The cascade bar itself can't
-       answer "have I hit my sticky stop yet?" — once stuck, its own top IS the stop, for ever. 1px rather
-       than 0 because a zero-height box has no area for an IntersectionObserver to reason about. -->
-  <div id="cascAnchor" aria-hidden="true" style="height:1px"></div>
+  <!-- CAS-172: the 1px #cascAnchor marker that used to sit here is gone with the collapse it measured. -->
   <div class="cascbar" id="cascbar">
     <div class="casclbl" id="cascLbl">Cascades</div>
     <div class="deck">
@@ -4160,53 +4142,23 @@ let deckResizeT=null;
 addEventListener("resize",()=>{ clearTimeout(deckResizeT); deckResizeT=setTimeout(()=>{ deckCentre(deckIdx,false); deckPaint(); },140); });
 deckMotion.addEventListener("change",()=>{ deckCentre(deckIdx,false); deckPaint(); });
 
-// ---- CAS-136: the deck sticks under the header and collapses as you scroll -------------------------
-// Switching cascade shouldn't cost a scroll back to the top, but a full-height coverflow deck pinned there
-// would eat a third of the screen for the whole listing. So it pins AND collapses: past the point where it
-// meets the header, the cards drop their icon, their sub-line and their buttons and the row becomes a slim
-// strip of names.
+// ---- CAS-136: the deck sticks under the header ------------------------------------------------------
+// Switching cascade shouldn't cost a scroll back to the top, so the deck pins there.
+// CAS-172 (Lee, 2026-07-24) reverses CAS-136's third point: it no longer COLLAPSES as you scroll past it.
+// A card now keeps its name, its "N films right now · alerts on …" line and its Edit/actions row at every
+// scroll position, so every per-card action and New Cascade stay reachable without scrolling back up. The
+// cost CAS-136 was avoiding is now accepted deliberately: the strip holds its full height for the whole
+// listing. Everything that existed only to decide WHEN to collapse is gone with it — the scroll listener,
+// the IntersectionObserver, and the zero-height #cascAnchor marker they both watched. Dead machinery that
+// still runs on every scroll frame is worse than no machinery: it costs the same and explains nothing.
 const phoneHeader = document.querySelector("header");
 // The header's height is not a constant — its contents change — so it is measured rather than assumed, and
-// published as --hdrh for the sticky offset to read.
+// published as --hdrh for the sticky offset to read. Still needed: the pin is what survived.
 function syncHeaderHeight(){
   if(phoneHeader) document.documentElement.style.setProperty("--hdrh", phoneHeader.offsetHeight+"px");
 }
-// The bar's own position is useless for this: once it is stuck, its top IS the header's bottom, for ever, so
-// it could never decide to un-collapse — and offsetTop is no help either, because a stuck element reports the
-// stuck position, not the layout one. So we watch a zero-height marker sitting in normal flow just above it:
-// when THAT has scrolled up past the header, the bar has reached its stop.
-let collapseRaf=0;
-function syncCascCollapse(){
-  const bar=$("cascbar"), anc=$("cascAnchor"); if(!bar||!anc||!phoneHeader) return;
-  const was=bar.classList.contains("collapsed");
-  // 6px of hysteresis so a scroll that comes to rest exactly on the line can't flutter between the two.
-  const top=anc.getBoundingClientRect().top, stop=phoneHeader.offsetHeight;
-  // CAS-150: never collapsed at rest. With the membership banner gone (setup done) there is nothing between
-  // the header and the bar, so the marker sits ON the line at scroll 0 and the bar collapsed before the page
-  // had been touched — taking the cascade's controls and the sort with it, and those are now the only
-  // controls there are. Collapsing is a thing that happens when you scroll; at the top, it is the full bar.
-  const now = window.scrollY>0 && (was ? top<=stop+6 : top<=stop);
-  if(now===was) return;
-  bar.classList.toggle("collapsed", now);
-  // Collapsing changes the card WIDTH, which moves the snap points out from under the current scroll offset
-  // — same reason the rail flip re-centres (CAS-102).
-  deckCentre(deckIdx,false); deckPaint();
-}
-addEventListener("scroll",()=>{ if(collapseRaf) return;
-  collapseRaf=requestAnimationFrame(()=>{ collapseRaf=0; syncCascCollapse(); }); },{passive:true});
-// An observer as well as the scroll listener, and not as a belt-and-braces: the marker can cross the line
-// WITHOUT a scroll — the membership banner above it disappears the moment setup completes, and the whole page
-// moves up under a stationary finger. A scroll listener never hears about that; this does.
-let cascIO=null;
-function armCascObserver(){
-  if(cascIO){ cascIO.disconnect(); cascIO=null; }
-  const anc=$("cascAnchor"); if(!anc||!phoneHeader||!("IntersectionObserver" in window)) return;
-  cascIO=new IntersectionObserver(()=>syncCascCollapse(),
-    {rootMargin:`-${phoneHeader.offsetHeight}px 0px 0px 0px`, threshold:[0,1]});
-  cascIO.observe(anc);
-}
-addEventListener("resize",()=>{ syncHeaderHeight(); armCascObserver(); syncCascCollapse(); });
-syncHeaderHeight(); armCascObserver();
+addEventListener("resize",syncHeaderHeight);
+syncHeaderHeight();
 
 // ---- CAS-136: per-cascade search ------------------------------------------------------------------
 // Search belongs to the cascade you are reading, so it is remembered per cascade: leave a term in one, go
