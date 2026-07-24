@@ -2211,7 +2211,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.7.0", "major": 0, "minor": 7, "patch": 0, "build": 99, "commit": "e9187c8", "builtAt": "2026-07-24T10:11:10Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.7.0", "major": 0, "minor": 7, "patch": 0, "build": 100, "commit": "6681c15", "builtAt": "2026-07-24T10:15:09Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -2707,7 +2707,8 @@ function ratingsHTML(m){
 // don't hold gets named, and no number is invented to fill a gap.
 const TENT_BADGE = {
   anticipated:{ico:"🚀", label:"Anticipated", why:()=>`in the top ${ANTICIPATED_TOP}% of upcoming titles for anticipation`},
-  blockbuster:{ico:"💥", label:"Blockbuster", why:()=>`in the top ${BLOCKBUSTER_TOP}% of the catalogue for popularity right now`},
+  blockbuster:{ico:"💥", label:"Blockbuster", why:()=>`in the top ${BLOCKBUSTER_TOP}% of the catalogue for popularity right now, `
+    + `on a $${BIG_BUDGET/1e6}M+ budget or $${BLOCKBUSTER_GROSS/1e6}M+ worldwide`},
   bigbudget:  {ico:"💰", label:"Big budget",  why:()=>`made for $${BIG_BUDGET/1e6}M or more`},
   landmark:   {ico:"🏛️", label:"Landmark",    why:()=>`award-winning, acclaimed by the critics, and made at scale`},
 };
@@ -3419,6 +3420,11 @@ const budgetBandCount = i => MOVIES.filter(m=>budgetOK(m,i,false)).length;
 const ANTICIPATED_TOP = 20;    // top N% of UPCOMING titles by popularity
 const BLOCKBUSTER_TOP = 15;    // top N% of the whole catalogue by popularity
 const BIG_BUDGET      = 120e6; // the "Huge" band — the same $120M line the budget slider draws
+// CAS-169: what a blockbuster ACTUALLY took, as the other half of the badge. Budget alone can't carry it —
+// Obsession was made for $750k and grossed $443M, and no reading of the word excludes it — so the tier asks
+// for money spent OR money taken. $150M worldwide sits at roughly the 85th percentile of the 776 titles that
+// report a gross, which is the same "top slice" claim the budget line makes from the other end.
+const BLOCKBUSTER_GROSS = 150e6;
 const LANDMARK_RT = 85, LANDMARK_META = 75;   // "high critics" = either one clears its bar
 
 const isUpcoming = m => m.status.includes("upcoming");
@@ -3438,7 +3444,16 @@ const bigBudget    = m => (m.budget||0) >= BIG_BUDGET;
 const hiCritics    = m => (m.rt_critic||0) >= LANDMARK_RT || (m.metacritic||0) >= LANDMARK_META;
 const hiPop        = m => popOf(m) >= BLOCKBUSTER_BAR;
 const isAnticipated= m => isUpcoming(m) && popOf(m) >= ANTICIPATED_BAR;
-const isBlockbuster= m => !isUpcoming(m) && hiPop(m);
+// CAS-169: "Blockbuster" was popularity and nothing else, so it said nothing about the film's scale — the
+// one thing the word means. TMDB popularity spikes on release whether or not anyone shows up, so Saccharine
+// (no budget, no gross, 186 IMDb votes) wore the same badge as Avatar, and any Must-see-style filter made
+// every result trip it. The tier now needs the money to back the word: a big spend OR a big take, since
+// either one alone is a real blockbuster (Obsession: $750k made, $443M taken). A title that clears the
+// popularity bar with neither drops out of the taxonomy rather than borrowing a claim we can't evidence.
+// This also settles the collision with the Budget dial's "Blockbuster" notch: both now mean a big-money
+// film, so "Any size" (which filters nothing) no longer looks contradicted by the badge underneath it.
+const bigMoney     = m => (m.budget||0) >= BIG_BUDGET || (m.worldwide_gross||0) >= BLOCKBUSTER_GROSS;
+const isBlockbuster= m => !isUpcoming(m) && hiPop(m) && bigMoney(m);
 // Landmark = acclaim AND an award AND scale. Not "a Blockbuster that's also good": TMDB popularity is this
 // week's buzz and it decays, so Oppenheimer and Dune: Part Two sit nowhere near the blockbuster bar despite
 // being exactly what this tier is for. Budget-or-popularity is the scale test, and either one satisfies it.
@@ -4781,8 +4796,10 @@ function syncScale(){
       <i>or</i> ${LANDMARK_META}+ Metacritic), <i>and</i> has the scale to match — a $${BIG_BUDGET/1e6}M+ budget or
       top-${BLOCKBUSTER_TOP}% popularity. It outranks the other tiers, so a Landmark is badged Landmark and
       nothing else.`,
-    blockbuster: `Already released, and in the top ${BLOCKBUSTER_TOP}% of the whole catalogue for TMDB
-      popularity (${BLOCKBUSTER_BAR.toFixed(0)}+) — the films everybody is watching right now.`,
+    blockbuster: `Already released, in the top ${BLOCKBUSTER_TOP}% of the whole catalogue for TMDB
+      popularity (${BLOCKBUSTER_BAR.toFixed(0)}+), <i>and</i> big enough to earn the word — a
+      $${BIG_BUDGET/1e6}M+ budget or $${BLOCKBUSTER_GROSS/1e6}M+ taken worldwide. Popularity alone spikes on
+      release whether or not anyone turns up, so on its own it says nothing about scale.`,
     anticipated: `Not out yet, and in the top ${ANTICIPATED_TOP}% of the ${POP_UPCOMING.length} upcoming titles
       for popularity (${ANTICIPATED_BAR.toFixed(0)}+). Ranked against the other upcoming films, not against
       released ones: a film that opened two years ago has had two years to build a following.`,
