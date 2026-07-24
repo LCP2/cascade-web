@@ -968,8 +968,20 @@
   .membhero .cancel svg{flex:0 0 auto}
   .membreassure{color:var(--faint);font-size:11.5px;line-height:1.5;margin:12px 2px 16px;text-align:center}
   .membcta{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
-    font-size:16px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 10px 30px rgba(124,92,255,.32)}
+    font-size:16px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 10px 30px rgba(124,92,255,.32);
+    display:flex;align-items:center;justify-content:center;gap:9px;
+    transition:transform .09s ease, filter .09s ease}
   .membcta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+  /* CAS-167: the tap has to answer inside ~100ms or it reads as a dead button. :active is the only
+     feedback the browser can give before script runs, so it carries the first frame; .busy then holds
+     the state for however long the listing build takes. Pointer events are off while busy so a second
+     tap cannot re-enter (the JS guard is the real defence, this just stops the ripple). */
+  .membcta:active{transform:scale(.985);filter:brightness(.94)}
+  .membcta.busy{cursor:progress;pointer-events:none;filter:saturate(.85) brightness(.92)}
+  .membcta .btnspin{flex:0 0 auto;width:16px;height:16px;border-radius:50%;
+    border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:btnspin .7s linear infinite}
+  @keyframes btnspin{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){ .membcta .btnspin{animation-duration:2.4s} .membcta:active{transform:none} }
   .membeyebrow{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--faint);text-transform:uppercase;margin:22px 2px 12px}
   .memben{display:flex;gap:13px;align-items:flex-start;margin-bottom:16px}
   .memben .ic{flex:0 0 auto;width:40px;height:40px;border-radius:11px;background:#0E1320;border:1px solid var(--line);
@@ -6676,9 +6688,40 @@ function closeMembership(){ $("membScreen").classList.remove("open"); document.b
 // Starting the free month goes straight to the #12 listing with the finish-setup bar (CAS-121) — no invite,
 // no learn step. In the real flow the sharpened agent is already committed; on the ?step=membership preview we
 // seed one so the listing has cards. Prototype — no real charge is ever made.
+// CAS-167: the tap used to do all of this inline, and the whole listing is built synchronously — ~160 cards
+// and 18k DOM nodes, 23ms of blocked main thread on a desktop and several seconds of it on Lee's phone. The
+// button had no state of its own, so for that whole stretch the screen was frozen on an un-pressed button:
+// it reads as a dead tap, and the natural response is to tap again. Nothing here is async and there is no
+// backend call (CAS-81–87 not needed), so the fix is ordering, not offloading: paint the busy state FIRST,
+// then let the build block. The double rAF is the guarantee — one frame to apply the class, one to be sure
+// the compositor has shown it — because a plain setTimeout(0) can still run before the paint.
+// membStarting is the double-tap guard; it also survives the work throwing, via the finally.
+let membStarting=false;
 window.membStart=()=>{
+  if(membStarting) return;              // second tap while the listing builds — ignore, don't queue
+  membStarting=true;
+  const btn=document.querySelector(".membcta");
+  if(btn){
+    btn.disabled=true; btn.classList.add("busy"); btn.setAttribute("aria-busy","true");
+    btn.innerHTML=`<span class="btnspin"></span>Starting your free month…`;
+  }
   logEvent("membership_start");
-  closeMembership();
+  // The membership screen stays up until the listing is ready, so the spinner is what the user watches
+  // instead of a half-built page. closeMembership() is the last thing, once there is something to reveal.
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    try{ membStartWork(); }
+    finally{
+      membStarting=false;
+      // If the work threw before closeMembership(), the screen is still up — hand the button back rather
+      // than leaving a spinner that can never resolve.
+      if($("membScreen").classList.contains("open") && btn){
+        btn.disabled=false; btn.classList.remove("busy"); btn.removeAttribute("aria-busy");
+        btn.textContent="Start my free month";
+      }
+    }
+  }));
+};
+function membStartWork(){
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
   if(!cascades.length){
     const s=STARTERS.find(x=>x.key==="streaming");   // CAS-143: the R5 presets replaced watch_tonight
@@ -6687,7 +6730,8 @@ window.membStart=()=>{
   showSetupBar=true;
   showFoundList();
   render();
-};
+  closeMembership();
+}
 // ================= Membership setup — persistent bar + setup sheet (CAS-121 / mock: 12-listing-and-setup.html) =================
 // Adds ONLY the surrounding chrome: a sticky "Complete your membership setup" bar at the top of the listing
 // and a setup sheet for services + alerts. The production CAS-100 card is never touched — the listing still
