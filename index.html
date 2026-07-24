@@ -2206,7 +2206,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.7.0", "major": 0, "minor": 7, "patch": 0, "build": 106, "commit": "a8f759d", "builtAt": "2026-07-24T10:39:20Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.7.0", "major": 0, "minor": 7, "patch": 0, "build": 107, "commit": "ac2ba6d", "builtAt": "2026-07-24T11:24:34Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3737,7 +3737,14 @@ function selBuzzOK(m,c){
   // No popularity figure = no claim either way, and a buzz bar can only judge what carries the signal —
   // same rule the score dials follow.
   if(!(typeof m.popularity==="number" && m.popularity >= BUZZ_CUTS[s])) return false;
-  return s < BUZZ_CORROBORATE_FROM || imdbReliable(m);
+  // CAS-173: an unreleased film is exempt from the votes floor. IMDb votes are a record of people who have
+  // already watched, so a film that has not opened yet cannot have them — Spider-Man: Brand New Day carries
+  // pop 100.3 and a $275M budget on 0 votes. Asking an unreleased title for an audience is asking it for
+  // something that cannot exist, and the floor was quietly emptying the cinema rail of Blockbuster Buzz
+  // (2 → 0 films) while leaving the streaming ones alone. For a film with no audience yet, anticipation and
+  // scale ARE the honest signals. The hole CAS-168 closed stays closed: Saccharine and Forgive Us All are
+  // released titles, so they still have to clear the votes floor like everything else that has come out.
+  return s < BUZZ_CORROBORATE_FROM || imdbReliable(m) || isUpcoming(m);
 }
 function matchesCriteria(m,c,ignoreBlocked){
   // CAS-170: before taste, before anything — an agent can only put a film in front of you if there is a film
