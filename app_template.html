@@ -1097,6 +1097,10 @@
   .ossumline b{color:var(--ink);font-weight:700}
   .ossumline .cnt{color:var(--green);font-weight:800}
   /* ---- Taste baseline accordion (CAS-146 / r5-prototype screenTaste) ---- */
+  /* CAS-159: the live "N films in your world" line. Same .ossumline family (and the same green .cnt) as the
+     bar page's live count, so the two onboarding screens state their number the same way; it just leads the
+     rows here instead of trailing them. */
+  .tbworld{margin:2px 2px 14px}
   .tbrows{display:flex;flex-direction:column;gap:11px;margin-top:4px}
   .tbrow{background:var(--panel2);border:1px solid var(--line);border-radius:14px;overflow:hidden;
     transition:border-color .22s,background .22s}
@@ -5685,6 +5689,24 @@ function passesTasteBase(m){
   if(ages.length<AGE_LEVELS.length && !ages.includes(m.age_rating)) return false;
   return true;
 }
+// CAS-159: how big that world actually is, right now. It runs the very predicate matchesCriteria applies to
+// every agent, so the number on the page and the narrowing it describes cannot drift apart — and all four
+// dimensions are counted together, which is the whole point: the rows compound, they don't each stand alone.
+const tasteBaseCount = () => MOVIES.filter(passesTasteBase).length;
+function tbWorldHTML(){
+  const n=tasteBaseCount();
+  return `<span class="cnt">${n} film${n===1?"":"s"}</span> in your world${
+    n===MOVIES.length ? " — the whole catalogue" : ` · of ${MOVIES.length}`}.`;
+}
+function tbPaintCount(){ const el=$("tbWorld"); if(el) el.innerHTML=tbWorldHTML(); }
+// CAS-159: a step's CTA may be a function, the same way its progress already may be — so a screen whose
+// button carries a live number computes it at paint time instead of being frozen at whatever it said when
+// the step object was declared. Both paint paths (first render and every refresh) go through here.
+function stepCtaText(step){
+  const c = step && step.cta;
+  if(typeof c==="function") return c();
+  return c || `Continue${ctaCount(onbCount())}`;
+}
 function yearFloor(i){ const y=YEAR_STOPS[i].years; return y==null ? null : (+CURRENT_YEAR)-(y-1); }
 function onbYearsApply(){
   const fl=yearFloor(onbFlow.yearStop!=null?onbFlow.yearStop:YEAR_DEFAULT);
@@ -5887,13 +5909,13 @@ function drawTasteRows(){
     const body=row.querySelector(".tbbody");
     TB_BODIES[tbOpen](body, ()=>{
       row.querySelector(".rval").textContent=(TB_ROWS.find(r=>r.key===tbOpen).sum)();
-      saveTasteBase(); onbRefresh();
+      saveTasteBase(); onbRefresh(); tbPaintCount();   // CAS-159: live, mid-accordion, on every change
       const p=row.querySelector(".tbpanel"); p.style.maxHeight=p.scrollHeight+60+"px";
     });
     const p=row.querySelector(".tbpanel");
     requestAnimationFrame(()=>{ p.style.maxHeight=p.scrollHeight+40+"px"; });
   }
-  onbRefresh();
+  onbRefresh(); tbPaintCount();   // CAS-159: also on open/close and on first draw, so it is right on load
 }
 const TB_BODIES = {
   genres(b, upd){
@@ -6072,10 +6094,15 @@ const SHARP_STEPS = {
     progress: 70,
     noAgent: true,
     noSkip: true,       // inside the hub's door — Done confirms it, Back leaves it alone
-    cta: "Done",
+    cta(){ return "Done"+ctaCount(tasteBaseCount()); },   // CAS-159: live, like the bar's "Continue · N films"
+    // CAS-159: the count sits ABOVE the rows, not under them like the bar page's summary line. Opening the
+    // Genres row pushes 19 chips down the page, and a count living below that is a count you cannot see
+    // while you are changing the very thing it measures. Up here it also finishes the subtitle's sentence:
+    // "The world your agents search." / "1,461 films in your world."
     body(){
       return `<h2 class="osh">Your taste baseline</h2>
         <p class="ossub">The world your agents search. Tap a row to change it — one opens at a time.</p>
+        <p class="ossumline tbworld" id="tbWorld">${tbWorldHTML()}</p>
         <div class="tbrows" id="tbRows"></div>
         <div class="tbfoot"><span class="dotg"></span>Set once — every agent inherits it</div>`;
     },
@@ -6256,7 +6283,7 @@ function renderOnbStep(key){
     ${step.body()}
     ${step.noAgent ? "" : `<div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>`}
     ${step.hub ? "" : `<div class="osfoot">
-      <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${step.cta || `Continue${ctaCount(onbCount())}`}</button>
+      <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${stepCtaText(step)}</button>
       ${step.noSkip ? "" : `<button class="osskip" type="button" onclick="onbStepSkip()">${step.skip || "Skip — I'll set this up later"}</button>`}
     </div>`}`;
   if(step.wire) step.wire();
@@ -6264,7 +6291,7 @@ function renderOnbStep(key){
 function onbRefresh(){
   const s=$("onbStepSum"); if(s) s.innerHTML=onbSummary();
   const step=SHARP_STEPS[onbStepKey];
-  const b=$("onbStepCta"); if(b) b.textContent = (step && step.cta) ? step.cta : `Continue${ctaCount(onbCount())}`;
+  const b=$("onbStepCta"); if(b) b.textContent = stepCtaText(step);
 }
 // #4 selectivity refresh (CAS-114): update the "What this does" line + count, and let onbRefresh update the
 // CTA count from the same live figure.
