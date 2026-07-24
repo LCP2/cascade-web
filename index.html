@@ -1835,30 +1835,39 @@ function escA(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").repl
 // ESTIMATED: it has never been polled, and the pipeline has worked its window out from how long ago it opened
 // in cinemas — an educated guess, with no offers and no price attached to it, ever.
 const isEstimated = m => m.availability_confidence==="estimated";
-// The window the pipeline estimated, kept safe before deriveStatus() overwrites m.status below.
+// The window the pipeline worked out, kept safe before deriveStatus() overwrites m.status below.
 MOVIES.forEach(m=>{ m.claimedStatus=(m.status||[]).slice(); });
 function deriveStatus(m){
+  // CAS-155: the pipeline's own `status` is the AUTHORITY on which window a film is in. This function may
+  // sharpen it from priced offers (that is how the poll sim, and a real Watchmode read, move a film along the
+  // ladder) but it may never INVENT a window the data denies. It used to: a `tmdb_providers` title arrives
+  // with real rent/buy offers carrying `price: null`, every price-based rule below therefore found nothing,
+  // and the closing fallback declared the film "in cinemas" on the strength of nothing but an old opening
+  // date. That mislabelled 257 of 1954 titles — every rental/pvod record in the catalogue — while the data
+  // said `rental`, which is how a film that dropped to rent in July 2026 was filed under In Cinema.
+  const claimed = CASCADE.filter(x=>m.claimedStatus.includes(x));
   // An estimated title has no offers to read, so there is nothing here to derive FROM: falling through to the
   // rules below would read "released, but no offers" as "in cinemas", and for a film that opened two years ago
   // that is simply false. Take the window the pipeline estimated — it is at least reasoned from the real
   // cinema date, and the card says out loud that it's an estimate.
-  if(isEstimated(m) && m.claimedStatus.length) return CASCADE.filter(x=>m.claimedStatus.includes(x));
+  if(isEstimated(m) && claimed.length) return claimed;
   const o = m.offers||[]; const s = new Set();
   const hasSub = o.some(x=>x.type==="sub"||x.type==="free");
   const rents = o.filter(x=>x.type==="rent"&&x.price!=null).map(x=>x.price);
   const buys  = o.filter(x=>x.type==="buy"&&x.price!=null).map(x=>x.price);
   const cheapestRent = rents.length?Math.min(...rents):null;
   const dearestBuy   = buys.length?Math.max(...buys):null;
+  const cd = m.cinema_date;
   // _simReleased: the daily-poll sim has advanced this upcoming film into cinemas. Nothing else sets it —
-  // the catalogue's own dates are never rewritten.
-  const cd = m.cinema_date, released = (cd && cd<=TODAY) || !!m._simReleased;
-  if(!o.length && released){
-    if(cd >= addDays(TODAY,-OPENING_WEEK_DAYS)) s.add("opening_week"); else s.add("in_cinema");
-  }
+  // the catalogue's own dates are never rewritten. It is the one thing allowed to put a film on the big screen
+  // that the data doesn't have there, because it has explicitly just moved it and announces the move.
+  if(m._simReleased) s.add(cd && cd >= addDays(TODAY,-OPENING_WEEK_DAYS) ? "opening_week" : "in_cinema");
   if(!hasSub && ((dearestBuy!=null&&dearestBuy>=PVOD_MIN)||(cheapestRent!=null&&cheapestRent>=PVOD_MIN))) s.add("pvod");
   if(cheapestRent!=null && cheapestRent<=RENTAL_MAX) s.add("rental");
   if(hasSub) s.add("included_streaming");
-  if(s.size===0) s.add(released?"in_cinema":"upcoming");
+  // Nothing readable in the offers. Defer to the pipeline rather than guessing from the calendar; only a film
+  // the data says nothing at all about falls back to the date, and that one is genuinely all we have.
+  if(s.size===0) return claimed.length ? claimed : [(cd && cd<=TODAY) ? "in_cinema" : "upcoming"];
   return CASCADE.filter(x=>s.has(x));
 }
 const primaryStatus = m => m.status[m.status.length-1];
@@ -2122,7 +2131,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 83, "commit": "79af995", "builtAt": "2026-07-24T02:58:00Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 84, "commit": "f2523dc", "builtAt": "2026-07-24T03:01:37Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
