@@ -47,6 +47,20 @@
     --selink:#cfc2ff;
   }
   *{box-sizing:border-box}
+  /* ---- THE UI SCALE LEVER (CAS-157) -------------------------------------------
+     The app is sized in fixed px throughout (98 font-size declarations, no rem/em), so bumping the root
+     font-size does nothing — nothing inherits from it. `zoom` on the root is the one knob that does: it
+     scales type, controls, spacing, borders and media together, in a single place, without touching a
+     single one of those 98 rules.
+     TO RETUNE THE WHOLE UI, CHANGE THIS ONE NUMBER. 1 = the old size; 1.12 is ~12% larger.
+     zoom (not transform:scale) because scale takes the element out of layout flow — it would leave the
+     page's own scroll height at the unscaled size and shear every position:fixed overlay. Modern zoom
+     is layout-affecting and divides the viewport for its subtree, so 100vh and inset:0 still resolve to
+     the real viewport: the splash, the reveal, the sticky header and the sticky footer all stay put.
+     Verified at 360/390/430px across splash, pick-agent, get-selective, set-your-bar, taste-baseline,
+     reveal and the listing — see CAS-157. */
+  :root{ --ui-scale:1.12 }
+  html{ zoom:var(--ui-scale) }
   body{margin:0;background:var(--bg);color:var(--ink);font-size:16px;
     font-family:var(--font-body);-webkit-font-smoothing:antialiased}
   /* CAS-130 readability scale: the shared secondary/body text classes below are lifted together
@@ -838,10 +852,15 @@
      Built self-contained and previewable in isolation (?step=<name>) until Lee wires the sequence. One
      shared full-screen frame — top bar (back + progress + LAST ONE), heading, control, live agent-voice
      summary, and a footer that carries the real running count. Chips/slider reuse the app's live controls. */
-  .sharpstep{position:fixed;inset:0;z-index:82;display:none;flex-direction:column;padding:22px 20px 20px;
+  .sharpstep{position:fixed;inset:0;z-index:82;display:none;flex-direction:column;padding:28px 20px 24px;
     overflow-y:auto;background:radial-gradient(120% 45% at 50% 0%,#141b30 0%,var(--bg) 42%,#080b14 100%)}
   .sharpstep.open{display:flex}
-  .osinner{width:100%;max-width:360px;margin:auto;display:flex;flex-direction:column;min-height:0;
+  /* CAS-157: `margin:auto` centred this block vertically, which on a sparse step (Get selective is the worst)
+     left a fat band of nothing above AND below and made the screen read as underfilled — the thing that
+     compounds the "everything is too small" impression. Top-aligned instead: the back/progress bar belongs at
+     the top of the screen, the heading reads where the eye already is, and the slack collects at the bottom
+     where it looks like room rather than a mistake. Horizontal centring (the auto side margins) is kept. */
+  .osinner{width:100%;max-width:360px;margin:0 auto;display:flex;flex-direction:column;min-height:0;
     animation:splashIn .4s ease both}
   @media (prefers-reduced-motion:reduce){ .osinner{animation:none} }
   .ostop{display:flex;align-items:center;gap:11px;margin-bottom:20px}
