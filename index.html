@@ -2157,7 +2157,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 87, "commit": "603be71", "builtAt": "2026-07-24T03:13:01Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.5.0", "major": 0, "minor": 5, "patch": 0, "build": 88, "commit": "8dd9fde", "builtAt": "2026-07-24T03:19:07Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5286,6 +5286,7 @@ window.pickStarter=key=>{
   onbFlow.scaleStop   = s.crit.selScale||0;
   onbFlow.buzzStop    = s.crit.selBuzz||0;
   onbFlow.selOr = false;   // AND, per buildspec §1 (reverses the earlier OR default on CAS-114)
+  onbFlow.barTouched=false; onbFlow.barAutoRelaxed=null;   // CAS-158: a new agent gets its own first open
   // The #4 selectivity dials own the crowd/critics/scale bars from here on, defaulting fully open, so zero the
   // pick's own IMDb bar — otherwise its preset would mask the People's-vote dial. Same supersede rule the
   // genres/age steps already follow: the sharpening screen is the single source for the axis it owns.
@@ -5566,7 +5567,54 @@ const voteSay = v => v<VOTE_OFF ? null : `scored ${v.toFixed(1)}+ by viewers`;
 
 const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME, yearStop:null,
                  langsOn:new Set(["en"]), ageStop:AGE_LEVELS.length-1,
-                 voteVal:VOTE_MIN, criticsStop:0, scaleStop:0, buzzStop:0, selOr:false};   // #4 dials (CAS-114/145)
+                 voteVal:VOTE_MIN, criticsStop:0, scaleStop:0, buzzStop:0, selOr:false,   // #4 dials (CAS-114/145)
+                 barTouched:false, barAutoRelaxed:null};   // CAS-158 first-open state
+
+// ---- First-open auto-relax of the bar (CAS-158) ---------------------------------------------------------
+// A preset can open on a bar its own channel can barely fill — Awesome Movies for Rent lands on 36, the cinema
+// agent lower still — and a first impression that thin reads as "this thing found nothing" rather than "you
+// asked for a lot". So on FIRST open we loosen the dials until the channel yields a decent haul.
+// Three rules keep it honest:
+//   · only ever LOOSEN. An agent whose defaults already clear the target is left exactly as it is.
+//   · stop at the FIRST notch that clears the target — never loosen past it, or the agent stops being itself.
+//   · never fabricate. If the channel cannot reach the target even wide open, we stop at wide open and show
+//     whatever is really there. The target is "40 or all there are".
+const MIN_INITIAL_MATCHES = 40;
+// Least-defining first, so the agent keeps its character as long as possible. `primary` is already the
+// agent's own ordering — it is what the bar screen puts up front vs behind "More controls" — so the secondary
+// dials go first, then the primary ones in reverse, leaving the agent's top-priority dial for last.
+function barRelaxOrder(){
+  const a=hubAgent();
+  const primary=(a && a.primary) || ["vote","crit"];
+  const rest=["vote","crit","scale","buzz"].filter(k=>!primary.includes(k));
+  return [...rest, ...primary.slice().reverse()];
+}
+const DIAL_STOP_KEY = {crit:"criticsStop", scale:"scaleStop", buzz:"buzzStop"};
+// The People's-vote dial is continuous, so its "notch" is the next marker DOWN the face of it — the same
+// 8.2/7.5/7.0/6.0 rungs the user can see and tap. Below the lowest it goes to Any.
+function barCanRelax(k){
+  return k==="vote" ? onbFlow.voteVal>=VOTE_OFF : (onbFlow[DIAL_STOP_KEY[k]]||0)>0;
+}
+function barRelaxOne(k){
+  if(k!=="vote"){ onbFlow[DIAL_STOP_KEY[k]] = Math.max(0, (onbFlow[DIAL_STOP_KEY[k]]||0)-1); return; }
+  const below = VOTE_REF.map(r=>r[0]).filter(v=>v < onbFlow.voteVal-1e-9);
+  onbFlow.voteVal = below.length ? below[below.length-1] : VOTE_MIN;
+}
+const barDialSnapshot = () => ({vote:onbFlow.voteVal, crit:onbFlow.criticsStop||0,
+                                scale:onbFlow.scaleStop||0, buzz:onbFlow.buzzStop||0});
+function autoRelaxBar(){
+  if(onbFlow.barTouched || onbFlow.barAutoRelaxed) return;   // first open only, and the user owns it after
+  const from=barDialSnapshot(), start=onbCount();
+  if(start>=MIN_INITIAL_MATCHES){ onbFlow.barAutoRelaxed={moved:false, from, to:from, count:start}; return; }
+  for(const k of barRelaxOrder()){
+    while(onbCount()<MIN_INITIAL_MATCHES && barCanRelax(k)) barRelaxOne(k);
+    if(onbCount()>=MIN_INITIAL_MATCHES) break;
+  }
+  const to=barDialSnapshot(), count=onbCount();
+  onbFlow.barAutoRelaxed={moved:true, from, to, count, capped:count<MIN_INITIAL_MATCHES};
+  logEvent("bar_auto_relaxed",{agent:(hubAgent()||{}).key||null, from, to, was:start, now:count,
+                               target:MIN_INITIAL_MATCHES, capped:count<MIN_INITIAL_MATCHES});
+}
 function onbApply(){
   const d=onbFlow.draft;
   // CAS-146: genres / how-far-back / language / age moved OUT of the per-agent draft and into the
@@ -5780,7 +5828,7 @@ function paintDial(card, fillPct, litFn, onFn){
 function wireDials(){
   const vote=$("onbDialVote");
   if(vote) vote.oninput=()=>{
-    const v=+vote.value; onbFlow.voteVal=v;
+    const v=+vote.value; onbFlow.voteVal=v; onbFlow.barTouched=true;   // CAS-158: from here the bar is theirs
     const card=vote.closest(".osdial");
     paintDial(card, votePos(v), i=>v>=VOTE_REF[i][0], i=>v>=VOTE_REF[i][0]);
     const read=$("onbVoteVal"); if(read) read.textContent=voteReadout(v);
@@ -5790,7 +5838,7 @@ function wireDials(){
     const r=$("onbDial_"+k); if(!r) return;
     const d=DIAL_DEFS[k], max=d.stops.length-1;
     r.oninput=()=>{
-      const v=+r.value; onbFlow[d.key]=v;
+      const v=+r.value; onbFlow[d.key]=v; onbFlow.barTouched=true;   // CAS-158: from here the bar is theirs
       paintDial(r.closest(".osdial"), v/max*100, i=>i<=v, i=>i===v);
       selRefresh();
     };
@@ -6232,9 +6280,10 @@ function openOnbStep(key, agentKey){
   onbFlow.draft=onbSeedDraft(); onbFlow.genresOn=new Set(ONB_GENRES); onbFlow.name=ONB_DEFAULT_NAME;
   onbFlow.yearStop=YEAR_DEFAULT; onbFlow.langsOn=new Set(["en"]); onbFlow.ageStop=AGE_LEVELS.length-1;
   onbFlow.voteVal=VOTE_MIN; onbFlow.criticsStop=0; onbFlow.scaleStop=0; onbFlow.buzzStop=0; onbFlow.selOr=false;   // dials open
+  onbFlow.barTouched=false; onbFlow.barAutoRelaxed=null;   // CAS-158: a fresh preview is a fresh first open
   // The selectivity page opens on the whole catalogue by design, so its preview must not inherit the seed's
   // above-average bar — the dials are the only crowd bar here.
-  if(key==="selectivity") onbFlow.draft.imdb=0;
+  if(key==="selectivity"){ onbFlow.draft.imdb=0; autoRelaxBar(); }
   const picked = agentKey && STARTERS.find(x=>x.key===agentKey);
   if(picked){ onbFlow.name=picked.name; onbFlow.draft.icon=picked.icon; }   // default name follows the pick
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
@@ -6327,6 +6376,10 @@ window.onbOpenDoor=key=>{
   const steps=HUB_DOORS[key]; if(!steps) return;
   logEvent("onbhub_door",{key, wired:onbSeqIndex>=0});
   onbDoor=key; onbDoorIdx=0;
+  // CAS-158: loosen the dials BEFORE the first paint of the bar, so the arrival state's sliders and its
+  // "Continue · N films" are the adjusted ones — no flash of the thin number, and no disagreement between
+  // where the dials sit and what the count says.
+  if(key==="bar") autoRelaxBar();
   renderOnbStep(steps[0]);
 };
 // Confirming the last screen of a door is what marks it done — and arms the one-time pulse that plays when
