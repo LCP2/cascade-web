@@ -2563,6 +2563,7 @@ function statusOK(m){
 }
 function passes(m){
   const id=m.tmdb_id;
+  if(!showable(m)) return false;                 // CAS-170: no offer and not upcoming = nothing to show
   if(!ignoreTagged && taggedOut(m)) return false;
   // Scoped per window: a Rent-scoped Cascade filters rental films by your stores, and leaves cinema alone.
   if(!ignoreScope && servicesPicked() && scopedFor(primaryStatus(m)) && !matchesServices(m)) return false;
@@ -3428,6 +3429,21 @@ const BLOCKBUSTER_GROSS = 150e6;
 const LANDMARK_RT = 85, LANDMARK_META = 75;   // "high critics" = either one clears its bar
 
 const isUpcoming = m => m.status.includes("upcoming");
+// ---- Availability we can stand behind (CAS-170) ---------------------------------
+// A result is a claim that you can go and watch this film, so it has to be backed by something real. Two
+// things qualify, and nothing else does: a CONFIRMED read with at least one actual offer on it, or a film
+// that hasn't come out yet and says so. What was slipping through is the third case — an ESTIMATED title,
+// never polled, its window worked out from how long ago it opened, with zero offers behind it. Saccharine
+// is the example: "included_streaming" on no offer from any service. The "≈ estimate" line was honest about
+// its own uncertainty, but a listing is not the place to be uncertain about whether a film exists to watch,
+// and 913 of 1,954 titles were sitting in exactly that state.
+// Upcoming is deliberately untouched — an unreleased film promises nothing about today, so there is nothing
+// to overclaim, and the Upcoming/Anticipated rail is the one place an estimate is the honest answer.
+const hasConfirmedOffer = m => !isEstimated(m) && (m.offers||[]).length>0;
+const showable = m => isUpcoming(m) || hasConfirmedOffer(m);
+// The real size of the catalogue as far as any user is concerned. Every "of N" on the page counts this, not
+// MOVIES.length, or the denominator would promise films no screen can ever reach.
+const SHOWABLE_N = MOVIES.filter(showable).length;
 const popOf = m => m.popularity||0;
 const POP_UPCOMING = MOVIES.filter(isUpcoming).map(popOf).sort((a,b)=>a-b);
 const POP_ALL      = MOVIES.map(popOf).sort((a,b)=>a-b);
@@ -3711,6 +3727,10 @@ function selBuzzOK(m,c){
   return s < BUZZ_CORROBORATE_FROM || imdbReliable(m);
 }
 function matchesCriteria(m,c,ignoreBlocked){
+  // CAS-170: before taste, before anything — an agent can only put a film in front of you if there is a film
+  // to watch. This sits here rather than in passes() alone so every derived number (card counts, hub counts,
+  // the reveal, Found-list membership via matchesTaste) is drawn from the same set the listing draws.
+  if(!showable(m)) return false;
   // CAS-146: the account-level taste baseline is inherited by every agent and applied first — it is the
   // world they all search, so an agent can narrow inside it but never reach outside it.
   if(!passesTasteBase(m)) return false;
@@ -4014,7 +4034,7 @@ function deckSync(shown){
       // catalogue total, which is true from wherever you're standing. And never an alert promise: All is a
       // view, not a standing watch, and saying otherwise would be an alert we'd never send.
       const live=on;   // CAS-150: one list, so All's card always speaks for the list it draws
-      const n=live?shown:MOVIES.length;
+      const n=live?shown:SHOWABLE_N;             // CAS-170: the catalogue you can actually reach
       el.classList.toggle("is-active",on);
       el.querySelector(".dc-sub").textContent=
         `${n} film${n===1?"":"s"} ${live?"right now":"in the catalogue"} · a view, not a watch — it never alerts you`;
@@ -5920,11 +5940,11 @@ function passesTasteBase(m){
 // CAS-159: how big that world actually is, right now. It runs the very predicate matchesCriteria applies to
 // every agent, so the number on the page and the narrowing it describes cannot drift apart — and all four
 // dimensions are counted together, which is the whole point: the rows compound, they don't each stand alone.
-const tasteBaseCount = () => MOVIES.filter(passesTasteBase).length;
+const tasteBaseCount = () => MOVIES.filter(m=>showable(m) && passesTasteBase(m)).length;   // CAS-170
 function tbWorldHTML(){
   const n=tasteBaseCount();
   return `<span class="cnt">${n} film${n===1?"":"s"}</span> in your world${
-    n===MOVIES.length ? " — the whole catalogue" : ` · of ${MOVIES.length}`}.`;
+    n===SHOWABLE_N ? " — the whole catalogue" : ` · of ${SHOWABLE_N}`}.`;
 }
 function tbPaintCount(){ const el=$("tbWorld"); if(el) el.innerHTML=tbWorldHTML(); }
 // CAS-159: a step's CTA may be a function, the same way its progress already may be — so a screen whose
