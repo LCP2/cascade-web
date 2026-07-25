@@ -1233,7 +1233,12 @@
      longer a property of the preset — it is the third door below, which the user sets. */
   .osbignum{font-family:var(--font-display);font-weight:800;font-size:44px;line-height:1;letter-spacing:-.02em;
     background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;margin:14px 2px 0}
-  .osbigl{color:var(--dim);font-size:12.5px;margin:4px 2px 14px}
+  .osbigl{color:var(--dim);font-size:12.5px;margin:4px 2px 0}
+  /* CAS-175: the funnel line — the pool the big number came out of, in the same words the taste-baseline
+     screen uses, so the two counts read as one narrowing rather than as two competing claims. Plain text,
+     never a box: it is a statement, not something to tap (buildspec §8). */
+  .osfunnel{color:var(--faint);font-size:11.5px;margin:3px 2px 14px}
+  .osfunnel b{color:var(--dim);font-weight:700}
   /* The doors. "Boxes = tappable" (buildspec §8): these ARE the interactive things on the page, so they get
      the box; the framing line above them is plain text and never does. */
   .osdoor{display:flex;align-items:center;gap:13px;width:100%;text-align:left;cursor:pointer;
@@ -2275,7 +2280,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.7.2", "major": 0, "minor": 7, "patch": 2, "build": 111, "commit": "bd472d8", "builtAt": "2026-07-25T00:10:09Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.7.2", "major": 0, "minor": 7, "patch": 2, "build": 112, "commit": "ac6141b", "builtAt": "2026-07-25T00:21:08Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5526,7 +5531,10 @@ window.pickStarter=key=>{
   // The #4 selectivity dials own the crowd/critics/scale bars from here on, defaulting fully open, so zero the
   // pick's own IMDb bar — otherwise its preset would mask the People's-vote dial. Same supersede rule the
   // genres/age steps already follow: the sharpening screen is the single source for the axis it owns.
-  onbFlow.draft.imdb = 0;
+  // CAS-175: and its ratingStop with it — that field is the same bar said a second way (the editor's rating
+  // slider and the agent-voice "above average+" clause both read it), so leaving it at the preset's rung
+  // kept a promise on screen that the zeroed bar no longer keeps.
+  onbFlow.draft.imdb = 0; onbFlow.draft.ratingStop = 0;
   $("shortlist").classList.remove("open");
   startSharpSequence();
 };
@@ -6116,10 +6124,31 @@ function passesTasteBase(m){
 // every agent, so the number on the page and the narrowing it describes cannot drift apart — and all four
 // dimensions are counted together, which is the whole point: the rows compound, they don't each stand alone.
 const tasteBaseCount = () => MOVIES.filter(m=>showable(m) && passesTasteBase(m)).length;   // CAS-170
+// ---- The funnel, from one source (CAS-175) --------------------------------------
+// The two screens were each telling the truth and still reading as a contradiction, because neither of
+// them mentioned the other's number: the baseline said "764 in your world · of 1041", the hub said
+// "5 films found for you right now", and nothing on either page said that the second is what is left of
+// the first. So both now print the SAME pair, off one call, in the same words.
+// Both numbers already stand on the same basis and nest by construction, not by coincidence:
+// matchesCriteria applies passesTasteBase before it looks at anything else, and every count on either
+// screen runs through it — so Get Selective narrows INSIDE the baseline and can never exceed it. (Checked
+// across 25 baseline × bar combinations: no case where the narrower number is the larger one.)
+//   all  — the films there is anything to watch at all (SHOWABLE_N, the denominator both screens quote)
+//   base — those of them your taste baseline admits: the world your agents search
+//   now  — what THIS agent is left watching once its bar and its windows are applied
+// `now` is null before an agent draft exists (the baseline is reachable on its own, with no agent to
+// narrow anything) — and a null number is simply not printed rather than printed as a zero.
+const onbFunnel = () => ({all:SHOWABLE_N, base:tasteBaseCount(),
+                          now:onbFlow.draft ? onbCount() : null});
 function tbWorldHTML(){
-  const n=tasteBaseCount();
-  return `<span class="cnt">${n} film${n===1?"":"s"}</span> in your world${
-    n===SHOWABLE_N ? " — the whole catalogue" : ` · of ${SHOWABLE_N}`}.`;
+  const f=onbFunnel();
+  const world=`<span class="cnt">${f.base} film${f.base===1?"":"s"}</span> in your world${
+    f.base===f.all ? " — the whole catalogue" : ` · of ${f.all}`}.`;
+  // Only say it when the bar is actually taking something off: "brings that to 764" against 764 films
+  // would be a sentence describing nothing happening.
+  return (f.now!=null && f.now < f.base)
+    ? `${world} Your agent's bar brings that to <span class="cnt">${f.now}</span>.`
+    : world;
 }
 // CAS-164: the same sentence, wherever it is printed — the page's own count above the rows, and one inside
 // each row's panel. Opening Genres drops 19 chips below the fold, so the count that tells you what you are
@@ -6550,7 +6579,7 @@ const SHARP_STEPS = {
     hub: true,          // the frame hides its footer: this screen builds its own CTA, and has no skip
     topCount: false,    // CAS-164: it opens ON the count — osbignum below IS the mirror
     body(){
-      const a=hubAgent(), n=onbCount();
+      const a=hubAgent(), f=onbFunnel(), n=f.now;
       const done=onbDone, keys=HUB_DOOR_KEYS;
       const c=keys.filter(k=>done[k]).length, all=c===keys.length;
       // CAS-160: the locked channel badge that used to sit here is gone with the model it belonged to. It
@@ -6559,9 +6588,15 @@ const SHARP_STEPS = {
       const framing = a
         ? `<p class="ossub"><b>${esc(a.name)}</b> ${esc(a.frame)} Set the three below to lock it in.</p>`
         : `<p class="ossub">Set the three below to lock in what your agent brings you.</p>`;
+      // CAS-175: the big number in the context of the pool it came out of, so the two screens read as one
+      // funnel — your world, then what this agent's bar leaves of it — instead of two unrelated counts.
+      const funnel = n < f.base
+        ? `<div class="osfunnel">out of <b>${f.base}</b> in your taste baseline · of ${f.all}</div>`
+        : `<div class="osfunnel">your whole taste baseline · of ${f.all} — no bar set yet</div>`;
       return `<h2 class="osh">Get selective</h2>
         <div class="osbignum">${n}</div>
         <div class="osbigl">film${n===1?"":"s"} found for you right now</div>
+        ${funnel}
         ${framing}
         ${hubDoorHTML("🎚️","The bar",hubBarSummary(),"bar")}
         ${hubDoorHTML("🧬","Your taste baseline",hubTasteSummary(),"taste")}
@@ -6855,9 +6890,18 @@ function openOnbStep(key, agentKey){
   // CAS-160: seed the viewing box off whatever the seed draft already watches, so a ?step= preview round-trips
   // its own status rather than opening on "any window" and silently widening the draft through onbApply.
   onbFlow.watch = watchFromStatus(onbFlow.draft.status);
-  // The selectivity page opens on the whole catalogue by design, so its preview must not inherit the seed's
-  // above-average bar — the dials are the only crowd bar here.
-  if(key==="selectivity"){ onbFlow.draft.imdb=0; autoRelaxBar(); }
+  // The seed draft carries an "above average" IMDb bar of its own, and the sharpening flow's People's-vote
+  // dial is the single writer of that axis (same supersede rule genres/year/language/age already follow, and
+  // the same thing pickStarter does on the wired path). It used to be zeroed for the selectivity preview
+  // ALONE, which left every other previewed screen counting against a bar nothing on the page could show:
+  // the hub said 224 films while its own bar door said "No bar set — everything qualifies" and the taste
+  // baseline said 765. Three numbers, no way to reconcile them (CAS-175). Zeroed for every step now, so the
+  // only things between the baseline count and the hub count are controls the user can see.
+  // ratingStop is the same setting said a second way (it is what the editor's rating slider and the
+  // agent-voice clause read), so it has to go to zero with it — otherwise the summary keeps promising
+  // "above average+" for a bar that is no longer there, which is a claim nothing enforces.
+  onbFlow.draft.imdb=0; onbFlow.draft.ratingStop=0;
+  if(key==="selectivity") autoRelaxBar();
   const picked = agentKey && STARTERS.find(x=>x.key===agentKey);
   if(picked){ onbFlow.name=picked.name; onbFlow.draft.icon=picked.icon; }   // default name follows the pick
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
