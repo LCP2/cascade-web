@@ -45,6 +45,9 @@
        counts. Violet, not green: green is being kept for "films found", and a count on an agent card is a
        selection preview, not a haul. 9.4:1 on --panel. */
     --selink:#cfc2ff;
+    /* CAS-179 card v4: gold is the accolade/agent colour, and --band is the tint the availability
+       strip sits on so the coloured window lozenges read as their own band, not as more chips. */
+    --gold:#f5d675; --band:#171d2b;
   }
   *{box-sizing:border-box}
   /* ---- THE UI SCALE LEVER (CAS-157) -------------------------------------------
@@ -158,29 +161,55 @@
   .gdot.included_streaming{background:var(--green)} .gdot.upcoming{background:var(--grey)}
   .gcount{color:var(--faint);font-weight:700}
   .list{padding:0 10px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:13px 13px;margin-bottom:11px;
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;margin-bottom:11px;overflow:hidden;
     transition:box-shadow .3s ease,border-color .3s ease;
     /* CAS-129: windowing. The browser skips layout+paint for cards outside the viewport, so only the
        visible handful of the ~2,000-card catalogue actually renders; contain-intrinsic-size:auto
        remembers each card's real height once seen, keeping the scrollbar and offsets stable. */
     content-visibility:auto;contain-intrinsic-size:auto 320px}
   .card.expanded{border-color:#3a3560;box-shadow:0 8px 30px rgba(0,0,0,.55)}
-  .ctop{display:flex;gap:12px}
-  .poster{width:78px;height:112px;flex-shrink:0;border-radius:10px;background:var(--panel2) center/cover no-repeat;
+  /* CAS-179: the card is three bands now — the information body, the availability strip on its own
+     tint, and the footer that carries the price line and the controls — so the padding moved off
+     .card and onto each band. Only the middle band is allowed to carry window colour. */
+  .cbody{padding:13px}
+  .cfoot{padding:11px 13px 12px}
+  .cfoot>:first-child{margin-top:0}
+  /* The information body lays out on a GRID, which is what makes the alignments true rather than
+     eyeballed: the poster spans the title→scores rows, so its bottom edge lands exactly on the
+     scores row, and the gold scale badge shares the last row (and so a baseline) with the awards.
+     A film with no scale badge simply lets the poster span every row instead. */
+  .ctop{display:grid;grid-template-columns:94px minmax(0,1fr);column-gap:10px;row-gap:9px;
+    grid-template-areas:
+      "poster title"
+      "poster meta"
+      "poster syn"
+      "poster money"
+      "poster scores"
+      "badge  awards"}
+  .poster{grid-area:poster;width:94px;align-self:stretch;min-height:150px;border-radius:10px;
+    background:var(--panel2) center/cover no-repeat;position:relative;
     border:1px solid var(--line);cursor:pointer;transition:transform .25s ease}
+  .poster.pfull{grid-row:1/-1}
   .card.expanded .poster{transform:scale(1.03)}
-  .chead{flex:1;min-width:0}
-  .title{font-size:16.5px;font-weight:750;line-height:1.25;cursor:pointer}
+  /* The ▶ on the poster is a real link to the film's first trailer, and it is only drawn when there
+     IS one — a play button that plays nothing is a lie the size of a button. */
+  .pplay{position:absolute;left:6px;bottom:6px;width:26px;height:26px;border-radius:50%;
+    background:rgba(10,14,26,.72);border:1px solid rgba(255,255,255,.35);color:#fff;font-size:11px;
+    display:grid;place-items:center;text-decoration:none;line-height:1}
+  .pplay:hover{border-color:#fff}
+  .title{grid-area:title;font-size:16.5px;font-weight:750;line-height:1.25;cursor:pointer}
   .cert{display:inline-block;font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:5px;
     border:1px solid #5b6472;color:#d6dce6;background:#232a35;margin-left:6px;vertical-align:middle;letter-spacing:.3px;white-space:nowrap}
   .cert.mature{border-color:#c0563f;color:#ffb9a6;background:rgba(192,86,63,.16)}
-  .meta{font-size:13.5px;color:var(--dim);margin-top:7px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}   /* CAS-135/130: larger, more legible meta line */
+  /* CAS-179: no date on the top line any more — the film's dates are all in the availability strip,
+     where they belong to a window each. This line is what the film IS: its genres and its language. */
+  .metaline{grid-area:meta;font-size:13px;color:var(--dim);line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .culttag{color:var(--faint)}
-  .synopsis{font-size:14px;color:#c8d0da;line-height:1.5;margin:8px 0 0;
-    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .synopsis{grid-area:syn;font-size:14px;color:#c8d0da;line-height:1.5;margin:0;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .card.expanded .synopsis{-webkit-line-clamp:unset;display:block}
   .expand{max-height:0;opacity:0;overflow:hidden;transition:max-height .4s ease,opacity .3s ease}
-  .card.expanded .expand{max-height:460px;opacity:1;margin-top:12px}
+  .card.expanded .expand{max-height:560px;opacity:1;margin-top:12px}
   .exhead{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--faint);font-weight:700;margin-bottom:8px}
   .credits{margin-bottom:12px}
   .credit{font-size:12.5px;color:#c4ccd6;line-height:1.5}
@@ -206,13 +235,19 @@
     cursor:pointer;display:grid;place-items:center;line-height:0;color:#8b93a1;transition:.15s;padding:0}
   .actbtn svg{width:18px;height:18px;display:block}
   .actbtn:hover{color:var(--ink);border-color:#3a4150}
-  .actbtn.on{background:rgba(124,92,255,.2);border-color:var(--accent);color:#cfc2ff}
+  /* CAS-179: an active control on a card is GOLD — the same gold as the scale badge and the
+     accolades — so the card's only two colour systems are "where you can watch it" (the windows)
+     and "this is distinguished / this is on" (gold). */
+  .actbtn.on{background:rgba(245,214,117,.12);border-color:rgba(245,214,117,.5);color:var(--gold)}
   /* ---- provenance: who put this film on your Found list (CAS-67) ---- */
   /* The megaphone is the only icon on the card that answers a question about US as well as about the film,
      so it is the only one that carries two ON colours: PURPLE = one of your Cascades chose it, ORANGE = you
      did, by hand. Same mark, same place, two honest answers — and the same pair is used in the Found list and
      in the provenance sheet, so a colour never means one thing here and another thing there. */
-  .actbtn.on.auto{background:rgba(164,134,240,.2);border-color:var(--purple);color:#d8c9ff}
+  /* CAS-179 moves the agent's own pick from purple to GOLD. The pair is still two clearly different
+     hues AND two different words ("Agent Pick" / "My Pick"), which is what WCAG 1.4.1 actually asks
+     for — colour is never the only thing carrying the state. */
+  .actbtn.on.auto{background:rgba(245,214,117,.12);border-color:rgba(245,214,117,.5);color:var(--gold)}
   .actbtn.on.mine{background:rgba(240,163,54,.18);border-color:var(--amber);color:#ffd79a}
   /* Pick carries its state in WORDS as well as colour — "Pick" / "Agent Pick" / "My Pick" — because three
      states told apart by hue alone is exactly what WCAG 1.4.1 rules out. It is the only labelled control in
@@ -226,7 +261,7 @@
   .actbtn.on.liked{background:rgba(72,199,142,.18);border-color:var(--green);color:#a6e8c8}
   .actbtn.on.disliked{background:rgba(255,107,107,.16);border-color:var(--open);color:#ffbdbd}
   .actbtn.wtwbtn .chev{transition:transform .18s}
-  .actbtn.wtwbtn.open{background:rgba(124,92,255,.2);border-color:var(--accent);color:#cfc2ff}
+  .actbtn.wtwbtn.open{background:rgba(245,214,117,.12);border-color:rgba(245,214,117,.5);color:var(--gold)}
   .actbtn.wtwbtn.open .chev{transform:rotate(180deg)}
   .actbtn.wtwbtn.off{opacity:.35;cursor:not-allowed}
   /* ---- undo-collapse: a tagged film shrinks to one line, it never vanishes (CAS-64) ---- */
@@ -245,60 +280,88 @@
   .stubwhy{font-size:11.5px;font-weight:700;color:var(--dim);white-space:nowrap;flex-shrink:0}
   .actbtn.stubbtn{width:32px;height:28px;border-radius:9px;flex-shrink:0}
   .actbtn.stubbtn svg{width:16px;height:16px}
-  .ratings{margin-top:12px}
-  /* CAS-135: the availability/ratings ("AS") line is enlarged and given more breathing room between
-     badges so the iconography no longer clusters. */
-  .rrow{display:flex;gap:7px;align-items:center;overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none}
-  .rrow::-webkit-scrollbar{display:none}
-  .rb{flex-shrink:0;height:26px;font-size:11.5px;font-weight:700;padding:0 9px;border-radius:8px;display:flex;gap:4px;align-items:center;justify-content:flex-start;
-    background:var(--panel2);border:1px solid var(--line);white-space:nowrap;overflow:hidden}
-  /* content-sized so text never clips; a small min-width keeps the score lozenges balanced */
-  .rb.imdb,.rb.rt,.rb.mc{min-width:58px}
-  .rb.muted{color:var(--faint)}
-  .rb.muted b{color:var(--faint)}
-  /* CAS-156: a withheld rating is the one lozenge with something to explain, so it's a real button — a title=
-     on a phone is a tooltip nobody can reach (same lesson as the scale badge). Reset to look identical. */
-  button.rb{font-family:inherit;font-weight:700;cursor:pointer;-webkit-appearance:none;appearance:none}
-  button.rb:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  .rb b{font-size:12.5px}
-  .rb.imdb b{color:var(--imdb)} .rb.rt b{color:var(--rt)} .rb.mc b{color:var(--meta)} .rb.budget b{color:#c9a2ff} .rb.gross b{color:#9fe6c4}
-  /* Scale badge — its own row, directly under the description and above the ratings (CAS-64). It's a claim
-     ABOUT the film, not another metric alongside IMDb/RT, so it gets its own line. Gold, and it names the
+  /* ---- The information chips (CAS-179 / I7 + I9) --------------------------------
+     Money and scores sit on TWO wrap-safe rows instead of one scrolling strip: a row that scrolls
+     sideways hides the last figure on it, which on a 390px phone was always Gross. Both rows wrap,
+     so nothing is ever off-screen and nothing clips.
+     The palette rule: colour is reserved for the availability windows and for gold accolades. The
+     values themselves are near-white at weight 600 — legible, not shouting — the labels are faint,
+     and the only colour in the row is the 6px source dot that says which body the number came from.
+     A figure we don't hold reads "–" (and never "$–": there is no dollar sign on a number we lack). */
+  .mrow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;align-content:center;min-width:0}
+  .r-money{grid-area:money} .r-scores{grid-area:scores} .r-awards{grid-area:awards}
+  /* Sized so Budget and Gross sit side by side in the ~174px the right-hand column has on a 390px
+     phone. They still WRAP rather than clip if a figure runs long — a truncated dollar amount is a
+     wrong number, which is worse than a second line. */
+  .m{height:24px;display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;
+    padding:0 6px;border-radius:7px;border:1px solid var(--line);background:var(--panel2);
+    white-space:nowrap;color:var(--dim);max-width:100%;overflow:hidden}
+  .m .lab{color:var(--faint);font-weight:600;font-size:10px}
+  .m b{color:var(--ink);font-weight:600}
+  .m.muted b{color:var(--faint)}
+  .m .dot{width:6px;height:6px;border-radius:50%;flex:0 0 auto;opacity:.75}
+  .m .dot.imdb{background:var(--imdb)} .m .dot.rt{background:var(--rt)} .m .dot.meta{background:var(--meta)}
+  /* CAS-156: a withheld rating is the one chip with something to explain, so it stays a real button —
+     a title= on a phone is a tooltip nobody can reach. Reset so it looks identical to the rest. */
+  button.m{font-family:inherit;cursor:pointer;-webkit-appearance:none;appearance:none}
+  button.m:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* Accolades are the one thing on the card allowed to be gold. */
+  .m.osc{border-color:rgba(245,214,117,.4);color:#d9c9a0} .m.osc b{color:var(--gold);font-weight:700}
+  .m.awd b{color:#c7cede}
+  .awx{display:none;margin-top:11px;padding-top:10px;border-top:1px solid var(--line);flex-direction:column;gap:5px}
+  .card.expanded .awx{display:flex}
+  .awx .l{display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:var(--dim)}
+  .awx .l b{color:var(--ink);font-weight:700}
+  /* Scale badge — tucked UNDER the poster, sharing the last grid row (and so a baseline) with the
+     awards. It's a claim ABOUT the film, not another metric alongside IMDb/RT. Gold, and it names the
      exact tier the Cascade's Tentpole filter uses. Press it (or hover) for the signals behind it. */
-  .scalerow{display:flex;margin-top:10px}
-  .tentbadge{height:22px;font:inherit;font-size:10px;font-weight:700;padding:0 9px;border-radius:7px;
-    display:inline-flex;gap:4px;align-items:center;white-space:nowrap;cursor:pointer;
-    border:1px solid rgba(245,197,24,.5);background:rgba(245,197,24,.12);color:#f5d675}
-  .tentbadge b{font-size:11px;font-weight:800;color:#f5d675}
-  .tentbadge:hover{border-color:rgba(245,197,24,.85)}
+  .tentbadge{grid-area:badge;align-self:center;width:100%;height:24px;font:inherit;font-size:10.5px;font-weight:700;
+    padding:0 6px;border-radius:8px;display:inline-flex;gap:5px;align-items:center;justify-content:center;
+    white-space:nowrap;overflow:hidden;cursor:pointer;
+    border:1px solid rgba(245,214,117,.45);background:rgba(245,214,117,.10);color:var(--gold)}
+  .tentbadge b{font-size:11px;font-weight:800;color:var(--gold)}
+  .tentbadge:hover{border-color:rgba(245,214,117,.85)}
   .tentbadge:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-  .award-slot{display:flex;align-items:center;height:22px}
-  .award{font-size:15px;line-height:1;cursor:pointer;padding-left:1px}
-  /* cascade stepper — 4 slots: Cinema[Upcoming/Opening/Cinema] · Premium · Rent · Stream */
-  .cascade{position:relative;display:grid;grid-template-columns:repeat(4,1fr);margin-top:13px}
-  /* 13px = the centre of a 22px node that starts 2px down (.cstage padding-top) — the connector has to move
-     with the node height or it draws through the lozenges instead of behind them. */
-  .cascade::before{content:"";position:absolute;top:13px;left:12.5%;right:calc(100% - var(--cx, 87.5%));height:2px;background:var(--dim);z-index:0}
-  .cstage{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;text-align:center;padding-top:2px}
-  /* 22px tall + 7px radius: the same box as the ratings lozenges (.rb) — the stepper was 19px and read as a
-     different family of control. line-height (not flex) keeps the ellipsis working on a long label. */
-  .cnode{width:calc(100% - 8px);height:22px;font-size:9px;font-weight:800;letter-spacing:.2px;padding:0 4px;border-radius:7px;
-    border:1px solid var(--line);background:var(--panel2);color:var(--faint);line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .cstage.past .cnode{color:var(--dim)}
-  .cstage.future .cnode{opacity:.4}
-  .cstage.current.st-cin-upcoming .cnode{background:linear-gradient(0deg,rgba(107,114,128,.25),rgba(107,114,128,.25)),var(--panel2);border-color:var(--grey);color:#c8cfd9}
-  .cstage.current.st-cin-opening .cnode{background:linear-gradient(0deg,rgba(255,107,107,.2),rgba(255,107,107,.2)),var(--panel2);border-color:var(--open);color:#ffc2c2}
-  .cstage.current.st-cin-cinema .cnode{background:linear-gradient(0deg,rgba(240,163,54,.2),rgba(240,163,54,.2)),var(--panel2);border-color:var(--amber);color:#ffce8f}
-  .cstage.current.st-pvod .cnode{background:linear-gradient(0deg,rgba(164,134,240,.2),rgba(164,134,240,.2)),var(--panel2);border-color:var(--purple);color:#d3c2ff}
-  .cstage.current.st-rental .cnode{background:linear-gradient(0deg,rgba(90,169,240,.2),rgba(90,169,240,.2)),var(--panel2);border-color:var(--blue);color:#bcdcff}
-  .cstage.current.st-included_streaming .cnode{background:linear-gradient(0deg,rgba(72,199,142,.2),rgba(72,199,142,.2)),var(--panel2);border-color:var(--green);color:#a7eccb}
-  .cdate{font-size:8px;color:var(--faint);margin-top:3px;white-space:nowrap;line-height:1}
-  .cdate.est{font-style:italic;opacity:.75}
+  /* ---- The availability strip (CAS-179) -----------------------------------------
+     Four coloured window lozenges — Cinema[Upcoming/Opening/Cinema] · Premium · Rent · Stream —
+     JOINED by a connector line so the strip reads as one journey rather than four separate chips.
+     Current is filled, past is tinted (it happened), future is ghosted and the joiner into it dims
+     with it: what is ahead is a forecast, and it should not look like a fact. Each window carries
+     its date underneath, italic where the date is worked out rather than read from a listing. */
+  .bandw{background:var(--band);border-top:1px solid var(--line);padding:11px 13px}
+  /* 10px between lozenges, not the mock's 14 — the connector still reads, and the four columns have to
+     hold "Upcoming" and "Premium" whole at 360px wide. An ellipsised window name is a clipped fact. */
+  .avail{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .win{display:flex;flex-direction:column;gap:5px;min-width:0;position:relative}
+  .wpill{position:relative;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+    font-size:10px;font-weight:800;padding:0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    border:1px solid var(--line);background:var(--panel2);color:var(--faint)}
+  .win:not(:first-child) .wpill::before{content:"";position:absolute;left:-10px;width:10px;height:2px;
+    top:50%;transform:translateY(-50%);background:rgba(255,255,255,.28);z-index:0}
+  .wdate{text-align:center;font-size:10px;color:var(--faint);line-height:1;font-variant-numeric:tabular-nums;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wdate.est{font-style:italic;opacity:.75}
+  .win.on .wdate{color:var(--dim)}
+  .win.w-cin-upcoming.on .wpill{color:#c8cfd9;border-color:var(--grey);background:rgba(107,114,128,.25)}
+  .win.w-cin-opening.on .wpill{color:#ffc2c2;border-color:var(--open);background:rgba(255,107,107,.2)}
+  .win.w-cin-cinema.on .wpill{color:#ffce8f;border-color:rgba(240,163,54,.65);background:rgba(240,163,54,.18)}
+  .win.w-pvod.on .wpill{color:#d3c2ff;border-color:rgba(164,134,240,.65);background:rgba(164,134,240,.18)}
+  .win.w-rental.on .wpill{color:#bcdcff;border-color:rgba(90,169,240,.7);background:rgba(90,169,240,.18)}
+  .win.w-included_streaming.on .wpill{color:#a7eccb;border-color:rgba(72,199,142,.65);background:rgba(72,199,142,.2)}
+  .win.w-cin-upcoming.past .wpill{color:#c8cfd9;border-color:rgba(107,114,128,.45)}
+  .win.w-cin-opening.past .wpill{color:#f0b4b4;border-color:rgba(255,107,107,.32)}
+  .win.w-cin-cinema.past .wpill{color:#e0b483;border-color:rgba(240,163,54,.32)}
+  .win.w-pvod.past .wpill{color:#c3b3f0;border-color:rgba(164,134,240,.32)}
+  .win.w-rental.past .wpill{color:#9fc4ef;border-color:rgba(90,169,240,.32)}
+  .win.w-included_streaming.past .wpill{color:#8fd5b3;border-color:rgba(72,199,142,.32)}
+  .win.future .wpill{opacity:.42;border-style:dashed}
+  .win.future .wpill::before{background:rgba(255,255,255,.14)}
+  .win.future .wdate{opacity:.42}
   /* ---- Estimated availability (CAS-110) ----
-     A window Cascade has NOT confirmed must not be able to pass for one it has. The lit node loses its solid
-     border and its fill and goes dashed and grey — the same shape, visibly not the same claim — and the line
-     underneath says so in words. Colour alone would leave the difference invisible to anyone who can't see it. */
-  .cascade.est .cstage.current .cnode{background:var(--panel2)!important;border-style:dashed!important;
+     A window Cascade has NOT confirmed must not be able to pass for one it has. The lit lozenge loses its
+     fill and goes dashed and grey — the same shape, visibly not the same claim — and the line underneath
+     says so in words. Colour alone would leave the difference invisible to anyone who can't see it. */
+  .avail.est .win.on .wpill{background:var(--panel2)!important;border-style:dashed!important;
     border-color:var(--line)!important;color:var(--dim)!important}
   .estline{display:flex;align-items:center;gap:7px;margin-top:9px;padding:6px 10px;border-radius:9px;
     border:1px dashed var(--line);background:transparent;color:var(--dim);font-size:11.5px;font-weight:600;cursor:help}
@@ -2527,13 +2590,48 @@ $("simBtn").onclick=simulateDay;
 function money(n){ if(n==null)return "—";
   if(n>=1e9)return "$"+(n/1e9).toFixed(1)+"B"; if(n>=1e6)return "$"+(n/1e6).toFixed(0)+"M";
   if(n>=1e3)return "$"+(n/1e3).toFixed(0)+"K"; return "$"+n; }
-function awardIcon(m){
-  if(!m.award) return "";
-  const ico = m.award==="won" ? "🏆" : "🎖️";
-  return `<span class="award" onclick="showAward(${m.tmdb_id})" title="Tap for award details">${ico}</span>`;
+// ---- Accolades, read off the film's own award line (CAS-179 / I8) ---------------
+// The catalogue carries one free-text sentence per film — "Won 2 Oscars. 125 wins & 376 nominations
+// total" — and until now the card reduced all of that to a single 🏆 you had to tap. It now reads,
+// and only ever reports what the sentence actually says: an Oscar count ONLY when the words "Oscar"
+// appear, so a film "Nominated for 1 BAFTA Award" is never promoted to an Academy Award nomination.
+// The leading "Won N Oscar." / "Nominated for N BAFTA Award" clause is stripped before the totals are
+// read, because in the raw data that clause sometimes runs straight into the totals with no full stop.
+function parseAwards(t){
+  if(!t) return null;
+  const oscW=(t.match(/Won (\d+) Oscar/i)||[])[1];
+  const oscN=(t.match(/Nominated for (\d+) Oscar/i)||[])[1];
+  const tail=t.replace(/^(?:Won|Nominated for)\s+\d+\s+[A-Za-z ]*?(?:Oscars?|Awards?|Emmys?|BAFTA)\.?\s*/i,"");
+  const wins=(tail.match(/(\d+)\s+wins?\b/i)||[])[1];
+  const noms=(tail.match(/(\d+)\s+nominations?\b/i)||[])[1];
+  const a={oscW:oscW?+oscW:0, oscN:oscN?+oscN:0, wins:wins?+wins:null, noms:noms?+noms:null};
+  return (a.oscW||a.oscN||a.wins!=null||a.noms!=null) ? a : null;
 }
-window.showAward=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id);
-  toast(m && m.award_text ? m.award_text : (m&&m.award==="won"?"Academy Award winner":"Oscar-nominated")); };
+// Three chips at most, and the third only when there are wins beyond the Oscars already named — the
+// row is a summary, not a list. Which award, in which category, in which year, is a separate job.
+function awardChips(m){
+  const a=parseAwards(m.award_text);
+  if(!a) return "";
+  let c="";
+  if(a.oscW)      c+=`<span class="m osc">🏆 <b>${a.oscW}</b> Oscar${a.oscW>1?"s":""}</span>`;
+  else if(a.oscN) c+=`<span class="m awd">✦ <b>${a.oscN}</b> Oscar nom${a.oscN>1?"s":""}</span>`;
+  if((a.wins||0)>(a.oscW||0)) c+=`<span class="m awd">🏅 <b>${a.wins}</b> win${a.wins>1?"s":""}</span>`;
+  return c;
+}
+// The breakdown, on the opened card. Same numbers, said in full — nothing here that isn't in the
+// film's own award line.
+function awardsBreakdownHTML(m){
+  const a=parseAwards(m.award_text);
+  if(!a) return "";
+  const l=[];
+  if(a.oscW) l.push(`<div class="l">🏆 <span><b>${a.oscW}</b> Academy Award${a.oscW>1?"s":""} won</span></div>`);
+  if(a.oscN) l.push(`<div class="l">✦ <span>Nominated for <b>${a.oscN}</b> Academy Award${a.oscN>1?"s":""}</span></div>`);
+  if(a.wins!=null && a.noms!=null)
+    l.push(`<div class="l">🏅 <span><b>${a.wins}</b> win${a.wins>1?"s":""} &amp; <b>${a.noms}</b> nomination${a.noms>1?"s":""} across all bodies</span></div>`);
+  else if(a.wins!=null) l.push(`<div class="l">🏅 <span><b>${a.wins}</b> win${a.wins>1?"s":""} across all bodies</span></div>`);
+  else if(a.noms!=null) l.push(`<div class="l">✦ <span><b>${a.noms}</b> nomination${a.noms>1?"s":""} across all bodies</span></div>`);
+  return l.length ? `<div class="awx">${l.join("")}</div>` : "";
+}
 
 // A film is "tagged out" when you have said something about it — Liked, Disliked, or Not for me. It is the
 // only exclusion the list doesn't act on silently: instead of vanishing, the film collapses to a stub you can
@@ -2676,25 +2774,22 @@ function stageDate(m, key){
   if(!m.cinema_date) return null;
   return {d:addDays(m.cinema_date, EST_OFFSET[key]), est:true};                    // estimated
 }
-function ratingsHTML(m){
-  // fixed slots, left-aligned; a missing metric shows "Label -" greyed (award only if present)
-  const cell=(cls,label,val,has)=>`<div class="rb ${cls}${has?"":" muted"}">${label} <b>${has?val:"-"}</b></div>`;
-  // CAS-156: below the vote bar the score is withheld, not shrunk — but a bare "-" would read as "nobody has
-  // rated this", which is a different (and equally untrue) claim. So the gated lozenge is a button that says
+// Money on its own row, above the scores (CAS-179 / I7). A figure we don't hold is an en dash on its
+// own — "$–" would be a dollar sign attached to nothing.
+function moneyRowHTML(m){
+  const cell=(label,val,has)=>`<span class="m${has?"":" muted"}"><span class="lab">${label}</span> <b>${has?val:"–"}</b></span>`;
+  return cell("Budget", m.budget>0?money(m.budget):"", m.budget>0)
+       + cell("Gross",  m.worldwide_gross>0?money(m.worldwide_gross):"", m.worldwide_gross>0);
+}
+// The three scores, each with the small muted dot that says whose number it is.
+function scoresRowHTML(m){
+  const cell=(dot,label,val,has)=>`<span class="m${has?"":" muted"}"><span class="dot ${dot}"></span><span class="lab">${label}</span> <b>${has?val:"–"}</b></span>`;
+  // CAS-156: below the vote bar the score is withheld, not shrunk — but a bare "–" would read as "nobody has
+  // rated this", which is a different (and equally untrue) claim. So the gated chip is a button that says
   // what it is actually waiting for, on tap as well as on hover.
-  const imdb  = imdbGate(m);
-  const rt    =cell("rt","🍅",       m.rt_critic!=null?m.rt_critic+"%":"",           m.rt_critic!=null);
-  // .mc, not .meta: the card's date/genre line is ALSO .meta and carries a 5px top margin, which was
-  // silently pushing this one lozenge 2.5px below the rest of the row. Same collision as .pill was.
-  const meta  =cell("mc","Meta",    m.metacritic!=null?m.metacritic:"",             m.metacritic!=null);
-  // Budget is just a figure now — one style, always. Scale is said ONCE, by the scale badge on its own row
-  // above, using the same taxonomy the Cascade filter uses; recolouring the budget was a second, competing
-  // way to say it.
-  const budget=cell("budget","Budget", m.budget>0?money(m.budget):"", m.budget>0);
-  const gross =cell("gross","Gross",   m.worldwide_gross>0?money(m.worldwide_gross):"", m.worldwide_gross>0);
-  return `<div class="ratings">
-    <div class="rrow">${imdb}${rt}${meta}${budget}${gross}<div class="award-slot">${awardIcon(m)}</div></div>
-  </div>`;
+  return imdbGate(m)
+       + cell("rt",  "RT",   m.rt_critic!=null?m.rt_critic+"%":"", m.rt_critic!=null)
+       + cell("meta","Meta", m.metacritic!=null?m.metacritic:"",   m.metacritic!=null);
 }
 // ---- The scale badge -----------------------------------------------------------
 // One badge, on its own row under the description. The tooltip (hover) and the toast (tap — a title= on a
@@ -2725,8 +2820,8 @@ function scaleBadge(m){
   const kind=scaleTier(m);
   if(!kind) return "";
   const b=TENT_BADGE[kind];
-  return `<div class="scalerow"><button class="tentbadge" type="button" onclick="showScale(${m.tmdb_id})"
-    title="${esc(scaleWhy(m))}">${b.ico} <b>${b.label}</b></button></div>`;
+  return `<button class="tentbadge" type="button" onclick="showScale(${m.tmdb_id})"
+    title="${esc(scaleWhy(m))}">${b.ico} <b>${b.label}</b></button>`;
 }
 window.showScale=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(scaleWhy(m)); };
 // ---- The IMDb lozenge, vote-gated (CAS-156) ------------------------------------
@@ -2742,29 +2837,38 @@ function imdbWhy(m){
        + `we don't trust yet.`;
 }
 function imdbGate(m){
-  if(m.imdb_rating==null) return `<div class="rb imdb muted">IMDb <b>-</b></div>`;
-  if(imdbReliable(m))     return `<div class="rb imdb">IMDb <b>${m.imdb_rating.toFixed(1)}</b></div>`;
-  return `<button class="rb imdb muted" type="button" onclick="showImdbWhy(${m.tmdb_id})"
-    title="${esc(imdbWhy(m))}">IMDb <b>-</b></button>`;
+  const face=`<span class="dot imdb"></span><span class="lab">IMDb</span>`;
+  if(m.imdb_rating==null) return `<span class="m muted">${face} <b>–</b></span>`;
+  if(imdbReliable(m))     return `<span class="m">${face} <b>${m.imdb_rating.toFixed(1)}</b></span>`;
+  return `<button class="m muted" type="button" onclick="showImdbWhy(${m.tmdb_id})"
+    title="${esc(imdbWhy(m))}">${face} <b>–</b></button>`;
 }
 window.showImdbWhy=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(imdbWhy(m)); };
-function cascadeHTML(m){
+// ---- The availability strip (CAS-179) ------------------------------------------
+// Four coloured lozenges joined into one line: where the film has been, where it is, and where it is
+// going. Every window carries its date underneath — an italic date is one Cascade WORKED OUT from the
+// cinema release, not one it read off a listing, and the whole future half of the strip is ghosted so
+// a forecast can never be mistaken for a fact.
+function availHTML(m){
   const slots=["cinema","pvod","rental","included_streaming"];
   const cur=curSlot(m);
   const cin=cinemaState(m);
-  const nodes=slots.map((key,i)=>{
-    const state=i<cur?"past":(i===cur?"current":"future");
-    const reached=i<=cur;
+  const cells=slots.map((key,i)=>{
+    const state=i<cur?"past":(i===cur?"on":"future");
     const label=i===0 ? cin.label : CSTAGE_LABEL[key];
-    const cls  =i===0 ? "st-cin-"+cin.key : "st-"+key;
-    let dateStr="", estCls="";
-    if(i<=cur+1){ const sd=stageDate(m,key); if(sd){ dateStr=fmtDate(sd.d); if(sd.est) estCls=" est"; } }   // reached + next
-    return `<div class="cstage ${state} ${reached?'reached':''} ${cls}">
-      <div class="cnode">${label}</div>
-      <div class="cdate${estCls}">${dateStr||"&nbsp;"}</div></div>`;
+    const cls  =i===0 ? "w-cin-"+cin.key : "w-"+key;
+    // An ESTIMATED date for a window the film has not reached, which has already been and gone, is an
+    // estimate reality has disproved — Oppenheimer's "streaming by Jan 24" when it is still a rental.
+    // Printing it would claim a window that never opened, so that one case shows nothing at all.
+    const sd=stageDate(m,key);
+    const stale = sd && sd.est && state==="future" && sd.d < TODAY;
+    const dateStr=(sd && !stale) ? fmtDate(sd.d) : "";
+    const estCls=(sd && sd.est && !stale) ? " est" : "";
+    return `<div class="win ${cls} ${state}">
+      <div class="wpill">${label}</div>
+      <div class="wdate${estCls}">${dateStr||"—"}</div></div>`;
   }).join("");
-  // --cx marks the current stage's centre so the connector line stops there (no line through un-reached stages)
-  return `<div class="cascade${isEstimated(m)?" est":""}" style="--cx:${cur*25+12.5}%">${nodes}</div>`;
+  return `<div class="bandw"><div class="avail${isEstimated(m)?" est":""}">${cells}</div></div>`;
 }
 // ---- Saying "estimate" out loud (CAS-110) --------------------------------------
 // An estimate reads as a likelihood, never as a fact: "Likely on streaming", not "Stream (included)". The
@@ -2927,6 +3031,13 @@ function cardHTML(m, markNew=false){
   // not the old genre-ish "Western" culture bucket.
   const cult = m.language ? ` · <span class="culttag">${langName(m.language)}</span>` : "";
   const poster = m.poster ? `background-image:url(https://image.tmdb.org/t/p/w185${m.poster})` : "";
+  // The ▶ on the poster goes straight to the film's first trailer. No trailer, no button.
+  const firstTrailer=(m.trailers||[])[0];
+  const play = firstTrailer
+    ? `<a class="pplay" href="https://www.youtube.com/watch?v=${esc(firstTrailer)}" target="_blank" rel="noopener"
+         onclick="event.stopPropagation()" title="Play the trailer" aria-label="${escA("Play the trailer for "+m.title)}">▶</a>`
+    : "";
+  const badge = scaleBadge(m);
   const wtwBtn = offers.length
     ? `<button class="actbtn wtwbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')" title="Where to watch (${offers.length})">${ICON.chev}</button>`
     : `<button class="actbtn wtwbtn off" disabled
@@ -2937,26 +3048,32 @@ function cardHTML(m, markNew=false){
   // CAS-135: the "New this week" and "Past opening weekend" chips are removed — too many tags. What's new
   // is still tracked (freshness) but no longer chipped on the card title. (markNew is kept in the signature
   // for callers but no longer rendered.)
+  // CAS-179: one grid, one order — title · genres·language · synopsis · money · scores · awards, with
+  // the poster spanning down to the scores row and the scale badge tucked under it beside the awards.
   return `<div class="card ${expandedSet.has(id)?'expanded':''}" id="card-${id}">
-    <div class="ctop">
-      <div class="poster" style="${poster}" onclick="toggleExpand(${id})"></div>
-      <div class="chead">
+    <div class="cbody">
+      <div class="ctop">
+        <div class="poster${badge?"":" pfull"}" style="${poster}" onclick="toggleExpand(${id})">${play}</div>
         <div class="title" onclick="toggleExpand(${id})">${m.title}${cert}</div>
-        <div class="meta">${m.cinema_date?fmtDate(m.cinema_date):""}${(m.genres||[]).length?(m.cinema_date?" · ":"")+(m.genres||[]).join(", "):""}${cult}</div>
+        <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
+        <div class="mrow r-money">${moneyRowHTML(m)}</div>
+        <div class="mrow r-scores">${scoresRowHTML(m)}</div>
+        ${badge}
+        <div class="mrow r-awards">${awardChips(m)}</div>
       </div>
+      <div class="expand">${awardsBreakdownHTML(m)}${creditsHTML(m)}${trailersHTML(m)}</div>
     </div>
-    ${scaleBadge(m)}
-    ${ratingsHTML(m)}
-    ${cascadeHTML(m)}
-    ${estimateHTML(m)}
-    <div class="expand">${creditsHTML(m)}${trailersHTML(m)}</div>
-    ${savingsHTML(m)}
-    ${wtw}
-    <div class="actions">
-      ${pickBtnHTML(id)}
-      ${opinionBtnsHTML(id)}
-      ${wtwBtn}
+    ${availHTML(m)}
+    <div class="cfoot">
+      ${estimateHTML(m)}
+      ${savingsHTML(m)}
+      ${wtw}
+      <div class="actions">
+        ${pickBtnHTML(id)}
+        ${opinionBtnsHTML(id)}
+        ${wtwBtn}
+      </div>
     </div>
   </div>`;
 }
