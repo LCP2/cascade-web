@@ -935,11 +935,13 @@
   /* CAS-164: the CTA's count, mirrored at the top of the page. The button sits at the bottom of a screen you
      may be scrolled away from while you work the controls — so the number that tells you whether you are
      narrowing too far was only visible once you had stopped narrowing. Same wording as the button's suffix,
-     so the two read as one statement; the count itself is one shared value, not two computations. */
-  .oscount{display:inline-flex;align-items:baseline;gap:6px;margin:0 0 14px;padding:6px 12px;border-radius:999px;
-    background:rgba(124,92,255,.10);border:1px solid rgba(124,92,255,.34);
-    font-size:12.5px;font-weight:600;color:var(--dim)}
-  .oscount b{font-family:var(--font-display);font-size:16px;font-weight:800;color:var(--ink)}
+     so the two read as one statement; the count itself is one shared value, not two computations.
+     CAS-180: and NOT in a box. Only selections get boxes (buildspec §8) — a count is a statement about what
+     you have selected, not another thing to tap, and a pill around it read as a control. It now takes the
+     "Your taste baseline" treatment: a plain line in the purple accent, sitting directly above the first
+     row of selections rather than above the screen's own title. */
+  .oscount{display:block;margin:2px 2px 13px;font-size:13px;line-height:1.55;color:var(--accenttext)}
+  .oscount b{font-family:var(--font-display);font-size:15px;font-weight:800;color:var(--accenttext)}
   .osh{font-family:var(--font-display);font-size:20px;font-weight:700;margin:0 0 6px;color:var(--ink)}
   .ossub{color:var(--dim);font-size:13px;line-height:1.5;margin:0 0 12px}   /* CAS-130 size / CAS-138 tighten */
   .osagent{display:flex;gap:9px;background:rgba(124,92,255,.08);border:1px solid rgba(124,92,255,.42);
@@ -6908,14 +6910,26 @@ function renderOnbStep(key){
       <div class="osprog"><i style="width:${prog}%"></i></div>
       ${last?`<span class="oslast">LAST ONE</span>`:""}
     </div>
-    ${stepCountHTML(step, n)}
     ${step.body()}
     ${step.noAgent ? "" : `<div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>`}
     ${step.hub ? "" : `<div class="osfoot">
       <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${stepCtaText(step, n)}</button>
       ${step.noSkip ? "" : `<button class="osskip" type="button" onclick="onbStepSkip()">${step.skip || "Skip — I'll set this up later"}</button>`}
     </div>`}`;
+  placeStepCount(step, n);
   if(step.wire) step.wire();
+}
+// CAS-180: the count belongs immediately above the FIRST thing you select, not above the screen's title —
+// on "Where & when you'll watch" that means above the Cinema row. It is placed after the step's intro
+// (its heading and, if it has one, its subtitle) rather than written into each body, so every screen gets
+// it in the same position and no body has to remember to include it.
+function placeStepCount(step, n){
+  const html=stepCountHTML(step, n);
+  if(!html) return;
+  const inner=$("onbStepInner"), h=inner.querySelector(".osh");
+  if(!h) return;
+  const sub=(h.nextElementSibling && h.nextElementSibling.classList.contains("ossub")) ? h.nextElementSibling : h;
+  sub.insertAdjacentHTML("afterend", html);
 }
 function onbRefresh(){
   const s=$("onbStepSum"); if(s) s.innerHTML=onbSummary();
