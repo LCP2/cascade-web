@@ -2760,11 +2760,23 @@ const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
 // CAS-148: the default is the availability timeline, and it ranks every group the same way, Upcoming
 // included. CAS-107's rating order is still there as an explicit choice: rated first, highest first, unrated
 // last, with byRatingDesc falling back to anticipation for the unrated so a group keeps a meaningful order
-// without pretending it has scores it doesn't have. The other sorts are explicit choices from the sort
-// control too, and they keep the anticipation fallback pre-release.
-const sortForKey = (g,key) => key==="availability" ? byTimeline
+// without pretending it has scores it doesn't have.
+// ---- Upcoming reads furthest-out first, whatever the order (CAS-177) ------------
+// The pre-release section is a countdown you read downwards: the film furthest from opening at the top,
+// the one about to open at the bottom. The default availability order already did that. What did not was
+// every OTHER order — under IMDb / RT / Gross / Popularity the Upcoming group fell back to anticipation,
+// which put Spider-Man (Jul 26, the most anticipated title in the catalogue) above Avengers (Dec 26).
+// The fallback is now the release timeline instead, which is the better fallback by CAS-148's own
+// argument: pre-release, the release date is the one figure an unreleased film definitely has, and a
+// score, a gross or a budget it does not have can only sort noise. The released windows keep their
+// explicit sort exactly as before — this is the pre-release section's rule, not a global reversal.
+// The sorts that ARE meaningful pre-release still win: Title stays alphabetical because the user asked
+// for alphabetical, and Cinema date is this order already.
+const sortForKey = (g,key) =>
+    (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byTimeline
+  : key==="availability" ? byTimeline
   : key==="imdb" ? byRatingDesc
-  : (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byPopularity : ((a,b)=>sortMoviesBy(a,b,key));
+  : ((a,b)=>sortMoviesBy(a,b,key));
 const sortFor = g => sortForKey(g, filt.sort);
 // ---- The listing's order, as one function (CAS-176) -----------------------------
 // The listing is sections in CASCADE order, each sorted by sortFor(); the reveal is the same films as one
