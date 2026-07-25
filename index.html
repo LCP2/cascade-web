@@ -1169,6 +1169,12 @@
   /* CAS-166: a named stop is tappable now — the four sizes you used to pick from are still one tap away,
      they just no longer bound what you can choose. Styled as the label it already was, not as a button. */
   .vlabels .vsnap{background:none;border:0;padding:4px 2px;margin:-4px -2px;font-family:inherit;cursor:pointer;text-align:center}
+  /* CAS-174: five named stops don't fit on one line of a phone-width track — "Blockbuster" and
+     "Megabudget" are ~65px of text with only ~37px between their centres once the end labels are
+     pulled inside the row. So a five-stop dial staggers its labels, which doubles the room each one
+     has without moving a single marker or shrinking the type. */
+  .vlabels.stag{height:56px}
+  .vlabels.stag .vsnap.lo{top:27px}
   .vlabels .vsnap:hover{color:var(--ink)}
   .vlabels .vsnap:focus-visible{outline:2px solid var(--cyan);outline-offset:1px;border-radius:5px}
   .osmore{width:100%;text-align:center;background:var(--panel2);border:1px dashed var(--line);color:var(--dim);
@@ -2269,7 +2275,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.7.2", "major": 0, "minor": 7, "patch": 2, "build": 110, "commit": "0471880", "builtAt": "2026-07-25T00:01:39Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.7.2", "major": 0, "minor": 7, "patch": 2, "build": 111, "commit": "bd472d8", "builtAt": "2026-07-25T00:10:09Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5778,11 +5784,17 @@ const CRITICS_STOPS = [
 // after, and tapping one still snaps to it, so nothing that could be chosen before has been taken away.
 // The slider carries a POSITION, not dollars, so each named stop gets an equal third of the track — money is
 // not linear to the eye, and a raw $0-100M range would bury every indie in the first millimetre.
+// CAS-174 adds a fifth named stop at the very top. 723 of the 1955 films carry a budget and the field
+// thins hard above $100M — 82 at $100M, 25 at $200M, 12 at $250M — so a $250M floor isolates about a
+// dozen genuine tentpoles rather than re-cutting the same Blockbuster set. Blockbuster and its $100M
+// stop do not move, there is no new card badge, and the lean is untouched: selScaleMatch still answers
+// null for a film whose money we don't know, and those films still ride along.
 const SCALE_REF = [
   {d:0,     label:"Any size"},
   {d:1e6,   label:"Indie"},
   {d:15e6,  label:"Studio"},
   {d:100e6, label:"Blockbuster"},
+  {d:250e6, label:"Megabudget"},
 ];
 const SCALE_SEG = 100;                                    // slider units between one named stop and the next
 const SCALE_POS_MAX = SCALE_SEG*(SCALE_REF.length-1);
@@ -6294,7 +6306,7 @@ function dialCardHTML(k){
         <input type="range" id="onbDial_${d.cont}" min="${cont.min}" max="${cont.max}" step="${cont.step}"
                value="${cont.rawOf(curV)}" aria-label="${escA(cont.aria)}">
       </div>
-      <div class="vlabels">${marks.map(mk=>`<button type="button" class="vsnap ${mk.lit?"on":""}" data-snap="${mk.snap}"
+      <div class="vlabels${marks.length>=5?" stag":""}">${marks.map((mk,i)=>`<button type="button" class="vsnap ${mk.lit?"on":""} ${i%2?"lo":""}" data-snap="${mk.snap}"
         style="left:${mk.pos}%;transform:${mk.pos<=0?"translateX(0)":mk.pos>=100?"translateX(-100%)":"translateX(-50%)"}">${esc(mk.label)}${mk.sub?`<small>${esc(mk.sub)}</small>`:""}</button>`).join("")}</div>
     </div>`;
   }
