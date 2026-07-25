@@ -2739,9 +2739,8 @@ function byTimeline(a,b){
   if(!db) return -1;
   return db.localeCompare(da);
 }
-const byStageThenTimeline = (a,b) => (stageIdx(a)-stageIdx(b)) || byTimeline(a,b);
-function sortMovies(a,b){
-  switch(filt.sort){
+function sortMoviesBy(a,b,key){
+  switch(key){
     case "availability": return byTimeline(a,b);
     case "rt": return (b.rt_critic||0)-(a.rt_critic||0);
     case "gross": return (b.worldwide_gross||0)-(a.worldwide_gross||0);
@@ -2751,6 +2750,7 @@ function sortMovies(a,b){
     default: return (ratingOf(b)||0)-(ratingOf(a)||0);   // CAS-156: the same vote gate as byRatingDesc
   }
 }
+const sortMovies = (a,b) => sortMoviesBy(a,b,filt.sort);
 // An un-released film has no rating, no box office and usually no budget — ranking it by a metric it doesn't
 // have just sorts noise (which is how genuine tentpoles ended up at the bottom of the budget sort). So the
 // Upcoming group always ranks by anticipation, except under the two sorts that DO mean something pre-release.
@@ -2762,9 +2762,31 @@ const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
 // last, with byRatingDesc falling back to anticipation for the unrated so a group keeps a meaningful order
 // without pretending it has scores it doesn't have. The other sorts are explicit choices from the sort
 // control too, and they keep the anticipation fallback pre-release.
-const sortFor = g => filt.sort==="availability" ? byTimeline
-  : filt.sort==="imdb" ? byRatingDesc
-  : (g==="upcoming" && !PRE_RELEASE_SORTS.has(filt.sort)) ? byPopularity : sortMovies;
+const sortForKey = (g,key) => key==="availability" ? byTimeline
+  : key==="imdb" ? byRatingDesc
+  : (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byPopularity : ((a,b)=>sortMoviesBy(a,b,key));
+const sortFor = g => sortForKey(g, filt.sort);
+// ---- The listing's order, as one function (CAS-176) -----------------------------
+// The listing is sections in CASCADE order, each sorted by sortFor(); the reveal is the same films as one
+// flat grid. For the two to be the same SEQUENCE, the flat one has to walk the same sections in the same
+// order and sort each of them the same way — which is what this does, once, for both callers. The reveal
+// used byStageThenTimeline, which is exactly this under the default "availability" sort and NOT it under
+// any other: a Blockbuster-style agent carries sort:"popularity", so the listing it landed in ranked each
+// section by anticipation while the reveal had just shown the same films on the release timeline.
+// The sort key is taken from the CASCADE being shown, not from the live filt.sort — at reveal time
+// filt.sort is still whatever the previous view was using, and c.sort is what applyCascade is about to
+// put there the moment the user lands in the listing.
+function listingOrder(films, sortKey){
+  const ordered=[], seen=new Set();
+  CASCADE.forEach(g=>{
+    films.filter(m=>primaryStatus(m)===g).sort(sortForKey(g,sortKey))
+         .forEach(m=>{ ordered.push(m); seen.add(m); });
+  });
+  // A film whose window isn't one of the six sections has no section to sit in, so the listing never shows
+  // it. It still can't be dropped silently here: it goes last, in the same order it arrived.
+  films.forEach(m=>{ if(!seen.has(m)) ordered.push(m); });
+  return ordered;
+}
 const CSTAGE_LABEL = {pvod:"Premium", rental:"Rent", included_streaming:"Stream"};
 const EST_OFFSET = {pvod:90, rental:120, included_streaming:180};   // days after cinema (rough AU windows)
 // The first cascade slot is the CINEMA slot, tri-state: Upcoming -> Opening -> Cinema.
@@ -7262,13 +7284,14 @@ const REVEAL_LEAD_RADAR = {cinema:"on their way to the big screen", rentals:"on 
 function showReveal(c){
   revealCascade=c;
   // CAS-132: the reveal previews EXACTLY the listing the user lands on. The Found listing's membership is
-  // watchesFilm (= watchCount) ordered by byStageThenTimeline — so the reveal draws from that same set, in
-  // that same order, with that same count. No divergent matchesCriteria/byRating path (that split was the
+  // watchesFilm (= watchCount), ordered by the listing's own sections — so the reveal draws from that same
+  // set, in that same order, with that same count. No divergent matchesCriteria/byRating path (that split was the
   // ~292-vs-367 mismatch: matchesCriteria is only the watchable-RIGHT-NOW slice). That slice is still called
   // out honestly, as a note under the same headline, not as a rival count.
   // CAS-148 closed the other half of that promise: the listing's status gate now lets the whole watch set
   // through, so this set and the one under it are the same films, not just the same number.
-  const films=MOVIES.filter(m=>watchesFilm(m,c)).sort(byStageThenTimeline);   // == the Found listing set/order
+  // CAS-176: the set AND the sequence, from the listing's own ordering function — see listingOrder().
+  const films=listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||"availability");
   const n=films.length;
   const nowN=MOVIES.filter(m=>matchesCriteria(m,c)).length;                 // watchable this moment (a subset of n)
   const posters=films.map(m=>{
