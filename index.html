@@ -171,7 +171,10 @@
   /* CAS-179: the card is three bands now — the information body, the availability strip on its own
      tint, and the footer that carries the price line and the controls — so the padding moved off
      .card and onto each band. Only the middle band is allowed to carry window colour. */
-  .cbody{padding:13px}
+  /* CAS-178: the two upper bands are the tap target, so they say so — a pointer over the whole region,
+     and a brief surface change on press so the tap is acknowledged before the card has finished opening. */
+  .cbody{padding:13px;cursor:pointer}
+  .cbody:active,.bandw:active{background:var(--panel2)}
   .cfoot{padding:11px 13px 12px}
   .cfoot>:first-child{margin-top:0}
   /* The information body lays out on a GRID, which is what makes the alignments true rather than
@@ -328,7 +331,7 @@
      Current is filled, past is tinted (it happened), future is ghosted and the joiner into it dims
      with it: what is ahead is a forecast, and it should not look like a fact. Each window carries
      its date underneath, italic where the date is worked out rather than read from a listing. */
-  .bandw{background:var(--band);border-top:1px solid var(--line);padding:11px 13px}
+  .bandw{background:var(--band);border-top:1px solid var(--line);padding:11px 13px;cursor:pointer}
   /* 10px between lozenges, not the mock's 14 — the connector still reads, and the four columns have to
      hold "Upcoming" and "Premium" whole at 360px wide. An ellipsised window name is a clipped fact. */
   .avail{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
@@ -2280,7 +2283,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.7.2", "major": 0, "minor": 7, "patch": 2, "build": 114, "commit": "1da7200", "builtAt": "2026-07-25T00:30:54Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.7.2", "major": 0, "minor": 7, "patch": 2, "build": 115, "commit": "2e0ce55", "builtAt": "2026-07-25T00:34:06Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -2913,7 +2916,8 @@ function availHTML(m){
       <div class="wpill">${label}</div>
       <div class="wdate${estCls}">${dateStr||"—"}</div></div>`;
   }).join("");
-  return `<div class="bandw"><div class="avail${isEstimated(m)?" est":""}">${cells}</div></div>`;
+  // CAS-178: the strip is part of the card's tap-to-open region — see cardTap().
+  return `<div class="bandw" onclick="cardTap(event,${m.tmdb_id})"><div class="avail${isEstimated(m)?" est":""}">${cells}</div></div>`;
 }
 // ---- Saying "estimate" out loud (CAS-110) --------------------------------------
 // An estimate reads as a likelihood, never as a fact: "Likely on streaming", not "Stream (included)". The
@@ -3096,10 +3100,10 @@ function cardHTML(m, markNew=false){
   // CAS-179: one grid, one order — title · genres·language · synopsis · money · scores · awards, with
   // the poster spanning down to the scores row and the scale badge tucked under it beside the awards.
   return `<div class="card ${expandedSet.has(id)?'expanded':''}" id="card-${id}">
-    <div class="cbody">
+    <div class="cbody" onclick="cardTap(event,${id})">
       <div class="ctop">
-        <div class="poster${badge?"":" pfull"}" style="${poster}" onclick="toggleExpand(${id})">${play}</div>
-        <div class="title" onclick="toggleExpand(${id})">${m.title}${cert}</div>
+        <div class="poster${badge?"":" pfull"}" style="${poster}">${play}</div>
+        <div class="title">${m.title}${cert}</div>
         <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
@@ -3474,6 +3478,23 @@ window.setNotify=(id,on)=>{
   render();
 };
 
+// ---- Tap the card to open it (CAS-178) ------------------------------------------
+// The whole of the card ABOVE the controls is the target — poster, title, synopsis, the information chips
+// and the availability strip — because that region is all one thing to read, and asking someone to find
+// the poster or the title specifically was asking them to aim. The controls row is deliberately outside
+// it: those are decisions, and a decision must not also be a "show me more".
+// Anything inside the region that is a control of its own keeps its own click. The test is what the click
+// actually landed on, not where the handler is: a real element wins over the region it sits in — the
+// withheld-IMDb explainer, the scale badge, the poster's trailer link, a trailer thumbnail, and any
+// availability lozenge that becomes a button later.
+window.cardTap=(e,id)=>{
+  if(e.target.closest('button, a, input, select, textarea, label, [role="button"]')) return;
+  // A tap that was really a text selection is not a tap. Opening the card mid-drag would yank the page
+  // out from under the selection the user was making in the synopsis.
+  const sel=window.getSelection && window.getSelection();
+  if(sel && !sel.isCollapsed && sel.toString().trim()) return;
+  toggleExpand(id);
+};
 window.toggleExpand=id=>{
   expandedSet.has(id)?expandedSet.delete(id):expandedSet.add(id);
   const on=expandedSet.has(id);
