@@ -1496,8 +1496,9 @@
   padding:6px 9px;border-radius:999px;white-space:nowrap;cursor:pointer;}
 #pnav button.on{background:linear-gradient(90deg,#7c6cff,#37c0e6);color:#fff;}
 .pscreen{display:none;} .pscreen.show{display:block;}
-/* let overlays that we drive as screens sit in flow */
-.pscreen.asscreen{position:relative!important;inset:auto!important;}
+/* drive the app's overlays as in-flow screens (they default to position:fixed) */
+.asscreen{position:relative!important;inset:auto!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;z-index:auto!important;}
+.asscreen::before{display:none!important;}   /* kill full-screen overlay glows */
 
 /* agent colour stripe on cards + agent tabs */
 .card.agent-cinema{border-left:4px solid var(--amber);}
@@ -1518,6 +1519,22 @@
 .pickcol.cinema .scard{border-left:3px solid rgba(240,163,54,.5);}
 .pickcol.stream .scard{border-left:3px solid rgba(72,199,142,.5);}
 @media (max-width:520px){ .pickcols{grid-template-columns:1fr 1fr;} }
+
+/* wizard component additions */
+.nlbl{display:block;font:700 12px/1 -apple-system,sans-serif;color:var(--dim);margin:16px 2px 6px;text-transform:uppercase;letter-spacing:.03em;}
+.ninput{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:12px;color:var(--ink);font:500 15px/1.3 -apple-system,sans-serif;padding:13px 14px;}
+.ntext{resize:none;}
+.wwLanes{display:flex;flex-direction:column;gap:12px;}
+.asrow{display:flex;gap:8px;align-items:stretch;margin-bottom:7px;}
+.asrow .wwopt{flex:1;text-align:left;}
+.asbell{flex:0 0 auto;width:46px;border-radius:11px;border:1px solid var(--line);background:var(--panel);font-size:16px;opacity:.45;cursor:pointer;}
+.asbell.on{opacity:1;border-color:var(--amber);background:rgba(240,163,54,.16);}
+.asdeliver{margin-top:16px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 12px 6px;}
+.asdeliver .wwnl{margin-top:0;}
+.edoors{display:flex;flex-direction:column;gap:9px;}
+.rvbadge{display:block;width:max-content;margin:8px auto 14px;background:rgba(72,199,142,.16);border:1px solid rgba(72,199,142,.5);color:#a6e8c8;font:700 12px/1 -apple-system,sans-serif;padding:7px 13px;border-radius:99px;}
+.reveal .rvinner{text-align:center;}
+.rvsecondary{display:block;width:100%;margin-top:10px;background:transparent;border:0;color:var(--dim);font:600 14px/1 -apple-system,sans-serif;padding:12px;cursor:pointer;}
 </style>
 <style>
 /* ---- prototype additions on top of the real 0.7 card ---- */
@@ -1652,35 +1669,34 @@ body{background:#0a0e1a;margin:0;}
         <span class="sc-bar">You set the bar</span>
       </span><span class="sc-chev">›</span></button></div></div>
 </div></div></div>
-<div class="pscreen" data-screen="selective"><div class="onbStep asscreen" id="selective">
-  <div class="osinner" id="onbStepInner">
-    <div class="ostop">
-      <button class="osback" type="button"  aria-label="Back">←</button>
-      <div class="osprog"><i style="width:50%"></i></div>
-      
-    </div>
-    <h2 class="osh">Get selective</h2>
-        <div class="osbignum">765</div>
-        <div class="osbigl">films found for you right now</div>
-        <div class="osfunnel">your whole taste baseline · of 1042 — no bar set yet</div>
-        <p class="ossub"><b>Blockbuster Buzz</b> wants the big, loud ones — the films everyone will be talking about. Set the three below to lock it in.</p>
-        <button type="button" class="osdoor" >
-    <span class="di">🎚️</span>
-    <span class="dt"><span class="dh">The bar</span><span class="ds">No bar set — everything qualifies</span></span>
-    <span class="dc">›</span></button>
-        <button type="button" class="osdoor" >
-    <span class="di">🧬</span>
-    <span class="dt"><span class="dh">Your taste baseline</span><span class="ds">All genres · Any · English · Anything (G to R 18+)</span></span>
-    <span class="dc">›</span></button>
-        <button type="button" class="osdoor" >
-    <span class="di">📺</span>
-    <span class="dt"><span class="dh">Where &amp; when you'll watch</span><span class="ds">Any window — not set yet</span></span>
-    <span class="dc">›</span></button>
-        <div class="oshint"><b>0 of 3</b> confirmed · set all three to see your films</div>
-    
-    </div>
-</div></div>
-<div class="pscreen" data-screen="bar"><div class="onbStep asscreen" id="bar">
+<div class="pscreen" data-screen="name_cin"><div class="sharpstep asscreen" id="name_cin"><div class="osinner">
+  <div class="ostop"><button class="osback" type="button" onclick="goto('pick')" aria-label="Back">←</button>
+    <div class="osprog"><i style="width:18%"></i></div></div>
+  <h2 class="osh">Name your agent</h2>
+  <p class="ossub">Give it a name and, if you like, a short brief. You can change these any time.</p>
+  <label class="nlbl">Agent name</label>
+  <input class="wizname ninput" type="text" maxlength="40" value="Blockbuster Buzz" placeholder="e.g. Blockbuster Buzz">
+  <label class="nlbl">What it's for <span style="color:var(--dim);font-weight:400;">(optional)</span></label>
+  <textarea class="ninput ntext" rows="3" placeholder="e.g. Big cinema releases everyone's talking about">Big cinema releases everyone will be talking about.</textarea>
+  <div class="osfoot"><button class="oscta" type="button">Continue</button></div>
+</div></div></div>
+<div class="pscreen" data-screen="as_cin"><div class="sharpstep asscreen" id="as_cin"><div class="osinner">
+  <div class="ostop"><button class="osback" type="button" onclick="goto('name_cin')" aria-label="Back">←</button>
+    <div class="osprog"><i style="width:42%"></i></div></div>
+  <h2 class="osh">Cinema agent settings</h2>
+  <p class="ossub">Pick what this agent lists, and tap 🔔 on any you also want to be alerted about.</p>
+  <div class="wwLanes"><div class="wwlane on" style="--wwc:var(--amber)">
+      <button type="button" class="wwhead" onclick="this.closest('.wwlane').classList.toggle('on')"><span class="cd"></span><span class="wwn">List upcoming movies</span><span class="wwtick">✓</span></button>
+      <div class="wwopts"><p class="wwnl">Show me movies that…</p><div class="asrow"><button type="button" class="wwopt asshow" onclick="asPick(this,false)"><span class="wwb">✓</span>Have been announced</button><button type="button" class="asbell" title="Notify me" onclick="this.classList.toggle('on')">🔔</button></div><div class="asrow"><button type="button" class="wwopt asshow" onclick="asPick(this,false)"><span class="wwb">✓</span>Open in 1 month</button><button type="button" class="asbell" title="Notify me" onclick="this.classList.toggle('on')">🔔</button></div><div class="asrow"><button type="button" class="wwopt asshow" onclick="asPick(this,false)"><span class="wwb">✓</span>Open in 1 week</button><button type="button" class="asbell" title="Notify me" onclick="this.classList.toggle('on')">🔔</button></div></div></div><div class="wwlane on" style="--wwc:var(--amber)">
+      <button type="button" class="wwhead" onclick="this.closest('.wwlane').classList.toggle('on')"><span class="cd"></span><span class="wwn">List movies showing now</span><span class="wwtick">✓</span></button>
+      <div class="wwopts"><p class="wwnl">Show me movies that…</p><div class="asrow"><button type="button" class="wwopt asshow" onclick="asPick(this,false)"><span class="wwb">✓</span>Open today</button><button type="button" class="asbell" title="Notify me" onclick="this.classList.toggle('on')">🔔</button></div><div class="asrow"><button type="button" class="wwopt asshow" onclick="asPick(this,false)"><span class="wwb">✓</span>Are past opening weekend</button><button type="button" class="asbell" title="Notify me" onclick="this.classList.toggle('on')">🔔</button></div></div></div></div>
+  <div class="asdeliver"><p class="wwnl">Send alerts</p>
+    <div class="asrow"><button class="wwopt on" onclick="this.classList.toggle('on')"><span class="wwb">✓</span>In the app</button></div>
+    <div class="asrow"><button class="wwopt" onclick="this.classList.toggle('on')"><span class="wwb">✓</span>By email · weekly digest</button></div>
+  </div>
+  <div class="osfoot"><button class="oscta" type="button">Continue</button></div>
+</div></div></div>
+<div class="pscreen" data-screen="bar_cin"><div class="sharpstep asscreen" id="bar_cin">
   <div class="osinner" id="onbStepInner">
     <div class="ostop">
       <button class="osback" type="button"  aria-label="Back">←</button>
@@ -1710,7 +1726,7 @@ body{background:#0a0e1a;margin:0;}
     </div>
     <div class="vlabels"><span class="on" style="left:0%;transform:translateX(0)">Any</span><span class="" style="left:33.33333333333333%;transform:translateX(-50%)">Talked-about</span><span class="" style="left:66.66666666666666%;transform:translateX(-50%)">Trending</span><span class="" style="left:100%;transform:translateX(-100%)">Must-see</span></div>
   </div>
-        <button type="button" class="osmore" >＋ More controls · People's vote, Critics &amp; awards</button>
+        
         <p class="ossumline" id="onbSelSay">No bar set, so everything qualifies — <span class="cnt">765 films</span> right now. Turn a dial up to get pickier.</p>
     
     <div class="osfoot">
@@ -1718,7 +1734,150 @@ body{background:#0a0e1a;margin:0;}
       
     </div></div>
 </div></div>
-<div class="pscreen" data-screen="taste"><div class="onbStep asscreen" id="taste">
+<div class="pscreen" data-screen="taste_cin"><div class="sharpstep asscreen" id="taste_cin">
+  <div class="osinner" id="onbStepInner">
+    <div class="ostop">
+      <button class="osback" type="button"  aria-label="Back">←</button>
+      <div class="osprog"><i style="width:70%"></i></div>
+      
+    </div>
+    <h2 class="osh">Your taste baseline</h2>
+        <p class="ossub">The world your agents search. Tap a row to change it — one opens at a time.</p>
+        <p class="ossumline tbworld" id="tbWorld"><span class="cnt">765 films</span> in your world · of 1042.</p>
+        <div class="tbrows" id="tbRows">
+    <div class="tbrow" data-row="genres">
+      <button type="button" class="tbhead"  aria-expanded="false">
+        <span class="ic">🎭</span>
+        <span class="rmid"><span class="rlabel">Genres</span><span class="rval">All genres</span></span>
+        <span class="chev">▶</span>
+      </button>
+      <div class="tbpanel">
+        <p class="ossumline tbworld tbrowcount"><span class="cnt">765 films</span> in your world · of 1042.</p>
+        <div class="tbbody"></div>
+      </div>
+    </div>
+    <div class="tbrow" data-row="year">
+      
+      <div class="tbpanel">
+        <p class="ossumline tbworld tbrowcount"><span class="cnt">765 films</span> in your world · of 1042.</p>
+        <div class="tbbody"></div>
+      </div>
+    </div>
+    <div class="tbrow" data-row="langs">
+      <button type="button" class="tbhead"  aria-expanded="false">
+        <span class="ic">💬</span>
+        <span class="rmid"><span class="rlabel">Language</span><span class="rval">English</span></span>
+        <span class="chev">▶</span>
+      </button>
+      <div class="tbpanel">
+        <p class="ossumline tbworld tbrowcount"><span class="cnt">765 films</span> in your world · of 1042.</p>
+        <div class="tbbody"></div>
+      </div>
+    </div>
+    <div class="tbrow" data-row="age">
+      <button type="button" class="tbhead"  aria-expanded="false">
+        <span class="ic">🔞</span>
+        <span class="rmid"><span class="rlabel">Age rating</span><span class="rval">Anything (G to R 18+)</span></span>
+        <span class="chev">▶</span>
+      </button>
+      <div class="tbpanel">
+        <p class="ossumline tbworld tbrowcount"><span class="cnt">765 films</span> in your world · of 1042.</p>
+        <div class="tbbody"></div>
+      </div>
+    </div></div>
+        <div class="tbfoot"><span class="dotg"></span>Set once — every agent inherits it</div>
+    
+    <div class="osfoot">
+      <button class="oscta" id="onbStepCta" type="button" >Done · 765 films</button>
+      
+    </div></div>
+</div></div>
+<div class="pscreen" data-screen="name_str"><div class="sharpstep asscreen" id="name_str"><div class="osinner">
+  <div class="ostop"><button class="osback" type="button" onclick="goto('pick')" aria-label="Back">←</button>
+    <div class="osprog"><i style="width:18%"></i></div></div>
+  <h2 class="osh">Name your agent</h2>
+  <p class="ossub">Give it a name and, if you like, a short brief. You can change these any time.</p>
+  <label class="nlbl">Agent name</label>
+  <input class="wizname ninput" type="text" maxlength="40" value="Everyday Favourites" placeholder="e.g. Blockbuster Buzz">
+  <label class="nlbl">What it's for <span style="color:var(--dim);font-weight:400;">(optional)</span></label>
+  <textarea class="ninput ntext" rows="3" placeholder="e.g. Big cinema releases everyone's talking about">Easy, great watches for a night in.</textarea>
+  <div class="osfoot"><button class="oscta" type="button">Continue</button></div>
+</div></div></div>
+<div class="pscreen" data-screen="as_str"><div class="sharpstep asscreen" id="as_str"><div class="osinner">
+  <div class="ostop"><button class="osback" type="button" onclick="goto('name_str')" aria-label="Back">←</button>
+    <div class="osprog"><i style="width:42%"></i></div></div>
+  <h2 class="osh">Streaming agent settings</h2>
+  <p class="ossub">Pick what this agent lists, and tap 🔔 on any you also want to be alerted about.</p>
+  <div class="wwLanes"><div class="wwlane on" style="--wwc:var(--blue)">
+      <button type="button" class="wwhead" onclick="this.closest('.wwlane').classList.toggle('on')"><span class="cd"></span><span class="wwn">List rental movies</span><span class="wwtick">✓</span></button>
+      <div class="wwopts"><p class="wwnl">Show me movies that are…</p><div class="asrow"><button type="button" class="wwopt asshow" onclick="asPick(this,false)"><span class="wwb">✓</span>Available for premium buy/rent (~$30)</button><button type="button" class="asbell" title="Notify me" onclick="this.classList.toggle('on')">🔔</button></div><div class="asrow"><button type="button" class="wwopt asshow" onclick="asPick(this,false)"><span class="wwb">✓</span>Available for standard rent</button><button type="button" class="asbell" title="Notify me" onclick="this.classList.toggle('on')">🔔</button></div></div></div><div class="wwlane on" style="--wwc:var(--green)">
+      <button type="button" class="wwhead" onclick="this.closest('.wwlane').classList.toggle('on')"><span class="cd"></span><span class="wwn">List streaming movies</span><span class="wwtick">✓</span></button>
+      <div class="wwopts"><p class="wwnl">Show me movies that are…</p><div class="asrow"><button type="button" class="wwopt asshow on" onclick="asPick(this,true)"><span class="wwb">●</span>On streaming on any service</button><button type="button" class="asbell" title="Notify me" onclick="this.classList.toggle('on')">🔔</button></div><div class="asrow"><button type="button" class="wwopt asshow" onclick="asPick(this,true)"><span class="wwb">●</span>On streaming on my services</button><button type="button" class="asbell" title="Notify me" onclick="this.classList.toggle('on')">🔔</button></div></div></div></div>
+  <div class="asdeliver"><p class="wwnl">Send alerts</p>
+    <div class="asrow"><button class="wwopt on" onclick="this.classList.toggle('on')"><span class="wwb">✓</span>In the app</button></div>
+    <div class="asrow"><button class="wwopt" onclick="this.classList.toggle('on')"><span class="wwb">✓</span>By email · weekly digest</button></div>
+  </div>
+  <div class="osfoot"><button class="oscta" type="button">Continue</button></div>
+</div></div></div>
+<div class="pscreen" data-screen="bar_str"><div class="sharpstep asscreen" id="bar_str">
+  <div class="osinner" id="onbStepInner">
+    <div class="ostop">
+      <button class="osback" type="button"  aria-label="Back">←</button>
+      <div class="osprog"><i style="width:70%"></i></div>
+      
+    </div>
+    <h2 class="osh">Set your bar</h2>
+        <p class="ossub">Set the standards that matter here. A film has to meet <b>all</b> the ones you turn up.</p><div class="oscount" id="onbStepCount" aria-live="polite"><b>765</b> films match right now</div>
+        <div class="osdial" data-dial="vote"><div class="osdh"><span class="em">👥</span><span class="dl">People's vote</span>
+    
+    <span class="dval" id="onbVal_vote">Any</span></div>
+    <p class="oscap">What everyday viewers scored it, out of 10.</p>
+      <div class="vslider">
+        <div class="vtrack"><div class="vfillbar" style="width:0%"></div></div>
+        <div class="vnotches"><span class="vnotch " style="left:25%"></span><span class="vnotch " style="left:50%"></span><span class="vnotch " style="left:62.5%"></span><span class="vnotch " style="left:79.99999999999999%"></span></div>
+        <input type="range" id="onbDial_vote" min="5" max="9" step="0.05" value="5" aria-label="People's vote">
+      </div>
+      <div class="vlabels"><button type="button" class="vsnap  " data-snap="6" style="left:25%;transform:translateX(-50%)">6.0<small>Liked</small></button><button type="button" class="vsnap  lo" data-snap="7" style="left:50%;transform:translateX(-50%)">7.0<small>Well-liked</small></button><button type="button" class="vsnap  " data-snap="7.5" style="left:62.5%;transform:translateX(-50%)">7.5<small>Loved</small></button><button type="button" class="vsnap  lo" data-snap="8.2" style="left:79.99999999999999%;transform:translateX(-50%)">8.2<small>Adored</small></button></div>
+    </div><div class="osdial" data-dial="crit"><div class="osdh"><span class="em">🏅</span><span class="dl">Critics &amp; awards</span>
+    
+    </div>
+    <p class="oscap">What professional critics and awards thought.</p>
+    <div class="vslider">
+      <div class="vtrack"><div class="vfillbar" style="width:0%"></div></div>
+      <div class="vnotches"><span class="vnotch lit" style="left:0%"></span><span class="vnotch " style="left:25%"></span><span class="vnotch " style="left:50%"></span><span class="vnotch " style="left:75%"></span><span class="vnotch " style="left:100%"></span></div>
+      <input type="range" id="onbDial_crit" min="0" max="4" step="1" value="0" aria-label="Critics &amp; awards">
+    </div>
+    <div class="vlabels"><span class="on" style="left:0%;transform:translateX(0)">Any</span><span class="" style="left:25%;transform:translateX(-50%)">Well-reviewed<small>score 60+</small></span><span class="" style="left:50%;transform:translateX(-50%)">Acclaimed<small>score 80+</small></span><span class="" style="left:75%;transform:translateX(-50%)">Nominee<small>🏆</small></span><span class="" style="left:100%;transform:translateX(-100%)">Winner<small>🏆</small></span></div>
+  </div>
+        <div class="osdial" data-dial="scale"><div class="osdh"><span class="em">🎬</span><span class="dl">Budget &amp; scale</span>
+    
+    <span class="dval" id="onbVal_scale">Any size</span></div>
+    <p class="oscap">How big the film is — from a small indie to a huge blockbuster.</p>
+      <div class="vslider">
+        <div class="vtrack"><div class="vfillbar" style="width:0%"></div></div>
+        <div class="vnotches"><span class="vnotch lit" style="left:0%"></span><span class="vnotch " style="left:25%"></span><span class="vnotch " style="left:50%"></span><span class="vnotch " style="left:75%"></span><span class="vnotch " style="left:100%"></span></div>
+        <input type="range" id="onbDial_scale" min="0" max="400" step="1" value="0" aria-label="Budget and scale">
+      </div>
+      <div class="vlabels stag"><button type="button" class="vsnap on " data-snap="0" style="left:0%;transform:translateX(0)">Any size</button><button type="button" class="vsnap  lo" data-snap="1000000" style="left:25%;transform:translateX(-50%)">Indie<small>$1M+</small></button><button type="button" class="vsnap  " data-snap="15000000" style="left:50%;transform:translateX(-50%)">Studio<small>$15M+</small></button><button type="button" class="vsnap  lo" data-snap="100000000" style="left:75%;transform:translateX(-50%)">Blockbuster<small>$100M+</small></button><button type="button" class="vsnap  " data-snap="250000000" style="left:100%;transform:translateX(-100%)">Megabudget<small>$250M+</small></button></div>
+    </div><div class="osdial" data-dial="buzz"><div class="osdh"><span class="em">🔥</span><span class="dl">Buzz</span>
+    <span class="tagnew">NEW</span>
+    </div>
+    <p class="oscap">How much people are talking about it right now.</p>
+    <div class="vslider">
+      <div class="vtrack"><div class="vfillbar" style="width:0%"></div></div>
+      <div class="vnotches"><span class="vnotch lit" style="left:0%"></span><span class="vnotch " style="left:33.33333333333333%"></span><span class="vnotch " style="left:66.66666666666666%"></span><span class="vnotch " style="left:100%"></span></div>
+      <input type="range" id="onbDial_buzz" min="0" max="3" step="1" value="0" aria-label="Buzz">
+    </div>
+    <div class="vlabels"><span class="on" style="left:0%;transform:translateX(0)">Any</span><span class="" style="left:33.33333333333333%;transform:translateX(-50%)">Talked-about</span><span class="" style="left:66.66666666666666%;transform:translateX(-50%)">Trending</span><span class="" style="left:100%;transform:translateX(-100%)">Must-see</span></div>
+  </div>
+        <p class="ossumline" id="onbSelSay">No bar set, so everything qualifies — <span class="cnt">765 films</span> right now. Turn a dial up to get pickier.</p>
+    
+    <div class="osfoot">
+      <button class="oscta" id="onbStepCta" type="button" >Continue · 765 films</button>
+      
+    </div></div>
+</div></div>
+<div class="pscreen" data-screen="taste_str"><div class="sharpstep asscreen" id="taste_str">
   <div class="osinner" id="onbStepInner">
     <div class="ostop">
       <button class="osback" type="button"  aria-label="Back">←</button>
@@ -1780,41 +1939,46 @@ body{background:#0a0e1a;margin:0;}
       
     </div></div>
 </div></div>
-<div class="pscreen" data-screen="where"><div class="onbStep asscreen" id="where">
-  <div class="osinner" id="onbStepInner">
-    <div class="ostop">
-      <button class="osback" type="button"  aria-label="Back">←</button>
-      <div class="osprog"><i style="width:70%"></i></div>
-      
-    </div>
-    <h2 class="osh">Where &amp; when you'll watch</h2>
-        <p class="ossub">Your agent will find movies that meet your criteria, and alert you when they become available on your chosen viewing services.</p><div class="oscount" id="onbStepCount" aria-live="polite"><b>765</b> films match right now</div>
-        <div id="wwLanes"><div class="wwlane" style="--wwc:var(--amber)">
-      <button type="button" class="wwhead" aria-pressed="false" >
-        <span class="cd"></span><span class="wwn">Cinema</span><span class="wwtick">✓</span></button>
-      <div class="wwopts">
-        <p class="wwnl">Notify me</p>
-        <button type="button" class="wwopt" aria-pressed="false" ><span class="wwb">✓</span>When announced</button><button type="button" class="wwopt" aria-pressed="false" ><span class="wwb">✓</span>1 month from release</button><button type="button" class="wwopt" aria-pressed="false" ><span class="wwb">✓</span>1 week from release</button><button type="button" class="wwopt" aria-pressed="false" ><span class="wwb">✓</span>In cinema release</button><button type="button" class="wwopt" aria-pressed="false" ><span class="wwb">✓</span>Past opening weekend</button>
-      </div></div><div class="wwlane" style="--wwc:var(--blue)">
-      <button type="button" class="wwhead" aria-pressed="false" >
-        <span class="cd"></span><span class="wwn">Rent</span><span class="wwtick">✓</span></button>
-      <div class="wwopts">
-        <p class="wwnl">Notify me</p>
-        <button type="button" class="wwopt" aria-pressed="false" ><span class="wwb">✓</span>When available for purchase</button><button type="button" class="wwopt" aria-pressed="false" ><span class="wwb">✓</span>When available for rent</button>
-      </div></div><div class="wwlane" style="--wwc:var(--green)">
-      <button type="button" class="wwhead" aria-pressed="false" >
-        <span class="cd"></span><span class="wwn">Streaming</span><span class="wwtick">✓</span></button>
-      <div class="wwopts">
-        <p class="wwnl">Notify me</p>
-        <button type="button" class="wwopt" aria-pressed="false" ><span class="wwb">✓</span>When on streaming</button>
-      </div></div></div>
-        <p class="wwfoot"><span>ℹ️</span><span>To complete these alerts we'll need to know your current rental and streaming services — we'll ask for this later.</span></p>
-    
-    <div class="osfoot">
-      <button class="oscta" id="onbStepCta" type="button" >Done · 765 films</button>
-      
-    </div></div>
+<div class="pscreen" data-screen="services"><div class="modal asscreen" id="services">
+  <div class="modalhead"><h3>My streaming services</h3><button class="donebtn" id="prefsDone">Done</button></div>
+  <div class="setup" id="prefSetup"><div class="setuptop"><span>You're already 2 of 5 there</span><span class="setuppct">40%</span></div>
+    <div class="setupbar"><div class="setupfill" style="width:40%"></div></div>
+    <div class="setuplist"><span class="setupitem done">✓ 📍 Region: Australia</span><span class="setupitem done">✓ 💾 Saved on this device</span><span class="setupitem ">📺 Finish it — your services</span><span class="setupitem ">🎯 Your agent</span><span class="setupitem ">🔔 Films found for you</span></div></div>
+  <div class="switch" id="prefSwitch" data-kb="1" tabindex="0" role="switch"><span>Only show what I can watch</span><span class="knob"></span></div>
+  <div class="pnote">Tell Cascade what you're paying for and it only shows you films you can actually watch on it —
+    and each card's “Where to watch” shows just your services.</div>
+  <div id="prefCascadeNote"></div>
+  <div class="flabel">Paid streaming — I subscribe to</div>
+  <div class="chips" id="prefSubChips"><div class="chip svc" data-val="10">10</div><div class="chip svc" data-val="7plus">7plus</div><div class="chip svc" data-val="ABC iview">ABC iview</div><div class="chip svc" data-val="AMC Plus Apple TV Channel ">AMC Plus Apple TV Channel </div><div class="chip svc" data-val="AMC+">AMC+</div><div class="chip svc" data-val="AMC+ Amazon Channel">AMC+ Amazon Channel</div><div class="chip svc" data-val="Amazon Prime Video">Amazon Prime Video</div><div class="chip svc" data-val="Amazon Prime Video with Ads">Amazon Prime Video with Ads</div><div class="chip svc" data-val="Apple TV">Apple TV</div><div class="chip svc" data-val="Apple TV Amazon Channel">Apple TV Amazon Channel</div><div class="chip svc" data-val="Artiflix">Artiflix</div><div class="chip svc" data-val="BINGE">BINGE</div><div class="chip svc" data-val="Beamafilm">Beamafilm</div><div class="chip svc" data-val="Bloodstream">Bloodstream</div><div class="chip svc" data-val="Chaupal Amazon Channel">Chaupal Amazon Channel</div><div class="chip svc" data-val="Crunchyroll">Crunchyroll</div><div class="chip svc" data-val="Crunchyroll Amazon Channel">Crunchyroll Amazon Channel</div><div class="chip svc" data-val="Disney Plus">Disney Plus</div><div class="chip svc" data-val="DocPlay">DocPlay</div><div class="chip svc" data-val="DocPlay Amazon Channel">DocPlay Amazon Channel</div><div class="chip svc" data-val="Filmzie">Filmzie</div><div class="chip svc" data-val="Foxtel Now">Foxtel Now</div><div class="chip svc" data-val="HBO Max">HBO Max</div><div class="chip svc" data-val="HBO Max Amazon Channel">HBO Max Amazon Channel</div><div class="chip svc" data-val="Hoichoi">Hoichoi</div><div class="chip svc" data-val="Hoopla">Hoopla</div><div class="chip svc" data-val="JustWatch TV">JustWatch TV</div><div class="chip svc" data-val="Kocowa">Kocowa</div><div class="chip svc" data-val="MUBI">MUBI</div><div class="chip svc" data-val="MUBI Amazon Channel">MUBI Amazon Channel</div><div class="chip svc" data-val="Netflix">Netflix</div><div class="chip svc" data-val="Netflix Kids">Netflix Kids</div><div class="chip svc" data-val="Netflix Standard with Ads">Netflix Standard with Ads</div><div class="chip svc" data-val="Paramount Plus">Paramount Plus</div><div class="chip svc" data-val="Paramount Plus Basic with Ads">Paramount Plus Basic with Ads</div><div class="chip svc" data-val="Paramount Plus Premium">Paramount Plus Premium</div><div class="chip svc" data-val="Paramount+ Amazon Channel">Paramount+ Amazon Channel</div><div class="chip svc" data-val="Plex">Plex</div><div class="chip svc" data-val="Rialto Amazon Channel">Rialto Amazon Channel</div><div class="chip svc" data-val="SBS On Demand">SBS On Demand</div><div class="chip svc" data-val="Shudder">Shudder</div><div class="chip svc" data-val="Shudder Amazon Channel">Shudder Amazon Channel</div><div class="chip svc" data-val="Shudder Apple TV Channel">Shudder Apple TV Channel</div><div class="chip svc" data-val="Sony Pictures Core Amazon Channel">Sony Pictures Core Amazon Channel</div><div class="chip svc" data-val="Stan">Stan</div><div class="chip svc" data-val="Sun Nxt">Sun Nxt</div><div class="chip svc" data-val="Tubi TV">Tubi TV</div><div class="chip svc" data-val="Zee5">Zee5</div></div>
+  <div class="flabel">Rent / Buy — stores I use</div>
+  <div class="chips" id="prefStoreChips"><div class="chip svc" data-val="Amazon Video">Amazon Video</div><div class="chip svc" data-val="Apple TV Store">Apple TV Store</div><div class="chip svc" data-val="Beamafilm">Beamafilm</div><div class="chip svc" data-val="Fetch TV">Fetch TV</div><div class="chip svc" data-val="Google Play Movies">Google Play Movies</div><div class="chip svc" data-val="JustWatch TV">JustWatch TV</div><div class="chip svc" data-val="MovieMe">MovieMe</div><div class="chip svc" data-val="YouTube">YouTube</div></div>
+  <div class="flabel">Which service covers what Cascade found?</div>
+  <div id="svcAdvice"><div class="pnote">Create a Cascade and it starts finding films for you — then we'll work out
+      which service covers the most of them, and what renting them instead would cost you.</div></div>
+  <!-- Global alert-type exclude (CAS-103 AC4). The one place to stop a KIND of alert without
+       editing every Cascade one at a time. -->
+  <div class="flabel">Never alert me about</div>
+  <div class="chips" id="prefAlertChips"><div class="chip exc" data-val="cinema" role="button" tabindex="0">🎬 Cinema</div><div class="chip exc" data-val="past_opening" role="button" tabindex="0">📣 Past opening weekend</div><div class="chip exc" data-val="pvod" role="button" tabindex="0">💳 Purchase</div><div class="chip exc" data-val="rental" role="button" tabindex="0">📼 Rent</div><div class="chip exc" data-val="included_streaming" role="button" tabindex="0">📺 Stream</div></div>
+  <div class="pnote">A type switched off here is off for <b>every</b> Cascade, whatever each one has
+    set — and the daily email respects it too. Your Cascades keep their own settings: turn a type
+    back on and each one goes straight back to what you chose.</div>
+  <div id="prefAlertNote"></div>
+  <div class="flabel">Experiment — value framing</div>
+  <div class="switch on" id="uxSwitch" data-kb="1" tabindex="0" role="switch"><span>Show savings &amp; alert framing</span><span class="knob"></span></div>
+  <div class="pnote">Adds a savings line to cards where a genuinely cheaper path exists, a live result count on
+    the Filters apply button, and loss-framed alert copy. Switch it off for the plain version — that's the A/B control.
+    Every figure is read from the real offer prices; we never show a saving or a countdown we can't back up.</div>
+  <!-- About / build provenance (CAS-124): the same stamp as the footer, in the settings surface. -->
+  <div class="flabel">About</div>
+  <div class="pnote" id="aboutBuild">v0.7.2 · build 116 · addb02f · env: staging · built 2026-07-25T00:37:55Z</div>
 </div></div>
+<div class="pscreen" data-screen="reveal"><div class="reveal asscreen" id="reveal"><div class="rvinner">
+  <div class="rvbadge">✓ Agent created</div>
+  <h2 class="osh" style="text-align:center;">Blockbuster Buzz is on it</h2>
+  <p class="ossub" style="text-align:center;">It found <b>20 films</b> already, and it'll keep watching — surfacing new ones and alerting you as they move.</p>
+  <button class="splashcta" type="button" onclick="goto('listing')" style="margin-top:8px;">See what it found</button>
+  <button class="rvsecondary" type="button" onclick="goto('pick')">Add another agent</button>
+</div></div></div>
 <div class="pscreen" data-screen="listing"><div class="asscreen" id="listing"><div style="max-width:452px;margin:0 auto;padding:10px 12px 80px;">
   <div class="lst-head" style="display:flex;align-items:center;justify-content:space-between;margin:4px 2px 12px;">
     <div style="font:800 15px/1 var(--font-display,inherit);color:var(--ink);">CASCADE AGENTS</div>
@@ -2024,6 +2188,23 @@ body{background:#0a0e1a;margin:0;}
     </div>
   </div></div>
 </div></div></div>
+<div class="pscreen" data-screen="edit"><div class="sharpstep asscreen" id="edit"><div class="osinner">
+  <div class="ostop"><button class="osback" type="button" onclick="goto('listing')" aria-label="Back">←</button>
+    <div class="osprog"><i style="width:100%"></i></div></div>
+  <h2 class="osh">Streaming Agent Briefing</h2>
+  <p class="ossub">Everything's on this page — dip into any section to change it, or just save.</p>
+  <div class="edoors">
+    <button type="button" class="osdoor" onclick="goto('name_str')"><span class="di">✏️</span><span class="dt"><span class="dh">Agent name</span><span class="ds">Everyday Favourites</span></span><span class="dc">›</span></button>
+    <button type="button" class="osdoor" onclick="goto('as_str')"><span class="di">⚙️</span><span class="dt"><span class="dh">Agent settings</span><span class="ds">Rental + streaming · alerts on</span></span><span class="dc">›</span></button>
+    <button type="button" class="osdoor" onclick="goto('bar_str')"><span class="di">🎚️</span><span class="dt"><span class="dh">Set your bar</span><span class="ds">Well-liked · your taste</span></span><span class="dc">›</span></button>
+    <button type="button" class="osdoor" onclick="goto('taste_str')"><span class="di">🎭</span><span class="dt"><span class="dh">Genres</span><span class="ds">All genres</span></span><span class="dc">›</span></button>
+    <button type="button" class="osdoor" onclick="goto('taste_str')"><span class="di">🕰️</span><span class="dt"><span class="dh">How far back</span><span class="ds">Any year</span></span><span class="dc">›</span></button>
+    <button type="button" class="osdoor" onclick="goto('taste_str')"><span class="di">💬</span><span class="dt"><span class="dh">Language</span><span class="ds">English</span></span><span class="dc">›</span></button>
+    <button type="button" class="osdoor" onclick="goto('taste_str')"><span class="di">🔞</span><span class="dt"><span class="dh">Age rating</span><span class="ds">G to R 18+</span></span><span class="dc">›</span></button>
+    <button type="button" class="osdoor" onclick="goto('services')"><span class="di">📺</span><span class="dt"><span class="dh">Streaming services</span><span class="ds">4 services</span></span><span class="dc">›</span></button>
+  </div>
+  <div class="osfoot"><button class="oscta" type="button" onclick="goto('listing')">Save agent</button></div>
+</div></div></div>
 <div class="pscreen" data-screen="yourmovies"><div class="asscreen" id="yourmovies"><div style="max-width:452px;margin:0 auto;padding:12px 14px 80px;">
   <h2 class="slh" style="margin:2px 0 4px;">Your Movies</h2>
   <p class="slp" style="margin-bottom:18px;">Everything your agents have surfaced, and how well your services are serving you.</p>
@@ -2048,27 +2229,48 @@ body{background:#0a0e1a;margin:0;}
   <div style="font:800 12px/1 var(--font-display,inherit);letter-spacing:.05em;text-transform:uppercase;color:var(--dim);margin:20px 2px 8px;">Membership</div><div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;"><div style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--line);"><div style="flex:1;min-width:0;"><div style="font-size:14px;color:var(--ink);">First name</div><div style="font-size:12px;color:var(--dim);">Lee</div></div><span style="color:var(--dim);">›</span></div><div style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--line);"><div style="flex:1;min-width:0;"><div style="font-size:14px;color:var(--ink);">Email</div><div style="font-size:12px;color:var(--dim);">lee@codynamics.com.au</div></div><span style="color:var(--dim);">›</span></div><div style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--line);"><div style="flex:1;min-width:0;"><div style="font-size:14px;color:var(--ink);">Plan</div><div style="font-size:12px;color:var(--dim);">$3.99/mo · renews 28 Aug</div></div><span style="color:var(--dim);">›</span></div><div style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--line);"><div style="flex:1;min-width:0;"><div style="font-size:14px;color:var(--ink);">Restore purchases</div></div><span style="color:var(--dim);">›</span></div><div style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--line);"><div style="flex:1;min-width:0;"><div style="font-size:14px;color:var(--ink);">Manage / cancel subscription</div></div><span style="color:var(--dim);">›</span></div><div style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--line);"><div style="flex:1;min-width:0;"><div style="font-size:14px;color:var(--ink);">Terms of use</div></div><span style="color:var(--dim);">›</span></div><div style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--line);"><div style="flex:1;min-width:0;"><div style="font-size:14px;color:var(--ink);">Privacy policy</div></div><span style="color:var(--dim);">›</span></div><div style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--line);"><div style="flex:1;min-width:0;"><div style="font-size:14px;color:var(--ink);">Sign out</div></div></div><div style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--line);"><div style="flex:1;min-width:0;"><div style="font-size:14px;color:var(--ink);">Delete account</div></div></div></div>
   <div style="font:800 12px/1 var(--font-display,inherit);letter-spacing:.05em;text-transform:uppercase;color:var(--dim);margin:20px 2px 8px;">Help & feedback</div><div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;"><div style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--line);"><div style="flex:1;min-width:0;"><div style="font-size:14px;color:var(--ink);">Help Wiki</div><div style="font-size:12px;color:var(--dim);">(coming soon)</div></div><span style="color:var(--dim);">›</span></div><div style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--line);"><div style="flex:1;min-width:0;"><div style="font-size:14px;color:var(--ink);">Feedback form</div><div style="font-size:12px;color:var(--dim);">(coming soon)</div></div><span style="color:var(--dim);">›</span></div></div>
 </div></div></div>
-<div id="pnav"><button data-s="splash" onclick="goto('splash')">Splash</button><button data-s="explainer" onclick="goto('explainer')">Explainer</button><button data-s="pick" onclick="goto('pick')">Pick agent</button><button data-s="selective" onclick="goto('selective')">Get selective</button><button data-s="bar" onclick="goto('bar')">Set your bar</button><button data-s="taste" onclick="goto('taste')">Taste baseline</button><button data-s="where" onclick="goto('where')">Where & when</button><button data-s="listing" onclick="goto('listing')">Listing</button><button data-s="yourmovies" onclick="goto('yourmovies')">Your Movies</button><button data-s="account" onclick="goto('account')">Account</button></div>
+<div id="pnav"><button data-s="splash" onclick="goto('splash')">Splash</button><button data-s="explainer" onclick="goto('explainer')">Explainer</button><button data-s="pick" onclick="goto('pick')">Pick agent</button><button data-s="name_cin" onclick="goto('name_cin')">① Name</button><button data-s="as_cin" onclick="goto('as_cin')">② Settings</button><button data-s="bar_cin" onclick="goto('bar_cin')">③ Bar</button><button data-s="taste_cin" onclick="goto('taste_cin')">④ Taste</button><button data-s="name_str" onclick="goto('name_str')">①S Name</button><button data-s="as_str" onclick="goto('as_str')">②S Settings</button><button data-s="bar_str" onclick="goto('bar_str')">③S Bar</button><button data-s="taste_str" onclick="goto('taste_str')">④S Taste</button><button data-s="services" onclick="goto('services')">Services</button><button data-s="reveal" onclick="goto('reveal')">Reveal</button><button data-s="listing" onclick="goto('listing')">Listing</button><button data-s="edit" onclick="goto('edit')">Edit agent</button><button data-s="yourmovies" onclick="goto('yourmovies')">Your Movies</button><button data-s="account" onclick="goto('account')">Account</button></div>
 
 <script>
-const SCREENS = ["splash", "explainer", "pick", "selective", "bar", "taste", "where", "listing", "yourmovies", "account"];
+const FLOWS = { cinema:['name_cin','as_cin','bar_cin','taste_cin','reveal','listing'],
+                stream:['name_str','as_str','bar_str','taste_str','services','reveal','listing'] };
+let activeFlow = FLOWS.cinema, CURRENT='splash';
 function goto(id){
+  CURRENT=id;
   document.querySelectorAll('.pscreen').forEach(s=>{
-    const on = s.dataset.screen===id;
-    s.classList.toggle('show', on);
-    const ov = s.querySelector('.asscreen');
-    if(ov) ov.classList.toggle('open', on);   // real overlays only render with .open
+    const on = s.dataset.screen===id; s.classList.toggle('show', on);
+    const ov = s.querySelector('.asscreen'); if(ov) ov.classList.toggle('open', on);
   });
   document.querySelectorAll('#pnav button').forEach(b=>b.classList.toggle('on', b.dataset.s===id));
-  document.body.style.overflow='';            // app's openModal sets hidden; keep prototype scrollable
-  window.scrollTo(0,0);
+  document.body.style.overflow=''; window.scrollTo(0,0);
 }
-// wire the splash CTA to explainer
+function next(){ const i=activeFlow.indexOf(CURRENT); if(i>=0 && i+1<activeFlow.length) goto(activeFlow[i+1]); }
+window.pick=(el)=>{ const col=el.closest('.pickcol'); const kind=(col&&col.classList.contains('stream'))?'stream':'cinema'; activeFlow=FLOWS[kind]; goto(activeFlow[0]); };
+window.asPick=(el,radio)=>{ if(radio){ el.closest('.wwopts').querySelectorAll('.asshow').forEach(x=>x.classList.remove('on')); el.classList.add('on'); } else { el.classList.toggle('on'); } };
+document.addEventListener('click',(e)=>{
+  const vs=e.target.closest('.vsnap');
+  if(vs){ e.preventDefault();
+    let dial=vs.parentElement; while(dial && !dial.querySelector('.vfillbar')) dial=dial.parentElement;
+    if(dial){ const pct=parseFloat(vs.style.left)||0;
+      const fill=dial.querySelector('.vfillbar'); if(fill) fill.style.width=pct+'%';
+      dial.querySelectorAll('.vnotch').forEach(n=>n.classList.toggle('lit',(parseFloat(n.style.left)||0)<=pct+0.1));
+      dial.querySelectorAll('.vsnap').forEach(x=>x.classList.remove('on')); vs.classList.add('on');
+      const dv=dial.querySelector('.dval'); if(dv){ const sm=vs.querySelector('small'); dv.textContent = sm? vs.textContent.replace(sm.textContent,'').trim() : vs.textContent.trim(); }
+    } return;
+  }
+  const cta=e.target.closest('.oscta');
+  if(cta && !cta.getAttribute('onclick')){ e.preventDefault(); next(); return; }
+  const done=e.target.closest('.modal .modaldone, #services .prefsdone, #services [data-done]');
+  if(done){ e.preventDefault(); next(); }
+},false);
 document.addEventListener('DOMContentLoaded',()=>{
-  const cta=document.querySelector('#splash .splashcta'); if(cta) cta.onclick=()=>goto('explainer');
+  // Streaming agents drop Buzz
+  document.querySelectorAll('#bar_str [data-dial="buzz"]').forEach(e=>e.remove());
+  // Cinema drops "How far back"
+  document.querySelectorAll('#taste_cin button, #taste_cin .osdoor, #taste_cin [class*="row"]').forEach(el=>{ if(/how far back/i.test(el.textContent)) el.remove(); });
+  const c=document.querySelector('#splash .splashcta'); if(c) c.onclick=()=>goto('explainer');
   goto('splash');
 });
-window.pick = (el)=>{ goto('selective'); };   // any preset → into the wizard hub (prototype)
 </script>
 <script>
 let OPEN=null, lastClose=0;
