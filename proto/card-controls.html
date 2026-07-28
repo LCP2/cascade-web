@@ -1,180 +1,1828 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
+<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Cascade — Compact Card + Controls</title>
+<title>Cascade — Card + Controls (real 0.7 card)</title>
 <style>
   :root{
-    --bg:#0b0f1c; --card:#141a2c; --card2:#1b2338; --line:#2a3350;
-    --ink:#eef1f7; --dim:#98a2bd; --amber:#f0a838; --purp:#7c6cff; --cyan:#37c0e6;
-    --neg:#d0453f; --dislike:#e08a3c; --indiff:#8a93a6; --like:#37c46a; --bell:#4a9eff;
+    /* ---- Cascade brand system (CAS-73 / spec 26640386 §1) ----
+       Spec token names are mapped onto this app's existing vars where they'd collide:
+       spec --ink(bg) → --bg, spec --surface → --panel, spec --violet → --accent (which
+       already equals the provenance purple #7C5CFF). The brand blue/cyan/amber live under
+       their own names below so the app's SEMANTIC window colours (--blue = rental,
+       --amber = in-cinema) keep the exact hues the availability system was tuned for. */
+    --violet:#7C5CFF; --brand-blue:#4C7DFF; --cyan:#22D3EE; --brand-amber:#F5A623;
+    --grad:linear-gradient(135deg,#7C5CFF 0%,#4C7DFF 52%,#22D3EE 100%);
+    --font-body:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --font-display:"Poppins",var(--font-body);
+    --bg:#0A0E1A; --panel:#141A2A; --panel2:#1e232c; --line:#2a303b;
+    /* CAS-130 readability pass: --dim and --faint lifted a step so secondary/metadata text has a clear
+       WCAG-AA margin on every panel (dim now ~8.3:1, faint ~7:1 on --panel; both comfortably over 4.5:1).
+       --faint was #6b7280 (3.26:1, failing) → #8b95a5 → now #9ba5b5. --dim #9aa4b2 → #aab4c4. */
+    --ink:#e8ecf2; --dim:#aab4c4; --faint:#9ba5b5;
+    --open:#ff6b6b; --amber:#f0a336; --purple:#a486f0; --blue:#5aa9f0; --green:#48c78e; --grey:#6b7280;
+    --imdb:#f5c518; --rt:#fa6c3c; --meta:#66cc33; --accent:#7c5cff;
+    /* White on --accent measures 4.35:1 — under AA for anything below 18px, which is every filled control
+       we have. --accentdeep is the same purple with the luminance taken down until white clears the bar
+       (5.5:1). Borders, glows and tints keep the brand --accent; only surfaces CARRYING white text swap. */
+    --accentdeep:#6b48f2;
+    /* --accent as TEXT on the dark panels measures 4.35:1 (the "+ New Cascade" card) and 3.63:1 (the
+       include-unrated hatch) — both under AA. Same hue, lifted until it clears: 7.3:1. */
+    --accenttext:#b3a4ff;
+    /* R5 (CAS-143, buildspec §Colour rule): the selection ink — selections, values and the candy-shop
+       counts. Violet, not green: green is being kept for "films found", and a count on an agent card is a
+       selection preview, not a haul. 9.4:1 on --panel. */
+    --selink:#cfc2ff;
+    /* CAS-179 card v4: gold is the accolade/agent colour, and --band is the tint the availability
+       strip sits on so the coloured window lozenges read as their own band, not as more chips. */
+    --gold:#f5d675; --band:#171d2b;
   }
-  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
-  html,body{margin:0; background:var(--bg); color:var(--ink);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
-  body{max-width:460px; margin:0 auto; padding:12px 12px 60px; touch-action:pan-y;}
-  h1{font-size:16px; margin:4px 2px 2px;}
-  .sub{color:var(--dim); font-size:12.5px; margin:0 2px 12px; line-height:1.45;}
-  .sub b{color:var(--ink);}
-  .density{display:flex; align-items:center; gap:8px; margin:0 2px 12px;}
-  .density label{font-size:12px; color:var(--dim);} .density input{flex:1;}
+  *{box-sizing:border-box}
+  /* ---- THE UI SCALE LEVER (CAS-157) -------------------------------------------
+     The app is sized in fixed px throughout (98 font-size declarations, no rem/em), so bumping the root
+     font-size does nothing — nothing inherits from it. `zoom` on the root is the one knob that does: it
+     scales type, controls, spacing, borders and media together, in a single place, without touching a
+     single one of those 98 rules.
+     TO RETUNE THE WHOLE UI, CHANGE THIS ONE NUMBER. 1 = the old size; 1.12 is ~12% larger.
+     zoom (not transform:scale) because scale takes the element out of layout flow — it would leave the
+     page's own scroll height at the unscaled size and shear every position:fixed overlay. Modern zoom
+     is layout-affecting and divides the viewport for its subtree, so 100vh and inset:0 still resolve to
+     the real viewport: the splash, the reveal, the sticky header and the sticky footer all stay put.
+     Verified at 360/390/430px across splash, pick-agent, get-selective, set-your-bar, taste-baseline,
+     reveal and the listing — see CAS-157. */
+  :root{ --ui-scale:1.12 }
+  html{ zoom:var(--ui-scale) }
+  body{margin:0;background:var(--bg);color:var(--ink);font-size:16px;
+    font-family:var(--font-body);-webkit-font-smoothing:antialiased}
+  /* CAS-130 readability scale: the shared secondary/body text classes below are lifted together
+     (.pnote 12->13, .synopsis 13->14, .ep 12.5->13.5, .flabel 11->11.5) so copy reads at arm's length. */
+  /* Poppins carries the display voice: wordmark, hero, section headings. */
+  .brand,h1,h2,h3,.modalhead h3{font-family:var(--font-display)}
+  .phone{max-width:480px;margin:0 auto;min-height:100vh;background:var(--bg);
+    border-left:1px solid var(--line);border-right:1px solid var(--line);position:relative;padding-bottom:40px}
+  header{position:sticky;top:0;z-index:30;background:rgba(10,14,26,.96);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);padding:12px 16px 10px}
+  .brandrow{display:flex;align-items:center;justify-content:space-between}
+  .brandlockup{display:inline-flex;align-items:center;gap:8px;vertical-align:middle}
+  .brandmark{width:26px;height:26px;display:block;flex:none}
+  /* Uppercase CASCADE wordmark in Poppins — the mark carries the signature gradient,
+     the wordmark stays solid --ink so it clears AA at this size. */
+  .brand{font-size:18px;font-weight:700;letter-spacing:1.6px;color:var(--ink);text-transform:uppercase}
+  .region{font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:20px;padding:2px 9px;margin-left:8px}
+  .updated{font-size:10.5px;color:var(--faint);margin-top:3px}
+  /* Build stamp (CAS-124) — small, muted release/build provenance at the foot of the app.
+     env is rendered by JS from the hostname at runtime, and coloured so staging (amber) is
+     never mistaken for production (dim). */
+  .buildstamp{margin:26px 8px 6px;text-align:center;font-size:10.5px;line-height:1.5;
+    color:var(--faint);letter-spacing:.02em}
+  .buildstamp .env{font-weight:600}
+  .buildstamp .env.staging{color:var(--amber)}
+  .buildstamp .env.production{color:var(--dim)}
+  /* App-wide data attribution (CAS-127) — required JustWatch/TMDB/OMDb credit. */
+  .appcredit{margin:22px 8px 2px;text-align:center;font-size:10.5px;line-height:1.5;color:var(--faint)}
+  .hdr-actions{display:flex;gap:8px}
+  .iconbtn{position:relative;cursor:pointer;font-size:19px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:12px;width:40px;height:40px;display:grid;place-items:center}
+  .iconbtn.on{border-color:var(--green);background:rgba(72,199,142,.14)}
+  .iconbtn .badge{position:absolute;top:-6px;right:-6px;background:var(--rt);color:#fff;font-size:10px;
+    font-weight:800;min-width:18px;height:18px;border-radius:10px;display:grid;place-items:center;padding:0 4px}
+  .search{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    border-radius:10px;padding:11px 40px 11px 12px;font-size:16px}
+  .search::placeholder{color:var(--faint)}
+  .search::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}
+  .searchclear{position:absolute;top:50%;right:7px;transform:translateY(-50%);width:27px;height:27px;
+    border-radius:50%;border:none;background:var(--line);color:var(--ink);font-size:16px;line-height:1;
+    cursor:pointer;display:none;place-items:center;padding:0}
+  .searchclear.show{display:grid}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;
+    padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .btn.active{border-color:var(--accent);color:#fff;background:rgba(124,92,255,.15)}
+  select{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:8px 10px;font-size:13px}
+  /* full-screen modals (filters, preferences) */
+  .modal{position:fixed;top:0;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;
+    background:var(--bg);z-index:50;display:none;overflow-y:auto;padding:0 16px 60px}
+  .modal.open{display:block}
+  .modalhead{position:sticky;top:0;background:var(--bg);display:flex;justify-content:space-between;align-items:center;
+    padding:14px 0 12px;border-bottom:1px solid var(--line);margin-bottom:6px;z-index:2}
+  .modalhead h3{margin:0;font-size:17px;font-weight:800}
+  .donebtn{background:var(--accentdeep);color:#fff;border:none;border-radius:9px;padding:9px 18px;font-weight:700;font-size:14px;cursor:pointer}
+  .pnote{font-size:13px;color:var(--dim);line-height:1.55;margin:2px 0 6px}
+  .switch:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .switch{display:flex;align-items:center;justify-content:space-between;background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:11px 13px;margin:2px 0 6px;cursor:pointer;font-size:13.5px;font-weight:600}
+  .switch .knob{width:42px;height:24px;border-radius:14px;background:#39414f;position:relative;transition:.15s;flex-shrink:0}
+  .switch .knob::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.15s}
+  .switch.on .knob{background:var(--green)}
+  .switch.on .knob::after{left:21px}
+  .flabel{font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:700;margin:16px 0 8px}
+  .flabel:first-child{margin-top:0}
+  /* One visible focus ring for every interactive thing the new UI added. A control you can Tab to but
+     can't SEE that you've Tabbed to is not keyboard-operable in any way that matters. */
+  .chip:focus-visible,.qpill:focus-visible,.hatch:focus-visible,.ebtn:focus-visible,.cschip:focus-visible,
+  .mlbtn:focus-visible,.ca-btn:focus-visible,.tpl:focus-visible,.actbtn:focus-visible,
+  .iconbtn:focus-visible,.donebtn:focus-visible,.applybtn:focus-visible,.dangerbtn:focus-visible{
+    outline:2px solid var(--accent);outline-offset:2px}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{font-size:12px;padding:6px 11px;border-radius:20px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--dim);cursor:pointer;user-select:none;font-weight:600}
+  .chip.on{color:#fff}
+  .chip.on.st-upcoming{background:rgba(107,114,128,.25);border-color:var(--grey);color:#c8cfd9}
+  .chip.on.st-opening_week{background:rgba(255,107,107,.22);border-color:var(--open);color:#ffc2c2}
+  .chip.on.st-in_cinema{background:rgba(240,163,54,.22);border-color:var(--amber);color:#ffce8f}
+  .chip.on.st-pvod{background:rgba(164,134,240,.22);border-color:var(--purple);color:#d3c2ff}
+  .chip.on.st-rental{background:rgba(90,169,240,.2);border-color:var(--blue);color:#bcdcff}
+  .chip.on.st-included_streaming{background:rgba(72,199,142,.2);border-color:var(--green);color:#a7eccb}
+  .chip.on.gen,.chip.on.yr{background:rgba(124,92,255,.2);border-color:var(--accent);color:#cfc2ff}
+  /* the one criterion that SUBTRACTS (CAS-71) — so it must not wear the same colour as the ones that add */
+  .chip.on.exc{background:rgba(192,86,63,.22);border-color:#c0563f;color:#ffb9a6}
+  .chip.on.svc{background:rgba(72,199,142,.2);border-color:var(--green);color:#a7eccb}
+  .slider{display:flex;align-items:center;gap:10px}
+  .slider input{flex:1;accent-color:var(--accent)}
+  .slider .val{font-size:13px;font-weight:700;min-width:44px;text-align:right}
+  .reset{margin-top:16px;font-size:12px;color:var(--dim);background:none;border:none;cursor:pointer;text-decoration:underline}
+  .count{font-size:12px;color:var(--dim);margin:12px 12px 0}
+  .group{margin-top:6px}
+  .grouphead{display:flex;align-items:center;gap:8px;padding:12px 12px 8px;font-size:13px;font-weight:800;letter-spacing:.2px}
+  .gdot{width:9px;height:9px;border-radius:50%}
+  .gdot.opening_week{background:var(--open)} .gdot.in_cinema{background:var(--amber)}
+  .gdot.pvod{background:var(--purple)} .gdot.rental{background:var(--blue)}
+  .gdot.included_streaming{background:var(--green)} .gdot.upcoming{background:var(--grey)}
+  .gcount{color:var(--faint);font-weight:700}
+  .list{padding:0 10px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;margin-bottom:11px;overflow:hidden;
+    transition:box-shadow .3s ease,border-color .3s ease;
+    /* CAS-129: windowing. The browser skips layout+paint for cards outside the viewport, so only the
+       visible handful of the ~2,000-card catalogue actually renders; contain-intrinsic-size:auto
+       remembers each card's real height once seen, keeping the scrollbar and offsets stable. */
+    content-visibility:auto;contain-intrinsic-size:auto 320px}
+  .card.expanded{border-color:#3a3560;box-shadow:0 8px 30px rgba(0,0,0,.55)}
+  /* CAS-179: the card is three bands now — the information body, the availability strip on its own
+     tint, and the footer that carries the price line and the controls — so the padding moved off
+     .card and onto each band. Only the middle band is allowed to carry window colour. */
+  /* CAS-178: the two upper bands are the tap target, so they say so — a pointer over the whole region,
+     and a brief surface change on press so the tap is acknowledged before the card has finished opening. */
+  .cbody{padding:13px;cursor:pointer}
+  .cbody:active,.bandw:active{background:var(--panel2)}
+  .cfoot{padding:11px 13px 12px}
+  .cfoot>:first-child{margin-top:0}
+  /* The information body lays out on a GRID, which is what makes the alignments true rather than
+     eyeballed: the poster spans the title→scores rows, so its bottom edge lands exactly on the
+     scores row, and the gold scale badge shares the last row (and so a baseline) with the awards.
+     A film with no scale badge simply lets the poster span every row instead. */
+  .ctop{display:grid;grid-template-columns:94px minmax(0,1fr);column-gap:10px;row-gap:9px;
+    grid-template-areas:
+      "poster title"
+      "poster meta"
+      "poster syn"
+      "poster money"
+      "poster scores"
+      "badge  awards"}
+  .poster{grid-area:poster;width:94px;align-self:stretch;min-height:150px;border-radius:10px;
+    background:var(--panel2) center/cover no-repeat;position:relative;
+    border:1px solid var(--line);cursor:pointer;transition:transform .25s ease}
+  .poster.pfull{grid-row:1/-1}
+  .card.expanded .poster{transform:scale(1.03)}
+  /* The ▶ on the poster is a real link to the film's first trailer, and it is only drawn when there
+     IS one — a play button that plays nothing is a lie the size of a button. */
+  .pplay{position:absolute;left:6px;bottom:6px;width:26px;height:26px;border-radius:50%;
+    background:rgba(10,14,26,.72);border:1px solid rgba(255,255,255,.35);color:#fff;font-size:11px;
+    display:grid;place-items:center;text-decoration:none;line-height:1}
+  .pplay:hover{border-color:#fff}
+  .title{grid-area:title;font-size:16.5px;font-weight:750;line-height:1.25;cursor:pointer}
+  .cert{display:inline-block;font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:5px;
+    border:1px solid #5b6472;color:#d6dce6;background:#232a35;margin-left:6px;vertical-align:middle;letter-spacing:.3px;white-space:nowrap}
+  .cert.mature{border-color:#c0563f;color:#ffb9a6;background:rgba(192,86,63,.16)}
+  /* CAS-179: no date on the top line any more — the film's dates are all in the availability strip,
+     where they belong to a window each. This line is what the film IS: its genres and its language. */
+  .metaline{grid-area:meta;font-size:13px;color:var(--dim);line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .culttag{color:var(--faint)}
+  .synopsis{grid-area:syn;font-size:14px;color:#c8d0da;line-height:1.5;margin:0;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .card.expanded .synopsis{-webkit-line-clamp:unset;display:block}
+  .expand{max-height:0;opacity:0;overflow:hidden;transition:max-height .4s ease,opacity .3s ease}
+  .card.expanded .expand{max-height:560px;opacity:1;margin-top:12px}
+  .exhead{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--faint);font-weight:700;margin-bottom:8px}
+  .credits{margin-bottom:12px}
+  .credit{font-size:12.5px;color:#c4ccd6;line-height:1.5}
+  .credit+.credit{margin-top:3px}
+  .credit .clbl{display:inline-block;box-sizing:border-box;min-width:70px;padding-right:8px;font-size:10.5px;
+    text-transform:uppercase;letter-spacing:.4px;color:var(--faint);font-weight:700;vertical-align:baseline}
+  .trailers{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
+  .trailers::-webkit-scrollbar{display:none}
+  .trailer{position:relative;flex-shrink:0;width:132px;height:76px;border-radius:9px;border:1px solid var(--line);
+    background:var(--panel2) center/cover no-repeat;display:grid;place-items:center;text-decoration:none}
+  .trailer .play{width:30px;height:30px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center;font-size:12px;border:1px solid rgba(255,255,255,.45)}
+  .notrailer{font-size:12px;color:var(--faint)}
+  /* The action row lives INSIDE the card panel, reading left to right in the order the decisions are made:
+     Pick first (do I want this?), then the three verdicts. Where-to-watch is not a verdict, so it sits apart,
+     pushed to the right edge — the four decision controls stay a single unbroken group (CAS-100). */
+  .actions{display:flex;gap:8px;margin-top:12px;align-items:center}
+  .actions .wtwbtn{margin-left:auto}
+  /* ONE icon set for the card's actions (CAS-64). Every action icon is a stroked outline drawn from the same
+     24px grid at the same 1.8 stroke weight, in the same grey — and every ON state is the same purple
+     treatment. Emoji glyphs are out: they carry their own weights, fills and platform styling, which is
+     exactly the mixed line/shading look this replaces. */
+  .actbtn{width:38px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);
+    cursor:pointer;display:grid;place-items:center;line-height:0;color:#8b93a1;transition:.15s;padding:0}
+  .actbtn svg{width:18px;height:18px;display:block}
+  .actbtn:hover{color:var(--ink);border-color:#3a4150}
+  /* CAS-179: an active control on a card is GOLD — the same gold as the scale badge and the
+     accolades — so the card's only two colour systems are "where you can watch it" (the windows)
+     and "this is distinguished / this is on" (gold). */
+  .actbtn.on{background:rgba(245,214,117,.12);border-color:rgba(245,214,117,.5);color:var(--gold)}
+  /* ---- provenance: who put this film on your Found list (CAS-67) ---- */
+  /* The megaphone is the only icon on the card that answers a question about US as well as about the film,
+     so it is the only one that carries two ON colours: PURPLE = one of your Cascades chose it, ORANGE = you
+     did, by hand. Same mark, same place, two honest answers — and the same pair is used in the Found list and
+     in the provenance sheet, so a colour never means one thing here and another thing there. */
+  /* CAS-179 moves the agent's own pick from purple to GOLD. The pair is still two clearly different
+     hues AND two different words ("Agent Pick" / "My Pick"), which is what WCAG 1.4.1 actually asks
+     for — colour is never the only thing carrying the state. */
+  .actbtn.on.auto{background:rgba(245,214,117,.12);border-color:rgba(245,214,117,.5);color:var(--gold)}
+  .actbtn.on.mine{background:rgba(240,163,54,.18);border-color:var(--amber);color:#ffd79a}
+  /* Pick carries its state in WORDS as well as colour — "Pick" / "Agent Pick" / "My Pick" — because three
+     states told apart by hue alone is exactly what WCAG 1.4.1 rules out. It is the only labelled control in
+     the row: the other three are one question with one answer, and the stub repeats them verbatim. */
+  .actbtn.pickbtn{width:auto;gap:6px;padding:0 11px;grid-auto-flow:column;font:inherit;font-size:12px;font-weight:750}
+  .picklbl{line-height:1;white-space:nowrap}
+  .actbtn.mlbtn.pickbtn{padding:0 9px;font-size:11.5px}
+  /* The three verdicts each own a colour, matching the meaning they already carry elsewhere in the app:
+     not-for-me greys out, liked is the same green as a win, disliked the same red as a warning. */
+  .actbtn.on.notfor{background:rgba(107,114,128,.28);border-color:var(--grey);color:#c9d0da}
+  .actbtn.on.liked{background:rgba(72,199,142,.18);border-color:var(--green);color:#a6e8c8}
+  .actbtn.on.disliked{background:rgba(255,107,107,.16);border-color:var(--open);color:#ffbdbd}
+  .actbtn.wtwbtn .chev{transition:transform .18s}
+  .actbtn.wtwbtn.open{background:rgba(245,214,117,.12);border-color:rgba(245,214,117,.5);color:var(--gold)}
+  .actbtn.wtwbtn.open .chev{transform:rotate(180deg)}
+  .actbtn.wtwbtn.off{opacity:.35;cursor:not-allowed}
+  /* ---- undo-collapse: a tagged film shrinks to one line, it never vanishes (CAS-64) ---- */
+  /* Tagging something Watched / Not-interested used to delete it from the screen with no way back except a
+     filter you'd have to go and find. Now the row stays, greyed, carrying the very icon that removed it —
+     press it again and the full card comes back. Nothing silently disappears. */
+  /* CAS-133: the collapsed row wears the SAME outline as the full card (solid, same colour/radius),
+     its title is bright and prominent, and it's only lightly dimmed so it reads as "collapsed", not
+     "gone". The shrink itself is animated by keepRowInPlace on deselect — the card visibly folds. */
+  .stub{display:flex;align-items:center;gap:9px;background:var(--panel);border:1px solid var(--line);
+    border-radius:16px;padding:9px 9px 9px 13px;margin-bottom:11px;opacity:.9;transition:opacity .18s;
+    content-visibility:auto;contain-intrinsic-size:auto 46px}   /* CAS-129: windowing (see .card) */
+  .stub:hover,.stub:focus-within{opacity:1}
+  .stubname{flex:1;min-width:0;font-size:14.5px;font-weight:750;color:var(--ink);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stubwhy{font-size:11.5px;font-weight:700;color:var(--dim);white-space:nowrap;flex-shrink:0}
+  .actbtn.stubbtn{width:32px;height:28px;border-radius:9px;flex-shrink:0}
+  .actbtn.stubbtn svg{width:16px;height:16px}
+  /* ---- The information chips (CAS-179 / I7 + I9) --------------------------------
+     Money and scores sit on TWO wrap-safe rows instead of one scrolling strip: a row that scrolls
+     sideways hides the last figure on it, which on a 390px phone was always Gross. Both rows wrap,
+     so nothing is ever off-screen and nothing clips.
+     The palette rule: colour is reserved for the availability windows and for gold accolades. The
+     values themselves are near-white at weight 600 — legible, not shouting — the labels are faint,
+     and the only colour in the row is the 6px source dot that says which body the number came from.
+     A figure we don't hold reads "–" (and never "$–": there is no dollar sign on a number we lack). */
+  .mrow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;align-content:center;min-width:0}
+  .r-money{grid-area:money} .r-scores{grid-area:scores} .r-awards{grid-area:awards}
+  /* Sized so Budget and Gross sit side by side in the ~174px the right-hand column has on a 390px
+     phone. They still WRAP rather than clip if a figure runs long — a truncated dollar amount is a
+     wrong number, which is worse than a second line. */
+  .m{height:24px;display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;
+    padding:0 6px;border-radius:7px;border:1px solid var(--line);background:var(--panel2);
+    white-space:nowrap;color:var(--dim);max-width:100%;overflow:hidden}
+  .m .lab{color:var(--faint);font-weight:600;font-size:10px}
+  .m b{color:var(--ink);font-weight:600}
+  .m.muted b{color:var(--faint)}
+  .m .dot{width:6px;height:6px;border-radius:50%;flex:0 0 auto;opacity:.75}
+  .m .dot.imdb{background:var(--imdb)} .m .dot.rt{background:var(--rt)} .m .dot.meta{background:var(--meta)}
+  /* CAS-156: a withheld rating is the one chip with something to explain, so it stays a real button —
+     a title= on a phone is a tooltip nobody can reach. Reset so it looks identical to the rest. */
+  button.m{font-family:inherit;cursor:pointer;-webkit-appearance:none;appearance:none}
+  button.m:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* Accolades are the one thing on the card allowed to be gold. */
+  .m.osc{border-color:rgba(245,214,117,.4);color:#d9c9a0} .m.osc b{color:var(--gold);font-weight:700}
+  .m.awd b{color:#c7cede}
+  .awx{display:none;margin-top:11px;padding-top:10px;border-top:1px solid var(--line);flex-direction:column;gap:5px}
+  .card.expanded .awx{display:flex}
+  .awx .l{display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:var(--dim)}
+  .awx .l b{color:var(--ink);font-weight:700}
+  /* Scale badge — tucked UNDER the poster, sharing the last grid row (and so a baseline) with the
+     awards. It's a claim ABOUT the film, not another metric alongside IMDb/RT. Gold, and it names the
+     exact tier the Cascade's Tentpole filter uses. Press it (or hover) for the signals behind it. */
+  .tentbadge{grid-area:badge;align-self:center;width:100%;height:24px;font:inherit;font-size:10.5px;font-weight:700;
+    padding:0 6px;border-radius:8px;display:inline-flex;gap:5px;align-items:center;justify-content:center;
+    white-space:nowrap;overflow:hidden;cursor:pointer;
+    border:1px solid rgba(245,214,117,.45);background:rgba(245,214,117,.10);color:var(--gold)}
+  .tentbadge b{font-size:11px;font-weight:800;color:var(--gold)}
+  .tentbadge:hover{border-color:rgba(245,214,117,.85)}
+  .tentbadge:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  /* ---- The availability strip (CAS-179) -----------------------------------------
+     Four coloured window lozenges — Cinema[Upcoming/Opening/Cinema] · Premium · Rent · Stream —
+     JOINED by a connector line so the strip reads as one journey rather than four separate chips.
+     Current is filled, past is tinted (it happened), future is ghosted and the joiner into it dims
+     with it: what is ahead is a forecast, and it should not look like a fact. Each window carries
+     its date underneath, italic where the date is worked out rather than read from a listing. */
+  .bandw{background:var(--band);border-top:1px solid var(--line);padding:11px 13px;cursor:pointer}
+  /* 10px between lozenges, not the mock's 14 — the connector still reads, and the four columns have to
+     hold "Upcoming" and "Premium" whole at 360px wide. An ellipsised window name is a clipped fact. */
+  .avail{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .win{display:flex;flex-direction:column;gap:5px;min-width:0;position:relative}
+  .wpill{position:relative;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+    font-size:10px;font-weight:800;padding:0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    border:1px solid var(--line);background:var(--panel2);color:var(--faint)}
+  .win:not(:first-child) .wpill::before{content:"";position:absolute;left:-10px;width:10px;height:2px;
+    top:50%;transform:translateY(-50%);background:rgba(255,255,255,.28);z-index:0}
+  .wdate{text-align:center;font-size:10px;color:var(--faint);line-height:1;font-variant-numeric:tabular-nums;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wdate.est{font-style:italic;opacity:.75}
+  .win.on .wdate{color:var(--dim)}
+  .win.w-cin-upcoming.on .wpill{color:#c8cfd9;border-color:var(--grey);background:rgba(107,114,128,.25)}
+  .win.w-cin-opening.on .wpill{color:#ffc2c2;border-color:var(--open);background:rgba(255,107,107,.2)}
+  .win.w-cin-cinema.on .wpill{color:#ffce8f;border-color:rgba(240,163,54,.65);background:rgba(240,163,54,.18)}
+  .win.w-pvod.on .wpill{color:#d3c2ff;border-color:rgba(164,134,240,.65);background:rgba(164,134,240,.18)}
+  .win.w-rental.on .wpill{color:#bcdcff;border-color:rgba(90,169,240,.7);background:rgba(90,169,240,.18)}
+  .win.w-included_streaming.on .wpill{color:#a7eccb;border-color:rgba(72,199,142,.65);background:rgba(72,199,142,.2)}
+  .win.w-cin-upcoming.past .wpill{color:#c8cfd9;border-color:rgba(107,114,128,.45)}
+  .win.w-cin-opening.past .wpill{color:#f0b4b4;border-color:rgba(255,107,107,.32)}
+  .win.w-cin-cinema.past .wpill{color:#e0b483;border-color:rgba(240,163,54,.32)}
+  .win.w-pvod.past .wpill{color:#c3b3f0;border-color:rgba(164,134,240,.32)}
+  .win.w-rental.past .wpill{color:#9fc4ef;border-color:rgba(90,169,240,.32)}
+  .win.w-included_streaming.past .wpill{color:#8fd5b3;border-color:rgba(72,199,142,.32)}
+  .win.future .wpill{opacity:.42;border-style:dashed}
+  .win.future .wpill::before{background:rgba(255,255,255,.14)}
+  .win.future .wdate{opacity:.42}
+  /* ---- Estimated availability (CAS-110) ----
+     A window Cascade has NOT confirmed must not be able to pass for one it has. The lit lozenge loses its
+     fill and goes dashed and grey — the same shape, visibly not the same claim — and the line underneath
+     says so in words. Colour alone would leave the difference invisible to anyone who can't see it. */
+  .avail.est .win.on .wpill{background:var(--panel2)!important;border-style:dashed!important;
+    border-color:var(--line)!important;color:var(--dim)!important}
+  .estline{display:flex;align-items:center;gap:7px;margin-top:9px;padding:6px 10px;border-radius:9px;
+    border:1px dashed var(--line);background:transparent;color:var(--dim);font-size:11.5px;font-weight:600;cursor:help}
+  .esttag{font-size:9.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--faint);
+    border:1px dashed var(--line);border-radius:6px;padding:1px 5px}
+  .mlwin.est{border-style:dashed!important;opacity:.8}
+  .pills{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+  .pill{font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:8px;border:1px solid}
+  .pill.opening_week{background:rgba(255,107,107,.14);border-color:rgba(255,107,107,.55);color:#ffc2c2}
+  .pill.in_cinema{background:rgba(240,163,54,.14);border-color:rgba(240,163,54,.5);color:#ffce8f}
+  .pill.pvod{background:rgba(164,134,240,.14);border-color:rgba(164,134,240,.5);color:#d3c2ff}
+  .pill.rental{background:rgba(90,169,240,.13);border-color:rgba(90,169,240,.5);color:#bcdcff}
+  .pill.included_streaming{background:rgba(72,199,142,.13);border-color:rgba(72,199,142,.5);color:#a7eccb}
+  .pill.upcoming{background:rgba(107,114,128,.15);border-color:rgba(107,114,128,.5);color:#c2c9d4}
+  .wtw-toggle{margin-top:11px;width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);
+    color:var(--dim);border-radius:9px;padding:8px 11px;font-size:12px;font-weight:600;cursor:pointer;
+    display:flex;justify-content:space-between;align-items:center}
+  .wtw-toggle .chev{transition:transform .18s}
+  .wtw-toggle.open .chev{transform:rotate(180deg)}
+  .wtw{display:none;margin-top:8px;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .wtw.open{display:block}
+  .wtwrow{display:flex;justify-content:space-between;gap:8px;padding:8px 11px;font-size:12px;border-top:1px solid var(--line)}
+  .wtwrow:first-child{border-top:none}
+  .wtwrow .svc{font-weight:600;color:var(--ink)}
+  .wtwrow .off{color:var(--dim);white-space:nowrap}
+  /* JustWatch attribution (CAS-127) — required credit shown with the availability list,
+     deep-linking to the film's JustWatch AU page when we have it. */
+  .wtwrow.jwrow{justify-content:center;background:var(--panel2)}
+  .jwattr{font-size:10.5px;color:var(--faint);text-decoration:none}
+  a.jwattr:hover{color:var(--dim);text-decoration:underline}
+  .tt{display:inline-block;box-sizing:border-box;min-width:46px;text-align:center;font-size:10px;font-weight:700;padding:2px 6px;border-radius:5px;margin-right:8px;vertical-align:middle}
+  .tt.sub{background:rgba(72,199,142,.16);color:#a7eccb} .tt.free{background:rgba(72,199,142,.16);color:#a7eccb}
+  .tt.rent{background:rgba(90,169,240,.16);color:#bcdcff} .tt.buy{background:rgba(164,134,240,.16);color:#d3c2ff}
+  /* ---- empty states: never a dead end ---- */
+  .empty{color:var(--dim);text-align:center;padding:34px 18px 40px;font-size:14px}
+  .empty .emoji{font-size:30px;margin-bottom:10px}
+  .empty .eh{font-size:15px;font-weight:800;color:var(--ink);line-height:1.35;margin-bottom:7px}
+  .empty .ep{font-size:13.5px;color:var(--dim);line-height:1.6;max-width:330px;margin:0 auto}
+  .ebtns{display:flex;flex-direction:column;gap:7px;margin:14px auto 0;max-width:330px}
+  .ebtn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:11px;
+    padding:11px 12px;font-size:12.5px;font-weight:700;cursor:pointer;text-align:left;
+    display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .ebtn:hover{border-color:var(--accent)}
+  .ebtn b{color:#a7eccb;white-space:nowrap}
+  .ebtn.ghost{justify-content:center;color:var(--faint);border-style:dashed}
+  .cascstart{margin:2px 12px 0;background:linear-gradient(135deg,rgba(124,92,255,.12),rgba(72,199,142,.07));
+    border:1px solid #3b3560;border-radius:13px;padding:12px}
+  .csh{font-size:13.5px;font-weight:800;color:var(--ink)}
+  .csp{font-size:12px;color:var(--dim);line-height:1.55;margin:4px 0 9px}
+  .cschips{display:flex;flex-wrap:wrap;gap:6px}
+  .cschip{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:20px;
+    padding:7px 11px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .cschip:hover{border-color:var(--accent)}
+  .cschip b{color:#a7eccb;font-weight:800}
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:40;display:none}
+  .overlay.open{display:block}
+  .drawer{position:absolute;top:0;right:0;height:100%;width:88%;max-width:400px;background:var(--panel);
+    border-left:1px solid var(--line);transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column}
+  .drawer.open{transform:translateX(0)}
+  .dhead{padding:16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+  .dhead h3{margin:0;font-size:16px}
+  .close{cursor:pointer;color:var(--dim);font-size:22px;background:none;border:none}
+  .sim{margin:14px 16px;padding:12px;background:linear-gradient(135deg,rgba(124,92,255,.18),rgba(72,199,142,.12));
+    border:1px solid var(--accent);border-radius:12px}
+  .sim p{margin:0 0 10px;font-size:12.5px;color:var(--dim);line-height:1.5}
+  .sim button{width:100%;background:var(--accentdeep);color:#fff;border:none;border-radius:10px;padding:11px;font-size:14px;font-weight:700;cursor:pointer}
+  .alerts{overflow-y:auto;padding:4px 16px 20px}
+  .alert{background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:12px;margin-bottom:10px}
+  .alert .t{font-size:14px;font-weight:700}
+  .alert .d{font-size:12px;color:var(--dim);margin-top:4px}
+  .alert .w{display:inline-block;margin-top:8px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:7px}
+  .noalert{color:var(--faint);font-size:13px;text-align:center;padding:30px 10px}
+  /* ---- usage log (debug) ---- */
+  .updated{cursor:default;user-select:none}
+  .logfirst{display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+  .logstep{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 8px;
+    font-size:11px;color:var(--dim)}
+  .logstep b{color:var(--accenttext)}
+  .logarrow{color:var(--faint);font-size:11px}
+  .logrows{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .logrow{display:flex;gap:8px;padding:6px 9px;font-size:11px;border-bottom:1px solid var(--line);align-items:baseline}
+  .logrow:last-child{border-bottom:none}
+  .logrow:nth-child(odd){background:var(--panel2)}
+  .logt{color:var(--faint);flex-shrink:0;font-variant-numeric:tabular-nums}
+  .logty{color:#cfc2ff;font-weight:700;flex-shrink:0}
+  .logd{color:var(--dim);min-width:0;overflow-wrap:anywhere}
+  /* ---- My List ---- */
+  .badge.grn{background:var(--green)}
+  .mlgroup{margin-top:16px}
+  .mlhead{font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;margin-bottom:8px;
+    display:flex;align-items:center;gap:7px}
+  .mlhead .n{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:1px 7px;
+    font-size:10px;color:var(--dim)}
+  .mlrow{display:flex;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;
+    padding:10px;margin-bottom:8px}
+  .mlrow.dim{opacity:.62}
+  .mlposter{width:44px;height:66px;border-radius:7px;background:#0c0f14 center/cover no-repeat;flex-shrink:0}
+  .mlmain{flex:1;min-width:0}
+  .mltitle{font-size:13px;font-weight:700;line-height:1.3}
+  .mlwin{display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;margin-top:5px}
+  .mloffers{font-size:11px;color:var(--dim);margin-top:5px;line-height:1.5}
+  .mloffers b{color:#a7eccb}
+  .mlfrom{font-size:10.5px;color:var(--faint);margin-top:5px;line-height:1.5}
+  .mlchip{display:inline-block;background:rgba(124,92,255,.16);border:1px solid #4c4270;color:#cfc2ff;
+    border-radius:20px;padding:1px 7px;font-size:10px;font-weight:700;margin-right:4px}
+  .mlacts{display:flex;flex-direction:column;gap:5px;flex-shrink:0}
+  /* My List reuses the card's .actbtn — same three icons, same grey default, same purple ON state — and
+     only overrides the box. One action wearing two different active colours in two places was exactly the
+     inconsistency CAS-64 is here to kill. */
+  .mlbtn{width:34px;height:30px;border-radius:9px;background:var(--panel)}
+  .mlbtn svg{width:16px;height:16px}
+  .mlempty{color:var(--faint);font-size:12.5px;line-height:1.6;text-align:center;padding:34px 12px}
+  /* CAS-102: the starter block now lives HERE, in the empty Found view. The empty state centres its text;
+     the block is a read-and-choose panel, so it keeps its own left alignment and drops the side margin it
+     needed when it sat loose in the Cascades bar. */
+  .mlempty .cascstart{margin:16px 0 0;text-align:left}
+  /* ---- the provenance sheet (CAS-67) ---- */
+  /* Tap the megaphone anywhere and this is what opens: who put the film on your Found list, which Cascade is
+     watching it, what that Cascade will actually tell you about — and the one control that changes any of it. */
+  .provfilm{display:flex;gap:11px;align-items:center;margin-bottom:13px}
+  .provposter{width:52px;height:78px;border-radius:8px;background:#0c0f14 center/cover no-repeat;flex-shrink:0}
+  .provtitle{font-size:15px;font-weight:800;line-height:1.25}
+  .provsrc{display:inline-block;border-radius:20px;padding:3px 10px;font-size:11.5px;font-weight:800;margin-top:7px}
+  .provsrc.auto{background:rgba(164,134,240,.16);border:1px solid var(--purple);color:#d8c9ff}
+  .provsrc.mine{background:rgba(240,163,54,.15);border:1px solid var(--amber);color:#ffd79a}
+  .provsrc.off {background:var(--panel2);border:1px solid var(--line);color:var(--dim)}
+  .provrow{display:flex;justify-content:space-between;align-items:center;gap:9px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:6px}
+  .provname{font-size:12.5px;font-weight:700;min-width:0}
+  .provalerts{font-size:10.5px;color:var(--faint);white-space:nowrap;flex-shrink:0}
+  .provnote{font-size:11.5px;color:var(--faint);line-height:1.6;margin:10px 0 13px}
+  .provnote b{color:var(--dim)}
+  .provact{display:flex}
+  .provact .dangerbtn{flex:1}
+  .mlfrom .provsrc{margin-top:0;padding:1px 7px;font-size:10px}
+  /* ---- per-Cascade digest ---- */
+  #digest{margin:0 16px 6px}
+  .dghead{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:700;margin:14px 0 8px}
+  .dgempty{font-size:12px;color:var(--faint);line-height:1.5;background:var(--panel2);border:1px solid var(--line);
+    border-radius:11px;padding:11px 12px;margin-top:12px}
+  .dgcard{background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:10px 12px;margin-bottom:8px}
+  .dgname{font-size:13px;font-weight:800;margin-bottom:6px}
+  .dgnone{font-size:11.5px;color:var(--faint)}
+  .dgsec{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin:8px 0 4px}
+  .dgsec.ok{color:var(--green)} .dgsec.mute{color:var(--faint)}
+  .dgrow{font-size:12px;color:var(--ink);line-height:1.45;padding:4px 0 4px 10px;border-left:2px solid var(--green)}
+  .dgrow b{color:#a7eccb;font-weight:700}
+  .dgrow.mute{border-left-color:#3a4150;color:var(--dim)}
+  .dgrow.mute b{color:var(--dim)}
+  .dgwhy{display:block;font-size:11px;color:#ffce8f;margin-top:2px}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);z-index:60;
+    background:#111722;border:1px solid var(--accent);color:#fff;padding:12px 16px;border-radius:12px;
+    font-size:13px;font-weight:600;box-shadow:0 8px 30px rgba(0,0,0,.5);opacity:0;pointer-events:none;
+    transition:all .25s ease;max-width:420px;text-align:center;line-height:1.4}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  /* ---- My Cascades — coverflow deck (the chip row clipped once you had a few) ---- */
+  /* CAS-136: the deck STICKS under the header, so switching cascade never means scrolling back to the top.
+     --hdrh is measured from the real header by JS, because the header's height changes with its contents.
+     CAS-172 reverses CAS-136's third point (Lee, 2026-07-24): the deck no longer collapses on scroll. It kept
+     its full form — name, the "N films right now · alerts on …" line, and the Edit/actions row — at every
+     scroll position. The whole `.cascbar.collapsed` block is gone rather than left unreferenced: a class no
+     code can apply is a trap for the next person who finds it and assumes the behaviour still exists.
+     The trade-off CAS-136 was written to avoid is now real and accepted: the strip holds its full height for
+     the whole listing. Nothing else about the sticky pin changed. */
+  .cascbar{--dcw:206px;--dgap:12px;padding:11px 0 2px;
+    position:sticky;top:var(--hdrh,0px);z-index:20;background:var(--bg)}
+  .casclbl{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:700;
+    margin:0 12px 4px}
+  /* CAS-136: the per-cascade search box the 🔍 on a card reveals. */
+  .cascsearch{display:flex;align-items:center;gap:6px;margin:8px 12px 0;position:relative}
+  .cascsearch[hidden]{display:none}   /* a bare [hidden] loses to the class rule above — restate it */
+  .cascsearch .search{flex:1;padding:9px 12px;font-size:15px}
+  .cascsearch .searchclear{position:static;transform:none;flex:0 0 auto}
+  .deck{position:relative}
+  .deck::before,.deck::after{content:"";position:absolute;top:0;bottom:0;width:22px;z-index:6;pointer-events:none}
+  .deck::before{left:0;background:linear-gradient(90deg,var(--bg),rgba(10,14,26,0))}
+  .deck::after{right:0;background:linear-gradient(270deg,var(--bg),rgba(10,14,26,0))}
+  .deckstrip{position:relative;display:flex;gap:var(--dgap);align-items:stretch;overflow-x:auto;overflow-y:hidden;
+    scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch;perspective:900px;
+    padding:12px calc(50% - var(--dcw)/2) 16px;outline:none}
+  .deckstrip::-webkit-scrollbar{display:none}
+  .deckstrip.dragging{scroll-snap-type:none;cursor:grabbing}
+  /* The card is the snap box and stays UNtransformed — scroll-snap measures the transformed border box,
+     so putting the coverflow transform on .dcard itself would fight the snap. It goes on .dc-in instead. */
+  .dcard{position:relative;flex:0 0 var(--dcw);width:var(--dcw);min-height:118px;scroll-snap-align:center;
+    display:flex;cursor:pointer}
+  .dc-in{flex:1;min-width:0;display:flex;flex-direction:column;text-align:left;
+    background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:11px 12px;color:var(--dim);
+    transform-origin:50% 50%;box-shadow:0 8px 22px rgba(0,0,0,.4);will-change:transform}
+  .dcard:focus-visible{outline:none}
+  .dcard:focus-visible .dc-in{outline:2px solid var(--accent);outline-offset:2px}
+  .dcard.is-centre .dc-in{background:linear-gradient(135deg,rgba(124,92,255,.16),rgba(72,199,142,.08));
+    border-color:var(--accent);color:var(--ink)}
+  .dc-icon{font-size:18px;line-height:1}
+  /* CAS-136/CAS-150: every cascade carries its own search, and since CAS-150 it rides in the card's control
+     row with Edit / 🔗 / × rather than floating over the corner — it is one of the things you do to the
+     Cascade you have open, so it sits with the others and inherits their look. */
+  .dc-search.on{border-color:var(--accent);color:#cfc2ff;background:rgba(124,92,255,.18)}
+  .dc-name{font-size:13.5px;font-weight:800;margin-top:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dcard.is-centre.is-active .dc-name{color:#cfc2ff}
+  .dc-sub{font-size:11px;color:var(--dim);margin-top:4px;line-height:1.4;display:none}
+  .dcard.is-centre .dc-sub{display:block}
+  .dc-acts{display:none;gap:6px;margin-top:auto;padding-top:9px}
+  .dcard.is-centre.is-active .dc-acts,.dcard.new.is-centre .dc-acts{display:flex}
+  .dcard.new .dc-in{border-style:dashed;border-color:#4c4270}
+  .dcard.new .dc-icon,.dcard.new .dc-name{color:var(--accenttext)}
+  /* The built-in All card: home base. Reads as belonging to the deck but not as one of YOUR agents — it
+     has no actions row, so it sits shorter than the rest and needs its own bottom padding. */
+  .dcard.all .dc-in{border-color:#3a4a63;padding-bottom:14px}
+  .dcard.all .dc-name{color:var(--dim)}
+  .dcard.all.is-centre .dc-name{color:var(--ink)}
+  .casccta{font-size:12px;color:var(--faint);line-height:1.5;margin:0 12px}
+  .ca-btn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;
+    padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .ca-btn.save{background:rgba(72,199,142,.2);border-color:var(--green);color:#a7eccb}
+  .ca-btn.x{padding:6px 9px;color:var(--dim)}
+  .ca-btn.new{background:rgba(124,92,255,.2);border-color:var(--accent);color:#cfc2ff;flex:1}
+  .dirty{font-style:italic;color:#ffce8f}
+  #cascDetail{margin-top:2px}
+  #cascDetail .warnnote{margin:0 12px 6px}
+  @media (max-width:400px){ .cascbar{--dcw:178px} }
+  /* Find view (CAS-102): the deck drops to a compact RAIL so "N of N titles" and the first film sit directly
+     under the controls instead of ~1.5 screens down. Same cards, same data, same Edit / Share / × / Create —
+     the icon just moves up beside the name, the sub-line clamps to one line, and the padding tightens.
+     Nothing is hidden: this is the tall card made short, not a card with its controls taken away. */
+  .cascbar.rail{--dcw:196px;padding:6px 0 0}
+  .cascbar.rail .casclbl{margin-bottom:2px}
+  .cascbar.rail .deckstrip{padding:8px calc(50% - var(--dcw)/2) 10px}
+  .cascbar.rail .dcard{min-height:0}
+  .cascbar.rail .dc-in{padding:8px 10px;flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:7px}
+  .cascbar.rail .dc-icon{font-size:15px}
+  .cascbar.rail .dc-name{margin-top:0;font-size:12.5px;flex:1 1 auto;min-width:0}
+  .cascbar.rail .dc-sub{flex:1 0 100%;margin-top:3px;font-size:10.5px;line-height:1.35;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cascbar.rail .dc-acts{flex:1 0 100%;padding-top:7px}
+  .cascbar.rail .ca-btn{padding:4px 8px;font-size:11px}
+  .cascbar.rail .dcard.all .dc-in{padding-bottom:8px}
+  /* Reduced motion: no coverflow transform — a plain horizontal snap-scroll (the JS clears the inline styles too) */
+  @media (prefers-reduced-motion:reduce){
+    .deckstrip{scroll-behavior:auto}
+    .dc-in{transform:none!important;filter:none!important;opacity:1!important}
+  }
+  /* ---- Cascade editor — Zone A: availability spine ---- */
+  .zone{margin-top:18px}
+  .zone:first-child{margin-top:0}
+  .zhead{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:700;margin-bottom:3px}
+  .zsub{font-size:11.5px;color:var(--dim);line-height:1.45;margin-bottom:9px}
+  .spine{display:flex;flex-direction:column;gap:7px}
+  .arow{background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden;transition:border-color .15s}
+  .arow.on{border-color:#3d4a63}
+  .arow.subsumed{opacity:.45}
+  .arow.subsumed .atog{pointer-events:none}
+  .arow-main{display:flex;align-items:center;gap:8px;padding:9px 10px}
+  .atog{flex:1;min-width:0;display:flex;align-items:center;gap:9px;background:none;border:none;padding:0;
+    cursor:pointer;color:var(--dim);text-align:left;font:inherit}
+  .atog:focus-visible,.abell:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px}
+  .adot{width:19px;height:19px;border-radius:6px;border:1.5px solid var(--line);flex-shrink:0;position:relative;
+    background:var(--panel);transition:.15s}
+  .arow.on .adot{background:var(--accent);border-color:var(--accent)}
+  .arow.on .adot::after{content:"✓";position:absolute;inset:0;display:grid;place-items:center;
+    font-size:12px;font-weight:800;color:#fff}
+  .alab{min-width:0}
+  .alab .pill{display:inline-block;cursor:pointer}   /* the card's window lozenge, reused verbatim */
+  .alab small{display:block;font-size:10.5px;color:var(--faint);margin-top:3px;line-height:1.3}
+  .switch.mini{padding:8px 10px;font-size:12px}
+  .switch.mini .knob{width:36px;height:20px} .switch.mini .knob::after{width:14px;height:14px}
+  .switch.mini.on .knob::after{left:19px}
+  .abell{flex-shrink:0;display:flex;align-items:center;gap:5px;background:var(--panel);border:1px solid var(--line);
+    border-radius:20px;padding:5px 9px;font-size:11px;font-weight:700;color:var(--faint);cursor:pointer}
+  .abell.on{background:rgba(240,163,54,.14);border-color:var(--amber);color:#ffce8f}
+  .abell .bl{font-size:10px;letter-spacing:.3px}
+  /* A bell that cannot ring for this Cascade (CAS-103 AC2/AC3): dimmed, struck through, and not
+     clickable — but still THERE, with its reason on the line below. Hiding it would leave the user
+     wondering where Purchase went; showing it live would be promising an email we'd never send. */
+  .abell[disabled]{opacity:.42;cursor:not-allowed;text-decoration:line-through}
+  .abell[disabled]:hover{border-color:var(--line)}
+  .awhy{font-size:10.5px;line-height:1.45;color:var(--faint);padding:0 10px 8px;margin-top:-3px}
+  .awhy b{color:var(--dim);font-weight:700}
+  /* The past-opening bell is a mini switch rather than a pill, but it obeys the same rule. */
+  .switch.mini.blocked{opacity:.45;cursor:not-allowed}
+  .switch.mini.blocked .knob{pointer-events:none}
+  /* the reveal: 0fr→1fr animates the row's options open without hard-coding a height */
+  .aopts{display:grid;grid-template-rows:0fr;transition:grid-template-rows .24s ease,opacity .2s ease;opacity:0}
+  .aopts>div{overflow:hidden;min-height:0}
+  .aopts.open{grid-template-rows:1fr;opacity:1}
+  .aopts .inner{padding:0 10px 10px}
+  .homeopts{margin-top:-2px}
+  /* ---- Zone B: quality & taste ---- */
+  .qrow{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:11px 12px;margin-bottom:7px}
+  .qhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+  .qhead .qt{font-size:12.5px;font-weight:700;color:var(--ink)}
+  .qcap{font-size:11px;color:var(--dim);line-height:1.45;margin-top:9px}
+  .qcap b{color:#cfc2ff}
+  /* NB: .pill is the movie card's window lozenge (see above). This is the editor's own toggle button —
+     it must NOT be called .pill, or it silently restyles every card in the app. */
+  .qpill{background:var(--panel);border:1px solid var(--line);color:var(--faint);border-radius:20px;
+    padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .qpill.on{background:rgba(240,163,54,.16);border-color:var(--amber);color:#ffce8f}
+  .hatch{margin-top:9px;background:none;border:1px dashed #4c4270;color:var(--accenttext);border-radius:9px;
+    padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;width:100%;text-align:left}
+  .hatch.on{background:rgba(124,92,255,.14);border-style:solid;color:#cfc2ff}
+  /* Rating — circle stops drawn UNDER a real range input (native drag, keyboard and a11y for free).
+     The input's own track is transparent so the stops show through; only its thumb paints. */
+  .rslider{position:relative;height:22px;display:flex;align-items:center}
+  .rstops{position:absolute;inset:0;display:flex;justify-content:space-between;align-items:center;
+    pointer-events:none;padding:0 4px}
+  .rstops::before{content:"";position:absolute;left:4px;right:4px;top:50%;height:3px;margin-top:-1.5px;
+    background:#2a303b;border-radius:2px}
+  .rstops i{position:relative;width:10px;height:10px;border-radius:50%;background:#39414f;
+    box-shadow:0 0 0 3px var(--panel2)}
+  .rstops i.lit{background:var(--accent)}
+  .rslider input{position:relative;z-index:2;width:100%;height:18px;margin:0;cursor:pointer;
+    -webkit-appearance:none;appearance:none;background:transparent}
+  .rslider input::-webkit-slider-runnable-track{height:18px;background:transparent}
+  .rslider input::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+    background:var(--accent);border:2px solid #cfc2ff;box-shadow:0 2px 8px rgba(0,0,0,.55);cursor:grab}
+  .rslider input::-moz-range-track{height:18px;background:transparent;border:none}
+  .rslider input::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);
+    border:2px solid #cfc2ff;box-shadow:0 2px 8px rgba(0,0,0,.55);cursor:grab}
+  .rslider input:focus-visible{outline:none}
+  .rslider input:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px rgba(124,92,255,.5)}
+  .rslider input:focus-visible::-moz-range-thumb{box-shadow:0 0 0 3px rgba(124,92,255,.5)}
+  .rlabels{display:flex;justify-content:space-between;gap:2px;margin-top:5px}
+  .rlabels span{flex:1;text-align:center;font-size:9.5px;line-height:1.2;color:var(--faint);font-weight:700}
+  .rlabels span:first-child{text-align:left} .rlabels span:last-child{text-align:right}
+  .rlabels span.lit{color:#cfc2ff}
+  /* age — joined lozenge, cumulative up-to-and-including */
+  .loz{display:flex;border:1px solid var(--line);border-radius:20px;overflow:hidden;background:var(--panel)}
+  .loz button{flex:1;background:none;border:none;border-right:1px solid var(--line);color:var(--faint);
+    padding:8px 2px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .loz button:last-child{border-right:none}
+  .loz button.fill{background:rgba(124,92,255,.22);color:#cfc2ff}
+  .loz button.edge{background:var(--accentdeep);color:#fff}
+  .loz button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  @media (prefers-reduced-motion:reduce){ .aopts{transition:none} }
+  /* template picker */
+  .tplgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .tpl{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:11px;cursor:pointer;
+    text-align:left;color:var(--ink);transition:.15s}
+  .tpl:hover{border-color:var(--accent)}
+  .tplicon{font-size:19px;line-height:1}
+  .tplname{font-size:13.5px;font-weight:800;margin-top:6px}
+  .tplblurb{font-size:11px;color:var(--dim);line-height:1.4;margin-top:3px}
+  .tplcount{font-size:11px;font-weight:800;color:#a7eccb;margin-top:7px}
+  .tpl.soon{cursor:not-allowed;opacity:.6;border-style:dashed;background:transparent}
+  .tpl.soon:hover{border-color:var(--line)}
+  .tpl.soon .tplname{color:var(--dim)}
+  .soonwhy{font-size:10.5px;line-height:1.4;color:var(--faint);font-style:italic;margin-top:7px}
+  /* builder editor */
+  .namein{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    border-radius:10px;padding:11px 12px;font-size:16px;font-weight:600}
+  .cascfoot{position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--line);
+    padding:12px 0 10px;margin-top:18px;display:flex;gap:8px;align-items:center}
+  .applybtn{flex:1;background:var(--accentdeep);color:#fff;border:none;border-radius:11px;padding:13px;
+    font-size:14.5px;font-weight:800;cursor:pointer}
+  .applybtn:disabled{background:var(--panel2);color:var(--faint);cursor:not-allowed}
+  .dangerbtn{background:var(--panel2);border:1px solid #5c3540;color:#ffb9a6;border-radius:11px;
+    padding:13px 14px;font-size:14px;font-weight:700;cursor:pointer}
+  .warnnote{font-size:11.5px;color:#ffce8f;background:rgba(240,163,54,.1);border:1px solid rgba(240,163,54,.4);
+    border-radius:9px;padding:8px 10px;margin-top:8px;line-height:1.45}
+  /* ---- UX-psychology framings (contrast / loss) — flag-toggleable ---- */
+  .saveline{margin-top:11px;font-size:11.5px;font-weight:700;line-height:1.45;padding:7px 10px;border-radius:9px;
+    background:rgba(72,199,142,.12);border:1px solid rgba(72,199,142,.45);color:#a7eccb}
+  /* rent-only: a fact, not a win — the green is reserved for "you already have this" */
+  .saveline.plain{background:var(--panel2);border-color:var(--line);color:var(--dim)}
+  .saveline.plain b{color:#bcdcff}
+  .saveline b{color:#d9ffec}
+  .alert .frame{font-size:11.5px;font-weight:600;line-height:1.45;margin-top:8px;padding:7px 9px;border-radius:8px;
+    background:rgba(240,163,54,.1);border:1px solid rgba(240,163,54,.35);color:#ffce8f}
+  /* ---- setup meter (goal-gradient — counts only real, already-true state) ---- */
+  .setup{margin-bottom:14px}
+  .setuptop{display:flex;justify-content:space-between;align-items:baseline;font-size:11.5px;font-weight:700;color:var(--dim)}
+  .setuppct{color:#a7eccb;font-size:13px}
+  .setupbar{height:7px;border-radius:5px;background:var(--panel2);border:1px solid var(--line);margin-top:6px;overflow:hidden}
+  .setupfill{height:100%;border-radius:5px;background:linear-gradient(90deg,var(--accent),var(--green));transition:width .45s ease}
+  .setuplist{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .setupitem{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:20px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--faint);white-space:nowrap}
+  .setupitem.done{border-color:var(--green);background:rgba(72,199,142,.14);color:#a7eccb}
+  /* ---- first-run splash (CAS-74, rebuilt CAS-111 / mock: cascade-splash-mock.html) ----
+     The visual front door to the signup flow, per the signed-off onboarding mock: brand mark +
+     thin wordmark, headline, the four journey lozenges in the app's stage colours, three tick
+     value-props, the north-star line and one CTA — all over a starfield. Uses the live design
+     tokens (--grad, Inter/Poppins, --panel/--line, stage colours) and ink/white text only.
+     Sits above everything (z-index 80 > onboarding's 70) and hands off to the next step on CTA. */
+  .splash{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;align-items:center;
+    justify-content:center;text-align:center;padding:40px 24px;overflow-y:auto;
+    background:radial-gradient(130% 90% at 50% -10%, rgba(124,92,255,.20), rgba(76,125,255,.06) 45%, rgba(10,14,26,0) 70%), var(--bg)}
+  /* Starfield: a scatter of tiny radial-gradient "stars" in white and the brand violet/cyan.
+     Percentage positions so it spreads across any viewport; sits behind the content (z-index 0). */
+  .splash::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:0;
+    background-image:
+      radial-gradient(2.4px 2.4px at 10% 8%, rgba(255,255,255,.95), transparent),
+      radial-gradient(3px 3px at 74% 6%, rgba(150,120,255,.9), transparent),
+      radial-gradient(2px 2px at 88% 12%, rgba(170,210,255,.85), transparent),
+      radial-gradient(1.6px 1.6px at 21% 21%, rgba(255,255,255,.7), transparent),
+      radial-gradient(1.6px 1.6px at 38% 13%, rgba(255,255,255,.6), transparent),
+      radial-gradient(2.4px 2.4px at 60% 26%, rgba(52,210,245,.8), transparent),
+      radial-gradient(1.6px 1.6px at 48% 4%, rgba(255,255,255,.8), transparent),
+      radial-gradient(1.6px 1.6px at 13% 37%, rgba(255,255,255,.55), transparent),
+      radial-gradient(2px 2px at 92% 40%, rgba(255,255,255,.6), transparent),
+      radial-gradient(1.6px 1.6px at 84% 32%, rgba(170,210,255,.5), transparent),
+      radial-gradient(1.6px 1.6px at 28% 55%, rgba(255,255,255,.45), transparent),
+      radial-gradient(2px 2px at 69% 60%, rgba(255,255,255,.5), transparent),
+      radial-gradient(1.4px 1.4px at 7% 70%, rgba(255,255,255,.4), transparent),
+      radial-gradient(1.6px 1.6px at 94% 74%, rgba(255,255,255,.45), transparent),
+      radial-gradient(1.4px 1.4px at 45% 47%, rgba(255,255,255,.38), transparent),
+      radial-gradient(1.6px 1.6px at 60% 88%, rgba(255,255,255,.4), transparent),
+      radial-gradient(1.4px 1.4px at 18% 96%, rgba(255,255,255,.32), transparent)}
+  .splash.open{display:flex}
+  .splashinner{position:relative;z-index:1;width:100%;max-width:400px;margin:auto;animation:splashIn .5s ease both}
+  @keyframes splashIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  .splashmark{width:84px;height:84px;margin:6px auto 0;display:block;
+    filter:drop-shadow(0 0 14px rgba(124,92,255,.55))}
+  /* CAS-152: the animated cascade mark is gone — the splash shows the finished static logo artwork
+     instead. This is CAS-137's preferred fix (a): drop the animation from the critical path entirely.
+     Nothing animates (so CAS-131's illegible flying words can't come back), nothing is downscaled, and
+     nothing is fetched from a second document, so the mark cannot add page-load delay. The intrinsic
+     800×533 ratio is declared on the box so the image reserves its space before it decodes — no shift.
+     Superseded: the CSS .splashanim/.scasc/.jcard cascade and the earlier splash_anim.html iframe. */
+  /* CAS-153: the mark is now a vector (splash-logo.svg), so the box is declared from the SVG's own
+     viewBox. No raster means no alpha fringe: the card edges stay hard at every DPI.
+     CAS-162: the stack was tightened (overlaps 66%→75% wide, 58%→70% tall) so the mark is shorter and no
+     longer pushes the CTA off a phone. The viewBox went 686×457 → 586×382 and this ratio follows it — they
+     must stay equal or the reserved box letterboxes the art.
+     CAS-163: CAS-162 only bought a few px because on a phone the 400px max-width never binds — the splash's
+     own column (348 - 48px padding ≈ 286px at 390w) is narrower than the cap, so the logo was already
+     container-sized and shrinking the cap to 300-320px measured as a literal no-op. The cap has to drop
+     BELOW the column to do anything: at 390x844 the splash stack needs 778px against 754px of room, and
+     220px is what buys back the 24px plus a 20px margin (logo 143px tall, 246 device px wide — still ~63%
+     of the screen). Phones only, so the desktop mark keeps its 400px. Ratio stays 586/382: capping height
+     directly would letterbox the art inside a wider reserved box, and the box must stay exact for CAS-137. */
+  .splashlogo{display:block;width:100%;max-width:400px;height:auto;aspect-ratio:586/382;
+    object-fit:contain;margin:2px auto 0}
+  @media (max-width:600px){ .splashlogo{max-width:220px} }
+  .splashword{font-family:var(--font-body);font-weight:500;letter-spacing:.44em;font-size:19px;
+    padding-left:.44em;color:#fff;line-height:1;margin:16px 0 24px}
+  .splashhero{font-family:var(--font-display);font-size:23px;font-weight:700;line-height:1.22;
+    color:var(--ink);margin:0 0 22px}
+  /* CAS-154: the four lozenges were sized to squeeze onto one line (nowrap, 10px), which made them the
+     smallest type on the splash — the one screen that has to be readable at arm's length. They now wrap
+     instead of shrinking, which buys the room to take the label to 13px and the dot to 7px. */
+  .splashloz{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:28px}
+  .splashpill{display:inline-flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--line);
+    border-radius:999px;padding:7px 13px;font-size:13px;color:var(--dim);white-space:nowrap}
+  .splashpill .splashdot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+  .splashbullets{width:100%;display:flex;flex-direction:column;gap:16px;margin-bottom:22px}
+  .splashb{display:flex;gap:12px;align-items:flex-start;text-align:left}
+  .splashb .splashtick{flex:0 0 auto;width:20px;height:20px;margin-top:1px}
+  .splashb span{font-size:15px;line-height:1.4;font-weight:500;color:var(--ink)}
+  .splashns{font-size:13.5px;line-height:1.5;color:var(--dim);margin:6px 4px 16px;text-align:center}
+  .splashcta{width:100%;background:var(--grad);color:#fff;border:none;border-radius:13px;padding:16px;
+    font-family:var(--font-display);font-size:16px;font-weight:700;cursor:pointer;
+    box-shadow:0 10px 34px rgba(124,92,255,.34)}
+  .splashcta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+  @media (prefers-reduced-motion:reduce){ .splashinner{animation:none} }
 
-  .card{background:var(--card); border:1px solid var(--line); border-left:3px solid var(--amber);
-    border-radius:13px; padding:10px 11px; margin-bottom:9px; position:relative;}
-  .card.stream{border-left-color:var(--like);}
-  .top{display:flex; gap:10px;}
-  .poster{width:64px; height:92px; border-radius:8px; flex:none; position:relative; overflow:hidden;
-    background:linear-gradient(150deg,#2a2350,#3a2f6b 60%,#243a63);}
-  .poster b{position:absolute; left:5px; bottom:5px; font-size:10px; font-weight:800; color:#ffd98a; text-shadow:0 1px 3px #000;}
-  .mid{min-width:0; flex:1;}
-  .ttl{font-size:15.5px; font-weight:800; line-height:1.15; margin:0;}
-  .cert{font-size:9px; font-weight:800; color:#ffb3ae; border:1px solid #6e2b2b; background:#2a1414;
-    padding:0 4px; border-radius:5px; vertical-align:middle; margin-left:5px;}
-  .genres{color:var(--cyan); font-size:11.5px; margin:2px 0 6px;}
-  .scores{display:flex; flex-wrap:wrap; gap:5px;}
-  .chip{font-size:10px; color:var(--dim); border:1px solid var(--line); border-radius:6px; padding:1px 6px;}
-  .chip .v{color:var(--ink); font-weight:700;}
+  /* ---- starter shortlist (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
+     "Select your first agent": the mock's list of tappable agent cards, each with a live green
+     "N films match now" count, one badged RECOMMENDED. Sits between the splash and the reveal. */
+  .shortlist{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;padding:34px 24px 40px;
+    overflow-y:auto;background:radial-gradient(130% 90% at 50% -10%, rgba(76,125,255,.18),
+    rgba(34,211,238,.05) 45%, rgba(10,14,26,0) 70%), var(--bg)}
+  .shortlist.open{display:flex}
+  .slinner{width:100%;max-width:420px;margin:auto;animation:splashIn .45s ease both}
+  .slback{background:none;border:none;color:var(--dim);font-size:13px;font-weight:600;cursor:pointer;
+    padding:6px 2px;margin-bottom:6px;display:inline-flex;align-items:center;gap:6px}
+  .slback:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
+  .slh{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.2px;color:var(--ink);margin:4px 0 6px}
+  .slp{font-size:13.5px;color:var(--dim);line-height:1.5;margin:0 0 20px}
+  .scards{display:grid;gap:11px}
+  .scard{display:flex;align-items:flex-start;gap:13px;text-align:left;cursor:pointer;width:100%;
+    background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;color:var(--ink);transition:border-color .15s}
+  .scard:hover{border-color:var(--violet);background:rgba(124,92,255,.08)}
+  .scard:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .sc-ic{flex:0 0 auto;width:42px;height:42px;border-radius:12px;background:#0E1320;border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:21px;line-height:1}
+  .sc-main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .sc-name{font-family:var(--font-display);font-size:15.5px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .sc-rec{font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--accenttext);
+    background:rgba(124,92,255,.16);border:1px solid rgba(124,92,255,.45);border-radius:999px;padding:2px 8px}
+  .sc-blurb{font-size:12.5px;color:var(--dim);line-height:1.4;margin:3px 0 6px}
+  /* CAS-143: Channel × Standard, said plainly, so the card shows WHAT the agent is as well as what it
+     catches. Read off the same criteria as the count, so the words and the number can't disagree. */
+  .sc-chan{font-size:11.5px;color:var(--faint);line-height:1.4;margin-bottom:6px}
+  /* Violet, not green (buildspec §Colour rule): green is reserved for "films found". A count here is a
+     preview of a selection you haven't made yet, not a haul something went and got you. */
+  .sc-match{color:var(--selink);font-size:12.5px;font-weight:800}
+  .sc-arw{flex:0 0 auto;color:var(--faint);font-size:18px;align-self:center}
+  /* The step-progress rail (CAS-143) — shared shape with the prototype's .pbar. */
+  .pbar{height:5px;border-radius:3px;background:#1c2230;overflow:hidden;margin:2px 0 16px}
+  .pbar>i{display:block;height:100%;background:var(--grad);border-radius:3px;transition:width .3s}
 
-  .avail{display:flex; gap:4px; margin-top:8px;}
-  .win{flex:1; text-align:center; border:1px solid var(--line); border-radius:7px; padding:3px 1px; line-height:1.1;}
-  .win.on{border-color:var(--amber); background:#231b0e;}
-  .card.stream .win.on{border-color:var(--like); background:#0f2418;}
-  .win .w{font-size:9.5px; font-weight:700;} .win .d{font-size:8.5px; color:var(--dim); margin-top:1px;}
+  /* ---- starter-aware config wizard (CAS-76 / spec 26640386 §3) ----
+     One thing per step, no step numbers: a slim progress bar + an "almost done / last one" cue.
+     Each entering step slides in (from the right going forward, from the left on Back). A live
+     agent-voice summary sits above the footer and updates every step. */
+  .wiz{position:fixed;inset:0;z-index:80;display:none;align-items:flex-end;justify-content:center;
+    background:rgba(6,8,12,.86);backdrop-filter:blur(4px)}
+  .wiz.open{display:flex}
+  .wizcard{width:100%;max-width:480px;max-height:96vh;background:var(--panel);border:1px solid var(--line);
+    border-radius:20px 20px 0 0;padding:14px 18px 22px;display:flex;flex-direction:column;overflow:hidden}
+  .wiztop{display:flex;align-items:center;gap:10px;margin-bottom:15px;flex:none}
+  .wizback{background:var(--panel2);border:1px solid var(--line);color:var(--ink);width:34px;height:34px;
+    border-radius:10px;font-size:16px;cursor:pointer;flex:none;display:grid;place-items:center}
+  .wizback:hover{border-color:var(--violet)}
+  .wizback:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .wizbar{flex:1;height:6px;background:var(--panel2);border-radius:5px;overflow:hidden}
+  .wizfill{height:100%;border-radius:5px;background:var(--grad);transition:width .4s ease}
+  .wizcue{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--cyan);
+    flex:none;white-space:nowrap}
+  .wizscroll{overflow-y:auto;flex:1;min-height:0}
+  .wizstepwrap{animation:wizIn .32s ease both}
+  .wizstepwrap.back{animation:wizInBack .32s ease both}
+  @keyframes wizIn{from{opacity:0;transform:translateX(38px)}to{opacity:1;transform:none}}
+  @keyframes wizInBack{from{opacity:0;transform:translateX(-38px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){ .wizstepwrap,.wizstepwrap.back{animation:none} }
+  .wizh{font-family:var(--font-display);font-size:21px;font-weight:700;letter-spacing:-.2px;line-height:1.25;margin:2px 0 7px}
+  .wizp{font-size:13px;color:#c4ccd6;line-height:1.55;margin:0 0 14px}
+  .wizopts{display:grid;gap:9px}
+  .wizopt{display:flex;align-items:center;gap:12px;text-align:left;width:100%;cursor:pointer;color:var(--ink);
+    background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 13px;transition:.15s}
+  .wizopt:hover{border-color:var(--violet)}
+  .wizopt.on{border-color:var(--violet);background:rgba(124,92,255,.14)}
+  .wizopt:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .wizopt .wo-main{flex:1;min-width:0}
+  .wizopt .wo-name{display:block;font-size:14px;font-weight:800}
+  .wizopt .wo-sub{display:block;font-size:11.5px;color:var(--dim);line-height:1.4;margin-top:2px}
+  .wizopt .wo-n{font-family:var(--font-display);font-size:15px;font-weight:700;color:var(--accenttext);flex:none;text-align:right}
+  .wizopt .wo-n small{display:block;font-family:var(--font-body);font-size:9px;font-weight:700;text-transform:uppercase;color:var(--faint)}
+  .wizopt .wo-tick{width:20px;height:20px;border-radius:50%;border:2px solid var(--line);flex:none;
+    display:grid;place-items:center;font-size:12px;color:transparent}
+  .wizopt.on .wo-tick{background:var(--violet);border-color:var(--violet);color:#fff}
+  .wizname{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    border-radius:10px;padding:12px 13px;font-size:16px;font-weight:600}
+  .wizsum{margin:15px 0 2px;background:linear-gradient(135deg,rgba(124,92,255,.16),rgba(34,211,238,.06));
+    border:1px solid var(--violet);border-radius:12px;padding:11px 12px;font-size:12.5px;line-height:1.5;color:#e8ecf2}
+  .wizfoot{display:flex;gap:8px;margin-top:16px;flex:none}
+  .wiznext{flex:1;background:var(--grad);color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;
+    font-weight:800;cursor:pointer;text-shadow:0 1px 2px rgba(10,14,26,.55)}
+  .wizskip{display:block;width:100%;margin-top:10px;background:none;border:none;color:var(--dim);
+    font-size:12.5px;font-weight:600;cursor:pointer;text-decoration:underline;padding:6px 0}
 
-  /* footer control row */
-  .cfoot{display:flex; align-items:center; gap:7px; margin-top:9px; position:relative;}
-  .cfoot .spacer{flex:1;}
-  .ctl{position:relative; user-select:none;}
-  .mini{display:flex; align-items:center; gap:6px; background:var(--card2); border:1px solid var(--line);
-    border-radius:10px; padding:6px 9px; cursor:pointer; position:relative; overflow:hidden; min-height:32px;}
-  .mini .fill{position:absolute; left:0; top:0; bottom:0; width:0%; opacity:.22; transition:width .26s cubic-bezier(.3,1,.4,1);}
-  .mini .ic{font-size:15px; z-index:1; line-height:1;}
-  .mini .lab{font-size:11.5px; z-index:1; color:var(--ink); font-weight:600; white-space:nowrap;}
-  .mini .lab.dim{color:var(--dim); font-weight:500;}
+  /* ---- north-star sharpening steps (CAS-115+ / mock: 05to09-genres-years-language-age-name.html) ----
+     The #5–#9 steps (genres, years, language, age, name) that sit between agent-select and the reveal.
+     Built self-contained and previewable in isolation (?step=<name>) until Lee wires the sequence. One
+     shared full-screen frame — top bar (back + progress + LAST ONE), heading, control, live agent-voice
+     summary, and a footer that carries the real running count. Chips/slider reuse the app's live controls. */
+  .sharpstep{position:fixed;inset:0;z-index:82;display:none;flex-direction:column;padding:28px 20px 24px;
+    overflow-y:auto;background:radial-gradient(120% 45% at 50% 0%,#141b30 0%,var(--bg) 42%,#080b14 100%)}
+  .sharpstep.open{display:flex}
+  /* CAS-157: `margin:auto` centred this block vertically, which on a sparse step (Get selective is the worst)
+     left a fat band of nothing above AND below and made the screen read as underfilled — the thing that
+     compounds the "everything is too small" impression. Top-aligned instead: the back/progress bar belongs at
+     the top of the screen, the heading reads where the eye already is, and the slack collects at the bottom
+     where it looks like room rather than a mistake. Horizontal centring (the auto side margins) is kept. */
+  .osinner{width:100%;max-width:360px;margin:0 auto;display:flex;flex-direction:column;min-height:0;
+    animation:splashIn .4s ease both}
+  @media (prefers-reduced-motion:reduce){ .osinner{animation:none} }
+  .ostop{display:flex;align-items:center;gap:11px;margin-bottom:20px}
+  .osback{width:34px;height:34px;border-radius:10px;background:var(--panel);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:15px;flex:0 0 auto;cursor:pointer}
+  .osback:hover{border-color:var(--violet)}
+  .osback:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .osprog{flex:1;height:6px;border-radius:999px;background:#20263a;overflow:hidden}
+  .osprog i{display:block;height:100%;border-radius:999px;background:var(--grad);transition:width .4s ease}
+  .oslast{font-size:10.5px;font-weight:700;letter-spacing:.06em;color:var(--accenttext);flex:0 0 auto}
+  /* CAS-164: the CTA's count, mirrored at the top of the page. The button sits at the bottom of a screen you
+     may be scrolled away from while you work the controls — so the number that tells you whether you are
+     narrowing too far was only visible once you had stopped narrowing. Same wording as the button's suffix,
+     so the two read as one statement; the count itself is one shared value, not two computations.
+     CAS-180: and NOT in a box. Only selections get boxes (buildspec §8) — a count is a statement about what
+     you have selected, not another thing to tap, and a pill around it read as a control. It now takes the
+     "Your taste baseline" treatment: a plain line in the purple accent, sitting directly above the first
+     row of selections rather than above the screen's own title. */
+  .oscount{display:block;margin:2px 2px 13px;font-size:13px;line-height:1.55;color:var(--accenttext)}
+  .oscount b{font-family:var(--font-display);font-size:15px;font-weight:800;color:var(--accenttext)}
+  .osh{font-family:var(--font-display);font-size:20px;font-weight:700;margin:0 0 6px;color:var(--ink)}
+  .ossub{color:var(--dim);font-size:13px;line-height:1.5;margin:0 0 12px}   /* CAS-130 size / CAS-138 tighten */
+  .osagent{display:flex;gap:9px;background:rgba(124,92,255,.08);border:1px solid rgba(124,92,255,.42);
+    border-radius:14px;padding:12px;margin:16px 0 0}
+  .osagent .i{font-size:15px;line-height:1.2;flex:0 0 auto}
+  .osagent p{margin:0;font-size:11.5px;line-height:1.5;color:var(--dim)}
+  .osagent b{color:var(--ink);font-weight:600}
+  .osagent .cnt{color:var(--green);font-weight:700}
+  /* years slider (#6, CAS-116) — the app's rich .rslider (dotted track + circle stops + labels below) */
+  .osslider{margin:24px 4px 8px}
+  .osrange{width:calc(100% - 16px);margin:24px 8px 10px;accent-color:var(--violet);cursor:pointer}
+  .osrange:focus-visible{outline:2px solid var(--cyan);outline-offset:4px}
+  .osticks{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);margin:0 2px}
+  .osticks .here{color:var(--accenttext);font-weight:700}
+  .osexplain{font-size:11.5px;color:var(--dim);margin:12px 2px 0;line-height:1.45}
+  .osexplain b{color:var(--ink)}
+  /* age segmented control (#8) — up-to-and-including ladder, gradient on the chosen level */
+  .osseg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px;gap:2px}
+  .osseg-s{flex:1;text-align:center;padding:10px 0;border-radius:999px;font-size:13px;font-weight:600;
+    color:var(--dim);background:none;border:0;cursor:pointer;transition:.15s}
+  .osseg-s.on{background:var(--grad);color:#fff}
+  .osseg-s:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* name field (#9) */
+  .osfield{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;
+    color:var(--ink);font-size:15px;font-weight:600;font-family:var(--font-body)}
+  .osfield::placeholder{color:var(--faint);font-weight:500}
+  .osfield:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* framing interstitial (#3) — the "here's what the next steps set" list; no control, no agent box */
+  .ossteps{display:flex;flex-direction:column;gap:12px;margin:22px 0 0}
+  .osstep{display:flex;gap:12px;align-items:center;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:12px 13px}
+  .osstep .dot{width:26px;height:26px;border-radius:8px;background:rgba(124,92,255,.16);
+    border:1px solid rgba(124,92,255,.4);display:flex;align-items:center;justify-content:center;
+    font-size:14px;flex:0 0 auto}
+  .osstep b{font-size:13.5px;font-weight:600;color:var(--ink)}
+  .osstep span{display:block;color:var(--dim);font-size:11.5px}
+  /* the one routing row on the #3 hub — "Set your bar" jumps to the #4 dials (CAS-113) */
+  .osstep-go{width:100%;font:inherit;text-align:left;color:inherit;cursor:pointer;transition:border-color .15s}
+  .osstep-go:hover{border-color:var(--violet)}
+  .osstep-go:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .osstep-arr{margin-left:auto;flex:0 0 auto;color:var(--accenttext);font-size:16px;font-weight:700}
+  /* selectivity: three dials (#4 / CAS-114) — reuse the range control; each dial gets a header, caption and
+     its own tick row, plus a combined "What this does" box and the "very best" OR shortcut chip */
+  .osbest{display:inline-flex;align-items:center;gap:6px;margin:2px 0 2px;padding:7px 13px;border-radius:999px;
+    border:1px solid rgba(124,92,255,.5);background:rgba(124,92,255,.12);color:var(--accenttext);
+    font-size:12px;font-weight:600;cursor:pointer}
+  .osbest.on{background:var(--grad);color:#fff;border-color:transparent}
+  .osbest:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .osdial{margin-top:13px}   /* CAS-138: reclaim vertical space so all three dials + Continue fit */
+  .osdh{display:flex;align-items:baseline;justify-content:space-between;margin:0 2px;gap:8px}
+  .osdh b{font-family:var(--font-display);font-size:14px;font-weight:600;color:var(--ink)}
+  .osdset{font-size:11.5px;color:var(--accenttext);font-weight:600;flex:0 0 auto}
+  .oscap{font-size:11px;color:var(--faint);margin:2px 2px 0}
+  .osdial .osticks{font-size:9px;align-items:flex-start}
+  .osdial .osticks span{flex:1;text-align:center}
+  .osdial .osticks .thr{display:block;font-size:8px;font-weight:700;opacity:.7;margin-top:1px}
+  .osdial .osticks .here .thr{opacity:1;color:var(--accenttext)}
+  .osaside{display:block;margin-top:7px;font-size:11px;color:var(--dim);font-style:italic}
+  .osexplain2{background:rgba(124,92,255,.09);border:1px solid rgba(124,92,255,.42);border-radius:14px;
+    padding:13px;margin:22px 0 0}
+  .osexplain2 .oseh{font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--accenttext);
+    text-transform:uppercase;margin-bottom:5px}
+  .osexplain2 p{margin:0;font-size:12.5px;line-height:1.5;color:var(--ink)}
+  .osexplain2 .cnt{color:var(--green);font-weight:700}
 
-  .pop{position:absolute; left:0; right:0; top:50%; transform:translateY(-50%); z-index:60;
-    background:#0e1424; border:1px solid var(--line); border-radius:11px; padding:4px;
-    box-shadow:0 10px 26px #000c; touch-action:none;}
-  .segs{display:flex; gap:4px;}
-  .seg{flex:1; display:flex; align-items:center; justify-content:center; gap:4px; height:30px; padding:0 4px;
-    border-radius:8px; background:var(--card2); border:1px solid transparent; position:relative; overflow:hidden;}
-  .seg .si{font-size:14px; line-height:1;} .seg .sl{font-size:9px; color:var(--dim); line-height:1; white-space:nowrap;}
-  .seg.hot{transform:translateY(-1px);} .seg.hot .sl{color:#fff;}
-  .seg .tk{position:absolute; top:1px; right:3px; font-size:8px; color:#fff; opacity:0; font-weight:800;}
-  .seg.on .tk{opacity:1;}
+  /* ---- Cascade Membership conversion page (CAS-120 / mock: 11-membership.html) ----
+     The post-reveal conversion moment: offer-led, benefits under the button. Built standalone/previewable
+     (?step=membership[&agent=<key>]) per Lee's wire-later call; the reveal→invite path is left as-is. */
+  .memb{position:fixed;inset:0;z-index:86;display:none;flex-direction:column;padding:24px 20px 22px;overflow-y:auto;
+    background:radial-gradient(120% 40% at 50% 0%,#141b30 0%,var(--bg) 44%,#080b14 100%)}
+  .memb.open{display:flex}
+  .membinner{width:100%;max-width:360px;margin:auto;display:flex;flex-direction:column;animation:splashIn .45s ease both}
+  @media (prefers-reduced-motion:reduce){ .membinner{animation:none} }
+  .membbadge{display:inline-block;font-family:var(--font-display);font-size:11px;font-weight:700;letter-spacing:.14em;
+    color:#fff;background:var(--grad);border-radius:999px;padding:5px 12px;align-self:flex-start}
+  .membh{font-family:var(--font-display);font-size:23px;font-weight:700;margin:16px 0 4px;line-height:1.2;color:var(--ink)}
+  .membsub{color:var(--dim);font-size:13px;line-height:1.5;margin:0 0 18px}
+  .membhero{border:1px solid rgba(124,92,255,.5);border-radius:16px;padding:16px 16px 14px;
+    background:linear-gradient(180deg,rgba(124,92,255,.14),rgba(124,92,255,.04))}
+  .membhero .free{font-family:var(--font-display);font-size:22px;font-weight:700;color:#fff}
+  .membhero .then{color:var(--dim);font-size:13px;font-weight:500;margin-left:6px}
+  .membhero .lt{display:block;color:var(--accenttext);font-size:12.5px;font-weight:600;margin-top:4px}
+  .membhero .cancel{display:flex;align-items:center;gap:7px;margin-top:12px;padding-top:12px;
+    border-top:1px solid rgba(124,92,255,.28);color:var(--ink);font-size:12.5px;font-weight:600}
+  .membhero .cancel svg{flex:0 0 auto}
+  .membreassure{color:var(--faint);font-size:11.5px;line-height:1.5;margin:12px 2px 16px;text-align:center}
+  .membcta{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
+    font-size:16px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 10px 30px rgba(124,92,255,.32);
+    display:flex;align-items:center;justify-content:center;gap:9px;
+    transition:transform .09s ease, filter .09s ease}
+  .membcta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+  /* CAS-167: the tap has to answer inside ~100ms or it reads as a dead button. :active is the only
+     feedback the browser can give before script runs, so it carries the first frame; .busy then holds
+     the state for however long the listing build takes. Pointer events are off while busy so a second
+     tap cannot re-enter (the JS guard is the real defence, this just stops the ripple). */
+  .membcta:active{transform:scale(.985);filter:brightness(.94)}
+  .membcta.busy{cursor:progress;pointer-events:none;filter:saturate(.85) brightness(.92)}
+  .membcta .btnspin{flex:0 0 auto;width:16px;height:16px;border-radius:50%;
+    border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:btnspin .7s linear infinite}
+  @keyframes btnspin{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){ .membcta .btnspin{animation-duration:2.4s} .membcta:active{transform:none} }
+  .membeyebrow{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--faint);text-transform:uppercase;margin:22px 2px 12px}
+  .memben{display:flex;gap:13px;align-items:flex-start;margin-bottom:16px}
+  .memben .ic{flex:0 0 auto;width:40px;height:40px;border-radius:11px;background:#0E1320;border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:19px}
+  .memben .t b{font-family:var(--font-display);font-size:14.5px;font-weight:600;color:var(--ink)}
+  .memben .t p{margin:2px 0 0;color:var(--dim);font-size:12px;line-height:1.45}
+  .membskip{display:block;width:100%;text-align:center;margin-top:6px;color:var(--dim);font-size:12.5px;
+    background:none;border:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+  .membskip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
+  .membproto{color:var(--faint);font-size:10px;text-align:center;margin-top:14px;line-height:1.5}
 
-  .note{font-size:12px; color:var(--dim); background:var(--card); border:1px solid var(--line);
-    border-radius:11px; padding:10px 12px; line-height:1.5; margin-top:6px;}
-  .note b{color:var(--ink);}
-  body.d2 .genres{display:none;} body.d2 .poster{height:74px;width:52px;} body.d2 .card{padding:8px 10px;} body.d2 .avail{margin-top:6px;}
+  /* ---- membership setup: prominent top banner + setup sheet (CAS-121, restructured by CAS-136) ----
+     Surrounding chrome only — the production CAS-100 card is never touched. CAS-136 moves it from inside the
+     listing to the top of the content, above the cascade scroll, and makes it deliberately large: this is the
+     one thing left undone, so it takes real estate until it IS done — and then it disappears completely,
+     which is what keeps "annoyingly high" honest rather than nagging. Not sticky: unmissable on arrival, not
+     permanently in the way. */
+  .msbar{display:flex;align-items:center;gap:13px;padding:18px 16px;width:100%;
+    background:linear-gradient(180deg,rgba(124,92,255,.30),rgba(124,92,255,.12));text-align:left;cursor:pointer;
+    border:0;border-bottom:1px solid rgba(124,92,255,.45)}
+  .msbar:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+  .msbar .gic{flex:0 0 auto;width:44px;height:44px;border-radius:12px;background:var(--grad);display:flex;
+    align-items:center;justify-content:center;font-size:21px}
+  .msbar .t{flex:1;min-width:0;display:flex;flex-direction:column}
+  .msbar .t b{font-family:var(--font-display);font-size:17px;font-weight:600;color:#fff;line-height:1.3}
+  .msbar .t .hint{font-size:12.5px;color:var(--accenttext);margin-top:4px;line-height:1.45}
+  .msbar .arw{color:var(--accenttext);font-size:22px}
+  .mssteps{display:flex;gap:4px;margin-top:5px}
+  .mssteps i{height:3px;flex:1;border-radius:999px;background:rgba(255,255,255,.18)}
+  .mssteps i.done{background:var(--green)}
+  .mssheet{position:fixed;inset:0;z-index:87;display:none;align-items:flex-end;justify-content:center;
+    background:rgba(6,8,12,.86);backdrop-filter:blur(4px)}
+  .mssheet.open{display:flex}
+  .mssheetcard{width:100%;max-width:480px;max-height:94vh;overflow-y:auto;background:var(--panel);
+    border:1px solid var(--line);border-radius:20px 20px 0 0;padding:20px 18px 18px}
+  .msgrab{width:38px;height:4px;border-radius:999px;background:#39414f;margin:0 auto 16px}
+  .mssheetcard h2{font-family:var(--font-display);font-size:20px;font-weight:700;margin:0 0 4px;color:var(--ink)}
+  .mssubh{color:var(--dim);font-size:12.5px;line-height:1.5;margin:0 0 18px}
+  /* ---- CAS-151: the sheet is four explicit steps, 1:1 with the bar's four segments ---- */
+  /* The bar said "1 of 4 done" over one undifferentiated screen, so there was no way to tell WHICH four, or
+     which one the 1 was. Each step is now a numbered, labelled section carrying its own done state, in the
+     same order as the segments — and the sheet repeats the tally at the top, over the same 4-segment bar,
+     so the two readings are visibly the same reading. */
+  .mstally{display:flex;flex-direction:column;gap:6px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:13px;padding:12px 13px;margin:0 0 18px}
+  .mstally .n{font-size:12.5px;font-weight:700;color:var(--ink)}
+  .mstally .n em{font-style:normal;color:var(--accenttext)}
+  .msstep{border:1px solid var(--line);border-radius:14px;padding:13px 13px 14px;margin-bottom:11px;
+    background:rgba(255,255,255,.015)}
+  .msstep.done{border-color:rgba(72,199,142,.45);background:rgba(72,199,142,.05)}
+  .msstephead{display:flex;align-items:center;gap:9px;margin-bottom:3px}
+  .msnum{flex:0 0 auto;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
+    font-size:11px;font-weight:800;background:var(--panel);border:1px solid var(--line);color:var(--faint)}
+  .msstep.done .msnum{background:var(--green);border-color:var(--green);color:#08130d}
+  .msstephead b{flex:1;min-width:0;font-size:13.5px;font-weight:700;color:var(--ink)}
+  .msstate{flex:0 0 auto;font-size:10.5px;font-weight:700;border-radius:999px;padding:2px 8px;
+    border:1px solid var(--line);color:var(--faint);background:var(--panel)}
+  .msstep.done .msstate{border-color:rgba(72,199,142,.55);color:#a7eccb;background:rgba(72,199,142,.14)}
+  .mssteph{margin:0 0 10px 31px;font-size:11.5px;color:var(--dim);line-height:1.5}
+  .msstepbody{margin-left:31px}
+  .msstepbody .msrow{margin-bottom:0}
+  .msfilter{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--ink);
+    border-radius:10px;padding:9px 11px;font-size:14px;margin-bottom:9px}
+  .msfilter::placeholder{color:var(--faint)}
+  .msnone{font-size:11.5px;color:var(--faint);padding:4px 2px}
+  .mseyebrow{font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--faint);text-transform:uppercase;
+    margin:18px 2px 10px;display:flex;justify-content:space-between}
+  .mseyebrow span{color:var(--accenttext);font-weight:600;letter-spacing:0;text-transform:none}
+  .mschips{display:flex;flex-wrap:wrap;gap:7px}
+  .mschip{font-size:12px;padding:7px 11px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);
+    color:var(--dim);cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-weight:600}
+  .mschip.on{border-color:var(--accent);background:rgba(124,92,255,.18);color:#fff}
+  .mschip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .mschip .tk{width:13px;height:13px}
+  .msrow{display:flex;align-items:center;justify-content:space-between;background:var(--panel2);
+    border:1px solid var(--line);border-radius:13px;padding:12px 13px;margin-bottom:9px}
+  .msrow .t b{font-size:13.5px;font-weight:600;color:var(--ink)}
+  .msrow .t p{margin:1px 0 0;color:var(--dim);font-size:11px}
+  .msswitch{width:42px;height:24px;border-radius:14px;background:#39414f;position:relative;flex:0 0 auto;
+    cursor:pointer;border:0}
+  .msswitch::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+    background:#fff;transition:.15s}
+  .msswitch.on{background:var(--green)} .msswitch.on::after{left:21px}
+  .msswitch:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .mssave{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
+    font-size:15px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 8px 24px rgba(124,92,255,.3);margin-top:22px}
+  .mssave:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+  .mslater{display:block;width:100%;text-align:center;margin-top:12px;color:var(--dim);font-size:12.5px;
+    background:none;border:0;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+  .osfoot{margin-top:18px}
+  /* ---- #4 Set-your-bar dials (CAS-145 / r5-prototype dialCard + sliders) ---- */
+  /* The dial is a card, like the prototype's. It IS interactive, so the box is earned (buildspec §8).
+     justify-content is restated because the shared .osdh above sets space-between, which would shove the
+     dial's own label to the far right away from its icon. */
+  .osdial{background:var(--panel2);border:1px solid var(--line);border-radius:14px;
+    padding:13px 14px 10px;margin-bottom:11px;margin-top:0}
+  .osdial .osdh{display:flex;align-items:center;justify-content:flex-start;gap:9px;margin-bottom:2px}
+  .osdial .osdh .em{font-size:16px}
+  .osdial .osdh .dl{font-weight:700;font-size:14.5px}
+  /* The live readout for the continuous dial — "Well-liked · 7.4+". Violet: it is a value. */
+  .osdial .osdh .dval{margin-left:auto;font-size:13px;font-weight:800;color:var(--selink);
+    white-space:nowrap;text-align:right}
+  .tagnew{font-size:9px;font-weight:800;letter-spacing:.06em;color:#fff;background:var(--accentdeep);
+    border-radius:6px;padding:2px 6px;margin-left:2px}
+  /* One slider for every dial, stepped or continuous, filling from the LEFT EDGE to its value with the dots
+     lit up to that point (buildspec §4). Without the fill a slider is a handle on an undifferentiated line
+     and nothing says which way is "more". */
+  .vslider{position:relative;height:22px;display:flex;align-items:center;margin:10px 2px 0}
+  .vtrack{position:absolute;left:4px;right:4px;top:50%;height:5px;margin-top:-2.5px;border-radius:3px;
+    background:#2a303b;overflow:hidden}
+  .vfillbar{height:100%;border-radius:3px;background:var(--grad);width:0;transition:width .15s}
+  .vnotches{position:absolute;left:4px;right:4px;top:0;bottom:0;pointer-events:none}
+  .vnotch{position:absolute;top:50%;transform:translate(-50%,-50%);width:9px;height:9px;border-radius:50%;
+    background:#39414f;box-shadow:0 0 0 3px var(--panel2);transition:background .15s}
+  .vnotch.lit{background:var(--accent)}
+  .vslider input{position:relative;z-index:2;width:100%;height:18px;margin:0;-webkit-appearance:none;
+    appearance:none;background:transparent;cursor:pointer}
+  .vslider input::-webkit-slider-runnable-track{height:18px;background:transparent}
+  .vslider input::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;
+    border-radius:50%;background:var(--accent);border:2px solid var(--selink);
+    box-shadow:0 2px 8px rgba(0,0,0,.55);cursor:grab}
+  .vslider input::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--accent);
+    border:2px solid var(--selink);box-shadow:0 2px 8px rgba(0,0,0,.55);cursor:grab}
+  .vslider input:focus-visible{outline:2px solid var(--cyan);outline-offset:3px;border-radius:12px}
+  .vlabels{position:relative;height:30px;margin-top:9px}
+  .vlabels span,.vlabels .vsnap{position:absolute;font-size:10px;color:var(--dim);line-height:1.2;white-space:nowrap}
+  .vlabels span.on,.vlabels .vsnap.on{color:var(--selink);font-weight:700}
+  .vlabels span small,.vlabels .vsnap small{display:block;font-size:8.5px;color:var(--faint)}
+  /* CAS-166: a named stop is tappable now — the four sizes you used to pick from are still one tap away,
+     they just no longer bound what you can choose. Styled as the label it already was, not as a button. */
+  .vlabels .vsnap{background:none;border:0;padding:4px 2px;margin:-4px -2px;font-family:inherit;cursor:pointer;text-align:center}
+  /* CAS-174: five named stops don't fit on one line of a phone-width track — "Blockbuster" and
+     "Megabudget" are ~65px of text with only ~37px between their centres once the end labels are
+     pulled inside the row. So a five-stop dial staggers its labels, which doubles the room each one
+     has without moving a single marker or shrinking the type. */
+  .vlabels.stag{height:56px}
+  .vlabels.stag .vsnap.lo{top:27px}
+  .vlabels .vsnap:hover{color:var(--ink)}
+  .vlabels .vsnap:focus-visible{outline:2px solid var(--cyan);outline-offset:1px;border-radius:5px}
+  .osmore{width:100%;text-align:center;background:var(--panel2);border:1px dashed var(--line);color:var(--dim);
+    border-radius:12px;padding:15px 12px;font-size:12.5px;font-weight:700;cursor:pointer;margin-bottom:11px}
+  .osmore:hover{border-color:var(--accent);color:var(--ink)}
+  .osmore:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* The summary: a plain LINE, never a box (buildspec §8 — boxes are for things you can tap). */
+  .ossumline{font-size:13px;color:var(--dim);line-height:1.55;margin:6px 2px 14px}
+  .ossumline b{color:var(--ink);font-weight:700}
+  .ossumline .cnt{color:var(--green);font-weight:800}
+  /* ---- Taste baseline accordion (CAS-146 / r5-prototype screenTaste) ---- */
+  /* CAS-159: the live "N films in your world" line. Same .ossumline family (and the same green .cnt) as the
+     bar page's live count, so the two onboarding screens state their number the same way; it just leads the
+     rows here instead of trailing them. */
+  .tbworld{margin:2px 2px 14px}
+  .tbrows{display:flex;flex-direction:column;gap:11px;margin-top:4px}
+  .tbrow{background:var(--panel2);border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    transition:border-color .22s,background .22s}
+  .tbrow.open{border-color:var(--accent);background:rgba(124,92,255,.06)}
+  .tbhead{display:flex;align-items:center;gap:13px;padding:14px 15px;cursor:pointer;user-select:none;
+    width:100%;background:none;border:0;color:var(--ink);text-align:left}
+  .tbhead:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+  .tbhead .ic{flex:0 0 auto;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+    font-size:18px;background:var(--panel);border:1px solid var(--line)}
+  .tbhead .rmid{flex:1;min-width:0;display:flex;flex-direction:column}
+  .tbhead .rlabel{font-weight:700;font-size:15px}
+  /* The collapsed value, in violet — this is what lets the page be read at a glance without opening a row. */
+  .tbhead .rval{color:var(--selink);font-weight:600;font-size:12.5px;margin-top:2px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tbhead .chev{flex:0 0 auto;color:var(--faint);transition:transform .3s;font-size:13px}
+  .tbrow.open .chev{transform:rotate(90deg)}
+  .tbpanel{max-height:0;overflow:hidden;transition:max-height .36s cubic-bezier(.4,0,.2,1)}
+  @media (prefers-reduced-motion:reduce){ .tbpanel{transition:none} }
+  .tbbody{padding:0 15px 17px}
+  .tbhint{color:var(--faint);font-size:12px;margin:0 0 12px;line-height:1.45}
+  .tbq{display:flex;gap:8px;margin-top:12px}
+  .tbq .q{flex:1;text-align:center;border:1px solid var(--line);background:var(--panel);color:var(--dim);
+    border-radius:10px;padding:8px;font-size:12px;font-weight:700;cursor:pointer}
+  .tbq .q:hover{border-color:var(--accent);color:var(--ink)}
+  .tbfoot{display:flex;align-items:center;gap:8px;justify-content:center;color:var(--faint);font-size:11.5px;
+    margin:16px 4px 2px;text-align:center}
+  .dotg{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+  /* The age RANGE band: one gradient fill across the chosen span, no handles and no dots (buildspec §6). */
+  .agebar{position:relative;height:48px;margin-top:6px;background:#151b28;border:1px solid var(--line);
+    border-radius:13px;touch-action:none;cursor:pointer;user-select:none;overflow:hidden}
+  .afill{position:absolute;top:5px;bottom:5px;border-radius:9px;background:var(--grad);
+    box-shadow:0 6px 18px rgba(90,80,200,.45);z-index:1;transition:left .16s,width .16s}
+  .agecells{position:absolute;inset:0;display:flex;z-index:2}
+  .acell{flex:1;display:grid;place-items:center;font-size:12.5px;font-weight:700;color:var(--dim);
+    transition:color .2s}
+  .acell.inr{color:#fff}
+  .uptag{font-size:11.5px;color:var(--faint);margin:12px 2px 0;text-align:center}
+  .uptag b{color:var(--selink)}
+  /* ---- #3 Get-selective hub (CAS-144 / r5-prototype screenSelective) ---- */
+  /* CAS-160: the locked channel badge that used to sit here is GONE, along with its rules. Availability is no
+     longer a property of the preset — it is the third door below, which the user sets. */
+  .osbignum{font-family:var(--font-display);font-weight:800;font-size:44px;line-height:1;letter-spacing:-.02em;
+    background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;margin:14px 2px 0}
+  .osbigl{color:var(--dim);font-size:12.5px;margin:4px 2px 0}
+  /* CAS-175: the funnel line — the pool the big number came out of, in the same words the taste-baseline
+     screen uses, so the two counts read as one narrowing rather than as two competing claims. Plain text,
+     never a box: it is a statement, not something to tap (buildspec §8). */
+  .osfunnel{color:var(--faint);font-size:11.5px;margin:3px 2px 14px}
+  .osfunnel b{color:var(--dim);font-weight:700}
+  /* The doors. "Boxes = tappable" (buildspec §8): these ARE the interactive things on the page, so they get
+     the box; the framing line above them is plain text and never does. */
+  .osdoor{display:flex;align-items:center;gap:13px;width:100%;text-align:left;cursor:pointer;
+    background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px;
+    color:var(--ink);transition:border-color .16s,background .16s}
+  .osdoor:hover{border-color:var(--accent)}
+  .osdoor:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .osdoor .di{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;font-size:19px;
+    flex:0 0 auto;background:var(--panel);border:1px solid var(--line)}
+  .osdoor .dt{flex:1;min-width:0;display:flex;flex-direction:column}
+  .osdoor .dh{font-weight:700;font-size:15px}
+  .osdoor .ds{color:var(--selink);font-size:12.5px;margin-top:2px;font-weight:600;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .osdoor .dc{color:var(--faint);font-size:16px}
+  /* Confirmed: green border + tint + tick. Green here is right and not a clash with the violet-count rule —
+     this is a completion state, not a count. */
+  .osdoor.done{border-color:rgba(72,199,142,.5);background:rgba(72,199,142,.07)}
+  .doneck{width:26px;height:26px;border-radius:50%;background:var(--green);display:grid;place-items:center;
+    color:#08210f;font-size:14px;font-weight:800;flex:0 0 auto}
+  @keyframes doorpulse{0%{transform:scale(.98)}40%{transform:scale(1.02)}100%{transform:scale(1)}}
+  .osdoor.pulse{animation:doorpulse .55s cubic-bezier(.34,1.56,.64,1);
+    box-shadow:0 0 0 2px rgba(72,199,142,.45),0 8px 26px rgba(72,199,142,.18)}
+  @media (prefers-reduced-motion:reduce){ .osdoor.pulse{animation:none} }
+  .oshint{text-align:center;color:var(--faint);font-size:12px;margin:14px 2px 0}
+  .oshint b{color:var(--selink)}
+  .osfinish{text-align:center;color:var(--green);font-size:13px;font-weight:800;margin:16px 2px 12px}
+  .oscta{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
+    font-size:15px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 8px 26px rgba(124,92,255,.3)}
+  .oscta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+  .osskip{display:block;width:100%;text-align:center;margin-top:12px;color:var(--dim);font-size:12.5px;
+    background:none;border:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+  .osskip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
+
+  /* ---- CAS-160: "Where & when you'll watch" — the hub's third door ----
+     One row per cascade stage, wearing that stage's own colour (amber/blue/green — the same hues the
+     availability system is tuned for, so the row and the film card mean the same thing). Ticking a stage
+     REVEALS its notify-me windows: a window is meaningless until the stage it belongs to is on, so the
+     windows live inside the row rather than beside it, and an untouched screen is three lines, not eleven.
+     `--wwc` is set inline per lane, so one rule set serves all three colours. */
+  .wwlane{border:1px solid var(--line);border-radius:14px;background:var(--panel2);margin-bottom:10px;
+    overflow:hidden;transition:border-color .16s}
+  .wwlane.on{border-color:var(--wwc)}
+  .wwhead{display:flex;align-items:center;gap:11px;width:100%;text-align:left;cursor:pointer;background:none;
+    border:0;padding:13px 14px;color:var(--ink);font-family:inherit;font-size:15px;font-weight:700}
+  .wwhead .cd{width:10px;height:10px;border-radius:50%;background:var(--wwc);flex:0 0 auto}
+  .wwhead .wwn{flex:1;min-width:0}
+  .wwtick{width:24px;height:24px;border-radius:7px;border:1.5px solid var(--line);background:var(--panel);
+    display:grid;place-items:center;font-size:13px;font-weight:800;color:transparent;flex:0 0 auto}
+  .wwlane.on .wwtick{background:var(--wwc);border-color:var(--wwc);color:#0b1016}
+  .wwopts{display:none;padding:2px 14px 12px 35px}
+  .wwlane.on .wwopts{display:block}
+  .wwnl{color:var(--faint);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    margin:0 0 4px}
+  .wwopt{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:none;border:0;
+    padding:7px 0;color:var(--dim);font-family:inherit;font-size:13px;cursor:pointer}
+  .wwopt .wwb{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line);flex:0 0 auto;
+    display:grid;place-items:center;font-size:10px;font-weight:800;color:transparent}
+  .wwopt.on{color:var(--ink)}
+  .wwopt.on .wwb{background:var(--wwc);border-color:var(--wwc);color:#0b1016}
+  .wwhead:focus-visible,.wwopt:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:8px}
+  /* The deferred ask, stated plainly rather than dressed as a warning — we are telling them what is still
+     missing, not blocking them on it (buildspec §8: only tappable things get a box). */
+  .wwfoot{display:flex;align-items:flex-start;gap:8px;color:var(--faint);font-size:11.5px;line-height:1.45;
+    margin:14px 2px 2px}
+
+  /* ---- value-first reveal (CAS-77 / spec 26640386 §2/§3) ----
+     The reciprocity moment: the agent's real haul (posters from the live engine) + provenance,
+     before any ask. Two CTAs — keep it running (→ invite), or just browse (→ guest). No account. */
+  .reveal{position:fixed;inset:0;z-index:85;display:none;flex-direction:column;padding:32px 24px 34px;
+    overflow-y:auto;background:radial-gradient(130% 80% at 50% -5%, rgba(124,92,255,.22),
+    rgba(34,211,238,.06) 50%, rgba(10,14,26,0) 75%), var(--bg)}
+  .reveal.open{display:flex}
+  .rvinner{width:100%;max-width:440px;margin:0 auto;animation:splashIn .5s ease both}
+  @media (prefers-reduced-motion:reduce){ .rvinner{animation:none} }
+  .rvhero{text-align:center;margin-bottom:18px}
+  /* CAS-123: the count + copy + single CTA are pinned to the top; the poster grid scrolls under them, so the
+     user can act without scrolling past posters. A gradient fade lets posters peek through as they pass under. */
+  .rvtop{position:sticky;top:0;z-index:3;text-align:center;padding:6px 0 16px;
+    background:linear-gradient(var(--bg) 82%, rgba(10,14,26,0))}
+  .rvcount{font-family:var(--font-display);font-size:64px;font-weight:700;line-height:1;
+    background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .rvh{font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--ink);margin:2px 0 9px}
+  .rvsub{font-size:13.5px;color:var(--dim);line-height:1.55;margin:0 0 14px}
+  /* CAS-141: a min-tile-width grid rather than a fixed 3 columns, so the tile size is the thing that's
+     pinned and the column count follows the width it actually has. repeat(3,1fr) was not giving three even
+     columns at all — see the min-width note on .rvposter — and the result read as an oversized 2-up. */
+  .rvgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;margin-bottom:15px}
+  /* min-width:0 is load-bearing, not tidying. A grid item's automatic minimum size is its content size, and
+     with aspect-ratio in play that resolves against the row height instead of the column — so each tile
+     demanded ~192px inside a 327px grid and the track blew out to 596px, overflowing the panel. The
+     aspect-ratio keeps the posters undistorted; min-width:0 is what lets them actually shrink to the track. */
+  .rvposter{aspect-ratio:2/3;min-width:0;border-radius:10px;background:#0c0f14 center/cover no-repeat;
+    border:1px solid var(--line);
+    /* CAS-129 windows this grid; CAS-141 re-sizes the placeholder to match the tighter tile (84px min track
+       x 3/2), so an off-screen row reserves roughly the height it will really take and the scrollbar doesn't
+       jump as you scroll. Real layout still wins the moment a tile comes into view — the 2:3 is never a
+       placeholder's guess. */
+    content-visibility:auto;contain-intrinsic-size:auto 126px}
+  .rvprov{font-size:12px;color:var(--faint);text-align:center;line-height:1.5;margin-bottom:20px}
+  .rvfoot{display:grid;gap:9px}
+  .rvkeep{display:block;width:100%;background:var(--grad);color:#fff;border:none;border-radius:13px;padding:15px;
+    font-size:15px;font-weight:800;cursor:pointer;text-shadow:0 1px 2px rgba(10,14,26,.55);box-shadow:0 8px 22px rgba(124,92,255,.28)}
+  .rvbrowse{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:13px;padding:14px;
+    font-size:14px;font-weight:700;cursor:pointer}
+  .rvbrowse:hover{border-color:var(--violet)}
+  .rvkeep:focus-visible,.rvbrowse:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+  /* ---- guest mode status + honest re-invite (CAS-79 / spec 26640386 §4) ---- */
+  .guestcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 14px;margin:4px 0 6px}
+  .gc-head{font-size:13px;font-weight:700;color:var(--ink);margin-bottom:9px}
+  .gc-status{display:flex;flex-wrap:wrap;gap:8px;font-size:11.5px;color:var(--dim);margin-bottom:10px}
+  .gc-status span{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:4px 10px;font-weight:600}
+  .gc-status b{font-weight:800}
+  .gc-status b.on{color:#a7eccb}
+  .gc-status b.off{color:var(--faint)}
+  .gc-reinvite{font-size:12.5px;line-height:1.5;color:var(--ink);background:linear-gradient(135deg,
+    rgba(124,92,255,.14),rgba(34,211,238,.05));border:1px solid var(--violet);border-radius:11px;
+    padding:10px 12px;margin-bottom:10px}
+  .gc-on{width:100%;background:var(--grad);color:#fff;border:none;border-radius:11px;padding:12px;font-size:14px;
+    font-weight:800;cursor:pointer;text-shadow:0 1px 2px rgba(10,14,26,.55)}
+  .gc-on:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+  /* ---- agent invite + dynamic learning + done (CAS-78 / spec 26640386 §2) ----
+     Prototype MOCK only: toggles and price are visual, no card / billing / push. Reached from the
+     reveal's "Keep it running". Three screens rendered into #inviteBody. */
+  .invite{position:fixed;inset:0;z-index:86;display:none;align-items:flex-end;justify-content:center;
+    background:rgba(6,8,12,.86);backdrop-filter:blur(4px)}
+  .invite.open{display:flex}
+  .invcard{width:100%;max-width:480px;max-height:96vh;overflow-y:auto;background:var(--panel);
+    border:1px solid var(--line);border-radius:20px 20px 0 0;padding:22px 18px}
+  .invh{font-family:var(--font-display);font-size:22px;font-weight:700;letter-spacing:-.2px;line-height:1.25;margin:0 0 8px}
+  .invp{font-size:13.5px;color:#c4ccd6;line-height:1.55;margin:0 0 16px}
+  .invprice{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:0 0 4px;
+    background:linear-gradient(135deg,rgba(124,92,255,.16),rgba(34,211,238,.06));border:1px solid var(--violet);
+    border-radius:13px;padding:14px 15px}
+  .invprice .free{font-family:var(--font-display);font-size:19px;font-weight:700;color:var(--ink)}
+  .invprice .then{font-size:13px;color:var(--dim);font-weight:700}
+  .invprice .anchor{font-size:11.5px;color:var(--cyan);font-weight:700;width:100%}
+  .invnote{font-size:11px;color:var(--faint);line-height:1.5;margin:8px 2px 16px}
+  .invrow{display:flex;align-items:center;gap:12px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:12px;padding:12px 13px;margin-bottom:9px}
+  .invrow .ir-main{flex:1;min-width:0}
+  .invrow .ir-name{font-size:14px;font-weight:800}
+  .invrow .ir-sub{font-size:11.5px;color:var(--dim);line-height:1.4;margin-top:2px}
+  .tgl{width:46px;height:27px;border-radius:20px;background:var(--panel);border:1px solid var(--line);
+    position:relative;cursor:pointer;flex:none;transition:.15s}
+  .tgl.on{background:var(--violet);border-color:var(--violet)}
+  .tgl:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .tgl::after{content:"";position:absolute;top:2px;left:2px;width:21px;height:21px;border-radius:50%;
+    background:#fff;transition:.15s}
+  .tgl.on::after{transform:translateX(19px)}
+  .invlearn{display:flex;gap:11px;align-items:center;background:var(--panel2);border:1px solid var(--line);
+    border-radius:12px;padding:12px 13px;margin-bottom:9px}
+  .invlearn .il-ic{font-size:20px;flex:none}
+  .invlearn .il-txt{font-size:12.5px;line-height:1.45}
+  .invlearn .il-txt b{color:var(--accenttext)}
+  .invnext{width:100%;background:var(--grad);color:#fff;border:none;border-radius:13px;padding:15px;font-size:15px;
+    font-weight:800;cursor:pointer;text-shadow:0 1px 2px rgba(10,14,26,.55);margin-top:6px}
+  .invnext:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .invskip{display:block;width:100%;margin-top:10px;background:none;border:none;color:var(--dim);
+    font-size:12.5px;font-weight:600;cursor:pointer;text-decoration:underline;padding:6px 0}
+  .invdone{text-align:center}
+  .invdone .dn-ic{font-size:46px;line-height:1;margin-bottom:6px}
+  .invstatus{display:grid;gap:8px;margin:16px 0 18px;text-align:left}
+  .invstatus .st-row{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:11px;padding:11px 13px;font-size:13.5px;font-weight:700}
+  .invstatus .st-row .st-on{margin-left:auto;font-size:11px;font-weight:800;color:#a7eccb;
+    background:rgba(72,199,142,.16);border:1px solid rgba(72,199,142,.5);border-radius:20px;padding:2px 9px}
+  .invstatus .st-row .st-off{margin-left:auto;font-size:11px;font-weight:800;color:var(--faint);
+    background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:2px 9px}
+
+  /* ---- first-run onboarding (bottom sheet) ---- */
+  .onb{position:fixed;inset:0;z-index:70;background:rgba(6,8,12,.82);backdrop-filter:blur(3px);
+    display:none;align-items:flex-end;justify-content:center}
+  .onb.open{display:flex}
+  .onbcard{width:100%;max-width:480px;max-height:94vh;overflow-y:auto;background:var(--panel);
+    border:1px solid var(--line);border-radius:20px 20px 0 0;padding:18px 16px 22px}
+  .onbstep{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:700}
+  .onbh{font-size:20px;font-weight:800;letter-spacing:-.3px;line-height:1.25;margin:6px 0 7px}
+  .onbp{font-size:13px;color:#c4ccd6;line-height:1.55;margin:0 0 12px}
+  .onbcascade{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;font-weight:700;
+    background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:10px 11px;margin-bottom:12px}
+  .onbcascade i{font-style:normal;color:var(--faint)}
+  .onbcascade b{font-weight:800}
+  .onbcascade .s1{color:#ffce8f} .onbcascade .s2{color:#d3c2ff}
+  .onbcascade .s3{color:#bcdcff} .onbcascade .s4{color:#a7eccb}
+  .onbfoot{display:flex;gap:8px;align-items:center;margin-top:16px}
+  .onbnext{flex:1;background:var(--accentdeep);color:#fff;border:none;border-radius:11px;padding:13px;
+    font-size:14.5px;font-weight:800;cursor:pointer}
+  .onbnext.ghost{flex:0 0 auto;background:var(--panel2);border:1px solid var(--line);color:var(--ink);padding:13px 14px}
+  .onbskip{display:block;width:100%;margin-top:10px;background:none;border:none;color:var(--dim);
+    font-size:12.5px;font-weight:600;cursor:pointer;text-decoration:underline;padding:6px 0}
+  .intent{display:grid;gap:8px}
+  .intentbtn{display:flex;gap:11px;align-items:center;text-align:left;color:var(--ink);cursor:pointer;
+    background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:11px 12px;transition:.15s}
+  .intentbtn:hover,.intentbtn.on{border-color:var(--accent);background:rgba(124,92,255,.14)}
+  .intentbtn .ii{font-size:21px;line-height:1;flex-shrink:0}
+  .intentbtn .iname{display:block;font-size:13.5px;font-weight:800}
+  .intentbtn .iblurb{display:block;font-size:11px;color:var(--dim);line-height:1.4;margin-top:2px}
+  .intentbtn .icount{display:block;font-size:11px;font-weight:800;color:#a7eccb;margin-top:4px}
+  .starter{margin-top:12px;background:linear-gradient(135deg,rgba(124,92,255,.16),rgba(72,199,142,.08));
+    border:1px solid var(--accent);border-radius:12px;padding:11px 12px}
+  .ctabtn{margin-top:9px;background:rgba(72,199,142,.2);border:1px solid var(--green);color:#a7eccb;
+    border-radius:9px;padding:9px 12px;font-size:12.5px;font-weight:800;cursor:pointer}
+  /* ---- service selector (insight) ---- */
+  .adv{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:11px 12px;margin-bottom:8px}
+  .adv.top{background:linear-gradient(135deg,rgba(124,92,255,.16),rgba(72,199,142,.08));border-color:var(--accent)}
+  .advhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .advsvc{font-size:14px;font-weight:800}
+  .advhave{font-size:10px;font-weight:800;padding:2px 7px;border-radius:20px;white-space:nowrap;
+    background:rgba(72,199,142,.16);color:#a7eccb;border:1px solid rgba(72,199,142,.5)}
+  .advwhy{font-size:12.5px;color:#c4ccd6;line-height:1.5;margin-top:5px}
+  .advwhy b{color:var(--ink)}
+  .advbar{height:6px;border-radius:4px;background:#2a303b;margin-top:8px;overflow:hidden}
+  .advbar span{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--green))}
+  .advrent{font-size:11.5px;font-weight:700;color:#a7eccb;margin-top:7px}
+  .advfoot{font-size:11px;color:var(--faint);line-height:1.55;margin-top:2px}
+  /* ---- plain-English setup (rules-based preview) ---- */
+  .nlrow{display:flex;gap:8px;align-items:stretch}
+  .nlrow .namein{flex:1;min-width:0;font-size:16px;font-weight:500}
+  .nlrow .ca-btn{flex-shrink:0;padding:0 14px}
+  .nlread{background:linear-gradient(135deg,rgba(124,92,255,.16),rgba(72,199,142,.08));
+    border:1px solid var(--accent);border-radius:12px;padding:11px 12px;margin:10px 0 4px}
+  .nlread .h{font-size:12px;font-weight:800;margin-bottom:7px}
+  .nlchips{display:flex;flex-wrap:wrap;gap:6px}
+  .nlchip{font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px;
+    background:var(--panel2);border:1px solid var(--accent);color:#cfc2ff;white-space:nowrap}
+  .nlmiss{font-size:11px;color:var(--faint);line-height:1.5;margin-top:8px;font-style:italic}
+  /* ---- The list's order control (CAS-150) ---- */
+  /* It belongs to the Cascade whose list it orders, so it sits under the deck rather than up in the header
+     with the app-wide controls. Right-aligned and quiet: it is an adjustment to the list, not a question
+     being asked of you. (This is where the New / All pair used to stand.) */
+  .sortbar{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:8px 12px 0}
+  .sortlbl{font-size:11.5px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+  .fglabel{display:flex;align-items:center;gap:8px;padding:15px 12px 4px;font-size:13px;font-weight:800}
+  .fglabel .n{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:1px 7px;
+    font-size:10.5px;color:var(--dim);font-weight:700}
+  .fgnote{font-size:11.5px;color:var(--faint);line-height:1.5;margin:0 12px 8px}
+  .newchip{display:inline-block;background:rgba(72,199,142,.16);border:1px solid rgba(72,199,142,.55);
+    color:#a7eccb;border-radius:20px;padding:1px 8px;font-size:10px;font-weight:800;margin-left:7px;
+    vertical-align:middle;white-space:nowrap}
+  /* the opening-weekend state (CAS-68) — amber, the cinema's colour, and it never claims a leave date */
+  .newchip.po{background:rgba(240,163,54,.14);border-color:rgba(240,163,54,.5);color:#ffce8f;cursor:help}
+
+  /* ---- Brand: primary CTAs carry the signature gradient (CAS-73 / spec 26640386 §1) ----
+     Each selector re-states its own primary button so it overrides that button's solid
+     --accentdeep fill (same selector, later in the sheet → wins); the deep-purple fill in
+     the original rules stays as the fallback. The gradient runs to cyan, where white bold
+     text alone would dip under AA, so a dark ink text-shadow keeps the label readable
+     across the light end. .applybtn:disabled (higher specificity, defined earlier) still
+     wins, so disabled buttons stay grey. Final visual/AA sign-off is Lee's. */
+  .donebtn, .sim button, .applybtn, .onbnext, .loz button.edge{
+    background:var(--grad);
+    text-shadow:0 1px 2px rgba(10,14,26,.55);
+  }
 </style>
-</head>
-<body>
-  <h1>Compact card · Variant A</h1>
-  <p class="sub">Press a control and its options appear <b>right over the button row</b> — the panel covers the other
-  control, never the card info above. <b>Watch</b> = slide &amp; release (one pick). <b>Notify</b> = tap or drag across to
-  pick any moments.</p>
+<style>
+/* ---- prototype additions on top of the real 0.7 card ---- */
+body{background:#0a0e1a;margin:0;}
+.wrap{max-width:452px;margin:0 auto;padding:12px 12px 60px;}
+.phead{font:600 13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#98a2bd;
+  margin:2px 4px 12px;}
+.phead b{color:#eef1f7;}
 
-  <div class="density">
-    <label>Density</label><input type="range" id="dens" min="1" max="2" step="1" value="1"><label id="densl">standard</label>
+/* left agent-type colour stripe (Cinema = amber, Streaming = green) */
+.card.agent-cinema{border-left:4px solid var(--amber);}
+.card.agent-stream{border-left:4px solid var(--green);}
+
+/* the two new controls live in the real .actions row, at card scale */
+.ctl{position:relative;user-select:none;}
+.cmini{display:flex;align-items:center;gap:7px;height:38px;padding:0 13px;border-radius:11px;
+  background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.12);cursor:pointer;
+  position:relative;overflow:hidden;font:650 12.5px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#eef1f7;}
+.cmini .cfill{position:absolute;inset:0 auto 0 0;width:0;opacity:.22;transition:width .26s cubic-bezier(.3,1,.4,1);}
+.cmini .cic{font-size:16px;z-index:1;line-height:1;}
+.cmini .clab{z-index:1;white-space:nowrap;}
+.cmini .clab.dim{color:#98a2bd;font-weight:500;}
+.ctl.watch{flex:1;} .ctl.watch .cmini{width:100%;}
+
+/* panel pinned over the action row — same height, covers the row, never the card body */
+.cpop{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);z-index:50;
+  background:#0e1626;border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:4px;
+  box-shadow:0 12px 30px rgba(0,0,0,.6);touch-action:none;}
+.csegs{display:flex;gap:4px;}
+.cseg{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;height:34px;padding:0 6px;
+  border-radius:9px;background:rgba(255,255,255,.05);border:1px solid transparent;position:relative;overflow:hidden;
+  font:600 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#98a2bd;}
+.cseg .ci{font-size:15px;} .cseg .cl{white-space:nowrap;}
+.cseg.hot{transform:translateY(-1px);} .cseg.hot .cl{color:#fff;}
+.cseg .ck{position:absolute;top:2px;right:4px;font-size:8px;color:#fff;opacity:0;font-weight:800;}
+.cseg.on .ck{opacity:1;}
+</style>
+</head><body>
+<div class="wrap">
+  <div class="phead">The real 0.7 card, with the <b>left agent colour</b> (amber = Cinema) and the new
+  <b>watch</b> + <b>alert</b> controls in the action row. Press a control, slide/tap across, release.</div>
+  <div class="card " id="card-83533">
+    <div class="cbody" onclick="cardTap(event,83533)">
+      <div class="ctop">
+        <div class="poster" style="background-image:url(https://image.tmdb.org/t/p/w185/bRBeSHfGHwkEpImlhxPmOcUsaeg.jpg)"><a class="pplay" href="https://www.youtube.com/watch?v=3ThgcAj0UyE" target="_blank" rel="noopener"
+         onclick="event.stopPropagation()" title="Play the trailer" aria-label="Play the trailer for Avatar: Fire and Ash">▶</a></div>
+        <div class="title">Avatar: Fire and Ash<span class="cert ">M</span></div>
+        <div class="metaline">Science Fiction, Adventure, Fantasy · <span class="culttag">English</span></div>
+        <p class="synopsis">In the wake of the devastating war against the RDA and the loss of their eldest son, Jake Sully and Neytiri face a new threat on Pandora: the Ash People, a violent and power-hungry Na'vi tribe led by the ruthless Varang. Jake's family must fight for their survival and the future of Pandora in a conflict that pushes them to their emotional and physical limits.</p>
+        <div class="mrow r-money"><span class="m"><span class="lab">Budget</span> <b>$350M</b></span><span class="m"><span class="lab">Gross</span> <b>$1.5B</b></span></div>
+        <div class="mrow r-scores"><span class="m"><span class="dot imdb"></span><span class="lab">IMDb</span> <b>7.2</b></span><span class="m"><span class="dot rt"></span><span class="lab">RT</span> <b>66%</b></span><span class="m"><span class="dot meta"></span><span class="lab">Meta</span> <b>61</b></span></div>
+        <button class="tentbadge" type="button" onclick="showScale(83533)"
+    title="💥 Blockbuster — in the top 15% of the catalogue for popularity right now, on a $120M+ budget or $150M+ worldwide. $350M budget · 66% critics · Metacritic 61 · award winner.">💥 <b>Blockbuster</b></button>
+        <div class="mrow r-awards"><span class="m osc">🏆 <b>1</b> Oscar</span><span class="m awd">🏅 <b>41</b> wins</span></div>
+      </div>
+      <div class="expand"><div class="awx"><div class="l">🏆 <span><b>1</b> Academy Award won</span></div><div class="l">🏅 <span><b>41</b> wins &amp; <b>62</b> nominations across all bodies</span></div></div><div class="credits"><div class="credit"><span class="clbl">Director</span>James Cameron</div><div class="credit"><span class="clbl">Cast</span>Sam Worthington, Zoe Saldaña, Sigourney Weaver, Stephen Lang</div></div><div class="exhead">Trailers</div><div class="trailers"><a class="trailer" href="https://www.youtube.com/watch?v=3ThgcAj0UyE" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/3ThgcAj0UyE/mqdefault.jpg)"><span class="play">▶</span></a><a class="trailer" href="https://www.youtube.com/watch?v=uEUGMJpuF0Y" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/uEUGMJpuF0Y/mqdefault.jpg)"><span class="play">▶</span></a><a class="trailer" href="https://www.youtube.com/watch?v=ITmRYfeg4H0" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/ITmRYfeg4H0/mqdefault.jpg)"><span class="play">▶</span></a><a class="trailer" href="https://www.youtube.com/watch?v=RlofL5WU28k" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/RlofL5WU28k/mqdefault.jpg)"><span class="play">▶</span></a></div></div>
+    </div>
+    <div class="bandw" onclick="cardTap(event,83533)"><div class="avail"><div class="win w-cin-cinema past">
+      <div class="wpill">Cinema</div>
+      <div class="wdate">Dec 25</div></div><div class="win w-pvod past">
+      <div class="wpill">Premium</div>
+      <div class="wdate est">Mar 26</div></div><div class="win w-rental past">
+      <div class="wpill">Rent</div>
+      <div class="wdate est">Apr 26</div></div><div class="win w-included_streaming on">
+      <div class="wpill">Stream</div>
+      <div class="wdate">Jul 26</div></div></div></div>
+    <div class="cfoot">
+      
+      <div class="saveline">✓ Included on <b>Disney Plus</b></div>
+      <div class="wtw"><div class="wtwrow">
+      <span class="svc"><span class="tt sub">Stream</span>Disney Plus</span>
+      <span class="off"></span></div><div class="wtwrow">
+      <span class="svc"><span class="tt buy">Buy</span>Amazon Video</span>
+      <span class="off"></span></div><div class="wtwrow">
+      <span class="svc"><span class="tt buy">Buy</span>Apple TV Store</span>
+      <span class="off"></span></div><div class="wtwrow jwrow"><a class="jwattr" href="https://www.themoviedb.org/movie/83533-avatar-fire-and-ash/watch?locale=AU" target="_blank" rel="noopener">Streaming data by JustWatch ↗</a></div></div>
+      <div class="actions">
+        <button class="actbtn pickbtn  " onclick="cyclePick(83533)" aria-pressed="false"
+    title="Nobody has picked this yet. Tap to make it My Pick." aria-label="Pick. Nobody has picked this yet. Tap to make it My Pick."><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 10.8 20.5 5.5v13L3.5 13.2z"/><path d="M11.4 16.4a2.9 2.9 0 1 1-5.6-1.5"/></svg><span class="picklbl">Pick</span></button>
+        <button class="actbtn  " onclick="setOpinion(83533,'notfor')"
+      aria-pressed="false" title="Not for me" aria-label="Not for me"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.6"/><path d="M5.9 18.1 18.1 5.9"/></svg></button><button class="actbtn  " onclick="setOpinion(83533,'liked')"
+      aria-pressed="false" title="Watched and liked it" aria-label="Watched and liked it"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7.2 10.6v9.2H4.4v-9.2z"/><path d="M7.2 10.6 12 4.2a2.1 2.1 0 0 1 2 2.6l-.7 2.7h4.8a2 2 0 0 1 1.9 2.5l-1.5 6a2 2 0 0 1-1.9 1.5H7.2z"/></svg></button><button class="actbtn  " onclick="setOpinion(83533,'disliked')"
+      aria-pressed="false" title="Watched and didn't like it" aria-label="Watched and didn't like it"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7.2 13.4V4.2H4.4v9.2z"/><path d="M7.2 13.4 12 19.8a2.1 2.1 0 0 0 2-2.6l-.7-2.7h4.8a2 2 0 0 0 1.9-2.5l-1.5-6a2 2 0 0 0-1.9-1.5H7.2z"/></svg></button>
+        <button class="actbtn wtwbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')" title="Where to watch (3)"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></svg></button>
+      </div>
+    </div>
   </div>
-  <div id="list"></div>
-
-  <div class="note"><b>Cinema agent card.</b> Press the left chip and slide to a watch status; press the right chip and
-  drag across the moments — “1 week” <b>and</b> “opens today” together is fine. (“Announced” lives in agent settings, not on
-  a card — if you can see the film it’s already announced.) A Streaming agent card will show streaming-specific alert
-  moments instead. Each panel matches the button-row height, so nothing above is covered.</p>
+<div class="card " id="card-969681">
+    <div class="cbody" onclick="cardTap(event,969681)">
+      <div class="ctop">
+        <div class="poster" style="background-image:url(https://image.tmdb.org/t/p/w185/x19dchU8e38vQfW4epzOsQNLuZ2.jpg)"><a class="pplay" href="https://www.youtube.com/watch?v=cM9zSxf2IYI" target="_blank" rel="noopener"
+         onclick="event.stopPropagation()" title="Play the trailer" aria-label="Play the trailer for Spider-Man: Brand New Day">▶</a></div>
+        <div class="title">Spider-Man: Brand New Day<span class="cert ">M</span></div>
+        <div class="metaline">Science Fiction, Action, Adventure · <span class="culttag">English</span></div>
+        <p class="synopsis">Fighting crime full-time as Spider-Man in a world that doesn't remember him—and the pressure of seeing his old friends move on without him—sparks a change in Peter Parker he may not have the power to control. But that transformation might also be the only thing that can stop a shocking new threat to the city and those he loves - a powerful villain no one can even see.</p>
+        <div class="mrow r-money"><span class="m"><span class="lab">Budget</span> <b>$275M</b></span><span class="m muted"><span class="lab">Gross</span> <b>–</b></span></div>
+        <div class="mrow r-scores"><span class="m muted"><span class="dot imdb"></span><span class="lab">IMDb</span> <b>–</b></span><span class="m muted"><span class="dot rt"></span><span class="lab">RT</span> <b>–</b></span><span class="m muted"><span class="dot meta"></span><span class="lab">Meta</span> <b>–</b></span></div>
+        <button class="tentbadge" type="button" onclick="showScale(969681)"
+    title="🚀 Anticipated — in the top 20% of upcoming titles for anticipation. $275M budget.">🚀 <b>Anticipated</b></button>
+        <div class="mrow r-awards"></div>
+      </div>
+      <div class="expand"><div class="awx"><div class="l">✦ <span><b>1</b> nomination across all bodies</span></div></div><div class="credits"><div class="credit"><span class="clbl">Director</span>Destin Daniel Cretton</div><div class="credit"><span class="clbl">Cast</span>Tom Holland, Zendaya, Sadie Sink, Jacob Batalon</div></div><div class="exhead">Trailers</div><div class="trailers"><a class="trailer" href="https://www.youtube.com/watch?v=cM9zSxf2IYI" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/cM9zSxf2IYI/mqdefault.jpg)"><span class="play">▶</span></a><a class="trailer" href="https://www.youtube.com/watch?v=WsP_Nz0o7WY" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/WsP_Nz0o7WY/mqdefault.jpg)"><span class="play">▶</span></a><a class="trailer" href="https://www.youtube.com/watch?v=cHGsLJJY2K0" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/cHGsLJJY2K0/mqdefault.jpg)"><span class="play">▶</span></a><a class="trailer" href="https://www.youtube.com/watch?v=14rWV0EUCY8" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/14rWV0EUCY8/mqdefault.jpg)"><span class="play">▶</span></a></div></div>
+    </div>
+    <div class="bandw" onclick="cardTap(event,969681)"><div class="avail"><div class="win w-cin-upcoming on">
+      <div class="wpill">Upcoming</div>
+      <div class="wdate">Jul 26</div></div><div class="win w-pvod future">
+      <div class="wpill">Premium</div>
+      <div class="wdate est">Oct 26</div></div><div class="win w-rental future">
+      <div class="wpill">Rent</div>
+      <div class="wdate est">Nov 26</div></div><div class="win w-included_streaming future">
+      <div class="wpill">Stream</div>
+      <div class="wdate est">Jan 27</div></div></div></div>
+    <div class="cfoot">
+      
+      
+      
+      <div class="actions">
+        <button class="actbtn pickbtn  " onclick="cyclePick(969681)" aria-pressed="false"
+    title="Nobody has picked this yet. Tap to make it My Pick." aria-label="Pick. Nobody has picked this yet. Tap to make it My Pick."><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 10.8 20.5 5.5v13L3.5 13.2z"/><path d="M11.4 16.4a2.9 2.9 0 1 1-5.6-1.5"/></svg><span class="picklbl">Pick</span></button>
+        <button class="actbtn  " onclick="setOpinion(969681,'notfor')"
+      aria-pressed="false" title="Not for me" aria-label="Not for me"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.6"/><path d="M5.9 18.1 18.1 5.9"/></svg></button><button class="actbtn  " onclick="setOpinion(969681,'liked')"
+      aria-pressed="false" title="Watched and liked it" aria-label="Watched and liked it"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7.2 10.6v9.2H4.4v-9.2z"/><path d="M7.2 10.6 12 4.2a2.1 2.1 0 0 1 2 2.6l-.7 2.7h4.8a2 2 0 0 1 1.9 2.5l-1.5 6a2 2 0 0 1-1.9 1.5H7.2z"/></svg></button><button class="actbtn  " onclick="setOpinion(969681,'disliked')"
+      aria-pressed="false" title="Watched and didn't like it" aria-label="Watched and didn't like it"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7.2 13.4V4.2H4.4v9.2z"/><path d="M7.2 13.4 12 19.8a2.1 2.1 0 0 0 2-2.6l-.7-2.7h4.8a2 2 0 0 0 1.9-2.5l-1.5-6a2 2 0 0 0-1.9-1.5H7.2z"/></svg></button>
+        <button class="actbtn wtwbtn off" disabled
+        title="No home offers yet"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></svg></button>
+      </div>
+    </div>
+  </div>
+<div class="card " id="card-1083381">
+    <div class="cbody" onclick="cardTap(event,1083381)">
+      <div class="ctop">
+        <div class="poster" style="background-image:url(https://image.tmdb.org/t/p/w185/rhGx6E3qRNMgj3i5su2oukNHwIQ.jpg)"><a class="pplay" href="https://www.youtube.com/watch?v=5C-zBIuvGnU" target="_blank" rel="noopener"
+         onclick="event.stopPropagation()" title="Play the trailer" aria-label="Play the trailer for Backrooms">▶</a></div>
+        <div class="title">Backrooms<span class="cert ">M</span></div>
+        <div class="metaline">Horror, Mystery, Science Fiction · <span class="culttag">English</span></div>
+        <p class="synopsis">A strange doorway appears in the basement of a furniture showroom.</p>
+        <div class="mrow r-money"><span class="m"><span class="lab">Budget</span> <b>$10M</b></span><span class="m"><span class="lab">Gross</span> <b>$384M</b></span></div>
+        <div class="mrow r-scores"><span class="m"><span class="dot imdb"></span><span class="lab">IMDb</span> <b>7.0</b></span><span class="m muted"><span class="dot rt"></span><span class="lab">RT</span> <b>–</b></span><span class="m"><span class="dot meta"></span><span class="lab">Meta</span> <b>77</b></span></div>
+        <button class="tentbadge" type="button" onclick="showScale(1083381)"
+    title="💥 Blockbuster — in the top 15% of the catalogue for popularity right now, on a $120M+ budget or $150M+ worldwide. $10M budget · Metacritic 77.">💥 <b>Blockbuster</b></button>
+        <div class="mrow r-awards"></div>
+      </div>
+      <div class="expand"><div class="awx"><div class="l">✦ <span><b>11</b> nominations across all bodies</span></div></div><div class="credits"><div class="credit"><span class="clbl">Director</span>Kane Parsons</div><div class="credit"><span class="clbl">Cast</span>Chiwetel Ejiofor, Renate Reinsve, Mark Duplass, Finn Bennett</div></div><div class="exhead">Trailers</div><div class="trailers"><a class="trailer" href="https://www.youtube.com/watch?v=5C-zBIuvGnU" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/5C-zBIuvGnU/mqdefault.jpg)"><span class="play">▶</span></a><a class="trailer" href="https://www.youtube.com/watch?v=2z6a6NUFlsU" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/2z6a6NUFlsU/mqdefault.jpg)"><span class="play">▶</span></a><a class="trailer" href="https://www.youtube.com/watch?v=0HjdiohVOik" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/0HjdiohVOik/mqdefault.jpg)"><span class="play">▶</span></a><a class="trailer" href="https://www.youtube.com/watch?v=tKGhxMi50y8" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/tKGhxMi50y8/mqdefault.jpg)"><span class="play">▶</span></a></div></div>
+    </div>
+    <div class="bandw" onclick="cardTap(event,1083381)"><div class="avail"><div class="win w-cin-cinema past">
+      <div class="wpill">Cinema</div>
+      <div class="wdate">May 26</div></div><div class="win w-pvod past">
+      <div class="wpill">Premium</div>
+      <div class="wdate">Jul 26</div></div><div class="win w-rental on">
+      <div class="wpill">Rent</div>
+      <div class="wdate">Jul 26</div></div><div class="win w-included_streaming future">
+      <div class="wpill">Stream</div>
+      <div class="wdate est">Nov 26</div></div></div></div>
+    <div class="cfoot">
+      
+      
+      <div class="wtw"><div class="wtwrow">
+      <span class="svc"><span class="tt rent">Rent</span>Amazon Video</span>
+      <span class="off"></span></div><div class="wtwrow">
+      <span class="svc"><span class="tt rent">Rent</span>Apple TV Store</span>
+      <span class="off"></span></div><div class="wtwrow">
+      <span class="svc"><span class="tt buy">Buy</span>Amazon Video</span>
+      <span class="off"></span></div><div class="wtwrow">
+      <span class="svc"><span class="tt buy">Buy</span>Apple TV Store</span>
+      <span class="off"></span></div><div class="wtwrow jwrow"><a class="jwattr" href="https://www.themoviedb.org/movie/1083381-backrooms/watch?locale=AU" target="_blank" rel="noopener">Streaming data by JustWatch ↗</a></div></div>
+      <div class="actions">
+        <button class="actbtn pickbtn  " onclick="cyclePick(1083381)" aria-pressed="false"
+    title="Nobody has picked this yet. Tap to make it My Pick." aria-label="Pick. Nobody has picked this yet. Tap to make it My Pick."><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 10.8 20.5 5.5v13L3.5 13.2z"/><path d="M11.4 16.4a2.9 2.9 0 1 1-5.6-1.5"/></svg><span class="picklbl">Pick</span></button>
+        <button class="actbtn  " onclick="setOpinion(1083381,'notfor')"
+      aria-pressed="false" title="Not for me" aria-label="Not for me"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.6"/><path d="M5.9 18.1 18.1 5.9"/></svg></button><button class="actbtn  " onclick="setOpinion(1083381,'liked')"
+      aria-pressed="false" title="Watched and liked it" aria-label="Watched and liked it"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7.2 10.6v9.2H4.4v-9.2z"/><path d="M7.2 10.6 12 4.2a2.1 2.1 0 0 1 2 2.6l-.7 2.7h4.8a2 2 0 0 1 1.9 2.5l-1.5 6a2 2 0 0 1-1.9 1.5H7.2z"/></svg></button><button class="actbtn  " onclick="setOpinion(1083381,'disliked')"
+      aria-pressed="false" title="Watched and didn't like it" aria-label="Watched and didn't like it"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7.2 13.4V4.2H4.4v9.2z"/><path d="M7.2 13.4 12 19.8a2.1 2.1 0 0 0 2-2.6l-.7-2.7h4.8a2 2 0 0 0 1.9-2.5l-1.5-6a2 2 0 0 0-1.9-1.5H7.2z"/></svg></button>
+        <button class="actbtn wtwbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')" title="Where to watch (4)"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></svg></button>
+      </div>
+    </div>
+  </div>
+<div class="card " id="card-1275779">
+    <div class="cbody" onclick="cardTap(event,1275779)">
+      <div class="ctop">
+        <div class="poster" style="background-image:url(https://image.tmdb.org/t/p/w185/AnJ8IQJI23hNpYXVNaythu061Ru.jpg)"><a class="pplay" href="https://www.youtube.com/watch?v=FDqOa3cOy6w" target="_blank" rel="noopener"
+         onclick="event.stopPropagation()" title="Play the trailer" aria-label="Play the trailer for Disclosure Day">▶</a></div>
+        <div class="title">Disclosure Day<span class="cert ">M</span></div>
+        <div class="metaline">Science Fiction, Thriller · <span class="culttag">English</span></div>
+        <p class="synopsis">A cybersecurity expert becomes a whistleblower after uncovering secrets about aliens, putting him on the run from a corporation. Meanwhile, a meteorologist experiencing strange phenomena joins forces with him to prove there's life beyond our understanding.</p>
+        <div class="mrow r-money"><span class="m"><span class="lab">Budget</span> <b>$115M</b></span><span class="m"><span class="lab">Gross</span> <b>$233M</b></span></div>
+        <div class="mrow r-scores"><span class="m"><span class="dot imdb"></span><span class="lab">IMDb</span> <b>6.7</b></span><span class="m muted"><span class="dot rt"></span><span class="lab">RT</span> <b>–</b></span><span class="m"><span class="dot meta"></span><span class="lab">Meta</span> <b>74</b></span></div>
+        <button class="tentbadge" type="button" onclick="showScale(1275779)"
+    title="💥 Blockbuster — in the top 15% of the catalogue for popularity right now, on a $120M+ budget or $150M+ worldwide. $115M budget · Metacritic 74.">💥 <b>Blockbuster</b></button>
+        <div class="mrow r-awards"><span class="m awd">🏅 <b>2</b> wins</span></div>
+      </div>
+      <div class="expand"><div class="awx"><div class="l">🏅 <span><b>2</b> wins &amp; <b>6</b> nominations across all bodies</span></div></div><div class="credits"><div class="credit"><span class="clbl">Director</span>Steven Spielberg</div><div class="credit"><span class="clbl">Cast</span>Emily Blunt, Josh O'Connor, Colin Firth, Colman Domingo</div></div><div class="exhead">Trailers</div><div class="trailers"><a class="trailer" href="https://www.youtube.com/watch?v=FDqOa3cOy6w" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/FDqOa3cOy6w/mqdefault.jpg)"><span class="play">▶</span></a><a class="trailer" href="https://www.youtube.com/watch?v=tQdAJzCPQpc" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/tQdAJzCPQpc/mqdefault.jpg)"><span class="play">▶</span></a><a class="trailer" href="https://www.youtube.com/watch?v=NOnNDur5e9g" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/NOnNDur5e9g/mqdefault.jpg)"><span class="play">▶</span></a><a class="trailer" href="https://www.youtube.com/watch?v=icDuEHSxE-w" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/icDuEHSxE-w/mqdefault.jpg)"><span class="play">▶</span></a></div></div>
+    </div>
+    <div class="bandw" onclick="cardTap(event,1275779)"><div class="avail"><div class="win w-cin-cinema past">
+      <div class="wpill">Cinema</div>
+      <div class="wdate">Jun 26</div></div><div class="win w-pvod past">
+      <div class="wpill">Premium</div>
+      <div class="wdate est">Sep 26</div></div><div class="win w-rental on">
+      <div class="wpill">Rent</div>
+      <div class="wdate">Jul 26</div></div><div class="win w-included_streaming future">
+      <div class="wpill">Stream</div>
+      <div class="wdate est">Dec 26</div></div></div></div>
+    <div class="cfoot">
+      
+      
+      <div class="wtw"><div class="wtwrow">
+      <span class="svc"><span class="tt rent">Rent</span>Amazon Video</span>
+      <span class="off"></span></div><div class="wtwrow">
+      <span class="svc"><span class="tt rent">Rent</span>Apple TV Store</span>
+      <span class="off"></span></div><div class="wtwrow">
+      <span class="svc"><span class="tt buy">Buy</span>Amazon Video</span>
+      <span class="off"></span></div><div class="wtwrow">
+      <span class="svc"><span class="tt buy">Buy</span>Apple TV Store</span>
+      <span class="off"></span></div><div class="wtwrow jwrow"><a class="jwattr" href="https://www.themoviedb.org/movie/1275779-disclosure-day/watch?locale=AU" target="_blank" rel="noopener">Streaming data by JustWatch ↗</a></div></div>
+      <div class="actions">
+        <button class="actbtn pickbtn  " onclick="cyclePick(1275779)" aria-pressed="false"
+    title="Nobody has picked this yet. Tap to make it My Pick." aria-label="Pick. Nobody has picked this yet. Tap to make it My Pick."><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 10.8 20.5 5.5v13L3.5 13.2z"/><path d="M11.4 16.4a2.9 2.9 0 1 1-5.6-1.5"/></svg><span class="picklbl">Pick</span></button>
+        <button class="actbtn  " onclick="setOpinion(1275779,'notfor')"
+      aria-pressed="false" title="Not for me" aria-label="Not for me"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.6"/><path d="M5.9 18.1 18.1 5.9"/></svg></button><button class="actbtn  " onclick="setOpinion(1275779,'liked')"
+      aria-pressed="false" title="Watched and liked it" aria-label="Watched and liked it"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7.2 10.6v9.2H4.4v-9.2z"/><path d="M7.2 10.6 12 4.2a2.1 2.1 0 0 1 2 2.6l-.7 2.7h4.8a2 2 0 0 1 1.9 2.5l-1.5 6a2 2 0 0 1-1.9 1.5H7.2z"/></svg></button><button class="actbtn  " onclick="setOpinion(1275779,'disliked')"
+      aria-pressed="false" title="Watched and didn't like it" aria-label="Watched and didn't like it"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7.2 13.4V4.2H4.4v9.2z"/><path d="M7.2 13.4 12 19.8a2.1 2.1 0 0 0 2-2.6l-.7-2.7h4.8a2 2 0 0 0 1.9-2.5l-1.5-6a2 2 0 0 0-1.9-1.5H7.2z"/></svg></button>
+        <button class="actbtn wtwbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')" title="Where to watch (4)"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></svg></button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
-const WATCH={key:'watch', prompt:{ic:'👁', lab:'Status'},
-  steps:[{ic:'🚫',l:'Don’t want',c:'var(--neg)'},{ic:'👎',l:'Disliked',c:'var(--dislike)'},
-         {ic:'😐',l:'So-so',c:'var(--indiff)'},{ic:'👍',l:'Liked',c:'var(--like)'}]};
+// neutralise the app's own handlers referenced in the real card markup
+window.cardTap=(e,id)=>{ const c=document.getElementById('card-'+id); if(c) c.classList.toggle('expanded'); };
+window.showScale=()=>{};
+
+const WATCH={key:'watch', prompt:{ic:'👁',lab:'Watch status'},
+  steps:[{ic:'🚫',l:'Don’t want',c:'#d0453f'},{ic:'👎',l:'Disliked',c:'#e08a3c'},
+         {ic:'😐',l:'So-so',c:'#8a93a6'},{ic:'👍',l:'Liked',c:'#37c46a'}]};
 const NOTIFY={key:'notify',
   steps:[{ic:'📅',l:'1 mo'},{ic:'⏰',l:'1 wk'},{ic:'🎬',l:'Today'},{ic:'🍿',l:'Post-open'}]};
-
-const CARDS=[
-  {t:'Dìdi', cert:'MA 15+', g:'Comedy, Drama · English', p:'DÌDI',
-   s:[['IMDb','7.3'],['Meta','78'],['🏆','21 wins']], av:[['Cinema','24 Nov',0],['Premium','25 Feb',0],['Rent','26 Jul',1],['Stream','—',0]]},
-  {t:'The Wild Robot', cert:'PG', g:'Animation, Family · English', p:'WILD ROBOT',
-   s:[['IMDb','8.2'],['RT','98'],['Meta','85']], av:[['Cinema','12 Sep',1],['Premium','—',0],['Rent','—',0],['Stream','—',0]]},
-  {t:'Dune: Part Three', cert:'M', g:'Sci-Fi, Adventure · English', p:'DUNE III',
-   s:[['IMDb','—'],['RT','—']], av:[['Cinema','26 Dec',0],['Premium','—',0],['Rent','—',0],['Stream','—',0]]},
-  {t:'Anora', cert:'R 18+', g:'Comedy, Drama · English', p:'ANORA', type:'stream',
-   s:[['IMDb','7.6'],['RT','92'],['🏆','5 wins']], av:[['Cinema','—',0],['Premium','—',0],['Rent','—',0],['Stream','on',1]]},
-];
-
+const BELL='#5aa9f0';
 const state={};
-function cssVar(v){ return (v&&v.startsWith('var('))? (getComputedStyle(document.documentElement).getPropertyValue(v.slice(4,-1)).trim()||'#888') : v; }
 
-function watchChip(i){
-  const st=state[i].watch; let ic,lab,color,dim=false,fill=0;
-  if(st===null){ic=WATCH.prompt.ic;lab=WATCH.prompt.lab;color='var(--line)';dim=true;}
+function watchChip(id){
+  const st=state[id].watch; let ic,lab,color,dim=false,fill=0;
+  if(st==null){ic=WATCH.prompt.ic;lab=WATCH.prompt.lab;color='transparent';dim=true;}
   else{const s=WATCH.steps[st];ic=s.ic;lab=s.l;color=s.c;fill=((st+1)/WATCH.steps.length)*100;}
-  return '<div class="ctl" data-card="'+i+'" data-key="watch"><div class="mini"><div class="fill" style="width:'+fill+'%;background:'+cssVar(color)+'"></div><span class="ic">'+ic+'</span><span class="lab'+(dim?' dim':'')+'">'+lab+'</span></div></div>';
+  return '<div class="ctl watch" data-id="'+id+'" data-key="watch"><div class="cmini"><div class="cfill" style="width:'+fill+'%;background:'+color+'"></div><span class="cic">'+ic+'</span><span class="clab'+(dim?' dim':'')+'">'+lab+'</span></div></div>';
 }
-function notifyChip(i){
-  const n=state[i].notify.length; const lab=n===0?'Notify':n+' alert'+(n>1?'s':'');
-  return '<div class="ctl" data-card="'+i+'" data-key="notify"><div class="mini"><div class="fill" style="width:'+((n/NOTIFY.steps.length)*100)+'%;background:'+cssVar('var(--bell)')+'"></div><span class="ic">'+(n?'🔔':'🔕')+'</span><span class="lab'+(n?'':' dim')+'">'+lab+'</span></div></div>';
+function notifyChip(id){
+  const n=state[id].notify.length, lab=n?(n+' alert'+(n>1?'s':'')):'Notify';
+  return '<div class="ctl" data-id="'+id+'" data-key="notify"><div class="cmini"><div class="cfill" style="width:'+((n/NOTIFY.steps.length)*100)+'%;background:'+BELL+'"></div><span class="cic">'+(n?'🔔':'🔕')+'</span><span class="clab'+(n?'':' dim')+'">'+lab+'</span></div></div>';
 }
 
-function render(){
-  const L=document.getElementById('list');
-  L.innerHTML=CARDS.map((c,i)=>{
-    if(!state[i]) state[i]={watch:null,notify:[]};
-    const scores=c.s.map(x=>'<span class="chip">'+x[0]+' <span class="v">'+x[1]+'</span></span>').join('');
-    const av=c.av.map(w=>'<div class="win'+(w[2]?' on':'')+'"><div class="w">'+w[0]+'</div><div class="d">'+w[1]+'</div></div>').join('');
-    return '<div class="card '+(c.type||'')+'"><div class="top"><div class="poster"><b>'+c.p+'</b></div>'
-      +'<div class="mid"><div class="ttl">'+c.t+' <span class="cert">'+c.cert+'</span></div>'
-      +'<div class="genres">'+c.g+'</div><div class="scores">'+scores+'</div></div></div>'
-      +'<div class="avail">'+av+'</div>'
-      +'<div class="cfoot" data-card="'+i+'">'+watchChip(i)+'<div class="spacer"></div>'+notifyChip(i)+'</div></div>';
-  }).join('');
-  L.querySelectorAll('.ctl').forEach(el=>{
-    const mini=el.querySelector('.mini'), card=+el.dataset.card, foot=el.closest('.cfoot');
-    if(el.dataset.key==='watch') mini.addEventListener('pointerdown',e=>openWatch(e,mini,foot,card));
-    else mini.addEventListener('pointerdown',e=>openNotify(e,mini,foot,card));
+function wireCard(card){
+  const id = card.id.replace('card-','');
+  state[id]={watch:null,notify:[]};
+  card.classList.add('agent-cinema');           // amber left stripe (cinema agent)
+  const actions = card.querySelector('.actions');
+  if(!actions) return;
+  const chevron = actions.querySelector('.wtwbtn');   // keep the where-to-watch expander
+  actions.innerHTML='';
+  actions.style.position='relative';
+  actions.insertAdjacentHTML('beforeend', watchChip(id));
+  actions.insertAdjacentHTML('beforeend', notifyChip(id));
+  if(chevron) actions.appendChild(chevron);
+  bind(actions, id);
+}
+function refresh(id){
+  const actions=document.getElementById('card-'+id).querySelector('.actions');
+  const chevron=actions.querySelector('.wtwbtn');
+  actions.querySelectorAll('.ctl').forEach(e=>e.remove());
+  const notifyNode=(()=>{const d=document.createElement('div');d.innerHTML=notifyChip(id);return d.firstChild;})();
+  const watchNode=(()=>{const d=document.createElement('div');d.innerHTML=watchChip(id);return d.firstChild;})();
+  actions.insertBefore(watchNode, chevron);
+  actions.insertBefore(notifyNode, chevron);
+  bind(actions, id);
+}
+function bind(actions, id){
+  actions.querySelectorAll('.ctl').forEach(el=>{
+    const mini=el.querySelector('.cmini');
+    if(el.dataset.key==='watch') mini.addEventListener('pointerdown',e=>openWatch(e,mini,actions,id));
+    else mini.addEventListener('pointerdown',e=>openNotify(e,mini,actions,id));
   });
 }
+function cseg(s,extra){ return '<div class="cseg" data-i="'+extra+'">'+(s.ck||'')+'<span class="ci">'+s.ic+'</span><span class="cl">'+s.l+'</span></div>'; }
 
-function openWatch(e, mini, foot, i){
+function openWatch(e, mini, actions, id){
   e.preventDefault(); const steps=WATCH.steps;
-  const pop=document.createElement('div'); pop.className='pop';
-  pop.innerHTML='<div class="segs">'+steps.map((s,k)=>'<div class="seg" data-i="'+k+'"><div class="si">'+s.ic+'</div><div class="sl">'+s.l+'</div></div>').join('')+'</div>';
-  foot.appendChild(pop);
-  const segs=[...pop.querySelectorAll('.seg')];
-  let hot = state[i].watch!==null? state[i].watch : null;
-  function paint(cancel){ segs.forEach((sg,k)=>{const on=(!cancel&&k===hot); sg.classList.toggle('hot',on); sg.style.background=on?cssVar(steps[k].c):''; sg.style.color=on?'#fff':'';}); }
-  function pick(x,y){ const r=pop.getBoundingClientRect(); if(y<r.top-70||y>r.bottom+70){hot=-1;paint(true);return;}
+  const pop=document.createElement('div'); pop.className='cpop';
+  pop.innerHTML='<div class="csegs">'+steps.map((s,k)=>'<div class="cseg" data-i="'+k+'"><span class="ci">'+s.ic+'</span><span class="cl">'+s.l+'</span></div>').join('')+'</div>';
+  actions.appendChild(pop);
+  const segs=[...pop.querySelectorAll('.cseg')];
+  let hot = state[id].watch!=null? state[id].watch : null;
+  function paint(cancel){ segs.forEach((sg,k)=>{const on=(!cancel&&k===hot); sg.classList.toggle('hot',on); sg.style.background=on?steps[k].c:''; sg.style.color=on?'#fff':'';}); }
+  function pick(x,y){ const r=pop.getBoundingClientRect(); if(y<r.top-80||y>r.bottom+80){hot=-1;paint(true);return;}
     let best=0,bd=1e9; segs.forEach((sg,k)=>{const b=sg.getBoundingClientRect();const cx=b.left+b.width/2;const d=Math.abs(cx-x);if(d<bd){bd=d;best=k;}}); hot=best; paint(false); }
   paint(false); mini.setPointerCapture(e.pointerId);
-  const move=ev=>pick(ev.clientX,ev.clientY);
-  const up=ev=>{ mini.removeEventListener('pointermove',move); mini.removeEventListener('pointerup',up);
-    const cancel=hot<0; pop.remove(); if(!cancel&&hot!==null&&hot>=0){ state[i].watch=hot; if(navigator.vibrate)navigator.vibrate(11); render(); } };
-  mini.addEventListener('pointermove',move); mini.addEventListener('pointerup',up); pick(e.clientX,e.clientY);
+  const mv=ev=>pick(ev.clientX,ev.clientY);
+  const up=ev=>{ mini.removeEventListener('pointermove',mv); mini.removeEventListener('pointerup',up);
+    const cancel=hot<0; pop.remove(); if(!cancel&&hot!=null&&hot>=0){ state[id].watch=hot; if(navigator.vibrate)navigator.vibrate(11); refresh(id); } };
+  mini.addEventListener('pointermove',mv); mini.addEventListener('pointerup',up); pick(e.clientX,e.clientY);
 }
-
-function openNotify(e, mini, foot, i){
-  e.preventDefault(); if(foot.querySelector('.pop')) return;
-  const sel=new Set(state[i].notify);
-  const pop=document.createElement('div'); pop.className='pop';
-  pop.innerHTML='<div class="segs">'+NOTIFY.steps.map((s,k)=>'<div class="seg" data-i="'+k+'"><span class="tk">✓</span><div class="si">'+s.ic+'</div><div class="sl">'+s.l+'</div></div>').join('')+'</div>';
-  foot.appendChild(pop);
-  const segs=[...pop.querySelectorAll('.seg')];
-  function paint(){ segs.forEach((sg,k)=>{const on=sel.has(k); sg.classList.toggle('on',on); sg.style.background=on?cssVar('var(--bell)'):''; sg.querySelector('.sl').style.color=on?'#fff':'';}); state[i].notify=[...sel].sort((a,b)=>a-b); }
+function openNotify(e, mini, actions, id){
+  e.preventDefault(); if(actions.querySelector('.cpop')) return;
+  const sel=new Set(state[id].notify);
+  const pop=document.createElement('div'); pop.className='cpop';
+  pop.innerHTML='<div class="csegs">'+NOTIFY.steps.map((s,k)=>'<div class="cseg" data-i="'+k+'"><span class="ck">✓</span><span class="ci">'+s.ic+'</span><span class="cl">'+s.l+'</span></div>').join('')+'</div>';
+  actions.appendChild(pop);
+  const segs=[...pop.querySelectorAll('.cseg')];
+  function paint(){ segs.forEach((sg,k)=>{const on=sel.has(k); sg.classList.toggle('on',on); sg.style.background=on?BELL:''; sg.querySelector('.cl').style.color=on?'#fff':'';}); state[id].notify=[...sel].sort((a,b)=>a-b); }
   paint();
-  let painting=false, val=null;
-  function segAt(x,y){ for(const sg of segs){const b=sg.getBoundingClientRect(); if(x>=b.left&&x<=b.right&&y>=b.top-6&&y<=b.bottom+6) return +sg.dataset.i;} return null; }
-  pop.addEventListener('pointerdown',ev=>{ ev.preventDefault(); ev.stopPropagation(); const k=segAt(ev.clientX,ev.clientY); if(k===null)return;
-    val=!sel.has(k); val?sel.add(k):sel.delete(k); painting=true; paint(); pop.setPointerCapture(ev.pointerId); if(navigator.vibrate)navigator.vibrate(8); });
-  pop.addEventListener('pointermove',ev=>{ if(!painting)return; const k=segAt(ev.clientX,ev.clientY); if(k===null)return; if(val)sel.add(k);else sel.delete(k); paint(); });
-  pop.addEventListener('pointerup',()=>{ painting=false; });
-  setTimeout(()=>{ function out(ev){ if(!pop.contains(ev.target)){ document.removeEventListener('pointerdown',out,true); pop.remove(); render(); } }
-    document.addEventListener('pointerdown',out,true); },0);
+  let painting=false,val=null;
+  function at(x,y){ for(const sg of segs){const b=sg.getBoundingClientRect(); if(x>=b.left&&x<=b.right&&y>=b.top-8&&y<=b.bottom+8) return +sg.dataset.i;} return null; }
+  pop.addEventListener('pointerdown',ev=>{ev.preventDefault();ev.stopPropagation();const k=at(ev.clientX,ev.clientY);if(k==null)return;val=!sel.has(k);val?sel.add(k):sel.delete(k);painting=true;paint();pop.setPointerCapture(ev.pointerId);if(navigator.vibrate)navigator.vibrate(8);});
+  pop.addEventListener('pointermove',ev=>{if(!painting)return;const k=at(ev.clientX,ev.clientY);if(k==null)return;if(val)sel.add(k);else sel.delete(k);paint();});
+  pop.addEventListener('pointerup',()=>{painting=false;});
+  setTimeout(()=>{function out(ev){if(!pop.contains(ev.target)){document.removeEventListener('pointerdown',out,true);pop.remove();refresh(id);}}document.addEventListener('pointerdown',out,true);},0);
 }
 
-document.getElementById('dens').addEventListener('input',e=>{ const v=+e.target.value; document.body.classList.toggle('d2',v===2); document.getElementById('densl').textContent=v===2?'tight':'standard'; });
-render();
+document.querySelectorAll('.card').forEach(wireCard);
 </script>
-</body>
-</html>
+
+</body></html>
