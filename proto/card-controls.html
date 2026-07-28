@@ -1491,16 +1491,16 @@
 /* ---- prototype additions on top of the real 0.7 card ---- */
 body{background:#0a0e1a;margin:0;}
 .wrap{max-width:452px;margin:0 auto;padding:12px 12px 60px;}
-.phead{font:600 13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#98a2bd;
-  margin:2px 4px 12px;}
+.phead{font:600 13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#98a2bd;margin:2px 4px 12px;}
 .phead b{color:#eef1f7;}
 
-/* left agent-type colour stripe (Cinema = amber, Streaming = green) */
 .card.agent-cinema{border-left:4px solid var(--amber);}
 .card.agent-stream{border-left:4px solid var(--green);}
 
-/* the two new controls live in the real .actions row, at card scale */
-.ctl{position:relative;user-select:none;}
+.ctl,.cmini,.cpop,.cseg,.cclose{
+  -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;touch-action:none;
+  -webkit-tap-highlight-color:transparent;}
+.ctl{position:relative;}
 .cmini{display:flex;align-items:center;gap:7px;height:38px;padding:0 13px;border-radius:11px;
   background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.12);cursor:pointer;
   position:relative;overflow:hidden;font:650 12.5px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#eef1f7;}
@@ -1510,23 +1510,29 @@ body{background:#0a0e1a;margin:0;}
 .cmini .clab.dim{color:#98a2bd;font-weight:500;}
 .ctl.watch{flex:1;} .ctl.watch .cmini{width:100%;}
 
-/* panel pinned over the action row — same height, covers the row, never the card body */
-.cpop{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);z-index:50;
-  background:#0e1626;border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:4px;
-  box-shadow:0 12px 30px rgba(0,0,0,.6);touch-action:none;}
-.csegs{display:flex;gap:4px;}
-.cseg{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;height:34px;padding:0 6px;
+/* panel sits over the action row (absolute in .actions, which is position:relative) */
+.cpop{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);z-index:60;
+  display:flex;align-items:center;gap:5px;
+  background:#0e1626;border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:4px;
+  box-shadow:0 14px 34px rgba(0,0,0,.7),0 0 0 100vmax rgba(6,9,16,.55);}
+.cpop .csegs{display:flex;gap:4px;flex:1;}
+.cseg{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;height:36px;padding:0 6px;
   border-radius:9px;background:rgba(255,255,255,.05);border:1px solid transparent;position:relative;overflow:hidden;
-  font:600 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#98a2bd;}
+  font:600 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#98a2bd;cursor:pointer;}
 .cseg .ci{font-size:15px;} .cseg .cl{white-space:nowrap;}
 .cseg.hot{transform:translateY(-1px);} .cseg.hot .cl{color:#fff;}
 .cseg .ck{position:absolute;top:2px;right:4px;font-size:8px;color:#fff;opacity:0;font-weight:800;}
 .cseg.on .ck{opacity:1;}
+.cclose{flex:none;width:34px;height:36px;border-radius:9px;border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.05);color:#c9d0da;font-size:16px;line-height:1;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;}
+.cclose:active{background:rgba(255,255,255,.14);}
 </style>
 </head><body>
 <div class="wrap">
-  <div class="phead">The real 0.7 card, with the <b>left agent colour</b> (amber = Cinema) and the new
-  <b>watch</b> + <b>alert</b> controls in the action row. Press a control, slide/tap across, release.</div>
+  <div class="phead">The real 0.7 card + <b>left agent colour</b> (amber = Cinema) + the new <b>watch</b> / <b>alert</b>
+  controls. Press &amp; slide <b>or</b> just tap an option. Close with <b>⌄</b> or by tapping away — tapping away no
+  longer expands the card.</div>
   <div class="card " id="card-83533">
     <div class="cbody" onclick="cardTap(event,83533)">
       <div class="ctop">
@@ -1733,15 +1739,15 @@ body{background:#0a0e1a;margin:0;}
 </div>
 
 <script>
-// neutralise the app's own handlers referenced in the real card markup
-window.cardTap=(e,id)=>{ const c=document.getElementById('card-'+id); if(c) c.classList.toggle('expanded'); };
+let OPEN=null, lastClose=0;
+// card expands only from the poster/title/synopsis area — and NEVER on the tap that dismisses a control
+window.cardTap=(e,id)=>{ if(OPEN || (Date.now()-lastClose)<380) return; const c=document.getElementById('card-'+id); if(c) c.classList.toggle('expanded'); };
 window.showScale=()=>{};
 
 const WATCH={key:'watch', prompt:{ic:'👁',lab:'Watch status'},
   steps:[{ic:'🚫',l:'Don’t want',c:'#d0453f'},{ic:'👎',l:'Disliked',c:'#e08a3c'},
          {ic:'😐',l:'So-so',c:'#8a93a6'},{ic:'👍',l:'Liked',c:'#37c46a'}]};
-const NOTIFY={key:'notify',
-  steps:[{ic:'📅',l:'1 mo'},{ic:'⏰',l:'1 wk'},{ic:'🎬',l:'Today'},{ic:'🍿',l:'Post-open'}]};
+const NOTIFY={key:'notify', steps:[{ic:'📅',l:'1 mo'},{ic:'⏰',l:'1 wk'},{ic:'🎬',l:'Today'},{ic:'🍿',l:'Post-open'}]};
 const BELL='#5aa9f0';
 const state={};
 
@@ -1755,16 +1761,13 @@ function notifyChip(id){
   const n=state[id].notify.length, lab=n?(n+' alert'+(n>1?'s':'')):'Notify';
   return '<div class="ctl" data-id="'+id+'" data-key="notify"><div class="cmini"><div class="cfill" style="width:'+((n/NOTIFY.steps.length)*100)+'%;background:'+BELL+'"></div><span class="cic">'+(n?'🔔':'🔕')+'</span><span class="clab'+(n?'':' dim')+'">'+lab+'</span></div></div>';
 }
-
 function wireCard(card){
   const id = card.id.replace('card-','');
   state[id]={watch:null,notify:[]};
-  card.classList.add('agent-cinema');           // amber left stripe (cinema agent)
-  const actions = card.querySelector('.actions');
-  if(!actions) return;
-  const chevron = actions.querySelector('.wtwbtn');   // keep the where-to-watch expander
-  actions.innerHTML='';
-  actions.style.position='relative';
+  card.classList.add('agent-cinema');
+  const actions = card.querySelector('.actions'); if(!actions) return;
+  const chevron = actions.querySelector('.wtwbtn');
+  actions.innerHTML=''; actions.style.position='relative';
   actions.insertAdjacentHTML('beforeend', watchChip(id));
   actions.insertAdjacentHTML('beforeend', notifyChip(id));
   if(chevron) actions.appendChild(chevron);
@@ -1773,11 +1776,10 @@ function wireCard(card){
 function refresh(id){
   const actions=document.getElementById('card-'+id).querySelector('.actions');
   const chevron=actions.querySelector('.wtwbtn');
-  actions.querySelectorAll('.ctl').forEach(e=>e.remove());
-  const notifyNode=(()=>{const d=document.createElement('div');d.innerHTML=notifyChip(id);return d.firstChild;})();
-  const watchNode=(()=>{const d=document.createElement('div');d.innerHTML=watchChip(id);return d.firstChild;})();
-  actions.insertBefore(watchNode, chevron);
-  actions.insertBefore(notifyNode, chevron);
+  actions.querySelectorAll('.ctl,.cpop').forEach(e=>e.remove());
+  const mk=html=>{const d=document.createElement('div');d.innerHTML=html;return d.firstChild;};
+  actions.insertBefore(mk(watchChip(id)), chevron);
+  actions.insertBefore(mk(notifyChip(id)), chevron);
   bind(actions, id);
 }
 function bind(actions, id){
@@ -1787,41 +1789,59 @@ function bind(actions, id){
     else mini.addEventListener('pointerdown',e=>openNotify(e,mini,actions,id));
   });
 }
-function cseg(s,extra){ return '<div class="cseg" data-i="'+extra+'">'+(s.ck||'')+'<span class="ci">'+s.ic+'</span><span class="cl">'+s.l+'</span></div>'; }
+function onDocDown(ev){
+  const pop=document.querySelector('.cpop');
+  if(pop && pop.contains(ev.target)) return;       // interacting inside the panel
+  ev.preventDefault(); ev.stopPropagation();        // swallow the tap so it can't expand the card
+  closeOpen();
+}
+function closeOpen(){
+  document.removeEventListener('pointerdown', onDocDown, true);
+  const id = OPEN && OPEN.id; OPEN=null; lastClose=Date.now();
+  document.querySelectorAll('.cpop').forEach(n=>n.remove());
+  if(id) refresh(id);
+}
+function armDismiss(){ setTimeout(()=>document.addEventListener('pointerdown', onDocDown, true), 0); }
 
 function openWatch(e, mini, actions, id){
-  e.preventDefault(); const steps=WATCH.steps;
-  const pop=document.createElement('div'); pop.className='cpop';
-  pop.innerHTML='<div class="csegs">'+steps.map((s,k)=>'<div class="cseg" data-i="'+k+'"><span class="ci">'+s.ic+'</span><span class="cl">'+s.l+'</span></div>').join('')+'</div>';
-  actions.appendChild(pop);
+  e.preventDefault(); closeOpen(); OPEN={id};
+  const steps=WATCH.steps;
+  const pop=document.createElement('div'); pop.className='cpop'; actions.appendChild(pop);
+  pop.innerHTML='<div class="csegs">'+steps.map((s,k)=>'<div class="cseg" data-i="'+k+'"><span class="ci">'+s.ic+'</span><span class="cl">'+s.l+'</span></div>').join('')+'</div><button class="cclose" type="button" title="Close">⌄</button>';
   const segs=[...pop.querySelectorAll('.cseg')];
-  let hot = state[id].watch!=null? state[id].watch : null;
-  function paint(cancel){ segs.forEach((sg,k)=>{const on=(!cancel&&k===hot); sg.classList.toggle('hot',on); sg.style.background=on?steps[k].c:''; sg.style.color=on?'#fff':'';}); }
-  function pick(x,y){ const r=pop.getBoundingClientRect(); if(y<r.top-80||y>r.bottom+80){hot=-1;paint(true);return;}
-    let best=0,bd=1e9; segs.forEach((sg,k)=>{const b=sg.getBoundingClientRect();const cx=b.left+b.width/2;const d=Math.abs(cx-x);if(d<bd){bd=d;best=k;}}); hot=best; paint(false); }
-  paint(false); mini.setPointerCapture(e.pointerId);
-  const mv=ev=>pick(ev.clientX,ev.clientY);
-  const up=ev=>{ mini.removeEventListener('pointermove',mv); mini.removeEventListener('pointerup',up);
-    const cancel=hot<0; pop.remove(); if(!cancel&&hot!=null&&hot>=0){ state[id].watch=hot; if(navigator.vibrate)navigator.vibrate(11); refresh(id); } };
-  mini.addEventListener('pointermove',mv); mini.addEventListener('pointerup',up); pick(e.clientX,e.clientY);
+  let hot=null, moved=false;
+  function commit(k){ state[id].watch=k; if(navigator.vibrate)navigator.vibrate(11); closeOpen(); }
+  function paint(){ segs.forEach((sg,k)=>{const on=k===hot; sg.classList.toggle('hot',on); sg.style.background=on?steps[k].c:''; sg.style.color=on?'#fff':'';}); }
+  function pickAt(x,y){ const r=pop.getBoundingClientRect(); if(y<r.top-90||y>r.bottom+90){hot=null;paint();return;} let best=0,bd=1e9; segs.forEach((sg,k)=>{const b=sg.getBoundingClientRect();const cx=b.left+b.width/2;const d=Math.abs(cx-x);if(d<bd){bd=d;best=k;}}); hot=best; paint(); }
+  segs.forEach((sg,k)=> sg.addEventListener('click', ev=>{ ev.stopPropagation(); commit(k); }));
+  pop.querySelector('.cclose').addEventListener('click', ev=>{ ev.stopPropagation(); closeOpen(); });
+  try{ mini.setPointerCapture(e.pointerId); }catch(_){}
+  function cleanup(){ mini.removeEventListener('pointermove',mv); mini.removeEventListener('pointerup',up); mini.removeEventListener('pointercancel',cn); }
+  const mv=ev=>{ moved=true; pickAt(ev.clientX,ev.clientY); };
+  const up=ev=>{ cleanup(); if(moved && hot!=null) commit(hot); };  // drag-release commits; a still tap leaves it open to tap an option
+  const cn=ev=>{ cleanup(); };                                      // iOS cancelled → leave open for tap, never strand
+  mini.addEventListener('pointermove',mv); mini.addEventListener('pointerup',up); mini.addEventListener('pointercancel',cn);
+  armDismiss();
 }
 function openNotify(e, mini, actions, id){
-  e.preventDefault(); if(actions.querySelector('.cpop')) return;
+  e.preventDefault(); closeOpen(); OPEN={id};
   const sel=new Set(state[id].notify);
-  const pop=document.createElement('div'); pop.className='cpop';
-  pop.innerHTML='<div class="csegs">'+NOTIFY.steps.map((s,k)=>'<div class="cseg" data-i="'+k+'"><span class="ck">✓</span><span class="ci">'+s.ic+'</span><span class="cl">'+s.l+'</span></div>').join('')+'</div>';
-  actions.appendChild(pop);
+  const pop=document.createElement('div'); pop.className='cpop'; actions.appendChild(pop);
+  pop.innerHTML='<div class="csegs">'+NOTIFY.steps.map((s,k)=>'<div class="cseg" data-i="'+k+'"><span class="ck">✓</span><span class="ci">'+s.ic+'</span><span class="cl">'+s.l+'</span></div>').join('')+'</div><button class="cclose" type="button" title="Done">⌄</button>';
   const segs=[...pop.querySelectorAll('.cseg')];
   function paint(){ segs.forEach((sg,k)=>{const on=sel.has(k); sg.classList.toggle('on',on); sg.style.background=on?BELL:''; sg.querySelector('.cl').style.color=on?'#fff':'';}); state[id].notify=[...sel].sort((a,b)=>a-b); }
   paint();
   let painting=false,val=null;
   function at(x,y){ for(const sg of segs){const b=sg.getBoundingClientRect(); if(x>=b.left&&x<=b.right&&y>=b.top-8&&y<=b.bottom+8) return +sg.dataset.i;} return null; }
-  pop.addEventListener('pointerdown',ev=>{ev.preventDefault();ev.stopPropagation();const k=at(ev.clientX,ev.clientY);if(k==null)return;val=!sel.has(k);val?sel.add(k):sel.delete(k);painting=true;paint();pop.setPointerCapture(ev.pointerId);if(navigator.vibrate)navigator.vibrate(8);});
-  pop.addEventListener('pointermove',ev=>{if(!painting)return;const k=at(ev.clientX,ev.clientY);if(k==null)return;if(val)sel.add(k);else sel.delete(k);paint();});
-  pop.addEventListener('pointerup',()=>{painting=false;});
-  setTimeout(()=>{function out(ev){if(!pop.contains(ev.target)){document.removeEventListener('pointerdown',out,true);pop.remove();refresh(id);}}document.addEventListener('pointerdown',out,true);},0);
+  const segbox=pop.querySelector('.csegs');
+  segbox.addEventListener('pointerdown',ev=>{ev.stopPropagation();const k=at(ev.clientX,ev.clientY);if(k==null)return;val=!sel.has(k);val?sel.add(k):sel.delete(k);painting=true;paint();try{segbox.setPointerCapture(ev.pointerId);}catch(_){}if(navigator.vibrate)navigator.vibrate(8);});
+  segbox.addEventListener('pointermove',ev=>{if(!painting)return;const k=at(ev.clientX,ev.clientY);if(k==null)return;if(val)sel.add(k);else sel.delete(k);paint();});
+  segbox.addEventListener('pointerup',()=>{painting=false;});
+  segbox.addEventListener('pointercancel',()=>{painting=false;});
+  pop.querySelector('.cclose').addEventListener('click', ev=>{ ev.stopPropagation(); closeOpen(); });
+  armDismiss();
 }
-
+window.addEventListener('scroll',()=>{ if(OPEN) closeOpen(); }, {passive:true});
 document.querySelectorAll('.card').forEach(wireCard);
 </script>
 
