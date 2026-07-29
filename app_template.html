@@ -784,8 +784,11 @@
      value-props, the north-star line and one CTA — all over a starfield. Uses the live design
      tokens (--grad, Inter/Poppins, --panel/--line, stage colours) and ink/white text only.
      Sits above everything (z-index 80 > onboarding's 70) and hands off to the next step on CTA. */
+  /* CAS-200: flex-start, not centre. A centred column taller than its scroll container puts its own
+     top ABOVE the scrollable area, where no scroll can reach it — measured at 360x640, the logo was
+     34px off the top of the screen and unrecoverable. From the top it simply scrolls. */
   .splash{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;align-items:center;
-    justify-content:center;text-align:center;padding:40px 24px;overflow-y:auto;
+    justify-content:flex-start;text-align:center;padding:20px 24px 28px;overflow-y:auto;
     background:radial-gradient(130% 90% at 50% -10%, rgba(124,92,255,.20), rgba(76,125,255,.06) 45%, rgba(10,14,26,0) 70%), var(--bg)}
   /* Starfield: a scatter of tiny radial-gradient "stars" in white and the brand violet/cyan.
      Percentage positions so it spreads across any viewport; sits behind the content (z-index 0). */
@@ -809,7 +812,34 @@
       radial-gradient(1.6px 1.6px at 60% 88%, rgba(255,255,255,.4), transparent),
       radial-gradient(1.4px 1.4px at 18% 96%, rgba(255,255,255,.32), transparent)}
   .splash.open{display:flex}
-  .splashinner{position:relative;z-index:1;width:100%;max-width:400px;margin:auto;animation:splashIn .5s ease both}
+  /* CAS-200: content sits HIGH, not centred. A wall of posters behind a vertically-centred column
+     leaves the art visible only in two thin bands; from the top the wall reads as a wall and the copy
+     still lands above the fold on a 360x640 phone. */
+  .splashinner{position:relative;z-index:2;width:100%;max-width:400px;margin:0 auto;
+    padding:3vh 0 8px;animation:splashIn .5s ease both}
+  /* ---- the poster wall (CAS-200) ----
+     A perspective grid of real posters, blurred and dimmed, with a dark radial fade over it. Three
+     separate jobs, three separate layers: the wall never touches the text's contrast (that is the fade's
+     job) and the text never has to sit on a box (that is what the fade replaces). */
+  .splash{overflow:hidden}
+  .splashwall{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+  .splashwallgrid{position:absolute;top:-14%;left:-24%;width:148%;
+    display:grid;grid-template-columns:repeat(6,1fr);gap:9px;
+    transform:perspective(1300px) rotateX(18deg) rotateZ(-5deg) scale(1.12);
+    transform-origin:center 14%;
+    filter:blur(1.2px) brightness(.74) saturate(1.08)}
+  .splashwall .swp{aspect-ratio:2/3;border-radius:8px;background:#141a28 center/cover no-repeat;
+    box-shadow:0 8px 22px rgba(0,0,0,.5)}
+  .splashfade{position:absolute;inset:0;z-index:1;pointer-events:none;
+    background:radial-gradient(120% 74% at 50% 30%, rgba(8,11,20,.34) 0%, rgba(8,11,20,.72) 42%,
+      rgba(8,11,20,.93) 74%, #080b14 100%)}
+  /* Legibility on a phone is the acceptance criterion, so the front layer carries its own shadow rather
+     than relying on the fade alone — the fade is weakest exactly where the content is, by design. */
+  .splashfront{text-shadow:0 2px 16px rgba(4,6,12,.9), 0 0 4px rgba(4,6,12,.8)}
+  .splashfront .splashword{text-shadow:0 2px 30px rgba(0,0,0,.8), 0 0 6px rgba(0,0,0,.7)}
+  .splashfront .splashb span{color:#fff;font-weight:600}
+  .splashfront .splashlogo{filter:drop-shadow(0 6px 24px rgba(124,92,255,.35))}
+  @media (prefers-reduced-motion:reduce){ .splashwallgrid{filter:blur(1.2px) brightness(.74)} }
   @keyframes splashIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
   .splashmark{width:84px;height:84px;margin:6px auto 0;display:block;
     filter:drop-shadow(0 0 14px rgba(124,92,255,.55))}
@@ -835,21 +865,18 @@
     object-fit:contain;margin:2px auto 0}
   @media (max-width:600px){ .splashlogo{max-width:220px} }
   .splashword{font-family:var(--font-body);font-weight:500;letter-spacing:.44em;font-size:19px;
-    padding-left:.44em;color:#fff;line-height:1;margin:16px 0 24px}
-  .splashhero{font-family:var(--font-display);font-size:23px;font-weight:700;line-height:1.22;
-    color:var(--ink);margin:0 0 22px}
+    padding-left:.44em;color:#fff;line-height:1;margin:14px 0 18px}
   /* CAS-154: the four lozenges were sized to squeeze onto one line (nowrap, 10px), which made them the
      smallest type on the splash — the one screen that has to be readable at arm's length. They now wrap
      instead of shrinking, which buys the room to take the label to 13px and the dot to 7px. */
-  .splashloz{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:28px}
+  .splashloz{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:18px}
   .splashpill{display:inline-flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--line);
     border-radius:999px;padding:7px 13px;font-size:13px;color:var(--dim);white-space:nowrap}
   .splashpill .splashdot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
-  .splashbullets{width:100%;display:flex;flex-direction:column;gap:16px;margin-bottom:22px}
+  .splashbullets{width:100%;display:flex;flex-direction:column;gap:13px;margin-bottom:20px}
   .splashb{display:flex;gap:12px;align-items:flex-start;text-align:left}
   .splashb .splashtick{flex:0 0 auto;width:20px;height:20px;margin-top:1px}
   .splashb span{font-size:15px;line-height:1.4;font-weight:500;color:var(--ink)}
-  .splashns{font-size:13.5px;line-height:1.5;color:var(--dim);margin:6px 4px 16px;text-align:center}
   .splashcta{width:100%;background:var(--grad);color:#fff;border:none;border-radius:13px;padding:16px;
     font-family:var(--font-display);font-size:16px;font-weight:700;cursor:pointer;
     box-shadow:0 10px 34px rgba(124,92,255,.34)}
@@ -857,6 +884,10 @@
   /* CAS-186: the second door. Quiet — it is the smaller of the two audiences on a first paint — but
      a full-width target, because "I already have an account" is a thing people look for and tap in
      one go rather than hunt for in a corner. */
+  /* A bare [hidden] loses to display:block — the same trap .stephdr[hidden] has. Without this the
+     "Log in" door stayed on screen on a build with no account config, which is the exact thing
+     CAS-186 hid it for. */
+  .splashlogin[hidden]{display:none}
   .splashlogin{display:block;width:100%;margin-top:12px;padding:13px;border-radius:13px;
     background:transparent;border:1px solid var(--line);color:var(--dim);
     font-size:14px;font-weight:600;cursor:pointer}
@@ -2031,7 +2062,12 @@
      step of the signup flow. Until the starter shortlist (CAS-75) lands, that next step is the
      existing agent-setup sheet. -->
 <div class="splash" id="splash" role="dialog" aria-modal="true" aria-label="Welcome to Cascade">
-  <div class="splashinner">
+  <!-- CAS-200: the poster wall. Filled by paintSplashWall() from the LIVE catalogue rather than a fixed
+       list of URLs — the front door showing this week's films is the product's first true statement, and
+       a hardcoded wall would be a picture of the day it was designed. Decorative, so aria-hidden. -->
+  <div class="splashwall" aria-hidden="true"><div class="splashwallgrid" id="splashWall"></div></div>
+  <div class="splashfade" aria-hidden="true"></div>
+  <div class="splashinner splashfront">
     <!-- CAS-152: static logo image, inline in normal document flow — no iframe, no animation, no
          downscale, so it cannot gate first paint (CAS-137) and cannot render illegibly (CAS-131).
          CAS-153: the haloed raster (splash-logo.webp/.png, a feathered white-background knockout) is
@@ -2041,7 +2077,6 @@
     <img class="splashlogo" src="splash-logo.svg" width="586" height="382" alt="" aria-hidden="true"
          decoding="async" loading="eager">
     <div class="splashword">CASCADE</div>
-    <h1 class="splashhero">Your own movie<br>search agents</h1>
     <div class="splashloz">
       <span class="splashpill"><span class="splashdot" style="background:var(--grey)"></span>Upcoming</span>
       <span class="splashpill"><span class="splashdot" style="background:var(--amber)"></span>In cinemas</span>
@@ -2053,7 +2088,6 @@
       <div class="splashb"><svg class="splashtick" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5" stroke="#22D3EE" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>follows them across cinema, rental and streaming</span></div>
       <div class="splashb"><svg class="splashtick" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5" stroke="#22D3EE" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>and gives you the viewing inside track</span></div>
     </div>
-    <p class="splashns">Never miss a film worth watching — and always know where to watch it.</p>
     <!-- CAS-186: two doors, not one. New here → the setup flow. Been here → straight to your own
          Cascades, without walking through a setup you already did. The primary is Sign up because a
          first visit is the common case; Log in is quiet but never hidden. -->
@@ -5703,7 +5737,20 @@ window.skipOnboarding=skipOnboarding;
 // The splash and the setup sheet share ONE first-run gate (cascade_onboarded, set on finish/skip),
 // so the splash is simply the first face of first-run: reload before finishing and you see it again,
 // and ?reset returns to it. It hands off to the next step on its single CTA.
+// CAS-200: the wall, from today's catalogue. The most-anticipated titles that actually have artwork,
+// in popularity order so the grid is deterministic — a shuffled wall would make two screenshots of the
+// same build disagree, and there is nothing here for randomness to buy. 36 fills six columns of six at
+// every width the grid is used at; fewer is fine (the grid just ends), which is what keeps this honest
+// on a thin catalogue rather than padding it out with repeats.
+const SPLASH_WALL_N = 36;
+function paintSplashWall(){
+  const box=$("splashWall"); if(!box || box.childElementCount) return;
+  const picks=MOVIES.filter(m=>m.poster).sort(byPopularity).slice(0, SPLASH_WALL_N);
+  box.innerHTML=picks.map(m=>
+    `<div class="swp" style="background-image:url(https://image.tmdb.org/t/p/w185${esc(m.poster)})"></div>`).join("");
+}
 function showSplash(){
+  paintSplashWall();
   $("splash").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("splash_shown");
 }
