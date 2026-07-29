@@ -2516,7 +2516,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 157, "commit": "9cc60eb", "builtAt": "2026-07-29T12:59:03Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 158, "commit": "27df7d9", "builtAt": "2026-07-29T13:01:35Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -6358,9 +6358,11 @@ const MIN_INITIAL_MATCHES = 40;
 // Least-defining first, so the agent keeps its character as long as possible. `primary` is already the
 // agent's own ordering — it is what the bar screen puts up front vs behind "More controls" — so the secondary
 // dials go first, then the primary ones in reverse, leaving the agent's top-priority dial for last.
+// CAS-192: `primary` is the LANE's ordering now, not the preset's — it is what the Mission screen puts up
+// front vs behind "More controls", and this has to read the same list or the auto-relax would loosen the
+// dial the user is looking at before the ones they can't see.
 function barRelaxOrder(){
-  const a=hubAgent();
-  const primary=(a && a.primary) || ["vote","crit"];
+  const primary=MISSION_DIALS[missionKind()] || MISSION_DIALS.cinema;
   const rest=["vote","crit","scale","buzz"].filter(k=>!primary.includes(k));
   return [...rest, ...primary.slice().reverse()];
 }
@@ -6649,6 +6651,12 @@ function onbRatingClause(d){
 // which direction is "more".
 // Copy is plain English (buildspec §5) — no "TMDB", no "Metacritic", no "a lean, not a hard cut". Those are
 // implementation facts, and this screen is where someone decides what they want to watch.
+// CAS-192: which dials lead, per lane.
+const MISSION_DIALS = {cinema:["scale","buzz"], stream:["vote","crit","scale"]};
+const missionKind = () => {
+  const k=(onbFlow.draft||{}).kind;
+  return (k==="cinema"||k==="stream") ? k : flowKind;
+};
 const DIAL_DEFS = {
   vote:  {em:"👥", label:"People's vote", how:"What everyday viewers scored it, out of 10.", cont:"vote"},
   crit:  {em:"🏅", label:"Critics & awards", how:"What professional critics and awards thought.",
@@ -6720,7 +6728,8 @@ function dialCardHTML(k){
       <div class="vnotches">${d.stops.map((_,i)=>`<span class="vnotch ${i<=cur?"lit":""}" style="left:${i/max*100}%"></span>`).join("")}</div>
       <input type="range" id="onbDial_${k}" min="0" max="${max}" step="1" value="${cur}" aria-label="${escA(d.label)}">
     </div>
-    <div class="vlabels">${d.stops.map((s,i)=>`<span class="${i===cur?"on":""}" style="left:${i/max*100}%;transform:${edgeShift(i,n)}">${esc(s.label)}${s.thr?`<small>${esc(s.thr)}</small>`:""}</span>`).join("")}</div>
+    <div class="vlabels">${d.stops.map((s,i)=>`<button type="button" class="vsnap ${i===cur?"on":""}" data-i="${i}"
+      style="left:${i/max*100}%;transform:${edgeShift(i,n)}">${esc(s.label)}${s.thr?`<small>${esc(s.thr)}</small>`:""}</button>`).join("")}</div>
   </div>`;
 }
 // Repaint one dial in place rather than re-rendering the screen: a slider you are dragging must not be torn
@@ -6752,12 +6761,18 @@ function wireDials(){
   });
   ["crit","buzz"].forEach(k=>{
     const r=$("onbDial_"+k); if(!r) return;
-    const d=DIAL_DEFS[k], max=d.stops.length-1;
-    r.oninput=()=>{
-      const v=+r.value; onbFlow[d.key]=v; onbFlow.barTouched=true;   // CAS-158: from here the bar is theirs
-      paintDial(r.closest(".osdial"), v/max*100, i=>i<=v, i=>i===v);
+    const d=DIAL_DEFS[k], max=d.stops.length-1, card=r.closest(".osdial");
+    const apply=v=>{
+      onbFlow[d.key]=v; onbFlow.barTouched=true;   // CAS-158: from here the bar is theirs
+      paintDial(card, v/max*100, i=>i<=v, i=>i===v);
       selRefresh();
     };
+    r.oninput=()=>apply(+r.value);
+    // CAS-192: a stepped dial's rungs are tappable too. They were labels beside a slider you had to drag
+    // to a named position you could already see — the target was right there and not a target.
+    card.querySelectorAll(".vsnap").forEach(b=>{
+      b.onclick=()=>{ const v=+b.dataset.i; r.value=v; apply(v); };
+    });
   });
 }
 // ---- Taste-baseline accordion (CAS-146) -----------------------------------------------------------
@@ -7053,13 +7068,16 @@ const SHARP_STEPS = {
     noAgent: true,
     noSkip: true,     // inside the hub's door — the way out is Continue or Back, not a skip that means nothing
     body(){
-      const a=hubAgent();
-      // CAS-160: the locked channel badge is gone from here too — the bar is about quality, and where you
-      // watch is its own door now.
-      const primary = (a && a.primary) || ["vote","crit"];
+      // CAS-192: the dials up front follow the LANE, not the preset. Which standards matter is a property
+      // of where you watch — at a cinema you are choosing between films that are all being sold to you at
+      // once, so scale and noise are the axes; on a service the catalogue is enormous and old, so what
+      // people and critics made of a film is what narrows it. Reading them off the preset (as CAS-145 did)
+      // meant two agents in the same lane opened on different questions, and an agent opened from the
+      // Briefing — which has no preset — opened on a guess.
+      const primary = MISSION_DIALS[missionKind()] || MISSION_DIALS.cinema;
       const rest = ["vote","crit","scale","buzz"].filter(k=>!primary.includes(k));
       const dials = ks => ks.map(dialCardHTML).join("");
-      return `<h2 class="osh">Set your bar</h2>
+      return `<h2 class="osh">Mission</h2>
         <p class="ossub">Set the standards that matter here. A film has to meet <b>all</b> the ones you turn up.</p>
         ${dials(primary)}
         ${rest.length ? (onbMoreOpen
