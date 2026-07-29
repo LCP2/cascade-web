@@ -488,6 +488,14 @@
   .alert .d{font-size:12px;color:var(--dim);margin-top:4px}
   .alert .w{display:inline-block;margin-top:8px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:7px}
   .noalert{color:var(--faint);font-size:13px;text-align:center;padding:30px 10px}
+  /* CAS-213: a real alert carries the film's face. The unread ones are the point of the badge, so they
+     are the ones that look live — a read row keeps its place and steps back rather than disappearing,
+     because "we told you about this" is a fact about the past and deleting it would lose it. */
+  .alertrow{display:flex;gap:11px;align-items:flex-start}
+  .alertrow.wasread{opacity:.62}
+  .alertposter{flex:0 0 auto;width:40px;height:60px;border-radius:7px;background:#0c0f14 center/cover no-repeat;
+    border:1px solid var(--line)}
+  .alertmain{flex:1;min-width:0}
   /* ---- usage log (debug) ---- */
   .updated{cursor:default;user-select:none}
   .logfirst{display:flex;flex-wrap:wrap;align-items:center;gap:5px}
@@ -2019,6 +2027,10 @@
 <div class="overlay" id="overlay">
   <div class="drawer" id="drawer">
     <div class="dhead"><h3>🔔 What Cascade found</h3><button class="close" id="closeDrawer">×</button></div>
+    <!-- CAS-213: the real alerts lead. They are what the daily job actually sent; the day-simulation
+         below them is a way to SEE what tomorrow would do, which is a different kind of claim and must
+         not be the first thing in a list headed "what Cascade found". -->
+    <div class="alerts" id="realAlertsList"></div>
     <div class="sim">
       <p>Cascade keeps your Found list up to date on its own — nothing for you to tag. Run a day forward and any
          film it's watching that moves to a new window comes back to you, at the moments that Cascade watches —
@@ -2540,7 +2552,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 172, "commit": "076807c", "builtAt": "2026-07-29T13:53:52Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 173, "commit": "e4790eb", "builtAt": "2026-07-29T13:56:21Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -8971,25 +8983,43 @@ const REAL_MOMENT_WINDOW = {
   hits_rent:"rental", hits_stream:"included_streaming",
 };
 function realAlertsHTML(){
-  if(!realAlerts.length) return "";
+  const signedIn = !!(window.CascadeAuth && window.CascadeAuth.status==="signed-in");
+  if(!realAlerts.length){
+    // Two different empty states, because they are two different facts. Not signed in: there is nowhere
+    // for an alert to have been recorded, and saying "nothing yet" would imply we looked. Signed in:
+    // we did look, and there is genuinely nothing.
+    return `<div class="dghead">From your agents</div>
+      <div class="dgempty">${signedIn
+        ? "Nothing yet. Your agents are watching — the moment one of their films reaches a window you asked about, it lands here."
+        : "Alerts are kept with your account. Sign in and anything your agents have found for you shows up here."}</div>`;
+  }
   const col={in_cinema:"#f0a336", past_opening:"#f0a336", pvod:"#a486f0",
              rental:"#5aa9f0", included_streaming:"#48c78e"};
+  const n=unreadReal();
   const rows=realAlerts.map(a=>{
     const w=REAL_MOMENT_WINDOW[a.moment]||"rental", c=col[w]||"#5aa9f0";
     const when=a.emailed_at ? new Date(a.emailed_at).toLocaleDateString() : "";
-    return `<div class="alert"${a.read_at?' style="opacity:.72"':''}>
-      <div class="t">${esc(a.title||"A film you're watching")}</div>
-      <div class="d">${esc(REAL_MOMENT_SAID[a.moment]||a.moment)}${when?` · ${when}`:""}</div>
-      <span class="w" style="background:${c}22;border:1px solid ${c}88;color:${c}">🔎 ${esc(a.cascade_name||"your Cascade")}</span>
-    </div>`;
+    // The film's own poster when it is still in the catalogue. When it is not, the row still stands —
+    // "we told you about this" is a fact about the past, and the ledger carries the title itself.
+    const m=MOVIES.find(x=>String(x.tmdb_id)===String(a.movie_id));
+    const bg=(m&&m.poster)?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
+    return `<div class="alert alertrow${a.read_at?" wasread":""}">
+      <div class="alertposter" style="${bg}"></div>
+      <div class="alertmain">
+        <div class="t">${esc(a.title||"A film you're watching")}</div>
+        <div class="d">${esc(REAL_MOMENT_SAID[a.moment]||a.moment)}${when?` · ${when}`:""}</div>
+        <span class="w" style="background:${c}22;border:1px solid ${c}88;color:${c}">🔎 ${esc(a.cascade_name||"your Cascade")}</span>
+      </div></div>`;
   }).join("");
-  return `<div class="dghead">From your agents</div>${rows}`;
+  return `<div class="dghead">From your agents${n?` · <b style="color:var(--accenttext)">${n} new</b>`:""}</div>${rows}`;
 }
 function renderAlerts(){
   const el=$("alertsList");
-  const real=realAlertsHTML();
+  // CAS-213: the two lists are two different claims and live in two different places — the daily job's
+  // record above the day simulation, the simulation's output below it.
+  const realEl=$("realAlertsList"); if(realEl) realEl.innerHTML=realAlertsHTML();
   if(!alerts.length){
-    el.innerHTML = real || '<div class="noalert">Nothing to report yet.<br>Cascade\'s out there watching — run a day forward to see what it finds.</div>';
+    el.innerHTML = '<div class="noalert">Run a day forward to see what tomorrow would bring.</div>';
     return;
   }
   const col={opening_week:"#ff6b6b",in_cinema:"#f0a336",past_opening:"#f0a336",pvod:"#a486f0",
@@ -9001,7 +9031,7 @@ function renderAlerts(){
     ? `<div class="dgempty" style="margin-bottom:10px">I don't know what you're paying for yet, so I'm telling you
         about <b>every</b> service. Tell me what you have and I'll only mention the ones you can actually watch on
         — and I'll price up what they're saving you.<br>${pickServicesCTA()}</div>` : "";
-  el.innerHTML=real+nudge+alerts.map(a=>`<div class="alert"><div class="t">${esc(a.title)}</div>
+  el.innerHTML=nudge+alerts.map(a=>`<div class="alert"><div class="t">${esc(a.title)}</div>
     <div class="d">${esc(alertVoice(a))} · day ${a.day}</div>
     <span class="w" style="background:${col[a.window]}22;border:1px solid ${col[a.window]}88;color:${col[a.window]}">→ ${a.label}</span>
     ${ux.on&&a.frame?`<div class="frame">${esc(a.frame)}</div>`:""}</div>`).join("");
