@@ -63,6 +63,11 @@
      Verified at 360/390/430px across splash, pick-agent, get-selective, set-your-bar, taste-baseline,
      reveal and the listing — see CAS-157. */
   :root{ --ui-scale:1.12 }
+  /* CAS-188: every screen of the signup flow is capped to a phone's width and centred, the way .modal
+     already is. The flow was designed in the hand; on a desktop an uncapped full-bleed screen stretches
+     one column of controls across 1400px and stops reading as the same product. One token, so the cap
+     is changed in one place. */
+  :root{ --flow-w:460px; --slidedur:.42s }
   html{ zoom:var(--ui-scale) }
   body{margin:0;background:var(--bg);color:var(--ink);font-size:16px;
     font-family:var(--font-body);-webkit-font-smoothing:antialiased}
@@ -822,17 +827,10 @@
   .splashcta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
   @media (prefers-reduced-motion:reduce){ .splashinner{animation:none} }
 
-  /* ---- starter shortlist (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
-     "Select your first agent": the mock's list of tappable agent cards, each with a live green
-     "N films match now" count, one badged RECOMMENDED. Sits between the splash and the reveal. */
-  .shortlist{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;padding:34px 24px 40px;
-    overflow-y:auto;background:radial-gradient(130% 90% at 50% -10%, rgba(76,125,255,.18),
-    rgba(34,211,238,.05) 45%, rgba(10,14,26,0) 70%), var(--bg)}
-  .shortlist.open{display:flex}
-  .slinner{width:100%;max-width:420px;margin:auto;animation:splashIn .45s ease both}
-  .slback{background:none;border:none;color:var(--dim);font-size:13px;font-weight:600;cursor:pointer;
-    padding:6px 2px;margin-bottom:6px;display:inline-flex;align-items:center;gap:6px}
-  .slback:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
+  /* ---- agent cards (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
+     "Pick a Cascade Agent": tappable agent cards, each with a live "N films match now" count, one badged
+     RECOMMENDED. CAS-188 folded the screen they used to live on into the flow as its `pickagent` step, so
+     the full-screen .shortlist overlay that wrapped them is gone; the cards themselves are unchanged. */
   .slh{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.2px;color:var(--ink);margin:4px 0 6px}
   .slp{font-size:13.5px;color:var(--dim);line-height:1.5;margin:0 0 20px}
   .scards{display:grid;gap:11px}
@@ -1488,6 +1486,106 @@
   /* the opening-weekend state (CAS-68) — amber, the cinema's colour, and it never claims a leave date */
   .newchip.po{background:rgba(240,163,54,.14);border-color:rgba(240,163,54,.5);color:#ffce8f;cursor:help}
 
+  /* ==== CAS-188: the linear signup flow — phone-width cap, fixed chrome, dual-pane slides ==========
+     R5 ended on a hub you came back to. 0.8 is a straight line you tap through, and a line needs three
+     things a hub never did: a meter that says how far along it you are, one place the "next" button
+     always is, and movement that shows which way you just went. */
+  /* The cap. Same left:50% / translateX(-50%) pattern .modal has used since CAS-71 — `inset:0` sets
+     left AND right, so both have to be overridden or max-width has nothing to bind against. */
+  .splash,.sharpstep,.memb,.reveal{left:50%;right:auto;width:100%;max-width:var(--flow-w);
+    transform:translateX(-50%)}
+  /* The progress header. FIXED, not part of the sliding pane: the meter is a statement about the flow,
+     not about the screen, so it must hold still while the screens move under it — a progress bar that
+     slides away with the step it measures reads as decoration. */
+  .stephdr{position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:var(--flow-w);
+    z-index:90;display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg);
+    border-bottom:1px solid rgba(255,255,255,.06)}
+  .stepprog{flex:1;height:6px;border-radius:999px;background:#20263a;overflow:hidden}
+  .stepprog i{display:block;height:100%;width:0;border-radius:999px;background:var(--grad);
+    transition:width var(--slidedur) cubic-bezier(.4,0,.2,1)}
+  .steplbl{flex:0 0 auto;font-size:11.5px;font-weight:700;color:var(--dim);white-space:nowrap}
+  /* The one Continue. Pinned to the bottom so it is in the same place on every step — you never hunt
+     for it, and a long step never hides it below the fold. */
+  .stepnav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:var(--flow-w);
+    z-index:90;display:flex;gap:10px;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));
+    background:linear-gradient(180deg,rgba(10,14,26,0),var(--bg) 34%)}
+  .stepnav .oscta{flex:1}
+  /* A bare [hidden] loses to the display rules above — restate it, as .cascsearch[hidden] already has to. */
+  .stephdr[hidden],.stepnav[hidden]{display:none}
+  /* Room for both, and only while both are there: the pre-meter screens (priority, pick an agent) carry
+     their own back arrow and their own tap-to-advance options, so padding them would be padding for
+     chrome that isn't on the screen. */
+  .sharpstep.chromed .osinner{padding-top:52px;padding-bottom:96px}
+  /* ---- the dual-pane slide ----
+     Two .osinner panes live in the stage at once: the outgoing one keeps the content it was already
+     painted with and walks off, the incoming one is built beside it and walks on. The stage is given the
+     taller of the two heights for the duration, because absolutely-positioned panes contribute nothing
+     to layout and the screen would otherwise collapse to zero mid-transition. */
+  .osstage{width:100%;display:flex;flex-direction:column}
+  .osstage.sliding{position:relative;overflow:hidden}
+  .osstage.sliding>.osinner{position:absolute;top:0;left:0;right:0}
+  .sharpstep.sliding{overflow:hidden}
+  @keyframes osInR{from{transform:translateX(100%)}to{transform:translateX(0)}}
+  @keyframes osInL{from{transform:translateX(-100%)}to{transform:translateX(0)}}
+  @keyframes osOutL{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+  @keyframes osOutR{from{transform:translateX(0)}to{transform:translateX(100%)}}
+  /* .osinner already carries splashIn; these are two classes deep, so they win without !important. */
+  .osinner.sl-in-r {animation:osInR  var(--slidedur) cubic-bezier(.4,0,.2,1) both}
+  .osinner.sl-in-l {animation:osInL  var(--slidedur) cubic-bezier(.4,0,.2,1) both}
+  .osinner.sl-out-l{animation:osOutL var(--slidedur) cubic-bezier(.4,0,.2,1) both}
+  .osinner.sl-out-r{animation:osOutR var(--slidedur) cubic-bezier(.4,0,.2,1) both}
+  /* Reduced motion never sees a slide at all (renderFlowStep swaps straight over), so all that is left
+     to quiet here is the meter's own fill. */
+  @media (prefers-reduced-motion:reduce){ .stepprog i{transition:none} }
+  /* ---- the two pre-meter screens ---- */
+  /* Priority (CAS-189): two answers, each its own tap target, wearing the colour of the lane it means. */
+  .prioopts{display:flex;flex-direction:column;gap:14px;margin-top:6px}
+  .priobtn{display:flex;align-items:center;gap:14px;width:100%;text-align:left;cursor:pointer;
+    background:var(--panel);border:1.5px solid var(--line);border-radius:18px;padding:20px 18px;
+    color:var(--ink);transition:transform .12s,border-color .12s}
+  .priobtn:hover{border-color:var(--accent)}
+  .priobtn:active{transform:scale(.99)}
+  .priobtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .priobtn.cin{border-left:4px solid var(--amber)}
+  .priobtn.str{border-left:4px solid var(--green)}
+  .prioic{font-size:30px;line-height:1;flex:0 0 auto}
+  .priotx{font-size:16px;font-weight:600;line-height:1.3}
+  .priostmt{margin:22px 2px 0;font-size:13.5px;color:var(--dim);line-height:1.5;text-align:center}
+  /* Select-all / clear-all is a SECONDARY row at the bottom of the picker, not a pair of buttons competing
+     with the chips above them: compact, underlined, low-contrast — there when you want it, never the first
+     thing the eye lands on. (.tbq's own rule stretches its children edge to edge, which is the treatment
+     the taste-baseline accordion wants and this screen does not.) */
+  .tbq.tbqmin{margin:20px 0 0;padding-top:16px;border-top:1px solid rgba(255,255,255,.08);
+    gap:18px;justify-content:center}
+  .tbq.tbqmin .q{flex:0 0 auto;background:none;border:0;border-radius:0;padding:4px 2px;
+    font-size:11.5px;font-weight:600;color:var(--dim);text-decoration:underline;text-underline-offset:3px}
+  .tbq.tbqmin .q:hover{color:var(--ink);border-color:transparent}
+  .tbq.tbqmin .q:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* ---- keep-finding (CAS-196) ---- */
+  .kflead{font-size:16px;line-height:1.5;color:var(--ink);margin:0 0 16px}
+  .kflead b{color:#fff}
+  .kfprice{margin:22px 0 0;padding:18px 16px;text-align:center;border-radius:16px;
+    background:linear-gradient(135deg,rgba(124,92,255,.18),rgba(72,199,142,.16));
+    border:1px solid rgba(124,92,255,.5)}
+  .kfprice .big{font-family:var(--font-display);font-size:20px;font-weight:800;line-height:1.1;color:var(--ink)}
+  .kfprice .sub{margin-top:6px;font-size:13.5px;color:var(--ink);opacity:.9}
+  .kfprice .sub b{color:var(--accenttext)}
+  /* ---- notify settings (CAS-197) — one big tap target per channel ---- */
+  .bigtoggle{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;
+    text-align:left;cursor:pointer;background:var(--panel);border:1.5px solid var(--line);
+    border-radius:16px;padding:18px;margin-bottom:12px;color:var(--ink);
+    transition:border-color .12s,background .12s}
+  .bigtoggle .btmain{font-size:15.5px;font-weight:600}
+  .bigtoggle .btcheck{flex:0 0 auto;width:26px;height:26px;border-radius:50%;border:2px solid var(--line);
+    color:transparent;display:grid;place-items:center;font-size:14px;font-weight:800}
+  .bigtoggle.on{border-color:var(--accent);background:rgba(124,92,255,.12)}
+  .bigtoggle.on .btcheck{background:var(--accent);border-color:var(--accent);color:#fff}
+  .bigtoggle:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .emailwrap{display:none;margin-top:4px}
+  .emailwrap.show{display:block}
+  .nlbl{display:block;font-size:12px;font-weight:700;color:var(--dim);margin:10px 2px 6px;
+    text-transform:uppercase;letter-spacing:.03em}
+
   /* ---- Brand: primary CTAs carry the signature gradient (CAS-73 / spec 26640386 §1) ----
      Each selector re-states its own primary button so it overrides that button's solid
      --accentdeep fill (same selector, later in the sheet → wins); the deep-purple fill in
@@ -1844,29 +1942,21 @@
   </div>
 </div>
 
-<!-- AGENT SELECT (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) — "Select your first agent":
-     the mock's list of agent cards with live "N films match now" counts, one RECOMMENDED. Shown after
-     the splash; a card builds that agent and hands to the value-first reveal (CAS-106, the agent's haul).
-     No membership gate on any card — service-scoped agents run against the whole catalogue until the
-     user adds their own services (the #12 setup step). -->
-<div class="shortlist" id="shortlist" role="dialog" aria-modal="true" aria-label="Select your first agent">
-  <div class="slinner">
-    <button class="slback" id="shortlistBack" type="button">← Back</button>
-    <!-- CAS-143: the step-progress rail. This screen is step 1 of the R5 setup flow, and the rail is the
-         promise that there is an end to it — the goal-gradient only works if the goal is visible. -->
-    <div class="pbar" aria-hidden="true"><i style="width:22%"></i></div>
-    <h2 class="slh">Pick your first agent</h2>
-    <p class="slp">Each one goes out and finds films for you, day after day. You can change everything later.</p>
-    <div class="scards" id="shortlistCards"></div>
-  </div>
+<!-- THE SIGNUP FLOW (CAS-188) — one frame for every step of it, from "what's your priority?" through to
+     notify settings. The body per step is rendered by renderOnbStep(); progress, summary and counts all
+     come from the live engine. Individual steps stay previewable in isolation at ?step=<name>.
+     The header and the Continue bar are FIXED and live OUTSIDE the frame, because they belong to the flow
+     rather than to any one screen: the screens slide under them, they do not slide with the screens. -->
+<div class="stephdr" id="stepHdr" hidden>
+  <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
+  <div class="stepprog" role="progressbar" aria-label="Setup progress" id="stepProg"><i id="stepFill"></i></div>
+  <span class="steplbl" id="stepLbl"></span>
 </div>
-
-<!-- NORTH-STAR SHARPENING STEP (CAS-115+ / mock: 05to09-genres-years-language-age-name.html) — one
-     shared frame for the #5–#9 steps. Built self-contained and previewable in isolation (?step=<name>)
-     until Lee wires the full sequence between agent-select (#2) and the reveal (#10). Body per step is
-     rendered by renderOnbStep(); progress + summary + count come from the live engine. -->
 <div class="sharpstep" id="onbStep" role="dialog" aria-modal="true" aria-label="Set up your agent">
-  <div class="osinner" id="onbStepInner"></div>
+  <div class="osstage" id="onbStepStage"><div class="osinner" id="onbStepInner"></div></div>
+</div>
+<div class="stepnav" id="stepNav" hidden>
+  <button class="oscta" id="flowCta" type="button" onclick="onbStepContinue()">Continue</button>
 </div>
 
 <!-- CASCADE MEMBERSHIP (CAS-120 / mock: 11-membership.html) — the post-reveal conversion page: offer-led,
@@ -5440,7 +5530,7 @@ function showSplash(){
 function splashGo(){
   $("splash").classList.remove("open");
   logEvent("splash_cta");
-  showShortlist();
+  flowStart();          // CAS-188: straight into the flow, which opens on the priority question
 }
 $("splashCta").onclick=splashGo;
 
@@ -5521,8 +5611,10 @@ function starterPreview(s){
 }
 const starterCount = s => watchCount(starterPreview(s));
 let pendingStarter = null;   // the agent the person chose
-function renderShortlist(){
-  $("shortlistCards").innerHTML = STARTERS.map(s=>{
+// CAS-188: the cards are the body of the flow's `pickagent` step now, not a screen of their own — so this
+// returns the markup rather than writing it into an overlay that no longer exists.
+function starterCardsHTML(){
+  return STARTERS.map(s=>{
     const n=starterCount(s);
     // The count is REAL — countCriteria against today's catalogue, the same call the deck cards use. The
     // prototype's figures were synthetic placeholders; these move with the data, so a preset the catalogue
@@ -5541,33 +5633,21 @@ function renderShortlist(){
       </button>`;
   }).join("");
 }
-function showShortlist(){
-  renderShortlist();
-  $("shortlist").classList.add("open"); document.body.style.overflow="hidden";
-  logEvent("shortlist_shown");
-}
-$("shortlistBack").onclick=()=>{ $("shortlist").classList.remove("open"); showSplash(); };
-// Picking an agent builds it straight from the card's real criteria and hands to the value-first reveal
-// (CAS-106, "the agent's haul") — the honest payoff of the north-star flow: pick, see what it found, keep
-// it running. The per-agent sharpening steps (#4–#9) slot in between select and reveal as their tickets
-// land. No membership gate here — a service-scoped agent runs against the whole catalogue until the user
-// adds their own services in the #12 setup step. (The CAS-76 wizard is kept for reference, no longer the
-// first-run path.)
+// Picking an agent seeds the draft from the card's real criteria and walks on to the next step of the flow.
+// No membership gate here — a service-scoped agent runs against the whole catalogue until the user adds
+// their own services. (The CAS-76 wizard is kept for reference, no longer the first-run path.)
 window.pickStarter=key=>{
   const s=STARTERS.find(x=>x.key===key); if(!s) return;
   pendingStarter=key; wiz.starter=key;   // wiz.starter feeds the reveal's lead phrase (falls back gracefully)
   logEvent("starter_picked",{key});
   // Seed the sharpening flow FROM the picked agent: its criteria (lane, alerts, rating) become the draft the
-  // sharpening screens refine, and its name is the dynamic default the #9 name step opens on. The taste dims
-  // start at the shipped generic defaults (all genres on, any year, English, all ratings) — exactly what each
-  // screen's copy assumes — and onbApply layers the user's choices back onto this draft. Commit is deferred
-  // to finishSharpSequence so the reveal shows the sharpened agent, not the raw card.
+  // sharpening screens refine, and its name is the dynamic default the name step opens on. Genres, language
+  // and age are NOT seeded here — since CAS-146 they live on the account-level taste baseline, which the
+  // flow's Style / Language / Ratings steps edit directly, and which persists between agents by design.
+  // Commit is deferred to finishSharpSequence so the payoff shows the sharpened agent, not the raw card.
   onbFlow.draft = normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
-  onbFlow.genresOn = new Set(ONB_GENRES);
   onbFlow.name = s.name;
   onbFlow.yearStop = YEAR_DEFAULT;   // Any — every year in (CAS-116)
-  onbFlow.langsOn = new Set(["en"]);
-  onbFlow.ageStop = AGE_LEVELS.length-1;
   // CAS-144: the dials OPEN ON THE AGENT'S OWN STANDARD, not fully open. The card you just tapped quoted a
   // number ("14 films match now"); landing on a hub that says 442 because its dials were reset would make one
   // of those two screens a liar. So the preset's standard seeds the stops, and the hub's count is the count
@@ -5592,8 +5672,7 @@ window.pickStarter=key=>{
   // slider and the agent-voice "above average+" clause both read it), so leaving it at the preset's rung
   // kept a promise on screen that the zeroed bar no longer keeps.
   onbFlow.draft.imdb = 0; onbFlow.draft.ratingStop = 0;
-  $("shortlist").classList.remove("open");
-  startSharpSequence();
+  flowNext();      // CAS-188: the card IS the answer to this step — no separate Continue to press
 };
 
 // ================= Starter-aware config wizard (CAS-76 / spec 26640386 §3) =================
@@ -5774,7 +5853,10 @@ function openWizard(starter){
   renderWiz("fwd");
 }
 $("wizBack").onclick=()=>{
-  if(wiz.step===0){ $("wiz").classList.remove("open"); showShortlist(); return; }
+  // CAS-188: agent-select is a step of the flow now, not a screen of its own — the kept-for-reference
+  // CAS-76 wizard backs out to the flow's pick-an-agent step rather than to an overlay that no longer exists.
+  if(wiz.step===0){ $("wiz").classList.remove("open"); flowOn=true; gotoStep("pickagent","back");
+                    $("onbStep").classList.add("open"); document.body.style.overflow="hidden"; return; }
   wiz.step--; logEvent("wiz_back",{starter:wiz.starter, step:wiz.step}); renderWiz("back");
 };
 window.wizPick=(field,key)=>{ wiz[field]=key; logEvent("wiz_pick",{starter:wiz.starter, field, key}); renderWiz("none"); };
@@ -5907,11 +5989,15 @@ const voteBand = v => (VOTE_REF.filter(r=>v>=r[0]).pop()||[])[1] || "";
 const voteReadout = v => v<VOTE_OFF ? "Any" : `${voteBand(v)?voteBand(v)+" · ":""}${v.toFixed(1)}+`;
 const voteSay = v => v<VOTE_OFF ? null : `scored ${v.toFixed(1)}+ by viewers`;
 
-const onbFlow = {draft:null, genresOn:new Set(ONB_GENRES), name:ONB_DEFAULT_NAME, yearStop:null,
-                 langsOn:new Set(["en"]), ageStop:AGE_LEVELS.length-1,
+// CAS-188: genresOn / langsOn / ageStop are gone. They were the pre-CAS-146 per-agent copies of genre,
+// language and age, and once those three moved to the account-level taste baseline nothing read them any
+// more — onbApply has cleared d.genre/d.lang/d.age since CAS-146, so the screens that wrote them were
+// screens with no effect. The Style / Language / Ratings steps now edit `tasteBase` itself.
+const onbFlow = {draft:null, name:ONB_DEFAULT_NAME, yearStop:null,
                  voteVal:VOTE_MIN, criticsStop:0, scaleVal:0, buzzStop:0, selOr:false,   // #4 dials (CAS-114/145/166)
                  barTouched:false, barAutoRelaxed:null,   // CAS-158 first-open state
-                 watch:{}};                                // CAS-160 viewing windows: {lane: [optKey,…]}
+                 watch:{},                                 // CAS-160 viewing windows: {lane: [optKey,…]}
+                 notifyInApp:true, notifyEmail:false, email:""};   // CAS-188 notify step
 
 // ---- Where & when you'll watch (CAS-160) ----------------------------------------------------------------
 // The model change: availability stops being a fixed property of the preset and becomes the user's own
@@ -6113,9 +6199,12 @@ const onbCount = () => watchCount(onbApply());
 // The genre clause, shared by the summary and the genres step. All-on and all-off both mean "any" here — an
 // empty include-list matches every genre — so both read as "anything you'll love", and the copy never
 // disagrees with the count (honesty guardrail).
+// CAS-188: read off the taste baseline, which is where genres actually live (CAS-146) — the summary used to
+// quote onbFlow.genresOn, a copy nothing had written since that move.
 function onbGenrePhrase(){
-  const anyGenre = onbFlow.genresOn.size===ONB_GENRES.length || onbFlow.genresOn.size===0;
-  return anyGenre ? "anything you'll love" : [...onbFlow.genresOn].map(esc).join(", ");
+  const g=tasteBase.genres;
+  if(tbNone(g)) return "nothing — no genres are selected";
+  return !g.length ? "anything you'll love" : g.map(esc).join(", ");
 }
 // ---- Release years (#6, reworked CAS-116 2026-07-21) ----------------------------------------------
 // A recent-weighted "how recent" window, log-style: fine control at the recent end (This year · Last 2 · 3 ·
@@ -6224,7 +6313,11 @@ function tbPaintCount(){
 // rather than a thing to remember. A step whose cta is a fixed STRING states no count, and returns null.
 function stepCount(step){
   if(!step || typeof step.cta==="string") return null;
-  return (typeof step.count==="function") ? step.count() : onbCount();
+  if(typeof step.count==="function") return step.count();
+  // CAS-188: the flow's first two screens run BEFORE an agent exists, and a count of what "your agent"
+  // is watching when there is no agent is not a small number — it is not a number at all. Null, and the
+  // mirror and the button simply don't print one.
+  return onbFlow.draft ? onbCount() : null;
 }
 function stepCtaText(step, n){
   const c = step && step.cta;
@@ -6255,20 +6348,15 @@ function onbYearPhrase(){
 // and an empty selection means "any language" — so deselecting even English widens rather than dead-ends.
 const LANG_OPTS = ["en","ko","ja","zh","fr","es","hi","it","de","th","sv","pt"];
 function onbLangPhrase(){
-  const on=[...onbFlow.langsOn];
-  if(!on.length) return "films in <b>any language</b>";
-  return `<b>${on.map(langName).join(", ")}-language</b> films`;
+  const l=tasteBase.langs;
+  if(tbNone(l)) return "films in <b>no language you've kept</b>";
+  if(!l.length) return "films in <b>any language</b>";
+  return `<b>${l.map(langName).join(", ")}-language</b> films`;
 }
 // ---- Age rating (#8) ------------------------------------------------------------------------------
 // "Up to and including" the chosen level; the top stop (R 18+) includes everything, which is the default.
 // The ladder is the catalogue's real ratings, so the include-list always lines up with the data.
-function onbAgePhrase(){
-  return onbFlow.ageStop>=AGE_LEVELS.length-1 ? "all ratings" : `up to ${AGE_LEVELS[onbFlow.ageStop]}`;
-}
-function onbAgeExplain(i){
-  if(i>=AGE_LEVELS.length-1) return `<b>${esc(AGE_LEVELS[AGE_LEVELS.length-1])}.</b> Everything qualifies — nothing's held back for rating.`;
-  return `<b>${esc(AGE_LEVELS[i])}.</b> Up to and including ${esc(AGE_LEVELS[i])} — anything higher is set aside.`;
-}
+function onbAgePhrase(){ return tbSumAge().toLowerCase(); }
 // The combined "What this does" line (CAS-114, reworked). Honest and live: names only the dials that are set,
 // joins them with "or" (they combine with OR — a film needs to clear only one), and always carries the real
 // count. When a score dial is active it appends a set-aside note, because a score dial can only judge titles
@@ -6471,8 +6559,64 @@ function tbSumLangs(){
 }
 function tbSumAge(){
   const {ageLo:lo, ageHi:hi}=tasteBase, last=AGE_LEVELS.length-1;
+  if(ageEmpty()) return "None selected";
   if(lo===0 && hi===last) return `Anything (${AGE_LEVELS[0]} to ${AGE_LEVELS[last]})`;
   return lo===hi ? `${AGE_LEVELS[lo]} only` : `${AGE_LEVELS[lo]} to ${AGE_LEVELS[hi]}`;
+}
+// ---- CAS-188: the age range, as a row of segments -------------------------------------------------
+// The baseline stores age as a CONTIGUOUS range (ageLo…ageHi), which is what the taste-baseline drag band
+// draws. The flow asks the same question as a row of taps, so a tap has to resolve to a range: outside the
+// range it stretches to reach you, on an edge it trims that edge, and in the middle it trims whichever edge
+// is nearer. Turning the last one off clears the row outright (ageHi < ageLo), which the count then reports
+// honestly as nothing rather than quietly reverting to everything.
+const ageEmpty = () => tasteBase.ageHi < tasteBase.ageLo;
+const ageOnAt  = k => !ageEmpty() && k>=tasteBase.ageLo && k<=tasteBase.ageHi;
+function ageToggle(k){
+  const last=AGE_LEVELS.length-1;
+  let lo=tasteBase.ageLo, hi=tasteBase.ageHi;
+  if(ageEmpty())        { lo=hi=k; }
+  else if(!ageOnAt(k))  { if(k<lo) lo=k; else hi=k; }
+  else if(lo===hi)      { lo=0; hi=-1; }
+  else if(k===lo)       { lo=k+1; }
+  else if(k===hi)       { hi=k-1; }
+  else                  { (k-lo <= hi-k) ? lo=k+1 : hi=k-1; }
+  tasteBase.ageLo=Math.max(0, Math.min(last, lo));
+  tasteBase.ageHi=Math.min(last, hi);
+  saveTasteBase();
+}
+// One "select all / clear all" for all three baseline rows the flow asks about, so the three screens can
+// never mean three different things by the same pair of words. `[]` = the filter is off (which is NOT the
+// same as listing every option: 188 films carry no genre at all, and a filter that is off must not drop
+// them); `null` = explicitly none. See the CAS-165 note on baseDefaults.
+window.tbSetAll=(key,on)=>{
+  if(key==="genres")     tasteBase.genres = on ? [] : null;
+  else if(key==="langs") tasteBase.langs  = on ? [] : null;
+  else { tasteBase.ageLo=0; tasteBase.ageHi = on ? AGE_LEVELS.length-1 : -1; }
+  saveTasteBase();
+  renderOnbStep(onbStepKey);
+};
+// The selection lines under each of the three. Plain lines, never boxes (buildspec §8), each stating what
+// is selected and the one live count — off tasteBaseCount(), the same call the step's Continue counts.
+// The count these three screens quote is the AGENT's, not the baseline's — the same number the bar step
+// before them and the Continue button beside them show. Both are true, but printing 21 on one screen and
+// 769 on the next reads as a contradiction rather than as two measurements (the CAS-175 lesson). Narrowing
+// the baseline still moves it, because matchesCriteria applies passesTasteBase before anything else.
+const flowCount = () => onbFlow.draft ? onbCount() : tasteBaseCount();
+function styleSayHTML(){
+  const g=tasteBase.genres, n=flowCount();
+  const what = tbNone(g) ? "no genres" : !g.length ? "all genres" : `${g.length} genre${g.length===1?"":"s"}`;
+  return `Drawing from <b>${what}</b> · <span class="cnt">${n} film${n===1?"":"s"}</span> match right now.`;
+}
+function langSayHTML(){
+  const l=tasteBase.langs, n=flowCount();
+  const what = tbNone(l) ? "no languages" : !l.length ? "any language" : l.map(langName).join(", ");
+  return `Watching in <b>${esc(what)}</b> · <span class="cnt">${n} film${n===1?"":"s"}</span> match right now.`;
+}
+function ageSayHTML(){
+  const n=flowCount(), last=AGE_LEVELS.length-1, {ageLo:lo, ageHi:hi}=tasteBase;
+  const what = ageEmpty() ? "no ratings" : (lo===0 && hi===last) ? "all ratings"
+             : lo===hi ? AGE_LEVELS[lo] : `${AGE_LEVELS[lo]} to ${AGE_LEVELS[hi]}`;
+  return `Including <b>${esc(what)}</b> · <span class="cnt">${n} film${n===1?"":"s"}</span> match right now.`;
 }
 const TB_ROWS = [
   {key:"genres", icon:"🎭", label:"Genres",        sum:tbSumGenres},
@@ -6593,7 +6737,8 @@ const TB_BODIES = {
       const {ageLo:lo, ageHi:hi}=tasteBase;
       fill.style.left=(lo*cw)+"%"; fill.style.width=((hi-lo+1)*cw)+"%";
       cells.forEach((c,i)=>c.classList.toggle("inr", i>=lo && i<=hi));
-      tag.innerHTML = (lo===0 && hi===n-1) ? "Includes <b>every rating</b>"
+      tag.innerHTML = ageEmpty() ? "Includes <b>no rating</b> — nothing matches"
+        : (lo===0 && hi===n-1) ? "Includes <b>every rating</b>"
         : (lo===hi ? `Only <b>${esc(AGE_LEVELS[lo])}</b>`
                    : `From <b>${esc(AGE_LEVELS[lo])}</b> to <b>${esc(AGE_LEVELS[hi])}</b>`);
       upd();
@@ -6737,28 +6882,68 @@ const SHARP_STEPS = {
     },
     wire(){ drawWatchLanes(); },
   },
+  // ---- CAS-188 #1: what are you here for? -----------------------------------------------------------
+  // The one question that has to come first, because it is the only one that changes what the rest of the
+  // flow asks. It is a starting point, not a commitment — said out loud on the screen, because a fork this
+  // early reads as permanent unless you promise otherwise.
+  priority: {
+    noAgent: true, hub: true,        // the two answers ARE the continue — there is nothing to press after
+    backTo: "splash",
+    body(){
+      return `<h2 class="osh prioh">What's your biggest viewing priority right now?</h2>
+        <div class="prioopts">
+          <button class="priobtn cin" type="button" onclick="flowPriority('cinema')">
+            <span class="prioic">🎬</span>
+            <span class="priotx">Not to miss the best movies at the Cinema.</span></button>
+          <button class="priobtn str" type="button" onclick="flowPriority('stream')">
+            <span class="prioic">📺</span>
+            <span class="priotx">Always know what to watch on my Streaming Services.</span></button>
+        </div>
+        <p class="priostmt">This is just your starting point — members can have as many Cascade Agents
+          working for them as they like.</p>`;
+    },
+  },
+  // ---- CAS-188 #2: pick an agent --------------------------------------------------------------------
+  // The same cards, the same live counts, in the flow's own frame rather than an overlay of their own.
+  pickagent: {
+    noAgent: true, hub: true,        // a card IS the answer (pickStarter walks on)
+    body(){
+      return `<h2 class="osh">Pick a Cascade Agent</h2>
+        <p class="ossub">It goes and finds films for you, day after day — you can change everything later.</p>
+        <div class="scards">${starterCardsHTML()}</div>`;
+    },
+  },
+  // ---- Style (genres) -------------------------------------------------------------------------------
+  // CAS-188: this screen edits the account-level TASTE BASELINE, which is where genres have lived since
+  // CAS-146. Until now it wrote onbFlow.genresOn, a field onbApply stopped reading when that move landed —
+  // so the screen looked like it worked and changed nothing about the agent it was setting up.
   genres: {
     progress: 30,
+    noAgent: true,
     body(){
-      return `<h2 class="osh">What do you love watching?</h2>
-        <p class="ossub">All genres are on — tap any to drop it. Leave them and your agent watches everything.</p>
-        <div class="chips" id="onbStepGenres"></div>`;
+      return `<h2 class="osh">Style</h2>
+        <p class="ossub">Which genres should your agent draw from?</p>
+        <div class="chips" id="onbStepGenres"></div>
+        <div class="tbq tbqmin">
+          <button type="button" class="q" onclick="tbSetAll('genres',true)">Select all</button>
+          <button type="button" class="q" onclick="tbSetAll('genres',false)">Clear all</button></div>
+        <p class="ossumline" id="onbStepSay">${styleSayHTML()}</p>`;
     },
     wire(){
       const box=$("onbStepGenres"); if(!box) return;
+      const on=tbGenreSet();
       box.innerHTML="";
       ONB_GENRES.forEach(g=>{
-        const on=onbFlow.genresOn.has(g);
         const c=document.createElement("button");
         c.type="button";
-        c.className="chip gen"+(on?" on":"");
-        c.setAttribute("aria-pressed", String(on));
+        c.className="chip gen"+(on.has(g)?" on":"");
+        c.setAttribute("aria-pressed", String(on.has(g)));
         c.innerHTML=`${esc(g)} <span style="opacity:.55">· ${GENRE_COUNT[g]||0}</span>`;
         c.onclick=()=>{
-          onbFlow.genresOn.has(g) ? onbFlow.genresOn.delete(g) : onbFlow.genresOn.add(g);
-          const nowOn=onbFlow.genresOn.has(g);
-          c.classList.toggle("on", nowOn);
-          c.setAttribute("aria-pressed", String(nowOn));
+          on.has(g) ? on.delete(g) : on.add(g);
+          tasteBase.genres = tbStore(on, ONB_GENRES); saveTasteBase();
+          c.classList.toggle("on", on.has(g)); c.setAttribute("aria-pressed", String(on.has(g)));
+          const s=$("onbStepSay"); if(s) s.innerHTML=styleSayHTML();
           onbRefresh();
         };
         box.appendChild(c);
@@ -6767,27 +6952,32 @@ const SHARP_STEPS = {
   },
   language: {
     progress: 65,
+    noAgent: true,
     lead(){ return `watches ${onbLangPhrase()}`; },
     body(){
-      return `<h2 class="osh">Which languages?</h2>
-        <p class="ossub">English is on. Add any others you watch — or leave it as-is.</p>
-        <div class="chips" id="onbStepLangs"></div>`;
+      return `<h2 class="osh">Language</h2>
+        <p class="ossub">Which languages are you happy to watch in?</p>
+        <div class="chips" id="onbStepLangs"></div>
+        <div class="tbq tbqmin">
+          <button type="button" class="q" onclick="tbSetAll('langs',true)">Select all</button>
+          <button type="button" class="q" onclick="tbSetAll('langs',false)">Clear all</button></div>
+        <p class="ossumline" id="onbStepSay">${langSayHTML()}</p>`;
     },
     wire(){
       const box=$("onbStepLangs"); if(!box) return;
+      const on=tbLangSet();
       box.innerHTML="";
       LANG_OPTS.forEach(code=>{
-        const on=onbFlow.langsOn.has(code);
         const c=document.createElement("button");
         c.type="button";
-        c.className="chip gen"+(on?" on":"");
-        c.setAttribute("aria-pressed", String(on));
+        c.className="chip gen"+(on.has(code)?" on":"");
+        c.setAttribute("aria-pressed", String(on.has(code)));
         c.textContent=langName(code);
         c.onclick=()=>{
-          onbFlow.langsOn.has(code) ? onbFlow.langsOn.delete(code) : onbFlow.langsOn.add(code);
-          const nowOn=onbFlow.langsOn.has(code);
-          c.classList.toggle("on", nowOn);
-          c.setAttribute("aria-pressed", String(nowOn));
+          on.has(code) ? on.delete(code) : on.add(code);
+          tasteBase.langs = tbStore(on, LANG_OPTS); saveTasteBase();
+          c.classList.toggle("on", on.has(code)); c.setAttribute("aria-pressed", String(on.has(code)));
+          const s=$("onbStepSay"); if(s) s.innerHTML=langSayHTML();
           onbRefresh();
         };
         box.appendChild(c);
@@ -6796,14 +6986,12 @@ const SHARP_STEPS = {
   },
   name: {
     progress: 100,
-    cta: "Show me what it found",
-    // No custom lead — the summary recaps the choices so far (genres/years/language/age) via the default
-    // genre lead plus the live count, which is exactly the #8 mock's "here's what it'll do" box.
+    noAgent: true,
     body(){
-      return `<h2 class="osh">Name your agent.</h2>
-        <p class="ossub">Optional — but it's yours, and it's about to go to work for you.</p>
+      return `<h2 class="osh">Name your Agent</h2>
+        <p class="ossub">Give it a name you'll recognise. Change it any time.</p>
         <input class="osfield" id="onbStepName" type="text" maxlength="40" autocomplete="off"
-               placeholder="${escA(onbFlow.name||ONB_DEFAULT_NAME)}" value="${escA(onbFlow.name)}"
+               placeholder="${escA(ONB_DEFAULT_NAME)}" value="${escA(onbFlow.name)}"
                aria-label="Name your agent">`;
     },
     wire(){
@@ -6811,42 +6999,74 @@ const SHARP_STEPS = {
       el.oninput=()=>{ onbFlow.name=el.value; onbRefresh(); };
     },
   },
+  // ---- Ratings --------------------------------------------------------------------------------------
+  // The age RANGE from the taste baseline (buildspec §6), said as a row of segments rather than a drag
+  // band: the flow asks it as "which of these are in?", and every rating is independently tappable, so a
+  // range with a hole in it is expressible and a single tap can't silently drag a whole edge with it.
   age: {
     progress: 82,
+    noAgent: true,
     lead(){ return `watches <b>${onbAgePhrase()}</b>`; },
-    // The app's cumulative gradient segmented control (CAS-118): a joined `.loz` lozenge where every level up
-    // to the chosen one is filled and the chosen level is gradient-filled (--grad via .edge) — so the
-    // "everything up to and including" semantics reads straight off the control.
     body(){
-      const i=onbFlow.ageStop;
-      const cls=k=> k<i ? "fill" : k===i ? "fill edge" : "";
-      return `<h2 class="osh">Age rating</h2>
-        <p class="ossub">Picks everything up to and including the level you choose.</p>
-        <div class="loz" id="onbStepAges" role="radiogroup" aria-label="Highest age rating to include">
-          ${AGE_LEVELS.map((a,k)=>`<button type="button" class="${cls(k)}" role="radio" data-i="${k}" aria-checked="${k===i}" tabindex="${k===i?0:-1}">${esc(a)}</button>`).join("")}
+      return `<h2 class="osh">Ratings</h2>
+        <p class="ossub">Which ratings can your agent include? Tap to remove any you don't want.</p>
+        <div class="loz" id="onbStepAges" role="group" aria-label="Ratings">
+          ${AGE_LEVELS.map((a,k)=>`<button type="button" class="${ageOnAt(k)?"fill":""}" data-i="${k}"
+             aria-pressed="${ageOnAt(k)}">${esc(a)}</button>`).join("")}
         </div>
-        <p class="osexplain" id="onbStepAgeExplain">${onbAgeExplain(i)}</p>`;
+        <div class="tbq tbqmin">
+          <button type="button" class="q" onclick="tbSetAll('age',true)">Select all</button>
+          <button type="button" class="q" onclick="tbSetAll('age',false)">Clear all</button></div>
+        <p class="ossumline" id="onbStepSay">${ageSayHTML()}</p>`;
     },
     wire(){
       const box=$("onbStepAges"); if(!box) return;
-      const paint=()=>{
-        [...box.children].forEach(b=>{ const k=+b.dataset.i, sel=onbFlow.ageStop;
-          b.className = k<sel ? "fill" : k===sel ? "fill edge" : "";
-          b.setAttribute("aria-checked", String(k===sel)); b.tabIndex = k===sel?0:-1; });
-        const ex=$("onbStepAgeExplain"); if(ex) ex.innerHTML=onbAgeExplain(onbFlow.ageStop);
-        onbRefresh();
-      };
-      const setAge=k=>{ onbFlow.ageStop=k; paint(); };
       [...box.children].forEach(b=>{
-        b.onclick=()=>setAge(+b.dataset.i);
-        b.onkeydown=e=>{
-          const sel=onbFlow.ageStop;
-          const to = e.key==="ArrowRight" ? Math.min(AGE_LEVELS.length-1, sel+1)
-                   : e.key==="ArrowLeft"  ? Math.max(0, sel-1) : null;
-          if(to===null) return;
-          e.preventDefault(); setAge(to); box.querySelector('[tabindex="0"]')?.focus();
-        };
+        b.onclick=()=>{ ageToggle(+b.dataset.i); renderOnbStep("age"); };
       });
+    },
+  },
+  // ---- CAS-188 #6: keep finding ---------------------------------------------------------------------
+  // The one screen in the flow with no control on it. It exists because the step before it is where a
+  // person can narrow themselves down to almost nothing, and the honest answer to a small number is not
+  // "loosen up" — it is "an agent that never stops looking is exactly what a small number needs".
+  keepfinding: {
+    progress: 90,
+    noAgent: true,
+    cta: "Continue",
+    body(){
+      return `<h2 class="osh">Cascade Agents keep finding</h2>
+        <p class="kflead">Don't worry if your selections are so precise that <b>few movies are found right
+          now</b>.</p>
+        <p class="kflead">Your agent will keep searching — and tell you about movies as they appear.</p>
+        <div class="kfprice">
+          <div class="big">Cascade Membership is free for your first month</div>
+          <div class="sub">then <b>$4.99 / month</b> · cancel any time</div>
+        </div>`;
+    },
+  },
+  // ---- CAS-188 #7: how it tells you -----------------------------------------------------------------
+  // Recorded, not promised: the email field is captured on the draft and nothing here claims a message has
+  // been scheduled. Delivery is the monitor's ticket (CAS-185); saying otherwise would be a capability we
+  // have not built.
+  notifysettings: {
+    progress: 100,
+    noAgent: true,
+    cta: "Continue",
+    body(){
+      const on=(k)=>onbFlow[k]?" on":"";
+      return `<h2 class="osh">How will your agent notify you about Movies?</h2>
+        <button type="button" class="bigtoggle${on("notifyInApp")}" onclick="flowNotify('notifyInApp',this)">
+          <span class="btmain">Allow in-app notifications</span><span class="btcheck">✓</span></button>
+        <button type="button" class="bigtoggle${on("notifyEmail")}" onclick="flowNotify('notifyEmail',this)">
+          <span class="btmain">Send me alerts by email</span><span class="btcheck">✓</span></button>
+        <div class="emailwrap${onbFlow.notifyEmail?" show":""}" id="onbEmailWrap">
+          <label class="nlbl" for="onbEmail">Your email</label>
+          <input class="osfield" id="onbEmail" type="email" autocomplete="email" inputmode="email"
+                 placeholder="you@email.com" value="${escA(onbFlow.email||"")}"></div>`;
+    },
+    wire(){
+      const el=$("onbEmail"); if(el) el.oninput=()=>{ onbFlow.email=el.value; };
     },
   },
   years: {
@@ -6888,14 +7108,103 @@ function onbYearExplain(i){
   return `<b>${p.charAt(0).toUpperCase()+p.slice(1)}.</b> Older films are set aside until you widen it again.`;
 }
 let onbStepKey=null;
-// ---- Wired sharpening flow (CAS-122, reshaped into a hub by CAS-144) --------------------------------
-// It used to be a straight line: #3 framing → #4 selectivity → #5 genres → #6 years → #7 language → #8 age
-// → #9 name → reveal. It is now a hub with two doors (see HUB_DOORS): agent-select lands on #3, the doors go
-// out to those same screens and come back marked done, and the payoff CTA finishes the flow.
-// The #9 name screen is no longer in the wired flow — the R5 flow ends at the hub's payoff, and the agent
-// carries the preset's name (editable any time from Edit on its deck card). Its step is still registered and
-// still reachable at ?step=name.
-let onbSeqIndex = -1;   // -1 = standalone ?step= preview (Continue/Back just close); ≥0 = live wired flow
+// ================= CAS-188: the linear signup flow =================================================
+// R5 ended on a HUB — "Get selective", three doors, come back to it when each was confirmed. 0.8 replaces
+// that with a straight line you tap through, because a hub asks you to plan your own route through a thing
+// you have never seen, and a line does not.
+//   priority → pick an agent → mission (the bar) → name → style → language → ratings → keep-finding →
+//   notify settings → [commit] → the payoff → membership
+// Seven of those are the COUNTED steps the meter reports. Priority and pick-an-agent sit before it because
+// you have not begun setting an agent up until you have one, and membership sits after it because it is the
+// offer, not another form to get through. Seven is also the number the header says out loud, so the two can
+// never disagree: FLOW_COUNTED.length is the only place it is written down.
+const FLOW_ORDER   = ["priority","pickagent","selectivity","name","genres","language","age",
+                      "keepfinding","notifysettings"];
+const FLOW_COUNTED = FLOW_ORDER.slice(2);
+// The priority answer is not a label — it seeds the windows the agent actually watches, so the choice
+// moves the count on every screen after it. pickStarter lays a saved answer for that same agent over it.
+const PRIORITY_WATCH = { cinema:{cinema:["release"]}, stream:{rent:["rent"], stream:["stream"]} };
+let flowOn=false;              // inside the wired flow (vs a standalone ?step= preview)
+let flowKind="cinema";         // what the priority screen answered
+let flowSlideT=null;
+const flowChromed = key => flowOn && FLOW_COUNTED.includes(key);
+function flowStart(){
+  flowOn=true;
+  onbDone=freshDone(); onbDoor=null; onbDoorIdx=0; onbDonePulse=null;
+  onbFlow.draft=null;          // no agent yet — nothing on the first two screens quotes a count
+  $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("flow_start");
+  gotoStep("priority","none");
+}
+function flowStop(){
+  flowOn=false;
+  if(flowSlideT){ clearTimeout(flowSlideT); flowSlideT=null; endSlide(); }
+  $("onbStep").classList.remove("open","chromed","sliding"); document.body.style.overflow="";
+  $("stepHdr").hidden=true; $("stepNav").hidden=true;
+}
+function flowNext(){
+  const i=FLOW_ORDER.indexOf(onbStepKey);
+  if(i>=0 && i+1<FLOW_ORDER.length) return gotoStep(FLOW_ORDER[i+1],"fwd");
+  flowOn=false; finishSharpSequence();       // past the last step → commit the agent and show its haul
+}
+function flowBack(){
+  const i=FLOW_ORDER.indexOf(onbStepKey);
+  if(i>0) return gotoStep(FLOW_ORDER[i-1],"back");
+  flowStop(); showSplash();                  // off the front of the flow → back out to the splash
+}
+window.flowPriority=kind=>{ flowKind=kind; logEvent("flow_priority",{kind}); flowNext(); };
+window.flowNotify=(key,el)=>{
+  onbFlow[key]=!onbFlow[key];
+  el.classList.toggle("on", onbFlow[key]);
+  if(key==="notifyEmail"){ const w=$("onbEmailWrap"); if(w) w.classList.toggle("show", onbFlow.notifyEmail); }
+  logEvent("flow_notify",{key, on:onbFlow[key]});
+};
+// ---- the dual-pane slide ---------------------------------------------------------------------------
+// Both panes are real .osinner elements in the stage at the same time: the outgoing one keeps the content
+// it was already painted with and walks off to the left, the incoming one is built beside it and walks on
+// from the right (mirrored on Back). Re-rendering in place and then transforming would show the NEW screen
+// standing in the old one's position for a frame, which reads as a flicker rather than a move.
+function gotoStep(key, dir){
+  const stage=$("onbStepStage");
+  if(flowSlideT){ clearTimeout(flowSlideT); flowSlideT=null; endSlide(); }
+  const out=$("onbStepInner");
+  if(dir==="none" || REDUCE_MOTION.matches || !out || !out.firstChild){
+    renderOnbStep(key); $("onbStep").scrollTop=0; return;
+  }
+  out.removeAttribute("id");                 // $("onbStepInner") must resolve to the INCOMING pane
+  const incoming=document.createElement("div");
+  incoming.className="osinner"; incoming.id="onbStepInner";
+  stage.appendChild(incoming);
+  renderOnbStep(key);
+  // Absolutely-positioned panes contribute nothing to layout, so the stage is pinned to the taller of the
+  // two for the duration — without it the screen collapses to zero height mid-slide.
+  stage.style.height=Math.max(out.offsetHeight, incoming.offsetHeight)+"px";
+  stage.classList.add("sliding"); $("onbStep").classList.add("sliding");
+  out.classList.add(dir==="back"?"sl-out-r":"sl-out-l");
+  incoming.classList.add(dir==="back"?"sl-in-l":"sl-in-r");
+  $("onbStep").scrollTop=0;
+  flowSlideT=setTimeout(()=>{ flowSlideT=null; endSlide(); }, 460);
+}
+function endSlide(){
+  const stage=$("onbStepStage"); if(!stage) return;
+  [...stage.children].forEach(p=>{ if(p.id!=="onbStepInner") p.remove(); });
+  const cur=$("onbStepInner");
+  if(cur) cur.classList.remove("sl-in-l","sl-in-r","sl-out-l","sl-out-r");
+  stage.classList.remove("sliding"); stage.style.height="";
+  $("onbStep").classList.remove("sliding");
+}
+// The fixed chrome. It is painted from the step key alone, so there is exactly one place that decides
+// whether the meter is showing and what it says.
+function paintFlowChrome(key, step, n){
+  const i = flowOn ? FLOW_COUNTED.indexOf(key) : -1, on = i>=0;
+  $("stepHdr").hidden=!on; $("stepNav").hidden=!on;
+  $("onbStep").classList.toggle("chromed", on);
+  if(!on) return;
+  $("stepFill").style.width = Math.round((i+1)/FLOW_COUNTED.length*100)+"%";
+  $("stepProg").setAttribute("aria-valuenow", String(i+1));
+  $("stepLbl").textContent = `Step ${i+1} of ${FLOW_COUNTED.length}`;
+  const cta=$("flowCta"); if(cta) cta.textContent=stepCtaText(step, n);
+}
 function renderOnbStep(key){
   const step=SHARP_STEPS[key]; if(!step) return;
   onbStepKey=key;
@@ -6904,20 +7213,25 @@ function renderOnbStep(key){
   const prog = typeof step.progress==="function" ? step.progress() : step.progress;
   const last = prog>=100;
   const n = stepCount(step);            // CAS-164: one number, read by the mirror and the button below
+  // CAS-188: inside the wired flow the back arrow, the meter and Continue are fixed chrome OUTSIDE this
+  // frame, so the step must not draw its own — two back arrows and two Continues on one screen is exactly
+  // what the fixed chrome exists to remove. A standalone ?step= preview still draws both.
+  const chromed = flowChromed(key);
   $("onbStepInner").innerHTML = `
-    <div class="ostop">
+    ${chromed ? "" : `<div class="ostop">
       <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
-      <div class="osprog"><i style="width:${prog}%"></i></div>
+      ${prog==null ? "" : `<div class="osprog"><i style="width:${prog}%"></i></div>`}
       ${last?`<span class="oslast">LAST ONE</span>`:""}
-    </div>
+    </div>`}
     ${step.body()}
     ${step.noAgent ? "" : `<div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>`}
-    ${step.hub ? "" : `<div class="osfoot">
+    ${(step.hub||chromed) ? "" : `<div class="osfoot">
       <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${stepCtaText(step, n)}</button>
       ${step.noSkip ? "" : `<button class="osskip" type="button" onclick="onbStepSkip()">${step.skip || "Skip — I'll set this up later"}</button>`}
     </div>`}`;
   placeStepCount(step, n);
   if(step.wire) step.wire();
+  paintFlowChrome(key, step, n);
 }
 // CAS-180: the count belongs immediately above the FIRST thing you select, not above the screen's title —
 // on "Where & when you'll watch" that means above the Cinema row. It is placed after the step's intro
@@ -6937,7 +7251,9 @@ function onbRefresh(){
   // CAS-164: count once, then hand the SAME value to both printers. Recomputing per printer is how the two
   // drift apart on a slow paint, and "equal at all times" is the whole acceptance criterion here.
   const n = stepCount(step);
-  const b=$("onbStepCta"); if(b) b.textContent = stepCtaText(step, n);
+  // CAS-188: exactly one of these exists at a time — the step's own footer button on a ?step= preview, the
+  // fixed bar's on the wired flow.
+  const b=$("onbStepCta")||$("flowCta"); if(b) b.textContent = stepCtaText(step, n);
   const top=$("onbStepCount");
   if(top && n!=null) top.innerHTML = `<b>${n}</b> film${n===1?"":"s"} match right now`;
 }
@@ -6951,9 +7267,8 @@ function selRefresh(){
 // agentKey (optional) seeds the dynamic default name from a picked agent — how #2 will feed the flow.
 function openOnbStep(key, agentKey){
   if(!SHARP_STEPS[key]) return false;
-  onbSeqIndex=-1;   // standalone preview — not part of the wired sequence
-  onbFlow.draft=onbSeedDraft(); onbFlow.genresOn=new Set(ONB_GENRES); onbFlow.name=ONB_DEFAULT_NAME;
-  onbFlow.yearStop=YEAR_DEFAULT; onbFlow.langsOn=new Set(["en"]); onbFlow.ageStop=AGE_LEVELS.length-1;
+  flowOn=false;     // a preview draws its own back arrow and footer, never the flow's fixed chrome
+  onbFlow.draft=onbSeedDraft(); onbFlow.name=ONB_DEFAULT_NAME; onbFlow.yearStop=YEAR_DEFAULT;
   onbFlow.voteVal=VOTE_MIN; onbFlow.criticsStop=0; onbFlow.scaleVal=0; onbFlow.buzzStop=0; onbFlow.selOr=false;   // dials open
   onbFlow.barTouched=false; onbFlow.barAutoRelaxed=null;   // CAS-158: a fresh preview is a fresh first open
   // CAS-160: seed the viewing box off whatever the seed draft already watches, so a ?step= preview round-trips
@@ -6978,48 +7293,40 @@ function openOnbStep(key, agentKey){
   renderOnbStep(key);
   return true;
 }
-window.closeOnbStep=()=>{ $("onbStep").classList.remove("open"); document.body.style.overflow=""; };
-// The live wired flow: agent-select seeds onbFlow (pickStarter), then hands the sharpened agent to the reveal.
-// CAS-144: the spine is the HUB, not a straight line. It opens on "Get selective" and stays there — the doors
-// go out and come back — until both are confirmed and the payoff CTA finishes the flow.
-function startSharpSequence(){
-  onbSeqIndex=0;
-  onbDone=freshDone(); onbDoor=null; onbDoorIdx=0; onbDonePulse=null;
-  $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
-  logEvent("sharp_sequence_start",{agent:wiz.starter});
-  renderOnbStep("selective");
-}
+window.closeOnbStep=()=>{ flowStop(); };
+// The end of the flow: layer the choices onto the picked agent, commit it, and hand the committed agent to
+// the payoff. CAS-188 renamed nothing here — the flow that reaches it is a line now rather than a hub, but
+// what "finish" means is unchanged.
 function finishSharpSequence(){
-  onbSeqIndex=-1;
-  $("onbStep").classList.remove("open"); document.body.style.overflow="";
+  flowStop();
   draft = onbApply();                       // layer the sharpening choices onto the picked agent
   const {c} = commitDraft();
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
   logEvent("agent_created",{starter:wiz.starter, matches:countCriteria(c), sharpened:true});
   showReveal(c);
 }
-// CAS-144: Back inside a door walks that door backwards and drops out onto the hub; Back on the hub itself
-// goes to agent-select. A door abandoned with Back is NOT marked done — you only confirm by going through it.
+// Back: inside the wired flow it is the flow's own back (one step, sliding the other way). Inside a hub door
+// on a ?step= preview it still walks that door backwards. Otherwise it just closes the preview.
 window.onbStepBack=()=>{
+  if(flowOn) return flowBack();
   if(onbDoor){
     onbDoorIdx--;
     if(onbDoorIdx<0) return onbCloseDoor(false);
     renderOnbStep(HUB_DOORS[onbDoor][onbDoorIdx]);
     return;
   }
-  if(onbSeqIndex>=0){ onbSeqIndex=-1; closeOnbStep(); showShortlist(); return; }   // off the hub → agent-select
   closeOnbStep();
 };
 window.onbStepSkip=()=>{
-  logEvent("onbstep_skipped",{step:onbStepKey, wired:onbSeqIndex>=0});
+  logEvent("onbstep_skipped",{step:onbStepKey, wired:flowOn});
   // Skipping a screen INSIDE a door leaves that door unconfirmed and returns you to the hub — it must not
   // finish the whole flow, or "skip this one question" would silently mean "skip setting up the agent".
   if(onbDoor) return onbCloseDoor(false);
-  if(onbSeqIndex>=0){ finishSharpSequence(); return; }
   closeOnbStep();
 };
 window.onbStepContinue=()=>{
-  logEvent("onbstep_continue",{step:onbStepKey, matches:onbCount()});
+  logEvent("onbstep_continue",{step:onbStepKey, matches:onbFlow.draft?onbCount():null});
+  if(flowOn) return flowNext();
   if(onbDoor){
     onbDoorIdx++;
     if(onbDoorIdx>=HUB_DOORS[onbDoor].length) return onbCloseDoor(true);   // through it → confirmed
@@ -7064,7 +7371,7 @@ function hubTasteSummary(){
 }
 window.onbOpenDoor=key=>{
   const steps=HUB_DOORS[key]; if(!steps) return;
-  logEvent("onbhub_door",{key, wired:onbSeqIndex>=0});
+  logEvent("onbhub_door",{key, wired:flowOn});
   onbDoor=key; onbDoorIdx=0;
   // CAS-158: loosen the dials BEFORE the first paint of the bar, so the arrival state's sliders and its
   // "Continue · N films" are the adjusted ones — no flash of the thin number, and no disagreement between
@@ -7082,8 +7389,7 @@ function onbCloseDoor(completed){
 }
 window.onbHubFinish=()=>{
   logEvent("onbhub_finish",{matches:onbCount()});
-  if(onbSeqIndex>=0){ finishSharpSequence(); return; }
-  closeOnbStep();                       // standalone ?step=selective preview
+  closeOnbStep();                       // CAS-188: the hub is a ?step=selective preview only now
 };
 
 // ================= Cascade Membership conversion page (CAS-120, reworked 2026-07-21 / mock: 11-membership.html) =====
