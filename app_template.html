@@ -592,6 +592,20 @@
   .dcard:focus-visible .dc-in{outline:2px solid var(--accent);outline-offset:2px}
   .dcard.is-centre .dc-in{background:linear-gradient(135deg,rgba(124,92,255,.16),rgba(72,199,142,.08));
     border-color:var(--accent);color:var(--ink)}
+  /* ---- CAS-203: an agent card denotes its type by colour ----
+     The left edge carries it at rest, so you can read the deck's makeup at a glance without centring a
+     card; the border and tint join in once the card IS the open one, which is when "what kind of agent am
+     I looking at" is a question about the list underneath. Amber is the cinema's colour and green the
+     service's, the same two the availability system has used since CAS-68 — a colour must not mean one
+     thing on a film card and another on the deck. `--dcc` is set per lane, so one rule set serves both. */
+  .dcard.agent-cin{--dcc:var(--amber)}
+  .dcard.agent-str{--dcc:var(--green)}
+  .dcard.agent-cin .dc-in,.dcard.agent-str .dc-in{border-left:3px solid var(--dcc)}
+  .dcard.agent-cin.is-centre .dc-in,.dcard.agent-str.is-centre .dc-in{border-color:var(--dcc)}
+  .dcard.agent-cin.is-centre .dc-in{background:linear-gradient(135deg,rgba(240,163,54,.18),rgba(240,163,54,.05))}
+  .dcard.agent-str.is-centre .dc-in{background:linear-gradient(135deg,rgba(72,199,142,.18),rgba(72,199,142,.05))}
+  .dcard.agent-cin.is-centre.is-active .dc-name{color:#ffce8f}
+  .dcard.agent-str.is-centre.is-active .dc-name{color:#a7eccb}
   .dc-icon{font-size:18px;line-height:1}
   /* CAS-136/CAS-150: every cascade carries its own search, and since CAS-150 it rides in the card's control
      row with Edit / 🔗 / × rather than floating over the corner — it is one of the things you do to the
@@ -4447,7 +4461,9 @@ const deckCount=()=>cascades.length+2;
 const deckAt=i=>(i>=1 && i<=cascades.length) ? cascades[i-1] : null;   // null = the All card or the New card
 const deckIsAll=i=>i===0;
 const deckIsNew=i=>i>=cascades.length+1;
-const cascSig=()=>cascades.map(c=>c.id+"|"+c.icon+"|"+c.name).join("~");
+// CAS-203: `kind` joins the signature. The deck is only rebuilt when this string changes, so a lane the
+// signature didn't mention would leave the card wearing the last agent's colour after an edit.
+const cascSig=()=>cascades.map(c=>c.id+"|"+c.icon+"|"+c.name+"|"+c.kind).join("~");
 let deckIdx=0;          // centred card
 let deckSig=null;       // cards are rebuilt only when the Cascade list itself changes — never mid-scroll
 let deckHold=false;     // a programmatic re-centre must not re-fire selection when it settles
@@ -4521,8 +4537,11 @@ function deckBuild(){
       <div class="dc-sub"></div>
       <div class="dc-acts">${searchBtn("All")}</div>
     </div></div>`
+  // CAS-203: the card wears the agent's own lane. This is the ONE place the type is stated on the listing
+  // now — CAS-204 takes the stripe off the film cards, because a colour repeated on every row stops being
+  // information — so an agent card has to carry it.
   + cascades.map(c=>`
-    <div class="dcard" role="group" aria-label="${esc(c.name)}" tabindex="-1" data-id="${c.id}"><div class="dc-in">
+    <div class="dcard agent-${c.kind==="stream"?"str":"cin"}" role="group" aria-label="${esc(c.name)}" tabindex="-1" data-id="${c.id}"><div class="dc-in">
       <div class="dc-icon">${c.icon}</div>
       <div class="dc-name">${esc(c.name)}</div>
       <div class="dc-sub"></div>
