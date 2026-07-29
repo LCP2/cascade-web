@@ -2089,6 +2089,12 @@
   <div class="uwrap" id="yourMoviesBody"></div>
 </div>
 
+<!-- GUEST → ACCOUNT (CAS-212) — the one offer, shown once on sign-in when this device is carrying
+     something the account has not got. Body rendered by renderMigrate(). -->
+<div class="invite" id="migrateSheet" role="dialog" aria-modal="true" aria-label="Bring your work with you">
+  <div class="invcard" id="migrateBody"></div>
+</div>
+
 <!-- ACCOUNT (CAS-206 / CAS-210) — the person icon's screen: what every new agent starts from, how you
      are told by default, and the membership. Body rendered by renderAccount(). Signing in itself still
      happens in the magic-link panel (CAS-82), which this screen opens rather than duplicates. -->
@@ -2534,7 +2540,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 171, "commit": "c9746cf", "builtAt": "2026-07-29T13:46:05Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 172, "commit": "076807c", "builtAt": "2026-07-29T13:53:52Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -9241,29 +9247,81 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
     if(error) console.warn("Cascade prune", error);
   }
 
-  // ---- read path: adopt the account, offering migration on first sign-in ----
+  // ---- read path: adopt the account, and offer to bring this device's work with you ----
+  // CAS-212 replaces two stacked native confirm()s — one for Cascades, one for watch statuses, each
+  // firing ONLY when the account was empty — with one offer that covers everything and works when the
+  // account already has rows. That second case is the one that mattered: with a non-empty account the
+  // old code silently adopted the remote list and the agents on this device just vanished from view.
+  // MERGE, not replace. A Cascade is added only if the account has nothing matching it (cascSigOf, the
+  // same signature the duplicate guard uses), so signing in twice cannot give you two of everything.
+  // A watch status is added only for a film the account has said nothing about — the account is the
+  // record and this device is the newcomer, so the account wins every conflict.
   async function loadAccount(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("cascades").select("*");   // RLS: only mine
     if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); return; }
     const remote = (data||[]).map(rowToCascade);
     const localOnes = cascades.slice();
-
-    if(remote.length===0 && localOnes.length>0){
-      const n=localOnes.length;
-      if(confirm(`Add your ${n} on-device Cascade${n===1?"":"s"} to your account, so ${n===1?"it syncs":"they sync"} across devices?`)){
-        await runSync();                       // uploads the current (on-device) list to the account
-        toast(`☁️ ${n} Cascade${n===1?"":"s"} saved to your account.`);
-        if(typeof afterSignIn==="function") afterSignIn();
-        return;                                // keep them on screen; they're now in the account
-      }
-      // declined → adopt the (empty) account; the on-device set stays in localStorage for guest mode
-    }
+    const sigs = new Set(remote.map(cascSigOf));
+    pendingMerge.cascades = localOnes.filter(x=>!sigs.has(cascSigOf(x)));
     replaceCascades(remote);
-    // CAS-186: the account has spoken — now the app can decide whether this person is returning to
-    // something or starting one. Only here, because only here is the answer known.
+    offerMerge();
     if(typeof afterSignIn==="function") afterSignIn();
   }
+  // What this device is carrying that the account has not got. Filled by the two loaders as they run,
+  // then offered once — the two answers arrive from different requests, so the offer waits for both.
+  const pendingMerge = {cascades:null, films:null, asked:false};
+  const mergeReady = () => pendingMerge.cascades!==null && pendingMerge.films!==null;
+  const mergeCount = () => (pendingMerge.cascades||[]).length + (pendingMerge.films||[]).length;
+  function offerMerge(){
+    if(pendingMerge.asked || !mergeReady()) return;
+    if(!mergeCount()){ pendingMerge.asked=true; return; }   // nothing to bring — say nothing
+    pendingMerge.asked=true;
+    renderMigrate();
+    $("migrateSheet").classList.add("open"); document.body.style.overflow="hidden";
+    logEvent("merge_offered",{cascades:(pendingMerge.cascades||[]).length, films:(pendingMerge.films||[]).length});
+  }
+  function renderMigrate(){
+    const nc=(pendingMerge.cascades||[]).length, nf=(pendingMerge.films||[]).length;
+    const line = (n,one,many) => n ? `<div class="invrow"><div class="ir-main">
+      <div class="ir-name">${n} ${n===1?one:many}</div>
+      <div class="ir-sub">${n===1?"It's":"They're"} saved in this browser only right now.</div></div></div>` : "";
+    $("migrateBody").innerHTML=`
+      <h2 class="invh">Bring this device's work with you?</h2>
+      <p class="invp">You've signed in, and your account is now what you're looking at. These are on this
+        browser and not in the account yet:</p>
+      ${line(nc,"Cascade","Cascades")}
+      ${line(nf,"film you've marked","films you've marked")}
+      <p class="invnote">Adding them never overwrites anything: a Cascade the account already has is
+        skipped, and a film the account already has an answer for keeps that answer.</p>
+      <button class="invnext" type="button" onclick="mergeAccept()">Add ${mergeCount()===1?"it":"them"} to my account</button>
+      <button class="invskip" type="button" onclick="mergeDecline()">Keep ${mergeCount()===1?"it":"them"} on this device only</button>`;
+  }
+  function closeMigrate(){ $("migrateSheet").classList.remove("open"); document.body.style.overflow=""; }
+  window.mergeAccept = async () => {
+    const add=pendingMerge.cascades||[], films=pendingMerge.films||[];
+    closeMigrate();
+    // A local Cascade may carry an id this account has never seen; it keeps it (they are uuids), and
+    // upsert on that id is an insert.
+    add.forEach(x=>cascades.push(normCascade(x)));
+    films.forEach(f=>{
+      const id=Number(f.movie_id);
+      if(f.status==="notfor") return blocked.add(id);
+      watched.add(id);
+      if(f.status==="disliked") disliked.add(id);
+      if(f.status==="soso")     indifferent.add(id);
+    });
+    recomputeFound();
+    await runSync(); await runFilmSync();
+    if(typeof render==="function") render();
+    logEvent("merge_accepted",{cascades:add.length, films:films.length});
+    toast(`☁️ Added ${add.length?`${add.length} Cascade${add.length===1?"":"s"}`:""}${add.length&&films.length?" and ":""}${films.length?`${films.length} film${films.length===1?"":"s"}`:""} to your account.`);
+  };
+  window.mergeDecline = () => {
+    closeMigrate();
+    logEvent("merge_declined",{cascades:(pendingMerge.cascades||[]).length, films:(pendingMerge.films||[]).length});
+    toast("👍 Left on this device. Sign out any time and they'll be here.");
+  };
 
   // ---- wrap the one save chokepoint ----------------------------------------
   // Guest: write localStorage as before. Signed-in: don't touch the guest key (so sign-out returns
@@ -9352,16 +9410,12 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
     const { data, error } = await c.from("user_films").select("movie_id,status");   // RLS: only mine
     if(error){ console.warn("user_films load", error); return; }
     const remote=data||[];
-    const localN=watched.size+blocked.size;
-    if(remote.length===0 && localN>0){
-      // First sign-in with answers on this device: offer them up rather than silently dropping them.
-      if(confirm(`Save the ${localN} film${localN===1?"":"s"} you've marked on this device to your account?`)){
-        await runFilmSync();
-        toast(`☁️ ${localN} watch status${localN===1?"":"es"} saved to your account.`);
-        return;
-      }
-    }
+    // CAS-212: what this device has said about films the account has said nothing about. Computed
+    // BEFORE the account's rows replace the local sets, because after that the answer is gone.
+    const known=new Set((remote||[]).map(r=>String(r.movie_id)));
+    pendingMerge.films = filmRows().filter(r=>!known.has(String(r.movie_id)));
     applyFilmRows(remote);
+    offerMerge();
   }
   function loadGuestFilms(){
     watched.clear();    loadSet("cascade_watched").forEach(id=>watched.add(id));
@@ -9518,7 +9572,11 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
                                 loadAccountFilms, syncFilmsNow: runFilmSync, filmRows, applyFilmRows,
                                 loadNotifyPrefs, loadRealAlerts, syncNotifyNow: runNotifySync,
                                 prefsRow, pickRows,
-                                loadUserPrefs, syncUserPrefsNow: runUserPrefsSync, userPrefsRow };
+                                loadUserPrefs, syncUserPrefsNow: runUserPrefsSync, userPrefsRow,
+                                // CAS-212: the merge seam, exposed the same way the shape mappers are —
+                                // it is the one decision in here with no UI of its own to poke at, and a
+                                // rule about what does NOT get copied has to be testable.
+                                pendingMerge, offerMerge, renderMigrate };
 })();
 </script>
 
