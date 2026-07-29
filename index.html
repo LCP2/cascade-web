@@ -854,6 +854,14 @@
     font-family:var(--font-display);font-size:16px;font-weight:700;cursor:pointer;
     box-shadow:0 10px 34px rgba(124,92,255,.34)}
   .splashcta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+  /* CAS-186: the second door. Quiet — it is the smaller of the two audiences on a first paint — but
+     a full-width target, because "I already have an account" is a thing people look for and tap in
+     one go rather than hunt for in a corner. */
+  .splashlogin{display:block;width:100%;margin-top:12px;padding:13px;border-radius:13px;
+    background:transparent;border:1px solid var(--line);color:var(--dim);
+    font-size:14px;font-weight:600;cursor:pointer}
+  .splashlogin:hover{border-color:var(--violet);color:var(--ink)}
+  .splashlogin:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   @media (prefers-reduced-motion:reduce){ .splashinner{animation:none} }
 
   /* ---- agent cards (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
@@ -1926,6 +1934,9 @@
   <div id="authSignedOut" style="display:none">
     <div class="pnote">Sign in with a one-tap link — no password. Enter your email and we'll send you a
       link that signs you straight in. Your Cascades then sync to your account across devices.</div>
+    <!-- CAS-186: what a guest actually stands to lose, counted rather than asserted. Filled in by
+         paintGuestStake() and hidden entirely when there is nothing on this device to save. -->
+    <div class="pnote" id="authGuestStake" style="display:none"></div>
     <div class="flabel">Email</div>
     <input id="authEmail" class="namein" type="email" inputmode="email" autocomplete="email"
            placeholder="you@example.com">
@@ -2016,7 +2027,11 @@
       <div class="splashb"><svg class="splashtick" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5" stroke="#22D3EE" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>and gives you the viewing inside track</span></div>
     </div>
     <p class="splashns">Never miss a film worth watching — and always know where to watch it.</p>
-    <button class="splashcta" id="splashCta" type="button">Select your first agent</button>
+    <!-- CAS-186: two doors, not one. New here → the setup flow. Been here → straight to your own
+         Cascades, without walking through a setup you already did. The primary is Sign up because a
+         first visit is the common case; Log in is quiet but never hidden. -->
+    <button class="splashcta" id="splashCta" type="button">Sign up — build my first agent</button>
+    <button class="splashlogin" id="splashLogin" type="button">Already have an account? Log in</button>
   </div>
 </div>
 
@@ -2488,7 +2503,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 153, "commit": "d8772ae", "builtAt": "2026-07-29T12:50:17Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 154, "commit": "7630824", "builtAt": "2026-07-29T12:53:27Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5671,6 +5686,36 @@ function splashGo(){
   flowStart();          // CAS-188: straight into the flow, which opens on the priority question
 }
 $("splashCta").onclick=splashGo;
+// ---- CAS-186: Log in from the front door ----------------------------------------------------------
+// The splash stays up behind the account panel. Signing in closes it (see the auth hook below); backing
+// out of the panel leaves you exactly where you were, which is the whole point of it being a door and
+// not a fork you can fall down.
+$("splashLogin").onclick=()=>{
+  logEvent("splash_login");
+  paintGuestStake();
+  openModal($("authModal"));
+};
+// A "Log in" button on a build with no account config is a door onto a wall. The auth module announces
+// whether accounts are available at all; until it says yes, the front door offers only the honest half.
+function paintSplashLogin(){
+  const b=$("splashLogin"); if(!b) return;
+  b.hidden = !(window.CascadeAuth && window.CascadeAuth.enabled);
+}
+paintSplashLogin();
+window.addEventListener("cascade-auth-change", paintSplashLogin);
+// What a guest is being asked to hand over, counted off what is actually on this device. Nothing to
+// save is not a reason to say nothing — it is a reason to say nothing about saving.
+function paintGuestStake(){
+  const el=$("authGuestStake"); if(!el) return;
+  const n=cascades.length, f=watched.size+blocked.size;
+  if(!n && !f){ el.style.display="none"; return; }
+  const bits=[];
+  if(n) bits.push(`<b>${n}</b> Cascade${n===1?"":"s"}`);
+  if(f) bits.push(`<b>${f}</b> film${f===1?"":"s"} you've marked`);
+  el.style.display="";
+  el.innerHTML=`You have ${bits.join(" and ")} saved in this browser. Signing in offers to carry
+    ${n+f===1?"it":"them"} up to your account so ${n+f===1?"it follows":"they follow"} you to another device.`;
+}
 
 // ---- Agent select (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
 // The mock's ten first-agent cards. Each carries real criteria, so its green "N films match now" is the
@@ -8922,6 +8967,31 @@ function openSharedFromURL(){
   return true;
 }
 
+// ---- CAS-186: what happens the moment a returning user signs in ------------------------------------
+// The account is the authority on whether they have been here before, so the answer waits for the
+// account to load rather than being guessed from a local flag: a returning user on a NEW device has no
+// local state at all, and would otherwise be walked through a setup they finished months ago.
+//   has Cascades  -> straight to their listing. They are not new; do not make them prove it.
+//   has none      -> into the flow. An empty account with a splash telling them to log in again would
+//                    be a dead end, and "you have nothing yet" is honestly a first run.
+// Called by the persistence block once loadAccount() has replaced the on-screen list.
+function afterSignIn(){
+  const splashUp=$("splash").classList.contains("open");
+  closeModal($("authModal"));
+  if(cascades.length){
+    try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
+    if(splashUp){ $("splash").classList.remove("open"); flowStop(); }
+    document.body.style.overflow="";
+    showFoundList(); render();
+    const n=cascades.length;
+    toast(`👋 Welcome back — ${n} Cascade${n===1?"":"s"} ${n===1?"is":"are"} still watching for you.`);
+    logEvent("signin_returning",{cascades:n});
+    return;
+  }
+  if(splashUp){ $("splash").classList.remove("open"); flowStart(); }
+  logEvent("signin_empty_account");
+}
+
 // ---- Re-engagement: what Cascade found while you weren't looking (CAS-69) ------------------------------
 // "Cascade found 3 for you since you last looked" has to be TRUE, so it is measured, not asserted: we store
 // the Found list as it stood the last time you looked at it (a boot, or opening the Found list), and the line
@@ -9059,11 +9129,15 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
       if(confirm(`Add your ${n} on-device Cascade${n===1?"":"s"} to your account, so ${n===1?"it syncs":"they sync"} across devices?`)){
         await runSync();                       // uploads the current (on-device) list to the account
         toast(`☁️ ${n} Cascade${n===1?"":"s"} saved to your account.`);
+        if(typeof afterSignIn==="function") afterSignIn();
         return;                                // keep them on screen; they're now in the account
       }
       // declined → adopt the (empty) account; the on-device set stays in localStorage for guest mode
     }
     replaceCascades(remote);
+    // CAS-186: the account has spoken — now the app can decide whether this person is returning to
+    // something or starting one. Only here, because only here is the answer known.
+    if(typeof afterSignIn==="function") afterSignIn();
   }
 
   // ---- wrap the one save chokepoint ----------------------------------------
