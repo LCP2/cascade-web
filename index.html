@@ -2530,7 +2530,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 160, "commit": "aa68ee5", "builtAt": "2026-07-29T13:07:07Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 161, "commit": "5c64eb2", "builtAt": "2026-07-29T13:08:36Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -6433,6 +6433,16 @@ function onbApply(){
   // it rides on the agent so the monitor can read it once delivery is built.
   d.status = watchStatuses();
   d.watchWindows = JSON.parse(JSON.stringify(onbFlow.watch||{}));
+  // CAS-197: the windows you picked ARE the alerts the daily job fires on. CAS-160 recorded them and
+  // deliberately did not write them, because promising delivery we had not built would have been a
+  // fabricated capability. CAS-185 built it — so leaving them unwritten is now the opposite failure: a
+  // screen that takes an answer nothing acts on. alertLive() still has the last word, so a bell that is
+  // unreachable for this agent's scope, or muted globally, never reaches alert_moments.
+  d.alerts = {...ALERT_DEFAULTS, ...(d.alerts||{})};
+  WATCH_LANES.forEach(l=>(onbFlow.watch[l.key]||[]).forEach(k=>{
+    const o=l.opts.find(x=>x.key===k);
+    if(o && o.alerts) Object.assign(d.alerts, o.alerts);
+  }));
   return normCascade(d);
 }
 const onbCount = () => watchCount(onbApply());
@@ -7434,7 +7444,10 @@ const FLOW_ORDER   = ["priority","pickagent","selectivity","name","genres","lang
 const FLOW_COUNTED = FLOW_ORDER.slice(2);
 // The priority answer is not a label — it seeds the windows the agent actually watches, so the choice
 // moves the count on every screen after it. pickStarter lays a saved answer for that same agent over it.
-const PRIORITY_WATCH = { cinema:{cinema:["release"]}, stream:{rent:["rent"], stream:["stream"]} };
+// CAS-197: a cinema agent starts with BOTH cinema moments on — the film reaching a cinema, and the film
+// getting past its opening weekend. They are the two the monitor actually has moments for (hits_cinema,
+// past_opening_weekend), and they answer two different questions: "it's on" and "the crowds have gone".
+const PRIORITY_WATCH = { cinema:{cinema:["release","past"]}, stream:{rent:["rent"], stream:["stream"]} };
 let flowOn=false;              // inside the wired flow (vs a standalone ?step= preview)
 let flowKind="cinema";         // what the priority screen answered
 let flowSlideT=null;
