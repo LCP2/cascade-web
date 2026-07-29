@@ -871,24 +871,37 @@
   .slh{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.2px;color:var(--ink);margin:4px 0 6px}
   .slp{font-size:13.5px;color:var(--dim);line-height:1.5;margin:0 0 20px}
   .scards{display:grid;gap:11px}
-  .scard{display:flex;align-items:flex-start;gap:13px;text-align:left;cursor:pointer;width:100%;
-    background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;color:var(--ink);transition:border-color .15s}
+  /* CAS-190: full-width, compact, and wearing the colour of the lane the person just chose — the amber
+     of a cinema or the green of a service. The card is a row you tap, not a tile you study: icon, name,
+     one line of description, what it catches, chevron. --agc is set on the list, so one rule set serves
+     both lanes and the cards can never disagree with the answer that produced them. */
+  .scards{--agc:var(--amber)}
+  .scards.str{--agc:var(--green)}
+  .scard{display:flex;align-items:center;gap:13px;text-align:left;cursor:pointer;width:100%;
+    background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--agc);
+    border-radius:15px;padding:13px 14px;color:var(--ink);
+    transition:border-color .15s,transform .12s}
+  .scard:active{transform:scale(.99)}
   .scard:hover{border-color:var(--violet);background:rgba(124,92,255,.08)}
   .scard:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  .sc-ic{flex:0 0 auto;width:42px;height:42px;border-radius:12px;background:#0E1320;border:1px solid var(--line);
-    display:flex;align-items:center;justify-content:center;font-size:21px;line-height:1}
+  .sc-ic{flex:0 0 auto;width:38px;height:38px;border-radius:11px;background:#0E1320;border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:20px;line-height:1}
   .sc-main{flex:1;display:flex;flex-direction:column;min-width:0}
   .sc-name{font-family:var(--font-display);font-size:15.5px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .sc-rec{font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--accenttext);
     background:rgba(124,92,255,.16);border:1px solid rgba(124,92,255,.45);border-radius:999px;padding:2px 8px}
-  .sc-blurb{font-size:12.5px;color:var(--dim);line-height:1.4;margin:3px 0 6px}
+  .sc-blurb{font-size:12.5px;color:var(--dim);line-height:1.35;margin:2px 0 0}
   /* CAS-143: Channel × Standard, said plainly, so the card shows WHAT the agent is as well as what it
      catches. Read off the same criteria as the count, so the words and the number can't disagree. */
-  .sc-chan{font-size:11.5px;color:var(--faint);line-height:1.4;margin-bottom:6px}
+  /* CAS-190 folds CAS-143's "what it is" line and the live count into ONE line, because two lines of
+     small grey text under a name is what made the card a tile rather than a row. The standard stays in
+     the faint colour, the count keeps the violet selection ink, and they read as one sentence. */
+  .sc-chan{font-size:11.5px;color:var(--faint);line-height:1.4;margin-top:4px}
+  .sc-chan .sc-match{margin-left:0}
   /* Violet, not green (buildspec §Colour rule): green is reserved for "films found". A count here is a
      preview of a selection you haven't made yet, not a haul something went and got you. */
   .sc-match{color:var(--selink);font-size:12.5px;font-weight:800}
-  .sc-arw{flex:0 0 auto;color:var(--faint);font-size:18px;align-self:center}
+  .sc-arw{flex:0 0 auto;color:var(--faint);font-size:20px;align-self:center}
   /* The step-progress rail (CAS-143) — shared shape with the prototype's .pbar. */
   .pbar{height:5px;border-radius:3px;background:#1c2230;overflow:hidden;margin:2px 0 16px}
   .pbar>i{display:block;height:100%;background:var(--grad);border-radius:3px;transition:width .3s}
@@ -2503,7 +2516,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 155, "commit": "13b45ac", "builtAt": "2026-07-29T12:55:48Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 156, "commit": "84564a6", "builtAt": "2026-07-29T12:57:23Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5826,10 +5839,9 @@ function starterCardsHTML(kind){
         <span class="sc-main">
           <span class="sc-name">${s.name}${recommended?` <b class="sc-rec">RECOMMENDED</b>`:""}</span>
           <span class="sc-blurb">${esc(s.blurb)}</span>
-          <span class="sc-chan">${esc(s.bar)}</span>
-          <span class="sc-match">${n
-            ? `${n} film${n===1?"":"s"} match${n===1?"es":""} now`
-            : `Nothing matches right now — it'll tell you the moment one does`}</span>
+          <span class="sc-chan">${esc(s.bar)} · <b class="sc-match">${n
+            ? `${n} film${n===1?"":"s"} now`
+            : `nothing yet — it'll tell you the moment one lands`}</b></span>
         </span>
         <span class="sc-arw">›</span>
       </button>`;
@@ -7155,7 +7167,7 @@ const SHARP_STEPS = {
     body(){
       return `<h2 class="osh">Pick a Cascade Agent</h2>
         <p class="ossub">It goes and finds films for you, day after day — you can change everything later.</p>
-        <div class="scards">${starterCardsHTML()}</div>`;
+        <div class="scards${flowKind==="stream"?" str":""}">${starterCardsHTML()}</div>`;
     },
   },
   // ---- Style (genres) -------------------------------------------------------------------------------
