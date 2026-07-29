@@ -1732,8 +1732,10 @@
         <!-- Your Movies (CAS-183): everything you've said about a film, and how your services cover it. -->
         <div class="iconbtn" id="moviesBtn" title="Your Movies" role="button" tabindex="0"
              aria-label="Your Movies" onclick="openYourMovies()">🎞️</div>
-        <!-- Account (CAS-82): magic-link sign-in. Guest until signed in; turns green when signed in. -->
-        <div class="iconbtn" id="accountBtn" title="Account — sign in" role="button" tabindex="0" aria-label="Account">👤</div>
+        <!-- Account (CAS-206): the Account SCREEN. Signing in is one row inside it — the magic-link panel
+             from CAS-82, opened rather than duplicated. -->
+        <div class="iconbtn" id="accountBtn" title="Account" role="button" tabindex="0" aria-label="Account"
+             onclick="openAccount()">👤</div>
         <div class="iconbtn" id="bell">🔔<div class="badge" id="badge" style="display:none">0</div></div>
       </div>
     </div>
@@ -2075,6 +2077,13 @@
      plus how well the services you pay for cover what your agents found. Body rendered by renderYourMovies(). -->
 <div class="uscreen" id="yourMovies" role="dialog" aria-modal="true" aria-label="Your Movies">
   <div class="uwrap" id="yourMoviesBody"></div>
+</div>
+
+<!-- ACCOUNT (CAS-206 / CAS-210) — the person icon's screen: what every new agent starts from, how you
+     are told by default, and the membership. Body rendered by renderAccount(). Signing in itself still
+     happens in the magic-link panel (CAS-82), which this screen opens rather than duplicates. -->
+<div class="uscreen" id="accountScreen" role="dialog" aria-modal="true" aria-label="Account">
+  <div class="uwrap" id="accountBody"></div>
 </div>
 
 <div class="stepnav" id="stepNav" hidden>
@@ -2515,7 +2524,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 168, "commit": "87570bf", "builtAt": "2026-07-29T13:32:51Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 169, "commit": "0fe8d83", "builtAt": "2026-07-29T13:37:07Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -2755,6 +2764,7 @@ function closeModal(el){
   // the flow frame in the stack — so the Briefing has to step aside for it and come back when it closes.
   // Coming back is the whole point: a row that dumped you on the listing would break the hub.
   if(briefResume){ const id=briefResume; briefResume=null; briefOpen(id); }
+  else if(typeof accountResume==="function") accountResume();   // CAS-206: same rule for Account
 }
 // CAS-150: the Filters button is gone from the header — the selection engine is the Cascade itself, and a
 // second one sitting above it was the clutter this ticket is about. The panel's controls stay in the DOM
@@ -7704,6 +7714,88 @@ window.openYourMovies=()=>{
   logEvent("yourmovies_opened",{tracked:[...found].filter(id=>!opinionOf(id)).length, watched:watched.size, notfor:blocked.size});
 };
 window.closeYourMovies=()=>{ $("yourMovies").classList.remove("open"); document.body.style.overflow=""; };
+
+// ================= CAS-206 / CAS-210: Account =======================================================
+// Three real sections and one honest one. Every row here either DOES something or says out loud that it
+// does not yet — a settings screen listing controls that quietly do nothing is the worst kind of screen,
+// because it looks like the place you already went and fixed it.
+//   Agent defaults        -> the account-level taste baseline, which is what a new agent starts from.
+//   Default notifications -> the same notify screen the flow uses, so there is one of it.
+//   Membership            -> who you are signed in as, what the plan is, and the way in and out.
+//   Help & feedback       -> not built. Marked, not dressed up.
+const acctRow = (icon, label, sub, action, chev=true) => {
+  const tag = action ? "button" : "div";
+  return `<${tag} class="urow${action?"":" nodiv"}" ${action?`type="button" onclick="${action}"`:""}>
+    ${icon?`<span class="uic">${icon}</span>`:""}
+    <span class="utxt"><span class="ut">${esc(label)}</span>${sub?`<span class="ussub">${sub}</span>`:""}</span>
+    ${action&&chev?`<span class="uchev">›</span>`:""}</${tag}>`;
+};
+const acctSoon = (icon,label) => acctRow(icon, label, `<i>Not built yet — it'll say so until it is.</i>`, null);
+function accountWho(){
+  const a=window.CascadeAuth;
+  if(a && a.status==="signed-in" && a.user) return {in:true, email:a.user.email||"your account"};
+  return {in:false, email:null};
+}
+function renderAccount(){
+  const who=accountWho();
+  const svc=prefs.sub.size+prefs.store.size;
+  const notif=[notifyPrefs.inApp?"In-app":null, notifyPrefs.emailOn?"Email":null].filter(Boolean).join(" · ")
+            || "Nothing switched on";
+  $("accountBody").innerHTML=`
+    <div class="ostop menutop"><button class="osback" type="button" onclick="closeAccount()" aria-label="Back">←</button></div>
+    <h2 class="osh">Account</h2>
+    <p class="ossub">Your defaults, how you're told, and your membership.</p>
+
+    <div class="usec">Agent defaults</div>
+    <p class="ucap">What a new agent starts from. Changing these never touches an agent you've already made
+      — each one carries its own copy (open it from Edit).</p>
+    <div class="ucard">
+      ${acctRow("🧬","Taste baseline", esc([tbSumGenres(), tbSumYear(), tbSumLangs(), tbSumAge()].join(" · ")),
+                "openAccountStep('taste')")}
+      ${acctRow("📺","My streaming services", svc?`${svc} service${svc===1?"":"s"}${prefs.on?" · only showing these":""}`
+                                                 :"None picked yet", "openAccountServices()")}
+    </div>
+
+    <div class="usec">Default notifications</div>
+    <div class="ucard">
+      ${acctRow("🔔","How you're told", esc(notif) + (notifyPrefs.emailOn && notifyPrefs.email
+                ? ` · ${esc(notifyPrefs.email)}` : ""), "openAccountStep('notifysettings')")}
+    </div>
+
+    <div class="usec">Membership</div>
+    <div class="ucard">
+      ${who.in ? acctRow("👤","Signed in", esc(who.email), "openAccountAuth()")
+               : acctRow("👤","Not signed in", "Sign in to sync across devices", "openAccountAuth()")}
+      ${acctRow("💳","Plan", "Free for your first month · then $4.99/month · cancel any time", null, false)}
+      ${acctSoon("🧾","Restore purchases")}
+      ${acctSoon("⚙️","Manage / cancel subscription")}
+      ${acctSoon("🗑️","Delete account")}
+    </div>
+    <p class="unone" style="margin:10px 2px 0">Prototype — no card is held and nothing is ever charged.</p>
+
+    <div class="usec">Help &amp; feedback</div>
+    <div class="ucard">
+      ${acctSoon("📖","Help wiki")}
+      ${acctSoon("✉️","Feedback form")}
+    </div>`;
+}
+window.openAccount=()=>{
+  renderAccount();
+  $("accountScreen").scrollTop=0;
+  $("accountScreen").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("account_opened",{signedIn:accountWho().in});
+};
+window.closeAccount=()=>{ $("accountScreen").classList.remove("open"); document.body.style.overflow=""; };
+// A defaults row opens the very screen the flow uses for that setting, rather than a second copy of it.
+// The step frame sits above this one, so Account steps aside and comes back when the step closes.
+let acctResume=false;
+window.openAccountStep=key=>{
+  acctResume=true; closeAccount();
+  openOnbStep(key);
+};
+window.openAccountServices=()=>{ acctResume=true; closeAccount(); openPrefs(); };
+window.openAccountAuth=()=>{ acctResume=true; closeAccount(); openModal($("authModal")); };
+function accountResume(){ if(!acctResume) return; acctResume=false; openAccount(); }
 // One row per setting, each read off the DRAFT so the row and the screen behind it cannot disagree.
 function briefSum(key){
   const v=(onbFlow.draft||{})[key];
@@ -7867,7 +7959,7 @@ function openOnbStep(key, agentKey){
   renderOnbStep(key);
   return true;
 }
-window.closeOnbStep=()=>{ flowStop(); };
+window.closeOnbStep=()=>{ flowStop(); if(typeof accountResume==="function") accountResume(); };
 // The end of the flow: layer the choices onto the picked agent, commit it, and hand the committed agent to
 // the payoff. CAS-188 renamed nothing here — the flow that reaches it is a line now rather than a hub, but
 // what "finish" means is unchanged.
@@ -9397,9 +9489,12 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
   const showPanel = which => ['authGuest','authSignedOut','authSignedIn']
     .forEach(p => gid(p).style.display = (p === which ? 'block' : 'none'));
 
-  // Header button opens the panel in every mode (guest included).
-  btn.addEventListener('click', openAuth);
-  btn.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openAuth(); } });
+  // CAS-206: the header's 👤 opens the ACCOUNT SCREEN now, not this panel — the panel is one row inside
+  // it. So this module no longer binds the header button; it only keeps the panel's own Done, and exposes
+  // openAuth for the Account screen's "Signed in / Not signed in" row to call.
+  window.CascadeOpenAuth = openAuth;
+  btn.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' '){
+    e.preventDefault(); if(typeof window.openAccount === 'function') window.openAccount(); } });
   gid('authDone').addEventListener('click', closeAuth);
 
   // A config is only "real" if both fields are filled and not the example placeholders.
