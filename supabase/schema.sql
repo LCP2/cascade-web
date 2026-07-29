@@ -2,8 +2,10 @@
 -- Source of truth: Confluence "Cascade Web — Architecture & CC Build Spec" §3.
 -- Apply this in the Supabase SQL editor (see supabase/README.md). Safe to re-run.
 --
--- Five tables:
+-- Six tables:
 --   cascades      — one row per saved agent, per user (the user owns their rows via RLS).
+--   user_prefs    — the account-level defaults a NEW agent starts from, plus the services the
+--                   user actually pays for. CAS-211.
 --   user_films    — one row per (user, film) the user has said something about: liked,
 --                   so-so, didn't like, or don't-want-to-watch. CAS-183.
 --   notify_prefs  — one row per user: how they want to be told, and which alert TYPES they
@@ -26,7 +28,15 @@ create table if not exists public.cascades (
   id            uuid primary key default gen_random_uuid(),
   user_id       uuid not null references auth.users(id) on delete cascade,
   name          text not null default 'My agent',
-  criteria      jsonb not null default '{}'::jsonb,   -- {genres:[], minRating, services:[], maxPrice, ageMax, ...}
+  -- The WHOLE agent config, as one object the front-end owns end to end: kind (cinema |
+  -- stream), the availability windows and their finer watch moments, the bar's four dials,
+  -- genres, language, the age list, the year window and the per-window service scope.
+  -- Deliberately not a column each (CAS-211): every one of those has changed shape at least
+  -- once this release — age went from a lo..hi band to a list, scale from a band index to a
+  -- dollar floor — and each change would have been a migration against live rows. The
+  -- monitor reads only alert_moments and criteria, and matching.py mirrors the front-end's
+  -- own matcher field for field.
+  criteria      jsonb not null default '{}'::jsonb,
   alert_moments text[] not null default '{hits_rent,hits_stream}',
                  -- subset of: hits_cinema | past_opening_weekend | hits_pvod | hits_rent | hits_stream
                  -- hits_pvod added by CAS-103 (the editor's Purchase bell). No migration is needed:
@@ -75,6 +85,36 @@ create policy user_films_owner on public.user_films
 
 -- The app loads a user's whole set on sign-in; the primary key already indexes user_id
 -- first, so no extra index is needed.
+
+-- ---------------------------------------------------------------------------
+-- user_prefs — account-level defaults and services (CAS-211)
+-- ---------------------------------------------------------------------------
+-- Two different things live here, and they are different from everything on a
+-- cascade row:
+--   the SERVICES the user pays for — an account fact, not an agent's opinion. The
+--   agent's own per-window scope ("only show me things I can already watch") stays
+--   in its criteria; this is the list that scope is measured against.
+--   the TASTE DEFAULTS a new agent starts from — genres, how-far-back, languages and
+--   the age range. Since CAS-182 every agent carries its OWN copy of those four, so
+--   this is a starting point and never a live filter over anyone's agents. Changing
+--   it must not silently re-narrow an agent the user already made.
+-- `taste` is jsonb for the same reason cascades.criteria is: it is one small object
+-- the front-end owns end to end, and a column per dimension would need a migration
+-- every time a dimension is added.
+create table if not exists public.user_prefs (
+  user_id        uuid primary key references auth.users(id) on delete cascade,
+  sub_services   text[] not null default '{}',
+  store_services text[] not null default '{}',
+  services_only  boolean not null default false,
+  taste          jsonb not null default '{}'::jsonb,
+  updated_at     timestamptz not null default now()
+);
+
+alter table public.user_prefs enable row level security;
+
+drop policy if exists user_prefs_owner on public.user_prefs;
+create policy user_prefs_owner on public.user_prefs
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
 -- notify_prefs — how a user wants to be told (CAS-185)
@@ -191,4 +231,9 @@ create trigger notify_prefs_set_updated_at
 drop trigger if exists film_picks_set_updated_at on public.film_picks;
 create trigger film_picks_set_updated_at
   before update on public.film_picks
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists user_prefs_set_updated_at on public.user_prefs;
+create trigger user_prefs_set_updated_at
+  before update on public.user_prefs
   for each row execute function public.set_updated_at();

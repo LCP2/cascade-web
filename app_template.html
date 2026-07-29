@@ -9281,7 +9281,7 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
     if(acct() && acct().status==="signed-in" && owner){
       if(owner !== currentUser){
         currentUser = owner;
-        loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadRealAlerts();
+        loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts();
       }
     } else if(currentUser !== null){
       // Signed out → back to the on-device set, and the bell stops showing another account's news.
@@ -9291,7 +9291,7 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
   // If a session was already restored before this listener attached, adopt it now.
   if(accountActive()){
     currentUser = uid();
-    loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadRealAlerts();
+    loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts();
   }
 
   // ==========================================================================
@@ -9464,17 +9464,61 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
       .eq("user_id", owner).is("read_at", null);
     if(error) console.warn("notifications mark-read", error);
   };
+  // ---- CAS-211: account-level defaults and services --------------------------------
+  // What a NEW agent starts from, and what the user actually pays for. Neither belongs on a
+  // cascade row: one is a starting point (every agent has carried its own copy since CAS-182)
+  // and the other is a fact about the person. Same wrap-one-chokepoint shape as everything
+  // else here, so there is still exactly one place each of these is written.
+  function userPrefsRow(){
+    return { user_id:uid(),
+             sub_services:[...prefs.sub], store_services:[...prefs.store],
+             services_only:!!prefs.on,
+             taste:JSON.parse(JSON.stringify(tasteBase)) };
+  }
+  let upTimer=null;
+  function scheduleUserPrefsSync(){ clearTimeout(upTimer); upTimer=setTimeout(runUserPrefsSync, 500); }
+  async function runUserPrefsSync(){
+    const c=client(), owner=uid(); if(!c||!owner) return;
+    const { error } = await c.from("user_prefs").upsert([userPrefsRow()], { onConflict:"user_id" });
+    if(error) console.warn("user_prefs upsert", error);
+  }
+  async function loadUserPrefs(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("user_prefs").select("*").limit(1);   // RLS: only mine
+    if(error){ console.warn("user_prefs load", error); return; }
+    const row=(data||[])[0];
+    if(!row){ scheduleUserPrefsSync(); return; }   // no row yet — seed it from this device
+    setTo(prefs.sub, row.sub_services||[]);
+    setTo(prefs.store, row.store_services||[]);
+    prefs.on = !!row.services_only;
+    if(row.taste && typeof row.taste==="object" && Object.keys(row.taste).length){
+      tasteBase = {...baseDefaults(), ...row.taste};
+      saveTasteBase();
+    }
+    savePrefsLocal();
+    syncServiceChips(); updatePrefSwitch(); updatePrefBtn();
+    if(typeof render==="function") render();
+  }
+  const saveTasteBaseLocal = saveTasteBase;
+  saveTasteBase = function(){ saveTasteBaseLocal(); if(accountActive()) scheduleUserPrefsSync(); };
+
   const saveNotifyLocal = saveNotify;
   saveNotify = function(){ saveNotifyLocal(); if(accountActive()) scheduleNotifySync(); };
   const saveNotifyPrefsLocal = saveNotifyPrefs;
   saveNotifyPrefs = function(){ saveNotifyPrefsLocal(); if(accountActive()) scheduleNotifySync(); };
   const savePrefsLocal = savePrefs;
-  savePrefs = function(){ savePrefsLocal(); if(accountActive()) scheduleNotifySync(); };
+  // prefs carries BOTH the global alert mutes (notify_prefs.excluded_moments) and the services
+  // (user_prefs), so one write fans out to both rather than the caller having to know which.
+  savePrefs = function(){
+    savePrefsLocal();
+    if(accountActive()){ scheduleNotifySync(); scheduleUserPrefsSync(); }
+  };
 
   window.CascadePersistence = { loadAccount, syncNow: runSync, accountActive, isUuid,
                                 loadAccountFilms, syncFilmsNow: runFilmSync, filmRows, applyFilmRows,
                                 loadNotifyPrefs, loadRealAlerts, syncNotifyNow: runNotifySync,
-                                prefsRow, pickRows };
+                                prefsRow, pickRows,
+                                loadUserPrefs, syncUserPrefsNow: runUserPrefsSync, userPrefsRow };
 })();
 </script>
 
