@@ -1561,6 +1561,14 @@
     font-size:11.5px;font-weight:600;color:var(--dim);text-decoration:underline;text-underline-offset:3px}
   .tbq.tbqmin .q:hover{color:var(--ink);border-color:transparent}
   .tbq.tbqmin .q:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* ---- CAS-182 / CAS-208: the Agent Briefing's rows ----
+     The hub's osdoor, tightened: eight rows have to be readable as one page without scrolling past the
+     Save button, so the padding comes in and the gap closes. Same component, same states — only denser. */
+  .edoors{display:flex;flex-direction:column;gap:8px}
+  .edoors .osdoor{padding:9px 12px;margin:0}
+  .edoors .osdoor .di{width:34px;height:34px;font-size:18px}
+  .edoors .osdoor .dh{font-size:15px}
+  .edoors .osdoor .ds{font-size:12px}
   /* ---- keep-finding (CAS-196) ---- */
   .kflead{font-size:16px;line-height:1.5;color:var(--ink);margin:0 0 16px}
   .kflead b{color:#fff}
@@ -2375,7 +2383,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 149, "commit": "f12cd14", "builtAt": "2026-07-29T12:18:02Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 150, "commit": "a2e6607", "builtAt": "2026-07-29T12:27:57Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -2611,6 +2619,10 @@ function openModal(el){ el.classList.add("open"); document.body.style.overflow="
 function closeModal(el){
   el.classList.remove("open");
   if(!document.querySelector(".modal.open")) document.body.style.overflow="";
+  // CAS-182: the services row of the Agent Briefing hands off to the Preferences modal, which sits UNDER
+  // the flow frame in the stack — so the Briefing has to step aside for it and come back when it closes.
+  // Coming back is the whole point: a row that dumped you on the listing would break the hub.
+  if(briefResume){ const id=briefResume; briefResume=null; briefOpen(id); }
 }
 // CAS-150: the Filters button is gone from the header — the selection engine is the Cascade itself, and a
 // second one sitting above it was the clutter this ticket is about. The panel's controls stay in the DOM
@@ -3796,9 +3808,24 @@ const EARLIER_YEARS = ALL_YEARS.slice(1);
 const yearCount = y => MOVIES.filter(m=>yearOf(m)===y).length;
 
 function normCascade(c){
-  c.status = c.status||[]; c.genre = c.genre||[]; c.age = c.age||[];
+  c.status = c.status||[];
+  // CAS-182: genre / lang / age carry THREE states now, the same three the taste-baseline rows have used
+  // since CAS-165 — null = explicitly none (nothing qualifies) · [] = the filter is off · [a,b] = exactly
+  // those. `||[]` would flatten null back to "off", which is the bug CAS-165 fixed on the baseline: the
+  // user clears every chip, the row reads back as "all", and every chip lights up again.
+  c.genre = (c.genre===null) ? null : (c.genre||[]);
+  c.age   = (c.age===null)   ? null : (c.age||[]);
+  c.lang  = (c.lang===null)  ? null : (c.lang||[]);
+  c.yearStop = (typeof c.yearStop==="number") ? c.yearStop : 0;   // CAS-182: the how-far-back rung
+  // CAS-182: which lane the agent was set up for — the priority answer, carried on the agent, because a
+  // preset stopped implying one at CAS-160. An agent saved before this is read from what it watches: one
+  // that never looks at a cinema window is a streaming agent, and one with no windows at all is neither
+  // narrowed nor streaming-only, so it reads as cinema (the default the flow opens on).
+  if(c.kind!=="cinema" && c.kind!=="stream"){
+    const st=c.status||[];
+    c.kind = (st.length && !st.some(w=>["upcoming","opening_week","in_cinema"].includes(w))) ? "stream" : "cinema";
+  }
   c.exclude = c.exclude||[];                 // [] = skip nothing (what every pre-existing Cascade meant)
-  c.lang = c.lang||[];                       // [] = any language (what every pre-existing Cascade meant)
   c.culture = c.culture||[];                 // [] = any origin
   c.year = c.year||[];                       // [] = any year; mirrors filt.year, so the Filters panel shows it too
   c.imdb = c.imdb||0; c.rt = c.rt||0;
@@ -3947,7 +3974,7 @@ function ratingOK(m, min, includeUnrated){          // declared, not const — p
 // The age slider lost its "Any" stop: the most-inclusive level (every certificate) IS "any", so it must
 // behave like one — including for the 2 titles that carry no certificate at all. Otherwise the default
 // would quietly drop films nobody asked to drop.
-const ageOpen = c => !(c.age||[]).length || c.age.length===AGE_LEVELS.length;
+const ageOpen = c => c.age!==null && (!c.age.length || c.age.length===AGE_LEVELS.length);
 // ---- Onboarding selectivity dials (CAS-114 / mock: 04-selectivity-three-dials.html) ----------------
 // Three independent gates the #4 step sets, each defaulting off (0/false) so a Cascade that never touched
 // them matches exactly as it did before. matchesCriteria wires them in below.
@@ -4034,10 +4061,13 @@ function matchesCriteria(m,c,ignoreBlocked){
   if(servicesPicked() && scopeOf(c)[primaryStatus(m)] && !matchesServices(m)) return false;
   if(c.status.length && !c.status.includes(primaryStatus(m))) return false;
   if((c.exclude||[]).length && (m.genres||[]).some(g=>c.exclude.includes(g))) return false;   // skip beats match
+  // CAS-182: cleared means cleared. A dimension holding null admits nothing, so the count says 0 rather
+  // than quietly reverting to the whole catalogue behind a screen of switched-off chips.
+  if(c.genre===null || c.age===null || c.lang===null) return false;
   if(c.genre.length && !(m.genres||[]).some(g=>c.genre.includes(g))) return false;
   if(!ageOpen(c) && !c.age.includes(m.age_rating)) return false;
   if((c.year||[]).length && !c.year.includes(yearOf(m))) return false;
-  if((c.lang||[]).length && !c.lang.includes(m.language)) return false;
+  if(c.lang.length && !c.lang.includes(m.language)) return false;
   if((c.culture||[]).length && !c.culture.includes(m.culture)) return false;
   if(c.awards && !m.award) return false;
   if(!ratingOK(m, c.imdb||0, c.includeUnrated)) return false;
@@ -4840,27 +4870,20 @@ function commitDraft(){
     selCrowd:draft.selCrowd, selCritics:draft.selCritics, selScale:draft.selScale, selBuzz:draft.selBuzz, selOr:draft.selOr,
     awards:draft.awards, myServices:{...draft.myServices},
     excludeWatched:draft.excludeWatched, excludeBlocked:draft.excludeBlocked,
-    sort:draft.sort||"imdb", alerts:draft.alerts, watchWindows:draft.watchWindows});
+    sort:draft.sort||"imdb", alerts:draft.alerts, watchWindows:draft.watchWindows,
+    yearStop:draft.yearStop, kind:draft.kind});
   normCascade(c);
   if(isNew) cascades.push(c);
   saveCascades(); setActive(c.id); applyCascade(c);
   // The template key and the shape of the radar — never its name, which is the one thing the user typed.
   logEvent(isNew?"cascade_created":"cascade_edited",
-    {key:c.template||"custom", windows:c.status.length||"all", genres:c.genre.length, rating:c.ratingStop,
+    {key:c.template||"custom", windows:c.status.length||"all", genres:(c.genre||[]).length, rating:c.ratingStop,
      mine:HOME_KEYS.filter(k=>scopeOf(c)[k]).length, matches:countCriteria(c)});
   return {c, isNew};
 }
-window.editCascade=()=>{
-  const c=activeCascade(); if(!c) return;
-  draft=JSON.parse(JSON.stringify(c));
-  draft.alerts={...ALERT_DEFAULTS, ...(draft.alerts||{})};
-  // Editing something you already saved: every bell on it is already YOUR decision, so mark them all
-  // touched. The auto-select then only ever forces off what has become unreachable — it will not
-  // re-light alerts you deliberately turned off the last time you were in here (CAS-103 AC2).
-  draft.alertsTouched={}; Object.keys(draft.alerts).forEach(k=>{ draft.alertsTouched[k]=true; });
-  openEditor("Edit Cascade");
-  openModal($("builder"));
-};
+// CAS-182: Edit opens the Agent Briefing — the same screens the flow set the agent up with, read back off
+// the agent. The pre-0.8 builder modal stays the path for "+ New Cascade", shared links and nlDraft.
+window.editCascade=()=>{ const c=activeCascade(); if(c) briefOpen(c.id); };
 // ---- Editor: Zone A, the availability spine ------------------------------------
 // The invariant: "All" is ON exactly when draft.status is empty (= watch every window). Turning All OFF
 // doesn't narrow anything on its own, so it lights every specific row instead — same films, now editable.
@@ -5219,7 +5242,7 @@ function buildQuality(){
 }
 // No "Any" stop any more: an empty age list (older Cascades, and templates that never set one) still means
 // "everything", so it seats at the top level — which is exactly what everything means.
-const ageSel = () => draft.age.length ? Math.max(...draft.age.map(a=>AGE_LEVELS.indexOf(a))) : AGE_LEVELS.length-1;
+const ageSel = () => (draft.age||[]).length ? Math.max(...draft.age.map(a=>AGE_LEVELS.indexOf(a))) : AGE_LEVELS.length-1;
 function setAge(i){ draft.age = AGE_LEVELS.slice(0, Math.max(0,i)+1); syncQuality(); refreshDraft(); }
 function syncQuality(){
   const stop=RATING_STOPS[draft.ratingStop];
@@ -5244,9 +5267,9 @@ function syncQuality(){
       <button class="qpill" id="cRtClear" type="button" style="margin-left:4px">Clear</button>`;
     $("cRtClear").onclick=()=>{ draft.rt=0; syncQuality(); refreshDraft(); };
   }
-  $("cGenreCap").textContent=draft.genre.length?`${draft.genre.length} on`:"Any";
+  $("cGenreCap").textContent=(draft.genre||[]).length?`${draft.genre.length} on`:"Any";
   $("cExclCap").textContent=draft.exclude.length?`${draft.exclude.length} skipped`:"Nothing";
-  $("cLangCap").textContent=draft.lang.length?draft.lang.map(langName).join(", "):"Any";
+  $("cLangCap").textContent=(draft.lang||[]).length?draft.lang.map(langName).join(", "):"Any";
   $("cCultCap").textContent=draft.culture.length?draft.culture.join(", "):"Any";
   $("cYearCap").textContent=draft.year.length
     ? (draft.year.length===EARLIER_YEARS.length && !draft.year.includes(CURRENT_YEAR) ? "Earlier years" : draft.year.length+" on")
@@ -5647,7 +5670,12 @@ window.pickStarter=key=>{
   // Commit is deferred to finishSharpSequence so the payoff shows the sharpened agent, not the raw card.
   onbFlow.draft = normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
   onbFlow.name = s.name;
-  onbFlow.yearStop = YEAR_DEFAULT;   // Any — every year in (CAS-116)
+  onbFlow.draft.kind = flowKind;     // CAS-182: the priority answer rides on the agent
+  // The shipped taste defaults, verbatim — exactly what each screen's copy assumes when it opens, and the
+  // same four starterPreview() counts the card against, so the card's number and the flow's first count
+  // are the same measurement.
+  onbFlow.draft.genre = []; onbFlow.draft.age = []; onbFlow.draft.lang = ["en"];
+  onbFlow.draft.yearStop = 0;        // Any — every year in (CAS-116)
   // CAS-144: the dials OPEN ON THE AGENT'S OWN STANDARD, not fully open. The card you just tapped quoted a
   // number ("14 films match now"); landing on a hub that says 442 because its dials were reset would make one
   // of those two screens a liar. So the preset's standard seeds the stops, and the hub's count is the count
@@ -5664,7 +5692,9 @@ window.pickStarter=key=>{
   // status, both are counting that standard over every window (the CAS-144 invariant), and the number moves
   // only once the user picks. A previous answer for this same agent still wins; a different agent's never
   // leaks across.
-  onbFlow.watch = loadWatch(s.key) || {};
+  // CAS-188/182: the priority answer is the starting point for WHERE this agent watches, so choosing
+  // "the cinema" really does put the agent in cinemas. A previous answer for this same agent still wins.
+  onbFlow.watch = loadWatch(s.key) || JSON.parse(JSON.stringify(PRIORITY_WATCH[flowKind]||{}));
   // The #4 selectivity dials own the crowd/critics/scale bars from here on, defaulting fully open, so zero the
   // pick's own IMDb bar — otherwise its preset would mask the People's-vote dial. Same supersede rule the
   // genres/age steps already follow: the sharpening screen is the single source for the axis it owns.
@@ -5993,7 +6023,7 @@ const voteSay = v => v<VOTE_OFF ? null : `scored ${v.toFixed(1)}+ by viewers`;
 // language and age, and once those three moved to the account-level taste baseline nothing read them any
 // more — onbApply has cleared d.genre/d.lang/d.age since CAS-146, so the screens that wrote them were
 // screens with no effect. The Style / Language / Ratings steps now edit `tasteBase` itself.
-const onbFlow = {draft:null, name:ONB_DEFAULT_NAME, yearStop:null,
+const onbFlow = {draft:null, name:ONB_DEFAULT_NAME,
                  voteVal:VOTE_MIN, criticsStop:0, scaleVal:0, buzzStop:0, selOr:false,   // #4 dials (CAS-114/145/166)
                  barTouched:false, barAutoRelaxed:null,   // CAS-158 first-open state
                  watch:{},                                 // CAS-160 viewing windows: {lane: [optKey,…]}
@@ -6174,10 +6204,10 @@ function autoRelaxBar(){
 }
 function onbApply(){
   const d=onbFlow.draft;
-  // CAS-146: genres / how-far-back / language / age moved OUT of the per-agent draft and into the
-  // account-level taste baseline, which matchesCriteria applies to every agent. Writing them here too
-  // would apply the same narrowing twice and make the agent's own criteria look narrower than they are.
-  d.genre = []; d.year = []; d.lang = []; d.age = [];
+  // CAS-182: genre / language / age / how-far-back are the AGENT's again (see dT() above), so they are
+  // left exactly as the flow's own screens set them. `year` is derived from the rung the how-far-back
+  // slider is on, because a year window has to be a real list of catalogue years for the count to be real.
+  d.year = onbYearsApply();
   d.name = (onbFlow.name||"").trim() || ONB_DEFAULT_NAME;
   // #4 selectivity (CAS-114): the dials own the crowd/critics/scale bars, as their own fields so the other
   // steps' seed rating is untouched. selCrowd is a raw IMDb bar; the two stop fields and the OR flag drive
@@ -6199,11 +6229,11 @@ const onbCount = () => watchCount(onbApply());
 // The genre clause, shared by the summary and the genres step. All-on and all-off both mean "any" here — an
 // empty include-list matches every genre — so both read as "anything you'll love", and the copy never
 // disagrees with the count (honesty guardrail).
-// CAS-188: read off the taste baseline, which is where genres actually live (CAS-146) — the summary used to
-// quote onbFlow.genresOn, a copy nothing had written since that move.
+// CAS-182: read off the AGENT, which is where genres live again — the summary used to quote
+// onbFlow.genresOn, a copy nothing had written since CAS-146 moved them to the account baseline.
 function onbGenrePhrase(){
-  const g=tasteBase.genres;
-  if(tbNone(g)) return "nothing — no genres are selected";
+  const g=dT().genre;
+  if(g===null) return "nothing — no genres are selected";
   return !g.length ? "anything you'll love" : g.map(esc).join(", ");
 }
 // ---- Release years (#6, reworked CAS-116 2026-07-21) ----------------------------------------------
@@ -6333,12 +6363,14 @@ function stepCountHTML(step, n){
   return `<div class="oscount" id="onbStepCount" aria-live="polite"><b>${n}</b> film${n===1?"":"s"} match right now</div>`;
 }
 function yearFloor(i){ const y=YEAR_STOPS[i].years; return y==null ? null : (+CURRENT_YEAR)-(y-1); }
+// CAS-182: the rung lives on the agent (draft.yearStop), so how-far-back round-trips with everything else.
+const flowYearStop = () => { const v=dT().yearStop; return (typeof v==="number") ? v : YEAR_DEFAULT; };
 function onbYearsApply(){
-  const fl=yearFloor(onbFlow.yearStop!=null?onbFlow.yearStop:YEAR_DEFAULT);
+  const fl=yearFloor(flowYearStop());
   return fl==null ? [] : ALL_YEARS.filter(y=>+y>=fl);
 }
 function onbYearPhrase(){
-  const i=onbFlow.yearStop!=null?onbFlow.yearStop:YEAR_DEFAULT, y=YEAR_STOPS[i].years;
+  const i=flowYearStop(), y=YEAR_STOPS[i].years;
   if(y==null) return "from any year";
   if(y===1)   return "released this year";
   return `from the last ${y} years`;
@@ -6348,15 +6380,18 @@ function onbYearPhrase(){
 // and an empty selection means "any language" — so deselecting even English widens rather than dead-ends.
 const LANG_OPTS = ["en","ko","ja","zh","fr","es","hi","it","de","th","sv","pt"];
 function onbLangPhrase(){
-  const l=tasteBase.langs;
-  if(tbNone(l)) return "films in <b>no language you've kept</b>";
+  const l=dT().lang;
+  if(l===null) return "films in <b>no language you've kept</b>";
   if(!l.length) return "films in <b>any language</b>";
   return `<b>${l.map(langName).join(", ")}-language</b> films`;
 }
 // ---- Age rating (#8) ------------------------------------------------------------------------------
 // "Up to and including" the chosen level; the top stop (R 18+) includes everything, which is the default.
 // The ladder is the catalogue's real ratings, so the include-list always lines up with the data.
-function onbAgePhrase(){ return tbSumAge().toLowerCase(); }
+function onbAgePhrase(){
+  const a=dT().age;
+  return a===null ? "no ratings" : (!a.length || a.length===AGE_LEVELS.length) ? "all ratings" : a.join(", ");
+}
 // The combined "What this does" line (CAS-114, reworked). Honest and live: names only the dials that are set,
 // joins them with "or" (they combine with OR — a film needs to clear only one), and always carries the real
 // count. When a score dial is active it appends a set-aside note, because a score dial can only judge titles
@@ -6557,66 +6592,71 @@ function tbSumLangs(){
   const first=langName(l[0]);
   return l.length===1 ? first : `${first} +${l.length-1}`;
 }
+// The baseline's age row is a lo..hi BAND (the drag control), so "cleared" there is hi < lo. The flow's
+// ratings screen is a list and has its own test; these two are different controls on different screens.
+const ageEmpty = () => tasteBase.ageHi < tasteBase.ageLo;
 function tbSumAge(){
   const {ageLo:lo, ageHi:hi}=tasteBase, last=AGE_LEVELS.length-1;
   if(ageEmpty()) return "None selected";
   if(lo===0 && hi===last) return `Anything (${AGE_LEVELS[0]} to ${AGE_LEVELS[last]})`;
   return lo===hi ? `${AGE_LEVELS[lo]} only` : `${AGE_LEVELS[lo]} to ${AGE_LEVELS[hi]}`;
 }
-// ---- CAS-188: the age range, as a row of segments -------------------------------------------------
-// The baseline stores age as a CONTIGUOUS range (ageLo…ageHi), which is what the taste-baseline drag band
-// draws. The flow asks the same question as a row of taps, so a tap has to resolve to a range: outside the
-// range it stretches to reach you, on an edge it trims that edge, and in the middle it trims whichever edge
-// is nearer. Turning the last one off clears the row outright (ageHi < ageLo), which the count then reports
-// honestly as nothing rather than quietly reverting to everything.
-const ageEmpty = () => tasteBase.ageHi < tasteBase.ageLo;
-const ageOnAt  = k => !ageEmpty() && k>=tasteBase.ageLo && k<=tasteBase.ageHi;
-function ageToggle(k){
-  const last=AGE_LEVELS.length-1;
-  let lo=tasteBase.ageLo, hi=tasteBase.ageHi;
-  if(ageEmpty())        { lo=hi=k; }
-  else if(!ageOnAt(k))  { if(k<lo) lo=k; else hi=k; }
-  else if(lo===hi)      { lo=0; hi=-1; }
-  else if(k===lo)       { lo=k+1; }
-  else if(k===hi)       { hi=k-1; }
-  else                  { (k-lo <= hi-k) ? lo=k+1 : hi=k-1; }
-  tasteBase.ageLo=Math.max(0, Math.min(last, lo));
-  tasteBase.ageHi=Math.min(last, hi);
-  saveTasteBase();
+// ---- CAS-182: the agent's own taste dimensions ----------------------------------------------------
+// CAS-188 pointed Style / Language / Ratings at the account-level taste baseline, because that is where
+// CAS-146 had put genre, language and age. v0.8's model is the prototype's, and it is per-agent: the
+// Account screen holds per-kind DEFAULTS and every agent carries its own copy seeded from them. That is
+// what makes the Briefing's rows editable per agent, and what makes "whatever you set during onboarding is
+// saved on the Cascade" true rather than true-of-the-account. So these four screens edit the DRAFT — the
+// same object the Briefing hands them when you open a saved agent, which is why one set of screens serves
+// both first-run and edit.
+// The three-state convention is the baseline's, unchanged: null = none · [] = the filter is off · [..] =
+// exactly those. "Filter off" is deliberately not the same as listing every option — 188 films carry no
+// genre at all and 186 are in a language outside the twelve we list, and a filter that is off must not
+// drop them.
+const dT = () => onbFlow.draft || {};
+const dSet = (v, all) => new Set(v===null ? [] : (v||[]).length ? v : all);
+const dGenreSet = () => dSet(dT().genre, ONB_GENRES);
+const dLangSet  = () => dSet(dT().lang,  LANG_OPTS);
+const dAgeSet   = () => dSet(dT().age,   AGE_LEVELS);
+// Ratings are a LIST, not a range, so each one is independently in or out and a tap means exactly what it
+// looks like. (The taste-baseline accordion keeps its lo..hi band; that is a different control on a
+// different screen, and this one no longer has to pretend a tap is a drag.)
+const dAgeOn = k => dAgeSet().has(AGE_LEVELS[k]);
+function dAgeToggle(k){
+  const on=dAgeSet(), a=AGE_LEVELS[k];
+  on.has(a) ? on.delete(a) : on.add(a);
+  // Stored in AGE_LEVELS order, so two agents holding the same ratings hold the same array (cascSigOf
+  // compares them by JSON, and duplicate detection would miss a reordering).
+  onbFlow.draft.age = tbStore(new Set(AGE_LEVELS.filter(x=>on.has(x))), AGE_LEVELS);
 }
-// One "select all / clear all" for all three baseline rows the flow asks about, so the three screens can
-// never mean three different things by the same pair of words. `[]` = the filter is off (which is NOT the
-// same as listing every option: 188 films carry no genre at all, and a filter that is off must not drop
-// them); `null` = explicitly none. See the CAS-165 note on baseDefaults.
-window.tbSetAll=(key,on)=>{
-  if(key==="genres")     tasteBase.genres = on ? [] : null;
-  else if(key==="langs") tasteBase.langs  = on ? [] : null;
-  else { tasteBase.ageLo=0; tasteBase.ageHi = on ? AGE_LEVELS.length-1 : -1; }
-  saveTasteBase();
+// One "select all / clear all" for every picker in the flow, so three screens can never mean three
+// different things by the same pair of words.
+window.flowSetAll=(key,on)=>{
+  if(!onbFlow.draft) return;
+  onbFlow.draft[key] = on ? [] : null;
   renderOnbStep(onbStepKey);
 };
-// The selection lines under each of the three. Plain lines, never boxes (buildspec §8), each stating what
-// is selected and the one live count — off tasteBaseCount(), the same call the step's Continue counts.
-// The count these three screens quote is the AGENT's, not the baseline's — the same number the bar step
-// before them and the Continue button beside them show. Both are true, but printing 21 on one screen and
-// 769 on the next reads as a contradiction rather than as two measurements (the CAS-175 lesson). Narrowing
-// the baseline still moves it, because matchesCriteria applies passesTasteBase before anything else.
+// The selection lines under each picker. Plain lines, never boxes (buildspec §8): each states what is
+// selected and the ONE live count — the agent's own, the same number the step's Continue shows and the
+// same one the bar step before them showed. Printing the agent's 21 on one screen and the baseline's 769
+// on the next is two true measurements that read as a contradiction (the CAS-175 lesson).
 const flowCount = () => onbFlow.draft ? onbCount() : tasteBaseCount();
+const flowCnt = n => `<span class="cnt">${n} film${n===1?"":"s"}</span> match right now.`;
 function styleSayHTML(){
-  const g=tasteBase.genres, n=flowCount();
-  const what = tbNone(g) ? "no genres" : !g.length ? "all genres" : `${g.length} genre${g.length===1?"":"s"}`;
-  return `Drawing from <b>${what}</b> · <span class="cnt">${n} film${n===1?"":"s"}</span> match right now.`;
+  const g=dT().genre, n=flowCount();
+  const what = g===null ? "no genres" : !g.length ? "all genres" : `${g.length} genre${g.length===1?"":"s"}`;
+  return `Drawing from <b>${what}</b> · ${flowCnt(n)}`;
 }
 function langSayHTML(){
-  const l=tasteBase.langs, n=flowCount();
-  const what = tbNone(l) ? "no languages" : !l.length ? "any language" : l.map(langName).join(", ");
-  return `Watching in <b>${esc(what)}</b> · <span class="cnt">${n} film${n===1?"":"s"}</span> match right now.`;
+  const l=dT().lang, n=flowCount();
+  const what = l===null ? "no languages" : !l.length ? "any language" : l.map(langName).join(", ");
+  return `Watching in <b>${esc(what)}</b> · ${flowCnt(n)}`;
 }
 function ageSayHTML(){
-  const n=flowCount(), last=AGE_LEVELS.length-1, {ageLo:lo, ageHi:hi}=tasteBase;
-  const what = ageEmpty() ? "no ratings" : (lo===0 && hi===last) ? "all ratings"
-             : lo===hi ? AGE_LEVELS[lo] : `${AGE_LEVELS[lo]} to ${AGE_LEVELS[hi]}`;
-  return `Including <b>${esc(what)}</b> · <span class="cnt">${n} film${n===1?"":"s"}</span> match right now.`;
+  const a=dT().age, n=flowCount();
+  const what = a===null ? "no ratings" : !a.length || a.length===AGE_LEVELS.length ? "all ratings"
+             : a.join(", ");
+  return `Including <b>${esc(what)}</b> · ${flowCnt(n)}`;
 }
 const TB_ROWS = [
   {key:"genres", icon:"🎭", label:"Genres",        sum:tbSumGenres},
@@ -6882,6 +6922,33 @@ const SHARP_STEPS = {
     },
     wire(){ drawWatchLanes(); },
   },
+  // ---- CAS-182 / CAS-208: the Agent Briefing ---------------------------------------------------------
+  // The edit screen is a HUB — one titled row per setting, each carrying that setting's current value read
+  // off the agent itself, each opening the very screen the flow used to set it. One set of controls serves
+  // first-run and edit, so the two can never drift into saying different things about the same setting.
+  briefing: {
+    hub: true, noAgent: true,
+    body(){
+      const d=onbFlow.draft||{}, stream = d.kind==="stream";
+      const row=(icon,label,sum,step)=>`<button type="button" class="osdoor" onclick="briefGo('${step}')">
+          <span class="di">${icon}</span>
+          <span class="dt"><span class="dh">${label}</span><span class="ds">${esc(sum)}</span></span>
+          <span class="dc">›</span></button>`;
+      return `<h2 class="osh">${stream?"Streaming":"Cinema"} Agent Briefing</h2>
+        <p class="ossub">Everything's on this page — dip into any section to change it, or just save.</p>
+        <div class="edoors">
+          ${row("✏️","Agent name",         onbFlow.name || d.name || "Unnamed", "name")}
+          ${row("⚙️","Agent settings",     hubWatchSummary(),                   "watching")}
+          ${row("🎚️","Set your bar",       hubBarSummary(),                     "selectivity")}
+          ${row("🎭","Genres",             briefSum("genre"),                   "genres")}
+          ${stream ? row("🕰️","How far back", YEAR_STOPS[flowYearStop()].label, "years") : ""}
+          ${row("💬","Language",           briefSum("lang"),                    "language")}
+          ${row("🔞","Age rating",         briefSum("age"),                     "age")}
+          ${stream ? row("📺","Streaming services", briefServicesSum(), "services") : ""}
+        </div>
+        <div class="osfoot"><button class="oscta" type="button" onclick="briefSave()">Save agent</button></div>`;
+    },
+  },
   // ---- CAS-188 #1: what are you here for? -----------------------------------------------------------
   // The one question that has to come first, because it is the only one that changes what the rest of the
   // flow asks. It is a starting point, not a commitment — said out loud on the screen, because a fork this
@@ -6914,9 +6981,9 @@ const SHARP_STEPS = {
     },
   },
   // ---- Style (genres) -------------------------------------------------------------------------------
-  // CAS-188: this screen edits the account-level TASTE BASELINE, which is where genres have lived since
-  // CAS-146. Until now it wrote onbFlow.genresOn, a field onbApply stopped reading when that move landed —
-  // so the screen looked like it worked and changed nothing about the agent it was setting up.
+  // CAS-182: this screen edits the AGENT's own genres. They lived on the account taste baseline from
+  // CAS-146, and CAS-182 brought them back to the agent. Before CAS-188 this screen wrote onbFlow.genresOn,
+  // a field onbApply had stopped reading — so it looked like it worked and changed nothing.
   genres: {
     progress: 30,
     noAgent: true,
@@ -6925,13 +6992,13 @@ const SHARP_STEPS = {
         <p class="ossub">Which genres should your agent draw from?</p>
         <div class="chips" id="onbStepGenres"></div>
         <div class="tbq tbqmin">
-          <button type="button" class="q" onclick="tbSetAll('genres',true)">Select all</button>
-          <button type="button" class="q" onclick="tbSetAll('genres',false)">Clear all</button></div>
+          <button type="button" class="q" onclick="flowSetAll('genre',true)">Select all</button>
+          <button type="button" class="q" onclick="flowSetAll('genre',false)">Clear all</button></div>
         <p class="ossumline" id="onbStepSay">${styleSayHTML()}</p>`;
     },
     wire(){
       const box=$("onbStepGenres"); if(!box) return;
-      const on=tbGenreSet();
+      const on=dGenreSet();
       box.innerHTML="";
       ONB_GENRES.forEach(g=>{
         const c=document.createElement("button");
@@ -6941,7 +7008,7 @@ const SHARP_STEPS = {
         c.innerHTML=`${esc(g)} <span style="opacity:.55">· ${GENRE_COUNT[g]||0}</span>`;
         c.onclick=()=>{
           on.has(g) ? on.delete(g) : on.add(g);
-          tasteBase.genres = tbStore(on, ONB_GENRES); saveTasteBase();
+          onbFlow.draft.genre = tbStore(new Set(ONB_GENRES.filter(x=>on.has(x))), ONB_GENRES);
           c.classList.toggle("on", on.has(g)); c.setAttribute("aria-pressed", String(on.has(g)));
           const s=$("onbStepSay"); if(s) s.innerHTML=styleSayHTML();
           onbRefresh();
@@ -6959,13 +7026,13 @@ const SHARP_STEPS = {
         <p class="ossub">Which languages are you happy to watch in?</p>
         <div class="chips" id="onbStepLangs"></div>
         <div class="tbq tbqmin">
-          <button type="button" class="q" onclick="tbSetAll('langs',true)">Select all</button>
-          <button type="button" class="q" onclick="tbSetAll('langs',false)">Clear all</button></div>
+          <button type="button" class="q" onclick="flowSetAll('lang',true)">Select all</button>
+          <button type="button" class="q" onclick="flowSetAll('lang',false)">Clear all</button></div>
         <p class="ossumline" id="onbStepSay">${langSayHTML()}</p>`;
     },
     wire(){
       const box=$("onbStepLangs"); if(!box) return;
-      const on=tbLangSet();
+      const on=dLangSet();
       box.innerHTML="";
       LANG_OPTS.forEach(code=>{
         const c=document.createElement("button");
@@ -6975,7 +7042,7 @@ const SHARP_STEPS = {
         c.textContent=langName(code);
         c.onclick=()=>{
           on.has(code) ? on.delete(code) : on.add(code);
-          tasteBase.langs = tbStore(on, LANG_OPTS); saveTasteBase();
+          onbFlow.draft.lang = tbStore(new Set(LANG_OPTS.filter(x=>on.has(x))), LANG_OPTS);
           c.classList.toggle("on", on.has(code)); c.setAttribute("aria-pressed", String(on.has(code)));
           const s=$("onbStepSay"); if(s) s.innerHTML=langSayHTML();
           onbRefresh();
@@ -7011,18 +7078,18 @@ const SHARP_STEPS = {
       return `<h2 class="osh">Ratings</h2>
         <p class="ossub">Which ratings can your agent include? Tap to remove any you don't want.</p>
         <div class="loz" id="onbStepAges" role="group" aria-label="Ratings">
-          ${AGE_LEVELS.map((a,k)=>`<button type="button" class="${ageOnAt(k)?"fill":""}" data-i="${k}"
-             aria-pressed="${ageOnAt(k)}">${esc(a)}</button>`).join("")}
+          ${AGE_LEVELS.map((a,k)=>`<button type="button" class="${dAgeOn(k)?"fill":""}" data-i="${k}"
+             aria-pressed="${dAgeOn(k)}">${esc(a)}</button>`).join("")}
         </div>
         <div class="tbq tbqmin">
-          <button type="button" class="q" onclick="tbSetAll('age',true)">Select all</button>
-          <button type="button" class="q" onclick="tbSetAll('age',false)">Clear all</button></div>
+          <button type="button" class="q" onclick="flowSetAll('age',true)">Select all</button>
+          <button type="button" class="q" onclick="flowSetAll('age',false)">Clear all</button></div>
         <p class="ossumline" id="onbStepSay">${ageSayHTML()}</p>`;
     },
     wire(){
       const box=$("onbStepAges"); if(!box) return;
       [...box.children].forEach(b=>{
-        b.onclick=()=>{ ageToggle(+b.dataset.i); renderOnbStep("age"); };
+        b.onclick=()=>{ dAgeToggle(+b.dataset.i); renderOnbStep("age"); };
       });
     },
   },
@@ -7075,7 +7142,7 @@ const SHARP_STEPS = {
     // The app's rich slider (CAS-116): dotted track + circle stops drawn under a real range input, labels
     // below. Recent-weighted stops (This year → Any); the window at or beyond the picked stop is "lit".
     body(){
-      const i=onbFlow.yearStop!=null?onbFlow.yearStop:YEAR_DEFAULT;
+      const i=flowYearStop();
       return `<h2 class="osh">How far back?</h2>
         <p class="ossub">From all-time classics to this week's releases — everything's in by default.</p>
         <div class="osslider">
@@ -7091,11 +7158,12 @@ const SHARP_STEPS = {
     wire(){
       const r=$("onbStepYears"); if(!r) return;
       r.oninput=()=>{
-        onbFlow.yearStop=+r.value;
-        const ex=$("onbStepYearExplain"); if(ex) ex.innerHTML=onbYearExplain(onbFlow.yearStop);
+        const v=+r.value;
+        if(onbFlow.draft) onbFlow.draft.yearStop=v;
+        const ex=$("onbStepYearExplain"); if(ex) ex.innerHTML=onbYearExplain(v);
         const dots=$("onbStep").querySelectorAll(".rstops i");
-        dots.forEach((el,k)=>el.classList.toggle("lit", k>=onbFlow.yearStop));   // CAS-139: fill toward the recent (right) end
-        const labs=$("onbStepYearLabels"); if(labs) [...labs.children].forEach((el,k)=>el.classList.toggle("lit", k===onbFlow.yearStop));
+        dots.forEach((el,k)=>el.classList.toggle("lit", k>=v));   // CAS-139: fill toward the recent (right) end
+        const labs=$("onbStepYearLabels"); if(labs) [...labs.children].forEach((el,k)=>el.classList.toggle("lit", k===v));
         onbRefresh();
       };
     },
@@ -7137,7 +7205,7 @@ function flowStart(){
   gotoStep("priority","none");
 }
 function flowStop(){
-  flowOn=false;
+  flowOn=false; briefOn=false;
   if(flowSlideT){ clearTimeout(flowSlideT); flowSlideT=null; endSlide(); }
   $("onbStep").classList.remove("open","chromed","sliding"); document.body.style.overflow="";
   $("stepHdr").hidden=true; $("stepNav").hidden=true;
@@ -7153,6 +7221,61 @@ function flowBack(){
   flowStop(); showSplash();                  // off the front of the flow → back out to the splash
 }
 window.flowPriority=kind=>{ flowKind=kind; logEvent("flow_priority",{kind}); flowNext(); };
+// ================= CAS-182 / CAS-208: the Agent Briefing =============================================
+// Editing an agent is the same set of screens the flow used to build it, hung off a hub instead of a line.
+// The draft is a COPY of the saved agent, so backing out changes nothing, and Save is the one moment the
+// agent on disk moves — which is also what makes the round-trip demonstrable: what you set in onboarding
+// is on the record, the Briefing reads it back off the record, and saving writes it there again.
+let briefOn=false;
+function briefOpen(id){
+  const c=cascades.find(x=>x.id===id); if(!c) return;
+  flowStop(); briefOn=true;
+  onbFlow.draft = normCascade(JSON.parse(JSON.stringify(c)));
+  onbFlow.name  = c.name || "";
+  // Every axis the flow owns is seeded off the agent, not off a default — a Briefing that opened on
+  // defaults would quietly rewrite the agent the moment you pressed Save.
+  onbFlow.voteVal     = c.selCrowd   || VOTE_MIN;
+  onbFlow.criticsStop = c.selCritics || 0;
+  onbFlow.scaleVal    = c.selScale   || 0;
+  onbFlow.buzzStop    = c.selBuzz    || 0;
+  onbFlow.selOr       = !!c.selOr;
+  onbFlow.barTouched  = true; onbFlow.barAutoRelaxed=null;   // a saved bar is already the user's decision
+  // watchWindows carries the finer moments (1 month out, past opening weekend) that `status` cannot
+  // express, so it wins where it exists; an agent saved before CAS-160 is read back off its status.
+  const w=c.watchWindows||{};
+  onbFlow.watch = Object.keys(w).length ? JSON.parse(JSON.stringify(w)) : watchFromStatus(c.status);
+  $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("briefing_opened",{id});
+  gotoStep("briefing","none");
+}
+let briefResume=null;
+window.briefGo=step=>{ logEvent("briefing_row",{step});
+  if(step==="services"){ briefResume=(onbFlow.draft||{}).id||null; briefClose(); openModal($("prefs")); return; }
+  gotoStep(step,"fwd"); };
+window.briefSave=()=>{
+  draft = onbApply();
+  const {c} = commitDraft();
+  briefClose();
+  showFoundList(); render();
+  toast(`✓ Saved — ${c.icon} ${esc(c.name)} is watching ${watchCount(c)} film${watchCount(c)===1?"":"s"}.`);
+  logEvent("briefing_saved",{id:c.id, matches:watchCount(c)});
+};
+function briefClose(){ briefOn=false; flowStop(); }
+// One row per setting, each read off the DRAFT so the row and the screen behind it cannot disagree.
+function briefSum(key){
+  const v=(onbFlow.draft||{})[key];
+  const all={genre:ONB_GENRES, lang:LANG_OPTS, age:AGE_LEVELS}[key];
+  const noneWord={genre:"No genres", lang:"No languages", age:"No ratings"}[key];
+  const allWord ={genre:"All genres", lang:"Any language", age:"All ratings"}[key];
+  if(v===null) return noneWord;
+  if(!v.length || v.length===all.length) return allWord;
+  if(key==="lang") return v.map(langName).join(", ");
+  return v.length<=3 ? v.join(", ") : `${v.length} of ${all.length}`;
+}
+function briefServicesSum(){
+  const n=prefs.sub.size+prefs.store.size;
+  return n ? `${n} service${n===1?"":"s"}` : "None picked yet";
+}
 window.flowNotify=(key,el)=>{
   onbFlow[key]=!onbFlow[key];
   el.classList.toggle("on", onbFlow[key]);
@@ -7217,17 +7340,21 @@ function renderOnbStep(key){
   // frame, so the step must not draw its own — two back arrows and two Continues on one screen is exactly
   // what the fixed chrome exists to remove. A standalone ?step= preview still draws both.
   const chromed = flowChromed(key);
+  // A Briefing spoke is one screen you came into and will come straight back out of, so it carries no
+  // progress rail (there is no sequence to be N-of) and its button says Done rather than Continue.
+  const spoke = briefOn && key!=="briefing";
   $("onbStepInner").innerHTML = `
     ${chromed ? "" : `<div class="ostop">
       <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
-      ${prog==null ? "" : `<div class="osprog"><i style="width:${prog}%"></i></div>`}
-      ${last?`<span class="oslast">LAST ONE</span>`:""}
+      ${(prog==null||spoke) ? "" : `<div class="osprog"><i style="width:${prog}%"></i></div>`}
+      ${(last&&!spoke)?`<span class="oslast">LAST ONE</span>`:""}
     </div>`}
     ${step.body()}
     ${step.noAgent ? "" : `<div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>`}
     ${(step.hub||chromed) ? "" : `<div class="osfoot">
-      <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${stepCtaText(step, n)}</button>
-      ${step.noSkip ? "" : `<button class="osskip" type="button" onclick="onbStepSkip()">${step.skip || "Skip — I'll set this up later"}</button>`}
+      <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${
+        spoke ? `Done${ctaCount(n)}` : stepCtaText(step, n)}</button>
+      ${(step.noSkip||spoke) ? "" : `<button class="osskip" type="button" onclick="onbStepSkip()">${step.skip || "Skip — I'll set this up later"}</button>`}
     </div>`}`;
   placeStepCount(step, n);
   if(step.wire) step.wire();
@@ -7268,7 +7395,7 @@ function selRefresh(){
 function openOnbStep(key, agentKey){
   if(!SHARP_STEPS[key]) return false;
   flowOn=false;     // a preview draws its own back arrow and footer, never the flow's fixed chrome
-  onbFlow.draft=onbSeedDraft(); onbFlow.name=ONB_DEFAULT_NAME; onbFlow.yearStop=YEAR_DEFAULT;
+  onbFlow.draft=onbSeedDraft(); onbFlow.name=ONB_DEFAULT_NAME; onbFlow.draft.yearStop=YEAR_DEFAULT;
   onbFlow.voteVal=VOTE_MIN; onbFlow.criticsStop=0; onbFlow.scaleVal=0; onbFlow.buzzStop=0; onbFlow.selOr=false;   // dials open
   onbFlow.barTouched=false; onbFlow.barAutoRelaxed=null;   // CAS-158: a fresh preview is a fresh first open
   // CAS-160: seed the viewing box off whatever the seed draft already watches, so a ?step= preview round-trips
@@ -7309,6 +7436,8 @@ function finishSharpSequence(){
 // on a ?step= preview it still walks that door backwards. Otherwise it just closes the preview.
 window.onbStepBack=()=>{
   if(flowOn) return flowBack();
+  // Inside the Briefing: a spoke drops back onto the hub; the hub itself closes without saving.
+  if(briefOn) return (onbStepKey==="briefing") ? briefClose() : gotoStep("briefing","back");
   if(onbDoor){
     onbDoorIdx--;
     if(onbDoorIdx<0) return onbCloseDoor(false);
@@ -7327,6 +7456,7 @@ window.onbStepSkip=()=>{
 window.onbStepContinue=()=>{
   logEvent("onbstep_continue",{step:onbStepKey, matches:onbFlow.draft?onbCount():null});
   if(flowOn) return flowNext();
+  if(briefOn) return gotoStep("briefing","back");   // a spoke's Done takes the change back to the hub
   if(onbDoor){
     onbDoorIdx++;
     if(onbDoorIdx>=HUB_DOORS[onbDoor].length) return onbCloseDoor(true);   // through it → confirmed
