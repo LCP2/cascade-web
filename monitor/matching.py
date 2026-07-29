@@ -46,11 +46,17 @@ class Hit:
     transition: object      # monitor.transitions.Transition
 
     def notification_row(self) -> dict:
+        # CAS-185: the ledger is the in-app delivery as well as the email de-dupe, so it carries
+        # what the bell needs to draw a row — the agent that caught the film and the film's title.
+        # Deriving those in the app would mean the bell going blank for a film that has since left
+        # the catalogue, and "we told you about this" is a fact about the past, not about today.
         return {
             "user_id": self.user_id,
             "cascade_id": self.cascade_id,
             "movie_id": self.transition.movie_id,
             "moment": self.transition.moment,
+            "cascade_name": self.cascade_name,
+            "title": self.transition.title,
         }
 
 
@@ -270,6 +276,50 @@ def match(cascades: list, transitions: list, already=None, catalogue=None, suppr
                 Hit(user_id=c["user_id"], cascade_id=c["id"],
                     cascade_name=c.get("name", "My Cascade"), transition=t))
     return by_user
+
+
+# --------------------------------------------------------------------------- #
+# delivery preferences (CAS-185)
+# --------------------------------------------------------------------------- #
+# A user who has never opened the notify screen has no row, and that is not the same as
+# "wants nothing": the app's own default is in-app on, email off, which is what these say.
+PREFS_DEFAULT = {"in_app": True, "email_on": False, "email_address": None, "excluded_moments": []}
+
+
+def prefs_for(prefs: dict, user_id: str) -> dict:
+    """The delivery preferences that apply to one user, defaults filled in."""
+    row = (prefs or {}).get(str(user_id)) or {}
+    out = dict(PREFS_DEFAULT)
+    for k in out:
+        if row.get(k) is not None:
+            out[k] = row[k]
+    return out
+
+
+def delivery_plan(pref: dict, email) -> str:
+    """What actually happens for one user on one run: "email", "inapp", "none" or "wait".
+
+    There are two deliveries and they fail differently, so the decision is stated once, here,
+    rather than inline in the run loop where the ledger write also lives:
+
+      email — the user asked for it and we have an address. The ledger is written only after the
+              send succeeds, so a failure is retried next run rather than silently marked done.
+      inapp — the ledger row IS the delivery. Nothing can fail, so it is written outright.
+      wait  — they asked for email and we have no address. Writing the ledger would mark the
+              alert delivered when nobody was told, so we write nothing and try again tomorrow.
+      none  — both channels off. Nothing sent AND nothing written: switching notifications on
+              later must not be met with silence about the thing that just happened.
+    """
+    pref = pref or {}
+    if pref.get("email_on"):
+        return "email" if email else "wait"
+    return "inapp" if pref.get("in_app") else "none"
+
+
+def excludes_from_prefs(prefs: dict) -> dict:
+    """{user_id: {moment, ...}} from a notify_prefs map — the same shape excluded_moments()
+    produces, so match() takes either without caring where the mute came from."""
+    return excluded_moments({u: (r or {}).get("excluded_moments") or [] for u, r in (prefs or {}).items()})
 
 
 def notification_rows(by_user: dict) -> list:

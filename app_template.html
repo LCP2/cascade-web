@@ -2312,6 +2312,19 @@ const expandedSet = new Set();   // which cards are expanded (session only)
 //   removed true                    → you took it off    → grey; and it stays off across every future re-run
 // cascadeIds is DERIVED — rewritten on every recompute — and is persisted only because it's part of the entry
 // the concept doc specifies. Nothing ever reads it back from storage as the truth about membership.
+// ---- CAS-185: how you want to be told -------------------------------------------------------------
+// One answer per person, not per agent: "do you want to hear from us, and where". It is written by the
+// onboarding notify step and by the setup sheet, and it is what the daily monitor reads to decide whether
+// to email, to leave an in-app alert, or to do neither. `email` is deliberately its own field and not
+// assumed to be the sign-in address — a person can sign in with one and want alerts at another.
+const NOTIFY_PREFS_KEY = "cascade_notifyprefs";
+const notifyPrefsDefault = () => ({inApp:true, emailOn:false, email:""});
+let notifyPrefs = notifyPrefsDefault();
+try{ const o=JSON.parse(localStorage.getItem(NOTIFY_PREFS_KEY)||"null");
+     if(o && typeof o==="object") notifyPrefs={...notifyPrefsDefault(), ...o}; }catch(e){}
+function saveNotifyPrefs(){
+  try{ localStorage.setItem(NOTIFY_PREFS_KEY, JSON.stringify(notifyPrefs)); }catch(e){}
+}
 const NOTIFY_KEY="cascade_notify";
 function loadNotify(){
   let n={};
@@ -2793,7 +2806,7 @@ function syncFilterUI(){
 }
 $("resetBtn").onclick=()=>{ setActive(ALL_ID); clearFilters(); syncFilterUI(); render(); };
 
-$("bell").onclick=()=>{$("overlay").classList.add("open");setTimeout(()=>$("drawer").classList.add("open"),10);
+$("bell").onclick=()=>{markRealAlertsRead();$("overlay").classList.add("open");setTimeout(()=>$("drawer").classList.add("open"),10);
   logEvent("alerts_opened",{unread:alerts.length});
   renderAlerts(); renderDigest();};   // the digest re-reads the poll each time: Cascade prefs may have changed since
 $("closeDrawer").onclick=closeDrawer;
@@ -6128,8 +6141,7 @@ const voteSay = v => v<VOTE_OFF ? null : `scored ${v.toFixed(1)}+ by viewers`;
 const onbFlow = {draft:null, name:ONB_DEFAULT_NAME,
                  voteVal:VOTE_MIN, criticsStop:0, scaleVal:0, buzzStop:0, selOr:false,   // #4 dials (CAS-114/145/166)
                  barTouched:false, barAutoRelaxed:null,   // CAS-158 first-open state
-                 watch:{},                                 // CAS-160 viewing windows: {lane: [optKey,…]}
-                 notifyInApp:true, notifyEmail:false, email:""};   // CAS-188 notify step
+                 watch:{}};                                // CAS-160 viewing windows: {lane: [optKey,…]}
 
 // ---- Where & when you'll watch (CAS-160) ----------------------------------------------------------------
 // The model change: availability stops being a fixed property of the preset and becomes the user's own
@@ -7223,19 +7235,20 @@ const SHARP_STEPS = {
     noAgent: true,
     cta: "Continue",
     body(){
-      const on=(k)=>onbFlow[k]?" on":"";
+      const on=k=>notifyPrefs[k]?" on":"";
       return `<h2 class="osh">How will your agent notify you about Movies?</h2>
-        <button type="button" class="bigtoggle${on("notifyInApp")}" onclick="flowNotify('notifyInApp',this)">
+        <button type="button" class="bigtoggle${on("inApp")}" onclick="flowNotify('inApp',this)">
           <span class="btmain">Allow in-app notifications</span><span class="btcheck">✓</span></button>
-        <button type="button" class="bigtoggle${on("notifyEmail")}" onclick="flowNotify('notifyEmail',this)">
+        <button type="button" class="bigtoggle${on("emailOn")}" onclick="flowNotify('emailOn',this)">
           <span class="btmain">Send me alerts by email</span><span class="btcheck">✓</span></button>
-        <div class="emailwrap${onbFlow.notifyEmail?" show":""}" id="onbEmailWrap">
+        <div class="emailwrap${notifyPrefs.emailOn?" show":""}" id="onbEmailWrap">
           <label class="nlbl" for="onbEmail">Your email</label>
           <input class="osfield" id="onbEmail" type="email" autocomplete="email" inputmode="email"
-                 placeholder="you@email.com" value="${escA(onbFlow.email||"")}"></div>`;
+                 placeholder="you@email.com" value="${escA(notifyPrefs.email||"")}"></div>`;
     },
     wire(){
-      const el=$("onbEmail"); if(el) el.oninput=()=>{ onbFlow.email=el.value; };
+      const el=$("onbEmail");
+      if(el) el.oninput=()=>{ notifyPrefs.email=el.value.trim(); saveNotifyPrefs(); };
     },
   },
   years: {
@@ -7488,10 +7501,11 @@ function briefServicesSum(){
   return n ? `${n} service${n===1?"":"s"}` : "None picked yet";
 }
 window.flowNotify=(key,el)=>{
-  onbFlow[key]=!onbFlow[key];
-  el.classList.toggle("on", onbFlow[key]);
-  if(key==="notifyEmail"){ const w=$("onbEmailWrap"); if(w) w.classList.toggle("show", onbFlow.notifyEmail); }
-  logEvent("flow_notify",{key, on:onbFlow[key]});
+  notifyPrefs[key]=!notifyPrefs[key];
+  saveNotifyPrefs();
+  el.classList.toggle("on", notifyPrefs[key]);
+  if(key==="emailOn"){ const w=$("onbEmailWrap"); if(w) w.classList.toggle("show", notifyPrefs.emailOn); }
+  logEvent("flow_notify",{key, on:notifyPrefs[key]});
 };
 // ---- the dual-pane slide ---------------------------------------------------------------------------
 // Both panes are real .osinner elements in the stage at the same time: the outgoing one keeps the content
@@ -8729,7 +8743,18 @@ function renderDigest(){
            ${own.length===1?"it":"them"} — so I tell you about every move ${own.length===1?"it makes":"they make"}.</div></div>`;
   el.innerHTML=html;
 }
-function updateBadge(){ const b=$("badge"); if(alerts.length){b.style.display="grid";b.textContent=alerts.length;}else b.style.display="none"; }
+// ---- CAS-185/213: the bell counts REAL alerts ------------------------------------------------------
+// `alerts` is the local day-simulation's output; `realAlerts` is the daily monitor's, read back out of the
+// `notifications` ledger the job writes. They are two different claims — one is "here is what would happen
+// if tomorrow came", the other is "here is what did happen" — so they are counted and drawn separately and
+// the badge counts the UNREAD real ones first. A badge that counted a simulation would be a fabricated
+// number on the one surface that has to be trustworthy.
+let realAlerts=[];            // [{id, movie_id, moment, title, cascade_name, emailed_at, read_at}]
+const unreadReal = () => realAlerts.filter(a=>!a.read_at).length;
+function updateBadge(){
+  const b=$("badge"), n=unreadReal() || alerts.length;
+  if(n){ b.style.display="grid"; b.textContent=n; } else b.style.display="none";
+}
 // ---- The alert, in the agent's voice (CAS-69) ----------------------------------
 // "Cascade found one — Dune just landed on Netflix, which you have." Every clause has to be earned:
 //   · "Cascade found one" only if a Cascade found the film. One YOU added says so instead — that film's Pick
@@ -8759,9 +8784,38 @@ function alertVoice(a){
       return `“${a.title}” moved to ${a.label}${svc?` on ${svc}`:""}.`;
   }
 }
+// The monitor's own moment keys, said the way the app says them everywhere else.
+const REAL_MOMENT_SAID = {
+  hits_cinema:"reached a cinema", past_opening_weekend:"is past its opening weekend",
+  hits_pvod:"is available to buy", hits_rent:"dropped to a rental price",
+  hits_stream:"landed on streaming",
+};
+const REAL_MOMENT_WINDOW = {
+  hits_cinema:"in_cinema", past_opening_weekend:"past_opening", hits_pvod:"pvod",
+  hits_rent:"rental", hits_stream:"included_streaming",
+};
+function realAlertsHTML(){
+  if(!realAlerts.length) return "";
+  const col={in_cinema:"#f0a336", past_opening:"#f0a336", pvod:"#a486f0",
+             rental:"#5aa9f0", included_streaming:"#48c78e"};
+  const rows=realAlerts.map(a=>{
+    const w=REAL_MOMENT_WINDOW[a.moment]||"rental", c=col[w]||"#5aa9f0";
+    const when=a.emailed_at ? new Date(a.emailed_at).toLocaleDateString() : "";
+    return `<div class="alert"${a.read_at?' style="opacity:.72"':''}>
+      <div class="t">${esc(a.title||"A film you're watching")}</div>
+      <div class="d">${esc(REAL_MOMENT_SAID[a.moment]||a.moment)}${when?` · ${when}`:""}</div>
+      <span class="w" style="background:${c}22;border:1px solid ${c}88;color:${c}">🔎 ${esc(a.cascade_name||"your Cascade")}</span>
+    </div>`;
+  }).join("");
+  return `<div class="dghead">From your agents</div>${rows}`;
+}
 function renderAlerts(){
   const el=$("alertsList");
-  if(!alerts.length){el.innerHTML='<div class="noalert">Nothing to report yet.<br>Cascade\'s out there watching — run a day forward to see what it finds.</div>';return;}
+  const real=realAlertsHTML();
+  if(!alerts.length){
+    el.innerHTML = real || '<div class="noalert">Nothing to report yet.<br>Cascade\'s out there watching — run a day forward to see what it finds.</div>';
+    return;
+  }
   const col={opening_week:"#ff6b6b",in_cinema:"#f0a336",past_opening:"#f0a336",pvod:"#a486f0",
              rental:"#5aa9f0",included_streaming:"#48c78e"};
   // Services aren't asked for up front any more (CAS-71), so until they're set we do NOT pretend to know which
@@ -8771,7 +8825,7 @@ function renderAlerts(){
     ? `<div class="dgempty" style="margin-bottom:10px">I don't know what you're paying for yet, so I'm telling you
         about <b>every</b> service. Tell me what you have and I'll only mention the ones you can actually watch on
         — and I'll price up what they're saving you.<br>${pickServicesCTA()}</div>` : "";
-  el.innerHTML=nudge+alerts.map(a=>`<div class="alert"><div class="t">${esc(a.title)}</div>
+  el.innerHTML=real+nudge+alerts.map(a=>`<div class="alert"><div class="t">${esc(a.title)}</div>
     <div class="d">${esc(alertVoice(a))} · day ${a.day}</div>
     <span class="w" style="background:${col[a.window]}22;border:1px solid ${col[a.window]}88;color:${col[a.window]}">→ ${a.label}</span>
     ${ux.on&&a.frame?`<div class="frame">${esc(a.frame)}</div>`:""}</div>`).join("");
@@ -9026,13 +9080,20 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
   window.addEventListener("cascade-auth-change", () => {
     const owner = uid();
     if(acct() && acct().status==="signed-in" && owner){
-      if(owner !== currentUser){ currentUser = owner; loadAccount(); loadAccountFilms(); }
+      if(owner !== currentUser){
+        currentUser = owner;
+        loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadRealAlerts();
+      }
     } else if(currentUser !== null){
-      currentUser = null; loadGuest(); loadGuestFilms();   // signed out → back to the on-device set
+      // Signed out → back to the on-device set, and the bell stops showing another account's news.
+      currentUser = null; loadGuest(); loadGuestFilms(); realAlerts=[]; updateBadge();
     }
   });
   // If a session was already restored before this listener attached, adopt it now.
-  if(accountActive()){ currentUser = uid(); loadAccount(); loadAccountFilms(); }
+  if(accountActive()){
+    currentUser = uid();
+    loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadRealAlerts();
+  }
 
   // ==========================================================================
   // CAS-183: watch status per account (`user_films`)
@@ -9117,8 +9178,104 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
     else saveWatchStatusLocal();
   };
 
+  // ==========================================================================
+  // CAS-185: notifications, both directions
+  // --------------------------------------------------------------------------
+  // UP   — how you want to be told (notify_prefs) and which films you have answered by hand
+  //        (film_picks). The daily job reads both: prefs decide whether it emails, leaves an
+  //        in-app alert, or does neither; an "off" pick means it says nothing about that film,
+  //        every run, until you change your mind. Both were device-local before this, which is
+  //        why the monitor's --prefs / --picks flags had no Supabase default.
+  // DOWN — the `notifications` ledger, which the job writes and only the owner can read. That
+  //        row IS the in-app alert; the bell draws it, and marking it read is the one write an
+  //        end user is allowed to make against that table.
+  // ==========================================================================
+  function prefsRow(){
+    return { user_id:uid(),
+             in_app:!!notifyPrefs.inApp,
+             email_on:!!notifyPrefs.emailOn,
+             email_address:(notifyPrefs.email||"").trim() || null,
+             excluded_moments:[...prefs.alertsOff] };
+  }
+  // Only the answers the USER gave travel. An auto entry is derivable from the Cascade that made
+  // it, so uploading it would be storing a conclusion next to its own premise — and the two would
+  // disagree the moment the Cascade changed.
+  function pickRows(){
+    const owner=uid(), out=[];
+    for(const id in notify){
+      const e=notify[id]||{};
+      const state = e.removed ? "off" : (e.source==="mine" ? "mine" : null);
+      if(state) out.push({user_id:owner, movie_id:String(id), state});
+    }
+    return out;
+  }
+  let notifyTimer=null;
+  function scheduleNotifySync(){ clearTimeout(notifyTimer); notifyTimer=setTimeout(runNotifySync, 500); }
+  async function runNotifySync(){
+    const c=client(), owner=uid(); if(!c||!owner) return;
+    try{
+      const { error:pe } = await c.from("notify_prefs").upsert([prefsRow()], { onConflict:"user_id" });
+      if(pe) console.warn("notify_prefs upsert", pe);
+      const rows=pickRows();
+      if(rows.length){
+        const { error } = await c.from("film_picks").upsert(rows, { onConflict:"user_id,movie_id" });
+        if(error) console.warn("film_picks upsert", error);
+      }
+      const ids=rows.map(r=>r.movie_id);
+      let del=c.from("film_picks").delete().eq("user_id", owner);
+      if(ids.length) del=del.not("movie_id","in","("+ids.map(x=>`"${x}"`).join(",")+")");
+      const { error:de } = await del;
+      if(de) console.warn("film_picks prune", de);
+    }catch(err){ console.warn("Cascade: notify sync failed", err); }
+  }
+  async function loadNotifyPrefs(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("notify_prefs").select("*").limit(1);   // RLS: only mine
+    if(error){ console.warn("notify_prefs load", error); return; }
+    const row=(data||[])[0];
+    if(!row){ scheduleNotifySync(); return; }   // no row yet — seed it from this device's answer
+    notifyPrefs.inApp   = row.in_app!==false;
+    notifyPrefs.emailOn = !!row.email_on;
+    notifyPrefs.email   = row.email_address || "";
+    saveNotifyPrefs();
+  }
+  // The bell's real contents. Newest first, and capped: a list nobody can reach the bottom of is
+  // not a list, it is a wall.
+  async function loadRealAlerts(){
+    const c=client(); if(!c||!accountActive()){ realAlerts=[]; updateBadge(); return; }
+    const { data, error } = await c.from("notifications")
+      .select("id,movie_id,moment,title,cascade_name,emailed_at,read_at")
+      .order("emailed_at", { ascending:false }).limit(50);
+    if(error){ console.warn("notifications load", error); return; }
+    realAlerts = data || [];
+    updateBadge();
+    if(typeof renderAlerts==="function") renderAlerts();
+  }
+  // Opening the bell is reading it. The rows stay — "we told you about this" is a fact about the
+  // past — they just stop counting toward the badge.
+  window.markRealAlertsRead = async () => {
+    const c=client(), owner=uid();
+    const unread=realAlerts.filter(a=>!a.read_at);
+    if(!unread.length) return;
+    const now=new Date().toISOString();
+    unread.forEach(a=>{ a.read_at=now; });
+    updateBadge();
+    if(!c||!owner) return;
+    const { error } = await c.from("notifications").update({read_at:now})
+      .eq("user_id", owner).is("read_at", null);
+    if(error) console.warn("notifications mark-read", error);
+  };
+  const saveNotifyLocal = saveNotify;
+  saveNotify = function(){ saveNotifyLocal(); if(accountActive()) scheduleNotifySync(); };
+  const saveNotifyPrefsLocal = saveNotifyPrefs;
+  saveNotifyPrefs = function(){ saveNotifyPrefsLocal(); if(accountActive()) scheduleNotifySync(); };
+  const savePrefsLocal = savePrefs;
+  savePrefs = function(){ savePrefsLocal(); if(accountActive()) scheduleNotifySync(); };
+
   window.CascadePersistence = { loadAccount, syncNow: runSync, accountActive, isUuid,
-                                loadAccountFilms, syncFilmsNow: runFilmSync, filmRows, applyFilmRows };
+                                loadAccountFilms, syncFilmsNow: runFilmSync, filmRows, applyFilmRows,
+                                loadNotifyPrefs, loadRealAlerts, syncNotifyNow: runNotifySync,
+                                prefsRow, pickRows };
 })();
 </script>
 

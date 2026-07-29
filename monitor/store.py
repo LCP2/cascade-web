@@ -12,6 +12,9 @@ Interface:
   fetch_active_cascades() -> list[cascade row]
   fetch_notification_keys() -> set[(cascade_id, movie_id, moment)]   # for de-dupe
   insert_notifications(rows) -> int                                  # ledger write; returns count
+  fetch_user_email(user_id) -> str | None
+  fetch_notify_prefs() -> {user_id: {in_app, email_on, email_address, excluded_moments}}  # CAS-185
+  fetch_picks() -> [{user_id, movie_id, state}]                                           # CAS-185
 """
 from __future__ import annotations
 
@@ -28,10 +31,12 @@ SERVICE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
 class InMemoryStore:
     """A store backed by plain Python lists — used for dry-run and tests."""
 
-    def __init__(self, cascades=None, notifications=None, emails=None):
+    def __init__(self, cascades=None, notifications=None, emails=None, prefs=None, picks=None):
         self._cascades = list(cascades or [])
         self._notifications = list(notifications or [])
         self._emails = dict(emails or {})
+        self._prefs = dict(prefs or {})
+        self._picks = list(picks or [])
 
     def fetch_active_cascades(self) -> list:
         return [c for c in self._cascades if c.get("active", True)]
@@ -46,6 +51,12 @@ class InMemoryStore:
 
     def fetch_user_email(self, user_id: str):
         return self._emails.get(user_id)
+
+    def fetch_notify_prefs(self) -> dict:
+        return dict(self._prefs)
+
+    def fetch_picks(self) -> list:
+        return list(self._picks)
 
 
 class SupabaseStore:
@@ -77,6 +88,17 @@ class SupabaseStore:
     def fetch_notification_keys(self) -> set:
         rows = self._get("/notifications?select=cascade_id,movie_id,moment")
         return {(r.get("cascade_id"), str(r.get("movie_id")), r.get("moment")) for r in rows}
+
+    def fetch_notify_prefs(self) -> dict:
+        """user_id -> the user's delivery preferences (CAS-185). A user with no row is not an
+        error and not a default-off: they simply have not answered, and PREFS_DEFAULT applies."""
+        rows = self._get("/notify_prefs?select=user_id,in_app,email_on,email_address,excluded_moments")
+        return {str(r.get("user_id")): r for r in rows if r.get("user_id")}
+
+    def fetch_picks(self) -> list:
+        """Every hand-answer on a film, for every user (CAS-100). Only the 'off' rows suppress —
+        see matching.suppressed_pairs — but both are fetched so the caller does the deciding."""
+        return self._get("/film_picks?select=user_id,movie_id,state")
 
     def fetch_user_email(self, user_id: str):
         """Resolve a user_id to their email via the Auth admin API (service_role only).

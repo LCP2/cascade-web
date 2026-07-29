@@ -165,7 +165,13 @@ class MatchTests(unittest.TestCase):
         rows = notification_rows(self._match())
         self.assertEqual(len(rows), 4)
         for r in rows:
-            self.assertEqual(set(r), {"user_id", "cascade_id", "movie_id", "moment"})
+            # CAS-185: the ledger is the in-app delivery too, so a row also carries the agent
+            # that caught the film and the film's title — enough for the bell to draw itself
+            # without re-deriving anything from a catalogue that has moved on since.
+            self.assertEqual(set(r), {"user_id", "cascade_id", "movie_id", "moment",
+                                      "cascade_name", "title"})
+            self.assertTrue(r["title"])
+            self.assertTrue(r["cascade_name"])
 
     # ---- store round-trip (in-memory) drives the same de-dupe ----
     def test_inmemory_store_write_then_dedupe(self):

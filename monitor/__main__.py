@@ -28,7 +28,8 @@ import json
 import sys
 
 from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notification_rows,
-               render_digest, send_via_resend, suppressed_pairs, excluded_moments)
+               render_digest, send_via_resend, suppressed_pairs, excluded_moments,
+               prefs_for, excludes_from_prefs, delivery_plan)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
 from .store import InMemoryStore, store_from_env
 
@@ -51,14 +52,16 @@ def _parse_args(argv):
                    help="user_id -> email JSON map (dry-run/fixtures; default: Supabase auth).")
     p.add_argument("--picks", metavar="PATH",
                    help="Personal Pick overrides JSON: [{user_id, movie_id, state}] where state "
-                        "'off' suppresses that film for that user (CAS-100). Device-local until the "
-                        "picks are account-synced, so there is no Supabase default yet.")
+                        "'off' suppresses that film for that user (CAS-100). Overrides the "
+                        "`film_picks` table, which is the default source since CAS-185.")
+    p.add_argument("--prefs", metavar="PATH",
+                   help="Delivery preferences JSON: {user_id: {in_app, email_on, email_address, "
+                        "excluded_moments}} (CAS-185). Overrides the `notify_prefs` table.")
     p.add_argument("--excluded", metavar="PATH",
                    help="Global alert-type excludes JSON: {user_id: [moment, ...]} (or a list of "
                         "{user_id, excluded_moments}). A muted TYPE never fires for that user, "
-                        "whatever their Cascades say (CAS-103 AC4). Device-local in Preferences "
-                        "until prefs are account-synced, so there is no Supabase default yet — the "
-                        "front-end also strips muted types out of alert_moments when it saves.")
+                        "whatever their Cascades say (CAS-103 AC4). Since CAS-185 this also comes "
+                        "from notify_prefs.excluded_moments; this flag adds to that.")
     p.add_argument("--print-html", action="store_true",
                    help="With --dry-run, print the full digest HTML (default: subject + text preview).")
     return p.parse_args(argv)
@@ -67,6 +70,20 @@ def _parse_args(argv):
 def _load_json(path):
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def _store_call(store, name, default):
+    """Call an optional store method. A store that predates CAS-185 (or a hand-rolled one in a
+    test) simply does not have these, and a monitor run must not die over a preference table —
+    the honest fallback is "nobody has expressed a preference", which is what the defaults say."""
+    fn = getattr(store, name, None)
+    if not callable(fn):
+        return default
+    try:
+        return fn()
+    except Exception as err:   # noqa: BLE001 - a missing table must not abort the whole run
+        print(f"[monitor] could not read {name}: {err} - carrying on with defaults.")
+        return default
 
 
 def main(argv=None) -> int:
@@ -88,7 +105,9 @@ def main(argv=None) -> int:
     if args.cascades is not None:
         store = InMemoryStore(cascades=_load_json(args.cascades),
                               notifications=_load_json(args.notifications) if args.notifications else [],
-                              emails=_load_json(args.emails) if args.emails else {})
+                              emails=_load_json(args.emails) if args.emails else {},
+                              prefs=_load_json(args.prefs) if args.prefs else {},
+                              picks=_load_json(args.picks) if args.picks else [])
         source = "fixtures"
     else:
         store = store_from_env()
@@ -100,11 +119,19 @@ def main(argv=None) -> int:
 
     cascades = store.fetch_active_cascades()
     already = store.fetch_notification_keys()
+    # CAS-185: both of these are stored per account now, so the default source is the store rather
+    # than a flag. The flags still win where given — that is what makes a fixture run reproducible.
+    prefs = _load_json(args.prefs) if args.prefs else _store_call(store, "fetch_notify_prefs", {})
+    picks = _load_json(args.picks) if args.picks else _store_call(store, "fetch_picks", [])
     # A film the user has taken off by hand stays off — their answer outranks their own Cascade, in the
     # email as well as in the app (CAS-100 AC5).
-    off = suppressed_pairs(_load_json(args.picks)) if args.picks else set()
-    # An alert TYPE the user muted everywhere in Preferences outranks their Cascades (CAS-103 AC4).
-    muted = excluded_moments(_load_json(args.excluded)) if args.excluded else {}
+    off = suppressed_pairs(picks)
+    # An alert TYPE the user muted everywhere outranks their Cascades (CAS-103 AC4). Two sources, one
+    # meaning: the stored preference, plus anything the flag adds.
+    muted = excludes_from_prefs(prefs)
+    if args.excluded:
+        for u, ms in excluded_moments(_load_json(args.excluded)).items():
+            muted.setdefault(u, set()).update(ms)
     by_user = match(cascades, transitions, already=already, catalogue=today_movies, suppressed=off,
                     excluded=muted)
 
@@ -117,12 +144,21 @@ def main(argv=None) -> int:
         return 0
 
     # --- one consolidated digest per user ---
-    sent, written_total = 0, 0
+    # CAS-185: there are TWO deliveries now, and they have different failure modes.
+    #   email  — goes out only if the user asked for it AND we have an address. A failed send
+    #            leaves the ledger unwritten so the next run retries it.
+    #   in-app — IS the ledger row. There is nothing to fail, so it is written whenever the user
+    #            has in-app on, whether or not an email went with it.
+    # A user with both switched off gets nothing and no row: turning notifications on later must
+    # not be met with silence about the very thing that just happened.
+    sent, written_total, inapp = 0, 0, 0
     for user_id, hits in by_user.items():
         digest = render_digest(hits)
-        email = store.fetch_user_email(user_id)
+        pref = prefs_for(prefs, user_id)
+        email = pref["email_address"] or store.fetch_user_email(user_id)
         print(f"[monitor] user {user_id} ({email or 'email unknown'}): "
-              f"{len(hits)} alert(s) — subject: {digest['subject']!r}")
+              f"{len(hits)} alert(s) — in-app {'on' if pref['in_app'] else 'off'}, "
+              f"email {'on' if pref['email_on'] else 'off'} — subject: {digest['subject']!r}")
         for h in hits:
             print(f"    • [{h.cascade_name}] {h.transition.summary()}")
 
@@ -133,23 +169,31 @@ def main(argv=None) -> int:
                 print("    digest preview:\n      " + digest["text"].replace("\n", "\n      "))
             continue
 
-        if not email:
-            print(f"[monitor] no email for {user_id} — skipping (ledger not written, will retry).")
+        plan = delivery_plan(pref, email)
+        if plan == "none":
+            print(f"[monitor] {user_id} has both channels off — nothing sent, nothing written.")
             continue
-        try:
-            send_via_resend(email, digest["subject"], digest["html"], digest["text"])
-        except Exception as err:  # noqa: BLE001 — never let one bad send abort the run
-            print(f"[monitor] send failed for {user_id}: {err} — ledger not written, will retry.")
+        if plan == "wait":
+            print(f"[monitor] {user_id} wants email but has no address — skipping (will retry).")
             continue
+        if plan == "email":
+            try:
+                send_via_resend(email, digest["subject"], digest["html"], digest["text"])
+            except Exception as err:  # noqa: BLE001 — never let one bad send abort the run
+                print(f"[monitor] send failed for {user_id}: {err} — ledger not written, will retry.")
+                continue
+            sent += 1
+        else:
+            inapp += 1
         written_total += store.insert_notifications(notification_rows({user_id: hits}))
-        sent += 1
 
     if args.dry_run:
         would = sum(len(h) for h in by_user.values())
         print(f"[monitor] --dry-run: rendered {len(by_user)} digest(s) covering {would} alert(s); "
               "sent NOTHING, wrote NOTHING.")
     else:
-        print(f"[monitor] sent {sent} digest(s); wrote {written_total} notification row(s).")
+        print(f"[monitor] sent {sent} email digest(s), {inapp} in-app-only; "
+              f"wrote {written_total} notification row(s).")
     return 0
 
 
