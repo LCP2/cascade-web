@@ -1132,6 +1132,24 @@
     background:none;border:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
   .membskip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
   .membproto{color:var(--faint);font-size:10px;text-align:center;margin-top:14px;line-height:1.5}
+  /* ---- CAS-201: the condensed membership page ---- */
+  .cascpill{display:inline-block;align-self:flex-start;width:max-content;background:var(--grad);color:#fff;
+    font-family:var(--font-display);font-weight:700;font-size:12px;letter-spacing:.08em;
+    padding:6px 14px;border-radius:999px;margin-bottom:12px}
+  .membh{font-family:var(--font-display);font-size:26px;font-weight:700;margin:0 0 8px;line-height:1.2;color:var(--ink)}
+  .membhaul{font-size:13.5px;line-height:1.5;color:var(--dim);margin:0 0 10px}
+  .membhaul b{color:var(--ink)} .membhaul .cnt{color:var(--green);font-weight:800}
+  .memfine{font-size:12.5px;line-height:1.55;color:var(--dim);margin:0 0 16px}
+  .memfine b{color:var(--accenttext)}
+  .membenefits{display:flex;flex-direction:column;gap:15px;margin:0 0 20px}
+  .mbrow{display:flex;align-items:center;gap:13px}
+  .mbic{flex:0 0 auto;width:38px;height:38px;display:grid;place-items:center;font-size:20px;
+    background:rgba(255,255,255,.05);border-radius:11px}
+  .mbtx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .mbt{font-family:var(--font-display);font-weight:700;font-size:15.5px;color:var(--ink)}
+  .mbd{font-size:12.5px;color:var(--dim);line-height:1.35}
+  /* The haul, under the button — four across, so it reads as a wall rather than a shelf. */
+  .membgrid{grid-template-columns:repeat(4,1fr);gap:7px;margin:18px 0 4px}
 
   /* ---- membership setup: prominent top banner + setup sheet (CAS-121, restructured by CAS-136) ----
      Surrounding chrome only — the production CAS-100 card is never touched. CAS-136 moves it from inside the
@@ -2145,13 +2163,6 @@
     </div>
     <div class="wizscroll"><div id="wizBody"></div></div>
   </div>
-</div>
-
-<!-- VALUE-FIRST REVEAL (CAS-77) — after the wizard: the agent's real haul + provenance, no account.
-     Body rendered by showReveal() from the live engine. Two CTAs: keep it running (→ CAS-78 invite)
-     or just browse (→ CAS-79 guest). -->
-<div class="reveal" id="reveal" role="dialog" aria-modal="true" aria-label="What your agent found">
-  <div class="rvinner" id="revealBody"></div>
 </div>
 
 <!-- AGENT INVITE → DYNAMIC LEARNING → DONE (CAS-78) — prototype mock only (visual toggles, no billing
@@ -6175,7 +6186,7 @@ window.wizCreateAgent=()=>{
   // First-run is done, but don't drop the user on the app yet — the reveal is the payoff screen.
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
   $("wiz").classList.remove("open");
-  showReveal(c);
+  openMembership(wiz.starter, c.name, c);   // CAS-201
 };
 
 // ================= North-star sharpening steps (CAS-115+ / mock: 05to09-genres-years-language-age-name.html) =================
@@ -7925,7 +7936,7 @@ function finishSharpSequence(){
   const {c} = commitDraft();
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
   logEvent("agent_created",{starter:wiz.starter, matches:countCriteria(c), sharpened:true});
-  showReveal(c);
+  openMembership(wiz.starter, c.name, c);   // CAS-201: straight to the one page that carries the haul
 }
 // Back: inside the wired flow it is the flow's own back (one step, sliding the other way). Inside a hub door
 // on a ?step= preview it still walks that door backwards. Otherwise it just closes the preview.
@@ -8023,34 +8034,58 @@ window.onbHubFinish=()=>{
 // There is NO escape hatch on this page (per the correction), and no alert/email toggles. Starting the free
 // month wires straight through to the #12 listing + finish-setup bar (CAS-121) — the legacy "Let it learn you"
 // invite (CAS-78) is no longer part of the flow. Previewable at ?step=membership[&agent=<key>].
+// The agent whose haul this page is showing, so a re-render (membStart's busy state) keeps its posters.
+let membCascade = null;
+// Four across, six rows — enough to read as a wall without becoming the page.
+const MEMB_POSTERS = 24;
 const MEMB_BENEFITS = [
   {ic:"🔔", name:"Film Alerts", sub:"The moment a match hits cinema, rental or streaming."},
   {ic:"🎚️", name:"Streaming service filtering", sub:"Only show films on the services you actually have."},
   {ic:"✨", name:"AI preference learning", sub:"Learns what you watch and sharpens every pick."},
   {ic:"💳", name:"Streaming service utilisation", sub:"Get more from the subscriptions you already pay for."},
 ];
-function openMembership(agentKey, nameOverride){
+// CAS-201: ONE page, not two. The reveal used to come first — a big count, the agent's haul, and a button
+// that led here — and then this page said much the same thing again with a different headline. Two screens
+// between finishing setup and using the app, both making the same argument, and the second one asking for
+// the decision the first had already softened you up for. The haul is what makes the argument, so it stays;
+// it just stands on the page that asks, under the button rather than on a screen of its own.
+// The offer line stays too, condensed to one line. A button that starts a subscription has to state its
+// price on the page it is pressed on — the prototype's mock leaves the price on the screen before, and
+// "it said so a moment ago" is not the same as saying so.
+function openMembership(agentKey, nameOverride, cascade){
   const picked = agentKey && STARTERS.find(x=>x.key===agentKey);
-  // The committed agent's real (possibly user-named) name leads the line; fall back to the starter's default.
   const name = (nameOverride && nameOverride.trim()) || (picked ? picked.name : ONB_DEFAULT_NAME);
-  const tick = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5" stroke="#48c78e" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const c = cascade || membCascade;
+  membCascade = c || null;
+  // The real haul, in the listing's own order, from the listing's own membership test (CAS-132/176) — so
+  // the posters under the button are the films behind it, not a different set that happens to look nice.
+  const films = c ? listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||"availability") : [];
+  const posters = films.slice(0, MEMB_POSTERS).map(m=>{
+    const bg=m.poster?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
+    return `<div class="rvposter" style="${bg}" title="${escA(m.title)}"></div>`;
+  }).join("");
+  const n=films.length;
+  const haul = c
+    ? `<p class="membhaul">${c.icon} <b>${esc(name)}</b> is already watching
+        <span class="cnt">${n} film${n===1?"":"s"}</span> for you, and it never stops looking.</p>`
+    : "";
   $("membBody").innerHTML = `
-    <span class="membbadge">CASCADE</span>
+    <span class="cascpill">CASCADE</span>
     <h2 class="membh">Cascade Membership</h2>
-    <p class="membsub">Keep <b>${esc(name)}</b> running. It never stops — it finds new films the moment they
-      match, in every window, every day, so you don't have to look.</p>
-    <div class="membhero">
-      <div><span class="free">Free for a month</span><span class="then">then $4.99/month</span></div>
-      <div class="cancel">${tick} Cancel any time — one tap, no questions</div>
+    ${haul}
+    <p class="memfine">Free for your first month · then <b>$4.99/month</b> · cancel any time. No card needed —
+      we'll always ask before anything is ever charged.</p>
+    <div class="membenefits">
+      ${MEMB_BENEFITS.map(b=>`<div class="mbrow"><span class="mbic">${b.ic}</span>
+        <span class="mbtx"><span class="mbt">${esc(b.name)}</span><span class="mbd">${esc(b.sub)}</span></span>
+      </div>`).join("")}
     </div>
-    <p class="membreassure">No card needed. We'll always ask before anything is ever charged.</p>
     <button class="membcta" type="button" onclick="membStart()">Start my free month</button>
-    <div class="membeyebrow">Become a Service Member</div>
-    ${MEMB_BENEFITS.map(b=>`<div class="memben"><div class="ic">${b.ic}</div>
-      <div class="t"><b>${esc(b.name)}</b><p>${esc(b.sub)}</p></div></div>`).join("")}
+    ${posters?`<div class="rvgrid membgrid">${posters}</div>`:""}
     <p class="membproto">Prototype — no account, no payment, no real charge.</p>`;
+  $("membScreen").scrollTop=0;
   $("membScreen").classList.add("open"); document.body.style.overflow="hidden";
-  logEvent("membership_shown",{agent:agentKey||null});
+  logEvent("membership_shown",{agent:agentKey||null, haul:n});
   return true;
 }
 function closeMembership(){ $("membScreen").classList.remove("open"); document.body.style.overflow=""; }
@@ -8256,74 +8291,13 @@ function openPreviewStep(name, agent){
 //     matchesCriteria), and the sub explains it against the wider taste-match total (the 190→114 drop).
 // If nothing is watchable this second we fall back — honestly — to the radar total rather than trumpet a zero.
 // Uses the live poster component as-is; the CAS-100 film card is never touched.
-let revealCascade=null;
-const REVEAL_LEAD_NOW   = {cinema:"in cinemas or opening soon", rentals:"just dropped to a rental price", streaming:"streaming now on your services"};
-const REVEAL_LEAD_RADAR = {cinema:"on their way to the big screen", rentals:"on their way to rent", streaming:"on their way to your services"};
-function showReveal(c){
-  revealCascade=c;
-  // CAS-132: the reveal previews EXACTLY the listing the user lands on. The Found listing's membership is
-  // watchesFilm (= watchCount), ordered by the listing's own sections — so the reveal draws from that same
-  // set, in that same order, with that same count. No divergent matchesCriteria/byRating path (that split was the
-  // ~292-vs-367 mismatch: matchesCriteria is only the watchable-RIGHT-NOW slice). That slice is still called
-  // out honestly, as a note under the same headline, not as a rival count.
-  // CAS-148 closed the other half of that promise: the listing's status gate now lets the whole watch set
-  // through, so this set and the one under it are the same films, not just the same number.
-  // CAS-176: the set AND the sequence, from the listing's own ordering function — see listingOrder().
-  const films=listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||"availability");
-  const n=films.length;
-  const nowN=MOVIES.filter(m=>matchesCriteria(m,c)).length;                 // watchable this moment (a subset of n)
-  const posters=films.map(m=>{
-    const bg=m.poster?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
-    return `<div class="rvposter" style="${bg}" title="${escA(m.title)}"></div>`;
-  }).join("");
-  const nowNote = nowN
-    ? ` <b>${nowN}</b> ${nowN===1?"is":"are"} ready to watch right now — it'll tell you the moment another lands.`
-    : ` It'll tell you the moment one lands.`;
-  const sub = n
-    ? `${c.icon} <b>${esc(c.name)}</b> is watching <b>${n} film${n===1?"":"s"}</b> for your taste.${nowNote} <b>No account needed.</b>`
-    : `${c.icon} <b>${esc(c.name)}</b> is on the job and watching for you — <b>no account needed</b>.`;
-  $("revealBody").innerHTML=`
-    <div class="rvtop">
-      <div class="rvcount">${n}</div>
-      <h2 class="rvh">film${n===1?"":"s"} your agent's watching</h2>
-      <p class="rvsub">${sub}</p>
-      <button class="rvkeep" type="button" onclick="revealKeep()">Cascade Membership</button>
-    </div>
-    ${posters?`<div class="rvgrid">${posters}</div>`:""}
-    <div class="rvprov">🔎 Found by ${c.icon} <b>${esc(c.name)}</b> — it keeps watching, every day, without you.</div>`;
-  $("reveal").scrollTop=0;
-  $("reveal").classList.add("open"); document.body.style.overflow="hidden";
-  logEvent("reveal_shown",{starter:wiz.starter, n, nowN});
-}
-function closeRevealToApp(){
-  $("reveal").classList.remove("open"); document.body.style.overflow="";
-  showFoundList();
-  render();
-  const c=revealCascade;
-  if(c) toast(`✓ ${c.icon} ${c.name}'s on it — ${watchCount(c)} films found already. ${alertPromise(c)}`);
-}
-// "Cascade Membership" takes the sharpened agent to the membership conversion page (CAS-120), which then wires
-// straight through to the #12 listing + finish-setup. The legacy invite/"Let it learn you" step (CAS-78) is no
-// longer part of the onboarding flow; openInvite survives only for the guest re-invite path (enableAgent).
-window.revealKeep=()=>{
-  logEvent("reveal_membership",{starter:wiz.starter});
-  $("reveal").classList.remove("open"); document.body.style.overflow="";
-  openMembership(wiz.starter, revealCascade && revealCascade.name);
-};
-// "Just browse" → guest mode (CAS-79): the agent is saved on-device but PAUSED — no watching, no alerts —
-// while manual search stays free. Value first, wall never: declining never blocks results.
-window.revealBrowse=()=>{
-  logEvent("reveal_browse",{starter:wiz.starter});
-  const c=revealCascade;
-  if(c){ c.paused=true; saveCascades(); }
-  try{ localStorage.setItem("cascade_guest","1"); }catch(e){}
-  $("reveal").classList.remove("open"); document.body.style.overflow="";
-  // Land on All — the catalogue. Browsing is the free thing they chose, and a paused agent's own list would
-  // be a screen reporting on work it isn't doing.
-  setActive(ALL_ID); settleFoundView(); clearFilters(); syncFilterUI(); restoreCascadeSearch();
-  render();
-  if(c) toast(`👍 Browsing as a guest — ${c.icon} ${c.name} is saved but paused. Turn it on any time.`);
-};
+// CAS-201: the value-first reveal (CAS-77/123) is gone — its job moved onto the membership page, which
+// now carries the same haul, from the same listingOrder() call, under the button instead of on a screen of
+// its own. Two screens making the same argument was one screen too many between finishing setup and using
+// the app.
+// What went with it: "Just browse" was the only thing that ever SET cascade_guest, so guest mode has no
+// entry point any more. Its read side is deliberately left in place — anyone who chose it before this build
+// still has the flag, and the re-invite card below is still the honest thing to show them.
 const guestMode = () => { try{ return localStorage.getItem("cascade_guest")==="1"; }catch(e){ return false; } };
 // An honest re-invite: a REAL, current fact about a film this paused agent would watch — never a fabricated
 // timer. "Just opened" is genuinely date-checked (opening week); the rest are present-tense current windows.
@@ -8337,7 +8311,10 @@ function realMoment(c){
   return null;
 }
 // Guest turns the agent on → the invite (CAS-78). inviteFinish un-pauses it.
-window.enableAgent=id=>{ const c=cascades.find(x=>x.id===id); if(c) revealCascade=c; logEvent("guest_enable"); openInvite(); };
+// CAS-201: the reveal is gone, so the invite keeps its own handle on the agent it is turning on rather
+// than borrowing the reveal's. `inviteCascade` is set by the only door that reaches this screen.
+let inviteCascade=null;
+window.enableAgent=id=>{ const c=cascades.find(x=>x.id===id); if(c) inviteCascade=c; logEvent("guest_enable"); openInvite(); };
 
 // ================= Agent invite → dynamic learning → done (CAS-78 / spec 26640386 §2) =================
 // PROTOTYPE MOCK ONLY. Every control here is visual: no card is taken, nothing is billed, no real
@@ -8400,7 +8377,7 @@ function renderInvite(){
       <button class="invskip" type="button" onclick="inviteGo(0)">Back</button>`;
   } else {
     const row=(name,on)=>`<div class="st-row">${name}<span class="${on?"st-on":"st-off"}">${on?"On":"Off"}</span></div>`;
-    const c=revealCascade;
+    const c=inviteCascade;
     b.innerHTML=`
       <div class="invdone">
         <div class="dn-ic">${c?c.icon:"✅"}</div>
@@ -8428,10 +8405,10 @@ function inviteFinish(){
   cascades.forEach(c=>{ if(c.paused){ c.paused=false; unpaused=true; } });
   if(unpaused) saveCascades();
   try{ localStorage.removeItem("cascade_guest"); }catch(e){}
-  $("invite").classList.remove("open"); $("reveal").classList.remove("open"); document.body.style.overflow="";
+  $("invite").classList.remove("open"); document.body.style.overflow="";
   showFoundList();
   render();
-  const c=revealCascade;
+  const c=inviteCascade;
   if(c) toast(`✓ ${c.icon} ${c.name}'s on the job — alerts ${agentState.alerts?"on":"off"}${agentState.learning?", learning on":""}. ${alertPromise(c)}`);
 }
 window.inviteFinish=inviteFinish;
