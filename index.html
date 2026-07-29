@@ -2503,7 +2503,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 154, "commit": "7630824", "builtAt": "2026-07-29T12:53:27Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 155, "commit": "13b45ac", "builtAt": "2026-07-29T12:55:48Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5745,25 +5745,30 @@ const _tplCrit = k => CASCADE_TEMPLATES.find(t=>t.key===k);
 // apply it, and the counts below include it. The data is TMDB `popularity`, on 1,953 of today's 1,954
 // titles, cut at live catalogue percentiles rather than fixed constants (see BUZZ_CUTS).
 const STARTERS = [
-  {key:"cinema", icon:"🎬", name:"Blockbuster Buzz",
+  // CAS-189: `kinds` is which priority answer an agent belongs to. Every preset here is a STANDARD, not
+  // a lane (CAS-160), so most of them make sense either side — but a person who came in saying "I don't
+  // want to miss the best films at the cinema" should not be handed a shortlist headed by one built for a
+  // night in, and vice versa. So the list is filtered rather than reordered: a shorter, right list beats
+  // a long one you have to sort yourself.
+  {key:"cinema", icon:"🎬", name:"Blockbuster Buzz", kinds:["cinema"],
    blurb:"Big, loud films everyone will be talking about.",
    frame:"wants the big, loud ones — the films everyone will be talking about.",
    bar:"Blockbuster · must-see buzz", cd:"var(--amber)", primary:["scale","buzz"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:0, selCritics:0, selScale:100e6, selBuzz:3}},   // CAS-166: $100M+ floor
-  {key:"rentals", icon:"🍿", name:"Loved & Acclaimed",
+  {key:"rentals", icon:"🍿", name:"Loved & Acclaimed", kinds:["stream"],
    blurb:"Genuinely great films — loved by crowds and critics both.",
    frame:"is watching for the genuinely great ones — the films that earn their reviews.",
    bar:"Loved & acclaimed", cd:"var(--blue)", primary:["vote","crit"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:7.5, selCritics:2, selScale:0, selBuzz:0}},
-  {key:"date_night", icon:"🌙", name:"Date Night",
+  {key:"date_night", icon:"🌙", name:"Date Night", kinds:["cinema","stream"],
    blurb:"Easy crowd-pleasers for two on the couch.",
    frame:"is after the well-liked, feel-good ones you'll both enjoy.",
    bar:"Well-liked · a little buzz", cd:"var(--blue)", primary:["vote","buzz"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:7, selCritics:0, selScale:0, selBuzz:1}},
-  {key:"streaming", icon:"📺", name:"Everyday Favourites", recommended:true,
+  {key:"streaming", icon:"📺", name:"Everyday Favourites", kinds:["stream"],
    // Buildspec §10 (never "your services" until services are actually added) used to need a footnote under
    // this card. CAS-160 removes the need for one: the blurb no longer claims anything about your services.
    blurb:"Easy, fun watches for a night in.",
@@ -5771,13 +5776,26 @@ const STARTERS = [
    bar:"Fun-first · a little buzz", cd:"var(--green)", primary:["vote","buzz"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:6, selCritics:0, selScale:0, selBuzz:1}},
-  {key:"prestige", icon:"🏆", name:"Nominees & Awards",
+  {key:"prestige", icon:"🏆", name:"Nominees & Awards", kinds:["cinema","stream"],
    blurb:"Award-worthy films of any era — must-sees.",
    frame:"collects the award nominees and winners worth seeing.",
    bar:"Award nominees & winners", cd:"var(--accent)", primary:["crit"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:0, selCritics:3, selScale:0, selBuzz:0}},
+  // The prototype's fourth card on both lists. It is a real agent, not a placeholder: everything open, so
+  // it catches the whole catalogue and the very next screens are where you brief it. That is why its count
+  // is the largest of the five and says so — nothing is being narrowed on your behalf yet.
+  {key:"custom", icon:"🛠️", name:"Totally Custom", kinds:["cinema","stream"],
+   blurb:"Start from scratch and brief it yourself.",
+   frame:"starts wide open — the next few screens are where you tell it what you want.",
+   bar:"No bar set yet", cd:"var(--dim)", primary:["vote","crit"],
+   crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
+         myServices:false, selCrowd:0, selCritics:0, selScale:0, selBuzz:0}},
 ];
+// One recommendation per lane, and it is the preset that answers the question they just asked rather than
+// a fixed favourite. RECOMMENDED is a badge on a card, so it has to move with the list the card is in.
+const RECOMMENDED_FOR = {cinema:"cinema", stream:"streaming"};
+const startersFor = kind => STARTERS.filter(s=>(s.kinds||["cinema","stream"]).includes(kind));
 STARTERS.forEach(s=>normCascade(s.crit));
 // CAS-143/144: ONE number for a preset, everywhere it is quoted. The card, the hub's hero figure and the
 // reveal must agree, so the card counts the agent it would actually BUILD — the preset's standard laid over
@@ -5796,8 +5814,9 @@ const starterCount = s => watchCount(starterPreview(s));
 let pendingStarter = null;   // the agent the person chose
 // CAS-188: the cards are the body of the flow's `pickagent` step now, not a screen of their own — so this
 // returns the markup rather than writing it into an overlay that no longer exists.
-function starterCardsHTML(){
-  return STARTERS.map(s=>{
+function starterCardsHTML(kind){
+  return startersFor(kind || flowKind).map(s=>{
+    const recommended = s.key===RECOMMENDED_FOR[kind || flowKind];
     const n=starterCount(s);
     // The count is REAL — countCriteria against today's catalogue, the same call the deck cards use. The
     // prototype's figures were synthetic placeholders; these move with the data, so a preset the catalogue
@@ -5805,7 +5824,7 @@ function starterCardsHTML(){
     return `<button class="scard" type="button" onclick="pickStarter('${s.key}')">
         <span class="sc-ic">${s.icon}</span>
         <span class="sc-main">
-          <span class="sc-name">${s.name}${s.recommended?` <b class="sc-rec">RECOMMENDED</b>`:""}</span>
+          <span class="sc-name">${s.name}${recommended?` <b class="sc-rec">RECOMMENDED</b>`:""}</span>
           <span class="sc-blurb">${esc(s.blurb)}</span>
           <span class="sc-chan">${esc(s.bar)}</span>
           <span class="sc-match">${n
