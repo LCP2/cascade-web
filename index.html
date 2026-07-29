@@ -2530,7 +2530,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 161, "commit": "5c64eb2", "builtAt": "2026-07-29T13:08:36Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 162, "commit": "e963e94", "builtAt": "2026-07-29T13:10:20Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -6875,18 +6875,22 @@ window.flowSetAll=(key,on)=>{
 // on the next is two true measurements that read as a contradiction (the CAS-175 lesson).
 const flowCount = () => onbFlow.draft ? onbCount() : tasteBaseCount();
 const flowCnt = n => `<span class="cnt">${n} film${n===1?"":"s"}</span> match right now.`;
-function styleSayHTML(){
-  const g=dT().genre, n=flowCount();
+// CAS-198/164: every one of these takes the count as an ARGUMENT. The screen prints the same number in
+// three places — the mirror at the top, the Continue button and this line — and "equal at all times" can
+// only be a property of the code if there is one computation per paint rather than three that happen to
+// agree. onbRefresh() is where that one call lives; nothing else counts.
+function styleSayHTML(n){
+  const g=dT().genre;
   const what = g===null ? "no genres" : !g.length ? "all genres" : `${g.length} genre${g.length===1?"":"s"}`;
   return `Drawing from <b>${what}</b> · ${flowCnt(n)}`;
 }
-function langSayHTML(){
-  const l=dT().lang, n=flowCount();
+function langSayHTML(n){
+  const l=dT().lang;
   const what = l===null ? "no languages" : !l.length ? "any language" : l.map(langName).join(", ");
   return `Watching in <b>${esc(what)}</b> · ${flowCnt(n)}`;
 }
-function ageSayHTML(){
-  const a=dT().age, n=flowCount();
+function ageSayHTML(n){
+  const a=dT().age;
   const what = a===null ? "no ratings" : !a.length || a.length===AGE_LEVELS.length ? "all ratings"
              : a.join(", ");
   return `Including <b>${esc(what)}</b> · ${flowCnt(n)}`;
@@ -7223,6 +7227,7 @@ const SHARP_STEPS = {
   genres: {
     progress: 30,
     noAgent: true,
+    say: styleSayHTML,
     body(){
       return `<h2 class="osh">Style</h2>
         <p class="ossub">Which genres should your agent draw from?</p>
@@ -7230,7 +7235,7 @@ const SHARP_STEPS = {
         <div class="tbq tbqmin">
           <button type="button" class="q" onclick="flowSetAll('genre',true)">Select all</button>
           <button type="button" class="q" onclick="flowSetAll('genre',false)">Clear all</button></div>
-        <p class="ossumline" id="onbStepSay">${styleSayHTML()}</p>`;
+        <p class="ossumline" id="onbStepSay">${styleSayHTML(stepCount(SHARP_STEPS.genres))}</p>`;
     },
     wire(){
       const box=$("onbStepGenres"); if(!box) return;
@@ -7246,7 +7251,6 @@ const SHARP_STEPS = {
           on.has(g) ? on.delete(g) : on.add(g);
           onbFlow.draft.genre = tbStore(new Set(ONB_GENRES.filter(x=>on.has(x))), ONB_GENRES);
           c.classList.toggle("on", on.has(g)); c.setAttribute("aria-pressed", String(on.has(g)));
-          const s=$("onbStepSay"); if(s) s.innerHTML=styleSayHTML();
           onbRefresh();
         };
         box.appendChild(c);
@@ -7256,6 +7260,7 @@ const SHARP_STEPS = {
   language: {
     progress: 65,
     noAgent: true,
+    say: langSayHTML,
     lead(){ return `watches ${onbLangPhrase()}`; },
     body(){
       return `<h2 class="osh">Language</h2>
@@ -7264,7 +7269,7 @@ const SHARP_STEPS = {
         <div class="tbq tbqmin">
           <button type="button" class="q" onclick="flowSetAll('lang',true)">Select all</button>
           <button type="button" class="q" onclick="flowSetAll('lang',false)">Clear all</button></div>
-        <p class="ossumline" id="onbStepSay">${langSayHTML()}</p>`;
+        <p class="ossumline" id="onbStepSay">${langSayHTML(stepCount(SHARP_STEPS.language))}</p>`;
     },
     wire(){
       const box=$("onbStepLangs"); if(!box) return;
@@ -7280,7 +7285,6 @@ const SHARP_STEPS = {
           on.has(code) ? on.delete(code) : on.add(code);
           onbFlow.draft.lang = tbStore(new Set(LANG_OPTS.filter(x=>on.has(x))), LANG_OPTS);
           c.classList.toggle("on", on.has(code)); c.setAttribute("aria-pressed", String(on.has(code)));
-          const s=$("onbStepSay"); if(s) s.innerHTML=langSayHTML();
           onbRefresh();
         };
         box.appendChild(c);
@@ -7323,6 +7327,7 @@ const SHARP_STEPS = {
   age: {
     progress: 82,
     noAgent: true,
+    say: ageSayHTML,
     lead(){ return `watches <b>${onbAgePhrase()}</b>`; },
     body(){
       return `<h2 class="osh">Ratings</h2>
@@ -7334,7 +7339,7 @@ const SHARP_STEPS = {
         <div class="tbq tbqmin">
           <button type="button" class="q" onclick="flowSetAll('age',true)">Select all</button>
           <button type="button" class="q" onclick="flowSetAll('age',false)">Clear all</button></div>
-        <p class="ossumline" id="onbStepSay">${ageSayHTML()}</p>`;
+        <p class="ossumline" id="onbStepSay">${ageSayHTML(stepCount(SHARP_STEPS.age))}</p>`;
     },
     wire(){
       const box=$("onbStepAges"); if(!box) return;
@@ -7749,6 +7754,8 @@ function onbRefresh(){
   const b=$("onbStepCta")||$("flowCta"); if(b) b.textContent = stepCtaText(step, n);
   const top=$("onbStepCount");
   if(top && n!=null) top.innerHTML = `<b>${n}</b> film${n===1?"":"s"} match right now`;
+  // CAS-198: the third printer, off the same n.
+  const say=$("onbStepSay"); if(say && step && step.say) say.innerHTML = step.say(n);
 }
 // #4 selectivity refresh (CAS-114): update the "What this does" line + count, and let onbRefresh update the
 // CTA count from the same live figure.
