@@ -2530,7 +2530,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 162, "commit": "e963e94", "builtAt": "2026-07-29T13:10:20Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 163, "commit": "041e0e3", "builtAt": "2026-07-29T13:14:05Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -6438,6 +6438,9 @@ function onbApply(){
   // fabricated capability. CAS-185 built it — so leaving them unwritten is now the opposite failure: a
   // screen that takes an answer nothing acts on. alertLive() still has the last word, so a bell that is
   // unreachable for this agent's scope, or muted globally, never reaches alert_moments.
+  // CAS-199: "only show films on my services" is a per-window scope on the agent, and it is the switch
+  // that says so — naming your services alone never narrows anything.
+  if(d.kind==="stream") HOME_KEYS.forEach(k=>{ d.myServices[k] = !!prefs.on; });
   d.alerts = {...ALERT_DEFAULTS, ...(d.alerts||{})};
   WATCH_LANES.forEach(l=>(onbFlow.watch[l.key]||[]).forEach(k=>{
     const o=l.opts.find(x=>x.key===k);
@@ -7348,6 +7351,64 @@ const SHARP_STEPS = {
       });
     },
   },
+  // ---- CAS-199: My streaming services ---------------------------------------------------------------
+  // The one screen that turns "on some service somewhere" into "on one you already pay for". Streaming
+  // agents only: on the cinema lane there is nothing to scope to, and a screen asking which services you
+  // have in order to filter cinema listings would be a question with no consequence.
+  // The switch is the honest half. Naming your services does not, on its own, mean "hide everything else";
+  // that is a second decision, and until it is made the count must not move.
+  services: {
+    progress: 95,
+    noAgent: true,
+    // The honest pair. `n` is what the agent WATCHES, and watching is deliberately not service-scoped
+    // (matchesTaste drops myServices — CAS-132: an agent goes on following a film whatever you subscribe
+    // to today). So this line must not imply the count is filtered; it reports the second number the
+    // screen is actually about — how many of those films you can watch on what you already pay for.
+    say: n => {
+      const k=prefs.sub.size;
+      if(!k) return `No services named yet · ${flowCnt(n)}`;
+      const mine=MOVIES.filter(m=>watchesFilm(m, onbApply()) && matchesServices(m)).length;
+      return `<b>${k} service${k===1?"":"s"}</b> · <span class="cnt">${mine}</span> of your agent's
+        ${n} film${n===1?"":"s"} ${mine===1?"is":"are"} on ${k===1?"it":"them"} right now.`;
+    },
+    body(){
+      return `<h2 class="osh">My Streaming Services</h2>
+        <p class="ossub">Which do you already pay for? Your agent uses this to tell you what a film is
+          costing you — and, if you want, to leave out what you'd have to buy.</p>
+        <div class="chips" id="onbStepSvcs"></div>
+        <button type="button" class="bigtoggle${prefs.on?" on":""}" id="onbSvcOnly">
+          <span class="btmain">Only show films on my services</span><span class="btcheck">✓</span></button>
+        <p class="osexplain">Your agent keeps watching everything either way — this only changes what
+          the list shows you.</p>
+        <p class="ossumline" id="onbStepSay">${SHARP_STEPS.services.say(stepCount(SHARP_STEPS.services))}</p>`;
+    },
+    wire(){
+      const box=$("onbStepSvcs"); if(!box) return;
+      box.innerHTML="";
+      SUB_SERVICES.forEach(svc=>{
+        const c=document.createElement("button");
+        c.type="button";
+        c.className="chip svc"+(prefs.sub.has(svc)?" on":"");
+        c.setAttribute("aria-pressed", String(prefs.sub.has(svc)));
+        c.textContent=svcName(svc);
+        c.onclick=()=>{
+          prefs.sub.has(svc) ? prefs.sub.delete(svc) : prefs.sub.add(svc);
+          const on=prefs.sub.has(svc);
+          c.classList.toggle("on", on); c.setAttribute("aria-pressed", String(on));
+          savePrefs(); syncServiceChips(); updatePrefSwitch(); updatePrefBtn();
+          onbRefresh();
+        };
+        box.appendChild(c);
+      });
+      const tog=$("onbSvcOnly");
+      if(tog) tog.onclick=()=>{
+        prefs.on=!prefs.on; savePrefs();
+        tog.classList.toggle("on", prefs.on);
+        updatePrefSwitch(); updatePrefBtn();
+        onbRefresh();
+      };
+    },
+  },
   // ---- CAS-188 #6: keep finding ---------------------------------------------------------------------
   // The one screen in the flow with no control on it. It exists because the step before it is where a
   // person can narrow themselves down to almost nothing, and the honest answer to a small number is not
@@ -7396,6 +7457,8 @@ const SHARP_STEPS = {
   },
   years: {
     progress: 48,
+    noAgent: true,
+    say: n => `Going back <b>${esc(YEAR_STOPS[flowYearStop()].label.toLowerCase())}</b> · ${flowCnt(n)}`,
     lead(){ return `watches films <b>${onbYearPhrase()}</b>`; },
     // The app's rich slider (CAS-116): dotted track + circle stops drawn under a real range input, labels
     // below. Recent-weighted stops (This year → Any); the window at or beyond the picked stop is "lit".
@@ -7411,7 +7474,8 @@ const SHARP_STEPS = {
           </div>
           <div class="rlabels" id="onbStepYearLabels">${YEAR_STOPS.map((s,k)=>`<span class="${k===i?'lit':''}">${s.label}</span>`).join("")}</div>
         </div>
-        <p class="osexplain" id="onbStepYearExplain">${onbYearExplain(i)}</p>`;
+        <p class="osexplain" id="onbStepYearExplain">${onbYearExplain(i)}</p>
+        <p class="ossumline" id="onbStepSay">${SHARP_STEPS.years.say(stepCount(SHARP_STEPS.years))}</p>`;
     },
     wire(){
       const r=$("onbStepYears"); if(!r) return;
@@ -7443,10 +7507,20 @@ let onbStepKey=null;
 // Seven of those are the COUNTED steps the meter reports. Priority and pick-an-agent sit before it because
 // you have not begun setting an agent up until you have one, and membership sits after it because it is the
 // offer, not another form to get through. Seven is also the number the header says out loud, so the two can
-// never disagree: FLOW_COUNTED.length is the only place it is written down.
-const FLOW_ORDER   = ["priority","pickagent","selectivity","name","genres","language","age",
-                      "keepfinding","notifysettings"];
-const FLOW_COUNTED = FLOW_ORDER.slice(2);
+// never disagree: flowCounted().length is the only place it is written down.
+// CAS-199: the streaming lane asks two more questions, so the flow is per-lane and the meter counts the
+// lane you are actually in. "How far back" only means something where the catalogue has depth — a cinema
+// listing is this month's releases and asking someone to date-limit it would be a control with nothing to
+// do — and "My streaming services" is the whole point of a streaming agent: it is what turns "on some
+// service somewhere" into "on one you already pay for".
+const FLOWS = {
+  cinema: ["priority","pickagent","selectivity","name","genres","language","age",
+           "keepfinding","notifysettings"],
+  stream: ["priority","pickagent","selectivity","name","genres","years","language","age","services",
+           "keepfinding","notifysettings"],
+};
+const flowList    = () => FLOWS[flowKind] || FLOWS.cinema;
+const flowCounted = () => flowList().slice(2);
 // The priority answer is not a label — it seeds the windows the agent actually watches, so the choice
 // moves the count on every screen after it. pickStarter lays a saved answer for that same agent over it.
 // CAS-197: a cinema agent starts with BOTH cinema moments on — the film reaching a cinema, and the film
@@ -7456,7 +7530,7 @@ const PRIORITY_WATCH = { cinema:{cinema:["release","past"]}, stream:{rent:["rent
 let flowOn=false;              // inside the wired flow (vs a standalone ?step= preview)
 let flowKind="cinema";         // what the priority screen answered
 let flowSlideT=null;
-const flowChromed = key => flowOn && FLOW_COUNTED.includes(key);
+const flowChromed = key => flowOn && flowCounted().includes(key);
 function flowStart(){
   flowOn=true;
   onbDone=freshDone(); onbDoor=null; onbDoorIdx=0; onbDonePulse=null;
@@ -7472,13 +7546,13 @@ function flowStop(){
   $("stepHdr").hidden=true; $("stepNav").hidden=true;
 }
 function flowNext(){
-  const i=FLOW_ORDER.indexOf(onbStepKey);
-  if(i>=0 && i+1<FLOW_ORDER.length) return gotoStep(FLOW_ORDER[i+1],"fwd");
+  const list=flowList(), i=list.indexOf(onbStepKey);
+  if(i>=0 && i+1<list.length) return gotoStep(list[i+1],"fwd");
   flowOn=false; finishSharpSequence();       // past the last step → commit the agent and show its haul
 }
 function flowBack(){
-  const i=FLOW_ORDER.indexOf(onbStepKey);
-  if(i>0) return gotoStep(FLOW_ORDER[i-1],"back");
+  const list=flowList(), i=list.indexOf(onbStepKey);
+  if(i>0) return gotoStep(list[i-1],"back");
   flowStop(); showSplash();                  // off the front of the flow → back out to the splash
 }
 window.flowPriority=kind=>{ flowKind=kind; logEvent("flow_priority",{kind}); flowNext(); };
@@ -7690,13 +7764,14 @@ function endSlide(){
 // The fixed chrome. It is painted from the step key alone, so there is exactly one place that decides
 // whether the meter is showing and what it says.
 function paintFlowChrome(key, step, n){
-  const i = flowOn ? FLOW_COUNTED.indexOf(key) : -1, on = i>=0;
+  const counted = flowCounted();
+  const i = flowOn ? counted.indexOf(key) : -1, on = i>=0;
   $("stepHdr").hidden=!on; $("stepNav").hidden=!on;
   $("onbStep").classList.toggle("chromed", on);
   if(!on) return;
-  $("stepFill").style.width = Math.round((i+1)/FLOW_COUNTED.length*100)+"%";
+  $("stepFill").style.width = Math.round((i+1)/counted.length*100)+"%";
   $("stepProg").setAttribute("aria-valuenow", String(i+1));
-  $("stepLbl").textContent = `Step ${i+1} of ${FLOW_COUNTED.length}`;
+  $("stepLbl").textContent = `Step ${i+1} of ${counted.length}`;
   const cta=$("flowCta"); if(cta) cta.textContent=stepCtaText(step, n);
 }
 function renderOnbStep(key){
