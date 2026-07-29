@@ -5861,6 +5861,10 @@ window.pickStarter=key=>{
   // Commit is deferred to finishSharpSequence so the payoff shows the sharpened agent, not the raw card.
   onbFlow.draft = normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
   onbFlow.name = s.name;
+  // CAS-191: the name the field OFFERS is the name an emptied field falls back to. They used to be two
+  // different strings — the placeholder showed the agent you picked and onbApply quietly wrote "Friday
+  // night finder" — so clearing the box got you an agent called something you had never seen.
+  onbFlow.defaultName = s.name;
   onbFlow.draft.kind = flowKind;     // CAS-182: the priority answer rides on the agent
   // The shipped taste defaults, verbatim — exactly what each screen's copy assumes when it opens, and the
   // same four starterPreview() counts the card against, so the card's number and the flow's first count
@@ -6214,7 +6218,7 @@ const voteSay = v => v<VOTE_OFF ? null : `scored ${v.toFixed(1)}+ by viewers`;
 // language and age, and once those three moved to the account-level taste baseline nothing read them any
 // more — onbApply has cleared d.genre/d.lang/d.age since CAS-146, so the screens that wrote them were
 // screens with no effect. The Style / Language / Ratings steps now edit `tasteBase` itself.
-const onbFlow = {draft:null, name:ONB_DEFAULT_NAME,
+const onbFlow = {draft:null, name:ONB_DEFAULT_NAME, defaultName:ONB_DEFAULT_NAME,
                  voteVal:VOTE_MIN, criticsStop:0, scaleVal:0, buzzStop:0, selOr:false,   // #4 dials (CAS-114/145/166)
                  barTouched:false, barAutoRelaxed:null,   // CAS-158 first-open state
                  watch:{}};                                // CAS-160 viewing windows: {lane: [optKey,…]}
@@ -6398,7 +6402,7 @@ function onbApply(){
   // left exactly as the flow's own screens set them. `year` is derived from the rung the how-far-back
   // slider is on, because a year window has to be a real list of catalogue years for the count to be real.
   d.year = onbYearsApply();
-  d.name = (onbFlow.name||"").trim() || ONB_DEFAULT_NAME;
+  d.name = (onbFlow.name||"").trim() || onbFlow.defaultName || ONB_DEFAULT_NAME;
   // #4 selectivity (CAS-114): the dials own the crowd/critics/scale bars, as their own fields so the other
   // steps' seed rating is untouched. selCrowd is a raw IMDb bar; the two stop fields and the OR flag drive
   // matchesCriteria. Defaults are all-open, so touching nothing leaves the agent watching the whole catalogue.
@@ -7245,15 +7249,29 @@ const SHARP_STEPS = {
     progress: 100,
     noAgent: true,
     body(){
+      const dflt = onbFlow.defaultName || ONB_DEFAULT_NAME;
       return `<h2 class="osh">Name your Agent</h2>
-        <p class="ossub">Give it a name you'll recognise. Change it any time.</p>
+        <p class="ossub">Give it a name you'll recognise. Change it any time — from Edit on its card,
+          whenever you like.</p>
         <input class="osfield" id="onbStepName" type="text" maxlength="40" autocomplete="off"
-               placeholder="${escA(ONB_DEFAULT_NAME)}" value="${escA(onbFlow.name)}"
-               aria-label="Name your agent">`;
+               placeholder="${escA(dflt)}" value="${escA(onbFlow.name)}"
+               aria-label="Name your agent">
+        <p class="osexplain" id="onbNameNote"></p>`;
     },
     wire(){
       const el=$("onbStepName"); if(!el) return;
-      el.oninput=()=>{ onbFlow.name=el.value; onbRefresh(); };
+      const note=$("onbNameNote"), dflt = onbFlow.defaultName || ONB_DEFAULT_NAME;
+      // A pre-filled field you have to select-all before you can retype is a field that reads as
+      // finished. Focusing it offers the whole name, so replacing it is one gesture.
+      el.onfocus=()=>{ try{ el.select(); }catch(e){} };
+      const paint=()=>{
+        if(!note) return;
+        const v=(onbFlow.name||"").trim();
+        // Empty is allowed — it just means "use the one you were offered", and the screen says which.
+        note.innerHTML = v ? "" : `Leave it blank and it'll be called <b>${esc(dflt)}</b>.`;
+      };
+      el.oninput=()=>{ onbFlow.name=el.value; paint(); onbRefresh(); };
+      paint();
     },
   },
   // ---- Ratings --------------------------------------------------------------------------------------
