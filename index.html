@@ -207,19 +207,24 @@
      eyeballed: the poster spans the title→scores rows, so its bottom edge lands exactly on the
      scores row, and the gold scale badge shares the last row (and so a baseline) with the awards.
      A film with no scale badge simply lets the poster span every row instead. */
+  /* CAS-184: the poster is a TOMBSTONE — a fixed 2:3 block that does not change size when the card opens.
+     It used to be `align-self:stretch` against the grid, so expanding the card (which unclamps the synopsis)
+     stretched it from 250px to 485px: the one element on the card that is a picture of a fixed thing was the
+     one element that changed shape. The poster and the scale badge are now ONE grid cell that packs from the
+     top, so the badge still sits directly under the poster and the slack collects at the bottom of the column
+     where it reads as room rather than as a hole. */
   .ctop{display:grid;grid-template-columns:94px minmax(0,1fr);column-gap:10px;row-gap:9px;
     grid-template-areas:
-      "poster title"
-      "poster meta"
-      "poster syn"
-      "poster money"
-      "poster scores"
-      "badge  awards"}
-  .poster{grid-area:poster;width:94px;align-self:stretch;min-height:150px;border-radius:10px;
+      "tomb title"
+      "tomb meta"
+      "tomb syn"
+      "tomb money"
+      "tomb scores"
+      "tomb awards"}
+  .ptomb{grid-area:tomb;align-self:start;display:flex;flex-direction:column;gap:8px;width:94px}
+  .poster{width:100%;aspect-ratio:2/3;border-radius:10px;
     background:var(--panel2) center/cover no-repeat;position:relative;
-    border:1px solid var(--line);cursor:pointer;transition:transform .25s ease}
-  .poster.pfull{grid-row:1/-1}
-  .card.expanded .poster{transform:scale(1.03)}
+    border:1px solid var(--line);cursor:pointer}
   /* The ▶ on the poster is a real link to the film's first trailer, and it is only drawn when there
      IS one — a play button that plays nothing is a lie the size of a button. */
   .pplay{position:absolute;left:6px;bottom:6px;width:26px;height:26px;border-radius:50%;
@@ -347,7 +352,7 @@
   /* Scale badge — tucked UNDER the poster, sharing the last grid row (and so a baseline) with the
      awards. It's a claim ABOUT the film, not another metric alongside IMDb/RT. Gold, and it names the
      exact tier the Cascade's Tentpole filter uses. Press it (or hover) for the signals behind it. */
-  .tentbadge{grid-area:badge;align-self:center;width:100%;height:24px;font:inherit;font-size:10.5px;font-weight:700;
+  .tentbadge{width:100%;height:24px;font:inherit;font-size:10.5px;font-weight:700;
     padding:0 6px;border-radius:8px;display:inline-flex;gap:5px;align-items:center;justify-content:center;
     white-space:nowrap;overflow:hidden;cursor:pointer;
     border:1px solid rgba(245,214,117,.45);background:rgba(245,214,117,.10);color:var(--gold)}
@@ -2470,7 +2475,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 151, "commit": "fa29195", "builtAt": "2026-07-29T12:38:28Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 152, "commit": "6cd75f3", "builtAt": "2026-07-29T12:40:49Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3297,13 +3302,15 @@ function cardHTML(m, markNew=false){
   return `<div class="card ${expandedSet.has(id)?'expanded':''}" id="card-${id}">
     <div class="cbody" onclick="cardTap(event,${id})">
       <div class="ctop">
-        <div class="poster${badge?"":" pfull"}" style="${poster}">${play}</div>
+        <div class="ptomb">
+          <div class="poster" style="${poster}">${play}</div>
+          ${badge}
+        </div>
         <div class="title">${m.title}${cert}</div>
         <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
         <div class="mrow r-scores">${scoresRowHTML(m)}</div>
-        ${badge}
         <div class="mrow r-awards">${awardChips(m)}</div>
       </div>
       <div class="expand">${awardsBreakdownHTML(m)}${creditsHTML(m)}${trailersHTML(m)}</div>
