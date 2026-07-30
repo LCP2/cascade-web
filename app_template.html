@@ -208,7 +208,7 @@
   /* CAS-178: the two upper bands are the tap target, so they say so — a pointer over the whole region,
      and a brief surface change on press so the tap is acknowledged before the card has finished opening. */
   .cbody{padding:13px;cursor:pointer}
-  .cbody:active,.bandw:active{background:var(--panel2)}
+  .cbody:active{background:var(--panel2)}   /* CAS-239: the strip is not a tap target, so it does not press */
   .cfoot{padding:11px 13px 12px}
   .cfoot>:first-child{margin-top:0}
   /* The information body lays out on a GRID, which is what makes the alignments true rather than
@@ -455,7 +455,7 @@
      Current is filled, past is tinted (it happened), future is ghosted and the joiner into it dims
      with it: what is ahead is a forecast, and it should not look like a fact. Each window carries
      its date underneath, italic where the date is worked out rather than read from a listing. */
-  .bandw{background:var(--band);border-top:1px solid var(--line);padding:11px 13px;cursor:pointer}
+  .bandw{background:var(--band);border-top:1px solid var(--line);padding:11px 13px}
   /* 10px between lozenges, not the mock's 14 — the connector still reads, and the four columns have to
      hold "Upcoming" and "Premium" whole at 360px wide. An ellipsised window name is a clipped fact. */
   .avail{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
@@ -3447,8 +3447,11 @@ function availHTML(m){
       <div class="wpill">${label}</div>
       <div class="wdate${estCls}">${dateStr||"—"}</div></div>`;
   }).join("");
-  // CAS-178: the strip is part of the card's tap-to-open region — see cardTap().
-  return `<div class="bandw" onclick="cardTap(event,${m.tmdb_id})"><div class="avail${isEstimated(m)?" est":""}">${cells}</div></div>`;
+  // CAS-239: the strip is NOT part of the tap-to-open region any more. It sits directly above the Watch
+  // status and Notify chips, and a miss on either of those landed on the strip and opened the card — so the
+  // gesture that was supposed to answer a question about the film answered a different one instead. The
+  // bottom of the card is where the decisions are; only the body above it opens.
+  return `<div class="bandw"><div class="avail${isEstimated(m)?" est":""}">${cells}</div></div>`;
 }
 // ---- Saying "estimate" out loud (CAS-110) --------------------------------------
 // An estimate reads as a likelihood, never as a fact: "Likely on streaming", not "Stream (included)". The
@@ -4199,6 +4202,10 @@ window.setNotify=(id,on)=>{
 // withheld-IMDb explainer, the scale badge, the poster's trailer link, a trailer thumbnail, and any
 // availability lozenge that becomes a button later.
 window.cardTap=(e,id)=>{
+  // CAS-239: nothing in the availability strip or the footer opens the card, whichever handler the click
+  // arrived through. Belt and braces on top of the strip losing its own handler: the footer is a sibling of
+  // .cbody today and so cannot bubble here, and this is what keeps that true if either is ever re-nested.
+  if(e.target.closest('.bandw, .cfoot')) return;
   if(e.target.closest('button, a, input, select, textarea, label, [role="button"]')) return;
   // A tap that was really a text selection is not a tap. Opening the card mid-drag would yank the page
   // out from under the selection the user was making in the synopsis.
