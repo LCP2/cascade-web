@@ -104,6 +104,8 @@ const EXPORTS = `
   selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK,
   SCALE_REF, BUZZ_STOPS, VOTE_REF, CRIT_MARKS, AWARD_STOPS, awardRank, parseAwards,
   AGE_LEVELS, ONB_GENRES, LANG_OPTS, GENRE_COUNT,
+  YEARS_MAX, YEARS_NOTCHES, YEARS_LABELS, yearsForPos, posForYears, yearsCutoff, releasedSince,
+  yearsFromLegacy, yearsLabel, flowYearsBack, baseYearsBack, yearOf,
   MIN_INITIAL_MATCHES, autoRelaxBar, barDialSnapshot,
   STARTERS, startersFor, starterPreview, starterCount, starterAgentName, starterWatch,
   AGENT_WINDOWS, agentWindows, watchToStatuses, listToStatuses, migrateWatch,

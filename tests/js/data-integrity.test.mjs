@@ -431,6 +431,69 @@ test("critics: an agent saved under the old single ladder still means what it me
   assert.equal(fresh.selAwards, 0);
 });
 
+// ---- 3f. HOW FAR BACK IS A ROLLING WINDOW ON A LOG TRACK (CAS-250) --------------------------------------
+test("how far back: the window rolls from today, and the tightest rung is twelve months", () => {
+  const cut = E.yearsCutoff(1);
+  assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(cut), `a one-year cutoff of ${cut}`);
+  // The correction the ticket is about: this is TODAY minus a year, not the first of January. The old
+  // "This year" rung admitted five days of releases on 5 January and meant something different every month.
+  assert.equal(cut.slice(5), E.TODAY.slice(5), `${cut} is not the same day of the year as ${E.TODAY}`);
+  assert.equal(+cut.slice(0, 4), +E.TODAY.slice(0, 4) - 1);
+  assert.equal(E.yearsCutoff(0), null, "Any must rule nothing out");
+  for(const y of [1, 3, 10, 50]) assert.equal(+E.yearsCutoff(y).slice(0, 4), +E.TODAY.slice(0, 4) - y);
+});
+
+test("how far back: widening the window never loses a film, and a film is judged on its own date", () => {
+  let prev = 0;
+  for(const y of [1, 2, 3, 5, 10, 25, 50, 0]){
+    const cut = E.yearsCutoff(y);
+    const n = E.MOVIES.filter(m => E.releasedSince(m, cut)).length;
+    assert.ok(n >= prev, `a ${y || "any"}-year window caught ${n}, fewer than the tighter one's ${prev}`);
+    prev = y ? n : prev;
+  }
+  // A dated film is judged on the date — that is what makes it rolling — and one with only a year on its
+  // year, because a title we cannot date precisely must not be dropped for our own missing field.
+  const cut = E.yearsCutoff(1);
+  const dated = E.MOVIES.filter(m => m.cinema_date);
+  assert.ok(dated.length > 0);
+  for(const m of dated.slice(0, 300))
+    assert.equal(E.releasedSince(m, cut), m.cinema_date >= cut,
+      `${m.title} (${m.cinema_date}) was judged against ${cut} by something other than its date`);
+  const undated = E.MOVIES.find(m => !m.cinema_date && m.year);
+  if(undated) assert.equal(E.releasedSince(undated, cut), E.yearOf(undated) >= cut.slice(0, 4));
+});
+
+test("how far back: the track is continuous and log-spaced, and every named window is reachable", () => {
+  const landed = new Set(Array.from({ length: 101 }, (_, p) => E.yearsForPos(p)));
+  for(const y of E.YEARS_NOTCHES) assert.ok(landed.has(y),
+    `${y} years is a named notch that no slider position lands on`);
+  assert.ok(landed.size > E.YEARS_NOTCHES.length + 5,
+    `only ${landed.size} distinct windows across the whole track — it is still a stop ladder`);
+  // Log-spaced means the short windows get the room: 1→3 must take more of the track than 25→50, which is
+  // the whole argument for not making it linear.
+  const short = E.posForYears(3) - E.posForYears(1);
+  const long  = E.posForYears(50) - E.posForYears(25);
+  assert.ok(short > long, `1→3 spans ${short.toFixed(1)}% and 25→50 spans ${long.toFixed(1)}% — not log-spaced`);
+  // Position and value round-trip, and the marks stay on the track.
+  for(const y of E.YEARS_NOTCHES){
+    const p = E.posForYears(y);
+    assert.ok(p >= 0 && p <= 100, `${y} years sits at ${p}%`);
+    assert.equal(E.yearsForPos(p), y, `${y} years maps to ${p}% which reads back as ${E.yearsForPos(p)}`);
+  }
+  assert.equal(E.yearsForPos(0), 0, "the bottom of the track must be Any");
+  assert.equal(E.posForYears(0), 0);
+});
+
+test("how far back: an agent saved under the old rung keeps its window", () => {
+  const expect = [0, 10, 5, 3, 2, 1];
+  expect.forEach((years, i) => {
+    assert.equal(E.yearsFromLegacy(i), years, `rung ${i} converted to ${E.yearsFromLegacy(i)} years`);
+    assert.equal(E.normCascade({ yearStop: i }).yearsBack, years);
+  });
+  // …and one saved SINCE keeps its own answer rather than being overwritten by the conversion.
+  assert.equal(E.normCascade({ yearStop: 5, yearsBack: 20 }).yearsBack, 20);
+});
+
 // ---- 4. COUNTS HOLD ACROSS A WIDER MATRIX THAN THE PRESETS ----------------------------------------------
 // The presets are eleven points in a space a person can move freely around. A count bug that only appears
 // once someone has touched a dial would pass every preset-shaped test, so this walks each preset with each
