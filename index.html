@@ -2657,7 +2657,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 193, "commit": "ab40c7a", "builtAt": "2026-07-30T01:43:35Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 196, "commit": "89bc978", "builtAt": "2026-07-30T02:14:12Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -7080,14 +7080,13 @@ const MISSION_DIALS = {cinema:["scale","buzz"], stream:["vote","crit","scale"]};
 // So the lane declares its whole set, and "More controls" is whatever that set has beyond the leaders:
 // nothing for cinema, Buzz for streaming.
 const MISSION_DIALS_USED = {cinema:["scale","buzz"], stream:["vote","crit","scale","buzz"]};
-// Does this lane use this dial at all? One question, one answer — read by the Mission screen (what to show) and
-// the auto-relax (what it may loosen). CAS-231 found that it ought to gate a third thing, what a preset is
-// allowed to WRITE, because a cinema preset can still carry a vote or critics criterion that its lane neither
-// shows nor relaxes; see the CAS-231 comment for the measurements and why fixing it is Lee's call, not mine.
-function missionDialUsed(dial, kind){
-  const k = (kind==="cinema"||kind==="stream") ? kind : missionKind();
-  return (MISSION_DIALS_USED[k] || MISSION_DIALS_USED.cinema).includes(dial);
-}
+// KNOWN GAP, found by the CAS-231 invariant suite and left for Lee to rule on: MISSION_DIALS_USED gates what
+// the Mission screen SHOWS and what the auto-relax may loosen, but not what a preset may WRITE. So a cinema
+// preset can still carry a criterion on a dial the cinema lane neither shows nor relaxes — Date Night's
+// People's-vote floor of 7.0 (2 films caught where 33 qualify) and Nominees & Awards' critics rung (0 where 82
+// qualify) are both unreachable-and-active. Zeroing them is a two-line change and it is deliberately NOT made
+// here: it would leave a card titled "Nominees & Awards" quoting 82 films with no awards criterion behind it,
+// which trades a hidden filter for a false promise. Which of the two to fix, and how, is a product call.
 const missionKind = () => {
   const k=(onbFlow.draft||{}).kind;
   return (k==="cinema"||k==="stream") ? k : flowKind;
