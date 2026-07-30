@@ -2766,7 +2766,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 210, "commit": "8c97a45", "builtAt": "2026-07-30T07:39:18Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 211, "commit": "d701ad4", "builtAt": "2026-07-30T07:48:39Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -7486,19 +7486,16 @@ function onbAgePhrase(){
 // CAS-145: a PLAIN LINE, not a box — "boxes = tappable" (buildspec §8), and this is a passive summary of what
 // you have just set. The selections are un-bolded, the joining "and" IS bold (it is the thing that changed
 // from the old OR, and the whole meaning of the sentence hangs on it), and the count is green.
+// CAS-234: the Mission's recap sentence is gone — every dial already says what it is set to, on its own
+// face, and the count is on the screen twice above this.
+//
+// The set-aside note is NOT the recap and is deliberately kept: it explains a real drop the dials do not
+// account for (a score bar can only admit titles carrying that score, so it silently drops the unscored —
+// the 190→51 Lee asked about on CAS-164). Deleting it with the recap would remove the answer to a question
+// the screen still raises. It only appears when there is something to explain.
 function selSayHtml(){
-  const n=onbCount(), cnt=`<span class="cnt">${n} film${n===1?"":"s"}</span>`;
-  const parts=[];
-  const v=voteSay(onbFlow.voteVal); if(v) parts.push(v);
-  const cr=critScoreSay(onbFlow.critScore||0); if(cr) parts.push(cr);
-  const aw=(AWARD_STOPS[onbFlow.awardStop||0]||{}).say; if(aw) parts.push(aw);
-  const sc=scaleSay(onbFlow.scaleVal||0); if(sc) parts.push(sc);
-  const bz=BUZZ_STOPS[onbFlow.buzzStop||0].say; if(bz) parts.push(bz);
-  if(!parts.length) return `No bar set, so everything qualifies — ${cnt} right now. Turn a dial up to get pickier.`;
-  const joined = parts.reduce((a,p,i)=> i===0 ? p : `${a} <b>and</b> ${p}`, "");
   const aside = selSetAside();
-  const asideHtml = aside ? ` <span class="osaside">${aside} title${aside===1?"":"s"} have no score yet and aren't counted here.</span>` : "";
-  return `Films that are ${joined}. ${cnt} right now.${asideHtml}`;
+  return aside ? `<span class="osaside">${aside} title${aside===1?"":"s"} have no score yet and aren't counted here.</span>` : "";
 }
 // The set-aside count the "What this does" box owns. A score dial (People's vote, or a Critics REVIEW rung —
 // not the award rungs) can only admit titles carrying that score, so it silently drops the unscored. N is the
@@ -7836,21 +7833,26 @@ const flowCnt = n => `<span class="cnt">${n} film${n===1?"":"s"}</span> match ri
 // three places — the mirror at the top, the Continue button and this line — and "equal at all times" can
 // only be a property of the code if there is one computation per paint rather than three that happen to
 // agree. onbRefresh() is where that one call lives; nothing else counts.
+// CAS-234: the count is gone from these lines. Every step already prints it twice — the mirror at the top
+// and the Continue button — and a third printing at the foot of the page was three chances to disagree for
+// no extra information. What is left is the part only this line said: what the step is currently set TO.
+// The `n` argument stays so the one-computation-per-paint rule (CAS-198/164) is undisturbed for the
+// screens that still quote a number, and so re-adding it here is a one-word change.
 function styleSayHTML(n){
   const g=dT().genre;
   const what = g===null ? "no genres" : !g.length ? "all genres" : `${g.length} genre${g.length===1?"":"s"}`;
-  return `Drawing from <b>${what}</b> · ${flowCnt(n)}`;
+  return `Drawing from <b>${what}</b>`;
 }
 function langSayHTML(n){
   const l=dT().lang;
   const what = l===null ? "no languages" : !l.length ? "any language" : l.map(langName).join(", ");
-  return `Watching in <b>${esc(what)}</b> · ${flowCnt(n)}`;
+  return `Watching in <b>${esc(what)}</b>`;
 }
 function ageSayHTML(n){
   const a=dT().age;
   const what = a===null ? "no ratings" : !a.length || a.length===AGE_LEVELS.length ? "all ratings"
              : a.join(", ");
-  return `Including <b>${esc(what)}</b> · ${flowCnt(n)}`;
+  return `Including <b>${esc(what)}</b>`;
 }
 const TB_ROWS = [
   {key:"genres", icon:"🎭", label:"Genres",        sum:tbSumGenres},
@@ -8473,7 +8475,9 @@ const SHARP_STEPS = {
   years: {
     progress: 48,
     noAgent: true,
-    say: n => `Going back <b>${esc(yearsLabel(flowYearsBack()).toLowerCase())}</b> · ${flowCnt(n)}`,
+    // CAS-234 names Style, Language and Ratings; How far back carries the identical third count and gets
+    // the identical treatment, or the flow would drop it on three screens and keep it on a fourth.
+    say: n => `Going back <b>${esc(yearsLabel(flowYearsBack()).toLowerCase())}</b>`,
     lead(){ return `watches films <b>${onbYearPhrase()}</b>`; },
     // The app's rich slider (CAS-116): dotted track + circle stops drawn under a real range input, labels
     // below. CAS-250 makes it continuous and log-spaced — the input carries a POSITION and the years are
