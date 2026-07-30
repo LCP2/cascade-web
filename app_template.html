@@ -6611,7 +6611,15 @@ function onbApply(){
   // CAS-228: only the NOTIFY switches write alerts. Under CAS-160 a ticked window did both jobs, so listing a
   // window silently armed its bell; now a window you only wanted to see stays silent, and a window you only
   // wanted to hear about never has to appear in the list.
-  d.alerts = {...ALERT_DEFAULTS, ...(d.alerts||{})};
+  // CAS-229: and the starting point is ALL OFF, not ALERT_DEFAULTS. ALERT_DEFAULTS turns Rent and Stream on,
+  // which is right for a Cascade built in the editor over the whole ladder and wrong for an agent scoped to
+  // one end of it: a cinema agent was shipping with rental and streaming bells set true, and those bells can
+  // never fire for it — a film reaching rent has already left a cinema agent's watch set, so the flags were
+  // unreachable-but-true, exactly the state CAS-103 requires be switched off in the data rather than greyed.
+  // Building up from nothing means the agent's bells are precisely the windows it has a Notify on, which is
+  // also this ticket's stated default for each type.
+  const off={}; Object.keys(ALERT_DEFAULTS).forEach(k=>{ off[k]=false; });
+  d.alerts = off;
   agentWindows(d.kind).forEach(w=>{
     if(winOn(w.key,"notify") && w.alerts) Object.assign(d.alerts, w.alerts);
   });
@@ -7762,6 +7770,11 @@ let onbStepKey=null;
 // listing is this month's releases and asking someone to date-limit it would be a control with nothing to
 // do — and "My streaming services" is the whole point of a streaming agent: it is what turns "on some
 // service somewhere" into "on one you already pay for".
+// CAS-229: `watching` is deliberately NOT in either list. Onboarding makes assumptions about where and when
+// the agent watches (PRIORITY_WATCH, below) rather than asking; the per-window List/Notify controls live only
+// in Agent Settings, reached from the Briefing. The one notification question onboarding does ask is
+// `notifysettings`, which is about how we reach YOU (in-app, email) — not about which windows, so it stays.
+// If you are adding a step here, that is the line: onboarding may ask how to reach you, never which windows.
 const FLOWS = {
   cinema: ["priority","pickagent","selectivity","name","genres","language","age",
            "keepfinding","notifysettings"],
