@@ -2713,7 +2713,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 205, "commit": "b2c3ecf", "builtAt": "2026-07-30T06:29:00Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 206, "commit": "2f45f2f", "builtAt": "2026-07-30T06:39:15Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -6176,7 +6176,10 @@ const STARTERS = [
   {key:"date_night", icon:"🌙", name:"Date Night", kinds:["cinema","stream"],
    blurb:"Easy crowd-pleasers for two on the couch.",
    frame:"is after the well-liked, feel-good ones you'll both enjoy.",
-   bar:"Well-liked · a little buzz", cd:"var(--blue)", primary:["vote","buzz"],
+   // CAS-248: the bar a card prints has to be the bar the agent applies, and Date Night is offered in BOTH
+   // lanes. Its buzz rung is real at the cinema, where buzz is a dial, and is dropped on streaming, where it
+   // is not — so the label is dropped there too rather than promising a criterion the agent no longer has.
+   bar:"Well-liked · a little buzz", barBy:{stream:"Well-liked"}, cd:"var(--blue)", primary:["vote","buzz"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:7, selCritics:0, selScale:0, selBuzz:1}},
   {key:"streaming", icon:"📺", name:"Everyday Favourites", kinds:["stream"],
@@ -6184,7 +6187,7 @@ const STARTERS = [
    // this card. CAS-160 removes the need for one: the blurb no longer claims anything about your services.
    blurb:"Easy, fun watches for a night in.",
    frame:"keeps it easy and fun, and leans on what you like.",
-   bar:"Fun-first · a little buzz", cd:"var(--green)", primary:["vote","buzz"],
+   bar:"Fun-first", cd:"var(--green)", primary:["vote"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:6, selCritics:0, selScale:0, selBuzz:1}},
   {key:"prestige", icon:"🏆", name:"Nominees & Awards", kinds:["cinema","stream"],
@@ -6237,9 +6240,14 @@ function starterPreview(s, kind){
   d.selBuzz=s.crit.selBuzz||0; d.selOr=false;
   d.status=watchToStatuses(starterWatch(s, kind));
   d.kind = kind || flowKind;
+  laneCrit(d, d.kind);                 // CAS-248: the card counts what the agent will actually apply
   return normCascade(d);
 }
 const starterCount = (s, kind) => watchCount(starterPreview(s, kind));
+// CAS-248: what the card says this agent's bar is, in the lane it is being offered in. A preset shared
+// across lanes can apply different criteria in each (laneCrit), so a single fixed string could only ever be
+// right in one of them.
+const starterBar = (s, kind) => (s.barBy && s.barBy[kind || flowKind]) || s.bar;
 let pendingStarter = null;   // the agent the person chose
 // CAS-188: the cards are the body of the flow's `pickagent` step now, not a screen of their own — so this
 // returns the markup rather than writing it into an overlay that no longer exists.
@@ -6255,7 +6263,7 @@ function starterCardsHTML(kind){
         <span class="sc-main">
           <span class="sc-name">${s.name}${recommended?` <b class="sc-rec">RECOMMENDED</b>`:""}</span>
           <span class="sc-blurb">${esc(s.blurb)}</span>
-          <span class="sc-chan">${esc(s.bar)} · <b class="sc-match">${n
+          <span class="sc-chan">${esc(starterBar(s, kind))} · <b class="sc-match">${n
             ? `${n} film${n===1?"":"s"} now`
             : `nothing yet — it'll tell you the moment one lands`}</b></span>
         </span>
@@ -7008,6 +7016,7 @@ function onbApply(){
   d.selCritics = onbFlow.criticsStop||0;
   d.selScale = onbFlow.scaleVal||0;           // CAS-166: a dollar floor
   d.selBuzz = onbFlow.buzzStop||0;
+  laneCrit(d, d.kind);                 // CAS-248: …and so does the agent itself
   d.selOr = !!onbFlow.selOr;
   // CAS-160: availability is the user's now, so the viewing door owns `status` the same way the dials own the
   // rating bars and the taste baseline owns genre/year/language/age — one screen per axis, no second writer.
@@ -7339,7 +7348,26 @@ const MISSION_DIALS = {cinema:["scale","buzz"], stream:["vote","crit","scale"]};
 // controls in front of a cinema agent that could only ever narrow it on data the films don't have yet.
 // So the lane declares its whole set, and "More controls" is whatever that set has beyond the leaders:
 // nothing for cinema, Buzz for streaming.
-const MISSION_DIALS_USED = {cinema:["scale","buzz"], stream:["vote","crit","scale","buzz"]};
+// CAS-248: and streaming loses Buzz, which is the streaming half of what CAS-220 did for cinema. A film on
+// a service has been out for months or years, so how much it is being TALKED ABOUT right now says something
+// about this week's trailer rather than about the film; what people and critics made of it, and how big it
+// is, are the questions that survive. Streaming's "More controls" therefore has nothing left in it and the
+// button stops rendering, exactly as cinema's did.
+const MISSION_DIALS_USED = {cinema:["scale","buzz"], stream:["vote","crit","scale"]};
+// A dial the lane does not use must not be CARRIED either. A criterion on a dial the screen never shows and
+// the auto-relax never loosens is a hidden filter — the thing CAS-231's KNOWN GAP is about — and two of the
+// streaming presets carried exactly that (Date Night and Everyday Favourites both ship selBuzz:1). Both
+// halves of one recipe read this, so the card's count and the agent's count cannot part company.
+//
+// It is deliberately buzz-on-streaming only. The gap's other half — the cinema presets' People's-vote and
+// Critics rungs — is untouched, because closing it means choosing between a hidden filter and a card called
+// "Nominees & Awards" that applies no awards criterion, and that is a product call rather than a bug fix.
+// This one is not ambiguous: the ticket says the streaming lane does not use Buzz, and no streaming preset
+// has buzz in its NAME.
+function laneCrit(c, kind){
+  if(kind==="stream") c.selBuzz = 0;
+  return c;
+}
 // KNOWN GAP, found by the CAS-231 invariant suite and left for Lee to rule on: MISSION_DIALS_USED gates what
 // the Mission screen SHOWS and what the auto-relax may loosen, but not what a preset may WRITE. So a cinema
 // preset can still carry a criterion on a dial the cinema lane neither shows nor relaxes — Date Night's

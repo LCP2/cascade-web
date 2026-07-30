@@ -52,7 +52,11 @@ test("CAS-216: the poster wall fills the screen and carries no z-rotation", asyn
   expect(wall.fade).not.toMatch(/rgb\(8, 11, 20\)\s/);
 });
 
-test("CAS-220: a cinema agent's Mission has no More controls; a streaming agent's does", async ({ page }) => {
+// CAS-220 asserted that a cinema Mission has no More controls and a streaming one does. CAS-248 removed
+// Buzz from the streaming lane, which was the only thing streaming's More controls held — so the second
+// half of that claim is now false by design, and the property CAS-220 was really protecting survives: each
+// lane offers exactly the dials it uses, and neither hides one behind a disclosure.
+test("CAS-220 / CAS-248: each Mission offers its own lane's dials, and no More controls", async ({ page }) => {
   await toShortlist(page, "cinema");
   let cards = await shortlistCards(page);
   await pickCard(page, cards[0].name);
@@ -62,9 +66,9 @@ test("CAS-220: a cinema agent's Mission has no More controls; a streaming agent'
   await toShortlist(page, "stream");
   cards = await shortlistCards(page);
   await pickCard(page, cards.find(c => /Everyday/.test(c.name))?.name || cards[0].name);
-  await expect(page.locator(".osmore")).toHaveCount(1);
-  await expect(page.locator(".osmore")).toContainText(/buzz/i);
-  await expect(page.locator(".osmore")).not.toContainText(/People's vote/i);
+  await expect(page.locator(".osmore")).toHaveCount(0);
+  await expect(page.locator(".dialcard, [data-dial]")).toHaveCount(3);
+  await expect(page.locator("#onbStep")).not.toContainText(/Buzz/i);
 });
 
 test("CAS-225 / CAS-223: Ratings drops Select all; Style keeps it, below its chips", async ({ page }) => {
