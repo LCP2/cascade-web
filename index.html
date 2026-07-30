@@ -468,6 +468,9 @@
   .wdate{text-align:center;font-size:10px;color:var(--faint);line-height:1;font-variant-numeric:tabular-nums;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .wdate.est{font-style:italic;opacity:.75}
+  /* CAS-240: a date we actually hold is upright and a shade brighter than an estimate, so the difference
+     between "this is the day" and "around then" is legible without reading the tooltip. */
+  .wdate.exact{font-style:normal;color:var(--dim)}
   .win.on .wdate{color:var(--dim)}
   .win.w-cin-upcoming.on .wpill{color:#c8cfd9;border-color:var(--grey);background:rgba(107,114,128,.25)}
   .win.w-cin-opening.on .wpill{color:#ffc2c2;border-color:var(--open);background:rgba(255,107,107,.2)}
@@ -2374,6 +2377,15 @@ const langName = c => LANG_NAMES[c] || (c ? c.toUpperCase() : "Unknown");
 
 function addDays(iso, n){ const d=new Date(iso+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
 function fmtDate(iso){ if(!iso) return ""; const [y,m,d]=iso.split("-"); return `${MONTHS[+m-1]} ${y.slice(2)}`; }
+// CAS-240: the same date said exactly, for the windows where we hold a real one. Month-and-year is the
+// right shape for an ESTIMATE — it says "around then" without pretending to a day — and precisely the wrong
+// shape for a date somebody published. The year is dropped when it is this one, because the strip is four
+// cells wide on a 390px phone and "26 Jul" is the part that carries the information.
+function fmtDay(iso){
+  if(!iso) return "";
+  const [y,m,d]=iso.split("-");
+  return `${+d} ${MONTHS[+m-1]}${y===TODAY.slice(0,4) ? "" : " "+y.slice(2)}`;
+}
 function yearOf(m){ return (m.cinema_date||m.year||"").slice(0,4); }
 function esc(s){ return (s||"").replace(/</g,"&lt;"); }
 // Same job, for text going inside a double-quoted attribute (a title=""), where a stray " would end it early.
@@ -2766,7 +2778,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 213, "commit": "58dd63a", "builtAt": "2026-07-30T08:05:52Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 214, "commit": "3122c0b", "builtAt": "2026-07-30T08:15:29Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3441,11 +3453,23 @@ function availHTML(m){
     // Printing it would claim a window that never opened, so that one case shows nothing at all.
     const sd=stageDate(m,key);
     const stale = sd && sd.est && state==="future" && sd.d < TODAY;
-    const dateStr=(sd && !stale) ? fmtDate(sd.d) : "";
-    const estCls=(sd && sd.est && !stale) ? " est" : "";
+    // CAS-240: an exact date where we hold one, the estimate's month-and-year where we do not. The two are
+    // different KINDS of claim and they now look different, which is what the ticket is about.
+    //
+    // They are also different claims from each other, and the tooltip says which. The cinema date is a
+    // published AU release date. A home-window date is the day Cascade FIRST SAW the film in that window —
+    // window_dates is an observation log, not a publisher's calendar — so it is dated exactly and described
+    // as a sighting rather than as a release, because the second would be a claim we cannot make.
+    const exact = sd && !sd.est;
+    const dateStr = stale ? "" : (exact ? fmtDay(sd.d) : (sd ? fmtDate(sd.d) : ""));
+    const estCls=(sd && sd.est && !stale) ? " est" : (exact ? " exact" : "");
+    const why = !sd || stale ? ""
+      : exact ? (key==="cinema" ? `AU release date: ${fmtDay(sd.d)}`
+                                : `Cascade first saw it here on ${fmtDay(sd.d)}`)
+              : `Estimated from its cinema release — Cascade hasn't read a listing for this window yet`;
     return `<div class="win ${cls} ${state}">
       <div class="wpill">${label}</div>
-      <div class="wdate${estCls}">${dateStr||"—"}</div></div>`;
+      <div class="wdate${estCls}"${why?` title="${escA(why)}"`:""}>${dateStr||"—"}</div></div>`;
   }).join("");
   // CAS-239: the strip is NOT part of the tap-to-open region any more. It sits directly above the Watch
   // status and Notify chips, and a miss on either of those landed on the strip and opened the card — so the

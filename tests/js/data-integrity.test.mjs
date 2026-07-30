@@ -545,6 +545,45 @@ test("services: the leading services really do lead", () => {
     `a hidden service carries more than a leading one: lead ${lead.join(",")} vs tail ${tail.join(",")}`);
 });
 
+// ---- 3h. AN EXACT DATE LOOKS DIFFERENT FROM AN ESTIMATE (CAS-240) ---------------------------------------
+test("dates: a date we hold is printed to the day, an estimate stays a month", () => {
+  const withCinema = SHOWABLE.filter(m => m.cinema_date);
+  assert.ok(withCinema.length > 0, "no film has a cinema date — this test would prove nothing");
+  let exact = 0, estimated = 0;
+  for(const m of SHOWABLE.slice(0, 400)){
+    const html = E.availHTML(m);
+    for(const key of ["cinema", "pvod", "rental", "included_streaming"]){
+      const sd = E.stageDate(m, key);
+      if(!sd) continue;
+      if(sd.est){ estimated++; continue; }
+      exact++;
+      // The day is on the card, and the month-only form is not what was printed for it.
+      assert.ok(html.includes(E.fmtDay(sd.d)),
+        `${m.title}: ${key} is a real ${sd.d} and the strip does not show it to the day`);
+    }
+  }
+  assert.ok(exact > 0 && estimated > 0,
+    `the sample held ${exact} exact and ${estimated} estimated dates — one of the two paths is untested`);
+});
+
+test("dates: the day form is compact, unambiguous, and never a fabricated precision", () => {
+  // This year drops the year; another year keeps it. Both are the same shape as what fmtDate says, so the
+  // two can be told apart at a glance rather than by counting characters.
+  const thisYear = `${E.TODAY.slice(0, 4)}-03-07`;
+  const other    = "2019-11-21";
+  assert.equal(E.fmtDay(thisYear), "7 Mar");
+  assert.equal(E.fmtDay(other), "21 Nov 19");
+  assert.equal(E.fmtDay(""), "", "an absent date must print nothing, never a guess");
+  // An ESTIMATE is still a month and a year — a day would claim a precision the offset does not have.
+  assert.equal(E.fmtDate(other), "Nov 19");
+  const est = E.MOVIES.find(m => { const s = E.stageDate(m, "included_streaming"); return s && s.est; });
+  if(est){
+    const sd = E.stageDate(est, "included_streaming");
+    assert.ok(E.availHTML(est).includes(E.fmtDate(sd.d)) || sd.d < E.TODAY,
+      `${est.title}: an estimated streaming date is not printed in its month form`);
+  }
+});
+
 // ---- 4. COUNTS HOLD ACROSS A WIDER MATRIX THAN THE PRESETS ----------------------------------------------
 // The presets are eleven points in a space a person can move freely around. A count bug that only appears
 // once someone has touched a dial would pass every preset-shaped test, so this walks each preset with each
