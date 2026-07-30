@@ -1198,6 +1198,9 @@
   .osdh b{font-family:var(--font-display);font-size:14px;font-weight:600;color:var(--ink)}
   .osdset{font-size:11.5px;color:var(--accenttext);font-weight:600;flex:0 0 auto}
   .oscap{font-size:11px;color:var(--faint);margin:2px 2px 0}
+  /* CAS-249: the second question inside the Critics & awards card, set off from the slider above it
+     so the two ladders read as two controls rather than one with a stray row of labels. */
+  .oscap2{margin-top:18px}
   .osdial .osticks{font-size:9px;align-items:flex-start}
   .osdial .osticks span{flex:1;text-align:center}
   .osdial .osticks .thr{display:block;font-size:8px;font-weight:700;opacity:.7;margin-top:1px}
@@ -2713,7 +2716,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 206, "commit": "2f45f2f", "builtAt": "2026-07-30T06:39:15Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 207, "commit": "c8a8ba6", "builtAt": "2026-07-30T07:01:53Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -4388,7 +4391,16 @@ function normCascade(c){
   c.includeUnbudgeted = !!c.includeUnbudgeted;
   c.tentpole = c.tentpole||"any";
   c.awards = !!c.awards;
-  c.selCrowd = c.selCrowd||0; c.selCritics = c.selCritics||0; c.selScale = c.selScale||0;
+  c.selCrowd = c.selCrowd||0; c.selScale = c.selScale||0;
+  // CAS-249: the old single 0-4 ladder, unpacked into the two questions it was conflating. An agent saved
+  // before this change is converted rather than reset — its rung meant something and it goes on meaning it.
+  if(c.selCritScore===undefined && c.selAwards===undefined){
+    const s=c.selCritics||0;
+    c.selCritScore = s===1 ? 60 : s===2 ? 80 : 0;
+    c.selAwards    = s===3 ? 1  : s>=4  ? 4  : 0;
+  }
+  c.selCritScore = c.selCritScore||0; c.selAwards = c.selAwards||0;
+  c.selCritics = c.selCritics||0;      // kept only so an older build reading the same localStorage still works
   c.selBuzz = c.selBuzz||0; c.selOr = !!c.selOr;   // CAS-114 dials + CAS-145 buzz
   // CAS-166: selScale used to be a band index 0-3 and is now a dollar floor. Nobody sets a floor of three
   // dollars, so anything under $1000 is an agent saved under the old shape — carried over to the floor its
@@ -4470,7 +4482,7 @@ cascades.forEach(normCascade);   // saved Cascades are filled out here, not at l
 // Only EXACT twins collapse. Two Cascades that differ anywhere — even one genre chip — are two real radars.
 const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.age, c.lang, c.culture, c.year,
   c.imdb, c.rt, c.awards, c.budget, c.includeUnbudgeted, c.includeUnrated, c.tentpole,
-  c.selCrowd||0, c.selCritics||0, c.selScale||0, c.selBuzz||0, !!c.selOr,
+  c.selCrowd||0, c.selCritScore||0, c.selAwards||0, c.selScale||0, c.selBuzz||0, !!c.selOr,
   c.myServices, c.alerts, c.sort||"imdb", c.excludeWatched, c.excludeBlocked,
   // CAS-160: the viewing windows are part of "the alert moments" too. Three of them (announced / 1 month /
   // 1 week out) all resolve to the same `status`, so without this line two agents that differ only in when
@@ -4528,12 +4540,49 @@ const ageOpen = c => c.age!==null && (!c.age.length || c.age.length===AGE_LEVELS
 // Three independent gates the #4 step sets, each defaulting off (0/false) so a Cascade that never touched
 // them matches exactly as it did before. matchesCriteria wires them in below.
 //   · selCrowd  — a raw IMDb bar (People's vote). A set bar is crowd-score-only, so an unrated film drops.
-//   · selCritics — 0 any · 1 Metacritic≥60 · 2 MC≥80 · 3 award nominee-or-better · 4 award winner.
-//                  The two review rungs read Metacritic first, Rotten Tomatoes as a fallback — never blended.
+//   · selCritScore — CAS-249: a continuous SCORE floor, 0-100, the same treatment CAS-166 gave Budget &
+//                  scale. It reads Metacritic first and Rotten Tomatoes as a fallback — never blended.
+//   · selAwards — CAS-249: the awards half, still stepped, but counted rather than named: 0 any · 1 one
+//                  nomination · 2 two or more · 3 three or more · 4 winner. They were one field before
+//                  (`selCritics`, 0-4), which forced a choice between a review bar and an awards bar when
+//                  the two are different questions — "well reviewed" and "nominated" are not rungs of one
+//                  ladder. A Cascade saved under the old field is migrated in normCascade.
 //   · selScale  — CAS-166: a dollar FLOOR now, not a band index. 0 = any; anything above is "made for (or
 //                  took) this much or more". A LEAN, not a hard cut: only known figures are gated; an
 //                  unknown-scale title is never dropped for its scale.
 const critScore = m => (m.metacritic!=null ? m.metacritic : (m.rt_critic ? m.rt_critic : null));
+// CAS-249: how decorated a film is, as ONE number, so the awards rungs nest inside one another.
+// `award_text` carries the count verbatim — "Nominated for 3 Oscars", "Won 7 Oscars" — so the ladder is
+// read off the data rather than invented. A win is worth more than any number of nominations, which is why
+// it is a large constant rather than a bigger count: it makes every winner clear every nomination rung, so
+// pushing the dial right can only ever narrow the set. Without that, "3+ nominations" (24 films) would be
+// tighter than "Winner" (36) and the count would go UP on the last step — a dial that widens as you get
+// pickier is the exact defect this release is about.
+const AWARD_WIN_RANK = 1000;
+const _awardRankCache = new Map();
+function awardRank(m){
+  if(_awardRankCache.has(m.tmdb_id)) return _awardRankCache.get(m.tmdb_id);
+  let r = 0;
+  if(m.award){
+    // parseAwards, not a second regex: it is already careful that an Oscar count is only read where the
+    // word "Oscar" appears, so a film "Nominated for 1 BAFTA Award" is never promoted to an Academy Award
+    // nomination. A nominated film with no Oscar line still counts as one nomination — the rung says
+    // "nomination", not "Oscar nomination", and it was nominated for something.
+    const a = parseAwards(m.award_text) || {};
+    r = Math.max(a.oscN||0, a.oscW||0, 1) + (m.award==="won" ? AWARD_WIN_RANK : 0);
+  }
+  _awardRankCache.set(m.tmdb_id, r);
+  return r;
+}
+// CAS-249: the awards half of the dial, counted. The rungs nest because a win outranks every nomination
+// count (see AWARD_WIN_RANK), so the set can only ever shrink as the dial is pushed right.
+const AWARD_STOPS = [
+  {label:"Any",     thr:null,          say:null,                                  rank:0},
+  {label:"1 nom",   thr:"nominated",   say:"award nominees",                      rank:1},
+  {label:"2+ noms", thr:"Oscars",      say:"films with two or more nominations",  rank:2},
+  {label:"3+ noms", thr:"Oscars",      say:"films with three or more nominations", rank:3},
+  {label:"Winner",  thr:"🏆 won",      say:"award winners",                       rank:AWARD_WIN_RANK},
+];
 function selCrowdOK(m,c){
   const min=c.selCrowd||0; if(!min) return true;
   // CAS-171: the People's vote dial is a claim about what a crowd thought, so it has to read the gated score.
@@ -4543,11 +4592,13 @@ function selCrowdOK(m,c){
   const r=ratingOf(m);
   return r!=null && r>=min;
 }
+// CAS-249: two questions, both under one dial, ANDed — "acclaimed AND nominated" is a coherent thing to
+// ask for and the old single ladder could not express it.
 function selCriticsOK(m,c){
-  const s=c.selCritics||0; if(!s) return true;
-  if(s>=4) return m.award==="won";
-  if(s>=3) return !!m.award;
-  const sc=critScore(m); return sc!=null && sc >= (s===1 ? 60 : 80);
+  const min=c.selCritScore||0, rung=c.selAwards||0;
+  if(min){ const sc=critScore(m); if(!(sc!=null && sc>=min)) return false; }
+  if(rung){ const need=(AWARD_STOPS[rung]||{}).rank||0; if(awardRank(m) < need) return false; }
+  return true;
 }
 // Scale match, tri-state: true (clears the floor) · false (known, below it) · null (no budget AND no revenue
 // → truly unknown scale). Budget is the primary signal, worldwide gross the real fallback — so an
@@ -4681,7 +4732,7 @@ function matchesCriteria(m,c,ignoreBlocked){
   // The score dials can only admit titles carrying that score; the budget dial stays a lean — an unknown
   // scale is never the reason a film is dropped.
   if(c.selCrowd   && !selCrowdOK(m,c))                 return false;
-  if(c.selCritics && !selCriticsOK(m,c))               return false;
+  if((c.selCritScore||c.selAwards) && !selCriticsOK(m,c)) return false;
   if(c.selScale   && selScaleMatch(m,c)===false)       return false;   // unknown(null) rides along
   if(c.selBuzz    && !selBuzzOK(m,c))                  return false;
   if(!budgetOK(m, c.budget||0, c.includeUnbudgeted)) return false;
@@ -5385,7 +5436,8 @@ function commitDraft(){
     age:draft.age, lang:draft.lang, culture:draft.culture, year:draft.year, imdb:draft.imdb, rt:draft.rt,
     ratingStop:draft.ratingStop, includeUnrated:draft.includeUnrated,
     budget:draft.budget, includeUnbudgeted:draft.includeUnbudgeted, tentpole:draft.tentpole,
-    selCrowd:draft.selCrowd, selCritics:draft.selCritics, selScale:draft.selScale, selBuzz:draft.selBuzz, selOr:draft.selOr,
+    selCrowd:draft.selCrowd, selCritScore:draft.selCritScore, selAwards:draft.selAwards,
+    selScale:draft.selScale, selBuzz:draft.selBuzz, selOr:draft.selOr,
     awards:draft.awards, myServices:{...draft.myServices},
     excludeWatched:draft.excludeWatched, excludeBlocked:draft.excludeBlocked,
     sort:draft.sort||"imdb", alerts:draft.alerts, watchWindows:draft.watchWindows,
@@ -6172,7 +6224,7 @@ const STARTERS = [
    frame:"is watching for the genuinely great ones — the films that earn their reviews.",
    bar:"Loved & acclaimed", cd:"var(--blue)", primary:["vote","crit"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
-         myServices:false, selCrowd:7.5, selCritics:2, selScale:0, selBuzz:0}},
+         myServices:false, selCrowd:7.5, selCritScore:80, selAwards:0, selScale:0, selBuzz:0}},
   {key:"date_night", icon:"🌙", name:"Date Night", kinds:["cinema","stream"],
    blurb:"Easy crowd-pleasers for two on the couch.",
    frame:"is after the well-liked, feel-good ones you'll both enjoy.",
@@ -6195,7 +6247,7 @@ const STARTERS = [
    frame:"collects the award nominees and winners worth seeing.",
    bar:"Award nominees & winners", cd:"var(--accent)", primary:["crit"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
-         myServices:false, selCrowd:0, selCritics:3, selScale:0, selBuzz:0}},
+         myServices:false, selCrowd:0, selCritScore:0, selAwards:1, selScale:0, selBuzz:0}},
   // The prototype's fourth card on both lists. It is a real agent, not a placeholder: everything open, so
   // it catches the whole catalogue and the very next screens are where you brief it. That is why its count
   // is the largest of the five and says so — nothing is being narrowed on your behalf yet.
@@ -6236,7 +6288,8 @@ function starterWatch(s, kind){
 function starterPreview(s, kind){
   const d=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
   d.genre=[]; d.year=[]; d.lang=["en"]; d.age=AGE_LEVELS.slice();   // the taste-baseline defaults, verbatim
-  d.selCrowd=s.crit.selCrowd||0; d.selCritics=s.crit.selCritics||0; d.selScale=s.crit.selScale||0;
+  d.selCrowd=s.crit.selCrowd||0; d.selScale=s.crit.selScale||0;
+  d.selCritScore=s.crit.selCritScore||0; d.selAwards=s.crit.selAwards||0;
   d.selBuzz=s.crit.selBuzz||0; d.selOr=false;
   d.status=watchToStatuses(starterWatch(s, kind));
   d.kind = kind || flowKind;
@@ -6304,7 +6357,8 @@ window.pickStarter=key=>{
   // of those two screens a liar. So the preset's standard seeds the stops, and the hub's count is the count
   // the card promised. (The dials remain fully editable — this is where they START, not a floor.)
   onbFlow.voteVal     = s.crit.selCrowd || VOTE_MIN;
-  onbFlow.criticsStop = s.crit.selCritics||0;
+  onbFlow.critScore   = s.crit.selCritScore||0;
+  onbFlow.awardStop   = s.crit.selAwards||0;
   onbFlow.scaleVal    = s.crit.selScale||0;   // CAS-166: dollars now, not a band index
   onbFlow.buzzStop    = s.crit.selBuzz||0;
   onbFlow.selOr = false;   // AND, per buildspec §1 (reverses the earlier OR default on CAS-114)
@@ -6572,13 +6626,20 @@ function onbSeedDraft(){
 // Plain English on the face of it (buildspec §5): which review score it reads is an implementation fact, and
 // this is the screen where someone decides what they want to watch. The numbers stay as the slider's small
 // print, where they answer "how high is that?" without becoming the label.
-const CRITICS_STOPS = [
-  {label:"Any",           thr:null,       say:null},
-  {label:"Well-reviewed", thr:"score 60+", say:"well-reviewed by critics"},
-  {label:"Acclaimed",     thr:"score 80+", say:"critically acclaimed"},
-  {label:"Nominee",       thr:"🏆",        say:"award nominees"},
-  {label:"Winner",        thr:"🏆",        say:"award winners"},
+// CAS-249: the SCORE half is continuous now — the same reversal CAS-166 made for Budget & scale, for the
+// same reason. Four named rungs could only ever say "at least this well reviewed" in four places, and the
+// place a person wants is rarely one of the four. The old names survive as the marks on the track: they are
+// what the readout is named after, and tapping one still lands exactly on it. On today's catalogue 734 films
+// carry a critic score — 484 at 60+, 191 at 80+, 79 at 90+ — so the marks sit where the field actually thins.
+const CRIT_MARKS = [
+  {v:0,  label:"Any",           say:null},
+  {v:60, label:"Well-reviewed", say:"well-reviewed by critics"},
+  {v:80, label:"Acclaimed",     say:"critically acclaimed"},
+  {v:90, label:"Universal",     say:"universally acclaimed"},
 ];
+const critScoreReadout = v => v ? `Score ${Math.round(v)}+` : "Any";
+const critScoreSay = v => (CRIT_MARKS.filter(r=>r.v>0 && v>=r.v).pop()||{}).say
+                       || (v ? `scoring ${Math.round(v)}+ with critics` : null);
 // CAS-166 (reverses buildspec decision #2): Budget & scale is continuous, like People's vote. Four bands
 // could only say "between these two numbers", which is not how anyone thinks about how big a film they want
 // — you want at least this big — and it misfired at the edges, dropping a $110M film from "Studio" for being
@@ -6649,7 +6710,7 @@ const voteSay = v => v<VOTE_OFF ? null : `scored ${v.toFixed(1)}+ by viewers`;
 // more — onbApply has cleared d.genre/d.lang/d.age since CAS-146, so the screens that wrote them were
 // screens with no effect. The Style / Language / Ratings steps now edit `tasteBase` itself.
 const onbFlow = {draft:null, name:ONB_DEFAULT_NAME, defaultName:ONB_DEFAULT_NAME,
-                 voteVal:VOTE_MIN, criticsStop:0, scaleVal:0, buzzStop:0, selOr:false,   // #4 dials (CAS-114/145/166)
+                 voteVal:VOTE_MIN, critScore:0, awardStop:0, scaleVal:0, buzzStop:0, selOr:false,   // #4 dials (CAS-114/145/166/249)
                  barTouched:false, barAutoRelaxed:null,   // CAS-158 first-open state
                  watch:{}};                                // CAS-160 viewing windows: {lane: [optKey,…]}
 
@@ -6970,24 +7031,31 @@ function barRelaxOrder(){
   const primary=MISSION_DIALS[missionKind()] || MISSION_DIALS.cinema;
   return [...missionRest(), ...primary.slice().reverse()];
 }
-const DIAL_STOP_KEY = {crit:"criticsStop", buzz:"buzzStop"};   // CAS-166: scale is continuous now
+const DIAL_STOP_KEY = {buzz:"buzzStop"};   // CAS-166: scale is continuous; CAS-249: so is the critic score
 // The continuous dials relax to the next marker DOWN the face of them — the same rungs the user can see and
 // tap (8.2/7.5/7.0/6.0, and Blockbuster/Studio/Indie). Below the lowest they go to Any. CAS-166 brought
 // Budget & scale into that group; the stop ladders still step down one index at a time.
 const CONT_RUNGS = {vote: () => VOTE_REF.map(r=>r[0]).filter(v=>v>VOTE_MIN),
-                    scale:() => SCALE_REF.map(r=>r.d).filter(d=>d>0)};
-const CONT_FLOOR = {vote: VOTE_MIN, scale: 0};
+                    scale:() => SCALE_REF.map(r=>r.d).filter(d=>d>0),
+                    crit: () => CRIT_MARKS.map(r=>r.v).filter(v=>v>0)};
+const CONT_FLOOR = {vote: VOTE_MIN, scale: 0, crit: 0};
+// CAS-249: "crit" is one dial carrying two controls, so relaxing it has an order — the awards ladder comes
+// down first, then the score. An awards rung is the harder ask (93 films clear one nomination against 484
+// at a 60 score), so it is the one giving a thin agent the most back per step.
 function barCanRelax(k){
+  if(k==="crit") return (onbFlow.awardStop||0)>0 || (onbFlow.critScore||0)>0;
   if(CONT_DIALS[k]) return CONT_DIALS[k].get() > CONT_FLOOR[k] && (k!=="vote" || onbFlow.voteVal>=VOTE_OFF);
   return (onbFlow[DIAL_STOP_KEY[k]]||0)>0;
 }
 function barRelaxOne(k){
+  if(k==="crit" && (onbFlow.awardStop||0)>0){ onbFlow.awardStop=Math.max(0,onbFlow.awardStop-1); return; }
   const cont=CONT_DIALS[k];
   if(!cont){ onbFlow[DIAL_STOP_KEY[k]] = Math.max(0, (onbFlow[DIAL_STOP_KEY[k]]||0)-1); return; }
   const below = CONT_RUNGS[k]().filter(v=>v < cont.get()-1e-9);
   cont.set(below.length ? below[below.length-1] : CONT_FLOOR[k]);
 }
-const barDialSnapshot = () => ({vote:onbFlow.voteVal, crit:onbFlow.criticsStop||0,
+const barDialSnapshot = () => ({vote:onbFlow.voteVal, crit:onbFlow.critScore||0,
+                                awards:onbFlow.awardStop||0,
                                 scale:onbFlow.scaleVal||0, buzz:onbFlow.buzzStop||0});
 function autoRelaxBar(){
   if(onbFlow.barTouched || onbFlow.barAutoRelaxed) return;   // first open only, and the user owns it after
@@ -7013,7 +7081,8 @@ function onbApply(){
   // steps' seed rating is untouched. selCrowd is a raw IMDb bar; the two stop fields and the OR flag drive
   // matchesCriteria. Defaults are all-open, so touching nothing leaves the agent watching the whole catalogue.
   d.selCrowd = (onbFlow.voteVal>=VOTE_OFF) ? onbFlow.voteVal : 0;   // continuous now (CAS-145)
-  d.selCritics = onbFlow.criticsStop||0;
+  d.selCritScore = onbFlow.critScore||0;
+  d.selAwards    = onbFlow.awardStop||0;
   d.selScale = onbFlow.scaleVal||0;           // CAS-166: a dollar floor
   d.selBuzz = onbFlow.buzzStop||0;
   laneCrit(d, d.kind);                 // CAS-248: …and so does the agent itself
@@ -7286,7 +7355,8 @@ function selSayHtml(){
   const n=onbCount(), cnt=`<span class="cnt">${n} film${n===1?"":"s"}</span>`;
   const parts=[];
   const v=voteSay(onbFlow.voteVal); if(v) parts.push(v);
-  const cr=CRITICS_STOPS[onbFlow.criticsStop||0].say; if(cr) parts.push(cr);
+  const cr=critScoreSay(onbFlow.critScore||0); if(cr) parts.push(cr);
+  const aw=(AWARD_STOPS[onbFlow.awardStop||0]||{}).say; if(aw) parts.push(aw);
   const sc=scaleSay(onbFlow.scaleVal||0); if(sc) parts.push(sc);
   const bz=BUZZ_STOPS[onbFlow.buzzStop||0].say; if(bz) parts.push(bz);
   if(!parts.length) return `No bar set, so everything qualifies — ${cnt} right now. Turn a dial up to get pickier.`;
@@ -7302,11 +7372,12 @@ function selSayHtml(){
 // and never add to this number. This is the explanation for the 190→51 drop Lee flagged.
 function selSetAside(){
   const crowdOn = onbFlow.voteVal>=VOTE_OFF;
-  const critStop = onbFlow.criticsStop||0;
-  const critScoreOn = critStop===1 || critStop===2;   // review rungs read a score; award rungs (3/4) don't
+  // CAS-249: the score and the awards are separate fields now, so this no longer has to work out which
+  // rungs of one ladder happened to read a score. Only the score dial does.
+  const critScoreOn = (onbFlow.critScore||0) > 0;
   if(!crowdOn && !critScoreOn) return 0;
   const d = onbApply();
-  const dOpen = {...d, selCrowd:0, selCritics:0, selScale:0, selBuzz:0, selOr:false};   // taste base, dials off
+  const dOpen = {...d, selCrowd:0, selCritScore:0, selAwards:0, selScale:0, selBuzz:0, selOr:false};   // taste base, dials off
   const inFinal = new Set(MOVIES.filter(m=>watchesFilm(m,d)));
   return MOVIES.filter(m=>{
     if(!watchesFilm(m,dOpen)) return false;   // must be in the taste base to begin with
@@ -7390,7 +7461,8 @@ function missionRest(){
 const DIAL_DEFS = {
   vote:  {em:"👥", label:"People's vote", how:"What everyday viewers scored it, out of 10.", cont:"vote"},
   crit:  {em:"🏅", label:"Critics & awards", how:"What professional critics and awards thought.",
-          stops:CRITICS_STOPS, key:"criticsStop"},
+          cont:"crit", also:{stops:AWARD_STOPS, key:"awardStop", dial:"awards",
+                             cap:"…and how decorated. A winner clears every nomination rung."}},
   scale: {em:"🎬", label:"Budget & scale", how:"How big the film is — from a small indie to a huge blockbuster.",
           cont:"scale"},
   buzz:  {em:"🔥", label:"Buzz", how:"How much people are talking about it right now.", isNew:true,
@@ -7416,6 +7488,19 @@ const CONT_DIALS = {
     marks:v => VOTE_REF.map(r=>({pos:votePos(r[0]), lit:v>=r[0], snap:r[0],
                                  label:r[0].toFixed(1), sub:r[1]})),
   },
+  // CAS-249: the critic score, 0-100, straight — no position mapping, because a score IS the number and
+  // the eye reads it linearly (which is the one thing money does not do, hence scale's positions).
+  crit: {
+    min:0, max:100, step:1, aria:"Critics score",
+    get:  () => onbFlow.critScore||0,
+    set:  v => { onbFlow.critScore=v; },
+    rawOf:v => v,
+    value:raw => +raw,
+    read: v => critScoreReadout(v),
+    pos:  v => v,
+    marks:v => CRIT_MARKS.map(r=>({pos:r.v, lit:v>=r.v, snap:r.v,
+                                   label:r.label, sub:r.v?r.v+"+":null})),
+  },
   scale: {
     min:0, max:SCALE_POS_MAX, step:1, aria:"Budget and scale",
     get:  () => onbFlow.scaleVal||0,
@@ -7436,6 +7521,21 @@ function dialCardHTML(k){
     ${d.isNew?`<span class="tagnew">NEW</span>`:""}
     ${cont?`<span class="dval" id="onbVal_${d.cont}">${esc(cont.read(curV))}</span>`:""}</div>
     <p class="oscap">${esc(d.how)}</p>`;
+  // CAS-249: a dial may carry a stepped companion under its slider — Critics & awards is one control made
+  // of two questions, and splitting it into two cards would have made the streaming Mission four bars deep
+  // the week CAS-248 cut it to three.
+  const alsoHTML = (()=>{
+    const a=d.also; if(!a) return "";
+    const cur=onbFlow[a.key]||0, n=a.stops.length, max=n-1;
+    return `<p class="oscap oscap2">${esc(a.cap)}</p>
+      <div class="vslider">
+        <div class="vtrack"><div class="vfillbar" style="width:${cur/max*100}%"></div></div>
+        <div class="vnotches">${a.stops.map((_,i)=>`<span class="vnotch ${i<=cur?"lit":""}" style="left:${i/max*100}%"></span>`).join("")}</div>
+        <input type="range" id="onbDial_${a.dial}" min="0" max="${max}" step="1" value="${cur}"
+               aria-label="Awards"></div>
+      <div class="vlabels">${a.stops.map((st,i)=>`<button type="button" class="vsnap ${i===cur?"on":""}" data-i="${i}"
+        style="left:${i/max*100}%;transform:${edgeShift(i,n)}">${esc(st.label)}${st.thr?`<small>${esc(st.thr)}</small>`:""}</button>`).join("")}</div>`;
+  })();
   if(cont){
     const marks=cont.marks(curV);
     // The marker labels are buttons: "the existing dots become snap points" (CAS-166) means the four sizes
@@ -7449,6 +7549,7 @@ function dialCardHTML(k){
       </div>
       <div class="vlabels${marks.length>=5?" stag":""}">${marks.map((mk,i)=>`<button type="button" class="vsnap ${mk.lit?"on":""} ${i%2?"lo":""}" data-snap="${mk.snap}"
         style="left:${mk.pos}%;transform:${mk.pos<=0?"translateX(0)":mk.pos>=100?"translateX(-100%)":"translateX(-50%)"}">${esc(mk.label)}${mk.sub?`<small>${esc(mk.sub)}</small>`:""}</button>`).join("")}</div>
+      ${alsoHTML}
     </div>`;
   }
   const cur=onbFlow[d.key]||0, n=d.stops.length, max=n-1;
@@ -7464,12 +7565,18 @@ function dialCardHTML(k){
 }
 // Repaint one dial in place rather than re-rendering the screen: a slider you are dragging must not be torn
 // out from under your finger.
-function paintDial(card, fillPct, litFn, onFn){
-  card.querySelector(".vfillbar").style.width=fillPct+"%";
-  card.querySelectorAll(".vnotch").forEach((x,i)=>x.classList.toggle("lit", litFn(i)));
+function paintDial(card, fillPct, litFn, onFn){ paintDialAt(card, 0, fillPct, litFn, onFn); }
+// CAS-249: a card can hold two sliders now (Critics & awards), so every repaint names which one it means.
+// Scoping by index rather than by class keeps the markup identical for both, which is what lets the
+// companion ladder reuse the slider CSS wholesale.
+function paintDialAt(card, nth, fillPct, litFn, onFn){
+  const bars=card.querySelectorAll(".vfillbar"), notchRows=card.querySelectorAll(".vnotches"),
+        labelRows=card.querySelectorAll(".vlabels");
+  if(bars[nth]) bars[nth].style.width=fillPct+"%";
+  if(notchRows[nth]) notchRows[nth].querySelectorAll(".vnotch").forEach((x,i)=>x.classList.toggle("lit", litFn(i)));
   // CAS-166: the continuous dials' labels are <button> (tap to snap), the stop ladders' are <span> — so this
   // reaches whatever the row is made of rather than only spans.
-  card.querySelectorAll(".vlabels > *").forEach((l,i)=>l.classList.toggle("on", onFn(i)));
+  if(labelRows[nth]) labelRows[nth].querySelectorAll(":scope > *").forEach((l,i)=>l.classList.toggle("on", onFn(i)));
 }
 function wireDials(){
   // CAS-166: both continuous dials down one path — the vote dial's behaviour, now shared.
@@ -7485,22 +7592,31 @@ function wireDials(){
     };
     r.oninput=()=>apply(cont.value(+r.value));
     // Tap a named stop to land exactly on it — the four old dots, still one tap away.
-    card.querySelectorAll(".vsnap").forEach(b=>{
+    // CAS-249: [data-snap], not every .vsnap in the card. Critics & awards holds two ladders now, and the
+    // companion's buttons carry data-i instead — wiring them here would read undefined and set the slider
+    // to NaN on the first tap.
+    card.querySelectorAll(".vsnap[data-snap]").forEach(b=>{
       b.onclick=()=>{ const v=+b.dataset.snap; r.value=cont.rawOf(v); apply(v); };
     });
   });
-  ["crit","buzz"].forEach(k=>{
+  // CAS-249: the stepped ladders. "awards" is the companion under the Critics slider, so it paints the
+  // SECOND .vslider in its card rather than the card's first — paintDial would otherwise repaint the score
+  // slider with the awards rung's numbers, which is the shape of bug that makes a dial appear to jump.
+  const STEP_DIALS = [{dial:"buzz", stops:BUZZ_STOPS, key:"buzzStop", nth:0},
+                      {dial:"awards", stops:AWARD_STOPS, key:"awardStop", nth:1}];
+  STEP_DIALS.forEach(d=>{
+    const k=d.dial;
     const r=$("onbDial_"+k); if(!r) return;
-    const d=DIAL_DEFS[k], max=d.stops.length-1, card=r.closest(".osdial");
+    const max=d.stops.length-1, card=r.closest(".osdial");
     const apply=v=>{
       onbFlow[d.key]=v; onbFlow.barTouched=true;   // CAS-158: from here the bar is theirs
-      paintDial(card, v/max*100, i=>i<=v, i=>i===v);
+      paintDialAt(card, d.nth, v/max*100, i=>i<=v, i=>i===v);
       selRefresh();
     };
     r.oninput=()=>apply(+r.value);
     // CAS-192: a stepped dial's rungs are tappable too. They were labels beside a slider you had to drag
     // to a named position you could already see — the target was right there and not a target.
-    card.querySelectorAll(".vsnap").forEach(b=>{
+    card.querySelectorAll(".vsnap[data-i]").forEach(b=>{
       b.onclick=()=>{ const v=+b.dataset.i; r.value=v; apply(v); };
     });
   });
@@ -8327,7 +8443,8 @@ function briefOpen(id){
   // Every axis the flow owns is seeded off the agent, not off a default — a Briefing that opened on
   // defaults would quietly rewrite the agent the moment you pressed Save.
   onbFlow.voteVal     = c.selCrowd   || VOTE_MIN;
-  onbFlow.criticsStop = c.selCritics || 0;
+  onbFlow.critScore   = c.selCritScore || 0;
+  onbFlow.awardStop   = c.selAwards    || 0;
   onbFlow.scaleVal    = c.selScale   || 0;
   onbFlow.buzzStop    = c.selBuzz    || 0;
   onbFlow.selOr       = !!c.selOr;
@@ -8702,7 +8819,7 @@ function openOnbStep(key, agentKey){
   if(!SHARP_STEPS[key]) return false;
   flowOn=false;     // a preview draws its own back arrow and footer, never the flow's fixed chrome
   onbFlow.draft=onbSeedDraft(); onbFlow.name=ONB_DEFAULT_NAME; onbFlow.draft.yearStop=YEAR_DEFAULT;
-  onbFlow.voteVal=VOTE_MIN; onbFlow.criticsStop=0; onbFlow.scaleVal=0; onbFlow.buzzStop=0; onbFlow.selOr=false;   // dials open
+  onbFlow.voteVal=VOTE_MIN; onbFlow.critScore=0; onbFlow.awardStop=0; onbFlow.scaleVal=0; onbFlow.buzzStop=0; onbFlow.selOr=false;   // dials open
   onbFlow.barTouched=false; onbFlow.barAutoRelaxed=null;   // CAS-158: a fresh preview is a fresh first open
   // CAS-160: seed the viewing box off whatever the seed draft already watches, so a ?step= preview round-trips
   // its own status rather than opening on "any window" and silently widening the draft through onbApply.
@@ -8800,7 +8917,8 @@ function hubDoorHTML(icon,title,sum,key){
 function hubBarSummary(){
   const parts=[];
   if(onbFlow.voteVal>=VOTE_OFF)  parts.push(voteBand(onbFlow.voteVal) || onbFlow.voteVal.toFixed(1)+"+");
-  if(onbFlow.criticsStop) parts.push(CRITICS_STOPS[onbFlow.criticsStop].label);
+  if(onbFlow.critScore)  parts.push(critScoreReadout(onbFlow.critScore));
+  if(onbFlow.awardStop)  parts.push(AWARD_STOPS[onbFlow.awardStop].label);
   if(onbFlow.scaleVal)    parts.push(scaleReadout(onbFlow.scaleVal));
   if(onbFlow.buzzStop)    parts.push(BUZZ_STOPS[onbFlow.buzzStop].label+" buzz");
   return parts.length ? esc(parts.join(" · ")) : "No bar set — everything qualifies";

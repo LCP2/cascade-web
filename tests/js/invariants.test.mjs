@@ -64,7 +64,11 @@ test("monotonicity: narrowing any single axis never increases the count", () => 
     ["age",       d => ({ ...d, age: [E.AGE_LEVELS[0]] })],
     ["lang",      d => ({ ...d, lang: ["en"] })],
     ["vote bar",  d => ({ ...d, selCrowd: Math.max(d.selCrowd || 0, 7.5) })],
-    ["critics",   d => ({ ...d, selCritics: Math.max(d.selCritics || 0, 2) })],
+    // CAS-249 split the one 0-4 critics ladder into a continuous SCORE floor and a counted awards rung.
+    // Both narrow, and both are poked, because a dead assertion on a field nothing reads any more would sit
+    // here passing forever — which is the failure mode a renamed field usually produces in a suite.
+    ["critics score", d => ({ ...d, selCritScore: Math.max(d.selCritScore || 0, 80) })],
+    ["awards rung",   d => ({ ...d, selAwards:    Math.max(d.selAwards || 0, 2) })],
     ["scale",     d => ({ ...d, selScale: Math.max(d.selScale || 0, 100e6) })],
     ["buzz",      d => ({ ...d, selBuzz: Math.max(d.selBuzz || 0, 3) })],
     ["awards",    d => ({ ...d, awards: true })],

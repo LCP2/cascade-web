@@ -366,6 +366,71 @@ test("windows: an agent that asked for premium under the old model gets the prem
   assert.equal(Object.keys(E.migrateWatch({ rent: [] })).sort().join(","), "premium,rent");
 });
 
+// ---- 3e. CRITICS AND AWARDS ARE TWO QUESTIONS (CAS-249) -------------------------------------------------
+// The score is continuous now and the awards rungs count nominations. The property that had to be designed
+// for, rather than discovered: the rungs must NEST, or pushing the dial right would widen the set. On this
+// catalogue 3+ nominations catches 24 films and Winner catches 36, so a naive ladder with Winner on top
+// would take the count UP on its last step — a dial that widens as you get pickier is the exact class of
+// defect this release is about.
+test("critics: the awards rungs nest, so pushing the dial right can only narrow", () => {
+  const base = { selCritScore: 0, selAwards: 0 };
+  const sets = E.AWARD_STOPS.map((_, i) =>
+    new Set(E.MOVIES.filter(m => E.selCriticsOK(m, { ...base, selAwards: i }))));
+  for(let i = 1; i < sets.length; i++){
+    for(const m of sets[i]) assert.ok(sets[i - 1].has(m),
+      `${m.title} clears ${E.AWARD_STOPS[i].label} but not ${E.AWARD_STOPS[i - 1].label} — the rungs do not nest`);
+    assert.ok(sets[i].size <= sets[i - 1].size,
+      `${E.AWARD_STOPS[i].label} catches ${sets[i].size}, more than ${E.AWARD_STOPS[i - 1].label}'s ${sets[i - 1].size}`);
+  }
+  assert.ok(sets[sets.length - 1].size > 0, "no film in the catalogue clears the top awards rung");
+  // …and the reason it nests: a winner outranks every nomination count.
+  const winner = E.MOVIES.find(m => m.award === "won");
+  assert.ok(winner, "no winners in the catalogue — this test would prove nothing");
+  for(let i = 1; i < E.AWARD_STOPS.length; i++)
+    assert.equal(E.selCriticsOK(winner, { ...base, selAwards: i }), true,
+      `a winner fails the ${E.AWARD_STOPS[i].label} rung`);
+});
+
+test("critics: the awards ladder is read off the film's own award line, never invented", () => {
+  for(const m of E.MOVIES){
+    const r = E.awardRank(m);
+    if(!m.award){ assert.equal(r, 0, `${m.title} has no award and was ranked ${r}`); continue; }
+    assert.ok(r >= 1, `${m.title} carries an award and ranked ${r}`);
+    const a = E.parseAwards(m.award_text) || {};
+    const named = Math.max(a.oscN || 0, a.oscW || 0);
+    // A nomination we cannot count still counts as one — the rung says "nomination", not "Oscar nomination".
+    assert.ok((r % 1000) >= Math.max(named, 1),
+      `${m.title}: ranked ${r} against an award line reading "${m.award_text}"`);
+  }
+});
+
+test("critics: the score floor is continuous and only judges a film that has a score", () => {
+  // Continuous means every value in between is a real, different filter — not four disguised presets.
+  const counts = [50, 55, 60, 65, 70, 75, 80].map(v =>
+    E.MOVIES.filter(m => E.selCriticsOK(m, { selCritScore: v, selAwards: 0 })).length);
+  for(let i = 1; i < counts.length; i++) assert.ok(counts[i] <= counts[i - 1],
+    `the score floor widened between rungs: ${counts.join(" → ")}`);
+  assert.ok(new Set(counts).size > E.CRIT_MARKS.length,
+    `only ${new Set(counts).size} distinct answers across seven settings — the slider is still stepped`);
+  // A film with no critic score is judged by the score dial like any other bar that reads a score: it has
+  // none, so it does not clear one. (The named marks are still exactly reachable.)
+  for(const r of E.CRIT_MARKS) assert.ok(typeof r.v === "number" && r.v >= 0 && r.v <= 100,
+    `${r.label} sits at ${r.v}, off the 0-100 score track`);
+});
+
+test("critics: an agent saved under the old single ladder still means what it meant", () => {
+  const cases = [[0, 0, 0], [1, 60, 0], [2, 80, 0], [3, 0, 1], [4, 0, 4]];
+  for(const [legacy, score, awards] of cases){
+    const c = E.normCascade({ selCritics: legacy });
+    assert.equal(c.selCritScore, score, `selCritics ${legacy} migrated to a ${c.selCritScore} score floor`);
+    assert.equal(c.selAwards, awards, `selCritics ${legacy} migrated to awards rung ${c.selAwards}`);
+  }
+  // An agent saved SINCE the split is left alone — the migration must not overwrite a real answer.
+  const fresh = E.normCascade({ selCritics: 4, selCritScore: 70, selAwards: 0 });
+  assert.equal(fresh.selCritScore, 70);
+  assert.equal(fresh.selAwards, 0);
+});
+
 // ---- 4. COUNTS HOLD ACROSS A WIDER MATRIX THAN THE PRESETS ----------------------------------------------
 // The presets are eleven points in a space a person can move freely around. A count bug that only appears
 // once someone has touched a dial would pass every preset-shaped test, so this walks each preset with each
@@ -376,7 +441,8 @@ const PERTURB = [
   ["lang",    d => ({ ...d, lang: [] })],
   ["age",     d => ({ ...d, age: [] })],
   ["crowd",   d => ({ ...d, selCrowd: 7 })],
-  ["critics", d => ({ ...d, selCritics: 2 })],
+  ["critics", d => ({ ...d, selCritScore: 80 })],
+  ["awards",  d => ({ ...d, selAwards: 2 })],
   ["scale",   d => ({ ...d, selScale: 15e6 })],
   ["buzz",    d => ({ ...d, selBuzz: 2 })],
   ["awards",  d => ({ ...d, awards: true })],
