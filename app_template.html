@@ -3230,8 +3230,20 @@ function stageDate(m, key){
 // own — "$–" would be a dollar sign attached to nothing.
 function moneyRowHTML(m){
   const cell=(label,val,has)=>`<span class="m${has?"":" muted"}"><span class="lab">${label}</span> <b>${has?val:"–"}</b></span>`;
-  return cell("Budget", m.budget>0?money(m.budget):"", m.budget>0)
+  return budgetCell(m)
        + cell("Gross",  m.worldwide_gross>0?money(m.worldwide_gross):"", m.worldwide_gross>0);
+}
+// CAS-238: the budget cell has three states, the same three the IMDb lozenge has (CAS-156), and for the same
+// reason — a bare "–" on Avengers: Doomsday reads as "this is a small film", which is a claim, and a false
+// one. Held: the figure. Inferred: the BAND its peers sit in, marked "≈" and never a dollar amount, on a
+// button that says where the band came from. Neither: the en dash, unchanged.
+function budgetCell(m){
+  const face=`<span class="lab">Budget</span>`;
+  if(m.budget>0) return `<span class="m">${face} <b>${money(m.budget)}</b></span>`;
+  const inf=inferredScale(m);
+  if(!inf)       return `<span class="m muted">${face} <b>–</b></span>`;
+  return `<button class="m muted" type="button" onclick="showScaleInfer(${m.tmdb_id})"
+    title="${esc(inferScaleWhy(m))}">${face} <b>≈ ${inf.label}</b></button>`;
 }
 // The three scores, each with the small muted dot that says whose number it is.
 function scoresRowHTML(m){
@@ -4420,9 +4432,61 @@ function selCriticsOK(m,c){
 function selScaleMatch(m,c){
   const min=c.selScale||0; if(!min) return true;
   const dollars = m.budget || m.worldwide_gross || 0;
-  if(!dollars) return null;
-  return dollars >= min;
+  if(dollars) return dollars >= min;
+  // CAS-238: an inferred floor may AFFIRM a film, never deny one. "Blockbuster scale" is a lower bound read
+  // off the films it is racing, so clearing $100M says this film is at least that big. FAILING $250M says
+  // only that the evidence does not reach that far, which is a different claim from the film being smaller —
+  // so that case stays null and rides along, exactly as an unknown scale always has (CAS-147).
+  const inf = inferredScale(m);
+  return (inf && inf.d >= min) ? true : null;
 }
+// ---- Inferred scale (CAS-238) --------------------------------------------------
+// A tentpole often carries no budget until close to release: Avengers: Doomsday has none today, and neither
+// does Dune: Part Three. The dial has never DROPPED those — an unknown scale answers null and rides along —
+// but it could not affirm them either, and the card printed "Budget –", so the biggest films of next year
+// read as the smallest things in the catalogue.
+//
+// What can honestly be inferred, and what cannot. For a RELEASED film with neither budget nor takings there
+// is no scale evidence at all, and CAS-169 already settled that popularity must not stand in for it:
+// popularity spikes on availability whether or not anyone turns up, which is how a $750k film wore the same
+// badge as Avatar. That decision is untouched — the inference below never runs on a released film. Before
+// release there is no spike to mistake. Popularity IS anticipation, the app already measures it against the
+// upcoming cohort rather than the catalogue (ANTICIPATED_BAR, for the same reason), and a film nobody has
+// seen yet is only anticipated because of what has been spent putting it in front of people.
+//
+// The claim itself is the catalogue's own answer rather than a rule of thumb: take every film that carries a
+// REAL budget and is at least as anticipated as this one, and read their median. Then snap that median DOWN
+// to a named stop on the scale track, because the defensible claim is a band ("Blockbuster scale") and not a
+// figure ($112M) — a figure is precisely the fake precise number the honesty guardrail forbids, and snapping
+// down keeps the answer a floor. Under the minimum sample there is no claim at all.
+const SCALE_INFER_MIN_PEERS = 8;
+const _scaleInferCache = new Map();
+function inferredScale(m){
+  if(_scaleInferCache.has(m.tmdb_id)) return _scaleInferCache.get(m.tmdb_id);
+  let out = null;
+  // isAnticipated, not merely isUpcoming, and this is the clause that keeps the claim honest. For a film in
+  // the bottom half of the upcoming cohort, "every title at least as anticipated as this one" is very nearly
+  // the whole catalogue, so its median is just "what the average film costs" — an inference that would put
+  // 60 obscure titles at Studio scale on the strength of nothing about them. Anticipation is only evidence
+  // where there is anticipation: the top-ANTICIPATED_TOP% bar the app already draws.
+  if(isAnticipated(m) && !(m.budget>0) && !(m.worldwide_gross>0)){
+    const peers = MOVIES.filter(x=>x.budget>0 && popOf(x)>=popOf(m)).map(x=>x.budget).sort((a,b)=>a-b);
+    if(peers.length>=SCALE_INFER_MIN_PEERS){
+      const h=peers.length>>1;
+      const mid = peers.length%2 ? peers[h] : (peers[h-1]+peers[h])/2;
+      out = SCALE_REF.filter(r=>r.d>0 && mid>=r.d).pop() || null;
+    }
+  }
+  _scaleInferCache.set(m.tmdb_id, out);
+  return out;
+}
+function inferScaleWhy(m){
+  const inf=inferredScale(m); if(!inf) return "";
+  return `No budget has been published for this film yet. ${inf.label} scale is what the films it is racing `
+       + `were made for — the median budget of every title at least as anticipated as this one. `
+       + `It is the band its peers sit in, not a figure Cascade holds.`;
+}
+window.showScaleInfer=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(inferScaleWhy(m)); };
 // ---- Buzz (CAS-145) -----------------------------------------------------------
 // How much a film is being talked about right now, off the TMDB popularity figure the pipeline already
 // carries on every title (1,951 of 1,952 in today's catalogue). The cut-offs are PERCENTILES of the live

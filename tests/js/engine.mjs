@@ -98,6 +98,7 @@ const EXPORTS = `
   prefs, servicesPicked, matchesServices, scopeOf, anyScope, HOME_KEYS,
   SUB_SERVICES, STORE_SERVICES, stageDate, curSlot, cinemaState, EST_OFFSET, TODAY,
   inCinemaRun, CINEMA_RUN_DAYS, LISTING_ORDER, listingOrder,
+  inferredScale, inferScaleWhy, budgetCell, moneyRowHTML, SCALE_INFER_MIN_PEERS, popOf, scaleTier,
   selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK,
   SCALE_REF, BUZZ_STOPS, VOTE_REF, CRITICS_STOPS, AGE_LEVELS, ONB_GENRES, LANG_OPTS, GENRE_COUNT,
   MIN_INITIAL_MATCHES, autoRelaxBar, barDialSnapshot,

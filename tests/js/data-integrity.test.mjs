@@ -224,6 +224,54 @@ test("scale: raising the lean never removes a film whose scale we do not hold", 
   }
 });
 
+// ---- 3b. AN INFERRED SCALE AFFIRMS, AND NEVER DENIES (CAS-238) ------------------------------------------
+// The complaint was that a tentpole with no budget yet — Avengers: Doomsday carries none — reads as the
+// smallest thing in the catalogue. The inference has to do two jobs without doing a third: place the film
+// under a high lean, say so on its card, and never once become a reason to drop something.
+test("inferred scale: an anticipated film with no budget is placed, not left blank", () => {
+  const inferred = E.MOVIES.filter(m => E.inferredScale(m));
+  assert.ok(inferred.length > 0, "not one film has an inferred scale — the inference is dead");
+  for(const m of inferred){
+    const inf = E.inferredScale(m);
+    // Always a named stop on the track. A band is the claim; a figure would be the fake precision the
+    // honesty guardrail forbids.
+    assert.ok(E.SCALE_REF.some(r => r.d === inf.d && r.label === inf.label),
+      `${m.title} was inferred to ${inf.label} $${inf.d}, which is not a stop on the scale track`);
+    assert.equal(E.selScaleMatch(m, { selScale: inf.d }), true,
+      `${m.title} is inferred ${inf.label} and does not clear its own band`);
+    // …and the inference is a LOWER bound, so a floor beyond it is unknown, never denied.
+    assert.equal(E.selScaleMatch(m, { selScale: inf.d * 10 }), null,
+      `${m.title} was DENIED by a floor its inference simply does not reach`);
+  }
+});
+
+test("inferred scale: only anticipation is ever read as scale, and only before release", () => {
+  for(const m of E.MOVIES){
+    if(!E.inferredScale(m)) continue;
+    // CAS-169's decision, kept: popularity spikes on availability, so a released film with no money figure
+    // has no scale evidence and must not borrow one.
+    assert.ok(E.isUpcoming(m), `${m.title} is released and was still handed an inferred scale`);
+    assert.ok(!(m.budget > 0) && !(m.worldwide_gross > 0),
+      `${m.title} has real money on it and was inferred anyway — the figure must win`);
+  }
+});
+
+test("inferred scale: the card says a band and never a dollar figure", () => {
+  const inferred = E.MOVIES.filter(m => E.inferredScale(m));
+  for(const m of inferred.slice(0, 20)){
+    const cell = E.budgetCell(m);
+    const why = E.inferScaleWhy(m);
+    assert.ok(cell.includes("≈"), `${m.title}: the budget cell does not mark itself as an estimate`);
+    assert.ok(cell.includes(E.inferredScale(m).label), `${m.title}: the budget cell names no band`);
+    assert.ok(!/\$\s*[\d.]/.test(cell), `${m.title}: the budget cell prints a dollar figure it does not hold`);
+    assert.ok(!/\$\s*[\d.]/.test(why), `${m.title}: the explanation prints a dollar figure it does not hold`);
+    assert.ok(why.length > 40, `${m.title}: the explanation says nothing about where the band came from`);
+  }
+  // A film whose budget IS known prints the figure, unchanged.
+  const known = E.MOVIES.find(m => m.budget > 0);
+  assert.ok(!E.budgetCell(known).includes("≈"), `${known.title} has a real budget and is being hedged`);
+});
+
 // ---- 4. COUNTS HOLD ACROSS A WIDER MATRIX THAN THE PRESETS ----------------------------------------------
 // The presets are eleven points in a space a person can move freely around. A count bug that only appears
 // once someone has touched a dial would pass every preset-shaped test, so this walks each preset with each
