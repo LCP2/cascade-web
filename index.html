@@ -273,6 +273,52 @@
      pushed to the right edge — the four decision controls stay a single unbroken group (CAS-100). */
   .actions{display:flex;gap:8px;margin-top:12px;align-items:center}
   .actions .wtwbtn{margin-left:auto}
+  /* ---- CAS-230: the v0.8 card controls (proto/cascade-08 listing card) ----
+     Two labelled chips instead of six bare icons. A chip says in words what it is for; four unlabelled
+     verdict icons only said it to someone who already knew. The fill bar behind the label is the same
+     device the Mission dials use — it is what makes a chip read as a setting with a position rather than a
+     button. `.actions` is the positioning context for the panel, which is why it is relative. */
+  .actions{position:relative}
+  .ctl{position:relative;flex:none;background:none;border:0;padding:0;cursor:pointer;
+    -webkit-tap-highlight-color:transparent}
+  .ctl.watch{flex:1;min-width:0}
+  .cmini{display:flex;align-items:center;gap:7px;height:38px;padding:0 12px;border-radius:11px;
+    background:var(--panel2);border:1px solid var(--line);position:relative;overflow:hidden;
+    font-family:inherit;font-size:12.5px;font-weight:650;color:var(--ink);line-height:1}
+  .ctl.watch .cmini{width:100%}
+  .cmini .cfill{position:absolute;inset:0 auto 0 0;width:0;opacity:.22;transition:width .26s cubic-bezier(.3,1,.4,1)}
+  .cmini .cic{position:relative;z-index:1;display:grid;place-items:center;line-height:0;color:#8b93a1}
+  .cmini .cic svg{width:17px;height:17px;display:block}
+  .cmini .clab{position:relative;z-index:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cmini .clab.dim{color:var(--dim);font-weight:500}
+  .ctl.on .cmini .cic{color:var(--cyan)}
+  .ctl:hover .cmini{border-color:#3a4150}
+  .ctl:focus-visible .cmini{outline:2px solid var(--cyan);outline-offset:2px}
+  /* The panel sits OVER the action row rather than under it: the row is the last thing on the card, and a
+     panel below would be off the bottom of a card sitting at the foot of the viewport. */
+  .cpop{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);z-index:60;
+    display:flex;align-items:center;gap:5px;background:#0e1626;border:1px solid rgba(255,255,255,.16);
+    border-radius:12px;padding:4px;box-shadow:0 14px 34px rgba(0,0,0,.7)}
+  .cpop .csegs{display:flex;gap:3px;flex:1;min-width:0}
+  /* The icon sits ABOVE the label, not beside it. Side by side, four segments plus the close button leave
+     about 45px of text each on a 360px phone, and every label truncated to "Do…" / "Dis…" — which is worse
+     than no label at all, because it looks like a rendering fault. Stacked, the full word fits at every
+     width the app supports. */
+  /* flex-basis auto, not 0: with a zero basis all four segments are equal and the longest label ("Don't
+     want") is 3px short of fitting at 360px, so it ellipsises while three neighbours sit half empty. Sizing
+     from content and sharing the slack keeps every label whole and the widths near enough to even. */
+  .cseg{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    height:44px;padding:0 2px;border-radius:9px;background:rgba(255,255,255,.05);border:1px solid transparent;
+    font-family:inherit;font-size:10px;font-weight:600;color:var(--dim);cursor:pointer;line-height:1}
+  .cseg .ci{display:grid;place-items:center;line-height:0}
+  .cseg .ci svg{width:15px;height:15px;display:block}
+  .cseg .cl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .cseg:hover{color:var(--ink);border-color:#3a4150}
+  .cseg:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
+  .cclose{flex:none;width:28px;height:44px;border-radius:9px;border:1px solid rgba(255,255,255,.12);
+    background:rgba(255,255,255,.05);color:#c9d0da;cursor:pointer;display:grid;place-items:center;line-height:0}
+  .cclose svg{width:16px;height:16px;display:block}
+  .cclose:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   /* ONE icon set for the card's actions (CAS-64). Every action icon is a stroked outline drawn from the same
      24px grid at the same 1.8 stroke weight, in the same grey — and every ON state is the same purple
      treatment. Emoji glyphs are out: they carry their own weights, fills and platform styling, which is
@@ -2216,6 +2262,14 @@ const ICON = {
   // the chevron rotates as a whole (the class is on the <svg>, not a path — rotating a path would spin it
   // about the SVG origin, not its own centre)
   chev:    svgIcon(`<path d="m6.5 9.5 5.5 5.5 5.5-5.5"/>`, "chev"),
+  // CAS-230: the card's two new controls. `eye` is the Watch-status chip before you have answered — the
+  // question mark of the set, so it must not look like any of the four answers. `bell`/`bellOff` are one
+  // bell drawn once, with a stroke through it for the off state, the same trick like/dislike already use.
+  // Drawn on the same 24px grid at the same weight, because the prototype's emoji would have broken the
+  // one-icon-set rule CAS-64 set for this row (emoji carry their own fills and platform styling).
+  eye:     svgIcon(`<path d="M2.6 12S6 6.6 12 6.6 21.4 12 21.4 12 18 17.4 12 17.4 2.6 12 2.6 12z"/><circle cx="12" cy="12" r="2.7"/>`),
+  bell:    svgIcon(`<path d="M6.4 10.2a5.6 5.6 0 0 1 11.2 0c0 4 1.5 5.4 1.5 5.4H4.9s1.5-1.4 1.5-5.4z"/><path d="M10.1 18.6a2.1 2.1 0 0 0 3.8 0"/>`),
+  bellOff: svgIcon(`<path d="M6.4 10.2a5.6 5.6 0 0 1 11.2 0c0 4 1.5 5.4 1.5 5.4H4.9s1.5-1.4 1.5-5.4z"/><path d="M10.1 18.6a2.1 2.1 0 0 0 3.8 0"/><path d="M4.6 4.6 19.4 19.4"/>`),
 };
 // Journey order — Upcoming leads (a film reaches cinemas before any home window).
 // primaryStatus() takes the LAST window a film holds, so "upcoming" sitting first is safe:
@@ -2588,7 +2642,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 186, "commit": "55144da", "builtAt": "2026-07-30T01:10:25Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 187, "commit": "03abde3", "builtAt": "2026-07-30T01:20:38Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3434,9 +3488,12 @@ function cardHTML(m, markNew=false){
       ${estimateHTML(m)}
       ${savingsHTML(m)}
       ${wtw}
+      <!-- CAS-230: the v0.8 control row — Watch status, Notify, chevron. The Pick badge and the four bare
+           verdict icons are gone from the card; Pick still lives on the Found / Your Movies rows, which is
+           where taking a film off your list by hand belongs. -->
       <div class="actions">
-        ${pickBtnHTML(id)}
-        ${opinionBtnsHTML(id)}
+        ${watchChipHTML(id)}
+        ${notifyChipHTML(id)}
         ${wtwBtn}
       </div>
     </div>
@@ -3461,6 +3518,89 @@ function opinionBtnsHTML(id, cls=""){
       aria-pressed="${on}" title="${escA(title)}" aria-label="${escA(title)}">${ICON[o.ico]}</button>`;
   }).join("");
 }
+// ---- CAS-230: the v0.8 card controls -------------------------------------------------------------------
+// The card carried six controls in a row: the Pick badge, four verdict icons and the chevron. The v0.8
+// prototype replaces that with two labelled chips and the chevron — a WATCH STATUS chip that opens a panel of
+// the four answers, and a NOTIFY toggle. The gain is that a chip says in words what it is for, where four
+// unlabelled icons only said it to someone who already knew.
+//
+// The four answers are the shipped CAS-183 set, in the prototype's order: the panel runs worst to best, left
+// to right, so the row reads as a scale rather than as four unrelated buttons. Each carries the prototype's
+// colour. Setting one still folds the card to its stub (CAS-100) — which is why the chip on a full card is
+// always the unanswered state, and correctly so: a full card IS a film you haven't answered.
+const WATCH_STEPS = [
+  {key:"notfor",   ico:"block",   lbl:"Don't want", cd:"#d0453f"},
+  {key:"disliked", ico:"dislike", lbl:"Disliked",   cd:"#e08a3c"},
+  {key:"soso",     ico:"soso",    lbl:"So-so",      cd:"#8a93a6"},
+  {key:"liked",    ico:"like",    lbl:"Liked",      cd:"#37c46a"},
+];
+function watchChipHTML(id){
+  const cur=opinionOf(id), i=WATCH_STEPS.findIndex(s=>s.key===cur), s=WATCH_STEPS[i];
+  const fill = s ? ((i+1)/WATCH_STEPS.length)*100 : 0;
+  const lbl  = s ? s.lbl : "Watch status";
+  const title = s ? `${s.lbl} — tap to change` : "Say whether you've watched it, and what you made of it";
+  return `<button type="button" class="ctl watch" data-cid="${id}" onclick="openWatchPanel(${id},this)"
+      aria-haspopup="true" title="${escA(title)}" aria-label="${escA(title)}">
+    <span class="cmini"><i class="cfill" style="width:${fill}%;background:${s?s.cd:"transparent"}"></i>
+      <span class="cic">${s ? ICON[s.ico] : ICON.eye}</span>
+      <span class="clab${s?"":" dim"}">${lbl}</span></span></button>`;
+}
+// The notify chip is a plain on/off, not the prototype's four-moment multi-select. Those four moments (1 month
+// out, 1 week out, today, post-opening) have never existed below the UI — CAS-160 recorded them and said so —
+// and shipping a four-way control where only one of the four can be acted on would be the fabricated
+// capability the honesty guardrail forbids. On/off is the whole of what this can honestly promise: alerts
+// about THIS film, or silence about it. catchReason() is the single place that reads it, so the bell drawer
+// and the digest both know, and the digest will say the film was muted rather than pretending nothing moved.
+function notifyChipHTML(id){
+  const muted=filmMuted(id);
+  const title = muted ? "Muted — you won't be told when this film moves. Tap to unmute."
+                      : "You'll be told when this film moves. Tap to mute it.";
+  return `<button type="button" class="ctl${muted?"":" on"}" onclick="toggleFilmNotify(${id})"
+      aria-pressed="${!muted}" title="${escA(title)}" aria-label="${escA(title)}">
+    <span class="cmini"><i class="cfill" style="width:${muted?0:100}%;background:var(--cyan)"></i>
+      <span class="cic">${muted ? ICON.bellOff : ICON.bell}</span>
+      <span class="clab${muted?" dim":""}">${muted ? "Muted" : "Notify"}</span></span></button>`;
+}
+// One panel at a time, anchored in the .actions row (which is position:relative for exactly this).
+function closeWatchPanel(){
+  document.querySelectorAll(".cpop").forEach(n=>n.remove());
+  document.removeEventListener("keydown", watchPanelKey, true);
+}
+function watchPanelKey(e){ if(e.key==="Escape"){ e.stopPropagation(); closeWatchPanel(); } }
+window.openWatchPanel=(id, btn)=>{
+  const open=btn.closest(".actions").querySelector(".cpop");
+  closeWatchPanel();
+  if(open) return;                       // tapping the chip again closes the panel it opened
+  const cur=opinionOf(id);
+  const pop=document.createElement("div");
+  pop.className="cpop";
+  pop.innerHTML=`<div class="csegs">${WATCH_STEPS.map(s=>{
+      const on=cur===s.key;
+      return `<button type="button" class="cseg${on?" on":""}" style="${on?`background:${s.cd};color:#fff`:""}"
+        onclick="pickWatch(${id},'${s.key}')" aria-pressed="${on}"
+        title="${escA(on?`${s.lbl} — tap to undo`:s.lbl)}"><span class="ci">${ICON[s.ico]}</span><span class="cl">${s.lbl}</span></button>`;
+    }).join("")}</div><button type="button" class="cclose" onclick="closeWatchPanel()" title="Close">${ICON.chev}</button>`;
+  btn.closest(".actions").appendChild(pop);
+  document.addEventListener("keydown", watchPanelKey, true);
+  const first=pop.querySelector(".cseg"); if(first) first.focus();
+};
+// Answering closes the panel first: setOpinion folds the card to its stub, and a panel left open would be
+// anchored to an .actions row that no longer exists.
+window.pickWatch=(id,key)=>{ closeWatchPanel(); setOpinion(id,key); };
+// Per-film mute. It rides the same `notify` record the Found list uses, so it saves, syncs and clears with
+// everything else about that film rather than needing a store of its own. Default is UNMUTED: an agent that
+// found a film is already promising to tell you about it, and silence has to be something you chose.
+const filmMuted = id => !!(notify[id] && notify[id].muted);
+window.toggleFilmNotify=id=>{
+  const e=entryFor(id);
+  e.muted=!e.muted;
+  saveNotify();
+  logEvent("film_notify_toggled",{muted:!!e.muted});
+  const btn=document.querySelector(`#card-${id} .actions .ctl[aria-pressed]`);
+  if(btn) btn.outerHTML=notifyChipHTML(id);
+  toast(e.muted ? "Muted — you won't hear about this film again unless you unmute it."
+                : "Unmuted — you'll hear about this film when it moves.");
+};
 // ---- The collapsed stub (CAS-64, made unconditional in CAS-100) ----------------
 // What a film becomes the moment you say Liked / Disliked / Not for me: one greyed line, in the position the
 // card was already in, carrying its title and the same three buttons with your answer lit. Press the lit one
@@ -9001,6 +9141,11 @@ function advanceOneWindow(m){
 // a switch wired to nothing. So scope decides WHICH FILMS a Cascade watches (inScope, above) and for how long;
 // the bells decide WHICH MOMENTS it speaks up about. Nothing here reads c.status.
 function catchReason(m, c, w, services){
+  // CAS-230: the card's Notify toggle, read here so it is a real switch rather than a decoration. It sits
+  // FIRST because it is about the film, not about any one Cascade: mute a film and no Cascade speaks up about
+  // it, and every Cascade gives the same reason. The digest therefore says the film was muted instead of
+  // leaving a move unexplained.
+  if(filmMuted(m.tmdb_id)) return `you muted alerts for this film`;
   // Per-window: a Cascade scoped to Stream only must still shout about a Rent drop on a service you don't
   // have. The scope that decides is the one on the window the film actually LANDED in.
   if(scopeOf(c)[w] && servicesPicked() && !matchesServices(m))
