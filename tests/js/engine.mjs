@@ -96,6 +96,7 @@ const EXPORTS = `
   // CAS-255: the my-services scope and the stage dates are both places the app makes a claim about what you
   // can watch and when, so the QA gate needs to reach them the same way the listing does.
   prefs, servicesPicked, matchesServices, scopeOf, anyScope, HOME_KEYS,
+  svcCanon, svcName, SVC_LEAD, myService,
   SUB_SERVICES, STORE_SERVICES, stageDate, curSlot, cinemaState, EST_OFFSET, TODAY,
   inCinemaRun, CINEMA_RUN_DAYS, LISTING_ORDER, listingOrder,
   inferredScale, inferScaleWhy, budgetCell, moneyRowHTML, SCALE_INFER_MIN_PEERS, popOf, scaleTier,

@@ -850,6 +850,14 @@
   .rlabels.loglabels .ysnap:last-child{transform:translateX(-100%)}
   .rlabels.loglabels .ysnap.lit{color:#cfc2ff}
   .rlabels.loglabels .ysnap:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* CAS-251: two named sections on the services screen, each with a lead set and a tail behind "more". */
+  .svcsec{margin-top:14px}
+  .svcsech{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);
+    margin:0 2px 7px}
+  .chip.svcmore{border-style:dashed;color:var(--accenttext)}
+  /* CAS-252: the switch was sitting on the list above it. It is a different question from "which do you
+     have", so it gets the gap that says so. */
+  .bigtoggle.svconly{margin-top:20px}
   /* age — joined lozenge, cumulative up-to-and-including */
   .loz{display:flex;border:1px solid var(--line);border-radius:20px;overflow:hidden;background:var(--panel)}
   .loz button{flex:1;background:none;border:none;border-right:1px solid var(--line);color:var(--faint);
@@ -2470,6 +2478,32 @@ function dedupOffers(offers){
 }
 const TYPE_LABEL={sub:"Stream",free:"Free",rent:"Rent",buy:"Buy"};
 const SVC_DISPLAY={"Amazon":"Amazon Prime"};
+// ---- CAS-251: one entry per service, not one per billing variant --------------------------------------
+// The provider feed names a service once per way you can pay for it: Netflix and "Netflix Standard with
+// Ads", Paramount Plus and "Paramount Plus Premium" and "Paramount Plus Basic with Ads" and "Paramount+
+// Amazon Channel". They carry the same catalogue, so 48 chips were really about 30 services, and picking
+// the wrong one of a pair silently missed films the other one listed. The rules below are patterns rather
+// than a list of names, so a variant the feed invents next month collapses without a code change.
+const SVC_VARIANT_RULES = [
+  / (Amazon|Apple TV|Roku|Prime Video) Channel$/i,   // resold through someone else's storefront
+  / (Standard|Basic|Premium|Essential)? ?with Ads$/i, // the ad-supported tier of the same thing
+  / (Premium|Standard|Basic|Essential)$/i,           // …and its named tiers
+  / Kids$/i,                                          // a slice of the same subscription
+];
+// "Paramount+" and "Paramount Plus" are one service written two ways, and neither spelling is wrong.
+const svcSpelling = s => s.replace(/\+/g, " Plus").replace(/\s+/g, " ").trim();
+function svcCanon(raw){
+  let s = svcSpelling(String(raw||"").trim());
+  let cut = true;
+  while(cut){
+    cut = false;
+    for(const re of SVC_VARIANT_RULES){
+      const next = s.replace(re, "").trim();
+      if(next && next !== s){ s = next; cut = true; }
+    }
+  }
+  return s || String(raw||"");
+}
 const svcName=s=>SVC_DISPLAY[s]||s;
 
 // ---- Reviewer URL params: ?reset and ?setup ------------------------------------
@@ -2649,7 +2683,10 @@ const cascadesFor = id => ((notify[id]||{}).cascadeIds||[])
 // Cascade, whatever each one has switched on. It rides in cascade_prefs with the rest of the
 // device-local preferences.
 function loadPrefs(){ try{ const p=JSON.parse(localStorage.getItem("cascade_prefs")||"{}");
-  return {on:!!p.on, touched:!!p.touched, sub:new Set(p.sub||[]), store:new Set(p.store||[]),
+  // CAS-251: a service saved under a variant name is folded onto its canonical one on the way in, so
+  // somebody who picked "Netflix Standard with Ads" last week still has Netflix picked today.
+  const canon = xs => new Set((xs||[]).map(svcCanon));
+  return {on:!!p.on, touched:!!p.touched, sub:canon(p.sub), store:canon(p.store),
           alertsOff:new Set(p.alertsOff||[])}; }
   catch(e){ return {on:false,touched:false,sub:new Set(),store:new Set(),alertsOff:new Set()}; } }
 function savePrefs(){ try{ localStorage.setItem("cascade_prefs",
@@ -2814,8 +2851,27 @@ $("updated").onclick=()=>{
 };
 
 // service lists derived from the data
-const SUB_SERVICES=[...new Set(MOVIES.flatMap(m=>(m.offers||[]).filter(o=>o.type==="sub"||o.type==="free").map(o=>o.service)))].sort();
-const STORE_SERVICES=[...new Set(MOVIES.flatMap(m=>(m.offers||[]).filter(o=>o.type==="rent"||o.type==="buy").map(o=>o.service)))].sort();
+// CAS-251: the chips are CANONICAL services, and they are ordered by how much of the catalogue each one
+// actually carries — so the leading services lead, on this catalogue's own evidence rather than on a
+// hand-kept list of who is big this year.
+function svcListFor(types){
+  const n=new Map();
+  MOVIES.forEach(m=>{
+    // Counted once per FILM, not once per offer. A film listed under both "Netflix" and "Netflix Standard
+    // with Ads" is one film you can watch on Netflix, and summing the offers instead put Paramount Plus —
+    // four variants of the same 39 titles — above BINGE's 53 and Disney Plus's 48.
+    const seen=new Set();
+    (m.offers||[]).forEach(o=>{ if(types.includes(o.type)) seen.add(svcCanon(o.service)); });
+    seen.forEach(k=>n.set(k, (n.get(k)||0)+1));
+  });
+  return [...n.entries()].sort((a,b)=> b[1]-a[1] || a[0].localeCompare(b[0])).map(e=>e[0]);
+}
+const SUB_SERVICES=svcListFor(["sub","free"]);
+const STORE_SERVICES=svcListFor(["rent","buy"]);
+const SVC_LEAD = 8;   // how many lead a section before "more" — two rows of chips on a 390px phone
+// Which sections are expanded, by box id. Held outside the step so re-rendering the screen (which the
+// live count does on every tap) does not fold a tail the user has just opened.
+const svcMore = {};
 const ALL_GENRES=[...new Set(MOVIES.flatMap(m=>m.genres||[]))].sort();
 const ALL_AGES=[...new Set(MOVIES.map(m=>m.age_rating).filter(Boolean))];
 const servicesPicked = () => prefs.sub.size>0 || prefs.store.size>0;
@@ -2837,8 +2893,11 @@ const scopeSummary = c => HOME_KEYS.filter(k=>scopeOf(c)[k]).map(k=>SCOPE_SHORT[
 let ignoreScope = false;
 const prefsActive = () => !ignoreScope && servicesScoped() && servicesPicked();
 function myService(o){
-  if(o.type==="sub"||o.type==="free") return prefs.sub.has(o.service);
-  if(o.type==="rent"||o.type==="buy") return prefs.store.has(o.service);
+  // CAS-251: compared canonically, so "Netflix Standard with Ads" satisfies a Netflix pick. Before this,
+  // choosing one variant of a pair silently missed every film the feed had listed under the other.
+  const k=svcCanon(o.service);
+  if(o.type==="sub"||o.type==="free") return prefs.sub.has(k);
+  if(o.type==="rent"||o.type==="buy") return prefs.store.has(k);
   return false;
 }
 function matchesServices(m){
@@ -8289,41 +8348,62 @@ const SHARP_STEPS = {
     // to today). So this line must not imply the count is filtered; it reports the second number the
     // screen is actually about — how many of those films you can watch on what you already pay for.
     say: n => {
-      const k=prefs.sub.size;
+      const k=prefs.sub.size+prefs.store.size;      // CAS-251: both sections count as "your services"
       if(!k) return `No services named yet · ${flowCnt(n)}`;
       const mine=MOVIES.filter(m=>watchesFilm(m, onbApply()) && matchesServices(m)).length;
       return `<b>${k} service${k===1?"":"s"}</b> · <span class="cnt">${mine}</span> of your agent's
         ${n} film${n===1?"":"s"} ${mine===1?"is":"are"} on ${k===1?"it":"them"} right now.`;
     },
     body(){
-      return `<h2 class="osh">My Streaming Services</h2>
+      // CAS-251: two sections, because renting and subscribing are two different things you pay for and a
+      // person knows exactly which of each they have. Each leads with the services carrying the most of
+      // THIS catalogue and hides the tail behind "more", so the screen opens at a size you can answer.
+      return `<h2 class="osh">My services</h2>
         <p class="ossub">Which do you already pay for? Your agent uses this to tell you what a film is
           costing you — and, if you want, to leave out what you'd have to buy.</p>
-        <div class="chips" id="onbStepSvcs"></div>
-        <button type="button" class="bigtoggle${prefs.on?" on":""}" id="onbSvcOnly">
+        <div class="svcsec"><div class="svcsech">My Rental Services</div>
+          <div class="chips" id="onbStepStores"></div></div>
+        <div class="svcsec"><div class="svcsech">My Streaming Services</div>
+          <div class="chips" id="onbStepSvcs"></div></div>
+        <button type="button" class="bigtoggle svconly${prefs.on?" on":""}" id="onbSvcOnly">
           <span class="btmain">Only show films on my services</span><span class="btcheck">✓</span></button>
         <p class="osexplain">Your agent keeps watching everything either way — this only changes what
           the list shows you.</p>
         <p class="ossumline" id="onbStepSay">${SHARP_STEPS.services.say(stepCount(SHARP_STEPS.services))}</p>`;
     },
     wire(){
-      const box=$("onbStepSvcs"); if(!box) return;
-      box.innerHTML="";
-      SUB_SERVICES.forEach(svc=>{
-        const c=document.createElement("button");
-        c.type="button";
-        c.className="chip svc"+(prefs.sub.has(svc)?" on":"");
-        c.setAttribute("aria-pressed", String(prefs.sub.has(svc)));
-        c.textContent=svcName(svc);
-        c.onclick=()=>{
-          prefs.sub.has(svc) ? prefs.sub.delete(svc) : prefs.sub.add(svc);
-          const on=prefs.sub.has(svc);
-          c.classList.toggle("on", on); c.setAttribute("aria-pressed", String(on));
-          savePrefs(); syncServiceChips(); updatePrefSwitch(); updatePrefBtn();
-          onbRefresh();
-        };
-        box.appendChild(c);
-      });
+      // Each section draws itself, so the two are the same control twice rather than two that can drift.
+      const draw=(boxId, list, set)=>{
+        const box=$(boxId); if(!box) return;
+        const open = !!svcMore[boxId];
+        const shown = open ? list : list.slice(0, SVC_LEAD);
+        box.innerHTML="";
+        shown.forEach(svc=>{
+          const c=document.createElement("button");
+          c.type="button";
+          c.className="chip svc"+(set.has(svc)?" on":"");
+          c.setAttribute("aria-pressed", String(set.has(svc)));
+          c.textContent=svcName(svc);
+          c.onclick=()=>{
+            set.has(svc) ? set.delete(svc) : set.add(svc);
+            const on=set.has(svc);
+            c.classList.toggle("on", on); c.setAttribute("aria-pressed", String(on));
+            onChipToggle("svc"); updatePrefSwitch(); updatePrefBtn();
+            onbRefresh();
+          };
+          box.appendChild(c);
+        });
+        if(list.length > SVC_LEAD){
+          const more=document.createElement("button");
+          more.type="button"; more.className="chip svcmore";
+          // The count is the real remainder, so "more" never promises a tail that isn't there.
+          more.textContent = open ? "− less" : `+ ${list.length-SVC_LEAD} more`;
+          more.onclick=()=>{ svcMore[boxId]=!open; draw(boxId, list, set); };
+          box.appendChild(more);
+        }
+      };
+      draw("onbStepStores", STORE_SERVICES, prefs.store);
+      draw("onbStepSvcs",   SUB_SERVICES,   prefs.sub);
       const tog=$("onbSvcOnly");
       if(tog) tog.onclick=()=>{
         prefs.on=!prefs.on; savePrefs();

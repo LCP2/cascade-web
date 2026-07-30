@@ -494,6 +494,57 @@ test("how far back: an agent saved under the old rung keeps its window", () => {
   assert.equal(E.normCascade({ yearStop: 5, yearsBack: 20 }).yearsBack, 20);
 });
 
+// ---- 3g. ONE ENTRY PER SERVICE (CAS-251) ----------------------------------------------------------------
+// The provider feed names a service once per way you can pay for it, so the picker was 48 chips for about
+// 30 services — and picking the wrong one of a pair silently missed every film listed under the other.
+test("services: billing variants collapse onto the service they are variants of", () => {
+  const pairs = [
+    ["Netflix Standard with Ads", "Netflix"],
+    ["Netflix Kids", "Netflix"],
+    ["Amazon Prime Video with Ads", "Amazon Prime Video"],
+    ["Paramount Plus Basic with Ads", "Paramount Plus"],
+    ["Paramount+ Amazon Channel", "Paramount Plus"],
+    ["HBO Max Amazon Channel", "HBO Max"],
+    ["Shudder Apple TV Channel", "Shudder"],
+  ];
+  for(const [raw, want] of pairs) assert.equal(E.svcCanon(raw), want,
+    `${raw} collapsed to ${E.svcCanon(raw)}`);
+  // …and a name that is not a variant is left exactly alone.
+  for(const plain of ["Netflix", "Stan", "Apple TV Store", "SBS On Demand"])
+    assert.equal(E.svcCanon(plain), plain, `${plain} was rewritten to ${E.svcCanon(plain)}`);
+  // The list the picker draws is the canonical one, with no duplicates and nothing empty.
+  for(const list of [E.SUB_SERVICES, E.STORE_SERVICES]){
+    assert.equal(new Set(list).size, list.length, "the service list holds a duplicate");
+    for(const svc of list){
+      assert.ok(svc && svc.trim(), "the service list holds a blank entry");
+      assert.equal(E.svcCanon(svc), svc, `${svc} is itself a variant and should have collapsed`);
+    }
+  }
+});
+
+test("services: a pick matches every variant of the service it names", () => {
+  const netflix = E.MOVIES.filter(m => (m.offers || []).some(o => /^Netflix/.test(o.service)));
+  assert.ok(netflix.length > 0, "no Netflix films — this test would prove nothing");
+  const sub = new Set(E.prefs.sub);
+  E.prefs.sub.clear(); E.prefs.sub.add("Netflix");
+  try {
+    for(const m of netflix) assert.ok(E.matchesServices(m),
+      `${m.title} is on ${(m.offers || []).map(o => o.service).join(", ")} and a Netflix pick missed it`);
+  } finally { E.prefs.sub.clear(); sub.forEach(x => E.prefs.sub.add(x)); }
+});
+
+test("services: the leading services really do lead", () => {
+  // The order is the catalogue's own evidence — how many films each service carries — not a hand-kept list
+  // of who is big this year, so it cannot go stale.
+  const carried = svc => E.MOVIES.filter(m =>
+    (m.offers || []).some(o => (o.type === "sub" || o.type === "free") && E.svcCanon(o.service) === svc)).length;
+  const lead = E.SUB_SERVICES.slice(0, E.SVC_LEAD).map(carried);
+  const tail = E.SUB_SERVICES.slice(E.SVC_LEAD).map(carried);
+  assert.ok(lead.length === E.SVC_LEAD && tail.length > 0, "there is no tail to hide");
+  assert.ok(Math.min(...lead) >= Math.max(...tail),
+    `a hidden service carries more than a leading one: lead ${lead.join(",")} vs tail ${tail.join(",")}`);
+});
+
 // ---- 4. COUNTS HOLD ACROSS A WIDER MATRIX THAN THE PRESETS ----------------------------------------------
 // The presets are eleven points in a space a person can move freely around. A count bug that only appears
 // once someone has touched a dial would pass every preset-shaped test, so this walks each preset with each
