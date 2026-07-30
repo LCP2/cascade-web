@@ -2642,7 +2642,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 188, "commit": "92388b1", "builtAt": "2026-07-30T01:25:14Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 189, "commit": "abfe853", "builtAt": "2026-07-30T01:27:50Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -6062,6 +6062,13 @@ const STARTERS = [
 // One recommendation per lane, and it is the preset that answers the question they just asked rather than
 // a fixed favourite. RECOMMENDED is a badge on a card, so it has to move with the list the card is in.
 const RECOMMENDED_FOR = {cinema:"cinema", stream:"streaming"};
+// CAS-222: the name an agent is OFFERED — the channel it watches plus the standard it was built from. The
+// card's own label stays the standard alone ("Blockbusters", CAS-218), because the card is choosing a standard
+// and the standard is the same either side; it is the AGENT that belongs to one channel. Without the prefix,
+// building the same preset in both lanes gets you two agents with one name and nothing on the deck to tell
+// them apart.
+const CHANNEL_WORD = {cinema:"Cinema", stream:"Streaming"};
+const starterAgentName = (s, kind) => `${CHANNEL_WORD[kind || flowKind] || CHANNEL_WORD.cinema} ${s.name}`;
 const startersFor = kind => STARTERS.filter(s=>(s.kinds||["cinema","stream"]).includes(kind));
 STARTERS.forEach(s=>normCascade(s.crit));
 // CAS-143/144: ONE number for a preset, everywhere it is quoted. The card, the hub's hero figure and the
@@ -6123,12 +6130,16 @@ window.pickStarter=key=>{
   // and age are NOT seeded here — since CAS-146 they live on the account-level taste baseline, which the
   // flow's Style / Language / Ratings steps edit directly, and which persists between agents by design.
   // Commit is deferred to finishSharpSequence so the payoff shows the sharpened agent, not the raw card.
-  onbFlow.draft = normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
-  onbFlow.name = s.name;
+  // CAS-222: the offered name is the CHANNEL plus the preset — "Cinema Blockbusters", not "Blockbusters".
+  // The card names a standard, and the same standard is a different agent in each lane, so the card's own
+  // label can't be the agent's name without two agents built from one preset ending up identically named.
+  const dfltName = starterAgentName(s, flowKind);
+  onbFlow.draft = normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:dfltName, crit:s.crit, alerts:s.alerts}));
+  onbFlow.name = dfltName;
   // CAS-191: the name the field OFFERS is the name an emptied field falls back to. They used to be two
   // different strings — the placeholder showed the agent you picked and onbApply quietly wrote "Friday
   // night finder" — so clearing the box got you an agent called something you had never seen.
-  onbFlow.defaultName = s.name;
+  onbFlow.defaultName = dfltName;
   onbFlow.draft.kind = flowKind;     // CAS-182: the priority answer rides on the agent
   // The shipped taste defaults, verbatim — exactly what each screen's copy assumes when it opens, and the
   // same four starterPreview() counts the card against, so the card's number and the flow's first count
@@ -8360,7 +8371,10 @@ function openOnbStep(key, agentKey){
   onbFlow.draft.imdb=0; onbFlow.draft.ratingStop=0;
   if(key==="selectivity") autoRelaxBar();
   const picked = agentKey && STARTERS.find(x=>x.key===agentKey);
-  if(picked){ onbFlow.name=picked.name; onbFlow.draft.icon=picked.icon; }   // default name follows the pick
+  // CAS-222: the preview offers the same channel+preset name the wired flow does, so a ?step=name preview
+  // doesn't show a different default from the real thing.
+  if(picked){ onbFlow.name=starterAgentName(picked); onbFlow.defaultName=onbFlow.name;
+              onbFlow.draft.icon=picked.icon; }
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("onbstep_shown",{step:key, agent:agentKey||null});
   renderOnbStep(key);
@@ -8494,7 +8508,9 @@ const MEMB_BENEFITS = [
 // "it said so a moment ago" is not the same as saying so.
 function openMembership(agentKey, nameOverride, cascade){
   const picked = agentKey && STARTERS.find(x=>x.key===agentKey);
-  const name = (nameOverride && nameOverride.trim()) || (picked ? picked.name : ONB_DEFAULT_NAME);
+  // CAS-222: the fallback is the agent's offered name (channel + preset), not the card's label — this line
+  // names the agent that was just built, and only the override would ever be a card label.
+  const name = (nameOverride && nameOverride.trim()) || (picked ? starterAgentName(picked) : ONB_DEFAULT_NAME);
   const c = cascade || membCascade;
   membCascade = c || null;
   // The real haul, in the listing's own order, from the listing's own membership test (CAS-132/176) — so
