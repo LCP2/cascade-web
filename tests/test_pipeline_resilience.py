@@ -13,6 +13,7 @@ import urllib.error
 from unittest import mock
 
 import poc_pipeline as pp
+import poll_scheduler as ps
 
 
 def _http_error(code, body=b""):
@@ -203,6 +204,74 @@ class BudgetsFitTheFreeTier(unittest.TestCase):
                              "OMDb budgets exceed the free-tier daily cap")
         self.assertLessEqual(total, pp.OMDB_FREE_TIER_CAP * 0.95,
                              "OMDb budgets leave no headroom for retries or a second run")
+
+
+class TheWindowEstimatorCannotLearnFromItsOwnStartDate(unittest.TestCase):
+    """CAS-237: the estimator taught itself that films reach streaming the day after they open.
+
+    `window_dates` is an OBSERVATION log — the date Cascade first SAW a film in each window, not the date the
+    film moved — so every title that was already streaming when polling began got its cinema stamp and its
+    streaming stamp on the same day. `compute_median_offsets` averaged those and learned
+    {pvod: 75, rental: 0, included_streaming: 1}. `estimate_status` then filed every unpolled released film
+    straight onto streaming: 1,614 of 1,961 titles, not one of them in a cinema, which is why a cinema agent
+    had no In Cinema section to fill.
+
+    The structural point, and the reason a floor rather than a smarter average is the fix: a median cannot
+    come out longer than the log is old. Eighteen days in, no amount of data could have produced a 210-day
+    streaming offset — so any short answer that early is a fact about the start date, not about films.
+    """
+
+    def test_an_observation_log_teaches_it_nothing(self):
+        # Twenty films, each stamped in every window on the same day: exactly the shape of a catalogue that
+        # was already released when polling started. It must learn nothing from them.
+        log = {str(i): {"in_cinema": "2026-07-12", "rental": "2026-07-12",
+                        "included_streaming": "2026-07-13"} for i in range(20)}
+        self.assertEqual(ps.compute_median_offsets(log), ps.DEFAULT_OFFSETS,
+                         "the estimator learned release windows from the day it started looking")
+
+    def test_a_journey_it_actually_followed_does_teach_it(self):
+        # The same twenty films, but seen BEFORE they opened — so the gaps are real moves, not first sightings.
+        log = {str(i): {"upcoming": "2025-01-01", "in_cinema": "2025-02-01",
+                        "pvod": "2025-05-01", "rental": "2025-06-01",
+                        "included_streaming": "2025-10-01"} for i in range(20)}
+        got = ps.compute_median_offsets(log)
+        self.assertEqual(got, {"pvod": 89, "rental": 120, "included_streaming": 242},
+                         f"a followed journey should be learned verbatim, got {got}")
+
+    def test_an_implausibly_short_offset_falls_back_to_the_default(self):
+        got = ps._sane_offsets({"pvod": 0, "rental": 0, "included_streaming": 1})
+        self.assertEqual(got, ps.DEFAULT_OFFSETS, "a zero-day window was taken as a fact")
+
+    def test_the_journey_can_never_run_backwards(self):
+        # Out-of-order offsets make estimate_status file a film into whichever test fires first, which is an
+        # accident rather than a window.
+        got = ps._sane_offsets({"pvod": 200, "rental": 100, "included_streaming": 300})
+        self.assertLessEqual(got["pvod"], got["rental"])
+        self.assertLessEqual(got["rental"], got["included_streaming"])
+
+    def test_a_film_that_opened_last_week_is_estimated_into_a_cinema(self):
+        # The user-visible claim, end to end: this is the film the report was about.
+        today = datetime.date(2026, 7, 30)
+        m = {"cinema_date": "2026-07-17"}
+        self.assertEqual(ps.estimate_status(m, today, ps.DEFAULT_OFFSETS), ("in_cinema", "estimated"))
+        # …and it is still true when the caller hands over a broken offset table, because estimate_status
+        # sanitises whatever it is given rather than trusting it.
+        self.assertEqual(ps.estimate_status(m, today, {"pvod": 0, "rental": 0, "included_streaming": 1}),
+                         ("in_cinema", "estimated"))
+
+    def test_the_ladder_still_moves_a_film_along_it(self):
+        # The floor must not turn the estimator into "everything is in a cinema forever".
+        today = datetime.date(2026, 7, 30)
+        for age, expected in ((5, "in_cinema"), (80, "pvod"), (150, "rental"), (400, "included_streaming")):
+            opened = (today - datetime.timedelta(days=age)).isoformat()
+            got, conf = ps.estimate_status({"cinema_date": opened}, today)
+            self.assertEqual(got, expected, f"a film {age} days out was estimated {got}")
+            self.assertEqual(conf, "estimated")
+
+    def test_an_unreleased_film_is_never_estimated_into_a_cinema(self):
+        today = datetime.date(2026, 7, 30)
+        self.assertEqual(ps.estimate_status({"cinema_date": "2026-12-01"}, today), ("upcoming", "estimated"))
+        self.assertEqual(ps.estimate_status({}, today), ("upcoming", "estimated"))
 
 
 if __name__ == "__main__":

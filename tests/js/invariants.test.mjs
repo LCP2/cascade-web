@@ -143,12 +143,17 @@ test("windows: no listed film sits outside the agent's listed windows", () => {
 });
 
 // ---- 6. AVAILABILITY IS BACKED BY SOMETHING (CAS-170 / CAS-155 / CAS-227) -------------------------------
-test("availability: every showable film is unreleased, offered, or confirmed in a cinema", () => {
+test("availability: every showable film is unreleased, offered, or in a cinema run", () => {
   for(const m of E.MOVIES){
     if(!E.showable(m)) continue;
     const upcoming   = (m.status || []).includes("upcoming");
     const offered    = !E.isEstimated(m) && (m.offers || []).length > 0;
-    const inCinema   = !E.isEstimated(m) && E.inCinemaWindow(m);
+    // CAS-237 widened the third case by exactly one clause. It used to require a CONFIRMED title; it now
+    // also admits an estimated one, PROVIDED the film is in a cinema window with its opening date still
+    // inside the run. That is not a weaker claim, it is the same claim: the evidence for "on a screen" is a
+    // real opening date and no digital listing, and whether the pipeline or the front end read that
+    // evidence changes nothing about it. Every other estimated window is still excluded (CAS-170).
+    const inCinema   = E.inCinemaWindow(m) && (!E.isEstimated(m) || E.inCinemaRun(m));
     assert.ok(upcoming || offered || inCinema,
       `${m.title} is listable on nothing: status ${(m.status||[]).join(",")}, ${(m.offers||[]).length} offers`);
     // CAS-155's fault in one line: a film with a rent or stream offer must never be filed under the big screen.

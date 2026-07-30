@@ -27,6 +27,10 @@ SWEEP_DAYS     = 28      # 4-week slow sweep
 
 # estimate model fallback: median days from cinema to each downstream window
 DEFAULT_OFFSETS = {"pvod": 75, "rental": 120, "included_streaming": 210}
+# CAS-237: the shortest a window has ever plausibly run in AU. A learned median below its floor is not a
+# fact about release windows — it is an artefact of how long Cascade has been watching, because a median
+# cannot come out longer than the observation log is old.
+OFFSET_FLOORS = {"pvod": 21, "rental": 45, "included_streaming": 75}
 
 
 def _date(s):
@@ -81,25 +85,59 @@ def select_daily_poll_set(movies, today, ondemand_ids=None,
     }
 
 
+def _sane_offsets(offsets, defaults=DEFAULT_OFFSETS):
+    """Any offset shorter than its floor is discarded for the default, and the journey is then forced to run
+    forwards. Both halves matter: a window that opens before the one ahead of it makes estimate_status file
+    films into whichever test happens to fire first, which is not a window so much as an accident."""
+    out = {}
+    for w in ("pvod", "rental", "included_streaming"):
+        v = offsets.get(w) if isinstance(offsets, dict) else None
+        out[w] = defaults[w] if not isinstance(v, (int, float)) or v < OFFSET_FLOORS[w] else int(v)
+    out["rental"] = max(out["rental"], out["pvod"])
+    out["included_streaming"] = max(out["included_streaming"], out["rental"])
+    return out
+
+
 def compute_median_offsets(window_dates, defaults=DEFAULT_OFFSETS, min_samples=5):
-    """Median days from cinema to each downstream window, learned from accrued
-    window_dates; fall back to defaults until enough samples exist."""
+    """Median days from cinema to each downstream window, learned from accrued window_dates; fall back to
+    defaults until enough REAL samples exist.
+
+    "Real" is doing the work here, and CAS-237 is what happens without it. window_dates is an OBSERVATION
+    log — it records when Cascade first SAW a film in each window, not when the film moved — so a title that
+    was already streaming when polling began gets its cinema stamp and its streaming stamp on the same day
+    and contributes a gap of zero. On 2026-07-30, eighteen days into the log, this function had learned
+    {pvod: 75, rental: 0, included_streaming: 1}. estimate_status then filed every unpolled film that had
+    opened at all straight onto streaming — 1,614 of 1,961 titles — and estimated not one film into a cinema,
+    which is why a cinema agent's listing had nothing In Cinema to show.
+
+    So a sample now has to come from a journey we actually FOLLOWED: the film must carry an `upcoming` stamp
+    at or before its cinema stamp, which is the evidence that we were watching before it opened and the
+    cinema stamp is the real thing rather than the day the film entered the log. That gate is self-clearing —
+    it admits more titles every week Cascade runs — and until it admits min_samples of them, the defaults are
+    the honest answer. The floors in _sane_offsets are the backstop: a learned median cannot be longer than
+    the log is old, so early on any short answer is an artefact of the start date, not a fact about windows.
+    """
     samples = {w: [] for w in ("pvod", "rental", "included_streaming")}
     for wd in window_dates.values():
         base = _date(wd.get("in_cinema") or wd.get("opening_week"))
         if not base:
             continue
+        watched_before = _date(wd.get("upcoming"))
+        if not watched_before or watched_before > base:
+            continue
         for w in samples:
             d = _date(wd.get(w))
             if d and (d - base).days >= 0:
                 samples[w].append((d - base).days)
-    return {w: (int(statistics.median(xs)) if len(xs) >= min_samples else defaults[w])
-            for w, xs in samples.items()}
+    learned = {w: (int(statistics.median(xs)) if len(xs) >= min_samples else defaults[w])
+               for w, xs in samples.items()}
+    return _sane_offsets(learned, defaults)
 
 
 def estimate_status(m, today, offsets=DEFAULT_OFFSETS):
     """Estimated current window for an UNPOLLED film from its cinema age.
     Returns (window, 'estimated'). Never fabricates price/services."""
+    offsets = _sane_offsets(offsets)      # whatever the caller holds, the journey runs forwards from here
     c = cinema_date(m)
     if not c or c > today:
         return ("upcoming", "estimated")

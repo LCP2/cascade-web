@@ -2290,6 +2290,12 @@ const ICON = {
 // primaryStatus() takes the LAST window a film holds, so "upcoming" sitting first is safe:
 // an upcoming film holds only that one, and a released film never holds it.
 const CASCADE = ["upcoming","opening_week","in_cinema","pvod","rental","included_streaming"];
+// CAS-237: the order the LISTING groups its sections in, which is not the journey order. CASCADE is the
+// journey — where a film has been and where it is going — and reading a listing down that order puts every
+// unreleased title above everything you could watch tonight. For a cinema agent that was the whole listing:
+// 27 Upcoming above the one film actually on a screen. A listing answers "what can I watch", so it leads
+// with what is out and keeps Upcoming as the tail it is. Same six sections, same films, same counts.
+const LISTING_ORDER = ["opening_week","in_cinema","pvod","rental","included_streaming","upcoming"];
 const STATUS_LABEL = {
   opening_week:"In Cinema · Opening week", in_cinema:"In Cinema",
   pvod:"Premium Buy/Rent (~$30)", rental:"Rent (~$7)",
@@ -2321,6 +2327,10 @@ function escA(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").repl
 // ESTIMATED: it has never been polled, and the pipeline has worked its window out from how long ago it opened
 // in cinemas — an educated guess, with no offers and no price attached to it, ever.
 const isEstimated = m => m.availability_confidence==="estimated";
+// CAS-237: the film opened, and its run isn't over yet. This is the whole of the evidence that a film is on
+// a screen right now — cinemas publish no offers, so there is never anything else to read.
+const inCinemaRun = m => !!m.cinema_date && m.cinema_date<=TODAY && m.cinema_date>=addDays(TODAY,-CINEMA_RUN_DAYS);
+const cinemaRungFor = m => m.cinema_date >= addDays(TODAY,-OPENING_WEEK_DAYS) ? "opening_week" : "in_cinema";
 // The window the pipeline worked out, kept safe before deriveStatus() overwrites m.status below.
 MOVIES.forEach(m=>{ m.claimedStatus=(m.status||[]).slice(); });
 function deriveStatus(m){
@@ -2332,11 +2342,22 @@ function deriveStatus(m){
   // date. That mislabelled 257 of 1954 titles — every rental/pvod record in the catalogue — while the data
   // said `rental`, which is how a film that dropped to rent in July 2026 was filed under In Cinema.
   const claimed = CASCADE.filter(x=>m.claimedStatus.includes(x));
-  // An estimated title has no offers to read, so there is nothing here to derive FROM: falling through to the
-  // rules below would read "released, but no offers" as "in cinemas", and for a film that opened two years ago
-  // that is simply false. Take the window the pipeline estimated — it is at least reasoned from the real
-  // cinema date, and the card says out loud that it's an estimate.
-  if(isEstimated(m) && claimed.length) return claimed;
+  // CAS-237: …except when the window the pipeline estimated is one the film's own opening date denies. The
+  // estimator learns its cinema→home offsets from window_dates, which is an OBSERVATION log rather than a
+  // journey, so eighteen days into that log it had learned that rent arrives 0 days after the cinema and
+  // streaming 1 — and every unpolled film that had opened at all was estimated straight onto streaming. That
+  // is 1,614 of 1,961 titles today, including one that opened thirteen days ago, and it is why a cinema
+  // agent had no In Cinema section to fill: the catalogue held no film in a cinema at all.
+  // poll_scheduler is fixed and tomorrow's refresh will say this itself. Until then, and for any future
+  // estimate that drifts the same way, this is the same correction from the same evidence: a film with NO
+  // offer of any kind whose opening is still inside the cinema run is on a screen, not on a service we
+  // cannot name. It is not an invented window (CAS-155) — it is the film's own date read against an
+  // estimate that rests on nothing, which is exactly the ground CAS-227 already stands on.
+  if(isEstimated(m) && claimed.length){
+    if(!(m.offers||[]).length && !claimed.some(w=>["upcoming","opening_week","in_cinema"].includes(w))
+       && inCinemaRun(m)) return [cinemaRungFor(m)];
+    return claimed;
+  }
   // CAS-227: "Upcoming" stops being true the day a film opens. The pipeline moves a title out of `upcoming`
   // when it sees an offer, which means a film sits mislabelled for the whole gap between opening night and its
   // first digital listing — today that is 8 titles, including one that opened this week and one opening
@@ -2348,8 +2369,8 @@ function deriveStatus(m){
   // before this function may move a title. An estimated title never reaches here (it returned above), and a
   // title with priced-null offers is excluded by the offers clause: those were CAS-155's two failure cases.
   if(claimed.length===1 && claimed[0]==="upcoming" && !(m.offers||[]).length && !isEstimated(m)
-     && m.cinema_date && m.cinema_date<=TODAY && m.cinema_date>=addDays(TODAY,-CINEMA_RUN_DAYS)){
-    return [m.cinema_date >= addDays(TODAY,-OPENING_WEEK_DAYS) ? "opening_week" : "in_cinema"];
+     && inCinemaRun(m)){
+    return [cinemaRungFor(m)];
   }
   const o = m.offers||[]; const s = new Set();
   const hasSub = o.some(x=>x.type==="sub"||x.type==="free");
@@ -2657,7 +2678,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 198, "commit": "d752344", "builtAt": "2026-07-30T04:52:42Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 199, "commit": "680bad1", "builtAt": "2026-07-30T05:24:59Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3176,7 +3197,7 @@ const sortFor = g => sortForKey(g, filt.sort);
 // put there the moment the user lands in the listing.
 function listingOrder(films, sortKey){
   const ordered=[], seen=new Set();
-  CASCADE.forEach(g=>{
+  LISTING_ORDER.forEach(g=>{
     films.filter(m=>primaryStatus(m)===g).sort(sortForKey(g,sortKey))
          .forEach(m=>{ ordered.push(m); seen.add(m); });
   });
@@ -4100,7 +4121,13 @@ const hasConfirmedOffer = m => !isEstimated(m) && (m.offers||[]).length>0;
 // the same terms as the other two: CONFIRMED (we polled it and there genuinely is no digital listing) plus a
 // real opening date already behind it, which is the evidence that it is on a screen. Estimated titles stay out
 // — that exclusion is the whole of CAS-170 and it is untouched.
-const inCinemaConfirmed = m => !isEstimated(m) && inCinemaWindow(m);
+// CAS-237: and the exclusion narrows by exactly one case. CAS-170 threw out estimated titles because an
+// estimate with no offers behind it promises a film you may not be able to watch anywhere — 913 of them.
+// A film in a CINEMA window is the one place that argument does not reach: the promise is a screening, the
+// evidence is a real opening date still inside the run, and cinemas publish no offers for anyone to check
+// against. That is the same evidence this file already accepts from a confirmed title, so accepting it here
+// is consistency rather than a new claim; every other estimated window stays out, untouched.
+const inCinemaConfirmed = m => inCinemaWindow(m) && (!isEstimated(m) || inCinemaRun(m));
 const showable = m => isUpcoming(m) || hasConfirmedOffer(m) || inCinemaConfirmed(m);
 // The real size of the catalogue as far as any user is concerned. Every "of N" on the page counts this, not
 // MOVIES.length, or the denominator would promise films no screen can ever reach.
@@ -8974,7 +9001,7 @@ function render(){
   // CAS-150: no blurb above the list. The section heads carry the counts where they mean something, and
   // the order is a thing you can see by reading down the list — saying it in a line was chrome, not honesty.
   wrap.innerHTML="";
-  CASCADE.forEach(g=>{
+  LISTING_ORDER.forEach(g=>{
     const items=rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g));
     if(!items.length) return;
     const live=items.filter(m=>!taggedOut(m)).length;

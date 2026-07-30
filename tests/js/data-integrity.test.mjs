@@ -86,14 +86,71 @@ test("listing: no more offers go dark than the ones already known to be", () => 
     `See the CAS-231 KNOWN GAP beside MISSION_DIALS_USED.`);
 });
 
-// CAS-170 from the listing's side: an estimated title is a guess, and a listing is not the place for one.
-test("listing: nothing on screen rests on an estimate", () => {
+// CAS-170 from the listing's side: an estimated title is a guess, and a listing is not the place for one —
+// with the single exception CAS-237 opened, and it has to stay single. A film in a CINEMA window whose
+// opening is still inside the run is the one estimate backed by something checkable (its own date, and the
+// fact that cinemas publish no offers for anyone to check against). Every other estimated window is a claim
+// about a service we cannot name, and those stay out.
+test("listing: an estimate only reaches the screen from a cinema run", () => {
   for(const { label, listed } of everyListing()){
     for(const m of listed){
       assert.ok(E.showable(m), `${label}: lists ${m.title}, which nothing backs`);
-      if(E.isEstimated(m)) assert.fail(`${label}: lists ${m.title}, whose availability is only estimated`);
+      if(!E.isEstimated(m)) continue;
+      assert.ok(E.inCinemaWindow(m),
+        `${label}: lists ${m.title} from ${E.primaryStatus(m)} on an estimate — only a cinema run may be estimated`);
+      assert.ok(E.inCinemaRun(m),
+        `${label}: lists ${m.title} as in a cinema on an estimate, but it opened ${m.cinema_date}`);
+      assert.equal((m.offers || []).length, 0,
+        `${label}: ${m.title} is estimated into a cinema while holding digital offers that could have been read`);
     }
   }
+});
+
+// ---- 1b. THE IN-CINEMA SECTION ACTUALLY POPULATES (CAS-237) ---------------------------------------------
+// The bug: a cinema agent listed 33 films of which 2 were not Upcoming, because the catalogue held no film
+// in a cinema at all — the window estimator had learned a 1-day cinema-to-streaming offset from an
+// observation log and filed 1,614 of 1,961 titles onto streaming. These are the assertions that would have
+// caught it, and neither of them pins a number: the first says the window exists, the second says nothing
+// silently falls out of it between the catalogue and the screen.
+test("in cinema: the catalogue holds films that are on a screen right now", () => {
+  const onScreen = E.MOVIES.filter(m => E.showable(m) && E.inCinemaWindow(m));
+  assert.ok(onScreen.length > 0,
+    "not one film in the whole catalogue is in a cinema window — the window estimator has collapsed (CAS-237)");
+  for(const m of onScreen) assert.ok(E.inCinemaRun(m),
+    `${m.title} is filed In Cinema on an opening date of ${m.cinema_date}, outside the run`);
+});
+
+test("in cinema: a wide-open cinema agent loses none of them, and is not a wall of Upcoming", () => {
+  pickInLane(E, "cinema", "custom");
+  const d = E.onbApply();
+  const eligible = E.MOVIES.filter(m => E.showable(m) && E.inCinemaWindow(m) && E.matchesTaste(m, d));
+  const listed = E.MOVIES.filter(m => E.listedBy(m, d));
+  const onScreen = listed.filter(m => E.inCinemaWindow(m));
+  assert.equal(onScreen.length, eligible.length,
+    `the widest cinema recipe lists ${onScreen.length} of the ${eligible.length} films it should have on screen`);
+  assert.ok(onScreen.length > 0, "the widest cinema recipe lists nothing that is on a screen (CAS-237)");
+  // "Not a wall of Upcoming" as the loosest assertion that still means it. Today the widest cinema recipe
+  // is 40% Upcoming; the bug was 100%. The ceiling catches the collapse coming back, not ordinary drift.
+  const upcoming = listed.filter(m => E.isUpcoming(m)).length;
+  const share = 100 * upcoming / Math.max(1, listed.length);
+  assert.ok(share <= 90,
+    `the widest cinema recipe is ${share.toFixed(0)}% Upcoming (${upcoming} of ${listed.length}) — a wall, not a listing`);
+});
+
+// The listing leads with what you can watch, and keeps Upcoming as the tail. Asserted on the shipped order
+// rather than on the rendering, because the reveal and the listing must walk the same sequence (CAS-176).
+test("in cinema: the listing leads with what is out and ends with what is not", () => {
+  assert.equal(E.LISTING_ORDER[E.LISTING_ORDER.length - 1], "upcoming",
+    `the listing leads with ${E.LISTING_ORDER[0]} and would put unreleased films above watchable ones`);
+  assert.deepEqual([...E.LISTING_ORDER].sort(), [...E.CASCADE].sort(),
+    "the listing order and the journey order are not the same six windows");
+  pickInLane(E, "cinema", "custom");
+  const d = E.onbApply();
+  const seq = E.listingOrder(E.MOVIES.filter(m => E.listedBy(m, d)), d.sort || "availability");
+  const firstUpcoming = seq.findIndex(m => E.isUpcoming(m));
+  const lastReleased = seq.map(m => !E.isUpcoming(m)).lastIndexOf(true);
+  if(firstUpcoming >= 0 && lastReleased >= 0) assert.ok(firstUpcoming > lastReleased,
+    `an Upcoming film sits at ${firstUpcoming}, above a released one at ${lastReleased}`);
 });
 
 // ---- 2. THE DATES THE CARD SHOWS ------------------------------------------------------------------------
@@ -196,9 +253,19 @@ test("counts: every count in the wider matrix is still the size of its own set",
       const shown = E.MOVIES.filter(m => E.matchesCriteria(m, d)).length;
       assert.equal(E.countCriteria(d), shown, `${label} + ${what}: countCriteria disagrees with its own set`);
       assert.ok(shown <= bySet, `${label} + ${what}: ${shown} showable exceeds ${bySet} watched`);
-      // A listing is drawn from the watched set, so it can never be larger than it either.
-      const listed = E.MOVIES.filter(m => E.listedBy(m, d)).length;
+      // A listing is drawn from the watched set, so it can never be larger than it — and the gap is never
+      // unexplained: every film the agent follows but does not list is one that has not arrived in a window
+      // it lists. A streaming agent follows a film that is still in cinemas so it can tell you when it
+      // lands; that film is in the haul and not on the screen, and that is the whole of the difference.
+      const watched = E.MOVIES.filter(m => E.watchesFilm(m, d));
+      const listed = watched.filter(m => E.listedBy(m, d)).length;
+      assert.equal(E.MOVIES.filter(m => E.listedBy(m, d)).length, listed,
+        `${label} + ${what}: lists a film it does not follow`);
       assert.ok(listed <= bySet, `${label} + ${what}: lists ${listed} of a watched set of ${bySet}`);
+      const upstream = watched.filter(m => !E.listedBy(m, d));
+      for(const m of upstream) assert.ok(!d.listStatus.length || !d.listStatus.includes(E.primaryStatus(m)),
+        `${label} + ${what}: follows ${m.title}, which is sitting in the listed window ` +
+        `${E.primaryStatus(m)} and still is not listed`);
     }
   }
 });

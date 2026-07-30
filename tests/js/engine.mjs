@@ -97,6 +97,7 @@ const EXPORTS = `
   // can watch and when, so the QA gate needs to reach them the same way the listing does.
   prefs, servicesPicked, matchesServices, scopeOf, anyScope, HOME_KEYS,
   SUB_SERVICES, STORE_SERVICES, stageDate, curSlot, cinemaState, EST_OFFSET, TODAY,
+  inCinemaRun, CINEMA_RUN_DAYS, LISTING_ORDER, listingOrder,
   selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK,
   SCALE_REF, BUZZ_STOPS, VOTE_REF, CRITICS_STOPS, AGE_LEVELS, ONB_GENRES, LANG_OPTS, GENRE_COUNT,
   MIN_INITIAL_MATCHES, autoRelaxBar, barDialSnapshot,

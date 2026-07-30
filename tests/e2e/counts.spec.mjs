@@ -37,10 +37,18 @@ for(const kind of ["cinema", "stream"]){
     await toListing(page);
     const sections = await sectionCounts(page);
     const listed = sections.reduce((a, s) => a + s.count, 0);
-    // The listing shows the windows the agent LISTS, which after CAS-228 can be narrower than what it watches.
-    // With the shipped defaults every window is listed, so these must agree exactly; if a default ever changes
-    // to list less than it watches, this is the assertion that will say so rather than the bug reaching prod.
-    expect(listed, `sections ${JSON.stringify(sections)} against a haul of ${cardCount}`).toBe(cardCount);
+    // The listing shows the films that have ARRIVED in a window the agent lists. The haul is everything the
+    // agent follows, and following a film starts before it arrives — a streaming agent watches a film that is
+    // still in cinemas precisely so it can tell you the day it lands. So the listing is a subset of the haul,
+    // never a superset, and the two coincide only when nothing the agent follows is still upstream of it.
+    //
+    // This asserted equality until CAS-237, and passed only by luck: every other preset already had a gap
+    // (stream/streaming listed 248 of 250) and the lead card happened not to. Once the window estimator was
+    // fixed and films could be in a cinema again, two of the lead card's films were legitimately still on a
+    // screen and the coincidence broke. The subset relation is the property that was always true.
+    expect(listed, `sections ${JSON.stringify(sections)} against a haul of ${cardCount}`)
+      .toBeLessThanOrEqual(cardCount);
+    expect(listed, `the listing is empty against a haul of ${cardCount}`).toBeGreaterThan(0);
   });
 
   test(`${kind}: every preset's card count agrees with its own Mission page`, async ({ page }) => {
