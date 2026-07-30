@@ -319,6 +319,28 @@
     background:rgba(255,255,255,.05);color:#c9d0da;cursor:pointer;display:grid;place-items:center;line-height:0}
   .cclose svg{width:16px;height:16px;display:block}
   .cclose:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* CAS-245: the Notify panel. Same shell as the Watch-status one, opposite handedness — its close sits on
+     the LEFT and points RIGHT, where the other sits on the right and points left. Two panels open off the
+     same row, so the side you close from is the cheapest way to tell them apart at a glance. */
+  .npop{gap:6px}
+  .nclose{order:-1}
+  .nclose svg{transform:rotate(-90deg)}
+  .nopts{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0;max-height:196px;overflow-y:auto}
+  .nopt{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 10px;border-radius:9px;
+    background:rgba(255,255,255,.05);border:1px solid transparent;font-family:inherit;font-size:12px;
+    font-weight:600;color:var(--dim);cursor:pointer;line-height:1.2}
+  .nopt.nsub{padding-left:22px;font-size:11.5px}
+  .nopt .wwb{width:15px;height:15px;border-radius:50%;border:1.5px solid rgba(255,255,255,.22);flex:0 0 auto;
+    display:grid;place-items:center;font-size:9px;font-weight:800;color:transparent}
+  .nopt.on{color:var(--ink);border-color:var(--wwc)}
+  .nopt.on .wwb{background:var(--wwc);border-color:var(--wwc);color:#0b1016}
+  .nopt .nol{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* An option this agent doesn't watch is still offered — that is the point of a per-film control — but it
+     says so, or a lit row would read as "my agent does this" rather than "just this film". */
+  .nopt .notag{flex:none;font-size:9.5px;font-weight:700;color:var(--faint);text-transform:uppercase;
+    letter-spacing:.04em}
+  .nopt:hover{color:var(--ink)}
+  .nopt:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
   /* ONE icon set for the card's actions (CAS-64). Every action icon is a stroked outline drawn from the same
      24px grid at the same 1.8 stroke weight, in the same grey — and every ON state is the same purple
      treatment. Emoji glyphs are out: they carry their own weights, fills and platform styling, which is
@@ -2713,7 +2735,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 203, "commit": "643fd24", "builtAt": "2026-07-30T06:11:15Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 204, "commit": "6b123fa", "builtAt": "2026-07-30T06:20:00Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3634,16 +3656,108 @@ function watchChipHTML(id){
 // capability the honesty guardrail forbids. On/off is the whole of what this can honestly promise: alerts
 // about THIS film, or silence about it. catchReason() is the single place that reads it, so the bell drawer
 // and the digest both know, and the digest will say the film was muted rather than pretending nothing moved.
-function notifyChipHTML(id){
-  const muted=filmMuted(id);
-  const title = muted ? "Muted — you won't be told when this film moves. Tap to unmute."
-                      : "You'll be told when this film moves. Tap to mute it.";
-  return `<button type="button" class="ctl${muted?"":" on"}" onclick="toggleFilmNotify(${id})"
-      aria-pressed="${!muted}" title="${escA(title)}" aria-label="${escA(title)}">
-    <span class="cmini"><i class="cfill" style="width:${muted?0:100}%;background:var(--cyan)"></i>
-      <span class="cic">${muted ? ICON.bellOff : ICON.bell}</span>
-      <span class="clab${muted?" dim":""}">${muted ? "Muted" : "Notify"}</span></span></button>`;
+// CAS-245: …and it is a PANEL now, not a single switch. The moments the four-way prototype control wanted
+// have existed since CAS-242 and CAS-243 — the windows and sub-moments an agent carries in its settings —
+// so the honesty objection that kept this on/off is answered: every row here is a moment the monitor can
+// actually fire. The panel lists every option the agent HAS, whether or not the agent has it switched on,
+// because "tell me about this one film reaching rent even though my agent doesn't watch rent" is exactly
+// the thing a per-film control is for. Each option the agent does have on starts ON for the film.
+function notifyOptionsFor(c){
+  if(c===undefined) c=activeCascade();
+  // In the All view there is no agent to read, and a film there can be caught by any of them — so the
+  // panel offers every window rather than guessing at one type.
+  const kinds = (c && (c.kind==="cinema"||c.kind==="stream")) ? [c.kind] : Object.keys(AGENT_WINDOWS);
+  const watch = c ? migrateWatch(c.watchWindows||{}) : {};
+  const out=[];
+  kinds.forEach(k=>AGENT_WINDOWS[k].forEach(w=>{
+    const f=watch[w.key]||{};
+    out.push({key:w.key, label:w.label, say:w.notifySay, cd:w.cd, agentOn:!!f.notify, alerts:w.alerts||{}});
+    (w.subs||[]).forEach(sb=>out.push({
+      key:`${w.key}.${sb.key}`, label:sb.label, say:sb.sub, cd:w.cd, sub:true,
+      agentOn: !!(f.notify && (f.subs||{})[sb.key]), alerts:sb.alerts||{},
+    }));
+  }));
+  return out;
 }
+// The film's answer for one option: its own if it has one, otherwise the agent's.
+// Which of those options covers the window a film has just landed in — the bridge between a status the
+// poll produces and a row on this panel. past_opening is a moment rather than a window, so it is matched by
+// the bell it arms instead of by a status.
+function filmOptKeyForWindow(c, w){
+  const kinds = (c && (c.kind==="cinema"||c.kind==="stream")) ? [c.kind] : Object.keys(AGENT_WINDOWS);
+  for(const k of kinds) for(const win of AGENT_WINDOWS[k]){
+    if((win.status||[]).includes(w) || (w==="past_opening" && (win.alerts||{}).past_opening)) return win.key;
+  }
+  return null;
+}
+const filmOptOn = (id, opt) => {
+  const w=(notify[id]||{}).wins||{};
+  return w[opt.key]===undefined ? !!opt.agentOn : !!w[opt.key];
+};
+// The chip's summary. `muted` is still the field it has always been — a whole-film silence — and it stays
+// the thing catchReason reads first; the per-option map narrows what is left. A film with every option off
+// is muted in substance, and the chip says so rather than claiming an alert it will not send.
+function filmNotifyState(id){
+  if(filmMuted(id)) return {on:0, total:0, muted:true};
+  const opts=notifyOptionsFor();
+  const on=opts.filter(o=>filmOptOn(id,o)).length;
+  return {on, total:opts.length, muted:on===0};
+}
+function notifyChipHTML(id){
+  const st=filmNotifyState(id);
+  const lbl = st.muted ? "Muted" : (st.on && st.on<st.total ? `Notify · ${st.on}` : "Notify");
+  const title = st.muted ? "Nothing about this film will reach you. Tap to choose what does."
+                         : `You'll be told when this film reaches ${st.on} of ${st.total} moments. Tap to change.`;
+  return `<button type="button" class="ctl notify${st.muted?"":" on"}" data-nid="${id}"
+      onclick="openNotifyPanel(${id},this)" aria-haspopup="true" aria-pressed="${!st.muted}"
+      title="${escA(title)}" aria-label="${escA(title)}">
+    <span class="cmini"><i class="cfill" style="width:${st.total?100*st.on/st.total:0}%;background:var(--cyan)"></i>
+      <span class="cic">${st.muted ? ICON.bellOff : ICON.bell}</span>
+      <span class="clab${st.muted?" dim":""}">${lbl}</span></span></button>`;
+}
+window.openNotifyPanel=(id, btn)=>{
+  const open=btn.closest(".actions").querySelector(".cpop");
+  closeWatchPanel();
+  if(open) return;                       // tapping the chip again closes the panel it opened
+  const opts=notifyOptionsFor();
+  const pop=document.createElement("div");
+  pop.className="cpop npop";
+  // The close control is on the LEFT and points RIGHT, deliberately the mirror of the Watch-status panel's
+  // (right edge, pointing left). Two panels open off the same row; if they closed from the same side with
+  // the same arrow, the only thing telling you which one you had open would be its contents.
+  pop.innerHTML=`<button type="button" class="cclose nclose" onclick="closeWatchPanel()"
+      title="Close" aria-label="Close">${ICON.chev}</button>
+    <div class="nopts">${opts.map(o=>{
+      const on=filmOptOn(id,o);
+      return `<button type="button" class="nopt${on?" on":""}${o.sub?" nsub":""}" style="--wwc:${o.cd}"
+        aria-pressed="${on}" onclick="toggleFilmOpt(${id},'${o.key}')"
+        title="${escA(on?`On — tap to stop hearing about this`:`Off — tap to be told ${o.say}`)}">
+        <span class="wwb">✓</span><span class="nol">${esc(o.label)}</span>
+        ${o.agentOn?"":`<span class="notag">not in this agent</span>`}</button>`;
+    }).join("")}</div>`;
+  btn.closest(".actions").appendChild(pop);
+  document.addEventListener("keydown", watchPanelKey, true);
+  const first=pop.querySelector(".nopt"); if(first) first.focus();
+};
+window.toggleFilmOpt=(id,key)=>{
+  const e=entryFor(id);
+  const opt=notifyOptionsFor().find(o=>o.key===key); if(!opt) return;
+  e.wins=e.wins||{};
+  e.wins[key]=!filmOptOn(id,opt);
+  // Touching any option un-mutes the film: a whole-film silence and a per-moment choice are two different
+  // answers, and holding both would leave a lit row that could never fire.
+  e.muted=false;
+  saveNotify();
+  logEvent("film_notify_option",{option:key, on:e.wins[key]});
+  const btn=document.querySelector(`#card-${id} .actions .ctl.notify`);
+  if(btn){ const pop=btn.closest(".actions").querySelector(".cpop");
+           btn.outerHTML=notifyChipHTML(id);
+           if(pop) pop.querySelectorAll(".nopt").forEach((n,i)=>{
+             const o=notifyOptionsFor()[i]; if(!o) return;
+             const on=filmOptOn(id,o);
+             n.classList.toggle("on", on); n.setAttribute("aria-pressed", String(on));
+           }); }
+};
 // One panel at a time, anchored in the .actions row (which is position:relative for exactly this).
 function closeWatchPanel(){
   document.querySelectorAll(".cpop").forEach(n=>n.remove());
@@ -3673,17 +3787,12 @@ window.pickWatch=(id,key)=>{ closeWatchPanel(); setOpinion(id,key); };
 // Per-film mute. It rides the same `notify` record the Found list uses, so it saves, syncs and clears with
 // everything else about that film rather than needing a store of its own. Default is UNMUTED: an agent that
 // found a film is already promising to tell you about it, and silence has to be something you chose.
+//
+// CAS-245 replaced the whole-film toggle that used to set this with the per-moment panel, and left the FIELD
+// alone on purpose: a film someone muted before this change stays muted, catchReason still reads it first,
+// and touching any row in the panel clears it. Silencing a film is still one gesture — turn every row off,
+// which the chip then reports as "Muted" — so nothing was taken away, only said more precisely.
 const filmMuted = id => !!(notify[id] && notify[id].muted);
-window.toggleFilmNotify=id=>{
-  const e=entryFor(id);
-  e.muted=!e.muted;
-  saveNotify();
-  logEvent("film_notify_toggled",{muted:!!e.muted});
-  const btn=document.querySelector(`#card-${id} .actions .ctl[aria-pressed]`);
-  if(btn) btn.outerHTML=notifyChipHTML(id);
-  toast(e.muted ? "Muted — you won't hear about this film again unless you unmute it."
-                : "Unmuted — you'll hear about this film when it moves.");
-};
 // ---- The collapsed stub (CAS-64, made unconditional in CAS-100) ----------------
 // What a film becomes the moment you say Liked / Disliked / Not for me: one greyed line, in the position the
 // card was already in, carrying its title and the same three buttons with your answer lit. Press the lit one
@@ -9474,6 +9583,14 @@ function catchReason(m, c, w, services){
   // it, and every Cascade gives the same reason. The digest therefore says the film was muted instead of
   // leaving a move unexplained.
   if(filmMuted(m.tmdb_id)) return `you muted alerts for this film`;
+  // CAS-245: and the finer answer — this film, this window. The panel offers a row per window whether or not
+  // the agent watches it, so this has to be read for every window rather than only the ones the agent has on,
+  // or turning a row ON for one film would light a switch that still could not fire.
+  const optKey = filmOptKeyForWindow(c, w);
+  if(optKey){
+    const opt = notifyOptionsFor(c).find(o=>o.key===optKey);
+    if(opt && !filmOptOn(m.tmdb_id, opt)) return `you turned this film's ${opt.label} alert off`;
+  }
   // Per-window: a Cascade scoped to Stream only must still shout about a Rent drop on a service you don't
   // have. The scope that decides is the one on the window the film actually LANDED in.
   if(scopeOf(c)[w] && servicesPicked() && !matchesServices(m))
