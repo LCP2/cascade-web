@@ -315,9 +315,16 @@
   .cseg .cl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
   .cseg:hover{color:var(--ink);border-color:#3a4150}
   .cseg:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
-  .cclose{flex:none;width:28px;height:44px;border-radius:9px;border:1px solid rgba(255,255,255,.12);
+  /* CAS-241: a thumb, not a fingernail. 28px wide was under half the 44px the rest of the card's controls
+     are drawn at, on the one button whose whole job is "put this away". The width comes off the four
+     segments beside it, which is why the labels are asserted intact at 360px rather than assumed. */
+  .cclose{flex:none;width:44px;height:44px;border-radius:9px;border:1px solid rgba(255,255,255,.12);
     background:rgba(255,255,255,.05);color:#c9d0da;cursor:pointer;display:grid;place-items:center;line-height:0}
   .cclose svg{width:16px;height:16px;display:block}
+  /* One chevron, pointed by the panel it closes. The Watch-status panel sits on the right and collapses
+     leftward, so its arrow says "<"; the Notify panel (CAS-245) sits on the left and says ">". Two panels
+     open off the same row, and which way the arrow points is the cheapest way to tell them apart. */
+  .wclose svg{transform:rotate(90deg)}
   .cclose:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   /* CAS-245: the Notify panel. Same shell as the Watch-status one, opposite handedness — its close sits on
      the LEFT and points RIGHT, where the other sits on the right and points left. Two panels open off the
@@ -3875,7 +3882,8 @@ window.openWatchPanel=(id, btn)=>{
       return `<button type="button" class="cseg${on?" on":""}" style="${on?`background:${s.cd};color:#fff`:""}"
         onclick="pickWatch(${id},'${s.key}')" aria-pressed="${on}"
         title="${escA(on?`${s.lbl} — tap to undo`:s.lbl)}"><span class="ci">${ICON[s.ico]}</span><span class="cl">${s.lbl}</span></button>`;
-    }).join("")}</div><button type="button" class="cclose" onclick="closeWatchPanel()" title="Close">${ICON.chev}</button>`;
+    }).join("")}</div><button type="button" class="cclose wclose" onclick="closeWatchPanel()"
+      title="Collapse" aria-label="Collapse watch status">${ICON.chev}</button>`;
   btn.closest(".actions").appendChild(pop);
   document.addEventListener("keydown", watchPanelKey, true);
   const first=pop.querySelector(".cseg"); if(first) first.focus();
