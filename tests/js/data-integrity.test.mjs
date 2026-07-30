@@ -584,6 +584,22 @@ test("dates: the day form is compact, unambiguous, and never a fabricated precis
   }
 });
 
+// ---- 3i. THE RECOMMENDED PRESET LEADS ITS LANE (CAS-247) ------------------------------------------------
+test("presets: whichever preset a lane recommends is the one offered first", () => {
+  for(const kind of LANES){
+    const list = E.startersFor(kind);
+    assert.ok(list.length > 1, `${kind} offers ${list.length} presets`);
+    const rec = list.find(s => s.key === E.RECOMMENDED_FOR[kind]);
+    assert.ok(rec, `${kind} recommends a preset it does not offer`);
+    assert.equal(list[0].key, rec.key,
+      `${kind} recommends ${rec.name} and offers ${list[0].name} first`);
+    // Everything else keeps the order it was written in, so lifting one does not reshuffle the rest.
+    const rest = list.slice(1).map(s => s.key);
+    const written = E.STARTERS.filter(s => (s.kinds || LANES).includes(kind) && s.key !== rec.key).map(s => s.key);
+    assert.equal(rest.join(","), written.join(","), `${kind}: the tail was reordered too`);
+  }
+});
+
 // ---- 4. COUNTS HOLD ACROSS A WIDER MATRIX THAN THE PRESETS ----------------------------------------------
 // The presets are eleven points in a space a person can move freely around. A count bug that only appears
 // once someone has touched a dial would pass every preset-shaped test, so this walks each preset with each

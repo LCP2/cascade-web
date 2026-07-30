@@ -108,7 +108,7 @@ const EXPORTS = `
   YEARS_MAX, YEARS_NOTCHES, YEARS_LABELS, yearsForPos, posForYears, yearsCutoff, releasedSince,
   yearsFromLegacy, yearsLabel, flowYearsBack, baseYearsBack, yearOf,
   MIN_INITIAL_MATCHES, autoRelaxBar, barDialSnapshot,
-  STARTERS, startersFor, starterPreview, starterCount, starterAgentName, starterWatch,
+  STARTERS, startersFor, starterPreview, starterCount, starterAgentName, starterWatch, RECOMMENDED_FOR,
   AGENT_WINDOWS, agentWindows, watchToStatuses, listToStatuses, migrateWatch,
   MISSION_DIALS, MISSION_DIALS_USED, missionRest, missionKind,
   axisCountsNow, genreCountsNow, langCountsNow,

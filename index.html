@@ -2778,7 +2778,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 214, "commit": "3122c0b", "builtAt": "2026-07-30T08:15:29Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 215, "commit": "871f1ba", "builtAt": "2026-07-30T08:27:33Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -6439,7 +6439,17 @@ const RECOMMENDED_FOR = {cinema:"cinema", stream:"streaming"};
 // them apart.
 const CHANNEL_WORD = {cinema:"Cinema", stream:"Streaming"};
 const starterAgentName = (s, kind) => `${CHANNEL_WORD[kind || flowKind] || CHANNEL_WORD.cinema} ${s.name}`;
-const startersFor = kind => STARTERS.filter(s=>(s.kinds||["cinema","stream"]).includes(kind));
+// CAS-247: the RECOMMENDED preset leads its lane. STARTERS is written in one order and offered in two, and
+// that order put Everyday Favourites — the one the streaming lane recommends — third, under two presets a
+// person is being told not to take first. The recommendation and the position now agree, without a second
+// hand-kept list to fall out of step with RECOMMENDED_FOR: the recommended one is lifted, everything else
+// keeps the order it was written in. Cinema is unaffected — its recommendation was already first.
+const startersFor = kind => {
+  const list = STARTERS.filter(s=>(s.kinds||["cinema","stream"]).includes(kind));
+  const rec = RECOMMENDED_FOR[kind];
+  const i = list.findIndex(s=>s.key===rec);
+  return i > 0 ? [list[i], ...list.slice(0,i), ...list.slice(i+1)] : list;
+};
 STARTERS.forEach(s=>normCascade(s.crit));
 // CAS-143/144: ONE number for a preset, everywhere it is quoted. The card, the hub's hero figure and the
 // reveal must agree, so the card counts the agent it would actually BUILD — the preset's standard laid over
