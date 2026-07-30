@@ -1449,6 +1449,11 @@
   .oscta{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
     font-size:15px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 8px 26px rgba(124,92,255,.3)}
   .oscta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+  /* CAS-253: a blocked Continue looks blocked. It stays visible and keeps its label, because a button that
+     vanishes leaves nothing to explain why you cannot go on. */
+  .oscta.blocked,.oscta:disabled{opacity:.45;cursor:not-allowed}
+  .fielderr{margin:7px 2px 0;color:#ffb4ae;font-size:12px;line-height:1.45}
+  .osfield.bad{border-color:var(--open)}
   .osskip{display:block;width:100%;text-align:center;margin-top:12px;color:var(--dim);font-size:12.5px;
     background:none;border:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
   .osskip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
@@ -8506,11 +8511,14 @@ const SHARP_STEPS = {
         <div class="emailwrap${notifyPrefs.emailOn?" show":""}" id="onbEmailWrap">
           <label class="nlbl" for="onbEmail">Your email</label>
           <input class="osfield" id="onbEmail" type="email" autocomplete="email" inputmode="email"
-                 placeholder="you@email.com" value="${escA(notifyPrefs.email||"")}"></div>`;
+                 aria-describedby="onbEmailErr" placeholder="you@email.com"
+                 value="${escA(notifyPrefs.email||"")}">
+          <p class="fielderr" id="onbEmailErr" role="alert" hidden></p></div>`;
     },
     wire(){
       const el=$("onbEmail");
-      if(el) el.oninput=()=>{ notifyPrefs.email=el.value.trim(); saveNotifyPrefs(); };
+      if(el) el.oninput=()=>{ notifyPrefs.email=el.value.trim(); saveNotifyPrefs(); notifyGate(); };
+      notifyGate();
     },
   },
   years: {
@@ -8919,11 +8927,47 @@ function briefServicesSum(){
   const n=prefs.sub.size+prefs.store.size;
   return n ? `${n} service${n===1?"":"s"}` : "None picked yet";
 }
+// ---- CAS-253: an email alert needs somewhere to send it ----------------------------------------------
+// Switching "Send me alerts by email" on and walking past the empty field left an agent whose email bell was
+// armed and undeliverable — the monitor's delivery_plan calls that state "wait" and quietly retries it
+// every night, forever, saying nothing. So the switch and the address are one answer: turn it on and the
+// address is required, turn it off and the field stops mattering.
+//
+// Deliberately not a full RFC check. The test is that there is a name, an @, and a dotted domain — enough to
+// catch the mistakes people actually make (a blank field, "me", a missing dot) without rejecting the valid
+// oddities that a stricter pattern always seems to. The real proof of an address is a mail that arrives.
+const EMAIL_RE = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+const emailValid = v => EMAIL_RE.test(String(v||"").trim());
+// Is the notify step answerable as it stands? Off = yes, always. On = only with an address.
+const notifyReady = () => !notifyPrefs.emailOn || emailValid(notifyPrefs.email);
+function notifyGate(){
+  const on=!!notifyPrefs.emailOn, val=(notifyPrefs.email||"").trim(), ok=notifyReady();
+  const err=$("onbEmailErr");
+  if(err){
+    // Nothing is said until there is something to say: an empty field on a switch just turned on is not a
+    // mistake yet, it is a question that has not been answered. The message appears once it has been
+    // answered WRONGLY, and the blocked button carries the rest.
+    const show = on && val && !ok;
+    err.hidden=!show;
+    err.textContent= show ? "That doesn't look like an email address — check it and we'll send your alerts there." : "";
+  }
+  const field=$("onbEmail"); if(field) field.classList.toggle("bad", on && !!val && !ok);
+  const b=$("onbStepCta")||$("flowCta");
+  if(b && onbStepKey==="notifysettings"){
+    b.disabled=!ok;
+    b.classList.toggle("blocked", !ok);
+    b.title = ok ? "" : "Add the email address your alerts should go to, or switch email alerts off";
+  }
+}
 window.flowNotify=(key,el)=>{
   notifyPrefs[key]=!notifyPrefs[key];
   saveNotifyPrefs();
   el.classList.toggle("on", notifyPrefs[key]);
-  if(key==="emailOn"){ const w=$("onbEmailWrap"); if(w) w.classList.toggle("show", notifyPrefs.emailOn); }
+  if(key==="emailOn"){
+    const w=$("onbEmailWrap"); if(w) w.classList.toggle("show", notifyPrefs.emailOn);
+    const f=$("onbEmail"); if(f && notifyPrefs.emailOn && !(notifyPrefs.email||"").trim()) f.focus();
+  }
+  notifyGate();   // CAS-253: the switch and the address are one answer
   logEvent("flow_notify",{key, on:notifyPrefs[key]});
 };
 // ---- the dual-pane slide ---------------------------------------------------------------------------
@@ -9033,6 +9077,9 @@ function onbRefresh(){
   // CAS-224: a step whose chips carry live counts repaints them here, so the chips move on the same beat as
   // the headline number rather than only when the screen is rebuilt.
   if(step && step.refresh) step.refresh();
+  // CAS-253: onbRefresh rewrites the button, so the gate is reapplied after it — otherwise any repaint
+  // (a toggle, a count moving) would hand back a Continue the screen is not ready for.
+  if(onbStepKey==="notifysettings") notifyGate();
 }
 // #4 selectivity refresh (CAS-114): update the "What this does" line + count, and let onbRefresh update the
 // CTA count from the same live figure.
@@ -9107,6 +9154,15 @@ window.onbStepSkip=()=>{
   closeOnbStep();
 };
 window.onbStepContinue=()=>{
+  // CAS-253: the disabled button is the visible half; this is the half a keyboard or a stale handler cannot
+  // get round. An armed email bell with no address is not a state the flow may leave this screen in.
+  if(onbStepKey==="notifysettings" && !notifyReady()){
+    notifyGate();
+    const f=$("onbEmail"); if(f) f.focus();
+    const err=$("onbEmailErr");
+    if(err){ err.hidden=false; err.textContent="Add the email address your alerts should go to, or switch email alerts off."; }
+    return;
+  }
   logEvent("onbstep_continue",{step:onbStepKey, matches:onbFlow.draft?onbCount():null});
   if(flowOn) return flowNext();
   if(briefOn) return gotoStep("briefing","back");   // a spoke's Done takes the change back to the hub
