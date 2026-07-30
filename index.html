@@ -2569,7 +2569,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 181, "commit": "81782d3", "builtAt": "2026-07-30T00:36:18Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 182, "commit": "627c127", "builtAt": "2026-07-30T00:39:26Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5890,21 +5890,31 @@ STARTERS.forEach(s=>normCascade(s.crit));
 // the same standing-watch set the listing and the reveal use (CAS-132). Counting the raw criteria with
 // countCriteria instead measured the narrower watchable-right-now slice, so the card said 14 where the hub
 // said 37 for the same agent.
-function starterPreview(s){
+// CAS-221: ...and the windows too. The CAS-144 invariant held while the viewing box started blank: with no
+// preset status, the card and the flow were both counting the standard over EVERY window, so they agreed.
+// CAS-188/182 then seeded the windows from the priority answer — the flow's count became cinema-only while
+// the card's stayed catalogue-wide, and the same agent read 153 on the card and 28 on Mission. The card now
+// seeds the same windows pickStarter will, from the same two sources in the same order (a saved answer for
+// this agent, else the priority answer's default), so there is one measurement and the card is quoting it.
+function starterWatch(s, kind){
+  return loadWatch(s.key) || JSON.parse(JSON.stringify(PRIORITY_WATCH[kind || flowKind] || {}));
+}
+function starterPreview(s, kind){
   const d=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
   d.genre=[]; d.year=[]; d.lang=["en"]; d.age=AGE_LEVELS.slice();   // the taste-baseline defaults, verbatim
   d.selCrowd=s.crit.selCrowd||0; d.selCritics=s.crit.selCritics||0; d.selScale=s.crit.selScale||0;
   d.selBuzz=s.crit.selBuzz||0; d.selOr=false;
+  d.status=watchToStatuses(starterWatch(s, kind));
   return normCascade(d);
 }
-const starterCount = s => watchCount(starterPreview(s));
+const starterCount = (s, kind) => watchCount(starterPreview(s, kind));
 let pendingStarter = null;   // the agent the person chose
 // CAS-188: the cards are the body of the flow's `pickagent` step now, not a screen of their own — so this
 // returns the markup rather than writing it into an overlay that no longer exists.
 function starterCardsHTML(kind){
   return startersFor(kind || flowKind).map(s=>{
     const recommended = s.key===RECOMMENDED_FOR[kind || flowKind];
-    const n=starterCount(s);
+    const n=starterCount(s, kind);
     // The count is REAL — countCriteria against today's catalogue, the same call the deck cards use. The
     // prototype's figures were synthetic placeholders; these move with the data, so a preset the catalogue
     // cannot fill today honestly says so instead of quoting a number that was true on a designer's screen.
@@ -5955,12 +5965,14 @@ window.pickStarter=key=>{
   onbFlow.buzzStop    = s.crit.selBuzz||0;
   onbFlow.selOr = false;   // AND, per buildspec §1 (reverses the earlier OR default on CAS-114)
   onbFlow.barTouched=false; onbFlow.barAutoRelaxed=null;   // CAS-158: a new agent gets its own first open
-  // CAS-160 (Lee's locked decision 3): the viewing box STARTS BLANK. Nothing is pre-ticked, because the
-  // preset no longer implies a window — its name and its criteria are a standard, and where you watch is a
-  // question only the user can answer. Blank is also why the card and the hub still agree: with no preset
-  // status, both are counting that standard over every window (the CAS-144 invariant), and the number moves
-  // only once the user picks. A previous answer for this same agent still wins; a different agent's never
-  // leaks across.
+  // CAS-160 (Lee's locked decision 3): the preset itself carries no window — its name and its criteria are a
+  // standard, and where you watch is a question only the user can answer. A previous answer for this same
+  // agent still wins; a different agent's never leaks across.
+  // CAS-221: what seeds the box is no longer nothing, though. CAS-188/182 made the priority answer the
+  // starting point, and the note that used to live here — "blank is why the card and the hub still agree" —
+  // stopped being true the moment it did: the flow counted cinema-only while the card counted everything.
+  // starterPreview() reads these same two sources now, so the agreement is restored by both sides sharing
+  // the seed rather than by neither having one.
   // CAS-188/182: the priority answer is the starting point for WHERE this agent watches, so choosing
   // "the cinema" really does put the agent in cinemas. A previous answer for this same agent still wins.
   onbFlow.watch = loadWatch(s.key) || JSON.parse(JSON.stringify(PRIORITY_WATCH[flowKind]||{}));
@@ -6349,13 +6361,17 @@ function watchFromStatus(status){
 }
 // …and the way back out: the ticked options ARE the agent's availability filter now. Empty = every window,
 // which is the honest reading of "you haven't told me where you watch yet".
-function watchStatuses(){
-  const out=new Set();
-  WATCH_LANES.forEach(l=>(onbFlow.watch[l.key]||[]).forEach(k=>{
+// CAS-221: the mapping is its own function so the pick-agent card can read the SAME one. The card used to
+// compute no status at all; now it maps the windows it would seed through this, which is why the two counts
+// can no longer disagree — there is one translation from ticks to statuses, with one caller each side.
+function watchToStatuses(watch){
+  const out=new Set(), w=watch||{};
+  WATCH_LANES.forEach(l=>(w[l.key]||[]).forEach(k=>{
     const o=l.opts.find(x=>x.key===k); if(o) o.status.forEach(s=>out.add(s));
   }));
   return [...out];
 }
+function watchStatuses(){ return watchToStatuses(onbFlow.watch); }
 // Persisted per agent, so backing out to the shortlist and returning keeps your answer — but picking a
 // DIFFERENT agent gets that agent's own seed rather than the last one's leftovers.
 const WATCH_KEY="cascade_watchwins";
