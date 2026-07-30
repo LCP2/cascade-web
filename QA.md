@@ -47,7 +47,10 @@ rather than Lee.
 
 ## CI
 
-`qa.yml` — running this gate on every push to `staging` and blocking promotion on red — is **CAS-236**, and
-it is not in this change: the CC autonomy contract bars CC from writing `.github/workflows/*`. The recipe is
-`npm ci && npx playwright install --with-deps chromium && npm run qa`, on `push: branches: [staging]`, with
-the promote workflow gated on that job. Until it exists, `npm run qa` before a promote is the gate.
+`qa.yml` — running this gate on every push to `staging` and blocking promotion on red — is **CAS-236**. The
+workflow is written and sits in **`ci/qa.yml`**, one `git mv` from being live; it is not in
+`.github/workflows/` because the CC autonomy contract bars CC from writing there, on the reasoning that a bot
+which can edit its own CI can edit the gate that checks it. `ci/README.md` has the two-line install and the
+promote-gate step that goes with it.
+
+Until it is installed, `npm run qa` before a promote is the gate.
