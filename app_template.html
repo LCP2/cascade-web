@@ -6527,6 +6527,51 @@ function onbApply(){
   return normCascade(d);
 }
 const onbCount = () => watchCount(onbApply());
+// ---- CAS-224: per-chip counts, measured off the agent instead of the catalogue --------------------------
+// The Style chips quoted GENRE_COUNT — how many films in the WHOLE catalogue carry that genre — on a page
+// whose own headline said "28 films match right now". Drama · 752 above a total of 28 isn't a small
+// inaccuracy, it's two different questions answered side by side, and the bigger number wins the eye.
+//
+// The counts now come from the agent as it currently stands, with only THIS axis opened up ([] is "any", so
+// the axis stops filtering — the same trick selSetAside already uses). That one choice answers both readings
+// of the ticket at once:
+//   · a genre that is ON: any film carrying it which clears everything else IS in the matching set, so the
+//     within-set count and this count are the same number.
+//   · a genre that is OFF: the count is what turning it back on would bring. Counting strictly within the
+//     matching set would print 0 for every unselected chip, which tells you nothing about the choice you
+//     are being asked to make.
+// So each count is ≤ the total whenever the axis is fully on, and never churns just because you toggled a
+// neighbouring chip.
+//
+// On summation (the open question in the ticket): I went with (a), within-set counts. Films carry several
+// genres, so the Style numbers overlap and can add up past the total — attributing each film to one
+// "primary" genre would make them sum exactly, but it would also mean a film with Action and Comedy is
+// counted under only one of them, and the chip would then understate what selecting it brings. Language is
+// single-valued per film, so those counts DO partition the set and sum exactly to the total, which is the
+// "make up to the total" behaviour where the data actually supports it.
+function axisCountsNow(axis, valueOf){
+  const c={...onbApply()};
+  c[axis]=[];                                  // [] = any: this axis stops narrowing, everything else stands
+  const out=Object.create(null);
+  MOVIES.forEach(m=>{
+    if(!watchesFilm(m,c)) return;
+    const v=valueOf(m);
+    if(Array.isArray(v)) v.forEach(x=>{ if(x!=null && x!=="") out[x]=(out[x]||0)+1; });
+    else if(v!=null && v!=="") out[v]=(out[v]||0)+1;
+  });
+  return out;
+}
+const genreCountsNow = () => axisCountsNow("genre", m=>m.genres||[]);
+const langCountsNow  = () => axisCountsNow("lang",  m=>m.language);
+// Repaint in place rather than rebuilding the chips: rebuilding on every toggle would drop focus off the
+// chip you just pressed, which is how a keyboard user loses their place mid-row.
+function paintChipCounts(boxId, counts){
+  const box=$(boxId); if(!box) return;
+  box.querySelectorAll("[data-chipkey]").forEach(chip=>{
+    const n=chip.querySelector(".chcount");
+    if(n) n.textContent = `· ${counts[chip.dataset.chipkey]||0}`;
+  });
+}
 // The genre clause, shared by the summary and the genres step. All-on and all-off both mean "any" here — an
 // empty include-list matches every genre — so both read as "anything you'll love", and the copy never
 // disagrees with the count (honesty guardrail).
@@ -7340,13 +7385,16 @@ const SHARP_STEPS = {
     wire(){
       const box=$("onbStepGenres"); if(!box) return;
       const on=dGenreSet();
+      // CAS-224: the agent's own numbers, not GENRE_COUNT's catalogue-wide ones.
+      const counts=genreCountsNow();
       box.innerHTML="";
       ONB_GENRES.forEach(g=>{
         const c=document.createElement("button");
         c.type="button";
         c.className="chip gen"+(on.has(g)?" on":"");
+        c.dataset.chipkey=g;
         c.setAttribute("aria-pressed", String(on.has(g)));
-        c.innerHTML=`${esc(g)} <span style="opacity:.55">· ${GENRE_COUNT[g]||0}</span>`;
+        c.innerHTML=`${esc(g)} <span class="chcount" style="opacity:.55">· ${counts[g]||0}</span>`;
         c.onclick=()=>{
           on.has(g) ? on.delete(g) : on.add(g);
           onbFlow.draft.genre = tbStore(new Set(ONB_GENRES.filter(x=>on.has(x))), ONB_GENRES);
@@ -7356,6 +7404,9 @@ const SHARP_STEPS = {
         box.appendChild(c);
       });
     },
+    // CAS-224: the chips have to move with everything else on the page, so they repaint from the same
+    // refresh the count and the summary line already go through.
+    refresh(){ paintChipCounts("onbStepGenres", genreCountsNow()); },
   },
   language: {
     progress: 65,
@@ -7374,13 +7425,17 @@ const SHARP_STEPS = {
     wire(){
       const box=$("onbStepLangs"); if(!box) return;
       const on=dLangSet();
+      // CAS-224: Language carried no counts at all. It does now, on the same basis as Style — and because a
+      // film has exactly one language, these ones partition the matching set and sum to the total.
+      const counts=langCountsNow();
       box.innerHTML="";
       LANG_OPTS.forEach(code=>{
         const c=document.createElement("button");
         c.type="button";
         c.className="chip gen"+(on.has(code)?" on":"");
+        c.dataset.chipkey=code;
         c.setAttribute("aria-pressed", String(on.has(code)));
-        c.textContent=langName(code);
+        c.innerHTML=`${esc(langName(code))} <span class="chcount" style="opacity:.55">· ${counts[code]||0}</span>`;
         c.onclick=()=>{
           on.has(code) ? on.delete(code) : on.add(code);
           onbFlow.draft.lang = tbStore(new Set(LANG_OPTS.filter(x=>on.has(x))), LANG_OPTS);
@@ -7390,6 +7445,7 @@ const SHARP_STEPS = {
         box.appendChild(c);
       });
     },
+    refresh(){ paintChipCounts("onbStepLangs", langCountsNow()); },
   },
   name: {
     progress: 100,
@@ -8010,6 +8066,9 @@ function onbRefresh(){
   if(top && n!=null) top.innerHTML = `<b>${n}</b> film${n===1?"":"s"} match right now`;
   // CAS-198: the third printer, off the same n.
   const say=$("onbStepSay"); if(say && step && step.say) say.innerHTML = step.say(n);
+  // CAS-224: a step whose chips carry live counts repaints them here, so the chips move on the same beat as
+  // the headline number rather than only when the screen is rebuilt.
+  if(step && step.refresh) step.refresh();
 }
 // #4 selectivity refresh (CAS-114): update the "What this does" line + count, and let onbRefresh update the
 // CTA count from the same live figure.
