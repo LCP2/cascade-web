@@ -6686,8 +6686,16 @@ const AGENT_WINDOWS = {
      sub:"On the big screen right now.", notifySay:"once it's past its opening weekend",
      alerts:{past_opening:true}},
   ],
+  // CAS-243: Rent was one window doing two jobs. Premium and standard rent are the same GESTURE — you pay
+  // per film — but they are weeks and about twenty dollars apart, and "tell me the day I can rent it" from
+  // someone waiting for the $7 price is a different sentence from the same words said by someone who will
+  // pay $30 on opening week. They are already separate windows in the data (pvod and rental, split on the
+  // real price ceiling), so this splits the control to match rather than inventing a distinction.
   stream: [
-    {key:"rent",   label:"Rent",      cd:"var(--blue)",  status:["rental"],
+    {key:"premium", label:"Premium", cd:"var(--purple)", status:["pvod"],
+     sub:"Out early to buy or rent, around $30.", notifySay:"when it lands early on premium",
+     alerts:{pvod:true}},
+    {key:"rent",   label:"Standard Rent", cd:"var(--blue)",  status:["rental"],
      sub:"Available to rent, around $7.", notifySay:"when it drops to rent", alerts:{rental:true}},
     {key:"stream", label:"Streaming", cd:"var(--green)", status:["included_streaming"],
      sub:"Included on a subscription.", notifySay:"when it lands on streaming",
@@ -6716,9 +6724,13 @@ const subOn    = (key, sub) => winOn(key,"notify") && !!winSubs(key)[sub];
 // CAS-228: the CAS-160 shape was {laneKey:[optionKeys]}. A saved agent or a localStorage entry from before this
 // change still holds it, so it is converted rather than dropped — an agent that was watching cinema keeps
 // watching cinema. Lists and notifies both come on, because under the old model ticking a window meant both.
-const OLD_LANE_MAP = {cinema:["upcoming","in_cinema"], rent:["rent"], stream:["stream"]};
+// CAS-243: `purchase` was the premium option, and under the old model it had nowhere of its own to land, so
+// it was folded into the rent window. Premium is now a window, so it lands there — which is what the person
+// who ticked it actually asked for. The bare `rent` LANE (ticked with no option chosen) meant the whole
+// pay-per-film lane, so it opens both.
+const OLD_LANE_MAP = {cinema:["upcoming","in_cinema"], rent:["premium","rent"], stream:["stream"]};
 const OLD_OPT_WIN  = {announced:"upcoming", month:"upcoming", week:"upcoming",
-                      release:"in_cinema", past:"in_cinema", purchase:"rent", rent:"rent", stream:"stream"};
+                      release:"in_cinema", past:"in_cinema", purchase:"premium", rent:"rent", stream:"stream"};
 function migrateWatch(w){
   if(!w || typeof w!=="object") return {};
   const out={};
@@ -8164,6 +8176,10 @@ const flowCounted = () => flowList().slice(2);
 const PRIORITY_WATCH = {
   cinema:{ upcoming:{list:true, notify:true, subs:{announced:true, opens_soon:true}},
            in_cinema:{list:true, notify:true} },
+  // CAS-243: and a streaming agent starts on the two windows a night in actually means — standard rent and
+  // streaming. Premium is deliberately absent rather than present-and-off: at ~$30 it is the one window
+  // nobody should be opted into by default, and the lane is drawn with both switches off so turning it on
+  // is one tap away.
   stream:{ rent:{list:true, notify:true},     stream:{list:true, notify:true} },
 };
 let flowOn=false;              // inside the wired flow (vs a standalone ?step= preview)

@@ -325,6 +325,47 @@ test("alerts: a saved agent from before this screen is never armed on its behalf
   assert.equal(now.upcoming.subs.opens_soon, false);
 });
 
+// ---- 3d. THE PAY-PER-FILM WINDOWS ARE TWO, NOT ONE (CAS-243) --------------------------------------------
+test("windows: a streaming agent is offered Premium, Standard Rent and Streaming, one status each", () => {
+  // Joined rather than deep-equalled: these arrays are built inside the vm realm, so their prototype is not
+  // the host's and a strict deep-equal of two identical arrays fails (the same trap as the status order).
+  const wins = E.AGENT_WINDOWS.stream;
+  assert.equal(wins.map(w => w.key).join(","), "premium,rent,stream");
+  assert.equal(wins.map(w => w.label).join(","), "Premium,Standard Rent,Streaming");
+  // Each window owns its own status and its own bell — the split is only real if nothing overlaps.
+  const seen = new Set();
+  for(const w of wins){
+    assert.equal(w.status.length, 1, `${w.key} covers ${w.status.length} windows`);
+    for(const st of w.status){
+      assert.ok(!seen.has(st), `${st} is claimed by two windows — a film would be listed twice`);
+      seen.add(st);
+    }
+    const keys = Object.keys(w.alerts || {});
+    assert.equal(keys.length, 1, `${w.key} arms ${keys.length} alerts`);
+    assert.ok(keys[0] in E.ALERT_DEFAULTS, `${w.key} arms ${keys[0]}, which is not an alert the app knows`);
+  }
+  assert.equal([...seen].sort().join(","), "included_streaming,pvod,rental");
+});
+
+test("windows: a new streaming agent takes rent and streaming, and is never opted into $30", () => {
+  const seed = E.PRIORITY_WATCH.stream;
+  assert.ok(seed.rent && seed.rent.list && seed.rent.notify, "Standard Rent is not on for a new agent");
+  assert.ok(seed.stream && seed.stream.list && seed.stream.notify, "Streaming is not on for a new agent");
+  assert.ok(!seed.premium, "a new streaming agent is opted into Premium, which costs ~$30 a film");
+  // …and the window is still OFFERED, or it could never be switched on.
+  assert.ok(E.agentWindow("premium", "stream"), "Premium is not on the screen at all");
+});
+
+test("windows: an agent that asked for premium under the old model gets the premium window", () => {
+  // `purchase` was the premium option and had nowhere of its own to land, so it was folded into rent.
+  assert.equal(JSON.stringify(E.migrateWatch({ rent: ["purchase"] })),
+    JSON.stringify({ premium: { list: true, notify: true } }));
+  assert.equal(JSON.stringify(E.migrateWatch({ rent: ["rent"] })),
+    JSON.stringify({ rent: { list: true, notify: true } }));
+  // A bare lane tick meant the whole pay-per-film lane, so it opens both.
+  assert.equal(Object.keys(E.migrateWatch({ rent: [] })).sort().join(","), "premium,rent");
+});
+
 // ---- 4. COUNTS HOLD ACROSS A WIDER MATRIX THAN THE PRESETS ----------------------------------------------
 // The presets are eleven points in a space a person can move freely around. A count bug that only appears
 // once someone has touched a dial would pass every preset-shaped test, so this walks each preset with each
