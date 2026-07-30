@@ -277,5 +277,128 @@ class ScoresAreCredible(unittest.TestCase):
         self.assertEqual(bad, [], f"award claims with no award text: {bad[:5]}")
 
 
+class DataCompleteness(unittest.TestCase):
+    """CAS-255: the fields the UI leans on, measured over the films the UI can actually show.
+
+    The classes above ask whether each record is COHERENT. This one asks whether it is COMPLETE enough for the
+    screen it lands on — which is the shape of the defects Lee has been finding by hand. "Dr Doom has no budget
+    so the scale dial dropped it" is not an incoherent record; it is a missing field the engine had no fallback
+    for. A sweep is the only way to see that class coming, because the record that breaks is always the one
+    nobody thought to open.
+
+    Two rules keep it useful:
+
+    * The population is the SHOWABLE catalogue, not the whole file. Half of movies.json is titles no screen can
+      reach (estimated availability, no offers), and letting those set the denominator would mean the numbers
+      moved for reasons the user never sees.
+    * Anything not at zero today is a RATCHET, not a target: the ceiling sits above today's measurement, the
+      failure message prints what it actually is, and the test's job is to catch the number climbing. A hard
+      zero is used only where the field is genuinely universal today, so that it stays that way.
+    """
+
+    # Today's measurements, over 1,050 showable titles of 1,961 (2026-07-30). Ceilings are set with headroom
+    # for ordinary daily drift and tight enough that a real regression trips them.
+    CEILINGS = {
+        "age_rating": 25.0,    # 16.2% today — the age dial silently passes films it cannot judge
+        "genres": 3.0,         # 1.1%  — a film with no genre can never match a genre-led recipe
+        "poster": 3.0,         # 1.0%  — the card falls back to a placeholder
+        "synopsis": 2.0,       # 0.1%  — the card has nothing to say about the film
+        "imdb_rating": 30.0,   # 22.1% — the vote bar has nothing to place the film against
+        "cinema_date": 2.0,    # 0.3%  — every estimated window date is derived from this one
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        cls.movies = load()["movies"]
+        cls.showable = [m for m in cls.movies if cls.is_showable(m)]
+
+    @staticmethod
+    def is_showable(m):
+        """The front end's showable(): unreleased, or confirmed with something real behind it."""
+        held = set(m.get("status") or [])
+        if "upcoming" in held:
+            return True
+        if m.get("availability_confidence") != "confirmed":
+            return False
+        return bool(m.get("offers")) or bool(held & CINEMA_WINDOWS)
+
+    def missing_share(self, field, present):
+        missing = [m.get("title") for m in self.showable if not present(m)]
+        pct = 100.0 * len(missing) / len(self.showable)
+        return missing, pct
+
+    def test_the_showable_catalogue_is_a_real_population(self):
+        # Every share below is a fraction of this, so a collapse here would make them all meaningless.
+        self.assertGreater(len(self.showable), 100,
+                           f"only {len(self.showable)} of {len(self.movies)} films are showable")
+
+    def test_every_showable_film_carries_what_it_cannot_be_shown_without(self):
+        # A title, a window and a language: without any one of these the film cannot be placed on the screen
+        # at all — it has no name, no section, or no answer to the language filter. All three are universal
+        # today, so they are asserted at zero rather than ratcheted.
+        bad = []
+        for m in self.showable:
+            for field in ("title", "status", "language"):
+                if not m.get(field):
+                    bad.append((m.get("title") or m.get("tmdb_id"), field))
+        self.assertEqual(bad, [], f"showable films missing a field they cannot be shown without: {bad[:5]}")
+
+    def test_every_showable_film_gives_the_scale_dial_something_to_read(self):
+        # CAS-238: the scale dial leans on budget, and half the showable catalogue has no budget figure. It
+        # must therefore always have a fallback to read — worldwide gross, or failing that popularity — or the
+        # dial becomes a filter on our own data gaps. Zero today, and it needs to stay zero for the inference
+        # CAS-238 asks for to be possible at all.
+        blind = [m["title"] for m in self.showable
+                 if not (m.get("budget") or 0) > 0
+                 and not (m.get("worldwide_gross") or 0) > 0
+                 and not (m.get("popularity") or 0) > 0]
+        self.assertEqual(blind, [], f"showable films with no signal of scale whatsoever: {blind[:5]}")
+
+    def test_a_film_the_ui_offers_can_always_be_reached(self):
+        # The other half of CAS-170, from the record's side: a showable film is a promise, and the promise is
+        # kept by an offer, a cinema date, or being unreleased. Nothing else counts.
+        bad = []
+        for m in self.showable:
+            held = set(m.get("status") or [])
+            if "upcoming" in held:
+                continue
+            if m.get("offers"):
+                continue
+            if held & CINEMA_WINDOWS and m.get("cinema_date"):
+                continue
+            bad.append((m["title"], sorted(held)))
+        self.assertEqual(bad, [], f"showable films with no way to reach them: {bad[:5]}")
+
+    def test_optional_fields_are_not_getting_emptier(self):
+        # One assertion per ratcheted field, reported together so a run says everything that moved rather than
+        # only the first thing.
+        present = {
+            "age_rating": lambda m: bool(m.get("age_rating")),
+            "genres": lambda m: bool(m.get("genres")),
+            "poster": lambda m: bool(m.get("poster")),
+            "synopsis": lambda m: bool(m.get("synopsis")),
+            "imdb_rating": lambda m: m.get("imdb_rating") is not None,
+            "cinema_date": lambda m: bool(m.get("cinema_date")),
+        }
+        over = []
+        for field, ceiling in sorted(self.CEILINGS.items()):
+            missing, pct = self.missing_share(field, present[field])
+            if pct > ceiling:
+                over.append(f"{field}: {len(missing)} of {len(self.showable)} showable films "
+                            f"({pct:.1f}%) have none, over the {ceiling}% ceiling — e.g. {missing[:3]}")
+        self.assertEqual(over, [], "the catalogue has got emptier:\n  " + "\n  ".join(over))
+
+    def test_an_offer_names_a_service_a_person_could_pick(self):
+        # "Only show films on my services" matches on the service NAME, so a blank or non-string name is a film
+        # that can never satisfy the scope no matter what the user picks — it just quietly vanishes.
+        bad = []
+        for m in self.showable:
+            for o in m.get("offers") or []:
+                name = o.get("service")
+                if not isinstance(name, str) or not name.strip():
+                    bad.append((m["title"], repr(name)))
+        self.assertEqual(bad, [], f"offers with no service to pick: {bad[:5]}")
+
+
 if __name__ == "__main__":
     unittest.main()

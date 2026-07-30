@@ -92,7 +92,11 @@ const EXPORTS = `
 ;globalThis.__ENGINE__ = {
   MOVIES, CASCADE, STATUS_LABEL, SHOWABLE_N,
   matchesCriteria, countCriteria, watchCount, watchesFilm, matchesTaste, listedBy, listWindowOK,
-  normCascade, showable, primaryStatus, inCinemaWindow, isEstimated, deriveStatus,
+  normCascade, showable, primaryStatus, inCinemaWindow, isEstimated, deriveStatus, isUpcoming,
+  // CAS-255: the my-services scope and the stage dates are both places the app makes a claim about what you
+  // can watch and when, so the QA gate needs to reach them the same way the listing does.
+  prefs, servicesPicked, matchesServices, scopeOf, anyScope, HOME_KEYS,
+  SUB_SERVICES, STORE_SERVICES, stageDate, curSlot, cinemaState, EST_OFFSET, TODAY,
   selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK,
   SCALE_REF, BUZZ_STOPS, VOTE_REF, CRITICS_STOPS, AGE_LEVELS, ONB_GENRES, LANG_OPTS, GENRE_COUNT,
   MIN_INITIAL_MATCHES, autoRelaxBar, barDialSnapshot,
