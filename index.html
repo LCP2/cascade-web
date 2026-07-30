@@ -734,6 +734,15 @@
   .dirty{font-style:italic;color:#ffce8f}
   #cascDetail{margin-top:2px}
   #cascDetail .warnnote{margin:0 12px 6px}
+  /* CAS-254: the banner is dismissible, so it has a close and room for one. `info` is the same box in a
+     calmer colour — "your list is scoped" is a fact about what you asked for, not a warning about it, and
+     dressing the two the same makes the real warning easier to walk past. */
+  .warnnote{position:relative;padding-right:30px}
+  .warnnote.info{color:#c5d8ff;background:rgba(90,169,240,.10);border-color:rgba(90,169,240,.38)}
+  .svcx{position:absolute;top:5px;right:6px;width:22px;height:22px;border:0;border-radius:7px;
+    background:transparent;color:inherit;opacity:.7;font-size:14px;line-height:1;cursor:pointer}
+  .svcx:hover{opacity:1;background:rgba(255,255,255,.08)}
+  .svcx:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   @media (max-width:400px){ .cascbar{--dcw:178px} }
   /* Find view (CAS-102): the deck drops to a compact RAIL so "N of N titles" and the first film sit directly
      under the controls instead of ~1.5 screens down. Same cards, same data, same Edit / Share / × / Create —
@@ -2783,7 +2792,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 216, "commit": "cb2be25", "builtAt": "2026-07-30T08:39:34Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 217, "commit": "2111dd7", "builtAt": "2026-07-30T08:49:48Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5522,6 +5531,19 @@ function emptyResultsHTML(){
   return html+`</div>`;
 }
 
+// ---- CAS-254: dismissing the services banner ---------------------------------------------------------
+// Per STATE, not per banner: closing "here is what your list is scoped to" must not also silence "your
+// scope is catching nothing", which is the one you would most want to see. Session-scoped on purpose — a
+// fact about your list is worth saying again next time you open the app, and a banner you can never get
+// back is worse than one that returns.
+const svcNoteHidden = {scoped:false, empty:false};
+const svcNoteClose = state => `<button type="button" class="svcx" aria-label="Dismiss"
+  title="Dismiss" onclick="dismissSvcNote('${state}')">×</button>`;
+window.dismissSvcNote = state => {
+  svcNoteHidden[state]=true;
+  logEvent("services_note_dismissed",{state});
+  const n=document.querySelector(`[data-svcnote="${state}"]`); if(n) n.remove();
+};
 function renderCascadeBar(shown){
   deckSync(shown);
   paintSearchBtns();     // deckSync may have rebuilt the cards, taking the lit 🔍 with them
@@ -5544,13 +5566,29 @@ function renderCascadeBar(shown){
       <button class="gc-on" type="button" onclick="enableAgent('${pausedAgent.id}')">Turn my agent on</button>
     </div>`;
   }
-  // Scoped to my services with none picked: the scope is silently inert. Say it, and give the way out.
-  // CAS-252: it is not inert any more, so the note says what actually happens. "Showing everything" was
-  // the old behaviour and the old copy; both were wrong in the same direction.
-  if(c && anyScope(c) && !servicesPicked())
-    html+=`<div class="warnnote">“${esc(c.name)}” only wants films on your services${allScoped(c)?"":` in
-      <b>${scopeSummary(c)}</b>`} — and you haven't named any yet, so nothing qualifies.
-      <br>${pickServicesCTA()}</div>`;
+  // ---- CAS-254: the services banner ------------------------------------------------------------------
+  // Two states, and until CAS-252 the app only had copy for the broken one. With services PICKED and the
+  // scope on, the list really is narrowed and the banner's job is to say so — otherwise a short list looks
+  // like a thin catalogue rather than a filter you switched on. With NONE picked it is a warning, because
+  // nothing qualifies and the way out has to be one tap away.
+  //
+  // Dismissible either way, and dismissed per state rather than once for both: closing "here is what your
+  // list is scoped to" must not also silence "your scope is catching nothing", which is the one you would
+  // most want to see. It is remembered for the session only — a fact about your list is worth saying again
+  // next time you open the app, and a banner you can never get back is worse than one that returns.
+  if(c && anyScope(c)){
+    const where = allScoped(c) ? "" : ` in <b>${scopeSummary(c)}</b>`;
+    const state = servicesPicked() ? "scoped" : "empty";
+    if(!svcNoteHidden[state]){
+      html += servicesPicked()
+        ? `<div class="warnnote info" data-svcnote="scoped">${svcNoteClose("scoped")}
+             <span>📺 We're only showing films on your streaming services${where} — ${prefs.sub.size+prefs.store.size}
+             service${(prefs.sub.size+prefs.store.size)===1?"":"s"} named. Change them any time in ⚙️.</span></div>`
+        : `<div class="warnnote" data-svcnote="empty">${svcNoteClose("empty")}
+             <span>“${esc(c.name)}” only wants films on your services${where} — and you haven't named any yet,
+             so nothing qualifies.<br>${pickServicesCTA()}</span></div>`;
+    }
+  }
   $("cascDetail").innerHTML=html;
 }
 
