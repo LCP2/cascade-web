@@ -2569,7 +2569,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 180, "commit": "95a3e74", "builtAt": "2026-07-30T00:31:04Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 181, "commit": "81782d3", "builtAt": "2026-07-30T00:36:18Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -6435,10 +6435,12 @@ const MIN_INITIAL_MATCHES = 40;
 // CAS-192: `primary` is the LANE's ordering now, not the preset's — it is what the Mission screen puts up
 // front vs behind "More controls", and this has to read the same list or the auto-relax would loosen the
 // dial the user is looking at before the ones they can't see.
+// CAS-220: the secondary list comes from missionRest() now, which is the lane's own set. A cinema agent
+// has no secondary dials, so the relax works only on the two the screen actually shows — it can no longer
+// "loosen" People's vote or Critics on a lane where neither applies.
 function barRelaxOrder(){
   const primary=MISSION_DIALS[missionKind()] || MISSION_DIALS.cinema;
-  const rest=["vote","crit","scale","buzz"].filter(k=>!primary.includes(k));
-  return [...rest, ...primary.slice().reverse()];
+  return [...missionRest(), ...primary.slice().reverse()];
 }
 const DIAL_STOP_KEY = {crit:"criticsStop", buzz:"buzzStop"};   // CAS-166: scale is continuous now
 // The continuous dials relax to the next marker DOWN the face of them — the same rungs the user can see and
@@ -6740,10 +6742,27 @@ function onbRatingClause(d){
 // implementation facts, and this screen is where someone decides what they want to watch.
 // CAS-192: which dials lead, per lane.
 const MISSION_DIALS = {cinema:["scale","buzz"], stream:["vote","crit","scale"]};
+// CAS-220: which dials a lane uses AT ALL — a different question from which ones lead. MISSION_DIALS
+// answers "what goes up front"; everything else used to fall through to "More controls", on the
+// assumption that every dial applies to every lane and only the ordering changes. For cinema that is
+// wrong: a film opening this month has no settled audience score and usually no awards, so People's vote
+// and Critics & awards are not secondary there — they do not apply. Offering them anyway put two
+// controls in front of a cinema agent that could only ever narrow it on data the films don't have yet.
+// So the lane declares its whole set, and "More controls" is whatever that set has beyond the leaders:
+// nothing for cinema, Buzz for streaming.
+const MISSION_DIALS_USED = {cinema:["scale","buzz"], stream:["vote","crit","scale","buzz"]};
 const missionKind = () => {
   const k=(onbFlow.draft||{}).kind;
   return (k==="cinema"||k==="stream") ? k : flowKind;
 };
+// The secondary dials for the lane you are in — the ones "More controls" reveals. One definition, read by
+// both the Mission screen and the auto-relax, so the relax can never loosen a dial the screen doesn't show.
+function missionRest(){
+  const kind=missionKind();
+  const primary=MISSION_DIALS[kind] || MISSION_DIALS.cinema;
+  const used=MISSION_DIALS_USED[kind] || MISSION_DIALS_USED.cinema;
+  return used.filter(k=>!primary.includes(k));
+}
 const DIAL_DEFS = {
   vote:  {em:"👥", label:"People's vote", how:"What everyday viewers scored it, out of 10.", cont:"vote"},
   crit:  {em:"🏅", label:"Critics & awards", how:"What professional critics and awards thought.",
@@ -7165,8 +7184,10 @@ const SHARP_STEPS = {
       // people and critics made of a film is what narrows it. Reading them off the preset (as CAS-145 did)
       // meant two agents in the same lane opened on different questions, and an agent opened from the
       // Briefing — which has no preset — opened on a guess.
+      // CAS-220: `rest` is the lane's own secondary set (missionRest), not "the other three". For a
+      // cinema agent that is empty, so the "More controls" button doesn't render at all.
       const primary = MISSION_DIALS[missionKind()] || MISSION_DIALS.cinema;
-      const rest = ["vote","crit","scale","buzz"].filter(k=>!primary.includes(k));
+      const rest = missionRest();
       const dials = ks => ks.map(dialCardHTML).join("");
       return `<h2 class="osh">Mission</h2>
         <p class="ossub">Set the standards that matter here. A film has to meet <b>all</b> the ones you turn up.</p>
