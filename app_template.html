@@ -1961,31 +1961,9 @@
 <div class="modal" id="builder">
   <div class="modalhead"><h3 id="builderTitle">New Cascade</h3><button class="donebtn" id="builderClose">Cancel</button></div>
 
-  <div id="tplPane">
-    <div class="pnote">A Cascade is an agent you set to work: it watches the catalogue for you, day after day,
-      and tells you the moment it finds something. Start from a template (each comes pre-filled, never blank)
-      and tune it however you like.</div>
-
-    <div class="flabel">Preview — say it in plain English</div>
-    <div class="nlrow">
-      <input id="nlInput" class="namein" type="text" maxlength="90" autocomplete="off"
-             placeholder="e.g. highly rated horror on my services">
-      <button class="ca-btn save" id="nlGo">Draft it</button>
-    </div>
-    <div class="pnote">This is a <b>keyword parser, not AI</b> — it reads words like “horror”, “highly rated”,
-      “on my services”, “cheap rental”, “Oscar”, “for the kids”. It always drops you into the editor to check
-      and change what it understood; nothing saves until you say so. The real AI version comes later.</div>
-    <div id="nlOut"></div>
-
-    <div class="flabel">Or start from a template</div>
-    <div class="tplgrid" id="tplGrid"></div>
-    <div id="tplSoonWrap" style="display:none">
-      <div class="flabel">Coming soon</div>
-      <div class="pnote">Cascades we can't run yet, and why. We'd rather tell you than set one to work that can't
-        see anything.</div>
-      <div class="tplgrid" id="tplSoon"></div>
-    </div>
-  </div>
+  <!-- CAS-246: the template grid and the keyword-parser preview that used to live here are gone. Creating an
+       agent is the onboarding funnel now (priority -> pick an agent -> the Briefing), so this modal is only
+       ever the EDITOR: the shared-link path and the empty-deck quick starts open straight into editPane. -->
 
   <div id="editPane" style="display:none">
     <div id="nlUnderstood"></div>
@@ -4522,12 +4500,9 @@ $("budgetBand").innerHTML=BUDGET_BANDS.map((b,i)=>
   `<option value="${i}">${i?`${b.label} (${b.hint})`:"Any"}</option>`).join("");
 $("tentpoleSel").innerHTML=TENTPOLE_STOPS.map(t=>
   `<option value="${t.key}">${t.key==="any"?"Any":`${t.label} (${tentpoleCount(t.key)})`}</option>`).join("");
-// Honesty guardrail: templates the current data can't actually serve are shown as unavailable,
-// with the real reason — never wired up to fake a result.
-const CASCADE_TEMPLATES_SOON = [
-  {icon:"⏳", name:"Leaving soon", blurb:"Last chance before it leaves a cinema or a service",
-   why:"Needs the date a film leaves a cinema or a service — no source we have gives us them"},
-];
+// CAS-246: the "coming soon" group went with the template grid it was drawn under. It said one true thing —
+// "Leaving soon" needs the date a film leaves a cinema or a service, and no source we have gives us them —
+// and that remains true and unbuilt; it just no longer has a screen to be honest on.
 
 // A film with no IMDb score isn't a bad film — it's an unknown one (13 of them here, mostly unreleased).
 // It rides along at "All", and drops out the moment you raise the bar, unless you take the escape hatch.
@@ -5353,125 +5328,31 @@ function renderCascadeBar(shown){
 }
 
 // ---- Plain-English setup (PREVIEW) --------------------------------------------
-// A rules-based keyword parser — deliberately NOT an LLM, and the UI says so. The concept doc's honesty
-// guardrail is explicit that the marketing must not run ahead of the product, so this is labelled a
-// keyword parser everywhere it appears. It only ever produces a DRAFT: the user lands in the editor and
-// has to press the Continue button themselves, so a misparse can never auto-commit.
-// Keys are regex fragments, so every one of them is quoted.
-const NL_SYNONYMS = {   // spoken word -> catalogue genre
-  "scary":"Horror", "frightening":"Horror",
-  "sci-?fi":"Science Fiction", "science fiction":"Science Fiction",
-  "rom-?coms?":"Romance", "romantic":"Romance",
-  "kids":"Family", "children":"Family",
-  "cartoons?":"Animation", "anime":"Animation",
-  "docos?":"Documentary", "documentaries":"Documentary",
-  "funny":"Comedy", "superheroe?s?":"Action", "action-?packed":"Action",
-};
-function parseNL(text){
-  const s=" "+String(text||"").toLowerCase().replace(/[^\w\s.$+-]/g," ").replace(/\s+/g," ")+" ";
-  const has=re=>new RegExp(re).test(s);
-  const c={status:[], genre:[], age:[], imdb:0, rt:0, awards:false, myServices:false};
-  const read=[];    // what we understood — shown back to the user, in their terms
-  const unmet=[];   // understood, but this catalogue can't serve it — say so rather than quietly dropping it
+// CAS-246: the keyword parser is gone with the screen that hosted it. It was the "say it in plain English"
+// box above the template grid — a rules-based matcher, deliberately never an LLM, and labelled as one. It
+// produced a draft and dropped you in the editor, so it was honest; it was also a second grammar for
+// describing an agent, sitting beside a first-run flow that describes one entirely differently. Removing
+// the screen removes the reason for it. `nlUnderstood` survives because the shared-link path still writes
+// its "here is what someone sent you" panel into the editor through it.
 
-  // genre: catalogue genres by name, then the spoken synonyms
-  ALL_GENRES.forEach(g=>{ if(has("\\b"+g.toLowerCase().replace(/\s/g,"\\s")+"s?\\b")) c.genre.push(g); });
-  Object.entries(NL_SYNONYMS).forEach(([word,g])=>{
-    if(!has("\\b"+word+"\\b")) return;
-    if(!ALL_GENRES.includes(g)){ if(!unmet.includes(g)) unmet.push(g); return; }
-    if(!c.genre.includes(g)) c.genre.push(g);
-  });
-  if(c.genre.length) read.push("Genre: "+c.genre.join(" or "));
-
-  // rating bar — an explicit number wins over the vague words
-  const num=s.match(/\b(?:imdb\s*)?(\d(?:\.\d)?)\s*(?:\+|or (?:higher|above|better)|and (?:up|above))/)
-         || s.match(/\brated (?:above|over|at least|better than)\s*(\d(?:\.\d)?)/);
-  if(num){ c.imdb=Math.min(10, parseFloat(num[1])); }
-  else if(has("\\b(highly rated|top rated|great|brilliant|excellent|best|must.?watch)\\b")) c.imdb=7.5;
-  else if(has("\\b(good|decent|solid|worth (?:a )?watch(?:ing)?)\\b")) c.imdb=6.5;
-  if(c.imdb) read.push(`IMDb ${c.imdb.toFixed(1)}+`);
-  if(has("\\b(critically acclaimed|well.?reviewed|critics? love|acclaimed)\\b")){ c.rt=80; read.push("RT critic 80%+"); }
-
-  // availability windows
-  if(has("\\b(stream|streaming|included|subscription|free with)\\b")) c.status.push("included_streaming");
-  if(has("\\b(rent|rental|cheap|cheaply|under \\$?\\d+|budget)\\b")) c.status.push("rental");
-  if(has("\\b(cinema|cinemas|theatre|theater|big screen)\\b")){ c.status.push("in_cinema","opening_week"); }
-  if(has("\\b(upcoming|coming soon|not out yet|anticipated|hasn.?t come out)\\b")) c.status.push("upcoming");
-  if(has("\\b(never overpay|don.?t overpay|bargain|drops? in price|stop paying)\\b")){
-    c.status.push("rental","included_streaming");
-  }
-  c.status=[...new Set(c.status)];
-  if(c.status.length) read.push("Window: "+c.status.map(w=>STATUS_LABEL[w]).join(" or "));
-
-  // scope + flags
-  if(has("\\b(my services|services i (?:have|pay|already)|i (?:can|could) watch|already pay|i subscribe)\\b")){
-    c.myServices=true; read.push("Only what I can watch (my services)");
-  }
-  if(has("\\b(oscar|oscars|academy award|award|awards|prestige|nominee|nominated)\\b")){
-    c.awards=true; read.push("Award winners & nominees");
-  }
-  if(has("\\b(kids|children|family|kid.?friendly|with the kids)\\b")){
-    c.age=["G","PG"].filter(a=>ALL_AGES.includes(a));
-    if(c.age.length) read.push("Age rating: "+c.age.join(" / "));
-  }
-  return {crit:c, read, unmet, confident:read.length>0};
-}
-const nlUnmetNote = u => u.length
-  ? ` This catalogue has no ${u.join(" or ")} titles at all, so I left that out rather than hand you an empty radar.`
-  : "";
-window.nlDraft=()=>{
-  const text=$("nlInput").value.trim();
-  const out=$("nlOut");
-  if(!text){ out.innerHTML=""; return; }
-  const {crit, read, unmet, confident}=parseNL(text);
-  logEvent("nl_used",{understood:read.length, confident:confident?1:0});   // never the words themselves
-  // Low confidence: nothing usable recognised. Say so plainly and leave them on the picker — never guess.
-  if(!confident){
-    out.innerHTML=`<div class="warnnote">I didn't recognise anything I can filter on.${nlUnmetNote(unmet)}
-      This is only a keyword parser — try words like “horror”, “highly rated”, “on my services”,
-      “cheap rental”, “Oscar”, “for the kids”, or just pick a template below.</div>`;
-    return;
-  }
-  out.innerHTML="";
-  draft={id:null, template:"nl", icon:"🔎", name:text.slice(0,40),
-         ...crit, alerts:{...ALERT_DEFAULTS}};
-  openEditor("Review your draft");
-  $("nlUnderstood").innerHTML=`<div class="nlread">
-    <div class="h">🔎 Here's what I understood — check it before you save</div>
-    <div class="nlchips">${read.map(r=>`<span class="nlchip">${esc(r)}</span>`).join("")}</div>
-    <div class="nlmiss">Anything I missed is just not set — tune it below. Nothing saves until you press the
-      button at the bottom.${nlUnmetNote(unmet)}</div>
-  </div>`;
-};
-
-// ---- builder (template picker → editor) ----
+// ---- builder (now the editor only) ----
 let draft=null;
+// CAS-246: "+ New Cascade" is the onboarding funnel, not a screen of its own. It used to open a keyword
+// parser above a grid of eight templates — a second, parallel way to describe an agent, with its own
+// vocabulary ("Bargain hunter", "Genre superfan") that matched nothing the first-run flow had taught anyone.
+// A person who has been through onboarding already knows how an agent is made here: you say whether you are
+// going out or staying in, you pick one of the pre-built agents for that answer, and you tune it. Making the
+// second agent should be that, and now it is: priority -> pick an agent -> the Briefing, with Save.
+//
+// The splash and the membership page are not in it, and neither is the linear middle of the flow. Those two
+// are first-run furniture — an introduction and an offer — and the sharpening screens are all reachable from
+// the Briefing anyway, each behind its own door. So the funnel stops at the hub, which is the screen that
+// can already say everything about the agent and is the one place Save lives.
 function newCascade(){
   draft=null;
-  $("builderTitle").textContent="New Cascade";
-  $("tplPane").style.display=""; $("editPane").style.display="none";
-  $("nlInput").value=""; $("nlOut").innerHTML="";
-  const grid=$("tplGrid"); grid.innerHTML="";
-  CASCADE_TEMPLATES.forEach(t=>{
-    const n=countCriteria(t.crit);
-    const b=document.createElement("button"); b.className="tpl";
-    b.innerHTML=`<div class="tplicon">${t.icon}</div><div class="tplname">${t.name}</div>
-      <div class="tplblurb">${t.blurb}</div><div class="tplcount">${n} film${n===1?"":"s"} match now</div>`;
-    b.onclick=()=>startFromTemplate(t);
-    grid.appendChild(b);
-  });
-  // Templates the data can't serve sit in their own de-emphasised group BELOW the live ones, each stating the
-  // real reason. Not buttons, no onclick — there is no dead query to tap into.
-  const soon=$("tplSoon"); soon.innerHTML="";
-  CASCADE_TEMPLATES_SOON.forEach(t=>{
-    const b=document.createElement("div"); b.className="tpl soon"; b.setAttribute("aria-disabled","true");
-    b.innerHTML=`<div class="tplicon">${t.icon}</div><div class="tplname">${t.name}</div>
-      <div class="tplblurb">${t.blurb}</div><div class="soonwhy">🔒 ${t.why}</div>`;
-    soon.appendChild(b);
-  });
-  $("tplSoonWrap").style.display = CASCADE_TEMPLATES_SOON.length ? "" : "none";
-  logEvent("picker_opened");
-  openModal($("builder"));
+  logEvent("new_agent_started");
+  flowStart();
+  flowNewAgent=true;      // set AFTER flowStart, which resets the flow's own state
 }
 window.newCascade=newCascade;
 const draftFromTemplate = t => ({id:null, template:t.key, icon:t.icon, name:t.name,
@@ -5522,7 +5403,8 @@ function commitDraft(){
   return {c, isNew};
 }
 // CAS-182: Edit opens the Agent Briefing — the same screens the flow set the agent up with, read back off
-// the agent. The pre-0.8 builder modal stays the path for "+ New Cascade", shared links and nlDraft.
+// the agent. CAS-246: "+ New Cascade" is the onboarding funnel now, so the pre-0.8 modal is the editor for
+// shared links and the empty-deck quick starts, and nothing else.
 window.editCascade=()=>{ const c=activeCascade(); if(c) briefOpen(c.id); };
 // ---- Editor: Zone A, the availability spine ------------------------------------
 // The invariant: "All" is ON exactly when draft.status is empty (= watch every window). Turning All OFF
@@ -5950,8 +5832,8 @@ function syncQuality(){
 
 function openEditor(title){
   $("builderTitle").textContent=title;
-  $("tplPane").style.display="none"; $("editPane").style.display="";
-  $("nlUnderstood").innerHTML="";   // nlDraft() refills this straight after; every other path clears it
+  $("editPane").style.display="";
+  $("nlUnderstood").innerHTML="";   // the shared-link path refills this straight after; every other clears it
   normCascade(draft);
   $("cName").value=draft.name;
   $("cDelete").style.display = draft.id ? "" : "none";
@@ -5994,8 +5876,6 @@ function refreshDraft(){
   syncMineWarn();
 }
 $("cName").oninput=e=>{ draft.name=e.target.value; };
-$("nlGo").onclick=()=>nlDraft();
-$("nlInput").onkeydown=e=>{ if(e.key==="Enter") nlDraft(); };
 $("builderClose").onclick=()=>closeModal($("builder"));
 $("cApply").onclick=()=>{
   const {c, isNew, dup}=commitDraft();
@@ -8369,11 +8249,15 @@ const PRIORITY_WATCH = {
   stream:{ rent:{list:true, notify:true},     stream:{list:true, notify:true} },
 };
 let flowOn=false;              // inside the wired flow (vs a standalone ?step= preview)
+// CAS-246: this run of the flow is making a SECOND agent from the deck, so it stops after the agent is
+// picked and hands over to the Briefing rather than walking the linear sharpening screens and finishing on
+// the membership page. Cleared by flowStart/flowStop, so it can never leak into a first run.
+let flowNewAgent=false;
 let flowKind="cinema";         // what the priority screen answered
 let flowSlideT=null;
 const flowChromed = key => flowOn && flowCounted().includes(key);
 function flowStart(){
-  flowOn=true;
+  flowOn=true; flowNewAgent=false;
   onbDone=freshDone(); onbDoor=null; onbDoorIdx=0; onbDonePulse=null;
   onbFlow.draft=null;          // no agent yet — nothing on the first two screens quotes a count
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
@@ -8381,13 +8265,17 @@ function flowStart(){
   gotoStep("priority","none");
 }
 function flowStop(){
-  flowOn=false; briefOn=false;
+  flowOn=false; flowNewAgent=false; briefOn=false;
   if(flowSlideT){ clearTimeout(flowSlideT); flowSlideT=null; endSlide(); }
   $("onbStep").classList.remove("open","chromed","sliding"); document.body.style.overflow="";
   $("stepHdr").hidden=true; $("stepNav").hidden=true;
 }
 function flowNext(){
   const list=flowList(), i=list.indexOf(onbStepKey);
+  // CAS-246: a second agent made from the deck stops here. The agent is picked, which is everything the
+  // Briefing needs to open on something real, and the Briefing is where the rest of it is set — so walking
+  // the linear screens as well would ask the same questions twice, once in a line and once in a hub.
+  if(flowNewAgent && onbStepKey==="pickagent"){ flowNewAgent=false; return briefNewAgent(); }
   if(i>=0 && i+1<list.length) return gotoStep(list[i+1],"fwd");
   flowOn=false; finishSharpSequence();       // past the last step → commit the agent and show its haul
 }
@@ -8430,6 +8318,20 @@ let briefResume=null;
 window.briefGo=step=>{ logEvent("briefing_row",{step});
   if(step==="services"){ briefResume=(onbFlow.draft||{}).id||null; briefClose(); openModal($("prefs")); return; }
   gotoStep(step,"fwd"); };
+// CAS-246: hand the just-picked agent to the Briefing WITHOUT committing it. briefOpen() reads a SAVED
+// cascade off the deck; this agent has never been saved, and saving it here so the hub had something to read
+// would put an agent nobody confirmed onto the deck — and leave it there if they backed out. So the draft
+// the flow has already built is kept exactly as it is and the hub is opened on it directly. Save is still
+// the one moment the deck changes, which is the whole contract briefSave/commitDraft already keep.
+function briefNewAgent(){
+  flowOn=false; briefOn=true;
+  onbFlow.draft = normCascade(onbApply());
+  onbFlow.draft.id = null;                 // commitDraft reads this to know it is creating, not editing
+  onbFlow.name = onbFlow.name || "";
+  onbFlow.barTouched = false;              // the preset's bar is still the preset's, not a decision
+  logEvent("new_agent_briefing", {key:(onbFlow.draft||{}).template||"custom"});
+  gotoStep("briefing","fwd");
+}
 window.briefSave=()=>{
   draft = onbApply();
   const {c} = commitDraft();
