@@ -2178,6 +2178,11 @@ const MOVIES = [{"tmdb_id": 1368337, "imdb_id": "tt33764258", "title": "The Odys
 const TODAY  = "2026-07-30";
 
 const PVOD_MIN = 19.99, RENTAL_MAX = 9.99, OPENING_WEEK_DAYS = 7;
+// CAS-227: how long after opening a film may still be presumed to be ON a screen. Nobody publishes the date a
+// film comes off, so this is a bound, not a claim: past it, a film we have no offers for is simply unknown and
+// keeps whatever the pipeline says. Inside it, a polled film with no digital offer at all and an opening date
+// behind us is in cinemas — that is the only window left for it to be in.
+const CINEMA_RUN_DAYS = 90;
 // ---- "Past opening weekend" — the fourth alert moment (CAS-68) ------------------------------------------
 // "About to leave the cinema" has no data behind it: nobody publishes the date a film comes off the screen, so
 // any countdown to it would be a fabricated timer. What IS computable from a real opening date is the moment a
@@ -2263,6 +2268,20 @@ function deriveStatus(m){
   // that is simply false. Take the window the pipeline estimated — it is at least reasoned from the real
   // cinema date, and the card says out loud that it's an estimate.
   if(isEstimated(m) && claimed.length) return claimed;
+  // CAS-227: "Upcoming" stops being true the day a film opens. The pipeline moves a title out of `upcoming`
+  // when it sees an offer, which means a film sits mislabelled for the whole gap between opening night and its
+  // first digital listing — today that is 8 titles, including one that opened this week and one opening
+  // tomorrow. A cinema agent's listing therefore had no In-Cinema section to fill, which is the bug reported.
+  // This is a sharpening, not an invention, and it is deliberately the narrowest one that fixes it: the film
+  // must be CONFIRMED (actually polled), hold no offers at all, claim `upcoming` and nothing else, and have an
+  // opening date that is behind us but inside CINEMA_RUN_DAYS. Every one of those clauses is load-bearing —
+  // together they leave "in cinemas" as the only window the film can be in, which is what CAS-155 requires
+  // before this function may move a title. An estimated title never reaches here (it returned above), and a
+  // title with priced-null offers is excluded by the offers clause: those were CAS-155's two failure cases.
+  if(claimed.length===1 && claimed[0]==="upcoming" && !(m.offers||[]).length && !isEstimated(m)
+     && m.cinema_date && m.cinema_date<=TODAY && m.cinema_date>=addDays(TODAY,-CINEMA_RUN_DAYS)){
+    return [m.cinema_date >= addDays(TODAY,-OPENING_WEEK_DAYS) ? "opening_week" : "in_cinema"];
+  }
   const o = m.offers||[]; const s = new Set();
   const hasSub = o.some(x=>x.type==="sub"||x.type==="free");
   const rents = o.filter(x=>x.type==="rent"&&x.price!=null).map(x=>x.price);
@@ -2569,7 +2588,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 183, "commit": "ebed641", "builtAt": "2026-07-30T00:44:22Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.0", "major": 0, "minor": 8, "patch": 0, "build": 184, "commit": "634d25b", "builtAt": "2026-07-30T00:52:43Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3915,7 +3934,14 @@ const isUpcoming = m => m.status.includes("upcoming");
 // Upcoming is deliberately untouched — an unreleased film promises nothing about today, so there is nothing
 // to overclaim, and the Upcoming/Anticipated rail is the one place an estimate is the honest answer.
 const hasConfirmedOffer = m => !isEstimated(m) && (m.offers||[]).length>0;
-const showable = m => isUpcoming(m) || hasConfirmedOffer(m);
+// CAS-227: and a third case the gate was missing — a film that is IN CINEMAS. Cinemas don't publish offers, so
+// a film on a screen right now has none, and this gate therefore deleted it: that is the structural reason a
+// cinema agent's listing could never hold an In-Cinema section, on top of the status bug above. It qualifies on
+// the same terms as the other two: CONFIRMED (we polled it and there genuinely is no digital listing) plus a
+// real opening date already behind it, which is the evidence that it is on a screen. Estimated titles stay out
+// — that exclusion is the whole of CAS-170 and it is untouched.
+const inCinemaConfirmed = m => !isEstimated(m) && inCinemaWindow(m);
+const showable = m => isUpcoming(m) || hasConfirmedOffer(m) || inCinemaConfirmed(m);
 // The real size of the catalogue as far as any user is concerned. Every "of N" on the page counts this, not
 // MOVIES.length, or the denominator would promise films no screen can ever reach.
 const SHOWABLE_N = MOVIES.filter(showable).length;
