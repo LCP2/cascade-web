@@ -6107,6 +6107,7 @@ function starterPreview(s, kind){
   d.selCrowd=s.crit.selCrowd||0; d.selCritics=s.crit.selCritics||0; d.selScale=s.crit.selScale||0;
   d.selBuzz=s.crit.selBuzz||0; d.selOr=false;
   d.status=watchToStatuses(starterWatch(s, kind));
+  d.kind = kind || flowKind;
   return normCascade(d);
 }
 const starterCount = (s, kind) => watchCount(starterPreview(s, kind));
@@ -7079,6 +7080,13 @@ const MISSION_DIALS = {cinema:["scale","buzz"], stream:["vote","crit","scale"]};
 // So the lane declares its whole set, and "More controls" is whatever that set has beyond the leaders:
 // nothing for cinema, Buzz for streaming.
 const MISSION_DIALS_USED = {cinema:["scale","buzz"], stream:["vote","crit","scale","buzz"]};
+// KNOWN GAP, found by the CAS-231 invariant suite and left for Lee to rule on: MISSION_DIALS_USED gates what
+// the Mission screen SHOWS and what the auto-relax may loosen, but not what a preset may WRITE. So a cinema
+// preset can still carry a criterion on a dial the cinema lane neither shows nor relaxes — Date Night's
+// People's-vote floor of 7.0 (2 films caught where 33 qualify) and Nominees & Awards' critics rung (0 where 82
+// qualify) are both unreachable-and-active. Zeroing them is a two-line change and it is deliberately NOT made
+// here: it would leave a card titled "Nominees & Awards" quoting 82 films with no awards criterion behind it,
+// which trades a hidden filter for a false promise. Which of the two to fix, and how, is a product call.
 const missionKind = () => {
   const k=(onbFlow.draft||{}).kind;
   return (k==="cinema"||k==="stream") ? k : flowKind;
