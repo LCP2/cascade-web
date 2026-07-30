@@ -862,23 +862,32 @@
      job) and the text never has to sit on a box (that is what the fade replaces). */
   .splash{overflow:hidden}
   .splashwall{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
-  .splashwallgrid{position:absolute;top:-14%;left:-24%;width:148%;
+  /* CAS-216: the rotateZ tilt is gone. A z-rotation turns the grid's own rectangular edge into a
+     diagonal, and no amount of over-fill hides a diagonal in a rectangular viewport — that was the
+     "edge artifact" on the left and right. rotateX alone keeps the wall receding without ever putting
+     the grid's corner inside the frame, so a modest over-fill (top -8%, left -12%, width 124%) is
+     enough. Values from proto/cascade-08 v0.8.1. */
+  .splashwallgrid{position:absolute;top:-8%;left:-12%;width:124%;
     display:grid;grid-template-columns:repeat(6,1fr);gap:9px;
-    transform:perspective(1300px) rotateX(18deg) rotateZ(-5deg) scale(1.12);
-    transform-origin:center 14%;
-    filter:blur(1.2px) brightness(.74) saturate(1.08)}
+    transform:perspective(1500px) rotateX(15deg) scale(1.04);
+    transform-origin:center 30%;
+    filter:blur(1.2px) brightness(.72) saturate(1.06)}
   .splashwall .swp{aspect-ratio:2/3;border-radius:8px;background:#141a28 center/cover no-repeat;
     box-shadow:0 8px 22px rgba(0,0,0,.5)}
+  /* CAS-216: the fade tops out at .9 and never reaches solid #080b14, so posters stay faintly visible
+     at the bottom of the screen instead of the wall dying into a black band under the buttons. The
+     centre band is still dark enough to read against — the front layer carries its own text-shadow
+     (below) precisely so the fade doesn't have to go opaque to win the contrast argument. */
   .splashfade{position:absolute;inset:0;z-index:1;pointer-events:none;
-    background:radial-gradient(120% 74% at 50% 30%, rgba(8,11,20,.34) 0%, rgba(8,11,20,.72) 42%,
-      rgba(8,11,20,.93) 74%, #080b14 100%)}
+    background:radial-gradient(130% 105% at 50% 40%, rgba(8,11,20,.28) 0%, rgba(8,11,20,.64) 45%,
+      rgba(8,11,20,.82) 78%, rgba(8,11,20,.9) 100%)}
   /* Legibility on a phone is the acceptance criterion, so the front layer carries its own shadow rather
      than relying on the fade alone — the fade is weakest exactly where the content is, by design. */
   .splashfront{text-shadow:0 2px 16px rgba(4,6,12,.9), 0 0 4px rgba(4,6,12,.8)}
   .splashfront .splashword{text-shadow:0 2px 30px rgba(0,0,0,.8), 0 0 6px rgba(0,0,0,.7)}
   .splashfront .splashb span{color:#fff;font-weight:600}
   .splashfront .splashlogo{filter:drop-shadow(0 6px 24px rgba(124,92,255,.35))}
-  @media (prefers-reduced-motion:reduce){ .splashwallgrid{filter:blur(1.2px) brightness(.74)} }
+  @media (prefers-reduced-motion:reduce){ .splashwallgrid{filter:blur(1.2px) brightness(.72)} }
   @keyframes splashIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
   .splashmark{width:84px;height:84px;margin:6px auto 0;display:block;
     filter:drop-shadow(0 0 14px rgba(124,92,255,.55))}
@@ -5732,10 +5741,13 @@ window.skipOnboarding=skipOnboarding;
 // and ?reset returns to it. It hands off to the next step on its single CTA.
 // CAS-200: the wall, from today's catalogue. The most-anticipated titles that actually have artwork,
 // in popularity order so the grid is deterministic — a shuffled wall would make two screenshots of the
-// same build disagree, and there is nothing here for randomness to buy. 36 fills six columns of six at
-// every width the grid is used at; fewer is fine (the grid just ends), which is what keeps this honest
-// on a thin catalogue rather than padding it out with repeats.
-const SPLASH_WALL_N = 36;
+// same build disagree, and there is nothing here for randomness to buy. Fewer than a full grid is fine
+// (the grid just ends), which is what keeps this honest on a thin catalogue rather than padding it out
+// with repeats.
+// CAS-216: 54, not 36. Six rows stopped short of the bottom on a tall phone, and the fade capping at .9
+// (so the bottom is no longer black) made that visible as an empty band under the buttons. Nine rows of
+// six reach the bottom edge at every viewport the splash is used at.
+const SPLASH_WALL_N = 54;
 function paintSplashWall(){
   const box=$("splashWall"); if(!box || box.childElementCount) return;
   const picks=MOVIES.filter(m=>m.poster).sort(byPopularity).slice(0, SPLASH_WALL_N);
