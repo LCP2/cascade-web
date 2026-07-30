@@ -19,6 +19,7 @@ Pure and side-effect free; the caller owns Supabase I/O (see store.py).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 # --- catalogue-scale constants, ported verbatim from app_template.html (CAS-64) ---
 _ANTICIPATED_TOP = 20      # top N% of UPCOMING titles by popularity
@@ -44,6 +45,19 @@ class Hit:
     cascade_id: str
     cascade_name: str
     transition: object      # monitor.transitions.Transition
+    # CAS-244: which channels THIS agent will accept, read from criteria.channelsLive. None means the agent
+    # predates the setting and takes whatever the account allows — the behaviour it already had.
+    channels: Optional[dict] = None
+
+    def wants(self, channel: str) -> bool:
+        """Does this agent accept delivery on `channel` ("in_app" | "email")?
+
+        The account still decides what is AVAILABLE — this only ever narrows it, and the caller applies the
+        account's own answer first. An agent that has never been asked accepts everything the account allows.
+        """
+        if not self.channels:
+            return True
+        return bool(self.channels.get(channel, True))
 
     def notification_row(self) -> dict:
         # CAS-185: the ledger is the in-app delivery as well as the email de-dupe, so it carries
@@ -274,7 +288,8 @@ def match(cascades: list, transitions: list, already=None, catalogue=None, suppr
             seen.add(key)   # guard against two identical Cascades double-firing within one run
             by_user.setdefault(c["user_id"], []).append(
                 Hit(user_id=c["user_id"], cascade_id=c["id"],
-                    cascade_name=c.get("name", "My Cascade"), transition=t))
+                    cascade_name=c.get("name", "My Cascade"), transition=t,
+                    channels=agent_channels(criteria)))
     return by_user
 
 
@@ -284,6 +299,20 @@ def match(cascades: list, transitions: list, already=None, catalogue=None, suppr
 # A user who has never opened the notify screen has no row, and that is not the same as
 # "wants nothing": the app's own default is in-app on, email off, which is what these say.
 PREFS_DEFAULT = {"in_app": True, "email_on": False, "email_address": None, "excluded_moments": []}
+
+
+def agent_channels(criteria: dict) -> Optional[dict]:
+    """CAS-244: {in_app, email} for one agent, or None if it has never been asked.
+
+    The front end writes `channelsLive` — the RESOLVED answer, account permission already applied — precisely
+    so this function never has to know anything about the account. Its own `channels` field holds the raw
+    per-agent answer and is deliberately not read here: a channel the account has switched off must not be
+    deliverable just because the agent still remembers wanting it.
+    """
+    live = (criteria or {}).get("channelsLive")
+    if not isinstance(live, dict):
+        return None
+    return {"in_app": bool(live.get("inApp", True)), "email": bool(live.get("email", True))}
 
 
 def prefs_for(prefs: dict, user_id: str) -> dict:

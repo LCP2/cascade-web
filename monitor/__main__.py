@@ -176,16 +176,31 @@ def main(argv=None) -> int:
         if plan == "wait":
             print(f"[monitor] {user_id} wants email but has no address — skipping (will retry).")
             continue
-        if plan == "email":
+
+        # CAS-244: the account decided WHICH channels exist (that is `plan`); each agent decides which of
+        # them it will use. So the user's hits split here rather than at the top: one agent set to in-app
+        # only must not put its films in the email digest, and an agent with both switched off is delivered
+        # by neither — which means no ledger row either, because the ledger IS the record that we told them.
+        mailable = [h for h in hits if h.wants("email")] if plan == "email" else []
+        appable = [h for h in hits if h.wants("in_app")] if pref["in_app"] else []
+        if not mailable and not appable:
+            print(f"[monitor] {user_id}: every matching agent has its channels off — nothing sent or written.")
+            continue
+
+        if mailable:
+            digest = render_digest(mailable)      # the email says only what the email is delivering
             try:
                 send_via_resend(email, digest["subject"], digest["html"], digest["text"])
             except Exception as err:  # noqa: BLE001 — never let one bad send abort the run
                 print(f"[monitor] send failed for {user_id}: {err} — ledger not written, will retry.")
                 continue
             sent += 1
-        else:
+        if appable and not mailable:
             inapp += 1
-        written_total += store.insert_notifications(notification_rows({user_id: hits}))
+        # One row per hit that WAS delivered, by either channel, and never one for a hit that was not.
+        delivered = {id(h): h for h in mailable}
+        delivered.update({id(h): h for h in appable})
+        written_total += store.insert_notifications(notification_rows({user_id: list(delivered.values())}))
 
     if args.dry_run:
         would = sum(len(h) for h in by_user.values())

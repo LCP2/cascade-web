@@ -9,6 +9,7 @@ import unittest
 
 from monitor import (compute_transitions, match, matches_criteria, service_ok,
                      notification_rows, suppressed_pairs, excluded_moments)
+from monitor.matching import Hit, agent_channels
 from monitor.catalogue import load_catalogue_file
 from monitor.store import InMemoryStore
 
@@ -209,6 +210,57 @@ class MatchTests(unittest.TestCase):
             moment = "hits_rent"
             services = []
         self.assertTrue(service_ok(T(), {"services": ["Netflix"]}))   # rent moment: unconstrained
+
+
+class PerAgentChannels(unittest.TestCase):
+    """CAS-244: the account decides which channels EXIST; an agent decides which of them it uses.
+
+    The direction matters, and it is the whole reason the front end writes a resolved `channelsLive` rather
+    than a raw preference: an agent must never be able to grant itself a channel the person switched off at
+    the account level. Everything here is about narrowing.
+    """
+
+    def _hit(self, criteria):
+        t = type("T", (), {"movie_id": "1", "moment": "hits_rent", "title": "A", "services": [], "price": None,
+                           "movie": {}})()
+        return Hit(user_id="u", cascade_id="c", cascade_name="Agent", transition=t,
+                   channels=agent_channels(criteria))
+
+    def test_an_agent_that_was_never_asked_accepts_everything(self):
+        h = self._hit({})
+        self.assertIsNone(h.channels)
+        self.assertTrue(h.wants("email"))
+        self.assertTrue(h.wants("in_app"))
+
+    def test_an_agent_can_turn_a_channel_off_for_itself(self):
+        h = self._hit({"channelsLive": {"inApp": True, "email": False}})
+        self.assertTrue(h.wants("in_app"))
+        self.assertFalse(h.wants("email"))
+
+    def test_the_raw_per_agent_answer_is_never_what_delivery_reads(self):
+        # `channels` is the agent's own wish and survives the account turning a channel off and on again.
+        # `channelsLive` is that wish with the account's permission already applied, and it is the only one
+        # the monitor may read — otherwise an agent would be deliverable on a channel the person disabled.
+        h = self._hit({"channels": {"email": True}, "channelsLive": {"inApp": True, "email": False}})
+        self.assertFalse(h.wants("email"))
+
+    def test_a_malformed_override_is_ignored_rather_than_obeyed(self):
+        for bad in (None, "yes", [], 3):
+            self.assertIsNone(agent_channels({"channelsLive": bad}), f"{bad!r} was read as a channel map")
+
+    def test_match_attaches_the_agent_answer_to_every_hit(self):
+        prev = [{"tmdb_id": 1, "title": "A", "status": ["in_cinema"], "cinema_date": "2026-01-01",
+                 "offers": []}]
+        today = [{"tmdb_id": 1, "title": "A", "status": ["rental"], "cinema_date": "2026-01-01",
+                  "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}]}]
+        ts = compute_transitions(prev, today, RUN_DATE)
+        cascades = [{"id": "c1", "user_id": "u1", "name": "Quiet one", "active": True,
+                     "alert_moments": ["hits_rent"],
+                     "criteria": {"channelsLive": {"inApp": True, "email": False}}}]
+        hits = match(cascades, ts)["u1"]
+        self.assertEqual(len(hits), 1)
+        self.assertFalse(hits[0].wants("email"))
+        self.assertTrue(hits[0].wants("in_app"))
 
 
 if __name__ == "__main__":

@@ -1456,6 +1456,16 @@
   .agwsubt .agwsubx i{display:block;margin-top:2px;font-style:normal;color:var(--faint);font-size:11.5px;
     line-height:1.4}
   .agwsubt:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* CAS-244: "Notify me by" reuses the sub-moment row wholesale — it is the same shape of choice (a named
+     thing with a line saying what it means) and giving it a second look would say the two were different. */
+  .wwsec{margin:22px 2px 9px}
+  .wwch{--wwc:var(--accent)}
+  .wwchfoot{margin:9px 2px 0;color:var(--faint);font-size:11.5px;line-height:1.45}
+  .wwnone{border:1px solid var(--line);border-radius:12px;padding:13px 14px;background:var(--panel)}
+  .wwnone p{margin:0 0 9px;color:var(--dim);font-size:12.5px;line-height:1.5}
+  .oslink{background:none;border:0;padding:0;color:var(--accent);font-family:inherit;font-size:13px;
+    font-weight:700;cursor:pointer}
+  .oslink:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   /* The deferred ask, stated plainly rather than dressed as a warning — we are telling them what is still
      missing, not blocking them on it (buildspec §8: only tappable things get a box). */
   .wwfoot{display:flex;align-items:flex-start;gap:8px;color:var(--faint);font-size:11.5px;line-height:1.45;
@@ -4255,6 +4265,11 @@ const yearCount = y => MOVIES.filter(m=>yearOf(m)===y).length;
 
 function normCascade(c){
   c.status = c.status||[];
+  // CAS-244: the per-agent channel overrides, and the resolved answer the monitor reads. An agent that has
+  // never been asked has neither, and both fill in as "everything the account allows" — which is what an
+  // agent made before this screen existed was already getting.
+  c.channels = (c.channels && typeof c.channels==="object") ? c.channels : {};
+  c.channelsLive = (c.channelsLive && typeof c.channelsLive==="object") ? c.channelsLive : null;
   // CAS-228: the windows the agent LISTS, which may be narrower than the windows it watches. [] means the
   // agent never singled any out and lists everything it watches — the behaviour every agent had before this
   // field existed, so an old agent needs no migration to keep looking the same.
@@ -6872,6 +6887,60 @@ window.wwToggleSub=(key,sub)=>{
   onbFlow.watch[key]=cur;
   wwChanged(key);
 };
+// ---- CAS-244: Notify me by --------------------------------------------------------------------------
+// Two levels, and the direction between them is the whole design. The ACCOUNT decides which channels exist
+// for this person at all — that is the one answer notifyPrefs has always held, and it is what the monitor
+// reads before it sends anything. An AGENT can only tailor what is already available: it may switch a
+// channel off for itself, and it can never switch one on. Anything else would be an agent granting itself a
+// permission the person never gave, and the monitor would refuse it anyway, which is the CAS-103 failure —
+// a switch on a screen wired to nothing.
+//
+// So the section lists exactly the channels the account has on, defaulting to on for this agent. A channel
+// the account later turns on appears here already on, because "available and not turned off" is the rule;
+// one it turns off disappears, and the agent's own answer for it is kept rather than erased, so turning the
+// account channel back on restores what this agent was set to.
+const NOTIFY_CHANNELS = [
+  {key:"inApp", label:"In-app notifications", sub:"A row on the bell, next time you open Cascade.",
+   accountOn:()=>!!notifyPrefs.inApp},
+  {key:"email", label:"Email notifications",  sub:"In the daily digest, to the address on your account.",
+   accountOn:()=>!!notifyPrefs.emailOn},
+];
+const accountChannels = () => NOTIFY_CHANNELS.filter(ch=>ch.accountOn());
+// The agent's own answer, defaulting to "yes" for anything it has never been asked about.
+const agentChannelOn = key => {
+  const c=(onbFlow.draft||{}).channels;
+  return !c || c[key]===undefined ? true : !!c[key];
+};
+// …and the resolved answer, which is the one that means anything: available AND not turned off here.
+const channelLive = key => {
+  const ch=NOTIFY_CHANNELS.find(x=>x.key===key);
+  return !!ch && ch.accountOn() && agentChannelOn(key);
+};
+function drawNotifyBy(){
+  const box=$("wwChannels"); if(!box) return;
+  const avail=accountChannels();
+  if(!avail.length){
+    // Nothing to tailor, and nothing pretending otherwise. The way out is the screen that actually owns it.
+    box.innerHTML=`<div class="wwnone"><p>You have no notification channels switched on, so this agent has
+      nothing to send through — it will still keep its list up to date.</p>
+      <button type="button" class="oslink" onclick="openAccountStep('notifysettings')">Turn one on in Account →</button></div>`;
+    return;
+  }
+  box.innerHTML = avail.map(ch=>{
+    const on=agentChannelOn(ch.key);
+    return `<button type="button" class="agwsubt wwch${on?" on":""}" aria-pressed="${on}"
+      onclick="wwToggleChannel('${ch.key}')"><span class="wwb">✓</span><span class="agwsubx">
+      <b>${esc(ch.label)}</b><i>${esc(ch.sub)}</i></span></button>`;
+  }).join("") + `<p class="wwchfoot">Switched on in your Account. Turning one off here affects
+    <b>this agent only</b>.</p>`;
+}
+window.wwToggleChannel=key=>{
+  const d=onbFlow.draft; if(!d) return;
+  d.channels={...(d.channels||{})};
+  d.channels[key]=!agentChannelOn(key);
+  logEvent("agent_channel_changed",{channel:key, on:d.channels[key]});
+  drawNotifyBy();
+};
 function wwChanged(key){
   saveWatch();
   logEvent("watch_windows_changed",{window:key, list:winOn(key,"list"), notify:winOn(key,"notify")});
@@ -6961,6 +7030,12 @@ function onbApply(){
   d.status = watchStatuses();
   d.listStatus = listStatuses();
   d.watchWindows = JSON.parse(JSON.stringify(onbFlow.watch||{}));
+  // CAS-244: the agent's own channel answer rides with it. Only the RESOLVED value is written — a channel
+  // the account has switched off is false here rather than absent, so the monitor never has to know about
+  // the account to read this, and the front end keeps the raw answer in `channels` so turning the account
+  // channel back on restores what this agent was set to.
+  d.channels = {...(d.channels||{})};
+  d.channelsLive = {inApp: channelLive("inApp"), email: channelLive("email")};
   // CAS-197: the windows you picked ARE the alerts the daily job fires on. CAS-160 recorded them and
   // deliberately did not write them, because promising delivery we had not built would have been a
   // fabricated capability. CAS-185 built it — so leaving them unwritten is now the opposite failure: a
@@ -7779,9 +7854,11 @@ const SHARP_STEPS = {
         <p class="ossub">Two separate choices per window: <b>List</b> puts those films in this agent's list, and
           <b>Notify</b> tells you when one arrives. Neither implies the other.</p>
         <div id="wwLanes"></div>
+        <div class="usec wwsec">Notify me by</div>
+        <div id="wwChannels"></div>
         ${stream ? `<p class="wwfoot"><span>ℹ️</span><span>To complete these alerts we'll need to know your current rental and streaming services — we'll ask for this later.</span></p>` : ""}`;
     },
-    wire(){ drawWatchLanes(); },
+    wire(){ drawWatchLanes(); drawNotifyBy(); },
   },
   // ---- CAS-182 / CAS-208: the Agent Briefing ---------------------------------------------------------
   // The edit screen is a HUB — one titled row per setting, each carrying that setting's current value read
