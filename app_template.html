@@ -2891,7 +2891,7 @@ const scopeSummary = c => HOME_KEYS.filter(k=>scopeOf(c)[k]).map(k=>SCOPE_SHORT[
 // ignoreScope is flipped only by the no-results panel, to ask "how many would there be if the my-services
 // scope weren't applied?" — so it can price that way out honestly instead of guessing.
 let ignoreScope = false;
-const prefsActive = () => !ignoreScope && servicesScoped() && servicesPicked();
+const prefsActive = () => !ignoreScope && servicesScoped();   // CAS-252: on is on, picked or not
 function myService(o){
   // CAS-251: compared canonically, so "Netflix Standard with Ads" satisfies a Netflix pick. Before this,
   // choosing one variant of a pair silently missed every film the feed had listed under the other.
@@ -3051,10 +3051,11 @@ function updatePrefSwitch(){
                                              : `only showing films on your services in <b>${scopeSummary(c)}</b>`)
                              : "showing films from every service"}.
          Close it (×) to go back to the switch above.</div>`);
-  // The switch on with nothing picked filters nothing — say so rather than looking quietly broken.
+  // CAS-252: the switch on with nothing picked now leaves NOTHING — which is what "only films on my
+  // services" means when you have none. Said plainly, with the way out, rather than as a broken screen.
   if(servicesScoped() && !servicesPicked())
-    notes.push(`<div class="warnnote">This scope is on, but you haven't picked any services yet — so nothing is
-         being narrowed. Pick the ones you actually have below and the list follows.</div>`);
+    notes.push(`<div class="warnnote">This scope is on and you haven't picked any services yet, so nothing
+         qualifies. Pick the ones you actually have below, or switch the scope off.</div>`);
   $("prefCascadeNote").innerHTML = notes.join("");
 }
 function updatePrefBtn(){ const b=$("prefBtn"); if(b) b.classList.toggle("on", prefsActive()); }
@@ -3187,7 +3188,11 @@ function passes(m){
   if(!showable(m)) return false;                 // CAS-170: no offer and not upcoming = nothing to show
   if(!ignoreTagged && taggedOut(m)) return false;
   // Scoped per window: a Rent-scoped Cascade filters rental films by your stores, and leaves cinema alone.
-  if(!ignoreScope && servicesPicked() && scopedFor(primaryStatus(m)) && !matchesServices(m)) return false;
+  // CAS-252: no `servicesPicked()` guard. The switch used to be inert until a service was named — so with
+  // it ON and nothing picked, the screen said "only showing films on your services" over the whole
+  // catalogue. Nothing is on your services when you have none, and 0 is the honest answer; the screen says
+  // so in words and offers the way out, which is a better answer than quietly ignoring what was asked.
+  if(!ignoreScope && scopedFor(primaryStatus(m)) && !matchesServices(m)) return false;
   if(filt.foundOnly && !found.has(id)) return false;
   if(filt.search && !m.title.toLowerCase().includes(filt.search)) return false;
   if(!statusOK(m)) return false;
@@ -4839,7 +4844,7 @@ function matchesCriteria(m,c,ignoreBlocked){
   if(!passesTasteBase(m)) return false;
   if(c.excludeBlocked!==false && !ignoreBlocked && blocked.has(m.tmdb_id)) return false;
   if(c.excludeWatched!==false && watched.has(m.tmdb_id)) return false;
-  if(servicesPicked() && scopeOf(c)[primaryStatus(m)] && !matchesServices(m)) return false;
+  if(scopeOf(c)[primaryStatus(m)] && !matchesServices(m)) return false;   // CAS-252: see passes()
   if(c.status.length && !c.status.includes(primaryStatus(m))) return false;
   if((c.exclude||[]).length && (m.genres||[]).some(g=>c.exclude.includes(g))) return false;   // skip beats match
   // CAS-182: cleared means cleared. A dimension holding null admits nothing, so the count says 0 rather
@@ -5504,9 +5509,11 @@ function renderCascadeBar(shown){
     </div>`;
   }
   // Scoped to my services with none picked: the scope is silently inert. Say it, and give the way out.
+  // CAS-252: it is not inert any more, so the note says what actually happens. "Showing everything" was
+  // the old behaviour and the old copy; both were wrong in the same direction.
   if(c && anyScope(c) && !servicesPicked())
     html+=`<div class="warnnote">“${esc(c.name)}” only wants films on your services${allScoped(c)?"":` in
-      <b>${scopeSummary(c)}</b>`} — but you haven't picked any yet, so it's showing everything.
+      <b>${scopeSummary(c)}</b>`} — and you haven't named any yet, so nothing qualifies.
       <br>${pickServicesCTA()}</div>`;
   $("cascDetail").innerHTML=html;
 }
@@ -5847,7 +5854,7 @@ function bellPaint(row, r){
 function syncMineWarn(){
   const w=$("cMineWarn"); if(!w) return;
   w.innerHTML = (anyScope(draft) && !servicesPicked())
-    ? `<div class="warnnote">You haven't picked any services yet, so that scope does nothing.
+    ? `<div class="warnnote">You haven't picked any services yet, so nothing qualifies while that scope is on.
          Pick them and this Cascade narrows to what you can actually watch.<br>${pickServicesCTA()}</div>` : "";
 }
 

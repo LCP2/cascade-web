@@ -657,6 +657,54 @@ test("my services: a scoped window only ever shows films the picked services car
   });
 });
 
+// CAS-252: the switch used to be inert until a service was named, so with it ON and nothing picked the
+// screen said "only showing films on your services" over the whole catalogue — 111 films that were on no
+// service of yours, because you had none. Nothing is on your services when you have none.
+test("my services: with the scope on and nothing picked, nothing on a service qualifies", () => {
+  const sub = new Set(E.prefs.sub), store = new Set(E.prefs.store), on = E.prefs.on;
+  E.prefs.sub.clear(); E.prefs.store.clear(); E.prefs.on = true;
+  try {
+    assert.equal(E.servicesPicked(), false, "the fixture picked a service");
+    for(const { kind, s, label } of CASES){
+      pickInLane(E, kind, s.key);
+      const scoped = E.normCascade({ ...E.onbApply(),
+        myServices: { pvod: true, rental: true, included_streaming: true } });
+      const shown = E.MOVIES.filter(m => E.matchesCriteria(m, scoped));
+      const onService = shown.filter(m => E.HOME_KEYS.includes(E.primaryStatus(m)));
+      assert.equal(onService.length, 0,
+        `${label}: ${onService.length} films are still shown at home with no service picked, e.g. ` +
+        `${onService.slice(0, 3).map(x => x.title).join(", ")}`);
+      // A cinema window is not on any service, so it is not what the scope is about and must survive.
+      for(const m of shown) assert.ok(!E.HOME_KEYS.includes(E.primaryStatus(m)),
+        `${label}: ${m.title} slipped through at ${E.primaryStatus(m)}`);
+    }
+  } finally {
+    E.prefs.sub.clear(); sub.forEach(x => E.prefs.sub.add(x));
+    E.prefs.store.clear(); store.forEach(x => E.prefs.store.add(x));
+    E.prefs.on = on;
+  }
+});
+
+// …and with SOME picked it is the matching subset, never the whole catalogue and never nothing.
+test("my services: with some picked, the scope leaves exactly what those services carry", () => {
+  const subs = E.SUB_SERVICES.slice(0, 3);
+  withServices(subs, [], () => {
+    pickInLane(E, "stream", "custom");
+    const base = E.normCascade({ ...E.onbApply(), myServices: false });
+    const scoped = E.normCascade({ ...base, myServices: { included_streaming: true } });
+    const open = E.MOVIES.filter(m => E.matchesCriteria(m, base));
+    const kept = E.MOVIES.filter(m => E.matchesCriteria(m, scoped));
+    assert.ok(kept.length < open.length, `the scope kept all ${open.length} films — it is not filtering`);
+    assert.ok(kept.length > 0, "the scope left nothing, with three of the biggest services picked");
+    for(const m of kept){
+      if(E.primaryStatus(m) !== "included_streaming") continue;
+      assert.ok((m.offers || []).some(o => subs.includes(E.svcCanon(o.service))),
+        `${m.title} survived a scope to ${subs.join(", ")} on offers from ` +
+        `${(m.offers || []).map(o => o.service).join(", ")}`);
+    }
+  });
+});
+
 test("my services: switching the scope on never adds a film", () => {
   withServices(E.SUB_SERVICES.slice(0, 2), E.STORE_SERVICES.slice(0, 2), () => {
     for(const { kind, s, label } of CASES){

@@ -60,3 +60,43 @@ test("CAS-251: the only-my-services switch is not touching the list above it", a
   });
   expect(gap, "the switch is sitting on the service list").toBeGreaterThanOrEqual(12);
 });
+
+// CAS-252: the switch really filters. With no services picked it leaves nothing on a service, which is
+// what "only films on my services" means when you have none.
+test("CAS-252: only-my-services with nothing picked drops the count to nothing", async ({ page }) => {
+  await toShortlist(page, "stream");
+  const cards = await shortlistCards(page);
+  await pickCard(page, cards[0].name);
+  await page.evaluate(() => window.gotoStep("services", "none"));
+  await expect(page.locator(".osh", { hasText: /My services/i })).toBeVisible();
+
+  // Nothing picked, scope off: the agent shows its normal haul.
+  const before = await page.evaluate(() => {
+    prefs.sub.clear(); prefs.store.clear(); prefs.on = false; savePrefs();
+    const d = normCascade({ ...onbApply(), myServices: false });
+    return MOVIES.filter(m => matchesCriteria(m, d)).length;
+  });
+  expect(before, "the agent shows nothing to begin with").toBeGreaterThan(0);
+
+  // Scope on, still nothing picked: no film on a service can qualify.
+  const after = await page.evaluate(() => {
+    prefs.on = true; savePrefs();
+    const d = normCascade({ ...onbApply(),
+      myServices: { pvod: true, rental: true, included_streaming: true } });
+    const shown = MOVIES.filter(m => matchesCriteria(m, d));
+    return { total: shown.length,
+             home: shown.filter(m => HOME_KEYS.includes(primaryStatus(m))).length };
+  });
+  expect(after.home, "films are still being shown as on your services when you have none").toBe(0);
+  expect(after.total).toBeLessThan(before);
+
+  // Picking one service brings a subset back — not the whole catalogue, and not nothing.
+  const withOne = await page.evaluate(() => {
+    prefs.sub.add(SUB_SERVICES[0]); savePrefs();
+    const d = normCascade({ ...onbApply(),
+      myServices: { pvod: true, rental: true, included_streaming: true } });
+    const shown = MOVIES.filter(m => matchesCriteria(m, d));
+    return { home: shown.filter(m => HOME_KEYS.includes(primaryStatus(m))).length };
+  });
+  expect(withOne.home, "picking a service brought nothing back").toBeGreaterThan(0);
+});
