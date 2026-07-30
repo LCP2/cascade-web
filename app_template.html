@@ -1412,10 +1412,18 @@
      `--wwc` is set inline per lane, so one rule set serves all three colours. */
   .wwlane{border:1px solid var(--line);border-radius:14px;background:var(--panel2);margin-bottom:10px;
     overflow:hidden;transition:border-color .16s}
-  .wwlane.on{border-color:var(--wwc)}
+  .wwlane.on{border-color:var(--wwc);background:color-mix(in srgb, var(--wwc) 7%, var(--panel2))}
   .wwhead{display:flex;align-items:center;gap:11px;width:100%;text-align:left;
     padding:13px 14px 8px;color:var(--ink);font-family:inherit;font-size:15px;font-weight:700}
-  .wwhead .cd{width:10px;height:10px;border-radius:50%;background:var(--wwc);flex:0 0 auto}
+  /* CAS-242: the dot said the window's colour whether the window was on or off, so the only thing carrying
+     the state was the border — and for Upcoming, whose colour was grey, "on" and "off" looked identical.
+     Off is now visibly off for EVERY lane (muted dot, dimmed title) and on is the window's own colour, so
+     the treatment is doing the work rather than the choice of colour. */
+  .wwhead .cd{width:10px;height:10px;border-radius:50%;background:var(--line);flex:0 0 auto;
+    transition:background .16s}
+  .wwlane.on .wwhead .cd{background:var(--wwc)}
+  .wwhead{color:var(--dim)}
+  .wwlane.on .wwhead{color:var(--ink)}
   .wwhead .wwn{flex:1;min-width:0}
   /* CAS-228: the switches sit on the FACE of the window card, side by side, instead of one revealing the
      other. Nesting notify inside a lane-tick made "list these but don't ping me" unexpressible; every
@@ -1431,6 +1439,23 @@
   .agwt.on{color:var(--ink);border-color:var(--wwc)}
   .agwt.on .wwb{background:var(--wwc);border-color:var(--wwc);color:#0b1016}
   .agwt:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* CAS-242: the finer moments, nested under the bell they belong to rather than sitting beside it — they
+     are not another job the agent does, they are which moments the one bell rings on. Indented to the same
+     35px gutter the sub-line and the switch row already use, so the nesting is read rather than explained. */
+  .agwsubs{padding:0 14px 13px 35px}
+  .agwsublead{margin:0 0 8px;color:var(--dim);font-size:12px;line-height:1.4}
+  .agwsubt{display:flex;align-items:flex-start;gap:9px;width:100%;text-align:left;background:var(--panel);
+    border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:6px;color:var(--dim);
+    font-family:inherit;font-size:12.5px;cursor:pointer}
+  .agwsubt .wwb{width:15px;height:15px;border-radius:50%;border:1.5px solid var(--line);flex:0 0 auto;
+    margin-top:1px;display:grid;place-items:center;font-size:9px;font-weight:800;color:transparent}
+  .agwsubt.on{color:var(--ink);border-color:var(--wwc)}
+  .agwsubt.on .wwb{background:var(--wwc);border-color:var(--wwc);color:#0b1016}
+  .agwsubt .agwsubx{min-width:0}
+  .agwsubt .agwsubx b{display:block;font-weight:700;font-size:13px}
+  .agwsubt .agwsubx i{display:block;margin-top:2px;font-style:normal;color:var(--faint);font-size:11.5px;
+    line-height:1.4}
+  .agwsubt:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   /* The deferred ask, stated plainly rather than dressed as a warning — we are telling them what is still
      missing, not blocking them on it (buildspec §8: only tappable things get a box). */
   .wwfoot{display:flex;align-items:flex-start;gap:8px;color:var(--faint);font-size:11.5px;line-height:1.45;
@@ -4029,7 +4054,10 @@ function activeCount(){
 // (nobody wants to be nudged to overpay), and cinema OFF — a release is news, not a saving.
 // past_opening (CAS-68) defaults OFF for the same reason cinema does: it's news about the big screen, not a
 // saving, and a Cascade nobody pointed at the cinema shouldn't start talking about it.
-const ALERT_DEFAULTS = {cinema:false, past_opening:false, pvod:false, rental:true, included_streaming:true};
+// CAS-242 adds two Upcoming moments. Both default OFF for the same reason cinema does — they are news about
+// a film nobody can watch yet, and an agent nobody pointed at the cinema should not start talking about it.
+const ALERT_DEFAULTS = {cinema:false, past_opening:false, announced:false, opens_soon:false,
+                        pvod:false, rental:true, included_streaming:true};
 
 // ---- The availability spine ---------------------------------------------------
 // One row per window a film can be in. "All" is not a window — it's the empty status set, i.e. any window.
@@ -4595,7 +4623,8 @@ const watchesFilm = (m,c) => matchesTaste(m,c) && inScope(m,c);
 // Not countCriteria(), which is the narrower "what it can show you today" number.
 const watchCount = c => MOVIES.filter(m=>watchesFilm(m,c)).length;
 
-const ALERT_SHORT = {cinema:"cinema", past_opening:"opening weekend", pvod:"premium", rental:"rent",
+const ALERT_SHORT = {cinema:"cinema", past_opening:"opening weekend", announced:"newly announced",
+                     opens_soon:"opening soon", pvod:"premium", rental:"rent",
                      included_streaming:"stream"};
 // A Cascade lets a film go once it passes the last window in its scope — so the last move it can ever witness
 // is the one OUT of that window. Rows past that point are unreachable, and a bell on one of them is a switch
@@ -4610,6 +4639,10 @@ const reachableRows = c => {
   // is still watching the film there. A Cascade scoped to Rent has let go of it long before — its bell would be
   // wired to nothing, and promising it in the card's "alerts on…" line would be a promise we can't keep.
   if(rows.has("cinema")) rows.add("past_opening");
+  // CAS-242: the two Upcoming moments happen to a film BEFORE it opens, so they can only fire for an agent
+  // that is watching it there. An agent whose scope starts at In cinema has not met the film yet; an agent
+  // with no scope at all is watching the whole ladder, so it has.
+  if(!(c.status||[]).length || (c.status||[]).includes("upcoming")){ rows.add("announced"); rows.add("opens_soon"); }
   return rows;
 };
 // ---- Global alert-type exclude (CAS-103 AC4) -----------------------------------
@@ -4632,6 +4665,7 @@ function alertSummary(c){
 // The same fact, said in the agent's voice — what it will actually come back to you about. Read off the same
 // reachable-bells rule as alertSummary(), so the promise can only name a moment that can really fire.
 const ALERT_MOMENT = {cinema:"reaches a cinema", past_opening:"is past its opening weekend",
+                      announced:"turns up newly announced", opens_soon:"is a week from opening",
                       pvod:"hits premium", rental:"drops to a rental price",
                       included_streaming:"lands on a service"};
 function alertPromise(c){
@@ -6630,8 +6664,24 @@ const onbFlow = {draft:null, name:ONB_DEFAULT_NAME, defaultName:ONB_DEFAULT_NAME
 // date a film is announced, so Upcoming's notify is the release, said honestly.
 const AGENT_WINDOWS = {
   cinema: [
-    {key:"upcoming",  label:"Upcoming",  cd:"var(--grey)",  status:["upcoming"],
-     sub:"Announced, not in cinemas yet.", notifySay:"when it reaches a cinema", alerts:{cinema:true}},
+    // CAS-242: Upcoming is grey everywhere else in the app, because an unreleased film is deliberately muted
+    // against the ones you can actually watch. On THIS screen the same grey is a different word: every other
+    // lane goes colour-when-on, so a lit Upcoming lane looked like a switched-off one. It gets the accent here
+    // and stays grey in the listing, because the two greys were never saying the same thing.
+    {key:"upcoming",  label:"Upcoming",  cd:"var(--accent)", status:["upcoming"],
+     sub:"Announced, not in cinemas yet.", notifySay:"when it reaches a cinema", alerts:{cinema:true},
+     // CAS-242: the two extra moments an UNRELEASED film can have. Both are computed from something real —
+     // one from the day a title first reaches Cascade, one from its own published opening date — and the
+     // monitor fires them. Neither is on by default for an agent that predates this screen: arming a new
+     // alert on an existing agent's behalf would be the app deciding to email someone who never asked.
+     subs:[
+       {key:"announced",  label:"When announced",
+        sub:"The day a new film that matches this agent first reaches Cascade — the earliest anyone can know.",
+        alerts:{announced:true}},
+       {key:"opens_soon", label:"Opening next week",
+        sub:`A week out from its published opening date${""}.`,
+        alerts:{opens_soon:true}},
+     ]},
     {key:"in_cinema", label:"In cinema", cd:"var(--amber)", status:["opening_week","in_cinema"],
      sub:"On the big screen right now.", notifySay:"once it's past its opening weekend",
      alerts:{past_opening:true}},
@@ -6658,6 +6708,11 @@ const agentWindow  = (key, kind) => agentWindows(kind).find(w=>w.key===key);
 const winFlags = key => (onbFlow.watch && onbFlow.watch[key]) || {};
 const winOn    = (key, which) => !!winFlags(key)[which];
 const winAny   = key => winOn(key,"list") || winOn(key,"notify");
+// CAS-242: a window's Notify can carry finer moments. They live under the window's own flags so the whole
+// answer stays one JSON-able object, and they only mean anything while Notify itself is on — the sub-switch
+// chooses WHICH moments, it does not turn the bell on behind your back.
+const winSubs  = key => winFlags(key).subs || {};
+const subOn    = (key, sub) => winOn(key,"notify") && !!winSubs(key)[sub];
 // CAS-228: the CAS-160 shape was {laneKey:[optionKeys]}. A saved agent or a localStorage entry from before this
 // change still holds it, so it is converted rather than dropped — an agent that was watching cinema keeps
 // watching cinema. Lists and notifies both come on, because under the old model ticking a window meant both.
@@ -6677,6 +6732,13 @@ function migrateWatch(w){
       });
     } else if(v && typeof v==="object"){               // already the new shape
       out[k]={list:!!v.list, notify:!!v.notify};
+      // CAS-242: sub-moments ride through untouched when present, and are NOT invented when absent. An agent
+      // saved before this screen existed asked for one thing — "tell me when it reaches a cinema" — and
+      // turning two more alerts on for it would be the app deciding to email someone who never asked.
+      if(v.subs && typeof v.subs==="object"){
+        const s={}; Object.keys(v.subs).forEach(k2=>{ s[k2]=!!v.subs[k2]; });
+        if(Object.keys(s).length) out[k].subs=s;
+      }
     }
   });
   return sawOld ? out : (Object.keys(out).length ? out : {});
@@ -6753,22 +6815,49 @@ function drawWatchLanes(){
     const lst=winOn(w.key,"list"), nt=winOn(w.key,"notify");
     const sw=(which,label,on,hint)=>`<button type="button" class="agwt${on?" on":""}" aria-pressed="${on}"
         title="${escA(hint)}" onclick="wwToggleWin('${w.key}','${which}')"><span class="wwb">✓</span>${label}</button>`;
+    // CAS-242: the finer moments appear only once Notify is on, because until then there is no bell for them
+    // to choose between. They are a nested list rather than a third switch on the row: they are not a
+    // separate job the agent does, they are which moments the one bell rings on.
+    const subs = (nt && w.subs && w.subs.length) ? `<div class="agwsubs">
+      <p class="agwsublead">Tell me ${esc(w.notifySay)}, and also:</p>
+      ${w.subs.map(s=>`<button type="button" class="agwsubt${subOn(w.key,s.key)?" on":""}"
+          aria-pressed="${subOn(w.key,s.key)}" onclick="wwToggleSub('${w.key}','${s.key}')">
+          <span class="wwb">✓</span><span class="agwsubx"><b>${esc(s.label)}</b>
+          <i>${esc(s.sub)}</i></span></button>`).join("")}
+      </div>` : "";
     return `<div class="wwlane${(lst||nt)?" on":""}" style="--wwc:${w.cd}">
       <div class="wwhead"><span class="cd"></span><span class="wwn">${esc(w.label)}</span></div>
       <p class="agwsub">${esc(w.sub)}</p>
       <div class="agwrow">
         ${sw("list","List", lst, `Include ${w.label.toLowerCase()} films in this agent's list`)}
         ${sw("notify","Notify", nt, `Alert me ${w.notifySay}`)}
-      </div></div>`;
+      </div>${subs}</div>`;
   }).join("");
 }
 // One switch, one meaning. Nothing here arms anything else on your behalf: turning List on does not turn
 // Notify on, which is the whole point of the ticket.
 window.wwToggleWin=(key,which)=>{
-  const cur={list:winOn(key,"list"), notify:winOn(key,"notify")};
+  const cur={list:winOn(key,"list"), notify:winOn(key,"notify"), subs:{...winSubs(key)}};
   cur[which]=!cur[which];
+  // CAS-242: switching Notify on for a window that has finer moments and has never been asked about them
+  // arms all of them — that is the same "everything on, take away what you don't want" assumption the agent
+  // starts with, and the sub-list is right there under the switch. Switching Notify off leaves the choice
+  // alone rather than forgetting it, so turning the bell back on restores what you had.
+  if(which==="notify" && cur.notify && !Object.keys(cur.subs).length){
+    (agentWindow(key)||{}).subs?.forEach(s=>{ cur.subs[s.key]=true; });
+  }
+  if(!Object.keys(cur.subs).length) delete cur.subs;
   onbFlow.watch=onbFlow.watch||{};
   if(cur.list || cur.notify) onbFlow.watch[key]=cur; else delete onbFlow.watch[key];
+  wwChanged(key);
+};
+// One moment, one switch. Turning every sub-moment off does NOT turn the bell off: "tell me when it reaches
+// a cinema, and nothing else" is a real answer, and it is the one the base Notify has always meant.
+window.wwToggleSub=(key,sub)=>{
+  const cur={list:winOn(key,"list"), notify:winOn(key,"notify"), subs:{...winSubs(key)}};
+  cur.subs[sub]=!cur.subs[sub];
+  onbFlow.watch=onbFlow.watch||{};
+  onbFlow.watch[key]=cur;
   wwChanged(key);
 };
 function wwChanged(key){
@@ -6881,7 +6970,11 @@ function onbApply(){
   const off={}; Object.keys(ALERT_DEFAULTS).forEach(k=>{ off[k]=false; });
   d.alerts = off;
   agentWindows(d.kind).forEach(w=>{
-    if(winOn(w.key,"notify") && w.alerts) Object.assign(d.alerts, w.alerts);
+    if(!winOn(w.key,"notify")) return;
+    if(w.alerts) Object.assign(d.alerts, w.alerts);
+    // CAS-242: and the finer moments, each only if it was actually asked for. subOn() already requires
+    // Notify, so a sub-switch left on under a bell you turned off writes nothing.
+    (w.subs||[]).forEach(s=>{ if(subOn(w.key,s.key) && s.alerts) Object.assign(d.alerts, s.alerts); });
   });
   return normCascade(d);
 }
@@ -8065,8 +8158,12 @@ const flowCounted = () => flowList().slice(2);
 // agent lists Upcoming and In cinema and alerts on both moments; a streaming agent lists Rent and Streaming
 // and alerts on both. Both notify flags are on precisely because the two cinema moments belong to the two
 // different windows (see AGENT_WINDOWS) — "In-cinema release + Past-opening-weekend", said as windows.
+// CAS-242 (2): a cinema agent starts with everything on, sub-moments included — a new agent is being briefed
+// by the person who is about to use it, so the assumption is "tell me everything about the big screen" and
+// the screen right there is where they take any of it away.
 const PRIORITY_WATCH = {
-  cinema:{ upcoming:{list:true, notify:true}, in_cinema:{list:true, notify:true} },
+  cinema:{ upcoming:{list:true, notify:true, subs:{announced:true, opens_soon:true}},
+           in_cinema:{list:true, notify:true} },
   stream:{ rent:{list:true, notify:true},     stream:{list:true, notify:true} },
 };
 let flowOn=false;              // inside the wired flow (vs a standalone ?step= preview)
@@ -9739,6 +9836,7 @@ else if(freshFound.length && !openedShared && !$("onb").classList.contains("open
   // the monitor (CAS-84/85). pvod now has a real monitor moment too (hits_pvod, CAS-103) — before
   // that the Purchase bell was UI-only, a switch the daily job could never act on.
   const ALERT_TO_MOMENT = { cinema:"hits_cinema", past_opening:"past_opening_weekend",
+                            announced:"announced", opens_soon:"opens_soon",
                             pvod:"hits_pvod", rental:"hits_rent",
                             included_streaming:"hits_stream" };
   // What we write here is the promise the monitor will keep, so it has to survive the same two

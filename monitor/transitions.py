@@ -18,6 +18,16 @@ A *transition* is one movie crossing into one *moment*. The four moments mirror 
     past_opening_weekend  — today is exactly ``opening_date + N`` days (N=4, tunable). This is
                             NOT a catalogue diff: it's computed from the film's REAL cinema
                             date, so it only ever fires on real dates (honesty guardrail; ref CAS-68).
+    announced             — a title Cascade has never held before arrived, and it is UNRELEASED. Added by
+                            CAS-242 for the cinema agent's Upcoming bell. It is the one moment a first
+                            sighting legitimately IS the news: for every other moment a first sighting would
+                            be reporting state that was simply already true, which is why they are guarded,
+                            but "a film worth knowing about has turned up" is a change from the reader's
+                            side too. What it is NOT is the studio's announcement date — nobody publishes
+                            that — so the front end says "first reaches Cascade" and the email says the same.
+    opens_soon            — today is exactly ``opening_date - N`` days (N=7, tunable). Computed from the
+                            film's own published date, the mirror of past_opening_weekend, and like it it
+                            can only ever fire on a real date.
 
 Honesty guardrail: the three status moments only fire on a *genuine transition* — the film
 must have been in yesterday's catalogue and NOT already in that window. A film's very first
@@ -35,6 +45,7 @@ from typing import Optional
 from poc_pipeline import RENTAL_MAX_PRICE
 
 DEFAULT_WEEKEND_N = 4  # days after opening that "past opening weekend" fires (tunable)
+DEFAULT_SOON_N    = 7  # days BEFORE opening that "opening next week" fires (tunable) — CAS-242
 
 # moment -> the status-set member whose *arrival* triggers it. past_opening_weekend is absent
 # here because it is date-computed, not status-derived.
@@ -44,7 +55,8 @@ _STATUS_MOMENTS = (
     ("hits_rent", "rental"),
     ("hits_stream", "included_streaming"),
 )
-MOMENTS = ("hits_cinema", "hits_pvod", "hits_rent", "hits_stream", "past_opening_weekend")
+MOMENTS = ("hits_cinema", "hits_pvod", "hits_rent", "hits_stream", "past_opening_weekend",
+           "announced", "opens_soon")
 
 
 @dataclass
@@ -138,12 +150,14 @@ def compute_transitions(
     today_movies: list,
     today: _dt.date,
     weekend_n: int = DEFAULT_WEEKEND_N,
+    soon_n: int = DEFAULT_SOON_N,
 ) -> list:
     """Return the list of Transition objects for today.
 
     prev_movies / today_movies : lists of movie records (poc_pipeline shape).
     today                       : the run date, used for the past-opening-weekend computation.
     weekend_n                   : days after opening that past_opening_weekend fires.
+    soon_n                      : days before opening that opens_soon fires.
     """
     prev = {_movie_id(m): m for m in prev_movies}
     transitions: list = []
@@ -163,10 +177,22 @@ def compute_transitions(
                     transitions.append(Transition(mid, m.get("title", ""), moment,
                                                   services=services, price=price, movie=m))
 
-        # --- computed moment: exactly N days past a REAL opening date ---
+        # --- CAS-242: a title Cascade has never held before, and it is not out yet ---
+        # The one moment where a first sighting IS the news rather than state that was already true. It is
+        # deliberately restricted to UNRELEASED titles: a film that turns up already streaming is not an
+        # announcement, it is a gap in yesterday's catalogue, and calling that "announced" would be a claim
+        # about the world made out of a fact about our own polling.
+        if not seen_before and "upcoming" in after:
+            transitions.append(Transition(mid, m.get("title", ""), "announced",
+                                          services=[], price=None, movie=m))
+
+        # --- computed moments: exactly N days either side of a REAL opening date ---
         opened = _parse_date(m.get("cinema_date"))
         if opened is not None and today == opened + _dt.timedelta(days=weekend_n):
             transitions.append(Transition(mid, m.get("title", ""), "past_opening_weekend",
+                                          services=[], price=None, movie=m))
+        if opened is not None and today == opened - _dt.timedelta(days=soon_n):
+            transitions.append(Transition(mid, m.get("title", ""), "opens_soon",
                                           services=[], price=None, movie=m))
 
     return transitions

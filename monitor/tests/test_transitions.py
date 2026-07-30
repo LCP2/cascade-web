@@ -116,10 +116,62 @@ class TransitionTests(unittest.TestCase):
         self.assertIsNone(t.price)
 
     def test_empty_yesterday_is_all_first_sightings(self):
-        # First ever run (no 'yesterday'): nothing is a transition except date-computed weekend.
+        # First ever run (no 'yesterday'): no status moment fires, because a first sighting is not a change.
+        # The date-computed weekend still does, and so would `announced` if the fixture held an unreleased
+        # title — it does not, which is what makes this assertion exact.
         transitions = compute_transitions([], self.today, RUN_DATE)
         pairs = self._pairs(transitions)
         self.assertEqual(pairs, {("5004", "past_opening_weekend")})
+
+
+class TheTwoUpcomingMoments(unittest.TestCase):
+    """CAS-242: the cinema agent's Upcoming bell got two finer moments, and both have to fire on something
+    real. `announced` is the one place a first sighting IS the news; `opens_soon` is a date computation,
+    the mirror of past_opening_weekend."""
+
+    def _t(self, prev, today, date=RUN_DATE, **kw):
+        return {(t.movie_id, t.moment) for t in compute_transitions(prev, today, date, **kw)}
+
+    def test_a_new_unreleased_title_is_announced(self):
+        today = [{"tmdb_id": 11, "title": "New Tentpole", "status": ["upcoming"],
+                  "cinema_date": "2027-01-01", "offers": []}]
+        self.assertIn(("11", "announced"), self._t([], today))
+
+    def test_a_title_we_already_held_is_not_announced_again(self):
+        rec = {"tmdb_id": 11, "title": "New Tentpole", "status": ["upcoming"],
+               "cinema_date": "2027-01-01", "offers": []}
+        self.assertNotIn(("11", "announced"), self._t([rec], [rec]))
+
+    def test_a_new_title_that_is_already_out_is_not_an_announcement(self):
+        # A film that turns up already streaming is a gap in yesterday's catalogue, not news about the world.
+        # Calling that "announced" would be a claim about a studio made out of a fact about our polling.
+        today = [{"tmdb_id": 12, "title": "Old Film", "status": ["included_streaming"],
+                  "cinema_date": "2024-01-01",
+                  "offers": [{"service": "Stan", "type": "sub", "price": None}]}]
+        self.assertEqual(self._t([], today), set())
+
+    def test_opens_soon_fires_exactly_a_week_out(self):
+        rec = {"tmdb_id": 13, "title": "Next Week", "status": ["upcoming"],
+               "cinema_date": (RUN_DATE + _dt.timedelta(days=7)).isoformat(), "offers": []}
+        self.assertIn(("13", "opens_soon"), self._t([rec], [rec]))
+        # …and on no other day, either side of it.
+        for off in (6, 8, 0, 30):
+            rec2 = dict(rec, cinema_date=(RUN_DATE + _dt.timedelta(days=off)).isoformat())
+            self.assertNotIn(("13", "opens_soon"), self._t([rec2], [rec2]),
+                             f"opens_soon fired {off} days out")
+
+    def test_opens_soon_is_tunable_like_its_mirror(self):
+        rec = {"tmdb_id": 14, "title": "Fortnight", "status": ["upcoming"],
+               "cinema_date": (RUN_DATE + _dt.timedelta(days=14)).isoformat(), "offers": []}
+        self.assertIn(("14", "opens_soon"), self._t([rec], [rec], soon_n=14))
+
+    def test_neither_moment_is_ever_invented_from_a_missing_date(self):
+        rec = {"tmdb_id": 15, "title": "No Date", "status": ["upcoming"], "cinema_date": None, "offers": []}
+        pairs = self._t([rec], [rec])
+        self.assertNotIn(("15", "opens_soon"), pairs)
+        # …though a brand-new dateless unreleased title is still an announcement: that claim rests on the
+        # title arriving, not on any date.
+        self.assertIn(("15", "announced"), self._t([], [rec]))
 
 
 if __name__ == "__main__":

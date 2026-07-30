@@ -8,6 +8,8 @@ per-movie *transitions* (the "moments" a user's Cascade can alert on):
     newly on a streaming service   -> hits_stream
     theatrical opening date reached -> hits_cinema
     today == opening_date + N (=4)  -> past_opening_weekend   (honest, computed)
+    today == opening_date - N (=7)  -> opens_soon             (honest, computed)
+    a title we have never held, unreleased -> announced
 
 Matching those transitions to users' Cascades, de-duping, and emailing land in the
 later stories (CAS-85 / CAS-86); this package does no network I/O and no writes.

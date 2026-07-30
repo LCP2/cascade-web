@@ -58,6 +58,10 @@ def moment_phrase(transition) -> str:
         return "In cinemas now"
     if m == "past_opening_weekend":
         return "Past its opening weekend"
+    if m == "announced":
+        return "Newly announced"
+    if m == "opens_soon":
+        return "In cinemas next week"
     return m
 
 
@@ -68,6 +72,10 @@ _MOMENT_NOTE = {
     "hits_rent": "It's reached the standard rental window.",
     "hits_cinema": "Its cinema run has begun.",
     "past_opening_weekend": "The opening weekend has passed — often a quieter time to see it.",
+    # CAS-242. "Reached Cascade", not "was announced by the studio": nobody publishes an announcement date,
+    # so this line says the thing we actually know instead of the thing it would be nicer to claim.
+    "announced": "It has just reached Cascade, and it matches what you asked for.",
+    "opens_soon": "Its published opening date is a week away.",
 }
 
 

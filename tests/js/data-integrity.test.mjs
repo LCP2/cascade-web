@@ -272,6 +272,59 @@ test("inferred scale: the card says a band and never a dollar figure", () => {
   assert.ok(!E.budgetCell(known).includes("≈"), `${known.title} has a real budget and is being hedged`);
 });
 
+// ---- 3c. A BELL ONLY PROMISES WHAT THE MONITOR CAN FIRE (CAS-242) ---------------------------------------
+// Two new Upcoming moments landed with this ticket, and the property that has to hold for all seven is the
+// one CAS-103 established: an alert key is a promise, so it must map to a moment the daily job computes, be
+// reachable for the agent's own scope, and be settable from the screen that claims to set it.
+test("alerts: every alert key has a name, a moment and a place in the defaults", () => {
+  for(const k of Object.keys(E.ALERT_DEFAULTS)){
+    assert.ok(E.ALERT_SHORT[k], `alert ${k} has no short name — the summary line would print undefined`);
+    assert.ok(E.ALERT_MOMENT[k], `alert ${k} has no moment phrase — the agent's promise would be unsayable`);
+  }
+  for(const k of Object.keys(E.ALERT_SHORT)) assert.ok(k in E.ALERT_DEFAULTS,
+    `alert ${k} is named but has no default — normCascade would never fill it in`);
+});
+
+test("alerts: an Upcoming moment is only reachable for an agent that watches Upcoming", () => {
+  const cinema = E.normCascade({ status: ["upcoming", "opening_week", "in_cinema"] });
+  const later  = E.normCascade({ status: ["rental", "included_streaming"] });
+  for(const k of ["announced", "opens_soon"]){
+    assert.ok(E.reachableRows(cinema).has(k), `${k} is unreachable for an agent watching Upcoming`);
+    assert.ok(!E.reachableRows(later).has(k),
+      `${k} is offered to a streaming agent, which has never met the film before it opens`);
+  }
+});
+
+test("alerts: a sub-moment writes an alert only when its own bell is on", () => {
+  const win = E.agentWindow("upcoming", "cinema");
+  assert.ok(win && win.subs && win.subs.length === 2, "the Upcoming window lost its finer moments");
+  for(const s of win.subs){
+    assert.ok(s.alerts && Object.keys(s.alerts).length === 1, `${s.key} arms no alert`);
+    const key = Object.keys(s.alerts)[0];
+    assert.ok(key in E.ALERT_DEFAULTS, `${s.key} arms ${key}, which is not an alert the app knows`);
+    assert.equal(E.ALERT_DEFAULTS[key], false,
+      `${key} defaults ON — an agent built in the editor would start emailing about it unasked`);
+    assert.ok(s.sub && s.sub.length > 20, `${s.key} does not say what it actually fires on`);
+  }
+  // A cinema agent starts with everything on, sub-moments included — the ticket's stated assumption.
+  const seed = E.PRIORITY_WATCH.cinema.upcoming;
+  assert.ok(seed.notify && seed.subs, "a new cinema agent no longer starts with the Upcoming bell on");
+  for(const s of win.subs) assert.equal(seed.subs[s.key], true,
+    `a new cinema agent starts with ${s.key} off, against the ticket's everything-on assumption`);
+});
+
+test("alerts: a saved agent from before this screen is never armed on its behalf", () => {
+  // migrateWatch is the only door an old agent comes through, and it must not invent a sub-moment: the
+  // person asked for one bell and would start receiving three.
+  const old = E.migrateWatch({ upcoming: { list: true, notify: true } });
+  assert.deepEqual(Object.keys(old.upcoming).sort().join(","), "list,notify",
+    `an agent saved before CAS-242 came back carrying ${JSON.stringify(old.upcoming)}`);
+  // …and one saved since round-trips exactly.
+  const now = E.migrateWatch({ upcoming: { list: true, notify: true, subs: { announced: true, opens_soon: false } } });
+  assert.equal(now.upcoming.subs.announced, true);
+  assert.equal(now.upcoming.subs.opens_soon, false);
+});
+
 // ---- 4. COUNTS HOLD ACROSS A WIDER MATRIX THAN THE PRESETS ----------------------------------------------
 // The presets are eleven points in a space a person can move freely around. A count bug that only appears
 // once someone has touched a dial would pass every preset-shaped test, so this walks each preset with each
