@@ -1363,24 +1363,24 @@
   .wwlane{border:1px solid var(--line);border-radius:14px;background:var(--panel2);margin-bottom:10px;
     overflow:hidden;transition:border-color .16s}
   .wwlane.on{border-color:var(--wwc)}
-  .wwhead{display:flex;align-items:center;gap:11px;width:100%;text-align:left;cursor:pointer;background:none;
-    border:0;padding:13px 14px;color:var(--ink);font-family:inherit;font-size:15px;font-weight:700}
+  .wwhead{display:flex;align-items:center;gap:11px;width:100%;text-align:left;
+    padding:13px 14px 8px;color:var(--ink);font-family:inherit;font-size:15px;font-weight:700}
   .wwhead .cd{width:10px;height:10px;border-radius:50%;background:var(--wwc);flex:0 0 auto}
   .wwhead .wwn{flex:1;min-width:0}
-  .wwtick{width:24px;height:24px;border-radius:7px;border:1.5px solid var(--line);background:var(--panel);
-    display:grid;place-items:center;font-size:13px;font-weight:800;color:transparent;flex:0 0 auto}
-  .wwlane.on .wwtick{background:var(--wwc);border-color:var(--wwc);color:#0b1016}
-  .wwopts{display:none;padding:2px 14px 12px 35px}
-  .wwlane.on .wwopts{display:block}
-  .wwnl{color:var(--faint);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
-    margin:0 0 4px}
-  .wwopt{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:none;border:0;
-    padding:7px 0;color:var(--dim);font-family:inherit;font-size:13px;cursor:pointer}
-  .wwopt .wwb{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line);flex:0 0 auto;
-    display:grid;place-items:center;font-size:10px;font-weight:800;color:transparent}
-  .wwopt.on{color:var(--ink)}
-  .wwopt.on .wwb{background:var(--wwc);border-color:var(--wwc);color:#0b1016}
-  .wwhead:focus-visible,.wwopt:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:8px}
+  /* CAS-228: the switches sit on the FACE of the window card, side by side, instead of one revealing the
+     other. Nesting notify inside a lane-tick made "list these but don't ping me" unexpressible; every
+     combination of the two is a real state, so both are always reachable and the card lights when either
+     is on. .wwtick and the head's button behaviour are gone with the lane toggle they belonged to. */
+  .agwsub{margin:0 14px 9px 35px;color:var(--dim);font-size:12.5px;line-height:1.45}
+  .agwrow{display:flex;gap:8px;padding:0 14px 13px 35px}
+  .agwt{display:flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:8px 13px;color:var(--dim);font-family:inherit;font-size:13px;font-weight:600;
+    cursor:pointer}
+  .agwt .wwb{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--line);flex:0 0 auto;
+    display:grid;place-items:center;font-size:9px;font-weight:800;color:transparent}
+  .agwt.on{color:var(--ink);border-color:var(--wwc)}
+  .agwt.on .wwb{background:var(--wwc);border-color:var(--wwc);color:#0b1016}
+  .agwt:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   /* The deferred ask, stated plainly rather than dressed as a warning — we are telling them what is still
      missing, not blocking them on it (buildspec §8: only tappable things get a box). */
   .wwfoot{display:flex;align-items:flex-start;gap:8px;color:var(--faint);font-size:11.5px;line-height:1.45;
@@ -3687,7 +3687,12 @@ const settleFoundView = () => { heldOpen.clear(); };
 // a film landing somewhere you can't watch so it can MUTE it with a reason, but the list you read is the
 // list you can act on — and "I'll only put films in front of you that you can actually watch" is a promise
 // the app makes out loud.
-const listedBy = (m,c) => matchesCriteria(m, {...c, status:[]}) && inScope(m,c);
+// CAS-228: the listing shows the windows you asked to SEE, which is not the same set as the windows the agent
+// follows. An agent notifying on a window it doesn't list must still watch that window (or the alert could
+// never fire), so `status` keeps it and `listStatus` is what decides whether it appears here. An agent with no
+// listStatus — anything built before this screen existed — lists everything it watches, as it always did.
+const listWindowOK = (m,c) => !(c.listStatus||[]).length || c.listStatus.includes(primaryStatus(m));
+const listedBy = (m,c) => matchesCriteria(m, {...c, status:[]}) && inScope(m,c) && listWindowOK(m,c);
 function scopeRows(){
   const c=activeCascade();
   // No Cascade open = the All card = the catalogue itself, which is what that card says it is.
@@ -4028,6 +4033,10 @@ const yearCount = y => MOVIES.filter(m=>yearOf(m)===y).length;
 
 function normCascade(c){
   c.status = c.status||[];
+  // CAS-228: the windows the agent LISTS, which may be narrower than the windows it watches. [] means the
+  // agent never singled any out and lists everything it watches — the behaviour every agent had before this
+  // field existed, so an old agent needs no migration to keep looking the same.
+  c.listStatus = c.listStatus||[];
   // CAS-182: genre / lang / age carry THREE states now, the same three the taste-baseline rows have used
   // since CAS-165 — null = explicitly none (nothing qualifies) · [] = the filter is off · [a,b] = exactly
   // those. `||[]` would flatten null back to "off", which is the bug CAS-165 fixed on the baseline: the
@@ -5095,6 +5104,9 @@ function commitDraft(){
     awards:draft.awards, myServices:{...draft.myServices},
     excludeWatched:draft.excludeWatched, excludeBlocked:draft.excludeBlocked,
     sort:draft.sort||"imdb", alerts:draft.alerts, watchWindows:draft.watchWindows,
+    // CAS-228: listStatus travels with status. Left out, the agent on disk would watch the right windows and
+    // list all of them, so turning List off for one window would appear to work and then not survive a save.
+    listStatus:draft.listStatus,
     yearStop:draft.yearStop, kind:draft.kind});
   normCascade(c);
   if(isNew) cascades.push(c);
@@ -6335,69 +6347,116 @@ const onbFlow = {draft:null, name:ONB_DEFAULT_NAME, defaultName:ONB_DEFAULT_NAME
                  barTouched:false, barAutoRelaxed:null,   // CAS-158 first-open state
                  watch:{}};                                // CAS-160 viewing windows: {lane: [optKey,…]}
 
-// ---- Where & when you'll watch (CAS-160) ----------------------------------------------------------------
-// The model change: availability stops being a fixed property of the preset and becomes the user's own
-// choice. Three lanes, in the cascade's own stage colours, each holding the moments you can be told about.
+// ---- Agent settings: the windows this agent's TYPE has (CAS-160, rebuilt by CAS-228) --------------------
+// CAS-160 made availability the user's choice rather than a property of the preset. It modelled that as three
+// cascade-stage lanes (Cinema / Rent / Streaming), each of which REVEALED a list of "notify me" radios once
+// ticked. Two things were wrong with that, and CAS-228 fixes both:
 //
-// Every option maps to REAL pipeline statuses (`status`) and to the alert keys the app already ships
-// (`alerts`), so nothing here is a decorative tickbox — `watchStatuses()` feeds the agent's own status
-// filter, which is what the counts on this screen are computed from. The finer windows fold in as the
-// ticket specifies: Upcoming is Cinema's announced/1-month/1-week, and PVOD is Rent's "for purchase".
+//   · it showed every lane to every agent. A cinema agent was offered Rent and Streaming — windows it has no
+//     business in — and a streaming agent was offered Upcoming and Cinema.
+//   · it conflated LISTING with NOTIFYING. Ticking a lane did both at once, so "put in-cinema films in my
+//     list but don't ping me about them" was not expressible, and neither was the reverse.
 //
-// A note on the three cinema pre-release options: they all resolve to the SAME status (`upcoming`), because
-// "1 month out" is a moment in time, not a window a film sits in. They are captured faithfully and differ
-// only in when the monitor would fire — which is the downstream delivery ticket, not this one. That is also
-// why `alerts` is recorded but NOT written onto the agent here: promising delivery we haven't built would
-// be exactly the fabricated-capability the honesty guardrail forbids.
-const WATCH_LANES = [
-  {key:"cinema", label:"Cinema", cd:"var(--amber)", dflt:"release", opts:[
-    {key:"announced", label:"When announced",       status:["upcoming"],                 alerts:{cinema:true}},
-    {key:"month",     label:"1 month from release", status:["upcoming"],                 alerts:{cinema:true}},
-    {key:"week",      label:"1 week from release",  status:["upcoming"],                 alerts:{cinema:true}},
-    {key:"release",   label:"In cinema release",    status:["opening_week","in_cinema"], alerts:{cinema:true}},
-    {key:"past",      label:"Past opening weekend", status:["opening_week","in_cinema"], alerts:{past_opening:true}},
-  ]},
-  {key:"rent", label:"Rent", cd:"var(--blue)", dflt:"rent", opts:[
-    {key:"purchase", label:"When available for purchase", status:["pvod"],   alerts:{pvod:true}},
-    {key:"rent",     label:"When available for rent",     status:["rental"], alerts:{rental:true}},
-  ]},
-  {key:"stream", label:"Streaming", cd:"var(--green)", dflt:"stream", opts:[
-    {key:"stream", label:"When on streaming", status:["included_streaming"], alerts:{included_streaming:true}},
-  ]},
-];
-const watchLane = k => WATCH_LANES.find(l=>l.key===k);
-// Sets don't survive JSON.stringify, and this state rides to localStorage on the committed agent, so the
-// selection is held as plain arrays throughout.
-const watchOn = (lane,opt) => (onbFlow.watch[lane]||[]).includes(opt);
-const laneOn  = lane => (onbFlow.watch[lane]||[]).length>0;
-// Reading an EXISTING agent's `status` back into lane/option ticks. The presets no longer use this — they
-// carry no status and the door opens blank (Lee's locked decision) — but a draft that already watches
-// something must open on what it watches, or the door would silently widen it the moment it was confirmed.
-// That is the ?step= preview path today, and the editor's when it lands. Empty means "any window", as ever.
-function watchFromStatus(status){
-  const st=new Set(status||[]), w={};
-  WATCH_LANES.forEach(l=>{
-    // `release` and `past` share a status pair; seeding both off one `in_cinema` would silently switch on an
-    // alert the preset never asked for, so only the plain-release option is ever seeded.
-    const picked=l.opts.filter(o=>o.key!=="past" && o.key!=="month" && o.key!=="week"
-                                  && o.status.some(s=>st.has(s)));
-    if(picked.length) w[l.key]=picked.map(o=>o.key);
+// So: the windows are per agent TYPE, and each window carries two independent switches. `list` is what the
+// agent puts in its listing (CAS-227); `notify` is what the daily monitor is allowed to alert on (CAS-185).
+// Every window still maps to REAL pipeline statuses and to the alert keys the app already ships, so nothing
+// here is a decorative tickbox.
+//
+// On the notify mapping: the big screen has exactly two moments the monitor can compute — a film REACHING a
+// cinema (hits_cinema) and a film being PAST its opening weekend (past_opening_weekend). They belong to
+// different windows, which is why they land one each rather than both on the cinema row: if you are watching
+// an Upcoming film, the moment you want is "it's out"; if it is already on a screen, the only moment left is
+// "the crowds have gone". Nothing is invented — there is no "announced" moment because nobody publishes the
+// date a film is announced, so Upcoming's notify is the release, said honestly.
+const AGENT_WINDOWS = {
+  cinema: [
+    {key:"upcoming",  label:"Upcoming",  cd:"var(--grey)",  status:["upcoming"],
+     sub:"Announced, not in cinemas yet.", notifySay:"when it reaches a cinema", alerts:{cinema:true}},
+    {key:"in_cinema", label:"In cinema", cd:"var(--amber)", status:["opening_week","in_cinema"],
+     sub:"On the big screen right now.", notifySay:"once it's past its opening weekend",
+     alerts:{past_opening:true}},
+  ],
+  stream: [
+    {key:"rent",   label:"Rent",      cd:"var(--blue)",  status:["rental"],
+     sub:"Available to rent, around $7.", notifySay:"when it drops to rent", alerts:{rental:true}},
+    {key:"stream", label:"Streaming", cd:"var(--green)", status:["included_streaming"],
+     sub:"Included on a subscription.", notifySay:"when it lands on streaming",
+     alerts:{included_streaming:true}},
+  ],
+};
+// Which set of windows the agent on screen has. Reads the draft's own kind first (an agent opened from the
+// Briefing has one and there may be no flow around it), then the flow's answer — the same order missionKind
+// uses, for the same reason.
+const agentWindowKind = () => {
+  const k=(onbFlow.draft||{}).kind;
+  return (k==="cinema"||k==="stream") ? k : (flowKind==="stream" ? "stream" : "cinema");
+};
+const agentWindows = kind => AGENT_WINDOWS[kind || agentWindowKind()] || AGENT_WINDOWS.cinema;
+const agentWindow  = (key, kind) => agentWindows(kind).find(w=>w.key===key);
+// Sets don't survive JSON.stringify and this state rides to localStorage on the committed agent, so a window's
+// pair of switches is held as a plain object throughout: {list:bool, notify:bool}.
+const winFlags = key => (onbFlow.watch && onbFlow.watch[key]) || {};
+const winOn    = (key, which) => !!winFlags(key)[which];
+const winAny   = key => winOn(key,"list") || winOn(key,"notify");
+// CAS-228: the CAS-160 shape was {laneKey:[optionKeys]}. A saved agent or a localStorage entry from before this
+// change still holds it, so it is converted rather than dropped — an agent that was watching cinema keeps
+// watching cinema. Lists and notifies both come on, because under the old model ticking a window meant both.
+const OLD_LANE_MAP = {cinema:["upcoming","in_cinema"], rent:["rent"], stream:["stream"]};
+const OLD_OPT_WIN  = {announced:"upcoming", month:"upcoming", week:"upcoming",
+                      release:"in_cinema", past:"in_cinema", purchase:"rent", rent:"rent", stream:"stream"};
+function migrateWatch(w){
+  if(!w || typeof w!=="object") return {};
+  const out={};
+  let sawOld=false;
+  Object.keys(w).forEach(k=>{
+    const v=w[k];
+    if(Array.isArray(v)){                              // old shape: lane -> [option keys]
+      sawOld=true;
+      (v.length ? v.map(o=>OLD_OPT_WIN[o]) : OLD_LANE_MAP[k]||[]).forEach(win=>{
+        if(win) out[win]={list:true, notify:true};
+      });
+    } else if(v && typeof v==="object"){               // already the new shape
+      out[k]={list:!!v.list, notify:!!v.notify};
+    }
   });
+  return sawOld ? out : (Object.keys(out).length ? out : {});
+}
+// Reading an EXISTING agent's `status` back into window switches, for a draft that arrives with windows but no
+// saved switch state (the ?step= preview path, and an agent saved before CAS-228). A window whose status the
+// agent watches comes on for BOTH, because that is all its `status` can tell us — it is one field and it was
+// doing both jobs. `listStatus`, when the agent has it, is the finer answer and wins.
+function watchFromStatus(status, listStatus){
+  const st=new Set(status||[]), ls=listStatus&&listStatus.length ? new Set(listStatus) : null, w={};
+  Object.keys(AGENT_WINDOWS).forEach(kind=>AGENT_WINDOWS[kind].forEach(win=>{
+    if(w[win.key] || !win.status.some(s=>st.has(s))) return;
+    w[win.key]={list: ls ? win.status.some(s=>ls.has(s)) : true, notify:true};
+  }));
   return w;
 }
-// …and the way back out: the ticked options ARE the agent's availability filter now. Empty = every window,
-// which is the honest reading of "you haven't told me where you watch yet".
-// CAS-221: the mapping is its own function so the pick-agent card can read the SAME one. The card used to
-// compute no status at all; now it maps the windows it would seed through this, which is why the two counts
-// can no longer disagree — there is one translation from ticks to statuses, with one caller each side.
+// …and the way back out. Two different questions, so two different functions.
+// The agent's WATCH scope is every window it has a job in — listing or notifying. It cannot be list-only:
+// a window you want alerts from is a window the agent has to be following, or the alert could never fire.
+// Empty = every window, which is the honest reading of "you haven't told me where you watch yet".
+// CAS-221: the mapping is its own function so the pick-agent card can read the SAME one.
 function watchToStatuses(watch){
-  const out=new Set(), w=watch||{};
-  WATCH_LANES.forEach(l=>(w[l.key]||[]).forEach(k=>{
-    const o=l.opts.find(x=>x.key===k); if(o) o.status.forEach(s=>out.add(s));
+  const out=new Set(), w=migrateWatch(watch);
+  Object.keys(AGENT_WINDOWS).forEach(kind=>AGENT_WINDOWS[kind].forEach(win=>{
+    const f=w[win.key]; if(f && (f.list || f.notify)) win.status.forEach(s=>out.add(s));
+  }));
+  return [...out];
+}
+// …and the LISTING scope is only the windows you asked to see. Empty means "no window was singled out", which
+// listedBy reads as "list whatever the agent watches" — the pre-CAS-228 behaviour, and the right answer for an
+// agent that has never been through this screen.
+function listToStatuses(watch){
+  const out=new Set(), w=migrateWatch(watch);
+  Object.keys(AGENT_WINDOWS).forEach(kind=>AGENT_WINDOWS[kind].forEach(win=>{
+    if(w[win.key] && w[win.key].list) win.status.forEach(s=>out.add(s));
   }));
   return [...out];
 }
 function watchStatuses(){ return watchToStatuses(onbFlow.watch); }
+function listStatuses(){  return listToStatuses(onbFlow.watch); }
 // Persisted per agent, so backing out to the shortlist and returning keeps your answer — but picking a
 // DIFFERENT agent gets that agent's own seed rather than the last one's leftovers.
 const WATCH_KEY="cascade_watchwins";
@@ -6407,55 +6466,55 @@ function saveWatch(){
 function loadWatch(agentKey){
   try{
     const s=JSON.parse(localStorage.getItem(WATCH_KEY)||"null");
-    if(s && s.agent===agentKey && s.watch && typeof s.watch==="object") return s.watch;
+    if(s && s.agent===agentKey && s.watch && typeof s.watch==="object") return migrateWatch(s.watch);
   }catch(e){}
   return null;
 }
-// Plain-English, read off the same state the door edits — so the hub row can never advertise something the
-// screen behind it doesn't say.
+// Plain-English, read off the same state the screen edits — so the Briefing row can never advertise something
+// the screen behind it doesn't say. CAS-228: it has two things to report now, not one, and it says both:
+// what gets listed and what gets alerted are separate answers and the summary must not merge them.
 function hubWatchSummary(){
-  const on=WATCH_LANES.filter(l=>laneOn(l.key));
-  // Blank is now the starting state, so this row is what the door says before anyone opens it. Once the user
-  // HAS been through and left it blank, "not set yet" would be false — they set it, to everything.
-  if(!on.length) return onbDone.watch ? "Any window — tell me whenever" : "Any window — not set yet";
-  const n=on.reduce((a,l)=>a+(onbFlow.watch[l.key]||[]).length, 0);
-  return esc(`${on.map(l=>l.label).join(" · ")} — ${n} alert${n===1?"":"s"}`);
+  const wins=agentWindows();
+  const listed=wins.filter(w=>winOn(w.key,"list")), noted=wins.filter(w=>winOn(w.key,"notify"));
+  if(!listed.length && !noted.length){
+    return onbDone.watch ? "Nothing listed or alerted" : "Any window — not set yet";
+  }
+  const bits=[];
+  bits.push(listed.length ? `Lists ${listed.map(w=>w.label).join(" + ")}` : "Lists nothing");
+  bits.push(noted.length ? `alerts on ${noted.map(w=>w.label).join(" + ")}` : "no alerts");
+  return esc(bits.join(" · "));
 }
+// CAS-228: one card per window this agent's type has, both switches on the face of it. They are drawn side by
+// side rather than one revealing the other, because every combination is a real state a person might want —
+// including list-without-alerts, which the old nested design could not express at all.
 function drawWatchLanes(){
   const box=$("wwLanes"); if(!box) return;
-  box.innerHTML = WATCH_LANES.map(l=>{
-    const on=laneOn(l.key);
-    return `<div class="wwlane${on?" on":""}" style="--wwc:${l.cd}">
-      <button type="button" class="wwhead" aria-pressed="${on}" onclick="wwToggleLane('${l.key}')">
-        <span class="cd"></span><span class="wwn">${esc(l.label)}</span><span class="wwtick">✓</span></button>
-      <div class="wwopts">
-        <p class="wwnl">Notify me</p>
-        ${l.opts.map(o=>{
-          const oo=watchOn(l.key,o.key);
-          return `<button type="button" class="wwopt${oo?" on":""}" aria-pressed="${oo}"
-            onclick="wwToggleOpt('${l.key}','${o.key}')"><span class="wwb">✓</span>${esc(o.label)}</button>`;
-        }).join("")}
+  box.innerHTML = agentWindows().map(w=>{
+    const lst=winOn(w.key,"list"), nt=winOn(w.key,"notify");
+    const sw=(which,label,on,hint)=>`<button type="button" class="agwt${on?" on":""}" aria-pressed="${on}"
+        title="${escA(hint)}" onclick="wwToggleWin('${w.key}','${which}')"><span class="wwb">✓</span>${label}</button>`;
+    return `<div class="wwlane${(lst||nt)?" on":""}" style="--wwc:${w.cd}">
+      <div class="wwhead"><span class="cd"></span><span class="wwn">${esc(w.label)}</span></div>
+      <p class="agwsub">${esc(w.sub)}</p>
+      <div class="agwrow">
+        ${sw("list","List", lst, `Include ${w.label.toLowerCase()} films in this agent's list`)}
+        ${sw("notify","Notify", nt, `Alert me ${w.notifySay}`)}
       </div></div>`;
   }).join("");
 }
-// A lane IS its ticked windows — there is no "on with nothing selected", because that state would promise a
-// lane and then never fire. So switching a lane on arms its plain-release window, and un-ticking the last
-// window switches the lane back off. One meaning, whichever control you reach for.
-window.wwToggleLane=key=>{
-  const l=watchLane(key); if(!l) return;
-  onbFlow.watch[key] = laneOn(key) ? [] : [l.dflt];
-  wwChanged(key);
-};
-window.wwToggleOpt=(key,opt)=>{
-  const cur=(onbFlow.watch[key]||[]).slice(), i=cur.indexOf(opt);
-  if(i>=0) cur.splice(i,1); else cur.push(opt);
-  onbFlow.watch[key]=cur;
+// One switch, one meaning. Nothing here arms anything else on your behalf: turning List on does not turn
+// Notify on, which is the whole point of the ticket.
+window.wwToggleWin=(key,which)=>{
+  const cur={list:winOn(key,"list"), notify:winOn(key,"notify")};
+  cur[which]=!cur[which];
+  onbFlow.watch=onbFlow.watch||{};
+  if(cur.list || cur.notify) onbFlow.watch[key]=cur; else delete onbFlow.watch[key];
   wwChanged(key);
 };
 function wwChanged(key){
   saveWatch();
-  logEvent("watch_windows_changed",{lane:key, on:laneOn(key), n:(onbFlow.watch[key]||[]).length});
-  drawWatchLanes();   // the lane's own open/closed state and its ticks
+  logEvent("watch_windows_changed",{window:key, list:winOn(key,"list"), notify:winOn(key,"notify")});
+  drawWatchLanes();   // the window's own lit state and its two switches
   onbRefresh();       // …and the CTA's live count, which really did just move
 }
 
@@ -6533,9 +6592,13 @@ function onbApply(){
   d.selOr = !!onbFlow.selOr;
   // CAS-160: availability is the user's now, so the viewing door owns `status` the same way the dials own the
   // rating bars and the taste baseline owns genre/year/language/age — one screen per axis, no second writer.
-  // `watchWindows` carries the finer moments (1 month out, past opening weekend) that `status` cannot express;
-  // it rides on the agent so the monitor can read it once delivery is built.
+  // `watchWindows` carries the per-window switch state so the screen round-trips exactly what you set.
+  // CAS-228: `status` is the WATCH scope — every window with a job, listing or notifying — and `listStatus` is
+  // the narrower set you asked to actually see. They have to be two fields: a window you want alerts from is a
+  // window the agent must follow, so it belongs in `status`, but it does not belong in the listing unless you
+  // said List. One field could only ever answer one of those two questions.
   d.status = watchStatuses();
+  d.listStatus = listStatuses();
   d.watchWindows = JSON.parse(JSON.stringify(onbFlow.watch||{}));
   // CAS-197: the windows you picked ARE the alerts the daily job fires on. CAS-160 recorded them and
   // deliberately did not write them, because promising delivery we had not built would have been a
@@ -6545,11 +6608,13 @@ function onbApply(){
   // CAS-199: "only show films on my services" is a per-window scope on the agent, and it is the switch
   // that says so — naming your services alone never narrows anything.
   if(d.kind==="stream") HOME_KEYS.forEach(k=>{ d.myServices[k] = !!prefs.on; });
+  // CAS-228: only the NOTIFY switches write alerts. Under CAS-160 a ticked window did both jobs, so listing a
+  // window silently armed its bell; now a window you only wanted to see stays silent, and a window you only
+  // wanted to hear about never has to appear in the list.
   d.alerts = {...ALERT_DEFAULTS, ...(d.alerts||{})};
-  WATCH_LANES.forEach(l=>(onbFlow.watch[l.key]||[]).forEach(k=>{
-    const o=l.opts.find(x=>x.key===k);
-    if(o && o.alerts) Object.assign(d.alerts, o.alerts);
-  }));
+  agentWindows(d.kind).forEach(w=>{
+    if(winOn(w.key,"notify") && w.alerts) Object.assign(d.alerts, w.alerts);
+  });
   return normCascade(d);
 }
 const onbCount = () => watchCount(onbApply());
@@ -7326,10 +7391,15 @@ const SHARP_STEPS = {
       // Both strings are VERBATIM from the ticket and are deliberately written on one source line each: wrapped
       // in the source they wrap in the built index.html too, and a wrapped string is not the string that was
       // signed off — searching the shipped page for it comes up empty (which is exactly how CAS-160 came back).
+      // CAS-228: two switches per window, and the subtitle has to teach the difference in one line, because
+      // "List" and "Notify" only read as independent if you are told they are. The old subtitle described a
+      // screen that did both at once and is no longer true of this one.
+      const stream = agentWindowKind()==="stream";
       return `<h2 class="osh">Where &amp; when you'll watch</h2>
-        <p class="ossub">Your agent will find movies that meet your criteria, and alert you when they become available on your chosen viewing services.</p>
+        <p class="ossub">Two separate choices per window: <b>List</b> puts those films in this agent's list, and
+          <b>Notify</b> tells you when one arrives. Neither implies the other.</p>
         <div id="wwLanes"></div>
-        <p class="wwfoot"><span>ℹ️</span><span>To complete these alerts we'll need to know your current rental and streaming services — we'll ask for this later.</span></p>`;
+        ${stream ? `<p class="wwfoot"><span>ℹ️</span><span>To complete these alerts we'll need to know your current rental and streaming services — we'll ask for this later.</span></p>` : ""}`;
     },
     wire(){ drawWatchLanes(); },
   },
@@ -7705,7 +7775,14 @@ const flowCounted = () => flowList().slice(2);
 // CAS-197: a cinema agent starts with BOTH cinema moments on — the film reaching a cinema, and the film
 // getting past its opening weekend. They are the two the monitor actually has moments for (hits_cinema,
 // past_opening_weekend), and they answer two different questions: "it's on" and "the crowds have gone".
-const PRIORITY_WATCH = { cinema:{cinema:["release","past"]}, stream:{rent:["rent"], stream:["stream"]} };
+// CAS-228/229: these are the defaults onboarding applies WITHOUT asking, in the new per-window shape. A cinema
+// agent lists Upcoming and In cinema and alerts on both moments; a streaming agent lists Rent and Streaming
+// and alerts on both. Both notify flags are on precisely because the two cinema moments belong to the two
+// different windows (see AGENT_WINDOWS) — "In-cinema release + Past-opening-weekend", said as windows.
+const PRIORITY_WATCH = {
+  cinema:{ upcoming:{list:true, notify:true}, in_cinema:{list:true, notify:true} },
+  stream:{ rent:{list:true, notify:true},     stream:{list:true, notify:true} },
+};
 let flowOn=false;              // inside the wired flow (vs a standalone ?step= preview)
 let flowKind="cinema";         // what the priority screen answered
 let flowSlideT=null;
@@ -7754,10 +7831,12 @@ function briefOpen(id){
   onbFlow.buzzStop    = c.selBuzz    || 0;
   onbFlow.selOr       = !!c.selOr;
   onbFlow.barTouched  = true; onbFlow.barAutoRelaxed=null;   // a saved bar is already the user's decision
-  // watchWindows carries the finer moments (1 month out, past opening weekend) that `status` cannot
-  // express, so it wins where it exists; an agent saved before CAS-160 is read back off its status.
-  const w=c.watchWindows||{};
-  onbFlow.watch = Object.keys(w).length ? JSON.parse(JSON.stringify(w)) : watchFromStatus(c.status);
+  // watchWindows carries the per-window List/Notify switches that `status` cannot express, so it wins where it
+  // exists; an agent saved before CAS-160 is read back off its status. CAS-228: migrateWatch converts a
+  // CAS-160-era watchWindows on the way in, so an existing agent opens on what it was actually doing rather
+  // than on a blank screen, and watchFromStatus reads listStatus too where the agent has one.
+  const w=migrateWatch(c.watchWindows||{});
+  onbFlow.watch = Object.keys(w).length ? w : watchFromStatus(c.status, c.listStatus);
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("briefing_opened",{id});
   gotoStep("briefing","none");
@@ -8112,7 +8191,7 @@ function openOnbStep(key, agentKey){
   onbFlow.barTouched=false; onbFlow.barAutoRelaxed=null;   // CAS-158: a fresh preview is a fresh first open
   // CAS-160: seed the viewing box off whatever the seed draft already watches, so a ?step= preview round-trips
   // its own status rather than opening on "any window" and silently widening the draft through onbApply.
-  onbFlow.watch = watchFromStatus(onbFlow.draft.status);
+  onbFlow.watch = watchFromStatus(onbFlow.draft.status, onbFlow.draft.listStatus);
   // The seed draft carries an "above average" IMDb bar of its own, and the sharpening flow's People's-vote
   // dial is the single writer of that axis (same supersede rule genres/year/language/age already follow, and
   // the same thing pickStarter does on the wired path). It used to be zeroed for the selectivity preview
