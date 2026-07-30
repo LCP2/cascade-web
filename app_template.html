@@ -923,13 +923,16 @@
   /* CAS-186: the second door. Quiet — it is the smaller of the two audiences on a first paint — but
      a full-width target, because "I already have an account" is a thing people look for and tap in
      one go rather than hunt for in a corner. */
-  /* A bare [hidden] loses to display:block — the same trap .stephdr[hidden] has. Without this the
-     "Log in" door stayed on screen on a build with no account config, which is the exact thing
-     CAS-186 hid it for. */
-  .splashlogin[hidden]{display:none}
-  .splashlogin{display:block;width:100%;margin-top:12px;padding:13px;border-radius:13px;
-    background:transparent;border:1px solid var(--line);color:var(--dim);
-    font-size:14px;font-weight:600;cursor:pointer}
+  /* CAS-215: no longer hideable. CAS-186 hid this door on a build with no account config, and on
+     production that guard fired — leaving a splash with one button and no way in for a returning
+     user. Tapping it with no config now lands on the honest #authGuest panel, which says in plain
+     words that this build has no account store, so the door opens onto an explanation rather than a
+     wall. Styling follows proto/cascade-08 v0.8.1: light-on-glass rather than dim-grey-on-transparent,
+     because the splash sits over a poster wall and the old treatment read as disabled. */
+  .splashlogin{display:block;width:100%;margin-top:12px;padding:14px;border-radius:14px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.22);color:#fff;
+    font-family:var(--font-display);font-size:15px;font-weight:700;cursor:pointer;
+    backdrop-filter:blur(4px)}
   .splashlogin:hover{border-color:var(--violet);color:var(--ink)}
   .splashlogin:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   @media (prefers-reduced-motion:reduce){ .splashinner{animation:none} }
@@ -2078,7 +2081,7 @@
          Cascades, without walking through a setup you already did. The primary is Sign up because a
          first visit is the common case; Log in is quiet but never hidden. -->
     <button class="splashcta" id="splashCta" type="button">Sign up — build my first agent</button>
-    <button class="splashlogin" id="splashLogin" type="button">Already have an account? Log in</button>
+    <button class="splashlogin" id="splashLogin" type="button">Log in</button>
   </div>
 </div>
 
@@ -5759,14 +5762,11 @@ $("splashLogin").onclick=()=>{
   paintGuestStake();
   openModal($("authModal"));
 };
-// A "Log in" button on a build with no account config is a door onto a wall. The auth module announces
-// whether accounts are available at all; until it says yes, the front door offers only the honest half.
-function paintSplashLogin(){
-  const b=$("splashLogin"); if(!b) return;
-  b.hidden = !(window.CascadeAuth && window.CascadeAuth.enabled);
-}
-paintSplashLogin();
-window.addEventListener("cascade-auth-change", paintSplashLogin);
+// CAS-215: this button is never hidden. CAS-186 gated it on window.CascadeAuth.enabled so a build with
+// no account config wouldn't offer a door onto a wall — but production tripped that guard, and a splash
+// with only "Sign up" strands every returning user. The honest half is not "say nothing": #authGuest
+// already spells out, in the panel this button opens, that the build has no account store and that guest
+// mode is the whole app. So the door always shows, and what's behind it tells the truth either way.
 // What a guest is being asked to hand over, counted off what is actually on this device. Nothing to
 // save is not a reason to say nothing — it is a reason to say nothing about saving.
 function paintGuestStake(){
