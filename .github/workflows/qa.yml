@@ -1,0 +1,70 @@
+# .github/workflows/qa.yml — Codynamics Development Standard (Cascade web)
+# The quality gate. Runs the full verify suite on every push to staging. Green here is the
+# only thing that lets promote.yml ship. Split out of the old release.yml `qa` job unchanged
+# except for name/trigger — same proven toolchain (python + pinned Chromium) and stale-build guard.
+name: qa
+
+on:
+  push:
+    branches: [staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: npm ci
+
+      - name: Install the matching browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Build the app
+        run: python poc_pipeline.py --build-html
+
+      - name: Fail if the committed build was stale
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- index.html; then
+            drift=$(git diff -U0 -- index.html | grep -E '^[+-]' | grep -vE '^[+-]{3}' | grep -vc 'BUILD_INFO' || true)
+            git diff --stat -- index.html
+            if [ "$drift" -gt 0 ]; then
+              echo "::error::index.html is $drift lines behind app_template.html - rebuild and commit it"
+              exit 1
+            fi
+            echo "index.html differs only by its build stamp, which is expected."
+          fi
+
+      - name: Engine invariants + data integrity
+        run: npm run test:engine
+      - name: Catalogue data quality
+        run: npm run test:data
+      - name: Monitor
+        run: |
+          npm run test:monitor
+          python -m monitor --dry-run
+      - name: End to end
+        run: npm run test:e2e
+
+      - name: Keep the report when it goes red
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
