@@ -98,7 +98,7 @@
   header{position:sticky;top:0;z-index:30;background:rgba(10,14,26,.96);backdrop-filter:blur(8px);
     border-bottom:1px solid var(--line);padding:12px 16px 10px}
   /* The identity block is allowed to give way; the action icons are not. Without min-width:0 a flex child
-     never shrinks below its content, so the brand lockup + region + freshness line held their full width and
+     never shrinks below its content, so the brand lockup + freshness line held their full width and
      pushed the icons past the right edge on a 360px phone (CAS-183 added a fourth). Now the freshness line
      ellipsises instead, which is the right thing to lose. */
   .brandrow{display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -110,7 +110,6 @@
   /* Uppercase CASCADE wordmark in Poppins — the mark carries the signature gradient,
      the wordmark stays solid --ink so it clears AA at this size. */
   .brand{font-size:18px;font-weight:700;letter-spacing:1.6px;color:var(--ink);text-transform:uppercase}
-  .region{font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:20px;padding:2px 9px;margin-left:8px}
   .updated{font-size:10.5px;color:var(--faint);margin-top:3px}
   /* Build stamp (CAS-124) — small, muted release/build provenance at the foot of the app.
      env is rendered by JS from the hostname at runtime, and coloured so staging (amber) is
@@ -131,10 +130,9 @@
     .hdr-actions{gap:6px}
     .hdr-actions .iconbtn{width:36px;height:36px;font-size:17px;border-radius:11px}
   }
-  /* …and the 📍 AU pill steps out below 420px. It is the least costly thing on the row to lose: the very
-     next line already says "Live AU data", so the fact survives — where clipping the CASCADE wordmark to
-     make room would have cost the one thing on the header that has to be whole. */
-  @media (max-width:420px){ .region{display:none} }
+  /* CAS-269: the rule that hid the 📍 AU pill below 420px went with the pill itself. The header now has
+     one thing on the left that can give way — the freshness line — and it ellipsises rather than pushing
+     the icons off the edge. */
   /* Belt and braces: whatever the row holds, the wordmark is never the thing that gives way. */
   .brandlockup{flex:0 0 auto}
   .iconbtn{position:relative;cursor:pointer;font-size:19px;background:var(--panel2);border:1px solid var(--line);
@@ -1995,7 +1993,10 @@
           </svg>
           <span class="brand">Cascade</span>
         </span>
-        <span class="region">📍 AU</span>
+        <!-- CAS-269: the 📍 AU chip is gone. Everything in this build is AU — the pipeline is AU-only —
+             so a chip that never says anything else is a label, not information, and it was competing for
+             room on the one row that also has to hold the wordmark and four controls. The freshness date
+             below stays: that DOES change, every day, and it is the thing people check. -->
         <div class="updated" id="updated"></div>
       </div>
       <div class="hdr-actions">
@@ -2009,7 +2010,7 @@
         <div class="iconbtn" id="bell">🔔<div class="badge" id="badge" style="display:none">0</div></div>
       </div>
     </div>
-    <!-- CAS-150: the header is identity only — logo, region, freshness, and the three account icons. The
+    <!-- CAS-150: the header is identity only — logo, freshness, and the three account icons. The
          global search box, the Filters button and Save as… have all left it. Search was global over a list
          that is always scoped to one Cascade, so it was answering a question nobody was asking there; the
          selection engine is the Cascade itself; and Save as… now sits in the screen where the criteria are
@@ -2872,7 +2873,9 @@ const activeCascade = () => cascades.find(c=>c.id===activeId) || null;
 // Stale pointer from a deleted Cascade → home base, not nowhere.
 if(activeId!==ALL_ID && !activeCascade()) setActive(ALL_ID);
 
-$("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
+// CAS-269: "Live AU data · " is gone from the freshness line for the same reason the chip is: it is a
+// constant. What is left is the one part of this line that moves.
+$("updated").textContent = "Updated " + fmtDate(TODAY);
 
 // ================= Build stamp (CAS-124) =================
 // version / build / commit / builtAt are baked at build time (from the committed VERSION file + git).
@@ -2880,7 +2883,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 232, "commit": "d64e7ef", "builtAt": "2026-08-01T01:25:49Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 233, "commit": "345f184", "builtAt": "2026-08-01T01:27:47Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
