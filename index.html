@@ -3025,7 +3025,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 251, "commit": "d4db219", "builtAt": "2026-08-01T04:25:25Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 252, "commit": "f683505", "builtAt": "2026-08-01T04:30:41Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -4707,14 +4707,7 @@ window.setNotify=(id,on)=>{
   }
   logEvent("notify",{key: on ? (auto?"restore_auto":"add_manual") : (auto?"remove_auto":"unpin"), cascades:e.cascadeIds.length});
   saveNotify();
-  const m=MOVIES.find(x=>x.tmdb_id===id);
-  const names=cascadesFor(id).map(c=>c.name).join(", ");
-  toast(on
-    ? (auto ? `🔔 “${m.title}” is back on your Found list — ${names} ${e.cascadeIds.length===1?"is":"are"} watching it again`
-            : `🔔 You added “${m.title}” — you'll be alerted when it moves`)
-    : (auto ? `🚫 “${m.title}” is off your Found list — it stays off, even though ${names} still ${e.cascadeIds.length===1?"matches":"match"} it`
-            : `🚫 “${m.title}” is off your Found list`));
-  render();
+  render();   // CAS-287: the row repaints to its new state — that IS the confirmation
 };
 
 // ---- Tap the card to open it (CAS-178) ------------------------------------------
@@ -5549,7 +5542,7 @@ window.openCascade=id=>{
     if(activeId===ALL_ID) return;
     setActive(ALL_ID); settleFoundView(); clearFilters(); syncFilterUI(); restoreCascadeSearch(); render();
     logEvent("cascade_opened", {key:"all"});
-    toast(`${ALL_ICON} “All” — the whole catalogue, with nothing filtered out.`);
+
     return;
   }
   const c=cascades.find(x=>x.id===id); if(!c || activeId===id) return;
@@ -5557,7 +5550,7 @@ window.openCascade=id=>{
   logEvent("cascade_opened", {key:c.template||"custom"});
   // countCriteria() is what the Cascade SHOWS you right now, which is not the same as what it has found and is
   // watching (that's the Found list). So this line says "showing", and only the value lines say "found".
-  toast(`${c.icon} “${c.name}” — showing you ${countCriteria(c)} films right now · ${alertSummary(c)}`);
+
 };
 // CAS-271: the × that used to sit on an agent card is gone, and closeCascade() with it. It was never a
 // close — nothing was shut, dismissed or put away; it selected the All card, which is a thing the deck
@@ -5586,7 +5579,7 @@ window.saveCascadeEdits=()=>{
   c.includeUnrated=filt.includeUnrated; c.ratingStop=stopFor(c.imdb);
   c.budget=filt.budget; c.includeUnbudgeted=filt.includeUnbudgeted; c.tentpole=filt.tentpole;
   c.excludeWatched=filt.hideWatched; c.excludeBlocked=!filt.showHidden;
-  saveCascades(); render(); toast(`✅ Saved changes to “${c.name}”`);
+  saveCascades(); render();
 };
 
 // ---- My Cascades — coverflow deck ---------------------------------------------
@@ -6033,9 +6026,9 @@ window.relaxFilter=key=>{
   if(key==="search") setSearchTerm("");   // CAS-150: the per-cascade box is the only search box now
   syncFilterUI(); render();
   const n=MOVIES.filter(passes).length;
-  toast(`Loosened — ${n} film${n===1?"":"s"} now`);   // the Cascade reads as "edited": Save it or leave it
+  // CAS-287: the count on the card and the list itself both move — no banner needed to say so.
 };
-window.resetEverything=()=>{ setActive(null); clearFilters(); syncFilterUI(); render(); toast("Reset — showing you everything again"); };
+window.resetEverything=()=>{ setActive(null); clearFilters(); syncFilterUI(); render(); };
 function emptyResultsHTML(){
   const c=activeCascade();
   const opts=relaxOptions();
@@ -6705,7 +6698,8 @@ function deleteAgentAsk(c){
   cascades.splice(cascades.indexOf(c),1); saveCascades();
   if(activeId===c.id){ setActive(ALL_ID); clearFilters(); syncFilterUI(); }
   logEvent("cascade_deleted",{id:c.id, films:mine});
-  toast(`🗑️ Deleted “${c.name}”` + (mine?` — ${mine} film${mine===1?"":"s"} left your Found list`:""));
+  // CAS-287: deleting already asks first, and the deck visibly loses the card. A banner afterwards is a
+  // third telling of the same fact.
   return true;
 }
 $("cDelete").onclick=()=>{
@@ -9394,7 +9388,7 @@ window.briefSave=()=>{
   const {c} = commitDraft();
   briefClose();
   showFoundList(); render();
-  toast(`✓ Saved — ${c.icon} ${esc(c.name)} is watching ${watchCount(c)} film${watchCount(c)===1?"":"s"}.`);
+
   logEvent("briefing_saved",{id:c.id, matches:watchCount(c)});
 };
 // CAS-268: the same delete the builder has always had, on the screen people now edit agents from. It reads
@@ -10199,7 +10193,7 @@ function inviteFinish(){
   showFoundList();
   render();
   const c=inviteCascade;
-  if(c) toast(`✓ ${c.icon} ${c.name}'s on the job — alerts ${agentState.alerts?"on":"off"}${agentState.learning?", learning on":""}. ${alertPromise(c)}`);
+
 }
 window.inviteFinish=inviteFinish;
 function startOnboarding(){
@@ -10338,7 +10332,7 @@ window.onbCreateAgent=()=>{
   finishOnboarding();
   showFoundList();                               // the payoff IS the front door
   render();
-  toast(`✓ ${c.icon} ${c.name}'s on it — ${watchCount(c)} films found already. ${alertPromise(c)}`);
+
 };
 
 // CAS-129: stream a list's cards in small batches across animation frames so building a big list
@@ -10578,22 +10572,11 @@ window.setOpinion=(id,kind)=>{
   // FIRST — so the toast reports what actually happened, not what we assumed. The repaint runs inside
   // keepRowInPlace so the card folds (or unfolds, on the tap that clears it) exactly where you tapped it.
   keepRowInPlace(id, ()=>repaintAfterOpinion(id));   // CAS-129: swap only the tapped row, not the whole list
-  opinionToast(id, on?kind:was, on, wasFound);
 };
-// The toast says the two things a one-tap answer really did: it folded the card (and how to undo that), and —
-// because every Cascade excludes what you've seen or waved off — whether it just ended that film's alerts.
-const OPINION_SAID = {wow:"🌟 Wow!", liked:"👍 Watch again", disliked:"👎 Didn't like",
-                      soso:"😐 So-so", notfor:"🚫 Won't watch —"};
-function opinionToast(id, kind, on, wasFound){
-  const m=MOVIES.find(x=>x.tmdb_id===id);
-  if(!on){
-    const back = !wasFound && found.has(id) ? " — back on your Found list" : "";
-    return toast(`Cleared your answer on “${m.title}”${back}`);
-  }
-  const bits=["collapsed to one line"];
-  if(wasFound && !found.has(id)) bits.push("your Cascades will stop alerting on it");
-  toast(`${OPINION_SAID[kind]} “${m.title}” — ${bits.join(" · ")}`);
-}
+// CAS-287: the toast that used to fire here is gone, and opinionToast with it. It was the worst offender the
+// ticket describes: answering a run of films is the single most repeated gesture in the app, and every answer
+// threw a banner over the bottom of the list you were working down. What it said was already on screen — the
+// card had visibly folded — so it interrupted in order to report something you had just watched happen.
 // ---- The Pick ring (CAS-100) ---------------------------------------------------
 // Agent Pick → My Pick → off → Agent Pick, for a film one of your Cascades matches. Taking it to "off" is the
 // personal override that outlasts every future run: the Cascade will go on matching it and will not put it
@@ -10606,7 +10589,7 @@ function opinionToast(id, kind, on, wasFound){
 window.cyclePick=id=>{
   const e=entryFor(id), auto=e.cascadeIds.length>0, st=pickState(id);
   const m=MOVIES.find(x=>x.tmdb_id===id);
-  const done=t=>{ saveNotify(); render(); toast(t); };
+  const done=t=>{ saveNotify(); render(); };   // CAS-287: the ring repaints; it does not also announce itself
   if(auto && st==="agent"){                        // Agent Pick → My Pick: you take it over, and we remember
     e.source="manual"; e.removed=false; e.claimed=true;
     logEvent("notify",{key:"claim_pick", cascades:e.cascadeIds.length});
@@ -11041,7 +11024,7 @@ function afterSignIn(){
     document.body.style.overflow="";
     showFoundList(); render();
     const n=cascades.length;
-    toast(`👋 Welcome back — ${n} Cascade${n===1?"":"s"} ${n===1?"is":"are"} still watching for you.`);
+
     logEvent("signin_returning",{cascades:n});
     return;
   }
@@ -11070,7 +11053,10 @@ if(booted){ applyCascade(booted); }
 // after all, looking at it), so asking afterwards what was new would always answer "nothing".
 const seenFound = loadSeenFound();
 render();
-const freshFound = seenFound ? [...found].filter(id=>!seenFound.has(id)) : [];
+// CAS-287 removed the "found N since you last looked" banner, so nothing reads this comparison at boot any
+// more. The SNAPSHOT itself still matters and is deliberately kept: markFoundSeen() is what the 🆕 chip on
+// each card is measured against (CAS-70 freshness), and seeding it on a first run is what stops every film
+// in the catalogue reading as new to somebody who has never seen any of them.
 if(!seenFound) markFoundSeen();   // first run: seed it, and say nothing — there is no "last time" to compare to
 // A shared link takes precedence over first-run onboarding — they arrived to look at a specific radar.
 const openedShared = openSharedFromURL();
@@ -11081,15 +11067,17 @@ const openedShared = openSharedFromURL();
 // so the screen can be reviewed on its own before Lee wires the sequence.
 if(!openedShared && previewStep && openPreviewStep(previewStep, previewAgent)){/* previewing a single step */}
 else if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
-// One screen, one message. Priority: the reset notice, then the duplicate clean-up (it changed your Cascades,
-// so it has to be said out loud), then the agent's report on what it found while you weren't looking.
+// CAS-287: two of the three arrival banners are gone. "Welcome back, N cascades are still watching" and
+// "Cascade found N films since you last looked" were both greetings thrown over the listing at the exact
+// moment you arrived to read it — and both said something the deck and the list say better, permanently,
+// without being dismissed.
+//
+// The duplicate clean-up survives, and is the one that should. It is not a confirmation of anything the user
+// did: the app CHANGED THEIR CASCADES on their behalf, on the way in, and something that edits your saved
+// work without being asked has to say so out loud.
 if(didReset) toast("🧹 Local state cleared — this is a clean first run.");
 else if(dedupedN)
   toast(`🧹 Cleaned up ${dedupedN} duplicate Cascade${dedupedN===1?"":"s"} — ${dedupedN===1?"it was an identical copy":"they were identical copies"} finding the same films twice.`);
-// The agent reports in the moment you come back — but only when it has something true to report, and only when
-// nothing else owns the screen (a shared link, or first-run setup).
-else if(freshFound.length && !openedShared && !$("onb").classList.contains("open"))
-  toast(`🔔 Cascade found ${freshFound.length} film${freshFound.length===1?"":"s"} for you since you last looked.`);
 
 // ============================================================================
 // Per-account Cascade persistence (CAS-83 / spec 26771457 §3-§4)
