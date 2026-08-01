@@ -1532,6 +1532,15 @@
   .osskip{display:block;width:100%;text-align:center;margin-top:12px;color:var(--dim);font-size:12.5px;
     background:none;border:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
   .osskip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
+  /* CAS-268: Delete. Full-width so it is a real target, but outlined rather than filled and set well under
+     Save — a destructive action should be findable and never the thing your thumb lands on by accident. It
+     wears the danger colour so it cannot be mistaken for the primary, and its confirmation is what actually
+     stops a slip. */
+  .osdel{display:block;width:100%;margin-top:22px;padding:13px;border-radius:13px;
+    background:none;border:1px solid rgba(255,107,107,.45);color:var(--open);
+    font-family:var(--font-display);font-size:14px;font-weight:700;cursor:pointer}
+  .osdel:hover{border-color:var(--open);background:rgba(255,107,107,.09)}
+  .osdel:focus-visible{outline:2px solid var(--open);outline-offset:2px}
 
   /* ---- CAS-160: "Where & when you'll watch" — the hub's third door ----
      One row per cascade stage, wearing that stage's own colour (amber/blue/green — the same hues the
@@ -2871,7 +2880,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 231, "commit": "46058ed", "builtAt": "2026-08-01T01:21:50Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 232, "commit": "d64e7ef", "builtAt": "2026-08-01T01:25:49Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -6241,8 +6250,12 @@ $("cApply").onclick=()=>{
       : isNew ? `✓ ${c.icon} ${c.name}'s on it — ${watchCount(c)} films found already. ${alertPromise(c)}`
               : `✓ ${c.icon} “${c.name}” updated — it's watching ${watchCount(c)} films now. ${alertPromise(c)}`);
 };
-$("cDelete").onclick=()=>{
-  const c=cascades.find(x=>x.id===draft.id); if(!c) return;
+// CAS-268: ONE definition of what deleting an agent means, what it warns you about, and what it leaves
+// behind — read by the old builder's Delete and by the Edit Agent page's. Two copies of this would be two
+// chances for one of them to warn about the wrong number of films, and the number is the whole warning.
+// Returns true if the agent was actually deleted, so the caller knows whether to close the screen it is on.
+function deleteAgentAsk(c){
+  if(!c) return false;
   // Under auto-membership, deleting a Cascade DOES take its films off your Found list — it was the thing
   // holding them there. Say so, with the real number, and say exactly what survives: the films you added by
   // hand (they were never this Cascade's), and your watched / not-interested marks.
@@ -6257,11 +6270,17 @@ $("cDelete").onclick=()=>{
     + (mine ? `The ${mine} film${mine===1?"":"s"} it found will drop off your Found list — it's what was watching `
               + `${mine===1?"it":"them"}. `
             : "")
-    + `Anything you added by hand stays, and your watched / not-interested marks aren't touched.`)) return;
+    + `Anything you added by hand stays, and your watched / not-interested marks aren't touched.`)) return false;
   cascades.splice(cascades.indexOf(c),1); saveCascades();
   if(activeId===c.id){ setActive(ALL_ID); clearFilters(); syncFilterUI(); }
-  closeModal($("builder")); render();
+  logEvent("cascade_deleted",{id:c.id, films:mine});
   toast(`🗑️ Deleted “${c.name}”` + (mine?` — ${mine} film${mine===1?"":"s"} left your Found list`:""));
+  return true;
+}
+$("cDelete").onclick=()=>{
+  const c=cascades.find(x=>x.id===draft.id);
+  if(!deleteAgentAsk(c)) return;
+  closeModal($("builder")); render();
 };
 
 // ================= Service selector (insight) =================
@@ -8428,7 +8447,13 @@ const SHARP_STEPS = {
           ${stream ? row("📺","Streaming services", briefServicesSum(), "services") : ""}
           ${row("🔔","Notifications",      hubWatchSummary(),                   "watching")}
         </div>
-        <div class="osfoot"><button class="oscta" type="button" onclick="briefSave()">Save agent</button></div>`;
+        <!-- CAS-268: Delete only appears for an agent that EXISTS. A brand-new agent reaching this screen
+             from New Cascade (CAS-246) has never been saved, so there is nothing to delete — offering the
+             button there would either do nothing or claim to have removed something that was never on the
+             deck. Backing out is what discards an uncommitted agent, and that is already true. -->
+        <div class="osfoot"><button class="oscta" type="button" onclick="briefSave()">Save agent</button>
+          ${d.id ? `<button class="osdel" type="button" onclick="briefDelete()">Delete agent</button>` : ""}
+        </div>`;
     },
   },
   // ---- CAS-188 #1: what are you here for? -----------------------------------------------------------
@@ -8940,6 +8965,15 @@ window.briefSave=()=>{
   showFoundList(); render();
   toast(`✓ Saved — ${c.icon} ${esc(c.name)} is watching ${watchCount(c)} film${watchCount(c)===1?"":"s"}.`);
   logEvent("briefing_saved",{id:c.id, matches:watchCount(c)});
+};
+// CAS-268: the same delete the builder has always had, on the screen people now edit agents from. It reads
+// the agent off the DECK by the draft's id rather than deleting the draft, because the draft is a copy and
+// deleting a copy would leave the real agent on the deck.
+window.briefDelete=()=>{
+  const id=(onbFlow.draft||{}).id;
+  const c=cascades.find(x=>x.id===id);
+  if(!deleteAgentAsk(c)) return;
+  briefClose(); showFoundList(); render();
 };
 function briefClose(){ briefOn=false; flowStop(); }
 
