@@ -2843,7 +2843,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 224, "commit": "98bd34a", "builtAt": "2026-08-01T00:09:01Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 225, "commit": "3d37871", "builtAt": "2026-08-01T00:21:51Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -4580,7 +4580,11 @@ const CURRENT_YEAR = ALL_YEARS[0];
 const EARLIER_YEARS = ALL_YEARS.slice(1);
 const yearCount = y => MOVIES.filter(m=>yearOf(m)===y).length;
 
-function normCascade(c){
+// CAS-261: `template:true` says "this is a preset's lane-NEUTRAL recipe, not an agent". A preset is a
+// standard offered in both lanes (CAS-160), so its stored criteria must keep every rung it was written with;
+// the lane rule is applied per lane, later, by starterPreview and by the flow's draft. Without the opt-out
+// the one normalise pass over STARTERS would lane them all as cinema and empty the streaming presets.
+function normCascade(c, opts){
   c.status = c.status||[];
   // CAS-244: the per-agent channel overrides, and the resolved answer the monitor reads. An agent that has
   // never been asked has neither, and both fill in as "everything the account allows" — which is what an
@@ -4638,6 +4642,12 @@ function normCascade(c){
   // band implied. Indie was a CEILING (<$15M) with no floor at all, so it maps to Any: the honest reading of
   // an agent that asked for small films is that it never asked for a minimum.
   if(c.selScale>0 && c.selScale<1000) c.selScale = [0, 0, 15e6, 100e6][Math.round(c.selScale)] || 0;
+  // CAS-261: a lane only carries the dials it uses, and that has to be true of agents SAVED before the rule
+  // as well as agents built after it — otherwise a cinema agent from last week goes on quietly filtering on
+  // a People's-vote floor its Mission screen does not show and its auto-relax cannot loosen. laneCrit is the
+  // single definition of the rule; applying it on load is what makes it a property of the agent rather than
+  // of the screen that happened to build it.
+  if(!(opts && opts.template)) laneCrit(c, c.kind);
   // CAS-160 viewing windows. {} on everything saved before this ticket, which reads correctly: those agents
   // never expressed a preference, and their `status` still says where they hunt.
   if(typeof c.watchWindows!=="object" || c.watchWindows===null) c.watchWindows={};
@@ -6497,7 +6507,10 @@ const STARTERS = [
    // CAS-248: the bar a card prints has to be the bar the agent applies, and Date Night is offered in BOTH
    // lanes. Its buzz rung is real at the cinema, where buzz is a dial, and is dropped on streaming, where it
    // is not — so the label is dropped there too rather than promising a criterion the agent no longer has.
-   bar:"Well-liked · a little buzz", barBy:{stream:"Well-liked"}, cd:"var(--blue)", primary:["vote","buzz"],
+   // CAS-261: and the cinema half loses its People's-vote clause for the same reason it loses the criterion —
+   // the cinema lane does not use that dial, so a cinema Date Night is now a buzz standard and says so.
+   bar:"Well-liked · a little buzz", barBy:{cinema:"A little buzz", stream:"Well-liked"},
+   cd:"var(--blue)", primary:["vote","buzz"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:7, selCritics:0, selScale:0, selBuzz:1}},
   {key:"streaming", icon:"📺", name:"Everyday Favourites", kinds:["stream"],
@@ -6508,7 +6521,12 @@ const STARTERS = [
    bar:"Fun-first", cd:"var(--green)", primary:["vote"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:6, selCritics:0, selScale:0, selBuzz:1}},
-  {key:"prestige", icon:"🏆", name:"Nominees & Awards", kinds:["cinema","stream"],
+  // CAS-261: streaming only now. This preset IS its awards rung, and the cinema lane does not use the
+  // Critics & awards dial at all (a film opening this month has no settled awards record) — so in the
+  // cinema lane it was a card promising a standard the lane could not apply. Rather than ship it with its
+  // criterion silently zeroed, it stops being offered there. That is the product call CAS-231's KNOWN GAP
+  // was waiting on.
+  {key:"prestige", icon:"🏆", name:"Nominees & Awards", kinds:["stream"],
    blurb:"Award-worthy films of any era — must-sees.",
    frame:"collects the award nominees and winners worth seeing.",
    bar:"Award nominees & winners", cd:"var(--accent)", primary:["crit"],
@@ -6545,7 +6563,7 @@ const startersFor = kind => {
   const i = list.findIndex(s=>s.key===rec);
   return i > 0 ? [list[i], ...list.slice(0,i), ...list.slice(i+1)] : list;
 };
-STARTERS.forEach(s=>normCascade(s.crit));
+STARTERS.forEach(s=>normCascade(s.crit, {template:true}));   // CAS-261: a standard, not an agent — no lane yet
 // CAS-143/144: ONE number for a preset, everywhere it is quoted. The card, the hub's hero figure and the
 // reveal must agree, so the card counts the agent it would actually BUILD — the preset's standard laid over
 // the shipped taste baseline (all genres, any year, English, all ages), measured with watchCount, which is
@@ -7705,15 +7723,17 @@ const MISSION_DIALS_USED = {cinema:["scale","buzz"], stream:["vote","crit","scal
 // has buzz in its NAME.
 function laneCrit(c, kind){
   if(kind==="stream") c.selBuzz = 0;
+  // CAS-261: the cinema half of the same rule. Cinema is Scale + Buzz, so a vote floor, a critics score or an
+  // awards rung on a cinema agent is a filter the Mission screen never shows and the auto-relax never loosens.
+  if(kind==="cinema"){ c.selCrowd = 0; c.selCritScore = 0; c.selAwards = 0; }
   return c;
 }
-// KNOWN GAP, found by the CAS-231 invariant suite and left for Lee to rule on: MISSION_DIALS_USED gates what
-// the Mission screen SHOWS and what the auto-relax may loosen, but not what a preset may WRITE. So a cinema
-// preset can still carry a criterion on a dial the cinema lane neither shows nor relaxes — Date Night's
-// People's-vote floor of 7.0 (2 films caught where 33 qualify) and Nominees & Awards' critics rung (0 where 82
-// qualify) are both unreachable-and-active. Zeroing them is a two-line change and it is deliberately NOT made
-// here: it would leave a card titled "Nominees & Awards" quoting 82 films with no awards criterion behind it,
-// which trades a hidden filter for a false promise. Which of the two to fix, and how, is a product call.
+// CAS-261 closes the gap the note here used to describe. The product call has been made: a cinema agent uses
+// Scale and Buzz and nothing else, so a cinema preset may not carry a People's-vote, critics-score or awards
+// criterion either. Both of the offenders are dealt with at their source rather than only here — Nominees &
+// Awards is no longer offered in the cinema lane at all (its whole standard is the awards rung), and Date
+// Night's cinema card now says "A little buzz" instead of promising "Well-liked" it can no longer apply.
+// laneCrit stays the backstop so a future preset cannot re-open the gap by accident.
 const missionKind = () => {
   const k=(onbFlow.draft||{}).kind;
   return (k==="cinema"||k==="stream") ? k : flowKind;

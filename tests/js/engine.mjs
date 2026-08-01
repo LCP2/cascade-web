@@ -110,7 +110,7 @@ const EXPORTS = `
   MIN_INITIAL_MATCHES, autoRelaxBar, barDialSnapshot,
   STARTERS, startersFor, starterPreview, starterCount, starterAgentName, starterWatch, RECOMMENDED_FOR,
   AGENT_WINDOWS, agentWindows, watchToStatuses, listToStatuses, migrateWatch,
-  MISSION_DIALS, MISSION_DIALS_USED, missionRest, missionKind,
+  MISSION_DIALS, MISSION_DIALS_USED, missionRest, missionKind, laneCrit,
   axisCountsNow, genreCountsNow, langCountsNow,
   onbApply, onbCount, pickStarter, flowStart, flowPriority, flowStop, FLOWS,
   tasteBase, cascades,

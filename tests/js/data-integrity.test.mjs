@@ -73,12 +73,11 @@ test("listing: every listed film carries a window the agent lists, with a label 
   }
 });
 
-// A preset on the pick-agent screen is an offer, and an offer that lists nothing is a dead end. One does
-// today — cinema/prestige, 0 films — and it is the KNOWN GAP recorded on CAS-231: the cinema presets carry
-// criteria on dials the cinema lane neither shows nor relaxes, so an awards rung nobody can see empties the
-// agent. That is CAS-231/CAS-237's to close, not this test's to hide, so this is a ratchet: it holds the
-// number of empty offers where it is and fails the moment a second one goes dark.
-const EMPTY_OFFERS_TODAY = 1;
+// A preset on the pick-agent screen is an offer, and an offer that lists nothing is a dead end. One did —
+// cinema/prestige, 0 films — which was the CAS-231 KNOWN GAP: an awards rung nobody could see, on a lane
+// with no awards dial, emptying the agent. CAS-261 closed it by taking that preset out of the cinema lane
+// altogether, so the ratchet comes down to zero. Every offer on both shortlists now lists something.
+const EMPTY_OFFERS_TODAY = 0;
 test("listing: no more offers go dark than the ones already known to be", () => {
   const empty = everyListing().filter(x => x.listed.length === 0).map(x => x.label);
   assert.ok(empty.length <= EMPTY_OFFERS_TODAY,
@@ -418,17 +417,66 @@ test("critics: the score floor is continuous and only judges a film that has a s
     `${r.label} sits at ${r.v}, off the 0-100 score track`);
 });
 
+// CAS-261: read in the streaming lane, which is the lane that still HAS a Critics & awards dial. Since
+// CAS-261 a cinema agent carries no critics criterion at all, so migrating one there and then dropping it is
+// the correct outcome rather than a migration failure — that half is asserted by its own test below.
 test("critics: an agent saved under the old single ladder still means what it meant", () => {
   const cases = [[0, 0, 0], [1, 60, 0], [2, 80, 0], [3, 0, 1], [4, 0, 4]];
   for(const [legacy, score, awards] of cases){
-    const c = E.normCascade({ selCritics: legacy });
+    const c = E.normCascade({ selCritics: legacy, kind: "stream" });
     assert.equal(c.selCritScore, score, `selCritics ${legacy} migrated to a ${c.selCritScore} score floor`);
     assert.equal(c.selAwards, awards, `selCritics ${legacy} migrated to awards rung ${c.selAwards}`);
   }
   // An agent saved SINCE the split is left alone — the migration must not overwrite a real answer.
-  const fresh = E.normCascade({ selCritics: 4, selCritScore: 70, selAwards: 0 });
+  const fresh = E.normCascade({ selCritics: 4, selCritScore: 70, selAwards: 0, kind: "stream" });
   assert.equal(fresh.selCritScore, 70);
   assert.equal(fresh.selAwards, 0);
+});
+
+// CAS-261: a lane carries only the dials it uses — and that has to hold for an agent SAVED before the rule,
+// not just one built after it. Otherwise a cinema agent goes on filtering on a floor its Mission screen does
+// not show and its auto-relax cannot loosen, which is the hidden filter the whole rule exists to remove.
+test("lanes: an agent carries only the criteria its own lane can show", () => {
+  const cinema = E.normCascade({ kind: "cinema", selCrowd: 7.5, selCritScore: 80, selAwards: 3,
+                                 selScale: 56e6, selBuzz: 1 });
+  assert.equal(cinema.selCrowd, 0, "a cinema agent kept a People's-vote floor");
+  assert.equal(cinema.selCritScore, 0, "a cinema agent kept a critics-score floor");
+  assert.equal(cinema.selAwards, 0, "a cinema agent kept an awards rung");
+  assert.equal(cinema.selScale, 56e6, "a cinema agent lost Scale, which it does use");
+  assert.equal(cinema.selBuzz, 1, "a cinema agent lost Buzz, which it does use");
+
+  const stream = E.normCascade({ kind: "stream", selCrowd: 7.5, selCritScore: 80, selAwards: 3,
+                                 selScale: 56e6, selBuzz: 1 });
+  assert.equal(stream.selCrowd, 7.5, "a streaming agent lost its People's-vote floor");
+  assert.equal(stream.selCritScore, 80, "a streaming agent lost its critics-score floor");
+  assert.equal(stream.selAwards, 3, "a streaming agent lost its awards rung");
+  assert.equal(stream.selBuzz, 0, "a streaming agent kept Buzz, which it does not use");
+
+  // The rule and the dial sets are one definition, not two that can drift.
+  for(const kind of ["cinema", "stream"]){
+    const carried = { vote: "selCrowd", crit: "selCritScore", scale: "selScale", buzz: "selBuzz" };
+    const on = E.normCascade({ kind, selCrowd: 7.5, selCritScore: 80, selScale: 56e6, selBuzz: 1 });
+    for(const [dial, field] of Object.entries(carried)){
+      const used = E.MISSION_DIALS_USED[kind].includes(dial);
+      assert.equal(on[field] > 0, used, `${kind}: ${field} is ${on[field]} but ${dial} used=${used}`);
+    }
+  }
+});
+
+// CAS-261: no preset may be OFFERED in a lane that cannot apply the standard the card names.
+test("presets: every offer's standard survives its own lane", () => {
+  for(const kind of ["cinema", "stream"]){
+    for(const s of E.STARTERS.filter(x => (x.kinds || ["cinema", "stream"]).includes(kind))){
+      const before = { ...s.crit };
+      const after = E.laneCrit({ ...s.crit }, kind);
+      const dropped = ["selCrowd", "selCritScore", "selAwards", "selBuzz"]
+        .filter(f => (before[f] || 0) > 0 && !(after[f] || 0));
+      const left = ["selCrowd", "selCritScore", "selAwards", "selScale", "selBuzz"]
+        .some(f => (after[f] || 0) > 0);
+      assert.ok(dropped.length === 0 || left,
+        `${kind}/${s.key} is offered but its lane drops ${dropped.join(", ")}, leaving it with no standard`);
+    }
+  }
 });
 
 // ---- 3f. HOW FAR BACK IS A ROLLING WINDOW ON A LOG TRACK (CAS-250) --------------------------------------

@@ -7,7 +7,9 @@
 import { expect } from "@playwright/test";
 
 export const PRESET_NAMES = {
-  cinema: ["Blockbusters", "Date Night", "Nominees & Awards", "Totally Custom"],
+  // CAS-261: Nominees & Awards left the cinema lane — the cinema control set is Scale + Buzz, so there was
+  // no awards criterion for it to stand on there.
+  cinema: ["Blockbusters", "Date Night", "Totally Custom"],
   stream: ["Loved & Acclaimed", "Date Night", "Everyday Favourites", "Nominees & Awards", "Totally Custom"],
 };
 

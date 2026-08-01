@@ -27,7 +27,10 @@ test("CAS-248: the card's bar is the bar the agent applies, in each lane", async
   expect(cdn, "Date Night must still be on the cinema shortlist").toBeTruthy();
   expect(cdn.barText || "", "the cinema card keeps its buzz clause").toBeDefined();
   const cinemaBar = await page.locator(".scard", { hasText: "Date Night" }).locator(".sc-chan").textContent();
-  expect(cinemaBar).toMatch(/a little buzz/);
+  // CAS-261 dropped the "Well-liked" half of the cinema clause with the vote criterion behind it, so the
+  // buzz half now leads the string and is capitalised. The claim under test is unchanged: the cinema card
+  // still says buzz, because the cinema agent still applies it.
+  expect(cinemaBar).toMatch(/a little buzz/i);
 
   await toShortlist(page, "stream");
   const streamBar = await page.locator(".scard", { hasText: "Date Night" }).locator(".sc-chan").textContent();
