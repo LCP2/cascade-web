@@ -316,17 +316,14 @@
   .exsharebtn:hover{color:var(--ink);border-color:#3a4150}
   .exsharebtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .exsharebtn.done{color:var(--green);border-color:rgba(72,199,142,.55)}
-  /* CAS-277: the controls stack. They were a left-to-right row, which worked while there were two of them
-     and a chevron; as the card gains controls, a row makes each one narrower and its label shorter, and a
-     control that has to abbreviate itself to fit stops saying what it does. Vertically each one gets the
-     full card width and a full-width target, and the list reads top to bottom in the order the decisions
-     are made rather than being squeezed onto one line.
-     Where-to-watch is not a decision about the film, so it sits LAST, under the decisions, rather than
-     being pushed to a right edge that no longer exists. */
-  .actions{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin-top:12px}
+  /* CAS-304: back to a left-to-right row (reverting CAS-277's stack, per Lee's 0.8.3 review). The three
+     controls share the row equally, each label still ellipsizing rather than wrapping if it runs out of
+     room, so a control that has to abbreviate itself still says what it does. Where-to-watch is a bare
+     chevron, not a decision about the film, so it keeps its small fixed size at the end of the row. */
+  .actions{display:flex;flex-direction:row;align-items:stretch;gap:8px;margin-top:12px}
   .actions .ctl,
-  .actions .ctl.watch{flex:none;width:100%}
-  .actions .wtwbtn{width:100%;margin-left:0}
+  .actions .ctl.watch{flex:1 1 0;min-width:0}
+  .actions .wtwbtn{flex:none}
   /* ---- CAS-230: the v0.8 card controls (proto/cascade-08 listing card) ----
      Two labelled chips instead of six bare icons. A chip says in words what it is for; four unlabelled
      verdict icons only said it to someone who already knew. The fill bar behind the label is the same
@@ -349,11 +346,14 @@
   .ctl.on .cmini .cic{color:var(--cyan)}
   .ctl:hover .cmini{border-color:#3a4150}
   .ctl:focus-visible .cmini{outline:2px solid var(--cyan);outline-offset:2px}
-  /* The panel sits OVER the action row rather than under it: the row is the last thing on the card, and a
-     panel below would be off the bottom of a card sitting at the foot of the viewport. */
-  .cpop{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);z-index:60;
+  /* CAS-304: the panel opens ABOVE the control row by default — the row is usually the last thing on the
+     card, and a panel below would be off the bottom of a card sitting at the foot of the viewport. When
+     there isn't room above (the row is near the top of the viewport), JS adds .pop-down and it opens below
+     instead — the original prototype behaviour. */
+  .cpop{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:60;
     display:flex;align-items:center;gap:5px;background:#0e1626;border:1px solid rgba(255,255,255,.16);
     border-radius:12px;padding:4px;box-shadow:0 14px 34px rgba(0,0,0,.7)}
+  .cpop.pop-down{bottom:auto;top:calc(100% + 8px)}
   /* CAS-278: the five answers run TOP TO BOTTOM, best first, so the list is read as a scale. Across a row
      they cannot be: five labels plus a close button on a 360px phone is about 40px of text each, and the
      old four already needed the icon stacked over the label to survive it. Down the column every label is
@@ -3052,7 +3052,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 266, "commit": "66d7d77", "builtAt": "2026-08-01T10:02:27Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 267, "commit": "cde2482", "builtAt": "2026-08-01T10:42:09Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -4223,6 +4223,7 @@ window.openCascadePanel=(id, btn)=>{
                                                       : "You have no cascades yet."}</div>`
     }</div>`;
   btn.closest(".actions").appendChild(pop);
+  positionPanel(pop);   // CAS-304
   wirePanelSlide(pop, ".nopt[data-cid]", el=>moveFilmTo(id, el.dataset.cid));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
   const first=pop.querySelector(".nopt"); if(first && first.tagName==="BUTTON") first.focus();
@@ -4273,6 +4274,7 @@ window.openNotifyPanel=(id, btn)=>{
     : `<div class="nopt nonone">This film has reached its last window, so there is nothing further to be
          told about.</div>`}</div>`;
   btn.closest(".actions").appendChild(pop);
+  positionPanel(pop);   // CAS-304
   document.addEventListener("keydown", watchPanelKey, true);
   const first=pop.querySelector(".nopt"); if(first) first.focus();
 };
@@ -4345,6 +4347,13 @@ function wirePanelSlide(pop, itemSel, onPick){
   pop.addEventListener("pointerup", finish);
   pop.addEventListener("pointercancel", e=>{ if(id===e.pointerId){ id=null; moved=false; mark(null); } });
 }
+// CAS-304: the panel opens upward by default (see the .cpop rule); this only flips it down when the row
+// itself doesn't have room above — measured against the sticky header, the same --hdrh the scroll math
+// elsewhere in this file already reads, so the panel never opens hidden under it.
+function positionPanel(pop){
+  const hdr=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hdrh"))||0;
+  if(pop.getBoundingClientRect().top < hdr+8) pop.classList.add("pop-down");
+}
 // One panel at a time, anchored in the .actions row (which is position:relative for exactly this).
 function closeWatchPanel(){
   document.querySelectorAll(".cpop").forEach(n=>n.remove());
@@ -4371,6 +4380,7 @@ window.openWatchPanel=(id, btn)=>{
     }).join("")}</div><button type="button" class="cclose wclose" onclick="closeWatchPanel()"
       title="Collapse" aria-label="Collapse watch status">${ICON.chev}</button>`;
   btn.closest(".actions").appendChild(pop);
+  positionPanel(pop);   // CAS-304
   wirePanelSlide(pop, ".cseg", el=>pickWatch(id, el.dataset.key));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
   const first=pop.querySelector(".cseg"); if(first) first.focus();

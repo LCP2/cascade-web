@@ -65,14 +65,18 @@ test("CAS-281: only one control is ever open at a time", async ({ page }) => {
   await expect(card.locator(".cpop.npop")).toBeVisible();
 });
 
-test("CAS-281: the collapse is needed because the panel covers the other controls", async ({ page }) => {
+test("CAS-281: the collapse is needed because the panel covers card content above it", async ({ page }) => {
+  // CAS-304: the panel now opens ABOVE the row rather than centred over it, so it no longer covers the
+  // row's own sibling chips — but it still opens over the card content just above the row (poster,
+  // synopsis, money row), which is exactly why the row still needs its own way to put the panel away.
   const card = await toCard(page);
   await card.locator(".ctl.watch").click();
   const covered = await page.evaluate(() => {
     const pop = document.querySelector("#groups .card .cpop").getBoundingClientRect();
-    return [...document.querySelectorAll("#groups .card .actions > .ctl")]
+    const card = document.querySelector("#groups .card");
+    return [...card.querySelectorAll(".ctop *, .cfoot > *:not(.actions)")]
       .filter(el => { const b = el.getBoundingClientRect();
-                      return b.top < pop.bottom && b.bottom > pop.top; }).length;
+                      return b.width && b.height && b.top < pop.bottom && b.bottom > pop.top; }).length;
   });
   expect(covered, "if nothing were covered, the collapse would be optional").toBeGreaterThan(0);
 });
