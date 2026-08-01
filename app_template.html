@@ -4682,9 +4682,18 @@ function renderListChrome(){
 // The three things you've SAID about films (took off / watched / not interested) are the undo for every
 // one-tap decision, so they sit under the list as receipts — in both scopes, so the undo is never somewhere
 // you have to go and find.
+// CAS-294: the watch-status groups no longer hang off the bottom of a cascade. Since CAS-290 an answered
+// film stays in the listing as its collapsed line, so those groups had become a SECOND copy of films already
+// on the screen above them — the same title twice, in two shapes, one of which was a footer nobody scrolled
+// to. Your Movies is the screen that owns "everything you have said about a film", and it reads the same
+// sets, so nothing is lost: the answer is undoable in place on the stub, and reviewable in full over there.
+//
+// What is NOT removed: the "you took these off" receipts, which are a Pick override rather than a watch
+// status and are the only undo for it; and the agent's value line, which is not a list of films at all.
+const SAID_HIDDEN = new Set(["found","wow","liked","soso","disliked","blocked"]);
 function renderSaid(){
   const el=$("listSaid"); if(!el) return;
-  const said=TAG_GROUPS.filter(g=>g.key!=="found")
+  const said=TAG_GROUPS.filter(g=>!SAID_HIDDEN.has(g.key))
     .map(g=>{ const ids=g.set();
               return {g, films:MOVIES.filter(m=>ids.has(m.tmdb_id) && !heldOpen.has(m.tmdb_id))}; })
     .filter(x=>x.films.length);
