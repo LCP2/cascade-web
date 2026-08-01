@@ -4612,11 +4612,23 @@ const listWindowOK = (m,c) => !(c.listStatus||[]).length || c.listStatus.include
 // Moved-out wins outright; pinned-in skips the criteria but still has to clear the agent's own WINDOWS,
 // because those are what the agent lists rather than what it likes — a cinema agent showing a film that is
 // only on streaming would be a lie about where you can watch it, whoever put it there.
+// CAS-290/291: a film you have ANSWERED stays in the cascade, as the one-line stub CAS-100 defined. It used
+// to be removed outright — the agent excludes what you have seen, and that exclusion reached the listing as
+// well as the watch set — so a card you tagged vanished from under the tap that tagged it, on an agent's own
+// listing, while the All view folded it in place. Two views, two answers to the same gesture.
+//
+// The exclusion is NOT weakened. It still applies to everything that counts a RESULT: the section counts and
+// the deck card count both drop tagged films, and watchesFilm/recomputeFound are untouched, so an agent
+// still stops watching and stops alerting on a film you have seen. The only thing that changes is that the
+// ROW survives, greyed and undoable, instead of disappearing.
 const listedBy = (m,c) => !movedOutOf(m.tmdb_id,c)
   && (pinnedInto(m.tmdb_id,c)
         ? (inScope(m,c) && listWindowOK(m,c))
-        : (matchesCriteria(m, {...c, status:[]}) && inScope(m,c) && listWindowOK(m,c)));
-const listedCount = c => MOVIES.filter(m=>listedBy(m,c)).length;
+        : (matchesCriteria(m, {...c, status:[], excludeWatched:false, excludeBlocked:false})
+             && inScope(m,c) && listWindowOK(m,c)));
+// The number describing a cascade counts RESULTS, so it leaves the stubs out — the same rule the section
+// heads and the open card's own count already follow.
+const listedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m)).length;
 function scopeRows(){
   const c=activeCascade();
   // No Cascade open = the All card = the catalogue itself, which is what that card says it is.
