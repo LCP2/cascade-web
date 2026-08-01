@@ -4071,15 +4071,18 @@ function cascadeChipHTML(id){
 }
 window.openCascadePanel=(id, btn)=>{
   const open=btn.closest(".actions").querySelector(".cpop");
+  const mine=open && open.classList.contains("kpop");   // CAS-281: only MY panel counts as a second tap
   closeWatchPanel();
-  if(open) return;                       // tapping the chip again closes the panel it opened
+  if(mine) return;                       // tapping the chip again closes the panel it opened
   const from=activeCascade();
   // "the OTHER cascades" — the one you are standing in is not somewhere you can move a film TO.
   const targets=cascades.filter(c=>!from || c.id!==from.id);
   const pop=document.createElement("div");
   pop.className="cpop kpop";
+  // CAS-281: every card control collapses the same way, and the button says what it collapses. Three panels
+  // open off one stack; a button labelled only "Close" leaves the reader to work out which of them it means.
   pop.innerHTML=`<button type="button" class="cclose nclose" onclick="closeWatchPanel()"
-      title="Close" aria-label="Close">${ICON.chev}</button>
+      title="Collapse" aria-label="Collapse cascade">${ICON.chev}</button>
     <div class="nopts">${
       targets.length
         ? targets.map(c=>{
@@ -4119,8 +4122,9 @@ window.moveFilmTo=(id,cid)=>{
 };
 window.openNotifyPanel=(id, btn)=>{
   const open=btn.closest(".actions").querySelector(".cpop");
+  const mine=open && open.classList.contains("npop");   // CAS-281: only MY panel counts as a second tap
   closeWatchPanel();
-  if(open) return;                       // tapping the chip again closes the panel it opened
+  if(mine) return;                       // tapping the chip again closes the panel it opened
   const opts=notifyOptionsFor(undefined,id);   // CAS-280: only what this film can still reach
   const pop=document.createElement("div");
   pop.className="cpop npop";
@@ -4128,7 +4132,7 @@ window.openNotifyPanel=(id, btn)=>{
   // (right edge, pointing left). Two panels open off the same row; if they closed from the same side with
   // the same arrow, the only thing telling you which one you had open would be its contents.
   pop.innerHTML=`<button type="button" class="cclose nclose" onclick="closeWatchPanel()"
-      title="Close" aria-label="Close">${ICON.chev}</button>
+      title="Collapse" aria-label="Collapse notify">${ICON.chev}</button>
     <div class="nopts">${opts.length ? opts.map(o=>{
       const on=filmOptOn(id,o);
       return `<button type="button" class="nopt${on?" on":""}${o.sub?" nsub":""}" style="--wwc:${o.cd}"
@@ -4171,9 +4175,13 @@ function closeWatchPanel(){
 }
 function watchPanelKey(e){ if(e.key==="Escape"){ e.stopPropagation(); closeWatchPanel(); } }
 window.openWatchPanel=(id, btn)=>{
+  // CAS-281: "was MY panel already open?", not "was ANY panel open?". The old test closed whatever was open
+  // and returned, so tapping a second control while a first was open closed the first and opened nothing —
+  // a dead tap, and with three controls on the stack that is most of the taps you would make.
   const open=btn.closest(".actions").querySelector(".cpop");
+  const mine=open && !open.classList.contains("npop") && !open.classList.contains("kpop");
   closeWatchPanel();
-  if(open) return;                       // tapping the chip again closes the panel it opened
+  if(mine) return;                       // tapping the chip again closes the panel it opened
   const cur=opinionOf(id);
   const pop=document.createElement("div");
   pop.className="cpop";
