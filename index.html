@@ -3061,7 +3061,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 272, "commit": "af28106", "builtAt": "2026-08-01T11:14:47Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 273, "commit": "1453f17", "builtAt": "2026-08-01T11:25:37Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -7015,6 +7015,16 @@ const STARTERS = [
    cd:"var(--blue)", primary:["vote","buzz"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:7, selCritics:0, selScale:0, selBuzz:1}},
+  // CAS-307: from Lee's 0.8.3 staging review. Cinema only, third door after Blockbusters and Date Night —
+  // Style and Rating are part of THIS preset's standard (unlike its siblings, which leave both open), so
+  // the crit carries an explicit age ladder and a genre exclude list rather than the usual empty ones.
+  {key:"family", icon:"👨‍👩‍👧‍👦", name:"Family Movies", kinds:["cinema"],
+   blurb:"Big films the whole family can watch together.",
+   frame:"wants the big films the whole family can watch together.",
+   bar:"Studio · trending", cd:"var(--purple)", primary:["scale","buzz"],
+   crit:{status:[], genre:[], age:AGE_LEVELS.filter(a=>!MATURE.has(a)), lang:[], imdb:0, rt:0, awards:false,
+         myServices:false, exclude:["Horror","Crime","Romance"],
+         selCrowd:0, selCritics:0, selScale:50e6, selBuzz:2}},
   {key:"streaming", icon:"📺", name:"Everyday Favourites", kinds:["stream"],
    // Buildspec §10 (never "your services" until services are actually added) used to need a footnote under
    // this card. CAS-160 removes the need for one: the blurb no longer claims anything about your services.
@@ -7083,7 +7093,10 @@ function starterWatch(s, kind){
 }
 function starterPreview(s, kind){
   const d=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
-  d.genre=[]; d.year=[]; d.lang=["en"]; d.age=AGE_LEVELS.slice();   // the taste-baseline defaults, verbatim
+  // The taste-baseline defaults, verbatim — except age, which stays the preset's OWN cap (CAS-307: Family
+  // Movies' rating ladder is part of its standard, not something the card should quote as wide open).
+  d.genre=[]; d.year=[]; d.lang=["en"];
+  d.age=(s.crit.age&&s.crit.age.length) ? s.crit.age : AGE_LEVELS.slice();
   d.selCrowd=s.crit.selCrowd||0; d.selScale=s.crit.selScale||0;
   d.selCritScore=s.crit.selCritScore||0; d.selAwards=s.crit.selAwards||0;
   d.selBuzz=s.crit.selBuzz||0; d.selOr=false;
@@ -7128,9 +7141,10 @@ window.pickStarter=key=>{
   pendingStarter=key; wiz.starter=key;   // wiz.starter feeds the reveal's lead phrase (falls back gracefully)
   logEvent("starter_picked",{key});
   // Seed the sharpening flow FROM the picked agent: its criteria (lane, alerts, rating) become the draft the
-  // sharpening screens refine, and its name is the dynamic default the name step opens on. Genres, language
-  // and age are NOT seeded here — since CAS-146 they live on the account-level taste baseline, which the
-  // flow's Style / Language / Ratings steps edit directly, and which persists between agents by design.
+  // sharpening screens refine, and its name is the dynamic default the name step opens on. Genre and age are
+  // per-agent since CAS-182 (this comment used to say otherwise, from before that ticket landed) — the Style
+  // / Ratings screens edit onbFlow.draft directly, so a preset that wants a standard of its own (CAS-307:
+  // Family Movies' rating cap and genre exclude) has to seed it here, not just the bar dials below.
   // Commit is deferred to finishSharpSequence so the payoff shows the sharpened agent, not the raw card.
   // CAS-222: the offered name is the CHANNEL plus the preset — "Cinema Blockbusters", not "Blockbusters".
   // The card names a standard, and the same standard is a different agent in each lane, so the card's own
@@ -7145,8 +7159,10 @@ window.pickStarter=key=>{
   onbFlow.draft.kind = flowKind;     // CAS-182: the priority answer rides on the agent
   // The shipped taste defaults, verbatim — exactly what each screen's copy assumes when it opens, and the
   // same four starterPreview() counts the card against, so the card's number and the flow's first count
-  // are the same measurement.
-  onbFlow.draft.genre = []; onbFlow.draft.age = []; onbFlow.draft.lang = ["en"];
+  // are the same measurement. genre/age fall back to those defaults but defer to the preset's own crit when
+  // it sets one (CAS-307), so a preset's Style/Rating standard survives into the draft instead of always
+  // being reset to wide open — draftFromTemplate already copied s.crit.exclude in above, untouched here.
+  onbFlow.draft.genre = s.crit.genre||[]; onbFlow.draft.age = s.crit.age||[]; onbFlow.draft.lang = ["en"];
   onbFlow.draft.yearStop = 0;        // Any — every year in (CAS-116)
   // CAS-144: the dials OPEN ON THE AGENT'S OWN STANDARD, not fully open. The card you just tapped quoted a
   // number ("14 films match now"); landing on a hub that says 442 because its dials were reset would make one
