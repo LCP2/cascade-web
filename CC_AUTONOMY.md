@@ -32,7 +32,13 @@ stop. Never commit secrets.
   changes that must be applied to a live project are a **Lee step** — describe them in the ticket, never
   run SQL against a live project.
 - Follow the repo convention of one Playwright spec per ticket: `tests/e2e/cas<NNN>.spec.mjs`.
-- Run the verify command and read its **real exit code**: `npm run qa`. Do not proceed on red.
+- **Verify fast in-session; CI is the gate.** The full `npm run qa` now runs in CI on every push to
+  `staging` (`.github/workflows/qa.yml`, CAS-236). Do **not** run the whole suite in-session — it exceeds
+  the run's foreground limit and loops. Run only the fast checks against your build, reading their **real
+  exit codes**, and never pipe them through `| tail`:
+  `npm run build && npm run test:engine && npm run test:data && npm run test:monitor && npx playwright test tests/e2e/cas<NNN>.spec.mjs`
+  (the last is the ticket's own e2e spec). Do not proceed on red. On green, commit and push to `staging` —
+  CI's QA run is the authoritative gate, and `promote` refuses any staging commit whose QA is not green.
 - If a ticket says an asset or spec "will be attached" and it is not in the ticket text, **do not invent
   it** — stop, label it `needs-lee`, and say what is missing.
 
