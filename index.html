@@ -2883,7 +2883,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 234, "commit": "602f3c7", "builtAt": "2026-08-01T01:58:22Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 235, "commit": "e7d22d0", "builtAt": "2026-08-01T02:13:19Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5147,8 +5147,11 @@ window.openCascade=id=>{
   // watching (that's the Found list). So this line says "showing", and only the value lines say "found".
   toast(`${c.icon} “${c.name}” — showing you ${countCriteria(c)} films right now · ${alertSummary(c)}`);
 };
-// Closing a Cascade lands you on All rather than on nothing — same films as before, now with a card lit.
-window.closeCascade=()=>{ setActive(ALL_ID); settleFoundView(); clearFilters(); syncFilterUI(); restoreCascadeSearch(); render(); };
+// CAS-271: the × that used to sit on an agent card is gone, and closeCascade() with it. It was never a
+// close — nothing was shut, dismissed or put away; it selected the All card, which is a thing the deck
+// already does by being scrolled to. An × on a card the user has spent time building reads as "delete
+// this", so the one control on that row that destroyed nothing was also the one that looked most like
+// it did. Selecting All is still how you leave an agent; it is just no longer disguised as an exit.
 // Filters touched by hand while a Cascade is open → offer to save them back into it.
 const sameSet=(s,a)=> s.size===a.length && a.every(v=>s.has(v));
 function cascadeDirty(){
@@ -5277,7 +5280,6 @@ function deckBuild(){
         <button class="ca-btn" data-act="edit">Edit</button>
         ${searchBtn(c.name)}
         <button class="ca-btn x" data-act="share" aria-label="Share this Cascade" title="Share this Cascade">🔗</button>
-        <button class="ca-btn x" data-act="close" aria-label="Close this Cascade" title="Close this Cascade">×</button>
       </div>
     </div></div>`).join("")
   + `<div class="dcard new" role="group" aria-label="New Cascade" tabindex="-1"><div class="dc-in">
@@ -5403,7 +5405,6 @@ deckStrip.addEventListener("click",e=>{
   if(act==="new") return newCascade();
   if(act==="edit") return editCascade();
   if(act==="share") return shareCascade();
-  if(act==="close") return closeCascade();
   if(act==="save") return saveCascadeEdits();
   if(act==="search") return onSearchIcon(card);
   if(deckDragged) return;                            // that click was the end of a drag
