@@ -3961,14 +3961,49 @@ function watchChipHTML(id){
 // actually fire. The panel lists every option the agent HAS, whether or not the agent has it switched on,
 // because "tell me about this one film reaching rent even though my agent doesn't watch rent" is exactly
 // the thing a per-film control is for. Each option the agent does have on starts ON for the film.
-function notifyOptionsFor(c){
+// ---- CAS-280: a film can only be told about where it is still GOING -------------------------------------
+// One ladder across both lanes, in the order a film actually travels it. A film already at Rent cannot
+// "reach Rent" again, so offering the row is offering an alert that can never fire — the honesty guardrail's
+// exact case. The rungs are the option keys AGENT_WINDOWS uses, so this map and that list cannot drift.
+const WINDOW_RUNG = {upcoming:0, in_cinema:1, premium:2, rent:3, stream:4};
+// …and where the FILM is on that same ladder, read from the window it is in now.
+const STATUS_RUNG  = {upcoming:0, opening_week:1, in_cinema:1, pvod:2, rental:3, included_streaming:4};
+const filmRung = id => {
+  const m=MOVIES.find(x=>x.tmdb_id===id);
+  const r=m ? STATUS_RUNG[primaryStatus(m)] : undefined;
+  return r===undefined ? -1 : r;      // unknown window -> -1, so nothing is filtered out on a guess
+};
+// Is this row's promise already spent for a film standing on `rung`?
+//
+// Below the film: yes, unambiguously — it cannot arrive somewhere it has already left.
+//
+// LEVEL with the film: only if everything the row can fire is its own arrival. That distinction is the whole
+// subtlety of this ticket. Two rows carry a MOMENT rather than an arrival, and both are still ahead of a film
+// sitting in that very window: "In cinema" fires on PAST OPENING WEEKEND, and "Upcoming" fires when the film
+// REACHES A CINEMA. Filtering on the rung alone would have deleted both — which for a cinema agent, whose
+// listing is mostly films already in cinemas, would have emptied the Notify control on nearly every card.
+// A row is read as arrival-only when every alert it can raise is one of its own statuses.
+function rowSpentFor(w, rung){
+  const r = WINDOW_RUNG[w.key];
+  if(r===undefined) return false;                    // unknown rung -> never filtered on a guess
+  if(r < rung) return true;
+  if(r > rung) return false;
+  const own = new Set(w.status||[]);
+  return Object.keys(w.alerts||{}).every(a=>own.has(a));
+}
+// `id` is optional. Given one, the list is narrowed to that film's FUTURE rungs (CAS-280) — which is what
+// every per-film caller wants, including the chip's own "N of M", because a total that counts moments the
+// film has already passed describes a promise nobody can keep.
+function notifyOptionsFor(c, id){
   if(c===undefined) c=activeCascade();
   // In the All view there is no agent to read, and a film there can be caught by any of them — so the
   // panel offers every window rather than guessing at one type.
   const kinds = (c && (c.kind==="cinema"||c.kind==="stream")) ? [c.kind] : Object.keys(AGENT_WINDOWS);
   const watch = c ? migrateWatch(c.watchWindows||{}) : {};
+  const rung = id===undefined ? -1 : filmRung(id);
   const out=[];
   kinds.forEach(k=>AGENT_WINDOWS[k].forEach(w=>{
+    if(rung>=0 && rowSpentFor(w, rung)) return;
     const f=watch[w.key]||{};
     out.push({key:w.key, label:w.label, say:w.notifySay, cd:w.cd, agentOn:!!f.notify, alerts:w.alerts||{}});
     (w.subs||[]).forEach(sb=>out.push({
@@ -3998,7 +4033,7 @@ const filmOptOn = (id, opt) => {
 // is muted in substance, and the chip says so rather than claiming an alert it will not send.
 function filmNotifyState(id){
   if(filmMuted(id)) return {on:0, total:0, muted:true};
-  const opts=notifyOptionsFor();
+  const opts=notifyOptionsFor(undefined,id);   // CAS-280: this film's future moments only
   const on=opts.filter(o=>filmOptOn(id,o)).length;
   return {on, total:opts.length, muted:on===0};
 }
@@ -4086,7 +4121,7 @@ window.openNotifyPanel=(id, btn)=>{
   const open=btn.closest(".actions").querySelector(".cpop");
   closeWatchPanel();
   if(open) return;                       // tapping the chip again closes the panel it opened
-  const opts=notifyOptionsFor();
+  const opts=notifyOptionsFor(undefined,id);   // CAS-280: only what this film can still reach
   const pop=document.createElement("div");
   pop.className="cpop npop";
   // The close control is on the LEFT and points RIGHT, deliberately the mirror of the Watch-status panel's
@@ -4094,21 +4129,25 @@ window.openNotifyPanel=(id, btn)=>{
   // the same arrow, the only thing telling you which one you had open would be its contents.
   pop.innerHTML=`<button type="button" class="cclose nclose" onclick="closeWatchPanel()"
       title="Close" aria-label="Close">${ICON.chev}</button>
-    <div class="nopts">${opts.map(o=>{
+    <div class="nopts">${opts.length ? opts.map(o=>{
       const on=filmOptOn(id,o);
       return `<button type="button" class="nopt${on?" on":""}${o.sub?" nsub":""}" style="--wwc:${o.cd}"
         aria-pressed="${on}" onclick="toggleFilmOpt(${id},'${o.key}')"
         title="${escA(on?`On — tap to stop hearing about this`:`Off — tap to be told ${o.say}`)}">
         <span class="wwb">✓</span><span class="nol">${esc(o.label)}</span>
         ${o.agentOn?"":`<span class="notag">not in this agent</span>`}</button>`;
-    }).join("")}</div>`;
+    }).join("")
+    // CAS-280: a film at the end of its journey has no moment left to be told about. Say that, rather than
+    // opening an empty panel or — worse — offering a row that could never fire.
+    : `<div class="nopt nonone">This film has reached its last window, so there is nothing further to be
+         told about.</div>`}</div>`;
   btn.closest(".actions").appendChild(pop);
   document.addEventListener("keydown", watchPanelKey, true);
   const first=pop.querySelector(".nopt"); if(first) first.focus();
 };
 window.toggleFilmOpt=(id,key)=>{
   const e=entryFor(id);
-  const opt=notifyOptionsFor().find(o=>o.key===key); if(!opt) return;
+  const opt=notifyOptionsFor(undefined,id).find(o=>o.key===key); if(!opt) return;
   e.wins=e.wins||{};
   e.wins[key]=!filmOptOn(id,opt);
   // Touching any option un-mutes the film: a whole-film silence and a per-moment choice are two different
@@ -4120,7 +4159,7 @@ window.toggleFilmOpt=(id,key)=>{
   if(btn){ const pop=btn.closest(".actions").querySelector(".cpop");
            btn.outerHTML=notifyChipHTML(id);
            if(pop) pop.querySelectorAll(".nopt").forEach((n,i)=>{
-             const o=notifyOptionsFor()[i]; if(!o) return;
+             const o=notifyOptionsFor(undefined,id)[i]; if(!o) return;
              const on=filmOptOn(id,o);
              n.classList.toggle("on", on); n.setAttribute("aria-pressed", String(on));
            }); }
