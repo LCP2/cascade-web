@@ -236,6 +236,11 @@
      recognise a film BY — and at 94 it was a thumbnail beside the text rather than the tombstone the
      card is built around. Width is the only number that changes: the height follows from the 2:3 that
      CAS-184 fixed, so nothing else in the grid has to move. */
+  /* CAS-276: the tombstone spans down to the SCORES row and stops there — which is the row holding the IMDb
+     lozenge, so the column now ends where the ticket asks it to. The awards row runs the full width beneath
+     both columns instead of being squeezed into the ~195px right-hand one: with the scale badge joining it
+     (it used to hang off the poster) three chips in a 195px column wrapped to three lines and made the card
+     ~60px taller than the information in it. Across the full width they sit on one. */
   .ctop{display:grid;grid-template-columns:124px minmax(0,1fr);column-gap:12px;row-gap:9px;
     grid-template-areas:
       "tomb title"
@@ -243,7 +248,7 @@
       "tomb syn"
       "tomb money"
       "tomb scores"
-      "tomb awards"}
+      "awards awards"}
   .ptomb{grid-area:tomb;align-self:start;display:flex;flex-direction:column;gap:8px;width:124px}
   .poster{width:100%;aspect-ratio:2/3;border-radius:10px;
     background:var(--panel2) center/cover no-repeat;position:relative;
@@ -260,10 +265,17 @@
   .cert.mature{border-color:#c0563f;color:#ffb9a6;background:rgba(192,86,63,.16)}
   /* CAS-179: no date on the top line any more — the film's dates are all in the availability strip,
      where they belong to a window each. This line is what the film IS: its genres and its language. */
-  .metaline{grid-area:meta;font-size:13px;color:var(--dim);line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* CAS-276: the Style line rides UP against the title. It is the title's qualifier — "Nosferatu, a horror
+     in English" is one thought — and a full 9px grid gutter between them read as two separate facts. The
+     negative margin buys that row's worth of space for the synopsis rather than returning it to the grid. */
+  .metaline{grid-area:meta;margin-top:-6px;font-size:13px;color:var(--dim);line-height:1.4;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .culttag{color:var(--faint)}
+  /* CAS-276: three lines, not two. Two lines of a synopsis is enough to start a sentence and not enough to
+     finish one, which is the worst of both — it costs the height and delivers a fragment. The room comes
+     from the badge leaving the tombstone and the Style line moving up, so the card does not simply grow. */
   .synopsis{grid-area:syn;font-size:14px;color:#c8d0da;line-height:1.5;margin:0;
-    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
   .card.expanded .synopsis{-webkit-line-clamp:unset;display:block}
   .expand{max-height:0;opacity:0;overflow:hidden;transition:max-height .4s ease,opacity .3s ease}
   .card.expanded .expand{max-height:560px;opacity:1;margin-top:12px}
@@ -457,10 +469,12 @@
   .card.expanded .awx{display:flex}
   .awx .l{display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:var(--dim)}
   .awx .l b{color:var(--ink);font-weight:700}
-  /* Scale badge — tucked UNDER the poster, sharing the last grid row (and so a baseline) with the
-     awards. It's a claim ABOUT the film, not another metric alongside IMDb/RT. Gold, and it names the
-     exact tier the Cascade's Tentpole filter uses. Press it (or hover) for the signals behind it. */
-  .tentbadge{width:100%;height:24px;font:inherit;font-size:10.5px;font-weight:700;
+  /* Scale badge — CAS-276 moves it INTO the awards row, which is what this comment always claimed it was
+     doing ("sharing a baseline with the awards"); in fact it hung under the poster and stretched the
+     tombstone column instead. It's a claim ABOUT the film, not another metric alongside IMDb/RT. Gold, and
+     it names the exact tier the Cascade's Tentpole filter uses. Press it (or hover) for the signals behind
+     it. Width is now content-sized, because it sits in a wrapping row of chips rather than filling a column. */
+  .tentbadge{height:24px;font:inherit;font-size:10.5px;font-weight:700;max-width:100%;
     padding:0 6px;border-radius:8px;display:inline-flex;gap:5px;align-items:center;justify-content:center;
     white-space:nowrap;overflow:hidden;cursor:pointer;
     border:1px solid rgba(245,214,117,.45);background:rgba(245,214,117,.10);color:var(--gold)}
@@ -473,7 +487,9 @@
      Current is filled, past is tinted (it happened), future is ghosted and the joiner into it dims
      with it: what is ahead is a forecast, and it should not look like a fact. Each window carries
      its date underneath, italic where the date is worked out rather than read from a listing. */
-  .bandw{background:var(--band);border-top:1px solid var(--line);padding:11px 13px}
+  /* CAS-276: 11px of vertical padding around a 46px strip is a quarter of the band spent on air. 8px still
+     reads as a separate band (it has its own background and top rule to do that) without paying for it twice. */
+  .bandw{background:var(--band);border-top:1px solid var(--line);padding:8px 13px}
   /* 10px between lozenges, not the mock's 14 — the connector still reads, and the four columns have to
      hold "Upcoming" and "Premium" whole at 360px wide. An ellipsised window name is a clipped fact. */
   .avail{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
@@ -2909,7 +2925,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 239, "commit": "29eeefe", "builtAt": "2026-08-01T02:25:06Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 240, "commit": "d7ff1d1", "builtAt": "2026-08-01T02:32:22Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3791,16 +3807,20 @@ function cardHTML(m, markNew=false){
   return `<div class="card ${expandedSet.has(id)?'expanded':''}" id="card-${id}">
     <div class="cbody" onclick="cardTap(event,${id})">
       <div class="ctop">
+        <!-- CAS-276: the tombstone is the POSTER, and nothing else. The scale badge used to hang below it,
+             which pushed the column's bottom up to 59px past the IMDb lozenge it is supposed to finish
+             level with — measured across 355 cards, and every one of the worst offenders had a badge. -->
         <div class="ptomb">
           <div class="poster" style="${poster}">${play}</div>
-          ${badge}
         </div>
         <div class="title">${m.title}${cert}</div>
         <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
         <div class="mrow r-scores">${scoresRowHTML(m)}</div>
-        <div class="mrow r-awards">${awardChips(m)}</div>
+        <!-- …and it lands HERE, which is where its own comment always said it belonged: beside the awards,
+             sharing their baseline. It is a claim about the film, like they are. -->
+        <div class="mrow r-awards">${badge}${awardChips(m)}</div>
       </div>
       <div class="expand">${awardsBreakdownHTML(m)}${creditsHTML(m)}${trailersHTML(m)}</div>
     </div>
