@@ -71,11 +71,3 @@ test("CAS-294: the receipts that are NOT watch statuses survive", async ({ page 
   const kept = await page.evaluate(() => !SAID_HIDDEN.has("removed"));
   expect(kept).toBe(true);
 });
-
-test("CAS-294: the agent's value line still renders", async ({ page }) => {
-  await agentListing(page);
-  await answerFirst(page);
-  // "What I've been doing for you" is not a list of films and is not in scope for this ticket.
-  const stillCalled = await page.evaluate(() => typeof foundValueHTML === "function");
-  expect(stillCalled).toBe(true);
-});

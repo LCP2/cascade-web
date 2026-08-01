@@ -3060,7 +3060,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 270, "commit": "0dde225", "builtAt": "2026-08-01T11:03:44Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 271, "commit": "ec7f5ce", "builtAt": "2026-08-01T11:08:16Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -4538,50 +4538,6 @@ function mlRowHTML(m, groupKey){
     </div>
   </div>`;
 }
-// ---- What each Cascade has actually done for you (retention surfacing, CAS-69) --------------------------
-// The agent's accrued value, in its own voice — and ONLY from figures we hold. The one saving this catalogue
-// can back up is money NOT spent renting: a film Cascade found for you that is included on a service you
-// already pay for, priced against that same film's real rent offer. We hold no subscription prices, so no
-// monthly saving is ever quoted; a Cascade with nothing to show says so rather than inventing a number.
-// Only films the Cascade actually FOUND count (purple). One you added by hand and it happens to match is not
-// something it found for you, and "Bargain hunter has found 6" must never be counting your own adds.
-function cascadeValue(c){
-  const films=MOVIES.filter(m=>found.has(m.tmdb_id) && foundSource(m.tmdb_id)==="auto"
-    && ((notify[m.tmdb_id]||{}).cascadeIds||[]).includes(c.id));
-  let covered=0, priced=0, saved=0;
-  films.forEach(m=>{
-    const offers=dedupOffers(m.offers||[]);
-    if(!offers.some(o=>(o.type==="sub"||o.type==="free") && prefs.sub.has(o.service))) return;
-    covered++;                                     // included on a service you actually pay for
-    const rents=offers.filter(o=>o.type==="rent" && o.price!=null).map(o=>o.price);
-    if(rents.length){ priced++; saved+=Math.min(...rents); }
-  });
-  return {n:films.length, covered, priced, saved};
-}
-function valueLine(c){
-  const v=cascadeValue(c);
-  if(!v.n) return `hasn't found anything yet — it's still watching.`;
-  const head=`has found <b>${v.n} film${v.n===1?"":"s"}</b>`;
-  if(!servicesPicked())
-    return `${head}. Tell me what you're paying for (⚙️) and I'll show you what that's worth to you.`;
-  if(!v.covered)
-    return `${head} — none of them are included on a service you pay for yet, so there's no saving I can honestly claim.`;
-  const body=`${head} — ${v.covered} of ${v.covered===v.n?"them":"those"} ${v.covered===1?"is":"are"} included on a
-    service you already pay for`;
-  return v.saved>0
-    ? `${body}, so that's <b>$${v.saved.toFixed(2)}</b> you don't have to spend renting
-       ${v.priced===v.covered ? (v.covered===1?"it":"them") : `the ${v.priced} of them we hold a rent price for`}.`
-    : `${body}.`;
-}
-function foundValueHTML(){
-  if(!cascades.length || !found.size) return "";
-  return `<div class="dgcard" style="margin-top:16px">
-    <div class="dgname">📣 What I've been doing for you</div>
-    ${cascades.map(c=>`<div class="dgrow">${c.icon} <b>${esc(c.name)}</b> ${valueLine(c)}</div>`).join("")}
-    <div class="dgnone" style="margin-top:8px">Every figure here is read from today's real offer prices. We don't
-      hold subscription prices, so we never guess at a monthly saving.</div>
-  </div>`;
-}
 // ================= The Found view — the hero (CAS-70) =======================================================
 // The front door. Not a filtered list you have to work: a SELECTION, presented — the agent says what it found
 // up top, marks what's new since it last reported, gives a reason on every card, and orders the lot by where
@@ -4734,7 +4690,7 @@ function renderListChrome(){
 // sets, so nothing is lost: the answer is undoable in place on the stub, and reviewable in full over there.
 //
 // What is NOT removed: the "you took these off" receipts, which are a Pick override rather than a watch
-// status and are the only undo for it; and the agent's value line, which is not a list of films at all.
+// status and are the only undo for it.
 const SAID_HIDDEN = new Set(["found","wow","liked","soso","disliked","blocked"]);
 function renderSaid(){
   const el=$("listSaid"); if(!el) return;
@@ -4742,8 +4698,7 @@ function renderSaid(){
     .map(g=>{ const ids=g.set();
               return {g, films:MOVIES.filter(m=>ids.has(m.tmdb_id) && !heldOpen.has(m.tmdb_id))}; })
     .filter(x=>x.films.length);
-  el.innerHTML=`<div style="padding:0 12px">${foundValueHTML()}</div>`
-    + said.map(({g,films})=>`<div class="mlgroup" style="padding:0 12px">
+  el.innerHTML=said.map(({g,films})=>`<div class="mlgroup" style="padding:0 12px">
       <div class="mlhead" style="color:${g.colour}">${g.icon} ${g.title}<span class="n">${films.length}</span></div>
       <div class="pnote" style="margin:-4px 0 8px">${g.blurb}</div>
       ${films.map(m=>mlRowHTML(m,g.key)).join("")}</div>`).join("");
