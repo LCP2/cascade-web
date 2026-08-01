@@ -2026,7 +2026,8 @@
     <div class="casclbl" id="cascLbl">Cascades</div>
     <div class="deck">
       <!-- Not a listbox: an option is not allowed to contain buttons, and the centre card carries
-           Edit / Share / Close. A group of groups keeps those buttons reachable to a screen reader. -->
+           Edit and Search (CAS-271/CAS-272 took Close and Share off it). A group of groups keeps those
+           buttons reachable to a screen reader. -->
       <div class="deckstrip" id="cascStrip" role="group" aria-label="Cascades — use the arrow keys to move between them"
            aria-keyshortcuts="ArrowLeft ArrowRight Home End"></div>
     </div>
@@ -2883,7 +2884,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 235, "commit": "e7d22d0", "builtAt": "2026-08-01T02:13:19Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 236, "commit": "f0afdf7", "builtAt": "2026-08-01T02:16:42Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5279,7 +5280,6 @@ function deckBuild(){
         <button class="ca-btn save" data-act="save" hidden>Save</button>
         <button class="ca-btn" data-act="edit">Edit</button>
         ${searchBtn(c.name)}
-        <button class="ca-btn x" data-act="share" aria-label="Share this Cascade" title="Share this Cascade">🔗</button>
       </div>
     </div></div>`).join("")
   + `<div class="dcard new" role="group" aria-label="New Cascade" tabindex="-1"><div class="dc-in">
@@ -5404,7 +5404,6 @@ deckStrip.addEventListener("click",e=>{
   const act=e.target.closest("button[data-act]")?.dataset.act;
   if(act==="new") return newCascade();
   if(act==="edit") return editCascade();
-  if(act==="share") return shareCascade();
   if(act==="save") return saveCascadeEdits();
   if(act==="search") return onSearchIcon(card);
   if(deckDragged) return;                            // that click was the end of a drag
@@ -10486,33 +10485,22 @@ function renderAlerts(){
 }
 let toastT; function toast(msg){const t=$("toast");t.textContent=msg;t.classList.add("show");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("show"),3200);}
 
-// ================= Share a Cascade (prototype link) =================
-// The whole radar travels in the URL — there's no backend, and a shared link must keep working when the
-// catalogue behind it has changed. So everything arriving from a URL is treated as hostile: whitelisted
-// keys only, every value checked against what the catalogue ACTUALLY has, and the result opened as a
-// DRAFT the recipient has to accept. A share link can never write to someone's saved Cascades by itself.
-const SHARE_KEYS = ["name","icon","status","genre","exclude","age","lang","culture","year","imdb","ratingStop",
-  "includeUnrated","budget","includeUnbudgeted","tentpole","awards","myServices","sort","alerts","rt"];
-const b64url = s => btoa(String.fromCharCode(...new TextEncoder().encode(s)))
-  .replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+// ================= Opening a shared Cascade (inbound only) =================
+// CAS-272: the 🔗 that MADE one of these links is gone, and shareCascade/shareLink/SHARE_KEYS/b64url with
+// it. It was never a share — there is no backend, so it copied a URL to the clipboard and left the rest to
+// you, while sitting in a control row next to Edit as though it were a peer of it. A control that hands you
+// a string and calls it "shared" promises a thing the product does not do.
+//
+// The RECEIVING half stays, and deliberately: links made before today are already out there in people's
+// messages, and a link that opens nothing is worse than a link that was never offered. Nothing in the app
+// mints a new one now, so this path only ever runs for a URL somebody already holds.
+//
+// Everything arriving from a URL is still treated as hostile: whitelisted keys only, every value checked
+// against what the catalogue ACTUALLY has, and the result opened as a DRAFT the recipient has to accept.
+// A share link can never write to someone's saved Cascades by itself.
 const unb64url = s => new TextDecoder().decode(
   Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")), c=>c.charCodeAt(0)));
 
-function shareLink(c){
-  const payload={};
-  SHARE_KEYS.forEach(k=>{ if(c[k]!==undefined) payload[k]=c[k]; });
-  const base=location.origin+location.pathname;
-  return `${base}?c=${b64url(JSON.stringify(payload))}`;
-}
-window.shareCascade=()=>{
-  const c=activeCascade(); if(!c) return;
-  logEvent("share_copied",{key:c.template||"custom"});
-  const url=shareLink(c);
-  const done=ok=>toast(ok ? `🔗 Link to “${c.name}” copied — it opens as a draft they can review`
-                          : `🔗 Copy this: ${url}`);
-  if(navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(()=>done(true), ()=>done(false));
-  else done(false);
-};
 // Keep only values this catalogue can actually serve. A link made before a genre/year/service existed —
 // or hand-edited — degrades to a narrower-but-valid radar instead of a broken one or a silent lie.
 const keepKnown = (v, allowed) => Array.isArray(v) ? v.filter(x=>allowed.includes(x)) : [];
