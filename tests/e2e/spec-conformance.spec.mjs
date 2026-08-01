@@ -110,7 +110,7 @@ test("CAS-228: Agent Settings shows only the agent type's own windows, each with
 
   // Edit → the Briefing → Agent settings. Reached the way a person reaches it.
   await page.evaluate(() => window.editCascade());
-  await expect(page.locator(".osh", { hasText: /Briefing/ })).toBeVisible();
+  await expect(page.locator(".osh", { hasText: /Edit Agent/ })).toBeVisible();   // CAS-266 renamed it
   await page.locator(".osdoor", { hasText: "Agent settings" }).click();
   await expect(page.locator(".osh", { hasText: /Where & when/ })).toBeVisible();
 

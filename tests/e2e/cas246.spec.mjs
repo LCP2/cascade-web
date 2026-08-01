@@ -27,7 +27,8 @@ test("CAS-246: New Cascade runs priority → pick an agent → the Briefing, and
 
   // …and lands in the Briefing, on the agent just picked, with Save.
   expect(await page.evaluate(() => onbStepKey), "…and lands in the Briefing").toBe("briefing");
-  await expect(page.locator(".osh", { hasText: /Briefing/ })).toBeVisible();
+  // CAS-266 renamed this screen's title to "Edit Agent"; the step it IS is still `briefing`, asserted above.
+  await expect(page.locator(".osh", { hasText: /Edit Agent/ })).toBeVisible();
   await expect(page.locator(".oscta", { hasText: "Save agent" })).toBeVisible();
   const draftState = await page.evaluate(() => ({ id: onbFlow.draft.id, kind: onbFlow.draft.kind }));
   expect(draftState.id, "the agent must not be on the deck before Save").toBe(null);
