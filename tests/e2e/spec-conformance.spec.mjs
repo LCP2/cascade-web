@@ -160,13 +160,16 @@ test("CAS-230: the film card carries Watch status + Notify + chevron, not the ol
   // The old row is gone: no Pick badge, no bare verdict buttons.
   await expect(first.locator(".actions .pickbtn, .actions .actbtn:not(.wtwbtn)")).toHaveCount(0);
 
-  // The Watch-status chip opens the four CAS-183 answers, and choosing one folds the card to its stub.
+  // The Watch-status chip opens the answers, and choosing one lands it.
+  // CAS-278 supersedes the four CAS-183 answers with five, listed best-first: the old expectation here was
+  // ["Don't want", "Disliked", "So-so", "Liked"] — worst-first, with the best answer sitting between the two
+  // worst. cas278.spec.mjs owns the ordering and the ramp; this test only cares that the chip still opens a
+  // real set of answers and that picking one registers.
   await first.locator(".ctl.watch").click();
   const segs = await page.locator(".cpop .cseg .cl").allTextContents();
-  expect(segs.map(s => s.trim())).toEqual(["Don't want", "Disliked", "So-so", "Liked"]);
-  // Exact, because "Liked" is a substring of "Disliked" and a loose match hits both.
+  expect(segs.map(s => s.trim())).toEqual(["Wow!", "Watch Again", "So-so", "Disliked", "Won't Watch"]);
   const cardId = await first.getAttribute("id");
-  await page.locator(".cpop .cseg").filter({ has: page.getByText("Liked", { exact: true }) }).click();
+  await page.locator(".cpop .cseg").filter({ has: page.getByText("Watch Again", { exact: true }) }).click();
   // What the chip has to achieve is that the answer LANDS — the film joins the watched set that feeds Your
   // Movies (CAS-183). What happens to the row afterwards differs by view and is not this ticket's business:
   // on the All view the card folds to its stub, and on an agent's own listing the agent's exclude-watched rule

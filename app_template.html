@@ -329,20 +329,22 @@
   .cpop{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);z-index:60;
     display:flex;align-items:center;gap:5px;background:#0e1626;border:1px solid rgba(255,255,255,.16);
     border-radius:12px;padding:4px;box-shadow:0 14px 34px rgba(0,0,0,.7)}
-  .cpop .csegs{display:flex;gap:3px;flex:1;min-width:0}
-  /* The icon sits ABOVE the label, not beside it. Side by side, four segments plus the close button leave
-     about 45px of text each on a 360px phone, and every label truncated to "Do…" / "Dis…" — which is worse
-     than no label at all, because it looks like a rendering fault. Stacked, the full word fits at every
-     width the app supports. */
-  /* flex-basis auto, not 0: with a zero basis all four segments are equal and the longest label ("Don't
-     want") is 3px short of fitting at 360px, so it ellipsises while three neighbours sit half empty. Sizing
-     from content and sharing the slack keeps every label whole and the widths near enough to even. */
-  .cseg{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
-    height:44px;padding:0 2px;border-radius:9px;background:rgba(255,255,255,.05);border:1px solid transparent;
-    font-family:inherit;font-size:10px;font-weight:600;color:var(--dim);cursor:pointer;line-height:1}
-  .cseg .ci{display:grid;place-items:center;line-height:0}
-  .cseg .ci svg{width:15px;height:15px;display:block}
-  .cseg .cl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  /* CAS-278: the five answers run TOP TO BOTTOM, best first, so the list is read as a scale. Across a row
+     they cannot be: five labels plus a close button on a 360px phone is about 40px of text each, and the
+     old four already needed the icon stacked over the label to survive it. Down the column every label is
+     whole at full size and each row is a 40px-tall target instead of a 44x60 sliver. */
+  .cpop .csegs{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+  .cseg{display:flex;flex-direction:row;align-items:center;gap:8px;
+    height:40px;padding:0 10px;border-radius:9px;background:rgba(255,255,255,.05);
+    border:1px solid transparent;border-left:3px solid var(--segc,transparent);
+    font-family:inherit;font-size:12px;font-weight:600;color:var(--dim);cursor:pointer;line-height:1;text-align:left}
+  /* The ramp is visible BEFORE anything is chosen. Colouring only the selected row would mean the scale had
+     no colour scheme at all until you had already used it — the gradient is meant to tell you which end is
+     which on the way in, not to confirm a choice on the way out. */
+  .cseg .ci{display:grid;place-items:center;line-height:0;color:var(--segc,currentColor);opacity:.9}
+  .cseg .ci svg{width:16px;height:16px;display:block}
+  .cseg .cl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+  .cseg.on .ci{color:inherit;opacity:1}
   .cseg:hover{color:var(--ink);border-color:#3a4150}
   .cseg:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
   /* CAS-241: a thumb, not a fingernail. 28px wide was under half the 44px the rest of the card's controls
@@ -414,6 +416,9 @@
   /* CAS-183 so-so: amber — between the green of a like and the red of a dislike, which is exactly where
      the answer sits. Not grey: grey is "not for me", an answer about a film you have NOT seen. */
   .actbtn.on.soso{background:rgba(240,163,54,.16);border-color:var(--amber);color:#ffce8f}
+  /* CAS-278 Wow!: the top of the ramp, a step brighter than Watch Again so the two greens are tellable
+     apart at a glance — they are adjacent answers and the difference between them is the whole point. */
+  .actbtn.on.wow{background:rgba(23,212,146,.20);border-color:#17d492;color:#8ff0cd}
   .actbtn.wtwbtn .chev{transition:transform .18s}
   .actbtn.wtwbtn.open{background:rgba(245,214,117,.12);border-color:rgba(245,214,117,.5);color:var(--gold)}
   .actbtn.wtwbtn.open .chev{transform:rotate(180deg)}
@@ -2485,6 +2490,9 @@ const ICON = {
   // CAS-183 "so-so": the same 24px circle the block mark uses, with a flat mouth — neither thumb, because
   // it is neither answer, and a half-turned thumb would read as a weak version of one of them.
   soso:    svgIcon(`<circle cx="12" cy="12" r="8.6"/><path d="M8.6 14.6h6.8"/><path d="M9.4 9.6h.01"/><path d="M14.6 9.6h.01"/>`),
+  // CAS-278 "Wow!": a star, on the same 24px grid at the same stroke weight as the thumbs and the circles,
+  // so the top of the scale is drawn in the same hand as the rest of it rather than borrowing an emoji.
+  wow:     svgIcon(`<path d="M12 3.6l2.6 5.3 5.8.85-4.2 4.1 1 5.75L12 16.9l-5.2 2.7 1-5.75-4.2-4.1 5.8-.85z"/>`),
   // the chevron rotates as a whole (the class is on the <svg>, not a path — rotating a path would spin it
   // about the SVG origin, not its own centre)
   chev:    svgIcon(`<path d="m6.5 9.5 5.5 5.5 5.5-5.5"/>`, "chev"),
@@ -2717,17 +2725,25 @@ const disliked = loadSet("cascade_disliked");
 // because that pushes the kind down the list. It is its own answer, riding alongside `watched` the same way
 // `disliked` does, so a film ticked before today keeps meaning exactly what it meant.
 const indifferent = loadSet("cascade_indifferent");
-const isLiked    = id => watched.has(id) && !disliked.has(id) && !indifferent.has(id);
+// CAS-278: and the FIFTH — the top of the scale. "Watch Again" is a strong answer, but it is not the same
+// answer as "that was extraordinary", and a five-point scale that stops at "I'd watch it again" has no room
+// at the top for the films the whole thing exists to find. It rides alongside `watched` exactly as the other
+// two markers do, so it costs no migration: nothing is in this set until somebody puts it there, and every
+// film ticked before today keeps meaning precisely what it meant.
+const wowed = loadSet("cascade_wow");
+const isWow      = id => watched.has(id) && wowed.has(id) && !disliked.has(id) && !indifferent.has(id);
+const isLiked    = id => watched.has(id) && !wowed.has(id) && !disliked.has(id) && !indifferent.has(id);
 const isDisliked = id => watched.has(id) && disliked.has(id);
 const isSoso     = id => watched.has(id) && indifferent.has(id) && !disliked.has(id);
 // "" when you've said nothing — the only state in which the full card is drawn.
 const opinionOf  = id => blocked.has(id) ? "notfor" : isDisliked(id) ? "disliked"
-                       : isSoso(id) ? "soso" : watched.has(id) ? "liked" : "";
+                       : isSoso(id) ? "soso" : isWow(id) ? "wow" : watched.has(id) ? "liked" : "";
 // CAS-183: ONE chokepoint for every write of a watch status, so the per-account sync has a single place to
 // wrap — exactly the way saveCascades() is wrapped for the `cascades` table.
 function saveWatchStatus(){
   saveSet("cascade_watched",watched); saveSet("cascade_disliked",disliked);
   saveSet("cascade_blocked",blocked); saveSet("cascade_indifferent",indifferent);
+  saveSet("cascade_wow",wowed);
 }
 const expandedSet = new Set();   // which cards are expanded (session only)
 
@@ -3852,11 +3868,15 @@ function cardHTML(m, markNew=false){
 // per film — so they behave as a radio group made of toggles: lighting one clears the other two, and pressing
 // the lit one clears it. Order is fixed everywhere they appear (card and collapsed stub), so the position of a
 // mark never changes meaning between the two.
+// CAS-278: five answers now, and ONE order for all of them — best first, everywhere they appear. The old
+// row ran Not-for-me · Liked · So-so · Disliked, which is not an order at all: the best answer sat between
+// the two worst. A scale has to read as a scale or its positions mean nothing.
 const OPINIONS = [
-  {key:"notfor",   ico:"block",   lbl:"Not for me", on:"Not for me — tap to undo",  off:"Not for me"},
-  {key:"liked",    ico:"like",    lbl:"Liked",      on:"Liked — tap to undo",       off:"Watched and liked it"},
-  {key:"soso",     ico:"soso",    lbl:"So-so",      on:"So-so — tap to undo",       off:"Watched, and it was so-so"},
-  {key:"disliked", ico:"dislike", lbl:"Disliked",   on:"Disliked — tap to undo",    off:"Watched and didn't like it"},
+  {key:"wow",      ico:"wow",     lbl:"Wow!",        on:"Wow! — tap to undo",        off:"That was extraordinary"},
+  {key:"liked",    ico:"like",    lbl:"Watch Again", on:"Watch Again — tap to undo", off:"Watched, and I'd watch it again"},
+  {key:"soso",     ico:"soso",    lbl:"So-so",       on:"So-so — tap to undo",       off:"Watched, and it was so-so"},
+  {key:"disliked", ico:"dislike", lbl:"Disliked",    on:"Disliked — tap to undo",    off:"Watched and didn't like it"},
+  {key:"notfor",   ico:"block",   lbl:"Won't Watch", on:"Won't Watch — tap to undo", off:"Not for me"},
 ];
 function opinionBtnsHTML(id, cls=""){
   const cur=opinionOf(id);
@@ -3876,15 +3896,23 @@ function opinionBtnsHTML(id, cls=""){
 // to right, so the row reads as a scale rather than as four unrelated buttons. Each carries the prototype's
 // colour. Setting one still folds the card to its stub (CAS-100) — which is why the chip on a full card is
 // always the unanswered state, and correctly so: a full card IS a film you haven't answered.
+// CAS-278: five steps, listed top to bottom best-first, on a continuous colour ramp so the list reads as a
+// scale before a single word of it is read. The ramp runs bright green -> green -> grey -> amber -> red:
+// greatness increases upward, and the neutral answer sits at the neutral colour in the middle rather than
+// borrowing a colour from either end. The panel is rendered in this array's order, so THIS is the ordering
+// the ticket asks for and there is nowhere else for it to disagree.
 const WATCH_STEPS = [
-  {key:"notfor",   ico:"block",   lbl:"Don't want", cd:"#d0453f"},
-  {key:"disliked", ico:"dislike", lbl:"Disliked",   cd:"#e08a3c"},
-  {key:"soso",     ico:"soso",    lbl:"So-so",      cd:"#8a93a6"},
-  {key:"liked",    ico:"like",    lbl:"Liked",      cd:"#37c46a"},
+  {key:"wow",      ico:"wow",     lbl:"Wow!",        cd:"#17d492"},
+  {key:"liked",    ico:"like",    lbl:"Watch Again", cd:"#37c46a"},
+  {key:"soso",     ico:"soso",    lbl:"So-so",       cd:"#8a93a6"},
+  {key:"disliked", ico:"dislike", lbl:"Disliked",    cd:"#e08a3c"},
+  {key:"notfor",   ico:"block",   lbl:"Won't Watch", cd:"#d0453f"},
 ];
 function watchChipHTML(id){
   const cur=opinionOf(id), i=WATCH_STEPS.findIndex(s=>s.key===cur), s=WATCH_STEPS[i];
-  const fill = s ? ((i+1)/WATCH_STEPS.length)*100 : 0;
+  // CAS-278: WATCH_STEPS is best-first now, so the raw index runs the wrong way — read straight it would
+  // draw the fullest bar for "Won't Watch". The bar tracks GREATNESS, so it is measured from the top.
+  const fill = s ? ((WATCH_STEPS.length-i)/WATCH_STEPS.length)*100 : 0;
   const lbl  = s ? s.lbl : "Watch status";
   const title = s ? `${s.lbl} — tap to change` : "Say whether you've watched it, and what you made of it";
   return `<button type="button" class="ctl watch" data-cid="${id}" onclick="openWatchPanel(${id},this)"
@@ -4016,7 +4044,8 @@ window.openWatchPanel=(id, btn)=>{
   pop.className="cpop";
   pop.innerHTML=`<div class="csegs">${WATCH_STEPS.map(s=>{
       const on=cur===s.key;
-      return `<button type="button" class="cseg${on?" on":""}" style="${on?`background:${s.cd};color:#fff`:""}"
+      // --segc carries the step's own colour whether it is chosen or not, so the ramp is legible on arrival.
+      return `<button type="button" class="cseg${on?" on":""}" style="--segc:${s.cd};${on?`background:${s.cd};color:#fff`:""}"
         onclick="pickWatch(${id},'${s.key}')" aria-pressed="${on}"
         title="${escA(on?`${s.lbl} — tap to undo`:s.lbl)}"><span class="ci">${ICON[s.ico]}</span><span class="cl">${s.lbl}</span></button>`;
     }).join("")}</div><button type="button" class="cclose wclose" onclick="closeWatchPanel()"
@@ -4066,7 +4095,13 @@ const TAG_GROUPS = [
   // Liked and Disliked are filed apart (CAS-100): they are the two halves of what one tick used to say, they
   // pull the taste weighting in opposite directions, and a film you told us you disliked must not sit in a
   // group headed "the kind you keep".
-  {key:"liked", icon:"👍", title:"Watched · liked", colour:"var(--green)",
+  // CAS-278: Wow! gets a group of its own rather than being folded in with Watch Again. Without one, every
+  // film given the top answer would silently vanish from these receipts — `isLiked` no longer matches it —
+  // and a film disappearing because you praised it is the worst possible reading of that gesture.
+  {key:"wow", icon:"🌟", title:"Watched · wow", colour:"var(--green)",
+   set:()=>new Set([...watched].filter(isWow)),
+   blurb:"The ones that landed hardest — I keep them out of what I find for you, and I lean toward more like them"},
+  {key:"liked", icon:"👍", title:"Watched · watch again", colour:"var(--green)",
    set:()=>new Set([...watched].filter(isLiked)),
    blurb:"Seen and enjoyed — I keep them out of what I find for you, and I look for more like them"},
   {key:"disliked", icon:"👎", title:"Watched · didn't like", colour:"var(--open)",
@@ -4126,9 +4161,11 @@ function mlWhyHTML(m, groupKey){
                                                       : " — put it back and it's theirs again."}`;
   }
   const would=wouldWatch(m);   // liked / disliked / not-for-me: which radars WOULD have it, if you hadn't said so
-  const why = groupKey==="liked"    ? "you've seen it and liked it"
+  const why = groupKey==="wow"      ? "you've seen it, and it landed"
+            : groupKey==="liked"    ? "you've seen it and would watch it again"
             : groupKey==="disliked" ? "you've seen it and didn't like it"
-                                    : "it's not for you";
+            : groupKey==="soso"     ? "you've seen it and it left you cold"
+                                    : "you won't watch it";
   return would.length
     ? `${cascChips(would)} would be watching this — held back because ${why}.`
     : (cascades.length ? "No Cascade of yours matches this one."
@@ -10193,12 +10230,13 @@ window.setOpinion=(id,kind)=>{
   // Read the film's freshness BEFORE the answer changes it, so the 🆕 chip on the stub doesn't flicker off
   // under the tap. (The ORDER can't move at all now — availability section, then date, see byTimeline.)
   const held = wasFound ? {fresh: foundSource(id)==="auto" && isNewFound(id)} : null;
-  watched.delete(id); disliked.delete(id); blocked.delete(id); indifferent.delete(id);
+  watched.delete(id); disliked.delete(id); blocked.delete(id); indifferent.delete(id); wowed.delete(id);
   if(on){
     if(kind==="notfor") blocked.add(id);
     else { watched.add(id);
            if(kind==="disliked") disliked.add(id);
-           if(kind==="soso")     indifferent.add(id); }
+           if(kind==="soso")     indifferent.add(id);
+           if(kind==="wow")      wowed.add(id); }   // CAS-278: rides alongside `watched`, like the others
     // Only a film the agent was actually offering is held in the Found view. Answering something in Find that
     // was never found would otherwise float it into "Found for you" — a list that means "the agent picked
     // these", and it didn't. In Find the stub holds its own place anyway, off the back of taggedOut.
@@ -10213,7 +10251,8 @@ window.setOpinion=(id,kind)=>{
 };
 // The toast says the two things a one-tap answer really did: it folded the card (and how to undo that), and —
 // because every Cascade excludes what you've seen or waved off — whether it just ended that film's alerts.
-const OPINION_SAID = {liked:"👍 Liked", disliked:"👎 Didn't like", soso:"😐 So-so", notfor:"🚫 Not for me —"};
+const OPINION_SAID = {wow:"🌟 Wow!", liked:"👍 Watch again", disliked:"👎 Didn't like",
+                      soso:"😐 So-so", notfor:"🚫 Won't watch —"};
 function opinionToast(id, kind, on, wasFound){
   const m=MOVIES.find(x=>x.tmdb_id===id);
   if(!on){
