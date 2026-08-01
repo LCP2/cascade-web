@@ -2980,7 +2980,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 247, "commit": "9e7aa51", "builtAt": "2026-08-01T03:51:32Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 248, "commit": "9d3289d", "builtAt": "2026-08-01T04:03:33Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -4625,6 +4625,23 @@ window.setNotify=(id,on)=>{
 // actually landed on, not where the handler is: a real element wins over the region it sits in — the
 // withheld-IMDb explainer, the scale badge, the poster's trailer link, a trailer thumbnail, and any
 // availability lozenge that becomes a button later.
+// CAS-283: while a control is open, the card is a dismiss surface and nothing else. A tap anywhere on it
+// collapses the control and does NOT expand the card.
+//
+// It is wired on the CARD rather than inside cardTap because cardTap only covers the body — the availability
+// strip and the footer deliberately opt out of it (CAS-239) — and "anywhere on the card" has to mean anywhere.
+// Capture phase, so it runs before the card's own handler and before any button inside the card: while a
+// panel is open, the first tap's whole job is to put it away.
+//
+// The panel itself is excluded, or choosing an option would be swallowed by the dismiss.
+document.addEventListener("click", e=>{
+  const pop=document.querySelector(".cpop"); if(!pop) return;
+  if(pop.contains(e.target)) return;                 // a tap inside the open control is the control's own
+  const card=e.target.closest(".card"); if(!card) return;
+  if(!card.contains(pop)) return;                    // a different card: leave it to that card's own rules
+  e.preventDefault(); e.stopPropagation();
+  closeWatchPanel();
+}, true);
 window.cardTap=(e,id)=>{
   // CAS-239: nothing in the availability strip or the footer opens the card, whichever handler the click
   // arrived through. Belt and braces on top of the strip losing its own handler: the footer is a sibling of
