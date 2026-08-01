@@ -1,0 +1,158 @@
+# .github/workflows/release.yml — Codynamics Development Standard (web variant)
+#
+# Installed by CAS-300 from the bootstrap kit. QA on every push to staging; cut a release by pushing a tag
+# vX.Y.Z. The tag name IS the release number. No Claude session touches this file.
+#
+# Two deliberate departures from the generic kit, both required by this project:
+#
+#  1. CASCADE TRACKS RELEASES BY LABEL, NOT BY JIRA VERSIONS. The kit's final step calls jira_release.py to
+#     release the Jira Version and open the next one. CAS does not use Jira Versions at all — a release is
+#     the per-release label v<X.Y.Z> on every ticket in it — so that step and that script are omitted. See
+#     The Release Mechanism -> CAS specifics.
+#
+#  2. THE QA JOB CARRIES THIS PROJECT'S REAL TOOLCHAIN. `npm run qa` here builds with python and drives a
+#     pinned Chromium, so the job installs python 3.12 and the matching browser. The kit's bare
+#     `npm ci && npm run qa` would go red on the first step. These are the steps proven in ci/qa.yml.
+name: pipeline
+
+on:
+  push:
+    branches: [staging]     # continuous QA
+    tags: ['v*']            # a tag = a release
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run per ref, and cancel a superseded one: the answer that matters is about the newest commit.
+  # Tags are never cancelled — a release must not be interrupted by the next push.
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/') }}
+
+jobs:
+  # ---- runs on every staging push: keep staging known-good ----------------
+  qa:
+    if: startsWith(github.ref, 'refs/heads/staging')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: npm ci
+
+      # The suite pins @playwright/test to exactly 1.60.0; this installs the chromium build that release
+      # ships with, so the browser always matches the client.
+      - name: Install the matching browser
+        run: npx playwright install --with-deps chromium
+
+      # Build FIRST and always. Every suite tests the built index.html, so running them against the
+      # committed build would test whatever the last person to run the pipeline had on their machine.
+      - name: Build the app
+        run: python poc_pipeline.py --build-html
+
+      # A build that changes index.html means the commit under test shipped a stale one. The build stamp
+      # moves on every build by design, so it is excluded.
+      - name: Fail if the committed build was stale
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- index.html; then
+            drift=$(git diff -U0 -- index.html | grep -E '^[+-]' | grep -vE '^[+-]{3}' | grep -vc 'BUILD_INFO' || true)
+            git diff --stat -- index.html
+            if [ "$drift" -gt 0 ]; then
+              echo "::error::index.html is $drift lines behind app_template.html - rebuild and commit it"
+              exit 1
+            fi
+            echo "index.html differs only by its build stamp, which is expected."
+          fi
+
+      - name: Engine invariants + data integrity
+        run: npm run test:engine
+      - name: Catalogue data quality
+        run: npm run test:data
+      - name: Monitor
+        run: |
+          npm run test:monitor
+          python -m monitor --dry-run
+      - name: End to end
+        run: npm run test:e2e
+
+      - name: Keep the report when it goes red
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  # ---- runs on a vX.Y.Z tag: the whole release ----------------------------
+  #
+  # Sequencing note: the kit's version of this job stamped VERSION and built AFTER checking out main and
+  # merging, and never committed the stamp — so main would carry the tag's old VERSION while the deployed
+  # artifact carried the new one. Here main is checked out first, the tag is merged into it, and the stamp
+  # and rebuild are COMMITTED onto main before the push and the deploy, so the branch, the tag and the live
+  # site all state the same version.
+  promote:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: github-pages
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: npm ci
+      - name: Install the matching browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Re-run QA (belt and braces — refuse to ship red)
+        run: npm run qa
+
+      - name: Merge the tag into main (main is written ONLY here)
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"        # v0.8.1 -> 0.8.1
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          git config user.name  "ci-promote"
+          git config user.email "ci@codynamics.com.au"
+          git fetch origin main
+          git checkout -B main origin/main
+          git merge --no-ff "$GITHUB_SHA" -m "release ${VERSION}"
+
+      - name: Stamp VERSION from the tag and rebuild
+        run: |
+          set -euo pipefail
+          echo "${VERSION}" > VERSION
+          python poc_pipeline.py --build-html
+          git add VERSION index.html version.json
+          git commit -m "release ${VERSION}: stamp version" || echo "nothing to stamp"
+
+      - name: Push main
+        run: git push origin main
+
+      # ---- deploy: WEB (GitHub Pages -> cascademovies.com) ----
+      # Requires the repository's Pages source to be set to "GitHub Actions". If it is still "Deploy from a
+      # branch", these two steps fail and the tag does not go live — the merge to main above will already
+      # have happened, so re-running is safe once the setting is changed.
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with: { path: '.' }
+      - name: Deploy to Pages
+        uses: actions/deploy-pages@v4
