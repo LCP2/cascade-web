@@ -2575,6 +2575,15 @@ const CASCADE = ["upcoming","opening_week","in_cinema","pvod","rental","included
 // 27 Upcoming above the one film actually on a screen. A listing answers "what can I watch", so it leads
 // with what is out and keeps Upcoming as the tail it is. Same six sections, same films, same counts.
 const LISTING_ORDER = ["opening_week","in_cinema","pvod","rental","included_streaming","upcoming"];
+// CAS-295: a CINEMA agent reads in the order a trip to the cinema is planned — what is coming, what has just
+// opened, what is on now — rather than in the order of what you can watch this minute. On that lane Upcoming
+// is not the dregs of the list: an announced film is the single most useful row a cinema-goer has, because
+// it is the one thing they can still make plans around.
+//
+// The default order everywhere else is unchanged and still ends with Upcoming, which is the right answer for
+// a streaming agent: there, an unreleased film really is the least actionable thing on the page.
+const CINEMA_LISTING_ORDER = ["upcoming","opening_week","in_cinema","pvod","rental","included_streaming"];
+const orderFor = c => (c && c.kind==="cinema") ? CINEMA_LISTING_ORDER : LISTING_ORDER;
 const STATUS_LABEL = {
   opening_week:"In Cinema · Opening week", in_cinema:"In Cinema",
   pvod:"Premium Buy/Rent (~$30)", rental:"Rent (~$7)",
@@ -3569,9 +3578,9 @@ const sortFor = g => sortForKey(g, filt.sort);
 // The sort key is taken from the CASCADE being shown, not from the live filt.sort — at reveal time
 // filt.sort is still whatever the previous view was using, and c.sort is what applyCascade is about to
 // put there the moment the user lands in the listing.
-function listingOrder(films, sortKey){
+function listingOrder(films, sortKey, c){
   const ordered=[], seen=new Set();
-  LISTING_ORDER.forEach(g=>{
+  orderFor(c).forEach(g=>{
     films.filter(m=>primaryStatus(m)===g).sort(sortForKey(g,sortKey))
          .forEach(m=>{ ordered.push(m); seen.add(m); });
   });
@@ -9988,7 +9997,7 @@ function openMembership(agentKey, nameOverride, cascade){
   membCascade = c || null;
   // The real haul, in the listing's own order, from the listing's own membership test (CAS-132/176) — so
   // the posters under the button are the films behind it, not a different set that happens to look nice.
-  const films = c ? listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||"availability") : [];
+  const films = c ? listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||"availability", c) : [];
   const posters = films.slice(0, MEMB_POSTERS).map(m=>{
     const bg=m.poster?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
     return `<div class="rvposter" style="${bg}" title="${escA(m.title)}"></div>`;
@@ -10419,7 +10428,7 @@ function render(){
   // CAS-150: no blurb above the list. The section heads carry the counts where they mean something, and
   // the order is a thing you can see by reading down the list — saying it in a line was chrome, not honesty.
   wrap.innerHTML="";
-  LISTING_ORDER.forEach(g=>{
+  orderFor(activeCascade()).forEach(g=>{      // CAS-295: a cinema agent leads with Upcoming
     const items=rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g));
     if(!items.length) return;
     const live=items.filter(m=>!taggedOut(m)).length;

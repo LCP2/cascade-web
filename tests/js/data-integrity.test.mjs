@@ -138,18 +138,42 @@ test("in cinema: a wide-open cinema agent loses none of them, and is not a wall 
 
 // The listing leads with what you can watch, and keeps Upcoming as the tail. Asserted on the shipped order
 // rather than on the rendering, because the reveal and the listing must walk the same sequence (CAS-176).
-test("in cinema: the listing leads with what is out and ends with what is not", () => {
+test("the listing leads with what is out and ends with what is not — on the STREAMING lane", () => {
+  // CAS-295 split this rule by lane. On streaming it is unchanged and still load-bearing: an unreleased film
+  // is the least actionable thing on the page, so it belongs at the tail.
   assert.equal(E.LISTING_ORDER[E.LISTING_ORDER.length - 1], "upcoming",
     `the listing leads with ${E.LISTING_ORDER[0]} and would put unreleased films above watchable ones`);
   assert.deepEqual([...E.LISTING_ORDER].sort(), [...E.CASCADE].sort(),
     "the listing order and the journey order are not the same six windows");
-  pickInLane(E, "cinema", "custom");
+  pickInLane(E, "stream", "custom");
   const d = E.onbApply();
-  const seq = E.listingOrder(E.MOVIES.filter(m => E.listedBy(m, d)), d.sort || "availability");
+  const seq = E.listingOrder(E.MOVIES.filter(m => E.listedBy(m, d)), d.sort || "availability", d);
   const firstUpcoming = seq.findIndex(m => E.isUpcoming(m));
   const lastReleased = seq.map(m => !E.isUpcoming(m)).lastIndexOf(true);
   if(firstUpcoming >= 0 && lastReleased >= 0) assert.ok(firstUpcoming > lastReleased,
     `an Upcoming film sits at ${firstUpcoming}, above a released one at ${lastReleased}`);
+});
+
+// CAS-295: the cinema lane reads in the order a trip to the cinema is planned, not in order of what you can
+// watch this minute. This is the deliberate reversal of the rule above, and it applies to that lane only.
+test("in cinema: the cinema lane leads with Upcoming, then Opening, then Cinema", () => {
+  // Spread into a LOCAL array first: the engine runs in a vm realm, so its Array has a different prototype
+  // and deepStrictEqual compares that too. Every other array assertion in this file does the same.
+  assert.deepEqual([...E.CINEMA_LISTING_ORDER].slice(0, 3), ["upcoming", "opening_week", "in_cinema"],
+    "the cinema lane does not open with upcoming -> opening -> in cinema");
+  assert.deepEqual([...E.CINEMA_LISTING_ORDER].sort(), [...E.CASCADE].sort(),
+    "the cinema order and the journey order are not the same six windows");
+  pickInLane(E, "cinema", "custom");
+  const d = E.onbApply();
+  assert.equal(E.orderFor(d), E.CINEMA_LISTING_ORDER, "a cinema agent is not using the cinema order");
+  const seq = E.listingOrder(E.MOVIES.filter(m => E.listedBy(m, d)), d.sort || "availability", d);
+  const lastUpcoming = seq.map(m => E.isUpcoming(m)).lastIndexOf(true);
+  const firstReleased = seq.findIndex(m => !E.isUpcoming(m));
+  if(lastUpcoming >= 0 && firstReleased >= 0) assert.ok(lastUpcoming < firstReleased,
+    `a released film sits at ${firstReleased}, above an Upcoming one at ${lastUpcoming}`);
+  // …and a streaming agent is untouched by it.
+  pickInLane(E, "stream", "custom");
+  assert.equal(E.orderFor(E.onbApply()), E.LISTING_ORDER, "the streaming lane picked up the cinema order");
 });
 
 // ---- 2. THE DATES THE CARD SHOWS ------------------------------------------------------------------------
