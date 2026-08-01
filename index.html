@@ -73,7 +73,14 @@
      already is. The flow was designed in the hand; on a desktop an uncapped full-bleed screen stretches
      one column of controls across 1400px and stops reading as the same product. One token, so the cap
      is changed in one place. */
-  :root{ --flow-w:460px; --slidedur:.42s }
+  :root{ --flow-w:460px; --slidedur:.42s;
+    /* CAS-262: the onboarding frame's side padding, as one value, because the step column and the FIXED
+       chrome above and below it (the meter, the Continue bar) have to keep the same left edge — three
+       hand-kept numbers is how they drift. Tighter on a phone, where the whole frame is the viewport and
+       every pixel of it is content the user came for; roomier above that, where the frame is already
+       capped at --flow-w and the padding is the only thing keeping the text off the edge. */
+    --flow-pad:16px }
+  @media (max-width:480px){ :root{ --flow-pad:12px } }
   html{ zoom:var(--ui-scale) }
   body{margin:0;background:var(--bg);color:var(--ink);font-size:16px;
     font-family:var(--font-body);-webkit-font-smoothing:antialiased}
@@ -1182,7 +1189,12 @@
      Built self-contained and previewable in isolation (?step=<name>) until Lee wires the sequence. One
      shared full-screen frame — top bar (back + progress + LAST ONE), heading, control, live agent-voice
      summary, and a footer that carries the real running count. Chips/slider reuse the app's live controls. */
-  .sharpstep{position:fixed;inset:0;z-index:82;display:none;flex-direction:column;padding:28px 20px 24px;
+  /* CAS-262: the onboarding screens use more of the width they are given. Two things were holding them in:
+     20px of side padding on this frame, and a 360px cap on the column inside it (below). The frame itself
+     stays capped at --flow-w — that phone-width cap is CAS-188's deliberate shape and the splash and reveal
+     share it, so widening the whole flow would have been a different change from the one asked for. */
+  .sharpstep{position:fixed;inset:0;z-index:82;display:none;flex-direction:column;
+    padding:28px var(--flow-pad) 24px;
     overflow-y:auto;background:radial-gradient(120% 45% at 50% 0%,#141b30 0%,var(--bg) 42%,#080b14 100%)}
   .sharpstep.open{display:flex}
   /* CAS-157: `margin:auto` centred this block vertically, which on a sparse step (Get selective is the worst)
@@ -1190,7 +1202,11 @@
      compounds the "everything is too small" impression. Top-aligned instead: the back/progress bar belongs at
      the top of the screen, the heading reads where the eye already is, and the slack collects at the bottom
      where it looks like room rather than a mistake. Horizontal centring (the auto side margins) is kept. */
-  .osinner{width:100%;max-width:360px;margin:0 auto;display:flex;flex-direction:column;min-height:0;
+  /* CAS-262: the 360px cap is gone. It bound on nothing below a 400px phone (the frame's own padding was
+     already narrower than the cap) and on everything above one, so on a 430px handset and on desktop the
+     step sat in a 360px column inside a 460px frame with the difference doing nothing. The column now fills
+     the frame; the frame's cap is what keeps a line length readable. */
+  .osinner{width:100%;margin:0 auto;display:flex;flex-direction:column;min-height:0;
     animation:splashIn .4s ease both}
   /* CAS-260: a pane that arrived by SLIDING must never also run splashIn. splashIn starts at
      translateY(10px)/opacity 0, so when endSlide() took .sl-in-r off, this rule underneath it became the
@@ -1764,7 +1780,7 @@
      not about the screen, so it must hold still while the screens move under it — a progress bar that
      slides away with the step it measures reads as decoration. */
   .stephdr{position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:var(--flow-w);
-    z-index:90;display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg);
+    z-index:90;display:flex;align-items:center;gap:12px;padding:12px var(--flow-pad);background:var(--bg);
     border-bottom:1px solid rgba(255,255,255,.06)}
   .stepprog{flex:1;height:6px;border-radius:999px;background:#20263a;overflow:hidden}
   .stepprog i{display:block;height:100%;width:0;border-radius:999px;background:var(--grad);
@@ -1773,7 +1789,8 @@
   /* The one Continue. Pinned to the bottom so it is in the same place on every step — you never hunt
      for it, and a long step never hides it below the fold. */
   .stepnav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:var(--flow-w);
-    z-index:90;display:flex;gap:10px;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));
+    z-index:90;display:flex;gap:10px;
+    padding:12px var(--flow-pad) calc(12px + env(safe-area-inset-bottom,0px));
     background:linear-gradient(180deg,rgba(10,14,26,0),var(--bg) 34%)}
   .stepnav .oscta{flex:1}
   /* A bare [hidden] loses to the display rules above — restate it, as .cascsearch[hidden] already has to. */
@@ -2843,7 +2860,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 225, "commit": "3d37871", "builtAt": "2026-08-01T00:21:51Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 226, "commit": "a311645", "builtAt": "2026-08-01T00:36:46Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
