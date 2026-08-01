@@ -345,6 +345,13 @@
   .cseg .ci svg{width:16px;height:16px;display:block}
   .cseg .cl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
   .cseg.on .ci{color:inherit;opacity:1}
+  /* CAS-282: the option under a sliding finger. It has to read as "this is what you'd get if you let go"
+     without looking chosen — the finger is usually covering the row, so the cue is the ring and the lift. */
+  .cpop .sliding{background:rgba(255,255,255,.14);border-color:var(--segc,var(--accent));
+    box-shadow:0 0 0 2px var(--segc,var(--accent)) inset;color:var(--ink)}
+  .cpop.kpop .sliding{--segc:var(--accent)}
+  /* The gesture owns the vertical axis while it is running, so the page cannot scroll out from under it. */
+  .cpop .csegs,.cpop .nopts{touch-action:pan-x}
   .cseg:hover{color:var(--ink);border-color:#3a4150}
   .cseg:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
   /* CAS-241: a thumb, not a fingernail. 28px wide was under half the 44px the rest of the card's controls
@@ -2973,7 +2980,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 246, "commit": "724cddc", "builtAt": "2026-08-01T03:39:43Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 247, "commit": "9e7aa51", "builtAt": "2026-08-01T03:51:32Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -4087,7 +4094,7 @@ window.openCascadePanel=(id, btn)=>{
       targets.length
         ? targets.map(c=>{
             const on=pinnedInto(id,c) || cascadesFor(id).some(x=>x.id===c.id);
-            return `<button type="button" class="nopt${on?" on":""}" style="--wwc:var(--accent)"
+            return `<button type="button" class="nopt${on?" on":""}" data-cid="${c.id}" style="--wwc:var(--accent)"
               aria-pressed="${on}" onclick="moveFilmTo(${id},'${c.id}')"
               title="${escA(on?`Already in ${c.name}`:`Move this film to ${c.name}`)}">
               <span class="wwb">✓</span><span class="nol">${c.icon} ${esc(c.name)}</span></button>`;
@@ -4097,6 +4104,7 @@ window.openCascadePanel=(id, btn)=>{
                                                       : "You have no cascades yet."}</div>`
     }</div>`;
   btn.closest(".actions").appendChild(pop);
+  wirePanelSlide(pop, ".nopt[data-cid]", el=>moveFilmTo(id, el.dataset.cid));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
   const first=pop.querySelector(".nopt"); if(first && first.tagName==="BUTTON") first.focus();
 };
@@ -4168,6 +4176,56 @@ window.toggleFilmOpt=(id,key)=>{
              n.classList.toggle("on", on); n.setAttribute("aria-pressed", String(on));
            }); }
 };
+// ---- CAS-282: press-then-slide ---------------------------------------------------------------------------
+// Open the control, then keep your finger down and run it over the options: the one under it lights up, and
+// it is chosen when you lift. On a phone that turns "tap, look, aim, tap" into one gesture, and the options
+// are a vertical stack (CAS-278) so the slide is a natural thumb movement down the list.
+//
+// It does NOT replace tapping, and that is the whole difficulty. Every option is a real <button> with its own
+// onclick, so a naive implementation fires twice for one press — and because these controls TOGGLE, firing
+// twice is not a double-select, it is a select followed by an undo, i.e. a control that visibly does nothing.
+// So the rule is: a press that never moved is left entirely alone and the button's own click does the work; a
+// press that DID move is a slide, and the click it produces is swallowed exactly once.
+const SLIDE_MIN = 6;   // px before a press counts as a drag rather than a wobble
+function wirePanelSlide(pop, itemSel, onPick){
+  let id=null, x0=0, y0=0, moved=false, lastEl=null;
+  const itemAt=(x,y)=>{ const el=document.elementFromPoint(x,y); return el ? el.closest(itemSel) : null; };
+  const mark=el=>{
+    pop.querySelectorAll(itemSel).forEach(n=>n.classList.toggle("sliding", n===el));
+  };
+  pop.addEventListener("pointerdown", e=>{
+    if(!itemAt(e.clientX,e.clientY)) return;
+    id=e.pointerId; x0=e.clientX; y0=e.clientY; moved=false;
+    // NB: capture is NOT taken here. Capturing on the press redirects the whole gesture to the panel, and the
+    // click that a plain tap produces then never reaches the option's own button — which silently breaks
+    // tapping, the primary way this control is used. Capture is taken at the moment it becomes a drag.
+  });
+  pop.addEventListener("pointermove", e=>{
+    if(id!==e.pointerId) return;
+    if(!moved && Math.hypot(e.clientX-x0, e.clientY-y0) < SLIDE_MIN) return;
+    if(!moved){ moved=true; try{ pop.setPointerCapture(id); }catch(_){} }
+    e.preventDefault();                        // the page must not scroll out from under the gesture
+    const at=itemAt(e.clientX,e.clientY);
+    if(at) lastEl=at;                          // remember the last real option the finger was over
+    mark(at);
+  });
+  const finish=e=>{
+    if(id!==e.pointerId) return;
+    if(moved){ try{ pop.releasePointerCapture(id); }catch(_){} }
+    id=null;
+    if(!moved){ mark(null); lastEl=null; return; }   // a plain tap — leave it to the button's own click
+    // What you release on is what was HIGHLIGHTED. The hit test at the release point can come back empty —
+    // a finger lifted a few pixels past the last row, or beyond the edge of the viewport — and answering
+    // "nothing" there would throw away a gesture the user had already visibly completed.
+    const el=itemAt(e.clientX,e.clientY) || lastEl;
+    mark(null); lastEl=null;
+    // Swallow the click this press is about to produce, once, so the slide's choice is not immediately undone.
+    pop.addEventListener("click", ev=>{ ev.stopPropagation(); ev.preventDefault(); }, {capture:true, once:true});
+    if(el) onPick(el);
+  };
+  pop.addEventListener("pointerup", finish);
+  pop.addEventListener("pointercancel", e=>{ if(id===e.pointerId){ id=null; moved=false; mark(null); } });
+}
 // One panel at a time, anchored in the .actions row (which is position:relative for exactly this).
 function closeWatchPanel(){
   document.querySelectorAll(".cpop").forEach(n=>n.remove());
@@ -4188,12 +4246,13 @@ window.openWatchPanel=(id, btn)=>{
   pop.innerHTML=`<div class="csegs">${WATCH_STEPS.map(s=>{
       const on=cur===s.key;
       // --segc carries the step's own colour whether it is chosen or not, so the ramp is legible on arrival.
-      return `<button type="button" class="cseg${on?" on":""}" style="--segc:${s.cd};${on?`background:${s.cd};color:#fff`:""}"
+      return `<button type="button" class="cseg${on?" on":""}" data-key="${s.key}" style="--segc:${s.cd};${on?`background:${s.cd};color:#fff`:""}"
         onclick="pickWatch(${id},'${s.key}')" aria-pressed="${on}"
         title="${escA(on?`${s.lbl} — tap to undo`:s.lbl)}"><span class="ci">${ICON[s.ico]}</span><span class="cl">${s.lbl}</span></button>`;
     }).join("")}</div><button type="button" class="cclose wclose" onclick="closeWatchPanel()"
       title="Collapse" aria-label="Collapse watch status">${ICON.chev}</button>`;
   btn.closest(".actions").appendChild(pop);
+  wirePanelSlide(pop, ".cseg", el=>pickWatch(id, el.dataset.key));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
   const first=pop.querySelector(".cseg"); if(first) first.focus();
 };
