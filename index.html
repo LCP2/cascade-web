@@ -291,6 +291,16 @@
     background:var(--panel2) center/cover no-repeat;display:grid;place-items:center;text-decoration:none}
   .trailer .play{width:30px;height:30px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center;font-size:12px;border:1px solid rgba(255,255,255,.45)}
   .notrailer{font-size:12px;color:var(--faint)}
+  /* CAS-284: share, in the opened card. Quiet — it is an offer, not one of the decisions the card is asking
+     you to make — and a full-height target rather than a bare glyph. */
+  .exshare{margin-top:12px}
+  .exsharebtn{display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 13px;border-radius:10px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--dim);
+    font-family:inherit;font-size:12.5px;font-weight:650;cursor:pointer;line-height:1}
+  .exsharebtn svg{width:16px;height:16px;display:block}
+  .exsharebtn:hover{color:var(--ink);border-color:#3a4150}
+  .exsharebtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .exsharebtn.done{color:var(--green);border-color:rgba(72,199,142,.55)}
   /* CAS-277: the controls stack. They were a left-to-right row, which worked while there were two of them
      and a chevron; as the card gains controls, a row makes each one narrower and its label shorter, and a
      control that has to abbreviate itself to fit stops saying what it does. Vertically each one gets the
@@ -2519,6 +2529,8 @@ const ICON = {
   // CAS-279: the deck — two cards, one behind the other. Same grid and stroke as the rest of the set, and it
   // is the deck the control moves a film between rather than a generic folder.
   deck:    svgIcon(`<rect x="8.2" y="4.4" width="11.4" height="13.2" rx="2.2"/><path d="M15.4 19.6H6.6a2.2 2.2 0 0 1-2.2-2.2V8.2"/>`),
+  // CAS-284: share — a box with an arrow leaving it, the platform-neutral mark for "send this somewhere else".
+  share:   svgIcon(`<path d="M12 15.4V4.2"/><path d="m8.2 7.8 3.8-3.6 3.8 3.6"/><path d="M6.4 12.4H5.2a1.6 1.6 0 0 0-1.6 1.6v5.2a1.6 1.6 0 0 0 1.6 1.6h13.6a1.6 1.6 0 0 0 1.6-1.6V14a1.6 1.6 0 0 0-1.6-1.6h-1.2"/>`),
 };
 // Journey order — Upcoming leads (a film reaches cinemas before any home window).
 // primaryStatus() takes the LAST window a film holds, so "upcoming" sitting first is safe:
@@ -2980,7 +2992,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 248, "commit": "9d3289d", "builtAt": "2026-08-01T04:03:33Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 249, "commit": "6502541", "builtAt": "2026-08-01T04:11:29Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3776,6 +3788,50 @@ function creditsHTML(m){
   if((m.cast||[]).length) rows.push(`<div class="credit"><span class="clbl">Cast</span>${esc(m.cast.join(", "))}</div>`);
   return rows.length ? `<div class="credits">${rows.join("")}</div>` : "";
 }
+// ---- CAS-284: share a film -------------------------------------------------------------------------------
+// CAS-272 removed the cascade "share" for being a string on a clipboard dressed up as a share. This one is
+// different in the way that matters: a FILM has a real public identity, so there is something true to send
+// and somewhere real for it to land. It uses the platform's own share sheet where the browser has one — an
+// actual share, to actual people — and falls back to the clipboard, saying so on the button rather than
+// claiming a share that did not happen.
+//
+// It lives in the expanded card, where the ticket suggests: it is a considered action, not a one-tap verdict,
+// and the control stack below is already three decisions deep.
+function shareFilmHTML(m){
+  return `<div class="exshare"><button type="button" class="exsharebtn" onclick="event.stopPropagation();shareFilm(${m.tmdb_id})"
+      title="${escA("Share "+m.title)}" aria-label="${escA("Share "+m.title)}">${ICON.share}<span class="sl">Share</span></button></div>`;
+}
+// What we can say about the film without inventing anything: its title, its year, and the window we have
+// actually CONFIRMED it is in. An estimated window says nothing at all — the whole point of the estimate is
+// that we have not read a listing, and a share is the last place to pass a guess off as a fact.
+function shareTextFor(m){
+  const yr=yearOf(m);
+  const where = isEstimated(m) ? "" : (STATUS_LABEL[primaryStatus(m)]||"");
+  return `${m.title}${yr?` (${yr})`:""}${where?` — ${where}`:""}`;
+}
+// The film's own public page. jw_link is the one we already hold and already credit; TMDB is the fallback,
+// and it is a real permanent page for the title rather than a link back into an app with no per-film route.
+const shareUrlFor = m => m.jw_link || `https://www.themoviedb.org/movie/${m.tmdb_id}`;
+window.shareFilm = async id => {
+  const m=MOVIES.find(x=>x.tmdb_id===id); if(!m) return;
+  const url=shareUrlFor(m), text=shareTextFor(m);
+  const btn=document.querySelector(`#card-${id} .exsharebtn`);
+  const say=msg=>{ if(!btn) return; const lab=btn.querySelector(".sl"); if(!lab) return;
+                   const was=lab.textContent; lab.textContent=msg; btn.classList.add("done");
+                   setTimeout(()=>{ lab.textContent=was; btn.classList.remove("done"); }, 1800); };
+  if(navigator.share){
+    try{ await navigator.share({title:m.title, text, url}); logEvent("film_shared",{how:"sheet"}); return; }
+    // A cancelled share sheet is not a failure and must not fall through to copying something the person
+    // just decided not to send.
+    catch(e){ if(e && e.name==="AbortError") return; }
+  }
+  const payload=`${text}\n${url}`;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    try{ await navigator.clipboard.writeText(payload); logEvent("film_shared",{how:"clipboard"}); say("Copied"); return; }
+    catch(e){}
+  }
+  say("Couldn't copy");
+};
 function trailersHTML(m){
   const t=(m.trailers||[]).slice(0,4);
   const body = t.length
@@ -3877,7 +3933,7 @@ function cardHTML(m, markNew=false){
              sharing their baseline. It is a claim about the film, like they are. -->
         <div class="mrow r-awards">${badge}${awardChips(m)}</div>
       </div>
-      <div class="expand">${awardsBreakdownHTML(m)}${creditsHTML(m)}${trailersHTML(m)}</div>
+      <div class="expand">${awardsBreakdownHTML(m)}${creditsHTML(m)}${trailersHTML(m)}${shareFilmHTML(m)}</div>
     </div>
     ${availHTML(m)}
     <div class="cfoot">
