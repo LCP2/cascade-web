@@ -108,10 +108,10 @@ test("CAS-228: Agent Settings shows only the agent type's own windows, each with
   await finishFlow(page);
   await toListing(page);
 
-  // Edit → the Briefing → Agent settings. Reached the way a person reaches it.
+  // Edit → the Edit Agent screen → Notifications (CAS-266/267 renamed both). Reached the way a person does.
   await page.evaluate(() => window.editCascade());
   await expect(page.locator(".osh", { hasText: /Edit Agent/ })).toBeVisible();   // CAS-266 renamed it
-  await page.locator(".osdoor", { hasText: "Agent settings" }).click();
+  await page.locator(".osdoor", { hasText: "Notifications" }).click();   // CAS-267 renamed this row
   await expect(page.locator(".osh", { hasText: /Where & when/ })).toBeVisible();
 
   const windows = await page.locator("#wwLanes .wwlane").evaluateAll(ls => ls.map(l => ({
