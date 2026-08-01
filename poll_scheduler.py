@@ -31,6 +31,12 @@ DEFAULT_OFFSETS = {"pvod": 75, "rental": 120, "included_streaming": 210}
 # fact about release windows — it is an artefact of how long Cascade has been watching, because a median
 # cannot come out longer than the observation log is old.
 OFFSET_FLOORS = {"pvod": 21, "rental": 45, "included_streaming": 75}
+# CAS-289: there is no cinema-END date in any data source, so "in cinemas" is always a guess made from the
+# opening date alone. OFFSET_FLOORS keeps that guess from learning something implausibly short, but it can
+# still hold a film in the estimated in_cinema window for 21+ days, which is longer than "likely still in
+# cinemas" should ever claim without a real offer to back it up. This is a second, independent ceiling on
+# the SAME window, not a replacement for the floor above.
+CINEMA_ESTIMATE_CAP_DAYS = 14
 
 
 def _date(s):
@@ -145,5 +151,6 @@ def estimate_status(m, today, offsets=DEFAULT_OFFSETS):
     if   age >= offsets["included_streaming"]: w = "included_streaming"
     elif age >= offsets["rental"]:             w = "rental"
     elif age >= offsets["pvod"]:               w = "pvod"
+    elif age >= CINEMA_ESTIMATE_CAP_DAYS:      w = "pvod"   # CAS-289: in_cinema is capped, not the ladder
     else:                                      w = "in_cinema"
     return (w, "estimated")

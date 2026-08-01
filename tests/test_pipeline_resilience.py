@@ -273,6 +273,21 @@ class TheWindowEstimatorCannotLearnFromItsOwnStartDate(unittest.TestCase):
         self.assertEqual(ps.estimate_status({"cinema_date": "2026-12-01"}, today), ("upcoming", "estimated"))
         self.assertEqual(ps.estimate_status({}, today), ("upcoming", "estimated"))
 
+    def test_the_estimated_in_cinema_window_is_capped_at_two_weeks(self):
+        # CAS-289: there is no cinema-END date anywhere, so "in cinemas" is a guess from the opening date —
+        # and the default pvod offset (75 days) let that guess run for months. Past two weeks it must move
+        # to the next estimated window even though the learned ladder hasn't caught up yet.
+        today = datetime.date(2026, 7, 30)
+        opened_13_days_ago = (today - datetime.timedelta(days=13)).isoformat()
+        self.assertEqual(ps.estimate_status({"cinema_date": opened_13_days_ago}, today),
+                         ("in_cinema", "estimated"))
+        opened_14_days_ago = (today - datetime.timedelta(days=14)).isoformat()
+        self.assertEqual(ps.estimate_status({"cinema_date": opened_14_days_ago}, today),
+                         ("pvod", "estimated"), "the estimated in-cinema window ran past its two-week cap")
+        opened_40_days_ago = (today - datetime.timedelta(days=40)).isoformat()
+        self.assertEqual(ps.estimate_status({"cinema_date": opened_40_days_ago}, today),
+                         ("pvod", "estimated"))
+
 
 if __name__ == "__main__":
     unittest.main()

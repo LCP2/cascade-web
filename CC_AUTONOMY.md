@@ -14,8 +14,9 @@ stop. Never commit secrets.
    ordered by priority DESC, key ASC. Take exactly one.
 3. **Claim it atomically:** transition it to `In Progress` and assign yourself **before** touching code.
    (This is what lets two workers share one queue without collision.)
-4. Jira credentials are in the environment: `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`. Authenticate
-   every call with `-u "$JIRA_EMAIL:$JIRA_API_TOKEN"`.
+4. **Jira auth — one shared token.** Authenticate every call with the token set once via `setx ATLASSIAN_API_TOKEN`:
+   `-u "lee@codynamics.com.au:$env:ATLASSIAN_API_TOKEN"`. Email/site are non-secret (from `pipeline.config.json`).
+   There is **no** separate `JIRA_API_TOKEN` var — the CI `JIRA_*` secrets are a different, Actions-only context.
 
 > **Cascade specific — releases are LABELS, not Jira Versions.** Do not set `fixVersion`, and do not call
 > `jira_release.py`; neither is used on this project. A release is the per-release label `v<X.Y.Z>` carried

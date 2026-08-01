@@ -2515,6 +2515,11 @@ const PVOD_MIN = 19.99, RENTAL_MAX = 9.99, OPENING_WEEK_DAYS = 7;
 // keeps whatever the pipeline says. Inside it, a polled film with no digital offer at all and an opening date
 // behind us is in cinemas — that is the only window left for it to be in.
 const CINEMA_RUN_DAYS = 90;
+// CAS-289: CINEMA_RUN_DAYS is backed by a real read on the CONFIRMED path (we polled and there genuinely was
+// no digital listing) — the ESTIMATED path has no such read, only a guess from the opening date, so it may
+// not borrow the same 90-day bound. Past two weeks "likely still in cinemas" stops being honest; the film
+// moves to its next estimated window instead. poll_scheduler.CINEMA_ESTIMATE_CAP_DAYS is this constant's twin.
+const CINEMA_ESTIMATE_RUN_DAYS = 14;
 // ---- "Past opening weekend" — the fourth alert moment (CAS-68) ------------------------------------------
 // "About to leave the cinema" has no data behind it: nobody publishes the date a film comes off the screen, so
 // any countdown to it would be a fabricated timer. What IS computable from a real opening date is the moment a
@@ -2628,6 +2633,8 @@ const isEstimated = m => m.availability_confidence==="estimated";
 // CAS-237: the film opened, and its run isn't over yet. This is the whole of the evidence that a film is on
 // a screen right now — cinemas publish no offers, so there is never anything else to read.
 const inCinemaRun = m => !!m.cinema_date && m.cinema_date<=TODAY && m.cinema_date>=addDays(TODAY,-CINEMA_RUN_DAYS);
+// CAS-289: the estimated-only counterpart, capped at CINEMA_ESTIMATE_RUN_DAYS rather than CINEMA_RUN_DAYS.
+const inCinemaRunEstimated = m => !!m.cinema_date && m.cinema_date<=TODAY && m.cinema_date>=addDays(TODAY,-CINEMA_ESTIMATE_RUN_DAYS);
 const cinemaRungFor = m => m.cinema_date >= addDays(TODAY,-OPENING_WEEK_DAYS) ? "opening_week" : "in_cinema";
 // The window the pipeline worked out, kept safe before deriveStatus() overwrites m.status below.
 MOVIES.forEach(m=>{ m.claimedStatus=(m.status||[]).slice(); });
@@ -2652,8 +2659,11 @@ function deriveStatus(m){
   // cannot name. It is not an invented window (CAS-155) — it is the film's own date read against an
   // estimate that rests on nothing, which is exactly the ground CAS-227 already stands on.
   if(isEstimated(m) && claimed.length){
+    // CAS-289: this correction must use the 14-day estimated bound, not the 90-day confirmed one — otherwise
+    // it would put a film back on a screen for up to 90 days on nothing but an opening date, which is the
+    // exact over-claim this ticket exists to stop.
     if(!(m.offers||[]).length && !claimed.some(w=>["upcoming","opening_week","in_cinema"].includes(w))
-       && inCinemaRun(m)) return [cinemaRungFor(m)];
+       && inCinemaRunEstimated(m)) return [cinemaRungFor(m)];
     return claimed;
   }
   // CAS-227: "Upcoming" stops being true the day a film opens. The pipeline moves a title out of `upcoming`
