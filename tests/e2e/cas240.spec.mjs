@@ -26,7 +26,8 @@ test("CAS-240: a known date is shown to the day, an estimate is not", async ({ p
       } else if(el.classList.contains("est")){
         out.est++;
         // An estimate stays a month and a year — a day would claim a precision the offset does not have.
-        if(!/^[A-Z][a-z]{2} \d{2}$/.test(text)) out.badEst.push(text);
+        // CAS-310: and it leads with "≈", the app's own estimate glyph, so the meaning survives on touch.
+        if(!/^≈ [A-Z][a-z]{2} \d{2}$/.test(text)) out.badEst.push(text);
       }
     });
     return out;
