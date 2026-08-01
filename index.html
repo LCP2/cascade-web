@@ -1192,6 +1192,12 @@
      where it looks like room rather than a mistake. Horizontal centring (the auto side margins) is kept. */
   .osinner{width:100%;max-width:360px;margin:0 auto;display:flex;flex-direction:column;min-height:0;
     animation:splashIn .4s ease both}
+  /* CAS-260: a pane that arrived by SLIDING must never also run splashIn. splashIn starts at
+     translateY(10px)/opacity 0, so when endSlide() took .sl-in-r off, this rule underneath it became the
+     element's animation for the first time and ran from the top — the step redrew ~10px low and jumped
+     back up, one beat after it had finished sliding in. Marked at creation and never removed; the .sl-*
+     rules are declared later at the same specificity, so they still win while the slide is running. */
+  .osinner.osslid{animation:none}
   @media (prefers-reduced-motion:reduce){ .osinner{animation:none} }
   .ostop{display:flex;align-items:center;gap:11px;margin-bottom:20px}
   .osback{width:34px;height:34px;border-radius:10px;background:var(--panel);border:1px solid var(--line);
@@ -2837,7 +2843,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 223, "commit": "7a84b23", "builtAt": "2026-08-01T00:06:31Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 224, "commit": "98bd34a", "builtAt": "2026-08-01T00:09:01Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -9068,7 +9074,9 @@ function gotoStep(key, dir){
   }
   out.removeAttribute("id");                 // $("onbStepInner") must resolve to the INCOMING pane
   const incoming=document.createElement("div");
-  incoming.className="osinner"; incoming.id="onbStepInner";
+  // CAS-260: `osslid` says "this pane got here by sliding", which suppresses the splashIn entry fade the
+  // base .osinner rule would otherwise run the moment the slide classes come off.
+  incoming.className="osinner osslid"; incoming.id="onbStepInner";
   stage.appendChild(incoming);
   renderOnbStep(key);
   // Absolutely-positioned panes contribute nothing to layout, so the stage is pinned to the taller of the
