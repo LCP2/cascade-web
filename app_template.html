@@ -2809,8 +2809,11 @@ function savePrefs(){ try{ localStorage.setItem("cascade_prefs",
   JSON.stringify({on:prefs.on,touched:prefs.touched,sub:[...prefs.sub],store:[...prefs.store],
                   alertsOff:[...prefs.alertsOff]})); }catch(e){} }
 const prefs = loadPrefs();
-// How many times this browser has opened the app. It exists for one reason: "Finish your agent" (CAS-71) must
-// arrive AFTER the agent has proved itself, not on the first screen — so we need to know this isn't the first.
+// How many times this browser has opened the app. CAS-273 removed its ONE reader — "Finish your agent" had
+// to arrive after the agent proved itself, so it needed to know this wasn't the first visit — so the counter
+// is now written and never read. It is kept, and only because it is a COUNT: throwing it away resets every
+// existing browser to zero, and the next feature that wants "is this a returning visitor" would have to wait
+// for the history to build up again. Nothing decides anything on it today; if you add a reader, this is it.
 let visits=1;
 try{ visits=(+localStorage.getItem("cascade_visits")||0)+1; localStorage.setItem("cascade_visits", String(visits)); }catch(e){}
 // UX-psychology framings sit behind one flag so the plain version is the A/B control. Default on.
@@ -4238,23 +4241,17 @@ function cascadeStartHTML(){
     }).join("")}</div>
   </div>`;
 }
-// ---- "Finish your agent" (CAS-71) ----------------------------------------------
-// The services question, asked at the ONE moment it's worth answering: the agent has already found you films,
-// so the ask now buys you something visible (only what you can watch, and what it saves you) instead of being
-// a toll gate on the way in. It waits for a second visit or a first override — i.e. for the thing to have
-// proved itself — and it disappears the moment services are set.
-const overrideCount = () =>
-  Object.values(notify).filter(e=>e.source==="manual" || e.removed).length + watched.size + blocked.size;
-function finishAgentHTML(){
-  if(servicesPicked() || !found.size) return "";
-  if(visits<2 && overrideCount()===0) return "";
-  return `<div class="cascstart" style="margin:12px 12px 0">
-    <div class="csh">📺 Finish your agent</div>
-    <div class="csp">I'm working on taste and price alone — I don't know what you're already paying for. Tell me,
-      and I'll only put films in front of you that you can actually watch, and show you what they're saving you.</div>
-    <button class="ctabtn" onclick="openServices()">📺 Add my services</button>
-  </div>`;
-}
+// ---- "Finish your agent" (CAS-71) — removed by CAS-273 --------------------------
+// The services question used to be asked a second time here, on top of the listing, once the agent had found
+// you something. The ask is already made where it belongs — in the flow that builds the agent, and any time
+// after that behind the ⚙️ — so this was a third place saying the same thing, and it said it by pushing the
+// films the agent had just found down the screen. An agent that has just delivered should show you the
+// delivery, not a form.
+//
+// The block is gone rather than hidden behind a flag: it left the listing's first screenful to a nag, which
+// is the opposite of what a listing is for. Services are still entirely settable, and the services banner
+// (CAS-254) still says so on any agent actually scoped to them — that one appears only when the scope is
+// really narrowing your list, which is a fact about the list rather than a request.
 // A film is 🆕 if the AGENT picked it up lately — one you pinned yourself this morning is not news to you.
 // A held film keeps the answer it had when you tapped it, so the chip on a stub doesn't flicker.
 const isFresh = m => heldOpen.has(m.tmdb_id) ? heldOpen.get(m.tmdb_id).fresh
@@ -4268,7 +4265,7 @@ function renderListChrome(){
   // With one list a first-timer lands on the catalogue instead — full of films, so never empty — and the
   // nudge would have had nowhere to appear. It sits above the listing while there are no Cascades at all,
   // and goes the moment there is one.
-  el.innerHTML = cascadeStartHTML() + finishAgentHTML();
+  el.innerHTML = cascadeStartHTML();   // CAS-273: "Finish your agent" no longer rides above the listing
 }
 // CAS-136: the membership-setup banner is no longer part of the listing — it sits at the very top of the
 // content, above the cascade scroll, so it cannot be scrolled past without being read. Still gated by
