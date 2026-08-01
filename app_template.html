@@ -10467,13 +10467,35 @@ function renderJumpBar(){
 }
 // The bar is STICKY, so scrolling a section to y=0 hides its heading behind the bar. The offset is the
 // header plus the band, measured rather than guessed — both change height with their contents.
+//
+// And it RE-AIMS, which is the part that took a bug to learn. The listing lays its cards out lazily, so a
+// long jump makes the page GROW underneath the scroll that is still in flight: measured on a cinema agent
+// after CAS-295 put its 27-film Upcoming section first, the document went from 13,632px to 17,299px during
+// a single jump, and the target heading ended ~4,000px below the fold. A jump computed once against the page
+// as it was will always undershoot whenever there is unlaid content above the target.
+//
+// So: aim, then keep re-aiming until the target stops moving. The first move is smooth because that is what
+// a jump should feel like; the corrections are instant, because a correction that animates is just another
+// thing to chase.
 window.jumpToSection = k => {
-  const g=document.querySelector(`#groups .group[data-g="${k}"]`); if(!g) return;
-  const bar=$("cascbar");
-  const hdr=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hdrh"))||0;
-  const occluded=(bar ? bar.getBoundingClientRect().height : 0)+hdr;
-  const y=g.getBoundingClientRect().top+window.scrollY-occluded-8;
-  window.scrollTo({top:Math.max(0,y), behavior:"smooth"});
+  // How far the section's heading still has to travel to sit just clear of the sticky chrome.
+  const delta = () => {
+    const g=document.querySelector(`#groups .group[data-g="${k}"]`); if(!g) return null;
+    const bar=$("cascbar");
+    const hdr=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hdrh"))||0;
+    const occluded=(bar ? bar.getBoundingClientRect().height : 0)+hdr;
+    return g.getBoundingClientRect().top - occluded - 8;
+  };
+  const first=delta(); if(first===null) return;
+  window.scrollBy({top:first, behavior:"smooth"});
+  let tries=0;
+  const settle=()=>{
+    const d=delta();
+    if(d===null || Math.abs(d)<=4 || tries++>=40) return;   // arrived, gone, or given up rather than loop
+    window.scrollBy(0,d);
+    setTimeout(settle,80);
+  };
+  setTimeout(settle,420);                                    // let the smooth scroll have its run first
   logEvent("jump_to_section",{key:k});
 };
 document.addEventListener("click", e=>{

@@ -42,7 +42,14 @@ test("CAS-275: tapping a chip brings that section's heading into view, clear of 
   // The last section is the one furthest down, so it is the real test of the control.
   const target = sections[sections.length - 1].window;
   await page.locator(`#jumpBar .jchip[data-jump="${target}"]`).click();
-  await page.waitForTimeout(900);            // smooth scroll
+  // Wait for the smooth scroll to SETTLE rather than guessing a duration. CAS-295 reordered the cinema lane
+  // so the jump can now be several thousand pixels, and a fixed wait raced it.
+  await page.waitForFunction(() => {
+    const y = window.scrollY;
+    if(window.__lastY === y){ return true; }
+    window.__lastY = y;
+    return false;
+  }, null, { polling: 120, timeout: 10_000 });
 
   const placed = await page.evaluate(k => {
     const head = document.querySelector(`#groups .group[data-g="${k}"] .grouphead`).getBoundingClientRect();
