@@ -33,6 +33,12 @@
        --faint was #6b7280 (3.26:1, failing) → #8b95a5 → now #9ba5b5. --dim #9aa4b2 → #aab4c4. */
     --ink:#e8ecf2; --dim:#aab4c4; --faint:#9ba5b5;
     --open:#ff6b6b; --amber:#f0a336; --purple:#a486f0; --blue:#5aa9f0; --green:#48c78e; --grey:#6b7280;
+    /* CAS-258/CAS-286: Upcoming gets a colour of its own. It had been --grey, which in every other part
+       of this UI means "off / nothing here" — the wrong thing to say about the films a person is most
+       looking forward to. #7C5CFF is the value named on CAS-286. Note it is the brand --violet exactly,
+       and it sits next door to --purple (#a486f0), which is Purchase; the two are told apart by position
+       in the strip rather than by hue. Flagged on CAS-286 — change the value here and it moves everywhere. */
+    --upcoming:#7C5CFF;
     --imdb:#f5c518; --rt:#fa6c3c; --meta:#66cc33; --accent:#7c5cff;
     /* White on --accent measures 4.35:1 — under AA for anything below 18px, which is every filled control
        we have. --accentdeep is the same purple with the luminance taken down until white clears the bar
@@ -1038,10 +1044,22 @@
   /* CAS-154: the four lozenges were sized to squeeze onto one line (nowrap, 10px), which made them the
      smallest type on the splash — the one screen that has to be readable at arm's length. They now wrap
      instead of shrinking, which buys the room to take the label to 13px and the dot to 7px. */
-  .splashloz{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:18px}
+  /* CAS-258: the strip is now five windows, and the ticket asks for a fixed 2-then-3 split rather than
+     whatever the width happens to wrap to. Two explicit rows do that at every viewport: the two BEFORE
+     you can watch it at home on top, the three ways to watch it at home below. */
+  .splashloz{display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:18px}
+  .splashlozrow{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
   .splashpill{display:inline-flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--line);
     border-radius:999px;padding:7px 13px;font-size:13px;color:var(--dim);white-space:nowrap}
   .splashpill .splashdot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+  /* CAS-258: the three home windows need 335px of row and a 360px phone only offers 306. CAS-154 bought
+     the 13px label by letting the strip wrap rather than shrink, and that call still holds — so the
+     narrow-phone saving comes out of padding and gaps, never the type. Applied to both rows so the strip
+     stays one object. Measured: row two 335 → 300 at 360px, with room to spare. */
+  @media (max-width:389px){
+    .splashlozrow{gap:6px}
+    .splashpill{padding:7px 9px;gap:5px}
+  }
   .splashbullets{width:100%;display:flex;flex-direction:column;gap:13px;margin-bottom:20px}
   .splashb{display:flex;gap:12px;align-items:flex-start;text-align:left}
   .splashb .splashtick{flex:0 0 auto;width:20px;height:20px;margin-top:1px}
@@ -2235,11 +2253,18 @@
     <!-- CAS-257: the tagline. Directly under the wordmark, so the first thing after the name says what
          the thing IS — the bullets below say what it does. -->
     <div class="splashtag" id="splashTag">Movie AI Agents</div>
+    <!-- CAS-258: all five windows Cascade follows, not four — Purchase was missing, which made the strip
+         quietly untrue about what the app tracks. Split 2 / 3: before it is home, then home. -->
     <div class="splashloz">
-      <span class="splashpill"><span class="splashdot" style="background:var(--grey)"></span>Upcoming</span>
-      <span class="splashpill"><span class="splashdot" style="background:var(--amber)"></span>In cinemas</span>
-      <span class="splashpill"><span class="splashdot" style="background:var(--blue)"></span>Rental</span>
-      <span class="splashpill"><span class="splashdot" style="background:var(--green)"></span>Streaming</span>
+      <div class="splashlozrow">
+        <span class="splashpill"><span class="splashdot" style="background:var(--upcoming)"></span>Upcoming</span>
+        <span class="splashpill"><span class="splashdot" style="background:var(--amber)"></span>In cinemas</span>
+      </div>
+      <div class="splashlozrow">
+        <span class="splashpill"><span class="splashdot" style="background:var(--purple)"></span>Purchase</span>
+        <span class="splashpill"><span class="splashdot" style="background:var(--blue)"></span>Rental</span>
+        <span class="splashpill"><span class="splashdot" style="background:var(--green)"></span>Streaming</span>
+      </div>
     </div>
     <div class="splashbullets">
       <div class="splashb"><svg class="splashtick" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5" stroke="#22D3EE" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>finds movies you'll love</span></div>
@@ -2810,7 +2835,7 @@ $("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 221, "commit": "4fce83b", "builtAt": "2026-07-31T23:53:34Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 222, "commit": "c37441e", "builtAt": "2026-08-01T00:05:21Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
