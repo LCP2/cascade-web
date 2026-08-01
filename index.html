@@ -2883,7 +2883,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 233, "commit": "345f184", "builtAt": "2026-08-01T01:27:47Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 234, "commit": "602f3c7", "builtAt": "2026-08-01T01:58:22Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5309,8 +5309,9 @@ function deckSync(shown){
       const live=on;   // CAS-150: one list, so All's card always speaks for the list it draws
       const n=live?shown:SHOWABLE_N;             // CAS-170: the catalogue you can actually reach
       el.classList.toggle("is-active",on);
-      el.querySelector(".dc-sub").textContent=
-        `${n} film${n===1?"":"s"} ${live?"right now":"in the catalogue"} · a view, not a watch — it never alerts you`;
+      // CAS-270: the count, and nothing after it. The card is a control you flick past, not a place to
+      // read — everything the old sub-line carried is said in full on the screen the card opens.
+      el.querySelector(".dc-sub").textContent=`${n} film${n===1?"":"s"}`;
       return;
     }
     const c=deckAt(i); if(!c) return;                // the "+ New" card paints nothing
@@ -5319,9 +5320,22 @@ function deckSync(shown){
     el.classList.toggle("is-active",on);
     el.querySelector(".dc-icon").textContent=c.icon;
     el.querySelector(".dc-name").innerHTML=`${esc(c.name)}${on&&dirty?' <span class="dirty">· edited</span>':""}`;
+    // CAS-270: the count, and — for a streaming agent only — what the count is drawn FROM. The old line
+    // also carried the alert summary, which is a promise about the future stacked on a statement about
+    // the present; two unrelated facts in one 11px line read as neither. The bells are stated in full on
+    // the Edit screen that owns them.
+    //
+    // The scope suffix stays because for a streaming agent the count is ambiguous without it: "153 films"
+    // means something different if it is the whole catalogue than if it is only what you can already
+    // watch, and nothing else on the card says which. It is spelled out in BOTH directions — an absent
+    // suffix would just be silence, and silence is what made this ambiguous in the first place. A cinema
+    // agent has no such fork, so it gets the bare count.
     el.querySelector(".dc-sub").textContent=
-      `${n} film${n===1?"":"s"} ${on?"right now":"match now"} · ${alertSummary(c)}`
-      + (anyScope(c) ? (allScoped(c) ? " · my services" : ` · my services on ${scopeSummary(c)}`) : "");
+      `${n} film${n===1?"":"s"}`
+      + (c.kind==="stream"
+          ? " · " + (anyScope(c) ? (allScoped(c) ? "my services" : `my services on ${scopeSummary(c)}`)
+                                 : "any service")
+          : "");
     el.querySelector('[data-act="save"]').hidden=!(on&&dirty);
   });
   deckPaint();
