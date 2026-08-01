@@ -1781,6 +1781,19 @@
      being asked of you. (This is where the New / All pair used to stand.) */
   .sortbar{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:8px 12px 0}
   .sortlbl{font-size:11.5px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+  /* CAS-275: the jump rail. It scrolls horizontally rather than wrapping — a control row that grows a second
+     line changes the height of a STICKY bar, which moves the listing under the reader's thumb. Six sections
+     will not fit across 390px and are not meant to; the rail is a thing you flick, like the deck above it. */
+  .jumpbar{display:flex;align-items:center;gap:6px;margin:8px 0 0;padding:0 12px 1px;
+    overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .jumpbar::-webkit-scrollbar{display:none}
+  .jlbl{flex:none;font-size:11.5px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+  .jchip{flex:none;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--dim);font-size:11.5px;font-weight:700;
+    cursor:pointer;white-space:nowrap;font-family:inherit}
+  .jchip:hover{color:var(--ink);border-color:#3a4150}
+  .jchip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .jchip .jn{color:var(--faint);font-weight:700}
   .fglabel{display:flex;align-items:center;gap:8px;padding:15px 12px 4px;font-size:13px;font-weight:800}
   .fglabel .n{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:1px 7px;
     font-size:10.5px;color:var(--dim);font-weight:700}
@@ -2059,6 +2072,10 @@
         <option value="title">Title A–Z</option>
       </select>
     </div>
+    <!-- CAS-275: jump to a section of the listing. It is rendered from the sections that ACTUALLY exist in
+         the current list, so it can never offer a destination that isn't there — and it hides itself when
+         there is only one, because a jump control with one destination scrolls you nowhere. -->
+    <div class="jumpbar" id="jumpBar" hidden></div>
     <div id="cascDetail"></div>
   </div>
   <!-- ONE listing (CAS-134, and now literally one: CAS-150 removed the New / All scopes). It is everything
@@ -9977,6 +9994,7 @@ function render(){
   if(!rows.length){
     // One list, so one empty: this Cascade matches nothing right now, and that panel carries the ways out.
     wrap.innerHTML = emptyResultsHTML();
+    renderJumpBar();          // CAS-275: no sections, so no jump rail — and no stale one left behind
     markFoundSeen();
     return;
   }
@@ -9996,9 +10014,48 @@ function render(){
     wrap.appendChild(grp);
     fillListChunked(grp.querySelector(".list"), items, renderGen, isFresh);
   });
+  renderJumpBar();     // after the groups exist — it is built FROM them, never from a fixed menu
   // You are looking at it — so the next visit's "since you last looked" counts from here.
   markFoundSeen();
 }
+// ---- CAS-275: jump to a section --------------------------------------------------------------------
+// The listing is sectioned by availability window and can run to the whole catalogue, so "take me to the
+// Cinema ones" was a scroll you had to do by hand past everything ahead of it.
+//
+// It is built from the sections the DOM actually holds, not from LISTING_ORDER, which is the whole point:
+// a menu of all six windows would offer destinations that aren't in this list, and a control that scrolls
+// you nowhere is exactly what CAS-271 and CAS-272 just took off the band. Same reason it hides itself at
+// fewer than two sections — one destination is not a choice.
+const SECTION_SHORT = {opening_week:"Opening", in_cinema:"Cinema", pvod:"Premium",
+                       rental:"Rent", included_streaming:"Stream", upcoming:"Upcoming"};
+function renderJumpBar(){
+  const el=$("jumpBar"); if(!el) return;
+  const groups=[...document.querySelectorAll("#groups .group")];
+  if(groups.length<2){ el.hidden=true; el.innerHTML=""; return; }
+  el.hidden=false;
+  el.innerHTML=`<span class="jlbl">Jump to</span>` + groups.map(g=>{
+    const k=g.dataset.g;
+    const n=(g.querySelector(".gcount")||{}).textContent||"";
+    return `<button type="button" class="jchip" data-jump="${k}"
+        title="${escA("Jump to "+(STATUS_LABEL[k]||k))}">
+      <span class="gdot ${k}"></span>${esc(SECTION_SHORT[k]||STATUS_LABEL[k]||k)}<span class="jn">${esc(n)}</span></button>`;
+  }).join("");
+}
+// The bar is STICKY, so scrolling a section to y=0 hides its heading behind the bar. The offset is the
+// header plus the band, measured rather than guessed — both change height with their contents.
+window.jumpToSection = k => {
+  const g=document.querySelector(`#groups .group[data-g="${k}"]`); if(!g) return;
+  const bar=$("cascbar");
+  const hdr=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hdrh"))||0;
+  const occluded=(bar ? bar.getBoundingClientRect().height : 0)+hdr;
+  const y=g.getBoundingClientRect().top+window.scrollY-occluded-8;
+  window.scrollTo({top:Math.max(0,y), behavior:"smooth"});
+  logEvent("jump_to_section",{key:k});
+};
+document.addEventListener("click", e=>{
+  const b=e.target.closest("#jumpBar .jchip"); if(!b) return;
+  jumpToSection(b.dataset.jump);
+});
 // ---- CAS-129: single-card updates (never rebuild the whole ~2,000-card list on one tap) --------
 // A "Not for me"/verdict just folds that film to its stub where it is, so we swap only that one node and
 // patch the visible counters — no full render() over a list that can run to the whole catalogue.
@@ -10008,6 +10065,10 @@ function patchFindCounts(){
   CASCADE.forEach(g=>{
     const gc=document.querySelector(`#groups .group[data-g="${g}"] .gcount`);
     if(gc) gc.textContent=rows.filter(m=>primaryStatus(m)===g && !taggedOut(m)).length;
+    // CAS-275: the jump chip carries the same number, so it has to be patched by the same pass — a chip
+    // still saying 12 next to a heading saying 11 is two places disagreeing about one list.
+    const jn=document.querySelector(`#jumpBar .jchip[data-jump="${g}"] .jn`);
+    if(jn && gc) jn.textContent=gc.textContent;
   });
   renderCascadeBar(shown.length);
 }
