@@ -151,12 +151,16 @@ test("CAS-230: the film card carries Watch status + Notify + chevron, not the ol
   const controls = await first.locator(".actions > *").evaluateAll(els => els.map(e => ({
     cls: e.className, text: (e.textContent || "").trim(),
   })));
-  expect(controls.length, JSON.stringify(controls)).toBe(3);
+  // CAS-279 adds a third labelled chip — Cascade — between the two answers about the film itself, so this
+  // row is four controls now rather than the three CAS-230 shipped. The shape the ticket cares about is
+  // unchanged: labelled chips plus the chevron, and none of the old bare verdict icons.
+  expect(controls.length, JSON.stringify(controls)).toBe(4);
   expect(controls[0].cls).toMatch(/\bctl\b.*\bwatch\b/);
   expect(controls[0].text).toMatch(/Watch status/i);
-  expect(controls[1].cls).toMatch(/\bctl\b/);
-  expect(controls[1].text).toMatch(/Notify|Muted/i);
-  expect(controls[2].cls).toMatch(/wtwbtn/);
+  expect(controls[1].cls).toMatch(/\bctl\b.*\bcasc\b/);
+  expect(controls[2].cls).toMatch(/\bctl\b/);
+  expect(controls[2].text).toMatch(/Notify|Muted/i);
+  expect(controls[3].cls).toMatch(/wtwbtn/);
   // The old row is gone: no Pick badge, no bare verdict buttons.
   await expect(first.locator(".actions .pickbtn, .actions .actbtn:not(.wtwbtn)")).toHaveCount(0);
 

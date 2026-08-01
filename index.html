@@ -380,6 +380,11 @@
     letter-spacing:.04em}
   .nopt:hover{color:var(--ink)}
   .nopt:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
+  /* CAS-279: the empty state of the Cascade panel. A panel that opens onto nothing reads as broken, so it
+     says why instead — and it is not a button, because there is nothing to press. */
+  .nopt.nonone{display:block;color:var(--faint);cursor:default;border-color:transparent;white-space:normal;
+    line-height:1.45;font-weight:600}
+  .ctl.casc .cmini .cic{color:var(--accent)}
   /* ONE icon set for the card's actions (CAS-64). Every action icon is a stroked outline drawn from the same
      24px grid at the same 1.8 stroke weight, in the same grey — and every ON state is the same purple
      treatment. Emoji glyphs are out: they carry their own weights, fills and platform styling, which is
@@ -2504,6 +2509,9 @@ const ICON = {
   eye:     svgIcon(`<path d="M2.6 12S6 6.6 12 6.6 21.4 12 21.4 12 18 17.4 12 17.4 2.6 12 2.6 12z"/><circle cx="12" cy="12" r="2.7"/>`),
   bell:    svgIcon(`<path d="M6.4 10.2a5.6 5.6 0 0 1 11.2 0c0 4 1.5 5.4 1.5 5.4H4.9s1.5-1.4 1.5-5.4z"/><path d="M10.1 18.6a2.1 2.1 0 0 0 3.8 0"/>`),
   bellOff: svgIcon(`<path d="M6.4 10.2a5.6 5.6 0 0 1 11.2 0c0 4 1.5 5.4 1.5 5.4H4.9s1.5-1.4 1.5-5.4z"/><path d="M10.1 18.6a2.1 2.1 0 0 0 3.8 0"/><path d="M4.6 4.6 19.4 19.4"/>`),
+  // CAS-279: the deck — two cards, one behind the other. Same grid and stroke as the rest of the set, and it
+  // is the deck the control moves a film between rather than a generic folder.
+  deck:    svgIcon(`<rect x="8.2" y="4.4" width="11.4" height="13.2" rx="2.2"/><path d="M15.4 19.6H6.6a2.2 2.2 0 0 1-2.2-2.2V8.2"/>`),
 };
 // Journey order — Upcoming leads (a film reaches cinemas before any home window).
 // primaryStatus() takes the LAST window a film holds, so "upcoming" sitting first is safe:
@@ -2787,6 +2795,14 @@ function loadNotify(){
     e.source = e.source==="manual" ? "manual" : "auto";
     e.cascadeIds = Array.isArray(e.cascadeIds) ? e.cascadeIds : [];
     e.removed = !!e.removed;
+    // CAS-279: the two halves of "move this film to another cascade". Membership is DERIVED from an agent's
+    // criteria and rewritten on every recompute, so a move that only edited cascadeIds would be undone by
+    // the next render — a control that appears to work and silently doesn't. These are the override layer,
+    // stored the same way `removed` is, and they are the only thing that can outrank the criteria.
+    //   pinnedTo — cascade ids this film is IN by hand, whether or not their criteria match it
+    //   notIn    — cascade ids this film has been moved OUT of, whether or not their criteria match it
+    e.pinnedTo = Array.isArray(e.pinnedTo) ? e.pinnedTo.filter(x=>typeof x==="string") : [];
+    e.notIn    = Array.isArray(e.notIn)    ? e.notIn.filter(x=>typeof x==="string")    : [];
     // "You took this over from a Cascade" (CAS-100) — kept only while true, so it never becomes a false flag
     // sitting on a film you added yourself. Only a manual entry can carry it.
     if(e.claimed && e.source==="manual") e.claimed=true; else delete e.claimed;
@@ -2813,7 +2829,11 @@ function saveNotify(){
   notifySaved=s;
   try{ localStorage.setItem(NOTIFY_KEY, s); }catch(e){}
 }
-const entryFor = id => notify[id] || (notify[id]={source:"auto", cascadeIds:[], removed:false});
+const entryFor = id => notify[id] || (notify[id]={source:"auto", cascadeIds:[], removed:false, pinnedTo:[], notIn:[]});
+// CAS-279: the two override tests, defined once so the listing, the counts and the Found set cannot disagree
+// about where a film lives. An entry that predates this change has neither array and answers false to both.
+const pinnedInto = (id,c) => ((notify[id]||{}).pinnedTo||[]).includes(c.id);
+const movedOutOf = (id,c) => ((notify[id]||{}).notIn||[]).includes(c.id);
 // The live membership: auto ∪ your adds − your removes. Rebuilt by recomputeFound(), read everywhere else.
 const found = new Set();
 function recomputeFound(){
@@ -2823,7 +2843,12 @@ function recomputeFound(){
                                                     // it adds no Found membership — and since the poll's watchlist
                                                     // IS the Found set, it raises no alerts either.
     MOVIES.forEach(m=>{
-      if(!watchesFilm(m,c)) return;                 // WATCHES, not shows — see the note above matchesTaste
+      // CAS-279: a hand-move outranks the criteria in BOTH directions, and it has to do so here as well as
+      // in the listing — this is the set the poll watches, so a film moved into an agent must be watched by
+      // it (or the move buys you a row and no alerts) and one moved out must not be (or it goes on emailing
+      // you from an agent you took it off).
+      if(movedOutOf(m.tmdb_id,c)) return;
+      if(!pinnedInto(m.tmdb_id,c) && !watchesFilm(m,c)) return;   // WATCHES, not shows — see matchesTaste
       if(!hits.has(m.tmdb_id)) hits.set(m.tmdb_id, []);
       hits.get(m.tmdb_id).push(c.id);
     });
@@ -2948,7 +2973,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 243, "commit": "a1a60fa", "builtAt": "2026-08-01T03:07:30Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 244, "commit": "f968d6a", "builtAt": "2026-08-01T03:19:02Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3855,8 +3880,11 @@ function cardHTML(m, markNew=false){
       <!-- CAS-230: the v0.8 control row — Watch status, Notify, chevron. The Pick badge and the four bare
            verdict icons are gone from the card; Pick still lives on the Found / Your Movies rows, which is
            where taking a film off your list by hand belongs. -->
+      <!-- CAS-279: Cascade sits in the MIDDLE, between the two answers about the film itself. It is the one
+           control here that is about where the film LIVES rather than what you make of it. -->
       <div class="actions">
         ${watchChipHTML(id)}
+        ${cascadeChipHTML(id)}
         ${notifyChipHTML(id)}
         ${wtwBtn}
       </div>
@@ -3986,6 +4014,74 @@ function notifyChipHTML(id){
       <span class="cic">${st.muted ? ICON.bellOff : ICON.bell}</span>
       <span class="clab${st.muted?" dim":""}">${lbl}</span></span></button>`;
 }
+// ---- CAS-279: the Cascade control -----------------------------------------------------------------------
+// Where this film lives, and the one gesture that changes it. Everything else on this row is an opinion about
+// the film; this is an instruction about the deck.
+//
+// The honesty problem it had to solve: cascadeIds is DERIVED from each agent's criteria and rewritten on
+// every recompute, so "move" cannot mean "edit the membership list" — the next render would put the film
+// straight back. It means "record an override the criteria cannot outvote", which is exactly how `removed`
+// has always worked. Both halves are stored, so the move survives a reload and a re-run.
+function cascadeChipHTML(id){
+  const here=cascadesFor(id);
+  const lbl = here.length===0 ? "Cascade" : here.length===1 ? here[0].name : `${here.length} cascades`;
+  const title = here.length
+    ? `In ${here.map(c=>c.name).join(", ")}. Tap to move it.`
+    : "Not in any of your cascades. Tap to put it in one.";
+  return `<button type="button" class="ctl casc" data-kid="${id}" onclick="openCascadePanel(${id},this)"
+      aria-haspopup="true" title="${escA(title)}" aria-label="${escA(title)}">
+    <span class="cmini"><i class="cfill" style="width:${here.length?100:0}%;background:var(--accent)"></i>
+      <span class="cic">${ICON.deck}</span>
+      <span class="clab${here.length?"":" dim"}">${esc(lbl)}</span></span></button>`;
+}
+window.openCascadePanel=(id, btn)=>{
+  const open=btn.closest(".actions").querySelector(".cpop");
+  closeWatchPanel();
+  if(open) return;                       // tapping the chip again closes the panel it opened
+  const from=activeCascade();
+  // "the OTHER cascades" — the one you are standing in is not somewhere you can move a film TO.
+  const targets=cascades.filter(c=>!from || c.id!==from.id);
+  const pop=document.createElement("div");
+  pop.className="cpop kpop";
+  pop.innerHTML=`<button type="button" class="cclose nclose" onclick="closeWatchPanel()"
+      title="Close" aria-label="Close">${ICON.chev}</button>
+    <div class="nopts">${
+      targets.length
+        ? targets.map(c=>{
+            const on=pinnedInto(id,c) || cascadesFor(id).some(x=>x.id===c.id);
+            return `<button type="button" class="nopt${on?" on":""}" style="--wwc:var(--accent)"
+              aria-pressed="${on}" onclick="moveFilmTo(${id},'${c.id}')"
+              title="${escA(on?`Already in ${c.name}`:`Move this film to ${c.name}`)}">
+              <span class="wwb">✓</span><span class="nol">${c.icon} ${esc(c.name)}</span></button>`;
+          }).join("")
+        // No second agent to move it to. Say so rather than opening an empty panel, which reads as broken.
+        : `<div class="nopt nonone">${cascades.length ? "This is your only cascade — there is nowhere else to move it to."
+                                                      : "You have no cascades yet."}</div>`
+    }</div>`;
+  btn.closest(".actions").appendChild(pop);
+  document.addEventListener("keydown", watchPanelKey, true);
+  const first=pop.querySelector(".nopt"); if(first && first.tagName==="BUTTON") first.focus();
+};
+// The move itself. Pin into the target; and if you were standing IN a cascade when you did it, push it out of
+// that one — that is what makes it a move rather than a copy. From the All view there is no source, so it is
+// honestly an "add to", and nothing is taken away from anywhere.
+window.moveFilmTo=(id,cid)=>{
+  const to=cascades.find(c=>c.id===cid); if(!to) return;
+  const from=activeCascade();
+  const e=entryFor(id);
+  e.pinnedTo=[...new Set([...(e.pinnedTo||[]), cid])];
+  e.notIn=(e.notIn||[]).filter(x=>x!==cid);          // moving it IN cancels any earlier move OUT of the same one
+  if(from && from.id!==cid){
+    e.notIn=[...new Set([...(e.notIn||[]), from.id])];
+    e.pinnedTo=e.pinnedTo.filter(x=>x!==from.id);
+  }
+  // A move is a statement that you want this film — so it must not stay on the "you took this off" pile.
+  e.removed=false;
+  saveNotify();
+  logEvent("film_moved",{to:to.template||"custom", from:from?(from.template||"custom"):"all"});
+  closeWatchPanel();
+  render();
+};
 window.openNotifyPanel=(id, btn)=>{
   const open=btn.closest(".actions").querySelector(".cpop");
   closeWatchPanel();
@@ -4305,7 +4401,15 @@ const settleFoundView = () => { heldOpen.clear(); };
 // never fire), so `status` keeps it and `listStatus` is what decides whether it appears here. An agent with no
 // listStatus — anything built before this screen existed — lists everything it watches, as it always did.
 const listWindowOK = (m,c) => !(c.listStatus||[]).length || c.listStatus.includes(primaryStatus(m));
-const listedBy = (m,c) => matchesCriteria(m, {...c, status:[]}) && inScope(m,c) && listWindowOK(m,c);
+// CAS-279: a hand-move is the only thing that outranks an agent's criteria about where a film is listed.
+// Moved-out wins outright; pinned-in skips the criteria but still has to clear the agent's own WINDOWS,
+// because those are what the agent lists rather than what it likes — a cinema agent showing a film that is
+// only on streaming would be a lie about where you can watch it, whoever put it there.
+const listedBy = (m,c) => !movedOutOf(m.tmdb_id,c)
+  && (pinnedInto(m.tmdb_id,c)
+        ? (inScope(m,c) && listWindowOK(m,c))
+        : (matchesCriteria(m, {...c, status:[]}) && inScope(m,c) && listWindowOK(m,c)));
+const listedCount = c => MOVIES.filter(m=>listedBy(m,c)).length;
 function scopeRows(){
   const c=activeCascade();
   // No Cascade open = the All card = the catalogue itself, which is what that card says it is.
@@ -5401,7 +5505,10 @@ function deckSync(shown){
     }
     const c=deckAt(i); if(!c) return;                // the "+ New" card paints nothing
     const on=c.id===activeId;
-    const n=on?shown:countCriteria(c);               // real counts on every card — the open one shows what's on screen
+    // Real counts on every card — the open one shows what's on screen. CAS-279: a closed card counts with
+    // listedCount rather than countCriteria, because a hand-moved film is in that agent's listing and would
+    // otherwise be missing from the number describing it. The open card already reads the listing itself.
+    const n=on?shown:listedCount(c);
     el.classList.toggle("is-active",on);
     el.querySelector(".dc-icon").textContent=c.icon;
     el.querySelector(".dc-name").innerHTML=`${esc(c.name)}${on&&dirty?' <span class="dirty">· edited</span>':""}`;
