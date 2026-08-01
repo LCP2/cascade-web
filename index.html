@@ -3025,7 +3025,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 252, "commit": "f683505", "builtAt": "2026-08-01T04:30:41Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 253, "commit": "83c00f0", "builtAt": "2026-08-01T04:36:48Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3465,7 +3465,7 @@ function passes(m){
   if(filt.genre.size && !(m.genres||[]).some(g=>filt.genre.has(g))) return false;
   if(filt.awards && !m.award) return false;
   if(!ratingOK(m, filt.imdb, filt.includeUnrated)) return false;
-  if(!budgetOK(m, filt.budget, filt.includeUnbudgeted)) return false;
+  if(!budgetOK(m, filt.budget)) return false;
   if(filt.tentpole!=="any" && !tentpoleIs(m,filt.tentpole)) return false;
   if((m.rt_critic||0) < filt.rt) return false;
   if((m.worldwide_gross||0) < filt.gross) return false;
@@ -4840,13 +4840,21 @@ const BUDGET_BANDS = [
 const UNBUDGETED_N = MOVIES.filter(m=>!m.budget).length;
 // Same rule as an unrated film: 11 titles have no budget figure. They ride along at "Any" and drop out
 // the moment a band is picked — unless you take the escape hatch. We never guess a number we don't have.
-function budgetOK(m, band, includeUnbudgeted){
+// CAS-288 (Lee, 2026-08-01): a film with NO budget figure is excluded whenever a budget band is chosen.
+// An unknown budget cannot satisfy a budget selection — it is not a small budget, it is an absence — so the
+// old opt-in that let it through has gone, along with the parameter that carried it. At "Any" (band 0)
+// nothing is being asked, so nothing is excluded and every film passes as before.
+//
+// Scope, per the ticket: this is the explicit Budget FILTER only. The Mission scale dial is a different path
+// and is untouched — it reads worldwide gross as a fallback, so a film with no budget can still have a known
+// scale there, and CAS-288 says so explicitly.
+function budgetOK(m, band){
   if(!band) return true;
+  if(!m.budget) return false;
   const b=BUDGET_BANDS[band];
-  if(!m.budget) return !!includeUnbudgeted;
   return m.budget>=b.min && (b.max==null || m.budget<b.max);
 }
-const budgetBandCount = i => MOVIES.filter(m=>budgetOK(m,i,false)).length;
+const budgetBandCount = i => MOVIES.filter(m=>budgetOK(m,i)).length;
 
 // ---- Scale tiers: ONE badge per film, and the same rule the Tentpole filter runs (CAS-64) -------------
 // Four tiers, defined once. The card's badge and the Cascade's Tentpole filter both call scaleTier(), so a
@@ -5068,6 +5076,9 @@ function normCascade(c, opts){
   c.includeUnrated = !!c.includeUnrated;
   c.paused = !!c.paused;                      // guest mode (CAS-79): saved on-device but not watching/alerting
   c.budget = c.budget||0;                    // index into BUDGET_BANDS; 0 = Any
+  // CAS-288: nothing READS this any more — an unknown budget is excluded whenever a band is set, full stop.
+  // It is still normalised so that an agent saved before today loads without complaint, and still carried in
+  // the signature below so that flipping it does not silently look like "no change".
   c.includeUnbudgeted = !!c.includeUnbudgeted;
   c.tentpole = c.tentpole||"any";
   c.awards = !!c.awards;
@@ -5425,7 +5436,7 @@ function matchesCriteria(m,c,ignoreBlocked){
   if((c.selCritScore||c.selAwards) && !selCriticsOK(m,c)) return false;
   if(c.selScale   && selScaleMatch(m,c)===false)       return false;   // unknown(null) rides along
   if(c.selBuzz    && !selBuzzOK(m,c))                  return false;
-  if(!budgetOK(m, c.budget||0, c.includeUnbudgeted)) return false;
+  if(!budgetOK(m, c.budget||0)) return false;
   if(c.tentpole && c.tentpole!=="any" && !tentpoleIs(m,c.tentpole)) return false;
   if((m.rt_critic||0) < (c.rt||0)) return false;
   return true;
@@ -6350,7 +6361,6 @@ function buildScale(){
       </div>
       <div class="rlabels" id="cBudLabels">${BUDGET_BANDS.map(b=>`<span>${b.label}</span>`).join("")}</div>
       <div class="qcap" id="cBudDesc"></div>
-      <button class="hatch" id="cUnbudgeted" role="switch" type="button" hidden></button>
     </div>
     <div class="qrow">
       <div class="qhead"><span class="qt">Tentpole</span><span class="qcap" style="margin:0" id="cTentCap"></span></div>
@@ -6374,11 +6384,7 @@ function buildScale(){
   });
   wrap.querySelector("#cBudget").oninput=e=>{
     draft.budget=+e.target.value;
-    if(!draft.budget) draft.includeUnbudgeted=false;   // at "Any" nothing is excluded — the hatch is moot
     syncScale(); refreshDraft();
-  };
-  wrap.querySelector("#cUnbudgeted").onclick=()=>{
-    draft.includeUnbudgeted=!draft.includeUnbudgeted; syncScale(); refreshDraft();
   };
   return wrap;
 }
@@ -6389,14 +6395,13 @@ function syncScale(){
   [...$("cScale").querySelectorAll(".rstops i")].forEach((el,i)=>el.classList.toggle("lit", i<=draft.budget));
   [...$("cBudLabels").children].forEach((el,i)=>el.classList.toggle("lit", i===draft.budget));
   $("cBudCap").textContent=band.label;
+  // CAS-288: choosing a band now excludes the titles with no budget figure, so the line says so. The count
+  // was already exclusive of them; what was missing was telling anyone.
   $("cBudDesc").innerHTML = draft.budget
-    ? `<b>${band.label} — ${band.hint}.</b> ${budgetBandCount(draft.budget)} titles in the catalogue sit in that band.`
+    ? `<b>${band.label} — ${band.hint}.</b> ${budgetBandCount(draft.budget)} titles sit in that band.`
+      + (UNBUDGETED_N ? ` The ${UNBUDGETED_N} titles with no budget figure are left out — an unknown budget
+         can't meet a budget bar.` : "")
     : `<b>Any budget.</b> Includes the ${UNBUDGETED_N} titles TMDB gives no budget figure for.`;
-  const hatch=$("cUnbudgeted");
-  hatch.hidden=!draft.budget || !UNBUDGETED_N;
-  hatch.classList.toggle("on", draft.includeUnbudgeted);
-  hatch.setAttribute("aria-checked", String(draft.includeUnbudgeted));
-  hatch.textContent=`${draft.includeUnbudgeted?"✓":"＋"} Include the ${UNBUDGETED_N} titles with no budget figure`;
 
   const t=draft.tentpole;
   $("cTentCap").textContent=TENTPOLE_STOPS.find(x=>x.key===t).label;
