@@ -1235,6 +1235,17 @@
   .oscount b{font-family:var(--font-display);font-size:15px;font-weight:800;color:var(--accenttext)}
   .osh{font-family:var(--font-display);font-size:20px;font-weight:700;margin:0 0 6px;color:var(--ink)}
   .ossub{color:var(--dim);font-size:13px;line-height:1.5;margin:0 0 12px}   /* CAS-130 size / CAS-138 tighten */
+  /* CAS-264: the trail. A quiet ledger, not a control — no card chrome, no tap affordance, just the rows
+     you have already answered with a hairline between them. The row for the step you are ON is lifted to
+     full ink so the newest answer reads as the live one and the ones above it read as settled. */
+  .ostrail{margin:18px 0 4px;padding-top:12px;border-top:1px solid var(--line)}
+  .otrow{display:flex;align-items:baseline;gap:10px;padding:5px 0;font-size:12px;line-height:1.45}
+  .otrow+.otrow{border-top:1px solid rgba(255,255,255,.045)}
+  .otrow .otk{flex:0 0 88px;color:var(--faint);font-weight:600;
+    text-transform:uppercase;letter-spacing:.05em;font-size:10.5px}
+  .otrow .otv{flex:1 1 auto;min-width:0;color:var(--dim)}
+  .otrow.now .otv{color:var(--ink);font-weight:600}
+  .otrow.now .otk{color:var(--accenttext)}
   .osagent{display:flex;gap:9px;background:rgba(124,92,255,.08);border:1px solid rgba(124,92,255,.42);
     border-radius:14px;padding:12px;margin:16px 0 0}
   .osagent .i{font-size:15px;line-height:1.2;flex:0 0 auto}
@@ -7698,6 +7709,72 @@ function onbSummary(){
   const lead=(step && step.lead) ? step.lead() : `watches for <b>${onbGenrePhrase()}</b>`;
   return `📓 <b>${esc(d.name)}</b> ${lead}${onbRatingClause(d)} — <span class="cnt">${n} film${n===1?"":"s"}</span> so far. I'll tell you the moment one lands on a service.`;
 }
+// ---- CAS-264: the trail — what you have said so far -------------------------------------------------
+// A line has one weakness a hub never had: on step six you cannot see step three. The flow answers that by
+// carrying every answer forward — each screen ends with the running list of what has been set, the newest
+// row last and marked as the one you are on. So Mission shows its own summary under the dials, Style shows
+// Mission's as well as its own, and by Notify the whole brief is on the screen you are finishing.
+//
+// Every value is read LIVE off the same state the screens edit (the draft, onbFlow, prefs) rather than
+// captured when a step was left, so the trail cannot go stale if you walk back and change something. Rows
+// with nothing to say are dropped rather than printed empty — an empty row is not a summary, it is noise.
+const trailGenres = () => { const g=dT().genre;
+  return g===null ? "None selected"
+       : !g.length ? "All genres"
+       : g.length<=2 ? g.join(", ")
+       : `${g.length} of ${ONB_GENRES.length}`; };
+const trailLangs = () => { const l=dT().lang;
+  return l===null ? "None selected"
+       : !l.length ? "Any language"
+       : l.length===1 ? langName(l[0])
+       : `${langName(l[0])} +${l.length-1}`; };
+const trailAge = () => { const a=dT().age;
+  return a===null ? "None selected"
+       : (!a.length || a.length===AGE_LEVELS.length) ? "All ratings"
+       : a.join(", "); };
+const trailServices = () => { const k=prefs.sub.size+prefs.store.size;
+  return k ? `${k} service${k===1?"":"s"}` : "None named yet"; };
+const trailNotify = () => {
+  const on=[notifyPrefs.inApp && "In-app", notifyPrefs.emailOn && "Email"].filter(Boolean);
+  return on.length ? on.join(", ") : "Off"; };
+// Keyed by step, so the trail can never list a step this lane does not walk — flowList() is what orders it.
+const ONB_TRAIL = {
+  priority:    {label:"Watching", value:()=> flowKind==="stream" ? "My streaming services" : "The cinema"},
+  pickagent:   {label:"Agent",    value:()=>{ const s=STARTERS.find(x=>x.key===pendingStarter);
+                                              return s ? s.name : null; }},
+  selectivity: {label:"Mission",  value:()=> hubBarSummary(), html:true},
+  name:        {label:"Name",     value:()=> (onbFlow.name||"").trim() || onbFlow.defaultName || null},
+  genres:      {label:"Style",    value:trailGenres},
+  years:       {label:"How far back", value:()=> yearsLabel(flowYearsBack())},
+  language:    {label:"Language", value:trailLangs},
+  age:         {label:"Rating",   value:trailAge},
+  services:    {label:"Services", value:trailServices},
+  notifysettings:{label:"Notify", value:trailNotify},
+};
+// The trail starts at Mission. Before it there is nothing to recap that the screen itself is not asking, and
+// the two screens before Mission are tap-to-advance — a summary under a question you answer by tapping one of
+// two buttons would be a footnote to a decision already made.
+const TRAIL_FROM = "selectivity";
+function onbTrailRows(key){
+  const list=flowList(), here=list.indexOf(key), from=list.indexOf(TRAIL_FROM);
+  if(here<0 || from<0 || here<from) return [];
+  return list.slice(0, here+1).map(k=>{
+    const t=ONB_TRAIL[k]; if(!t) return null;
+    const v=t.value();
+    return v ? {key:k, label:t.label, value:v, html:!!t.html, now:k===key} : null;
+  }).filter(Boolean);
+}
+function onbTrailHTML(key){
+  // Only inside the wired line. A standalone ?step= preview has no steps behind it, and the Briefing is a
+  // hub whose own doors already print their summaries — a trail there would be the same words twice.
+  if(!flowOn || briefOn) return "";
+  const rows=onbTrailRows(key);
+  if(!rows.length) return "";
+  return `<div class="ostrail" id="onbTrail" aria-label="What you've set so far">
+    ${rows.map(r=>`<div class="otrow${r.now?" now":""}">
+      <span class="otk">${esc(r.label)}</span>
+      <span class="otv">${r.html ? r.value : esc(r.value)}</span></div>`).join("")}</div>`;
+}
 // The quality-bar clause. The standalone previews seed an "above average+" agent, so it reads exactly like the
 // mock; but a picked agent (CAS-122) may watch every rating — and claiming "above average+" for one that
 // doesn't would be the fabricated copy the honesty guardrail forbids, so an all-ratings agent gets no clause.
@@ -9171,6 +9248,7 @@ function renderOnbStep(key){
       ${(last&&!spoke)?`<span class="oslast">LAST ONE</span>`:""}
     </div>`}
     ${step.body()}
+    ${onbTrailHTML(key)}
     ${step.noAgent ? "" : `<div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>`}
     ${(step.hub||chromed) ? "" : `<div class="osfoot">
       <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${
@@ -9209,6 +9287,11 @@ function onbRefresh(){
   // CAS-224: a step whose chips carry live counts repaints them here, so the chips move on the same beat as
   // the headline number rather than only when the screen is rebuilt.
   if(step && step.refresh) step.refresh();
+  // CAS-264: the trail is a live read of the same state these controls edit, so it repaints on the same beat
+  // as the count. Changing a dial and watching the Mission row under it move is the whole point of putting
+  // the summary on the screen that sets it.
+  const trail=$("onbTrail");
+  if(trail) trail.outerHTML = onbTrailHTML(onbStepKey) || "";
   // CAS-253: onbRefresh rewrites the button, so the gate is reapplied after it — otherwise any repaint
   // (a toggle, a count moving) would hand back a Continue the screen is not ready for.
   if(onbStepKey==="notifysettings") notifyGate();
@@ -9329,13 +9412,22 @@ function hubDoorHTML(icon,title,sum,key){
 }
 // Both summaries are read off the SAME live state the doors edit, so a door can never advertise something
 // different from what is behind it.
+// CAS-264: …and only the dials this LANE uses. onbFlow keeps a value for every dial whatever lane you are
+// in — a streaming preset still seeds a buzz rung — but laneCrit drops the ones the lane does not use before
+// the agent ever applies them. Reading onbFlow raw therefore advertised a criterion the agent was not using:
+// a streaming Mission summary said "Talked-about buzz" for an agent with no buzz filter, which is the exact
+// thing CAS-248 removed from that screen. This summary now reports the bar that is really being applied.
 function hubBarSummary(){
+  const uses = MISSION_DIALS_USED[missionKind()] || MISSION_DIALS_USED.cinema;
   const parts=[];
-  if(onbFlow.voteVal>=VOTE_OFF)  parts.push(voteBand(onbFlow.voteVal) || onbFlow.voteVal.toFixed(1)+"+");
-  if(onbFlow.critScore)  parts.push(critScoreReadout(onbFlow.critScore));
-  if(onbFlow.awardStop)  parts.push(AWARD_STOPS[onbFlow.awardStop].label);
-  if(onbFlow.scaleVal)    parts.push(scaleReadout(onbFlow.scaleVal));
-  if(onbFlow.buzzStop)    parts.push(BUZZ_STOPS[onbFlow.buzzStop].label+" buzz");
+  if(uses.includes("vote") && onbFlow.voteVal>=VOTE_OFF)
+    parts.push(voteBand(onbFlow.voteVal) || onbFlow.voteVal.toFixed(1)+"+");
+  if(uses.includes("crit")){
+    if(onbFlow.critScore)  parts.push(critScoreReadout(onbFlow.critScore));
+    if(onbFlow.awardStop)  parts.push(AWARD_STOPS[onbFlow.awardStop].label);
+  }
+  if(uses.includes("scale") && onbFlow.scaleVal)  parts.push(scaleReadout(onbFlow.scaleVal));
+  if(uses.includes("buzz")  && onbFlow.buzzStop)  parts.push(BUZZ_STOPS[onbFlow.buzzStop].label+" buzz");
   return parts.length ? esc(parts.join(" · ")) : "No bar set — everything qualifies";
 }
 function hubTasteSummary(){
