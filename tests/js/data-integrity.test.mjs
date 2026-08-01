@@ -639,11 +639,11 @@ test("dates: a date we hold is printed to the day, an estimate stays a month", (
 });
 
 test("dates: the day form is compact, unambiguous, and never a fabricated precision", () => {
-  // This year drops the year; another year keeps it. Both are the same shape as what fmtDate says, so the
-  // two can be told apart at a glance rather than by counting characters.
+  // CAS-296: every date shows its year, this year included — dropping it read as ambiguous once a film's
+  // window could straddle a year boundary.
   const thisYear = `${E.TODAY.slice(0, 4)}-03-07`;
   const other    = "2019-11-21";
-  assert.equal(E.fmtDay(thisYear), "7 Mar");
+  assert.equal(E.fmtDay(thisYear), `7 Mar ${E.TODAY.slice(2, 4)}`);
   assert.equal(E.fmtDay(other), "21 Nov 19");
   assert.equal(E.fmtDay(""), "", "an absent date must print nothing, never a guess");
   // An ESTIMATE is still a month and a year — a day would claim a precision the offset does not have.
