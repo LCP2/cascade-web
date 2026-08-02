@@ -2,13 +2,19 @@
 // (pvod/rental/stream) isn't backed by a live listing — but for a film currently in cinemas, that flag is
 // about whether it's STILL playing, not about the cinema date itself (stageDate never marks "cinema" as
 // est). The old CSS greyed the Cinema pill along with the rest of the card; it must keep the cinema token.
+//
+// CAS-318: built from "Totally Custom" (the wide-open recipe cas289/data-integrity's "widest cinema recipe"
+// also uses), not the first shortlist card. The skip guard below checks the WHOLE catalogue for a qualifying
+// film, so the DOM search has to look at a listing that can hold every showable film too — CAS-314's 14-day
+// estimate cap shrank the pool of qualifying films enough that a narrower, taste-scored preset (Blockbusters,
+// the old cards[0]) can miss the one candidate left on a given day even though it truly exists and is shown
+// elsewhere.
 import { test, expect } from "@playwright/test";
-import { toShortlist, shortlistCards, pickCard, finishFlow, toListing } from "./helpers.mjs";
+import { toShortlist, pickCard, finishFlow, toListing } from "./helpers.mjs";
 
 test("CAS-301: an in-cinema card's Cinema pill stays cinema-yellow even when the card is flagged estimated", async ({ page }) => {
   await toShortlist(page, "cinema");
-  const cards = await shortlistCards(page);
-  await pickCard(page, cards[0].name);
+  await pickCard(page, "Totally Custom");
   await finishFlow(page);
   await toListing(page);
 

@@ -2680,6 +2680,13 @@ function deriveStatus(m){
     // exact over-claim this ticket exists to stop.
     if(!(m.offers||[]).length && !claimed.some(w=>["upcoming","opening_week","in_cinema"].includes(w))
        && inCinemaRunEstimated(m)) return [cinemaRungFor(m)];
+    // CAS-318: the flip side of that correction. CAS-289 always meant the cap to move a stale claim forward
+    // ("the film moves to its next estimated window" — cas289.spec.mjs), not just hide it while primaryStatus
+    // went on reporting the expired one — that gap is what let CAS-314's inCinemaWindow() cap disagree with
+    // primaryStatus() for the same film. A claimed cinema window this estimate can no longer vouch for is
+    // exactly as unconfirmed as a claim CAS-227 corrects the other way, so it advances the same way a title
+    // that finishes one window moves into the next.
+    if(claimed.some(w=>["opening_week","in_cinema"].includes(w)) && !inCinemaRunEstimated(m)) return ["pvod"];
     return claimed;
   }
   // CAS-227: "Upcoming" stops being true the day a film opens. The pipeline moves a title out of `upcoming`
