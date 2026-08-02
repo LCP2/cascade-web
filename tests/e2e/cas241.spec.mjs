@@ -36,15 +36,19 @@ test("CAS-241: the collapse control is thumb-sized and points left", async ({ pa
   await expect(card.locator(".cpop")).toHaveCount(0);
 });
 
-test("CAS-241: widening it did not squeeze the four answers", async ({ page }) => {
+// CAS-311: CAS-278 replaced the four-answer row with a five-answer, best-first, top-to-bottom scale
+// (WATCH_STEPS) — a deliberate design change, not a regression. The invariant this test guards is still
+// "no answer is truncated at 360px"; it just checks it against today's five answers instead of the
+// original four.
+test("CAS-311: the five answers are not squeezed at 360px", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 800 });
   const card = await openWatchPanel(page);
   const segs = card.locator(".cpop .cseg");
-  await expect(segs).toHaveCount(4);
+  await expect(segs).toHaveCount(5);
   const labels = await segs.locator(".cl").evaluateAll(els => els.map(e => ({
     text: e.textContent.trim(), clipped: e.scrollWidth > e.clientWidth + 1,
   })));
-  expect(labels.map(l => l.text)).toEqual(["Don't want", "Disliked", "So-so", "Liked"]);
+  expect(labels.map(l => l.text)).toEqual(["Wow!", "Watch Again", "So-so", "Disliked", "Won't Watch"]);
   for(const l of labels) expect(l.clipped, `"${l.text}" is being truncated at 360px`).toBe(false);
 });
 
