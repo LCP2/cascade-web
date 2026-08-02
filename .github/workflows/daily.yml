@@ -28,6 +28,7 @@ jobs:
       - name: Check out repo (carries yesterday's state for change-detection)
         uses: actions/checkout@v4
         with:
+          ref: staging           # the repo's default branch is main; refresh must land on staging, never main
           fetch-depth: 2         # need HEAD~1 so the monitor can read yesterday's movies.json
 
       - name: Set up Python
@@ -48,7 +49,7 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add index.html movies.json state
           git commit -m "Daily refresh $(date -u +%F)" || echo "nothing to commit"
-          git push || echo "nothing to push"
+          git push origin HEAD:staging || echo "nothing to push"
 
       - name: Run the Cascade monitor (diff → match → de-dupe → email)
         # Reads yesterday's catalogue from git history (HEAD~1:movies.json). With the Supabase +

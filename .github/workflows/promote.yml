@@ -1,6 +1,9 @@
 # .github/workflows/promote.yml — Codynamics Development Standard (Cascade web)
 # The shipper. Fires automatically when qa.yml succeeds on staging — no tag, no human step.
-# main is written ONLY here. Pages source is "Deploy from a branch: main", so pushing main
+# main is written ONLY here, and only as a plain merge: main must stay a pure descendant of the
+# QA'd staging commit, so this job never rebuilds or commits generated files (index.html,
+# movies.json, state/*) on main — an independent rebuild-on-main is what caused promote run #16's
+# index.html merge conflict. Pages source is "Deploy from a branch: main", so pushing main
 # IS the production deploy (the built-in Pages pipeline publishes cascademovies.com). We do
 # NOT use upload-pages-artifact/deploy-pages — that is only for Pages source = GitHub Actions.
 name: promote
@@ -29,14 +32,9 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: npm ci
 
       - name: Merge the QA'd staging commit into main
         id: merge
@@ -49,20 +47,11 @@ jobs:
           git merge --no-ff "${{ github.event.workflow_run.head_sha }}" \
             -m "promote: staging@${{ github.event.workflow_run.head_sha }}"
 
-      - name: Bump patch version and rebuild for production
+      - name: Read the shipped release version
         id: ver
-        env:
-          CASCADE_ENV: production
         run: |
           set -euo pipefail
-          cur=$(tr -d ' \n' < VERSION)
-          IFS='.' read -r MA MI PA <<< "$cur"
-          new="${MA}.${MI}.$((PA+1))"
-          echo "$new" > VERSION
-          python poc_pipeline.py --build-html
-          git add VERSION index.html version.json
-          git commit -m "release ${new}"
-          echo "version=${new}" >> "$GITHUB_OUTPUT"
+          echo "version=$(tr -d ' \n' < VERSION)" >> "$GITHUB_OUTPUT"
 
       - name: Push main — the production deploy (main -> Pages)
         run: git push origin main
