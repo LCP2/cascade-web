@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cascade — Listing (live CAS-100 card) + membership setup</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700&display=swap');
+  :root{
+    --grad:linear-gradient(135deg,#7C5CFF 0%,#4C7DFF 52%,#22D3EE 100%);
+    --bg:#0A0E1A; --panel:#141A2A; --panel2:#1e232c; --line:#2a303b;
+    --ink:#e8ecf2; --dim:#9aa4b2; --faint:#8b95a5;
+    --open:#ff6b6b; --amber:#f0a336; --purple:#a486f0; --blue:#5aa9f0; --green:#48c78e; --grey:#6b7280;
+    --imdb:#f5c518; --rt:#fa6c3c; --meta:#66cc33; --accent:#7c5cff; --accenttext:#b3a4ff;
+    --fb:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --fd:"Poppins",var(--fb);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#05070d;font-family:var(--fb);color:var(--ink);padding:26px}
+  .board{display:flex;flex-wrap:wrap;gap:30px;justify-content:center;align-items:flex-start}
+  .screen{width:344px}
+  .label{font-family:var(--fd);font-size:12px;color:var(--accenttext);font-weight:600;margin:0 4px 8px}
+  .phone{position:relative;display:flex;flex-direction:column;color:var(--ink);
+    background:radial-gradient(120% 30% at 50% 0%,#141b30 0%,#0A0E1A 44%,#080b14 100%);
+    border:1px solid var(--line);border-radius:28px;padding:0 0 4px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.55)}
+  /* persistent setup banner (the proposed new element) */
+  .setupbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:11px;
+    padding:13px 15px;background:linear-gradient(180deg,rgba(124,92,255,.24),rgba(124,92,255,.10));
+    border-bottom:1px solid rgba(124,92,255,.4);cursor:pointer}
+  .setupbar .gic{flex:0 0 auto;width:32px;height:32px;border-radius:9px;background:var(--grad);
+    display:flex;align-items:center;justify-content:center;font-size:15px}
+  .setupbar .t{flex:1;min-width:0}
+  .setupbar .t b{font-family:var(--fd);font-size:13.5px;font-weight:600;color:#fff;display:block}
+  .setupbar .t span{font-size:11px;color:var(--accenttext)}
+  .setupbar .arw{color:var(--accenttext);font-size:18px}
+  .steps{display:flex;gap:4px;margin-top:5px}
+  .steps i{height:3px;flex:1;border-radius:999px;background:rgba(255,255,255,.18)}
+  .steps i.done{background:var(--green)}
+  .lhead{padding:15px 16px 4px}
+  .lhead .ag{font-family:var(--fd);font-size:16px;font-weight:700}
+  .lhead .cnt{color:var(--green);font-size:12.5px;font-weight:600;margin-top:3px}
+
+  /* ===== LIVE CARD — CAS-100, lifted from app.html ===== */
+  .list{padding:12px 14px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:13px;margin-bottom:11px}
+  .ctop{display:flex;gap:12px}
+  .poster{width:78px;height:112px;flex-shrink:0;border-radius:10px;
+    background:linear-gradient(160deg,#3a4a63,#20132a) center/cover no-repeat;
+    display:flex;align-items:flex-end;justify-content:center;padding:6px;font-size:8px;font-weight:700;color:#cbd5e6;text-align:center;letter-spacing:.15em}
+  .chead{flex:1;min-width:0}
+  .title{font-size:16.5px;font-weight:750;line-height:1.25}
+  .cert{display:inline-block;font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:5px;
+    border:1px solid #5b6472;color:#d6dce6;background:#232a35;margin-left:6px;vertical-align:middle;letter-spacing:.3px;white-space:nowrap}
+  .cert.mature{border-color:#c0563f;color:#ffb9a6;background:rgba(192,86,63,.16)}
+  .newchip{display:inline-block;background:rgba(72,199,142,.16);border:1px solid rgba(72,199,142,.55);
+    color:#a7eccb;border-radius:20px;padding:1px 8px;font-size:10px;font-weight:800;margin-left:7px;vertical-align:middle;white-space:nowrap}
+  .newchip.po{background:rgba(240,163,54,.14);border-color:rgba(240,163,54,.5);color:#ffce8f}
+  .meta{font-size:12.5px;color:var(--dim);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .synopsis{font-size:13px;color:#c4ccd6;line-height:1.5;margin:8px 0 0;
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  /* scale badge — own row */
+  .scalerow{display:flex;margin-top:10px}
+  .tentbadge{height:22px;font-size:10px;font-weight:700;padding:0 9px;border-radius:7px;display:inline-flex;gap:4px;
+    align-items:center;white-space:nowrap;cursor:pointer;border:1px solid rgba(245,197,24,.5);background:rgba(245,197,24,.12);color:#f5d675}
+  .tentbadge b{font-size:11px;font-weight:800;color:#f5d675}
+  /* ratings row */
+  .ratings{margin-top:12px}
+  .rrow{display:flex;gap:3px;align-items:center;overflow-x:auto;scrollbar-width:none}
+  .rrow::-webkit-scrollbar{display:none}
+  .rb{flex-shrink:0;height:22px;font-size:10px;font-weight:700;padding:0 6px;border-radius:7px;display:flex;gap:3px;
+    align-items:center;background:var(--panel2);border:1px solid var(--line);white-space:nowrap;color:var(--dim)}
+  .rb.imdb,.rb.rt,.rb.mc{min-width:52px}
+  .rb.muted,.rb.muted b{color:var(--faint)}
+  .rb b{font-size:11px}
+  .rb.imdb b{color:var(--imdb)} .rb.rt b{color:var(--rt)} .rb.mc b{color:var(--meta)} .rb.budget b{color:#c9a2ff} .rb.gross b{color:#9fe6c4}
+  /* cascade stepper */
+  .cascade{position:relative;display:grid;grid-template-columns:repeat(4,1fr);margin-top:13px}
+  .cascade::before{content:"";position:absolute;top:13px;left:12.5%;right:calc(100% - var(--cx,87.5%));height:2px;background:var(--dim);z-index:0}
+  .cstage{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;text-align:center;padding-top:2px}
+  .cnode{width:calc(100% - 8px);height:22px;font-size:9px;font-weight:800;letter-spacing:.2px;padding:0 4px;border-radius:7px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--faint);line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cstage.past .cnode{color:var(--dim)}
+  .cstage.future .cnode{opacity:.4}
+  .cstage.current.st-cin-opening .cnode{background:linear-gradient(0deg,rgba(255,107,107,.2),rgba(255,107,107,.2)),var(--panel2);border-color:var(--open);color:#ffc2c2}
+  .cstage.current.st-cin-cinema .cnode{background:linear-gradient(0deg,rgba(240,163,54,.2),rgba(240,163,54,.2)),var(--panel2);border-color:var(--amber);color:#ffce8f}
+  .cstage.current.st-pvod .cnode{background:linear-gradient(0deg,rgba(164,134,240,.2),rgba(164,134,240,.2)),var(--panel2);border-color:var(--purple);color:#d3c2ff}
+  .cdate{font-size:8px;color:var(--faint);margin-top:3px;white-space:nowrap;line-height:1}
+  .cdate.est{font-style:italic;opacity:.75}
+  /* action row — Pick + verdicts + where-to-watch */
+  .actions{display:flex;gap:8px;margin-top:12px;align-items:center}
+  .actions .wtwbtn{margin-left:auto}
+  .actbtn{width:38px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);
+    cursor:pointer;display:grid;place-items:center;line-height:0;color:#8b93a1;padding:0}
+  .actbtn svg{width:18px;height:18px;display:block}
+  .actbtn.on.auto{background:rgba(164,134,240,.2);border-color:var(--purple);color:#d8c9ff}
+  .actbtn.pickbtn{width:auto;gap:6px;padding:0 11px;grid-auto-flow:column;font-size:12px;font-weight:750}
+  .picklbl{line-height:1;white-space:nowrap}
+  .actbtn.wtwbtn.off{opacity:.35;cursor:not-allowed}
+  .fade{height:30px;background:linear-gradient(180deg,rgba(5,7,13,0),#05070d)}
+
+  /* ===== setup sheet (frame B) ===== */
+  .sheet{padding:20px 18px 18px}
+  .grab{width:38px;height:4px;border-radius:999px;background:#39414f;margin:0 auto 16px}
+  h2{font-family:var(--fd);font-size:20px;font-weight:700;margin:0 0 4px}
+  .subh{color:var(--dim);font-size:12.5px;line-height:1.5;margin:0 0 18px}
+  .eyebrow{font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--faint);text-transform:uppercase;margin:18px 2px 10px;display:flex;justify-content:space-between}
+  .eyebrow span{color:var(--accenttext);font-weight:600;letter-spacing:0;text-transform:none}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{font-size:12px;padding:7px 11px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--dim);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  .chip.on{border-color:var(--accent);background:rgba(124,92,255,.18);color:#fff;font-weight:600}
+  .chip .tk{width:13px;height:13px}
+  .row{display:flex;align-items:center;justify-content:space-between;background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:12px 13px;margin-bottom:9px}
+  .row .t b{font-size:13.5px;font-weight:600}.row .t p{margin:1px 0 0;color:var(--dim);font-size:11px}
+  .switch{width:42px;height:24px;border-radius:14px;background:#39414f;position:relative;flex:0 0 auto;cursor:pointer}
+  .switch::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.15s}
+  .switch.on{background:var(--green)}.switch.on::after{left:21px}
+  .save{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--fd);font-weight:700;font-size:15px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 8px 24px rgba(124,92,255,.3);margin-top:22px}
+  .later{display:block;text-align:center;margin-top:12px;color:var(--dim);font-size:12.5px;text-decoration:underline;text-underline-offset:3px}
+</style>
+</head>
+<body>
+<div class="board">
+
+  <!-- FRAME A: listing with persistent setup banner + the LIVE CAS-100 card -->
+  <div class="screen">
+    <div class="label">A · Listing — persistent setup bar + the live app card (rebuilt from app.html)</div>
+    <div class="phone">
+      <div class="setupbar">
+        <div class="gic">⚙</div>
+        <div class="t">
+          <b>Complete your membership setup</b>
+          <span>2 of 4 done — add your services &amp; alerts</span>
+          <div class="steps"><i class="done"></i><i class="done"></i><i></i><i></i></div>
+        </div>
+        <div class="arw">›</div>
+      </div>
+
+      <div class="lhead">
+        <div class="ag">🍿 Friday night finder</div>
+        <div class="cnt">9 films streaming now on your services</div>
+      </div>
+
+      <div class="list">
+        <div class="card">
+          <div class="ctop">
+            <div class="poster">THE ODYSSEY</div>
+            <div class="chead">
+              <div class="title">The Odyssey<span class="cert">M</span><span class="newchip">🆕 New this week</span><span class="newchip po">🎬 Past opening weekend</span></div>
+              <div class="meta">Jul 26 · Adventure, Action, Fantasy · Western</div>
+              <div class="synopsis">Odysseus, the legendary King of Ithaca, embarks on a long and perilous journey home following the Trojan War. Throughout his voyage, he is forced to confront…</div>
+            </div>
+          </div>
+
+          <div class="scalerow"><button class="tentbadge" type="button">💥 <b>Blockbuster</b></button></div>
+
+          <div class="ratings">
+            <div class="rrow">
+              <div class="rb imdb">IMDb <b>8.3</b></div>
+              <div class="rb rt muted">🍅 <b>-</b></div>
+              <div class="rb mc">Meta <b>89</b></div>
+              <div class="rb budget">Budget <b>$250M</b></div>
+              <div class="rb gross">Gross <b>$264M</b></div>
+            </div>
+          </div>
+
+          <div class="cascade" style="--cx:12.5%">
+            <div class="cstage current reached st-cin-opening"><div class="cnode">Opening</div><div class="cdate">Jul 26</div></div>
+            <div class="cstage future st-pvod"><div class="cnode">Premium</div><div class="cdate est">Oct 26</div></div>
+            <div class="cstage future st-rental"><div class="cnode">Rent</div><div class="cdate">&nbsp;</div></div>
+            <div class="cstage future st-included_streaming"><div class="cnode">Stream</div><div class="cdate">&nbsp;</div></div>
+          </div>
+
+          <div class="actions">
+            <button class="actbtn pickbtn on auto" title="Cascade found this — tap to make it My Pick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10.8 20.5 5.5v13L3.5 13.2z"/><path d="M11.4 16.4a2.9 2.9 0 1 1-5.6-1.5"/></svg><span class="picklbl">Agent Pick</span></button>
+            <button class="actbtn" title="Not for me"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M5.9 18.1 18.1 5.9"/></svg></button>
+            <button class="actbtn" title="Liked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7.2 10.6v9.2H4.4v-9.2z"/><path d="M7.2 10.6 12 4.2a2.1 2.1 0 0 1 2 2.6l-.7 2.7h4.8a2 2 0 0 1 1.9 2.5l-1.5 6a2 2 0 0 1-1.9 1.5H7.2z"/></svg></button>
+            <button class="actbtn" title="Disliked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7.2 13.4V4.2H4.4v9.2z"/><path d="M7.2 13.4 12 19.8a2.1 2.1 0 0 0 2-2.6l-.7-2.7h4.8a2 2 0 0 0 1.9-2.5l-1.5-6a2 2 0 0 0-1.9-1.5H7.2z"/></svg></button>
+            <button class="actbtn wtwbtn off" title="No home offers yet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></svg></button>
+          </div>
+        </div>
+
+        <!-- next card peeking, to show it's a scrollable stack -->
+        <div class="card">
+          <div class="ctop">
+            <div class="poster" style="background:linear-gradient(160deg,#7a2f2f,#20132a)">SINNERS</div>
+            <div class="chead">
+              <div class="title">Sinners<span class="cert mature">MA15+</span></div>
+              <div class="meta">Apr 25 · Horror, Thriller · English</div>
+              <div class="synopsis">Twin brothers return to their hometown to start over, only to discover a far greater evil waiting to welcome them back.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="fade"></div>
+    </div>
+  </div>
+
+  <!-- FRAME B: setup sheet -->
+  <div class="screen">
+    <div class="label">B · Setup sheet — services + alerts (opened from the bar)</div>
+    <div class="phone">
+      <div class="sheet">
+        <div class="grab"></div>
+        <h2>Finish your setup</h2>
+        <p class="subh">Tell Cascade what you can already watch on, and how you want to hear about matches. Your list gets sharper straight away.</p>
+
+        <div class="eyebrow">Your rental services <span>2 selected</span></div>
+        <div class="chips">
+          <span class="chip on"><svg class="tk" viewBox="0 0 24 24" fill="none"><path d="M4 12.5l5 5L20 6.5" stroke="#b3a4ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Apple TV</span>
+          <span class="chip on"><svg class="tk" viewBox="0 0 24 24" fill="none"><path d="M4 12.5l5 5L20 6.5" stroke="#b3a4ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Google Play</span>
+          <span class="chip">Amazon</span>
+          <span class="chip">YouTube</span>
+          <span class="chip">Fetch</span>
+          <span class="chip">Microsoft</span>
+        </div>
+
+        <div class="eyebrow">Your streaming services <span>3 selected</span></div>
+        <div class="chips">
+          <span class="chip on"><svg class="tk" viewBox="0 0 24 24" fill="none"><path d="M4 12.5l5 5L20 6.5" stroke="#b3a4ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Netflix</span>
+          <span class="chip on"><svg class="tk" viewBox="0 0 24 24" fill="none"><path d="M4 12.5l5 5L20 6.5" stroke="#b3a4ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Disney+</span>
+          <span class="chip on"><svg class="tk" viewBox="0 0 24 24" fill="none"><path d="M4 12.5l5 5L20 6.5" stroke="#b3a4ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Prime Video</span>
+          <span class="chip">Stan</span>
+          <span class="chip">Binge</span>
+          <span class="chip">Paramount+</span>
+          <span class="chip">Apple TV+</span>
+          <span class="chip">Foxtel</span>
+        </div>
+
+        <div class="eyebrow">Alerts</div>
+        <div class="row"><div class="t"><b>App alerts</b><p>A nudge here when one of your films moves.</p></div><div class="switch on"></div></div>
+        <div class="row"><div class="t"><b>Email alerts</b><p>The same alerts, in your inbox.</p></div><div class="switch"></div></div>
+
+        <button class="save">Save my setup</button>
+        <a class="later">I'll finish this later</a>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

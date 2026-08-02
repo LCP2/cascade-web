@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Cascade — selectivity prototype</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Poppins:wght@600;700;800&display=swap');
+:root{
+ --bg:#0A0E1A;--panel:#141A2A;--panel2:#1e232c;--line:#2a303b;--ink:#e8ecf2;--dim:#aab4c4;--faint:#9ba5b5;
+ --accent:#7c5cff;--accentdeep:#6b48f2;--selink:#cfc2ff;
+ --grad:linear-gradient(135deg,#7C5CFF 0%,#4C7DFF 52%,#22D3EE 100%);
+ --green:#48c78e;--amber:#f0a336;--blue:#5aa9f0;--count:#a7eccb;
+ --fb:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+ --fd:"Poppins",var(--fb);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0}
+body{background:#05070d;color:var(--ink);font-family:var(--fb);display:flex;justify-content:center;padding:20px 0 44px}
+.phone{width:412px;max-width:100vw;min-height:840px;background:var(--bg);border:1px solid var(--line);
+ border-radius:28px;padding:18px 16px 26px;position:relative;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.55)}
+h1{font-family:var(--fd);font-weight:800;font-size:23px;margin:6px 2px 6px;letter-spacing:-.01em}
+.sub{color:var(--dim);font-size:13px;line-height:1.5;margin:0 2px 14px}
+.pnote{font-size:13px;color:var(--dim);line-height:1.55;margin:2px 0 12px}
+
+.topbar{display:flex;align-items:center;gap:12px;margin:0 0 12px}
+.back{width:40px;height:36px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);
+ display:grid;place-items:center;cursor:pointer;color:var(--ink);font-size:17px;flex:0 0 auto}
+.back:hover{border-color:var(--accent)}
+.pbar{flex:1;height:5px;border-radius:3px;background:#1c2230;overflow:hidden}
+.pbar>i{display:block;height:100%;background:var(--grad);border-radius:3px;transition:width .3s}
+
+/* agent cards */
+.acard{display:flex;align-items:center;gap:13px;background:var(--panel2);border:1px solid var(--line);
+ border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer;transition:.16s}
+.acard:hover{border-color:var(--accent)}
+.acard .ai{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;font-size:22px;
+ background:var(--panel);border:1px solid var(--line);flex:0 0 auto}
+.acard .at{flex:1;min-width:0}
+.acard .an{font-weight:700;font-size:15px}
+.acard .ao{color:var(--dim);font-size:12px;margin-top:2px;line-height:1.35}
+.acard .am{color:var(--selink);font-size:12px;font-weight:800;margin-top:6px}
+.acard .ac{color:var(--faint);font-size:18px;flex:0 0 auto}
+
+.chan{display:inline-flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);
+ border-radius:20px;padding:6px 12px 6px 8px;font-size:12px;font-weight:700;color:var(--ink)}
+.chan .cd{width:9px;height:9px;border-radius:50%}
+.chan .lock{margin-left:4px;color:var(--faint);font-size:10px;font-weight:600}
+.channote{font-size:11px;color:var(--faint);margin:6px 2px 12px}
+.bignum{font-family:var(--fd);font-weight:800;font-size:44px;line-height:1;letter-spacing:-.02em;
+ background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;margin:12px 2px 0}
+.bigl{color:var(--dim);font-size:12.5px;margin:4px 2px 16px}
+
+.door{display:flex;align-items:center;gap:13px;background:var(--panel2);border:1px solid var(--line);
+ border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer;transition:.16s}
+.door:hover{border-color:var(--accent)}
+.door .di{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;font-size:19px;flex:0 0 auto;
+ background:var(--panel);border:1px solid var(--line)}
+.door .dt{flex:1;min-width:0}
+.door .dh{font-weight:700;font-size:15px}
+.door .ds{color:var(--selink);font-size:12.5px;margin-top:2px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.door .dc{color:var(--faint);font-size:16px}
+.door.done{border-color:rgba(72,199,142,.5);background:rgba(72,199,142,.07)}
+.doneck{width:26px;height:26px;border-radius:50%;background:var(--green);display:grid;place-items:center;color:#08210f;font-size:14px;font-weight:800;flex:0 0 auto}
+@keyframes doorpulse{0%{transform:scale(.98)}40%{transform:scale(1.02)}100%{transform:scale(1)}}
+.door.pulse{animation:doorpulse .55s cubic-bezier(.34,1.56,.64,1);box-shadow:0 0 0 2px rgba(72,199,142,.45),0 8px 26px rgba(72,199,142,.18)}
+.hintline{text-align:center;color:var(--faint);font-size:12px;margin:14px 2px 0}
+.hintline b{color:var(--selink)}
+.finishnote{text-align:center;color:var(--green);font-size:13px;font-weight:800;margin:16px 2px 12px}
+
+/* dial card */
+.dial{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:13px 14px 16px;margin-bottom:11px}
+.dhead{display:flex;align-items:center;gap:9px;margin-bottom:2px}
+.dhead .em{font-size:16px}
+.dhead .dl{font-weight:700;font-size:14.5px}
+.dhead .dval{margin-left:auto;font-size:13px;font-weight:800;color:var(--selink);white-space:nowrap;text-align:right}
+.tagnew{font-size:9px;font-weight:800;letter-spacing:.06em;color:#fff;background:var(--accentdeep);border-radius:6px;padding:2px 6px;margin-left:2px}
+.dhow{color:var(--faint);font-size:12px;margin:0 0 8px;line-height:1.4}
+
+/* unified slider (fill from left edge to value on ALL controls) */
+.vslider{position:relative;height:22px;display:flex;align-items:center;margin:10px 2px 0}
+.vtrack{position:absolute;left:4px;right:4px;top:50%;height:5px;margin-top:-2.5px;border-radius:3px;background:#2a303b;overflow:hidden}
+.vfillbar{height:100%;border-radius:3px;background:var(--grad);width:0;transition:width .15s}
+.vnotches{position:absolute;left:4px;right:4px;top:0;bottom:0;pointer-events:none}
+.vnotch{position:absolute;top:50%;transform:translate(-50%,-50%);width:9px;height:9px;border-radius:50%;background:#39414f;box-shadow:0 0 0 3px var(--panel2);transition:background .15s}
+.vnotch.lit{background:var(--accent)}
+.vslider input{position:relative;z-index:2;width:100%;height:18px;margin:0;-webkit-appearance:none;appearance:none;background:transparent;cursor:pointer}
+.vslider input::-webkit-slider-runnable-track{height:18px;background:transparent}
+.vslider input::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;
+ background:var(--accent);border:2px solid var(--selink);box-shadow:0 2px 8px rgba(0,0,0,.55);cursor:grab}
+.vlabels{position:relative;height:28px;margin-top:9px}
+.vlabels span{position:absolute;font-size:10px;color:var(--dim);line-height:1.2;white-space:nowrap}
+.vlabels span.on{color:var(--selink);font-weight:700}
+.vlabels span small{display:block;font-size:8.5px;color:var(--faint)}
+
+.morebtn{width:100%;text-align:center;background:var(--panel2);border:1px dashed var(--line);color:var(--dim);
+ border-radius:12px;padding:17px 12px;font-size:12.5px;font-weight:700;cursor:pointer;margin-bottom:11px}
+.morebtn:hover{border-color:var(--accent);color:var(--ink)}
+.summ{font-size:13px;color:var(--dim);line-height:1.55;margin:6px 2px 14px}
+.summ b{color:var(--ink);font-weight:700} .summ .g{color:var(--count);font-weight:800}
+
+.cta{width:100%;border:0;border-radius:14px;padding:15px;font-family:var(--fd);font-weight:700;font-size:16px;color:#fff;
+ background:var(--grad);cursor:pointer;box-shadow:0 10px 30px rgba(124,92,255,.3)}
+.skip{display:block;text-align:center;color:var(--dim);font-size:12.5px;margin-top:12px;text-decoration:underline;cursor:pointer;background:none;border:0;width:100%}
+
+/* taste baseline rows */
+.rows{display:flex;flex-direction:column;gap:11px}
+.row{background:var(--panel2);border:1px solid var(--line);border-radius:14px;overflow:hidden;transition:border-color .22s,background .22s}
+.row.open{border-color:var(--accent);background:rgba(124,92,255,.06)}
+.rhead{display:flex;align-items:center;gap:13px;padding:14px 15px;cursor:pointer;user-select:none}
+.ic{flex:0 0 auto;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;font-size:18px;background:var(--panel);border:1px solid var(--line)}
+.rmid{flex:1;min-width:0}
+.rlabel{font-weight:700;font-size:15px}
+.rval{color:var(--selink);font-weight:600;font-size:12.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chev{flex:0 0 auto;color:var(--faint);transition:transform .3s;font-size:13px}
+.row.open .chev{transform:rotate(90deg)}
+.panel{max-height:0;overflow:hidden;transition:max-height .36s cubic-bezier(.4,0,.2,1)}
+.pbody{padding:0 15px 17px}
+.hint{color:var(--faint);font-size:12px;margin:0 0 12px;line-height:1.45}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-size:12px;padding:7px 12px;border-radius:20px;border:1px solid var(--line);background:var(--panel);color:var(--dim);cursor:pointer;user-select:none;font-weight:600;transition:transform .1s,background .18s,color .18s,border-color .18s}
+.chip:active{transform:scale(.93)}
+.chip.sel{background:rgba(124,92,255,.2);border-color:var(--accent);color:var(--selink)}
+.qrow{display:flex;gap:8px;margin-top:12px}
+.q{flex:1;text-align:center;border:1px solid var(--line);background:var(--panel);color:var(--dim);border-radius:10px;padding:8px;font-size:12px;font-weight:700;cursor:pointer}
+.q:hover{border-color:var(--accent);color:var(--ink)}
+.agebar{position:relative;height:48px;margin-top:6px;background:#151b28;border:1px solid var(--line);border-radius:13px;touch-action:none;cursor:pointer;user-select:none;overflow:hidden}
+.afill{position:absolute;top:5px;bottom:5px;border-radius:9px;background:var(--grad);box-shadow:0 6px 18px rgba(90,80,200,.45);z-index:1;transition:left .16s,width .16s}
+.agecells{position:absolute;inset:0;display:flex;z-index:2}
+.acell{flex:1;display:grid;place-items:center;font-size:12.5px;font-weight:700;color:var(--dim);transition:color .2s}
+.acell.inr{color:#fff}
+.uptag{font-size:11.5px;color:var(--faint);margin:12px 2px 0;text-align:center}
+.uptag b{color:var(--selink)}
+.donebtn{width:100%;border:0;border-radius:14px;padding:14px;font-family:var(--fd);font-weight:700;font-size:15px;color:#fff;background:var(--grad);cursor:pointer;margin-top:16px}
+.foot{display:flex;align-items:center;gap:8px;justify-content:center;color:var(--faint);font-size:11.5px;margin:16px 4px 2px;text-align:center}
+.dotg{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+</style>
+</head>
+<body>
+<div class="phone"><div id="app"></div></div>
+
+<script>
+/* ---------------- data ---------------- */
+const ALLGENRES=["Action","Adventure","Animation","Comedy","Crime","Documentary","Drama","Family","Fantasy","History","Horror","Music","Mystery","Romance","Sci-Fi","Thriller","War","Western"];
+const LANGS=["English","Spanish","French","Korean","Japanese","Mandarin","Hindi","Italian","German","Swedish"];
+const YEARS=[["Any",""],["Last 10","10 yrs"],["Last 5","5 yrs"],["Last 3","3 yrs"],["Last 2","2 yrs"],["This year","2026"]];
+const YMULT=[1,0.8,0.55,0.4,0.3,0.15];
+const AGES=["G","PG","M","MA 15+","R 18+"]; const ASHARE=[0.07,0.16,0.33,0.30,0.14];
+const VMIN=5,VMAX=9, VREF=[[6,'Liked'],[7,'Well-liked'],[7.5,'Loved'],[8.2,'Adored']];
+const vpos=r=>(r-VMIN)/(VMAX-VMIN)*100;
+function vband(v){ if(v>=8.2)return'Adored'; if(v>=7.5)return'Loved'; if(v>=7)return'Well-liked'; if(v>=6)return'Liked'; return''; }
+
+const DIALS=[
+  {key:'vote',em:'👥',label:"People's vote",how:"What everyday viewers scored it, out of 10.",cont:true},
+  {key:'crit',em:'🏅',label:"Critics & awards",how:"What professional critics and awards thought.",
+   stops:["Any","Well-reviewed","Acclaimed","Nominee","Winner"],sub:["","score 60+","score 80+","🏆","🏆"],pf:[1,.35,.18,.07,.035]},
+  {key:'scale',em:'🎬',label:"Budget & scale",how:"How big the film is — from a small indie to a huge blockbuster.",
+   stops:["Any size","Indie","Studio","Blockbuster"],sub:["","small","mid","huge"],pf:[1,.55,.32,.18]},
+  {key:'buzz',em:'🔥',label:"Buzz",how:"How much people are talking about it right now.",isNew:true,
+   stops:["Any","Talked-about","Trending","Must-see"],sub:["","","",""],pf:[1,.5,.3,.22]},
+];
+const D=k=>DIALS.find(d=>d.key===k);
+
+const AGENTS={
+  cinema:{name:"Must See at the Cinema",em:'🎬',one:"Big-screen films everyone will be talking about.",channel:"In cinemas",note:"",cd:"var(--amber)",base:383,taste:false,primary:['scale','buzz'],dials:{vote:5,crit:0,scale:3,buzz:3},bar:"Blockbuster · lots of buzz",frame:"is holding out for the big ones — the films everyone will be talking about."},
+  rent:{name:"Awesome Movies for Rent",em:'🍿',one:"Great films that just dropped to rent.",channel:"New to rent",note:"",cd:"var(--blue)",base:210,taste:false,primary:['vote','crit'],dials:{vote:7.5,crit:2,scale:0,buzz:0},bar:"Loved & acclaimed",frame:"is watching for the genuinely great films landing on rent."},
+  date:{name:"Date Night Rentals",em:'🌙',one:"Easy crowd-pleasers for two on the couch.",channel:"On rent",note:"",cd:"var(--blue)",base:210,taste:false,primary:['vote','buzz'],dials:{vote:7,crit:0,scale:0,buzz:1},bar:"Well-liked · a little buzz",frame:"is after well-liked, feel-good films to rent tonight."},
+  stream:{name:"My Day to Day Streaming",em:'📺',one:"Easy, fun watches on your services.",channel:"Streaming",note:"On the big streaming services until you add your own.",cd:"var(--green)",base:1375,taste:true,primary:['vote','buzz'],dials:{vote:6,crit:0,scale:0,buzz:1},bar:"Fun-first · sorted to your taste",frame:"keeps it easy and fun, and leans on what you like."},
+  awards:{name:"Nominees & Awards",em:'🏆',one:"Award-worthy films of any era — must-sees.",channel:"Anywhere",note:"",cd:"var(--accent)",base:620,taste:false,primary:['crit'],dials:{vote:5,crit:3,scale:0,buzz:0},bar:"Award nominees & winners",frame:"collects the award nominees and winners worth seeing."}
+};
+const AGENT_ORDER=['cinema','rent','date','stream','awards'];
+
+/* ---------------- state ---------------- */
+const state={ screen:'agents', agent:null,
+  bars:Object.fromEntries(AGENT_ORDER.map(k=>[k,{...AGENTS[k].dials, taste:AGENTS[k].taste}])),
+  tb:{genres:new Set(ALLGENRES), langs:new Set(["English"]), year:0, ageLo:0, ageHi:4, open:null},
+  more:false, done:{}, justDone:null };
+const fmt=n=>n.toLocaleString('en-US');
+const el=h=>{const d=document.createElement('div');d.innerHTML=h.trim();return d.firstChild;};
+
+/* ---------------- counts ---------------- */
+function pfVote(v){ if(v<5.6)return 1; const p=[[5.6,.85],[6,.6],[7,.4],[7.5,.28],[8.2,.14],[9,.06],[10,.03]];
+  for(let i=0;i<p.length-1;i++){ if(v<=p[i+1][0]){ const[x0,y0]=p[i],[x1,y1]=p[i+1]; return y0+(y1-y0)*(v-x0)/(x1-x0);} } return .03; }
+function tbFrac(){ const t=state.tb;
+  const g=t.genres.size===0?0:t.genres.size/ALLGENRES.length;
+  const l=t.langs.size===0?0:(t.langs.has("English")?1:Math.min(.6,.12+.06*t.langs.size));
+  let a=0; for(let i=t.ageLo;i<=t.ageHi;i++)a+=ASHARE[i];
+  return g*YMULT[t.year]*l*a; }
+function barFrac(k){ const b=state.bars[k]; let f=1;
+  if(b.vote>=5.6) f*=pfVote(b.vote);
+  ['crit','scale','buzz'].forEach(key=>{ if(b[key]>0) f*=D(key).pf[b[key]]; });
+  return f; }
+function agentCount(k){ return Math.round(AGENTS[k].base*barFrac(k)*tbFrac()); }
+
+/* ---------------- shared bits ---------------- */
+function topbar(frac, backTo){
+  const t=el(`<div class="topbar"><div class="back">←</div><div class="pbar"><i style="width:${frac}%"></i></div></div>`);
+  t.querySelector('.back').addEventListener('click',()=>go(backTo));
+  return t;
+}
+function critWord(i){ return ["","well-reviewed by critics","critically acclaimed","award-nominated","award-winning"][i]; }
+function barSentence(k){ const b=state.bars[k]; const parts=[];
+  if(b.vote>=5.6) parts.push("scored "+b.vote.toFixed(1)+"+ by viewers");
+  if(b.crit>0) parts.push(critWord(b.crit));
+  if(b.scale>0) parts.push(b.scale===3?'blockbuster-scale':D('scale').stops[b.scale].toLowerCase());
+  if(b.buzz>0) parts.push(D('buzz').stops[b.buzz].toLowerCase()+" buzz");
+  let out=parts.length?"Films that are "+parts.join(" <b>and</b> ")+".":"Every film in this channel.";
+  if(b.taste) out+=" Then sorted by what you like.";
+  return out; }
+function barSummaryShort(k){ const b=state.bars[k]; const p=[];
+  if(b.scale>0) p.push(b.scale===3?'Blockbuster':D('scale').stops[b.scale]);
+  if(b.buzz>0) p.push(D('buzz').stops[b.buzz]+' buzz');
+  if(b.vote>=5.6) p.push(vband(b.vote)||b.vote.toFixed(1)+'+');
+  if(b.crit>0) p.push(D('crit').stops[b.crit]);
+  return p.length?p.join(' · '):'Everything in this channel'; }
+
+/* ---------------- sliders (fill on all) ---------------- */
+function edgeTransform(i,n){ return i===0?'translateX(0)':(i===n-1?'translateX(-100%)':'translateX(-50%)'); }
+function steppedSlider(d, onChange){
+  const b=state.bars[state.agent]; const val=b[d.key]; const n=d.stops.length; const max=n-1;
+  const w=el(`<div>
+    <div class="vslider">
+      <div class="vtrack"><div class="vfillbar" style="width:${val/max*100}%"></div></div>
+      <div class="vnotches">${d.stops.map((_,i)=>`<span class="vnotch ${i<=val?'lit':''}" style="left:${i/max*100}%"></span>`).join('')}</div>
+      <input type="range" min="0" max="${max}" step="1" value="${val}">
+    </div>
+    <div class="vlabels">${d.stops.map((s,i)=>`<span class="${i===val?'on':''}" style="left:${i/max*100}%;transform:${edgeTransform(i,n)}">${s}${d.sub[i]?`<small>${d.sub[i]}</small>`:''}</span>`).join('')}</div>
+  </div>`);
+  const input=w.querySelector('input'),fill=w.querySelector('.vfillbar'),notch=w.querySelectorAll('.vnotch'),labs=w.querySelectorAll('.vlabels span');
+  input.addEventListener('input',()=>{ const v=+input.value; b[d.key]=v;
+    fill.style.width=(v/max*100)+'%'; notch.forEach((x,i)=>x.classList.toggle('lit',i<=v)); labs.forEach((l,i)=>l.classList.toggle('on',i===v)); onChange(); });
+  return w;
+}
+function contSlider(d, valEl, onChange){
+  const b=state.bars[state.agent]; const v=b.vote;
+  const w=el(`<div>
+    <div class="vslider">
+      <div class="vtrack"><div class="vfillbar" style="width:${Math.max(0,vpos(v))}%"></div></div>
+      <div class="vnotches">${VREF.map(r=>`<span class="vnotch ${v>=r[0]?'lit':''}" style="left:${vpos(r[0])}%"></span>`).join('')}</div>
+      <input type="range" min="${VMIN}" max="${VMAX}" step="0.05" value="${Math.max(VMIN,v)}">
+    </div>
+    <div class="vlabels">${VREF.map(r=>`<span class="${v>=r[0]?'on':''}" style="left:${vpos(r[0])}%;transform:translateX(-50%)">${r[0].toFixed(1)}</span>`).join('')}</div>
+  </div>`);
+  const input=w.querySelector('input'),fill=w.querySelector('.vfillbar'),notch=w.querySelectorAll('.vnotch'),labs=w.querySelectorAll('.vlabels span');
+  const setR=vv=>{ if(valEl){ valEl.textContent = vv<5.6?'Any':((vband(vv)?vband(vv)+' · ':'')+vv.toFixed(1)+'+'); } };
+  input.addEventListener('input',()=>{ const vv=+input.value; b.vote=vv; fill.style.width=Math.max(0,vpos(vv))+'%';
+    notch.forEach((x,i)=>x.classList.toggle('lit',vv>=VREF[i][0])); labs.forEach((l,i)=>l.classList.toggle('on',vv>=VREF[i][0])); setR(vv); onChange(); });
+  setR(v); return w;
+}
+function dialCard(k, onChange){
+  const d=D(k);
+  const c=el(`<div class="dial"><div class="dhead"><span class="em">${d.em}</span><span class="dl">${d.label}</span>${d.isNew?'<span class="tagnew">NEW</span>':''}${d.cont?'<span class="dval"></span>':''}</div><div class="dhow">${d.how}</div></div>`);
+  c.appendChild(d.cont?contSlider(d,c.querySelector('.dval'),onChange):steppedSlider(d,onChange));
+  return c;
+}
+
+/* ---------------- screens ---------------- */
+function go(s){ state.screen=s; state.more=false; render(); }
+
+function screenAgents(){
+  const s=el('<div></div>');
+  s.appendChild(el(`<div class="pbar" style="margin:2px 0 16px"><i style="width:22%"></i></div>`));
+  s.appendChild(el(`<h1>Pick your first agent</h1>`));
+  s.appendChild(el(`<p class="sub">Each one goes out and finds films for you, day after day. You can change everything later.</p>`));
+  AGENT_ORDER.forEach(k=>{ const a=AGENTS[k];
+    const card=el(`<div class="acard"><div class="ai">${a.em}</div><div class="at"><div class="an">${a.name}</div><div class="ao">${a.one}</div><div class="am">${fmt(agentCount(k))} films match now</div></div><div class="ac">›</div></div>`);
+    card.addEventListener('click',()=>{ state.agent=k; go('selective'); });
+    s.appendChild(card);
+  });
+  return s;
+}
+
+function makeDoor(icon,title,sub,key,target){
+  const done=(state.done[state.agent]||{})[key];
+  const right=done?`<div class="doneck">✓</div>`:`<div class="dc">›</div>`;
+  const d=el(`<div class="door ${done?'done':''} ${state.justDone===key?'pulse':''}"><div class="di">${icon}</div><div class="dt"><div class="dh">${title}</div><div class="ds">${sub}</div></div>${right}</div>`);
+  d.addEventListener('click',()=>go(target));
+  return d;
+}
+function screenSelective(){
+  const a=AGENTS[state.agent], k=state.agent;
+  state.done[k]=state.done[k]||{bar:false,taste:false};
+  const dn=state.done[k];
+  const prog=50+(dn.bar?15:0)+(dn.taste?15:0);
+  const s=el('<div></div>');
+  s.appendChild(topbar(prog,'agents'));
+  s.appendChild(el(`<h1>Get selective</h1>`));
+  s.appendChild(el(`<div class="chan"><span class="cd" style="background:${a.cd}"></span>${a.channel}<span class="lock">🔒 fixed</span></div>`));
+  if(a.note) s.appendChild(el(`<div class="channote">${a.note}</div>`));
+  s.appendChild(el(`<div class="bignum">${fmt(agentCount(k))}</div><div class="bigl">films found for you right now</div>`));
+  s.appendChild(el(`<p class="pnote"><b>${a.name}</b> ${a.frame} Set the two below to lock it in.</p>`));
+  const t=state.tb; const tasteSum=`${t.genres.size===ALLGENRES.length?'All genres':t.genres.size+' genres'} · ${t.langs.has('English')&&t.langs.size===1?'English':t.langs.size+' languages'} · ${t.ageLo===0&&t.ageHi===4?'all ages':AGES[t.ageLo]+'–'+AGES[t.ageHi]}`;
+  s.appendChild(makeDoor('🎚️','The bar',barSummaryShort(k),'bar','bar'));
+  s.appendChild(makeDoor('🧬','Your taste baseline',tasteSum,'taste','taste'));
+  if(dn.bar && dn.taste){
+    s.appendChild(el(`<div class="finishnote">✓ You're all set</div>`));
+    const cta=el(`<button class="cta">Show me my ${fmt(agentCount(k))} films →</button>`);
+    cta.addEventListener('click',()=>go('done')); s.appendChild(cta);
+  } else {
+    const c=(dn.bar?1:0)+(dn.taste?1:0);
+    s.appendChild(el(`<div class="hintline"><b>${c} of 2</b> confirmed · set both to see your films</div>`));
+  }
+  state.justDone=null;
+  return s;
+}
+function screenDone(){
+  const a=AGENTS[state.agent], k=state.agent;
+  const s=el('<div></div>');
+  s.appendChild(topbar(100,'selective'));
+  s.appendChild(el(`<div style="text-align:center;margin-top:40px"><div style="font-size:52px">🎉</div></div>`));
+  s.appendChild(el(`<h1 style="text-align:center">${a.name} is on the case</h1>`));
+  s.appendChild(el(`<p class="sub" style="text-align:center">It's found <b style="color:var(--count)">${fmt(agentCount(k))} films</b> for you so far — and it'll keep watching, day after day. New ones land here on their own.</p>`));
+  const cta=el(`<button class="cta" style="margin-top:20px">See what it found →</button>`); cta.addEventListener('click',()=>go('agents'));
+  s.appendChild(cta);
+  const b2=el(`<button class="skip">Add another agent</button>`); b2.addEventListener('click',()=>go('agents')); s.appendChild(b2);
+  return s;
+}
+
+function screenBar(){
+  const a=AGENTS[state.agent], k=state.agent, b=state.bars[k];
+  const s=el('<div></div>');
+  s.appendChild(topbar(70,'selective'));
+  s.appendChild(el(`<h1>Set your bar</h1>`));
+  s.appendChild(el(`<div class="chan"><span class="cd" style="background:${a.cd}"></span>${a.channel}<span class="lock">🔒 fixed</span></div>`));
+  if(a.note) s.appendChild(el(`<div class="channote">${a.note}</div>`));
+  s.appendChild(el(`<p class="pnote">Set the standards that matter here. A film has to meet <b>all</b> the ones you turn up.</p>`));
+  let summEl;
+  const refresh=()=>{ summEl.innerHTML=barSentence(k)+` <span class="g">${fmt(agentCount(k))} films</span> right now.`;
+    s.querySelector('.cta').textContent='Continue · '+fmt(agentCount(k))+' films'; };
+  a.primary.forEach(kk=> s.appendChild(dialCard(kk, ()=>refresh())));
+  const rest=['vote','crit','scale','buzz'].filter(x=>!a.primary.includes(x));
+  if(rest.length){
+    if(!state.more){ const mb=el(`<div class="morebtn">＋ More controls · ${rest.map(x=>D(x).label).join(', ')}</div>`);
+      mb.addEventListener('click',()=>{ state.more=true; render(); }); s.appendChild(mb);
+    } else { rest.forEach(kk=> s.appendChild(dialCard(kk, ()=>refresh()))); }
+  }
+  summEl=el(`<div class="summ"></div>`); s.appendChild(summEl);
+  const cta=el(`<button class="cta"></button>`);
+  cta.addEventListener('click',()=>{ state.done[k]=state.done[k]||{}; state.done[k].bar=true; state.justDone='bar'; go('selective'); });
+  s.appendChild(cta);
+  refresh();
+  return s;
+}
+
+function screenTaste(){
+  const s=el('<div></div>');
+  s.appendChild(topbar(70,'selective'));
+  s.appendChild(el(`<h1>Your taste baseline</h1>`));
+  s.appendChild(el(`<p class="sub">The world your agents search. Tap a row to change it — one opens at a time.</p>`));
+  const rowsWrap=el(`<div class="rows"></div>`);
+  const ROWS=[
+    {key:'genres',icon:'🎭',label:'Genres',sum:sumGenres,body:genreBody},
+    {key:'year',icon:'🕰️',label:'How far back',sum:sumYear,body:yearBody},
+    {key:'langs',icon:'💬',label:'Language',sum:sumLangs,body:langBody},
+    {key:'age',icon:'🔞',label:'Age rating',sum:sumAge,body:ageBody},
+  ];
+  function drawRows(){
+    rowsWrap.innerHTML='';
+    ROWS.forEach(r=>{ const open=state.tb.open===r.key;
+      const row=el(`<div class="row ${open?'open':''}"><div class="rhead"><div class="ic">${r.icon}</div><div class="rmid"><div class="rlabel">${r.label}</div><div class="rval">${r.sum()}</div></div><div class="chev">▶</div></div><div class="panel"><div class="pbody"></div></div></div>`);
+      row.querySelector('.rhead').addEventListener('click',()=>{ state.tb.open=open?null:r.key; drawRows(); });
+      if(open){ r.body(row.querySelector('.pbody'), ()=>{ row.querySelector('.rval').textContent=r.sum(); const p=row.querySelector('.panel'); p.style.maxHeight=p.scrollHeight+60+'px'; }); }
+      rowsWrap.appendChild(row);
+      if(open){ const p=row.querySelector('.panel'); requestAnimationFrame(()=>p.style.maxHeight=p.scrollHeight+40+'px'); }
+    });
+  }
+  drawRows();
+  s.appendChild(rowsWrap);
+  s.appendChild(el(`<div class="foot"><span class="dotg"></span>Set once — every agent inherits it</div>`));
+  const done=el(`<button class="donebtn">Done</button>`);
+  done.addEventListener('click',()=>{ const k=state.agent; state.done[k]=state.done[k]||{}; state.done[k].taste=true; state.justDone='taste'; go('selective'); });
+  s.appendChild(done);
+  return s;
+}
+/* taste editors */
+function sumGenres(){ const n=state.tb.genres.size; return n===ALLGENRES.length?'All genres':n===0?'None selected':n+' of '+ALLGENRES.length; }
+function sumLangs(){ const t=state.tb,has=t.langs.has('English'),n=t.langs.size; if(n===0)return'None'; if(has&&n===1)return'English'; if(has)return'English +'+(n-1); return [...t.langs][0]+(n>1?' +'+(n-1):''); }
+function sumYear(){ return YEARS[state.tb.year][0]; }
+function sumAge(){ const{ageLo:lo,ageHi:hi}=state.tb; if(lo===0&&hi===4)return'Anything (G to R 18+)'; if(lo===hi)return AGES[lo]+' only'; return AGES[lo]+' to '+AGES[hi]; }
+function genreBody(b,upd){ b.appendChild(el(`<p class="hint">Everything's in by default. Switch off what you never want.</p>`));
+  const w=el(`<div class="chips"></div>`); ALLGENRES.forEach(g=>{ const c=el(`<button class="chip ${state.tb.genres.has(g)?'sel':''}">${g}</button>`);
+    c.addEventListener('click',()=>{ state.tb.genres.has(g)?state.tb.genres.delete(g):state.tb.genres.add(g); c.classList.toggle('sel'); upd(); }); w.appendChild(c); }); b.appendChild(w);
+  const q=el(`<div class="qrow"><button class="q" data-a="all">Select all</button><button class="q" data-a="none">Clear all</button></div>`);
+  q.querySelector('[data-a=all]').addEventListener('click',()=>{ state.tb.genres=new Set(ALLGENRES); state.tb.open='genres'; render(); });
+  q.querySelector('[data-a=none]').addEventListener('click',()=>{ state.tb.genres=new Set(); state.tb.open='genres'; render(); }); b.appendChild(q); }
+function langBody(b,upd){ b.appendChild(el(`<p class="hint">English is on by default. Add any others you'll watch.</p>`));
+  const w=el(`<div class="chips"></div>`); LANGS.forEach(l=>{ const c=el(`<button class="chip ${state.tb.langs.has(l)?'sel':''}">${l}</button>`);
+    c.addEventListener('click',()=>{ state.tb.langs.has(l)?state.tb.langs.delete(l):state.tb.langs.add(l); c.classList.toggle('sel'); upd(); }); w.appendChild(c); }); b.appendChild(w); }
+function yearBody(b,upd){ b.appendChild(el(`<p class="hint">Slide right for fresher films, left for the whole back-catalogue.</p>`));
+  const d={key:'__year',stops:YEARS.map(y=>y[0]),sub:YEARS.map(y=>y[1])}; const n=d.stops.length,max=n-1,val=state.tb.year;
+  const w=el(`<div>
+    <div class="vslider"><div class="vtrack"><div class="vfillbar" style="width:${val/max*100}%"></div></div>
+      <div class="vnotches">${d.stops.map((_,i)=>`<span class="vnotch ${i<=val?'lit':''}" style="left:${i/max*100}%"></span>`).join('')}</div>
+      <input type="range" min="0" max="${max}" step="1" value="${val}"></div>
+    <div class="vlabels">${d.stops.map((sl,i)=>`<span class="${i===val?'on':''}" style="left:${i/max*100}%;transform:${edgeTransform(i,n)}">${sl}${d.sub[i]?`<small>${d.sub[i]}</small>`:''}</span>`).join('')}</div></div>`);
+  const input=w.querySelector('input'),fill=w.querySelector('.vfillbar'),notch=w.querySelectorAll('.vnotch'),labs=w.querySelectorAll('.vlabels span');
+  input.addEventListener('input',()=>{ const v=+input.value; state.tb.year=v; fill.style.width=(v/max*100)+'%'; notch.forEach((x,i)=>x.classList.toggle('lit',i<=v)); labs.forEach((l,i)=>l.classList.toggle('on',i===v)); upd(); });
+  b.appendChild(w); }
+function ageBody(b,upd){ b.appendChild(el(`<p class="hint">Set the lowest and highest rating you want — tap a rating or drag.</p>`));
+  const bar=el(`<div class="agebar"><div class="afill"></div><div class="agecells">${AGES.map(a=>`<div class="acell">${a}</div>`).join('')}</div></div>`);
+  const fill=bar.querySelector('.afill'),cells=bar.querySelectorAll('.acell'),tag=el(`<div class="uptag"></div>`),cw=100/AGES.length;
+  function paint(){ const lo=state.tb.ageLo,hi=state.tb.ageHi; fill.style.left=(lo*cw)+'%'; fill.style.width=((hi-lo+1)*cw)+'%';
+    cells.forEach((c,i)=>c.classList.toggle('inr',i>=lo&&i<=hi));
+    tag.innerHTML=(lo===0&&hi===4)?"Includes <b>every rating</b>":(lo===hi?"Only <b>"+AGES[lo]+"</b>":"From <b>"+AGES[lo]+"</b> to <b>"+AGES[hi]+"</b>"); upd(); }
+  let active=null; const idxAt=cx=>{const r=bar.getBoundingClientRect();let t=(cx-r.left)/r.width;t=Math.max(0,Math.min(.999,t));return Math.floor(t*AGES.length);};
+  bar.addEventListener('pointerdown',e=>{ const i=idxAt(e.clientX); active=(i<=state.tb.ageLo)?'lo':(i>=state.tb.ageHi)?'hi':(Math.abs(i-state.tb.ageLo)<=Math.abs(i-state.tb.ageHi)?'lo':'hi'); try{bar.setPointerCapture(e.pointerId);}catch(_){} mv(e); e.preventDefault(); });
+  function mv(e){ if(!active)return; const i=idxAt(e.clientX); if(active==='lo')state.tb.ageLo=Math.min(i,state.tb.ageHi); else state.tb.ageHi=Math.max(i,state.tb.ageLo); paint(); }
+  bar.addEventListener('pointermove',mv); bar.addEventListener('pointerup',()=>active=null); bar.addEventListener('pointercancel',()=>active=null);
+  b.appendChild(bar); b.appendChild(tag); paint(); }
+
+/* ---------------- router ---------------- */
+function render(){ const app=document.getElementById('app'); app.innerHTML='';
+  const map={agents:screenAgents,selective:screenSelective,bar:screenBar,taste:screenTaste,done:screenDone};
+  app.appendChild(map[state.screen]()); }
+render();
+</script>
+</body>
+</html>

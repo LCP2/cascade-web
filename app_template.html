@@ -33,6 +33,17 @@
        --faint was #6b7280 (3.26:1, failing) → #8b95a5 → now #9ba5b5. --dim #9aa4b2 → #aab4c4. */
     --ink:#e8ecf2; --dim:#aab4c4; --faint:#9ba5b5;
     --open:#ff6b6b; --amber:#f0a336; --purple:#a486f0; --blue:#5aa9f0; --green:#48c78e; --grey:#6b7280;
+    /* CAS-258/CAS-286: Upcoming gets a colour of its own. It had been --grey, which in every other part
+       of this UI means "off / nothing here" — the wrong thing to say about the films a person is most
+       looking forward to. #7C5CFF is the value named on CAS-286. Note it is the brand --violet exactly,
+       and it sits next door to --purple (#a486f0), which is Purchase; the two are told apart by position
+       in the strip rather than by hue. Flagged on CAS-286 — change the value here and it moves everywhere. */
+    --upcoming:#7C5CFF;
+    /* CAS-286: the readable-on-dark partner for it. Every other window colour has one baked into its rules
+       as a literal; naming this one means the Upcoming lozenges cannot drift apart from each other, and the
+       promise directly above — change the value and it moves everywhere — is finally true. */
+    --upcoming-ink:#cfc3ff;
+    --upcoming-rgb:124,92,255;
     --imdb:#f5c518; --rt:#fa6c3c; --meta:#66cc33; --accent:#7c5cff;
     /* White on --accent measures 4.35:1 — under AA for anything below 18px, which is every filled control
        we have. --accentdeep is the same purple with the luminance taken down until white clears the bar
@@ -67,7 +78,14 @@
      already is. The flow was designed in the hand; on a desktop an uncapped full-bleed screen stretches
      one column of controls across 1400px and stops reading as the same product. One token, so the cap
      is changed in one place. */
-  :root{ --flow-w:460px; --slidedur:.42s }
+  :root{ --flow-w:460px; --slidedur:.42s;
+    /* CAS-262: the onboarding frame's side padding, as one value, because the step column and the FIXED
+       chrome above and below it (the meter, the Continue bar) have to keep the same left edge — three
+       hand-kept numbers is how they drift. Tighter on a phone, where the whole frame is the viewport and
+       every pixel of it is content the user came for; roomier above that, where the frame is already
+       capped at --flow-w and the padding is the only thing keeping the text off the edge. */
+    --flow-pad:16px }
+  @media (max-width:480px){ :root{ --flow-pad:12px } }
   html{ zoom:var(--ui-scale) }
   body{margin:0;background:var(--bg);color:var(--ink);font-size:16px;
     font-family:var(--font-body);-webkit-font-smoothing:antialiased}
@@ -85,7 +103,7 @@
   header{position:sticky;top:0;z-index:30;background:rgba(10,14,26,.96);backdrop-filter:blur(8px);
     border-bottom:1px solid var(--line);padding:12px 16px 10px}
   /* The identity block is allowed to give way; the action icons are not. Without min-width:0 a flex child
-     never shrinks below its content, so the brand lockup + region + freshness line held their full width and
+     never shrinks below its content, so the brand lockup + freshness line held their full width and
      pushed the icons past the right edge on a 360px phone (CAS-183 added a fourth). Now the freshness line
      ellipsises instead, which is the right thing to lose. */
   .brandrow{display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -97,7 +115,6 @@
   /* Uppercase CASCADE wordmark in Poppins — the mark carries the signature gradient,
      the wordmark stays solid --ink so it clears AA at this size. */
   .brand{font-size:18px;font-weight:700;letter-spacing:1.6px;color:var(--ink);text-transform:uppercase}
-  .region{font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:20px;padding:2px 9px;margin-left:8px}
   .updated{font-size:10.5px;color:var(--faint);margin-top:3px}
   /* Build stamp (CAS-124) — small, muted release/build provenance at the foot of the app.
      env is rendered by JS from the hostname at runtime, and coloured so staging (amber) is
@@ -107,8 +124,18 @@
   .buildstamp .env{font-weight:600}
   .buildstamp .env.staging{color:var(--amber)}
   .buildstamp .env.production{color:var(--dim)}
-  /* App-wide data attribution (CAS-127) — required JustWatch/TMDB/OMDb credit. */
+  /* CAS-285: About & credits — every provider attribution the app owes, in one place, off the cards.
+     Deliberately quiet: the attribution has to be present and legible, and TMDB's terms ask that their mark
+     is less prominent than the app's own branding, so this sits at the foot of the content at 10.5px. */
   .appcredit{margin:22px 8px 2px;text-align:center;font-size:10.5px;line-height:1.5;color:var(--faint)}
+  .appcredit .acdt{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;
+    color:var(--faint);margin:0 0 6px}
+  .appcredit .acln{margin:0 0 4px}
+  .appcredit a{color:var(--dim);text-decoration:none}
+  .appcredit a:hover{text-decoration:underline}
+  /* Where the official TMDB logo goes once it is in the repo. Empty renders as nothing. */
+  .appcredit .acslot:not(:empty){display:inline-block;vertical-align:middle;margin-right:6px;height:14px}
+  .appcredit .acslot img,.appcredit .acslot svg{height:14px;width:auto;display:block}
   .hdr-actions{display:flex;gap:8px}
   /* CAS-183 added a fourth header icon (Your Movies), which at 360px pushed the row past the edge — the
      brand block on the left is ~168px and four 40px targets plus their gaps are 184. Both come in a step
@@ -118,10 +145,9 @@
     .hdr-actions{gap:6px}
     .hdr-actions .iconbtn{width:36px;height:36px;font-size:17px;border-radius:11px}
   }
-  /* …and the 📍 AU pill steps out below 420px. It is the least costly thing on the row to lose: the very
-     next line already says "Live AU data", so the fact survives — where clipping the CASCADE wordmark to
-     make room would have cost the one thing on the header that has to be whole. */
-  @media (max-width:420px){ .region{display:none} }
+  /* CAS-269: the rule that hid the 📍 AU pill below 420px went with the pill itself. The header now has
+     one thing on the left that can give way — the freshness line — and it ellipsises rather than pushing
+     the icons off the edge. */
   /* Belt and braces: whatever the row holds, the wordmark is never the thing that gives way. */
   .brandlockup{flex:0 0 auto}
   .iconbtn{position:relative;cursor:pointer;font-size:19px;background:var(--panel2);border:1px solid var(--line);
@@ -169,7 +195,7 @@
   .chip{font-size:12px;padding:6px 11px;border-radius:20px;border:1px solid var(--line);
     background:var(--panel2);color:var(--dim);cursor:pointer;user-select:none;font-weight:600}
   .chip.on{color:#fff}
-  .chip.on.st-upcoming{background:rgba(107,114,128,.25);border-color:var(--grey);color:#c8cfd9}
+  .chip.on.st-upcoming{background:rgba(var(--upcoming-rgb),.22);border-color:var(--upcoming);color:var(--upcoming-ink)}
   .chip.on.st-opening_week{background:rgba(255,107,107,.22);border-color:var(--open);color:#ffc2c2}
   .chip.on.st-in_cinema{background:rgba(240,163,54,.22);border-color:var(--amber);color:#ffce8f}
   .chip.on.st-pvod{background:rgba(164,134,240,.22);border-color:var(--purple);color:#d3c2ff}
@@ -189,7 +215,7 @@
   .gdot{width:9px;height:9px;border-radius:50%}
   .gdot.opening_week{background:var(--open)} .gdot.in_cinema{background:var(--amber)}
   .gdot.pvod{background:var(--purple)} .gdot.rental{background:var(--blue)}
-  .gdot.included_streaming{background:var(--green)} .gdot.upcoming{background:var(--grey)}
+  .gdot.included_streaming{background:var(--green)} .gdot.upcoming{background:var(--upcoming)}
   .gcount{color:var(--faint);font-weight:700}
   /* CAS-204: the cards take the full page width. 10px of side gutter on a 360px phone is 20px of nothing
      either side of every card, which is a poster's worth of width spent on air. 5px keeps the cards from
@@ -225,6 +251,11 @@
      recognise a film BY — and at 94 it was a thumbnail beside the text rather than the tombstone the
      card is built around. Width is the only number that changes: the height follows from the 2:3 that
      CAS-184 fixed, so nothing else in the grid has to move. */
+  /* CAS-276: the tombstone spans down to the SCORES row and stops there — which is the row holding the IMDb
+     lozenge, so the column now ends where the ticket asks it to. The awards row runs the full width beneath
+     both columns instead of being squeezed into the ~195px right-hand one: with the scale badge joining it
+     (it used to hang off the poster) three chips in a 195px column wrapped to three lines and made the card
+     ~60px taller than the information in it. Across the full width they sit on one. */
   .ctop{display:grid;grid-template-columns:124px minmax(0,1fr);column-gap:12px;row-gap:9px;
     grid-template-areas:
       "tomb title"
@@ -232,7 +263,7 @@
       "tomb syn"
       "tomb money"
       "tomb scores"
-      "tomb awards"}
+      "awards awards"}
   .ptomb{grid-area:tomb;align-self:start;display:flex;flex-direction:column;gap:8px;width:124px}
   .poster{width:100%;aspect-ratio:2/3;border-radius:10px;
     background:var(--panel2) center/cover no-repeat;position:relative;
@@ -249,10 +280,17 @@
   .cert.mature{border-color:#c0563f;color:#ffb9a6;background:rgba(192,86,63,.16)}
   /* CAS-179: no date on the top line any more — the film's dates are all in the availability strip,
      where they belong to a window each. This line is what the film IS: its genres and its language. */
-  .metaline{grid-area:meta;font-size:13px;color:var(--dim);line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* CAS-276: the Style line rides UP against the title. It is the title's qualifier — "Nosferatu, a horror
+     in English" is one thought — and a full 9px grid gutter between them read as two separate facts. The
+     negative margin buys that row's worth of space for the synopsis rather than returning it to the grid. */
+  .metaline{grid-area:meta;margin-top:-6px;font-size:13px;color:var(--dim);line-height:1.4;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .culttag{color:var(--faint)}
+  /* CAS-276: three lines, not two. Two lines of a synopsis is enough to start a sentence and not enough to
+     finish one, which is the worst of both — it costs the height and delivers a fragment. The room comes
+     from the badge leaving the tombstone and the Style line moving up, so the card does not simply grow. */
   .synopsis{grid-area:syn;font-size:14px;color:#c8d0da;line-height:1.5;margin:0;
-    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
   .card.expanded .synopsis{-webkit-line-clamp:unset;display:block}
   .expand{max-height:0;opacity:0;overflow:hidden;transition:max-height .4s ease,opacity .3s ease}
   .card.expanded .expand{max-height:560px;opacity:1;margin-top:12px}
@@ -268,11 +306,24 @@
     background:var(--panel2) center/cover no-repeat;display:grid;place-items:center;text-decoration:none}
   .trailer .play{width:30px;height:30px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center;font-size:12px;border:1px solid rgba(255,255,255,.45)}
   .notrailer{font-size:12px;color:var(--faint)}
-  /* The action row lives INSIDE the card panel, reading left to right in the order the decisions are made:
-     Pick first (do I want this?), then the three verdicts. Where-to-watch is not a verdict, so it sits apart,
-     pushed to the right edge — the four decision controls stay a single unbroken group (CAS-100). */
-  .actions{display:flex;gap:8px;margin-top:12px;align-items:center}
-  .actions .wtwbtn{margin-left:auto}
+  /* CAS-284: share, in the opened card. Quiet — it is an offer, not one of the decisions the card is asking
+     you to make — and a full-height target rather than a bare glyph. */
+  .exshare{margin-top:12px}
+  .exsharebtn{display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 13px;border-radius:10px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--dim);
+    font-family:inherit;font-size:12.5px;font-weight:650;cursor:pointer;line-height:1}
+  .exsharebtn svg{width:16px;height:16px;display:block}
+  .exsharebtn:hover{color:var(--ink);border-color:#3a4150}
+  .exsharebtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .exsharebtn.done{color:var(--green);border-color:rgba(72,199,142,.55)}
+  /* CAS-304: back to a left-to-right row (reverting CAS-277's stack, per Lee's 0.8.3 review). The three
+     controls share the row equally, each label still ellipsizing rather than wrapping if it runs out of
+     room, so a control that has to abbreviate itself still says what it does. Where-to-watch is a bare
+     chevron, not a decision about the film, so it keeps its small fixed size at the end of the row. */
+  .actions{display:flex;flex-direction:row;align-items:stretch;gap:8px;margin-top:12px}
+  .actions .ctl,
+  .actions .ctl.watch{flex:1 1 0;min-width:0}
+  .actions .wtwbtn{flex:none}
   /* ---- CAS-230: the v0.8 card controls (proto/cascade-08 listing card) ----
      Two labelled chips instead of six bare icons. A chip says in words what it is for; four unlabelled
      verdict icons only said it to someone who already knew. The fill bar behind the label is the same
@@ -281,8 +332,9 @@
   .actions{position:relative}
   .ctl{position:relative;flex:none;background:none;border:0;padding:0;cursor:pointer;
     -webkit-tap-highlight-color:transparent}
-  .ctl.watch{flex:1;min-width:0}
-  .cmini{display:flex;align-items:center;gap:7px;height:38px;padding:0 12px;border-radius:11px;
+  .ctl.watch{min-width:0}
+  /* CAS-277: every chip fills the column, so the label has room whatever it says. */
+  .cmini{display:flex;width:100%;align-items:center;gap:7px;height:38px;padding:0 12px;border-radius:11px;
     background:var(--panel2);border:1px solid var(--line);position:relative;overflow:hidden;
     font-family:inherit;font-size:12.5px;font-weight:650;color:var(--ink);line-height:1}
   .ctl.watch .cmini{width:100%}
@@ -294,25 +346,37 @@
   .ctl.on .cmini .cic{color:var(--cyan)}
   .ctl:hover .cmini{border-color:#3a4150}
   .ctl:focus-visible .cmini{outline:2px solid var(--cyan);outline-offset:2px}
-  /* The panel sits OVER the action row rather than under it: the row is the last thing on the card, and a
-     panel below would be off the bottom of a card sitting at the foot of the viewport. */
-  .cpop{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);z-index:60;
+  /* CAS-304: the panel opens ABOVE the control row by default — the row is usually the last thing on the
+     card, and a panel below would be off the bottom of a card sitting at the foot of the viewport. When
+     there isn't room above (the row is near the top of the viewport), JS adds .pop-down and it opens below
+     instead — the original prototype behaviour. */
+  .cpop{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:60;
     display:flex;align-items:center;gap:5px;background:#0e1626;border:1px solid rgba(255,255,255,.16);
     border-radius:12px;padding:4px;box-shadow:0 14px 34px rgba(0,0,0,.7)}
-  .cpop .csegs{display:flex;gap:3px;flex:1;min-width:0}
-  /* The icon sits ABOVE the label, not beside it. Side by side, four segments plus the close button leave
-     about 45px of text each on a 360px phone, and every label truncated to "Do…" / "Dis…" — which is worse
-     than no label at all, because it looks like a rendering fault. Stacked, the full word fits at every
-     width the app supports. */
-  /* flex-basis auto, not 0: with a zero basis all four segments are equal and the longest label ("Don't
-     want") is 3px short of fitting at 360px, so it ellipsises while three neighbours sit half empty. Sizing
-     from content and sharing the slack keeps every label whole and the widths near enough to even. */
-  .cseg{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
-    height:44px;padding:0 2px;border-radius:9px;background:rgba(255,255,255,.05);border:1px solid transparent;
-    font-family:inherit;font-size:10px;font-weight:600;color:var(--dim);cursor:pointer;line-height:1}
-  .cseg .ci{display:grid;place-items:center;line-height:0}
-  .cseg .ci svg{width:15px;height:15px;display:block}
-  .cseg .cl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .cpop.pop-down{bottom:auto;top:calc(100% + 8px)}
+  /* CAS-278: the five answers run TOP TO BOTTOM, best first, so the list is read as a scale. Across a row
+     they cannot be: five labels plus a close button on a 360px phone is about 40px of text each, and the
+     old four already needed the icon stacked over the label to survive it. Down the column every label is
+     whole at full size and each row is a 40px-tall target instead of a 44x60 sliver. */
+  .cpop .csegs{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+  .cseg{display:flex;flex-direction:row;align-items:center;gap:8px;
+    height:40px;padding:0 10px;border-radius:9px;background:rgba(255,255,255,.05);
+    border:1px solid transparent;border-left:3px solid var(--segc,transparent);
+    font-family:inherit;font-size:12px;font-weight:600;color:var(--dim);cursor:pointer;line-height:1;text-align:left}
+  /* The ramp is visible BEFORE anything is chosen. Colouring only the selected row would mean the scale had
+     no colour scheme at all until you had already used it — the gradient is meant to tell you which end is
+     which on the way in, not to confirm a choice on the way out. */
+  .cseg .ci{display:grid;place-items:center;line-height:0;color:var(--segc,currentColor);opacity:.9}
+  .cseg .ci svg{width:16px;height:16px;display:block}
+  .cseg .cl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+  .cseg.on .ci{color:inherit;opacity:1}
+  /* CAS-282: the option under a sliding finger. It has to read as "this is what you'd get if you let go"
+     without looking chosen — the finger is usually covering the row, so the cue is the ring and the lift. */
+  .cpop .sliding{background:rgba(255,255,255,.14);border-color:var(--segc,var(--accent));
+    box-shadow:0 0 0 2px var(--segc,var(--accent)) inset;color:var(--ink)}
+  .cpop.kpop .sliding{--segc:var(--accent)}
+  /* The gesture owns the vertical axis while it is running, so the page cannot scroll out from under it. */
+  .cpop .csegs,.cpop .nopts{touch-action:pan-x}
   .cseg:hover{color:var(--ink);border-color:#3a4150}
   .cseg:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
   /* CAS-241: a thumb, not a fingernail. 28px wide was under half the 44px the rest of the card's controls
@@ -348,6 +412,11 @@
     letter-spacing:.04em}
   .nopt:hover{color:var(--ink)}
   .nopt:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
+  /* CAS-279: the empty state of the Cascade panel. A panel that opens onto nothing reads as broken, so it
+     says why instead — and it is not a button, because there is nothing to press. */
+  .nopt.nonone{display:block;color:var(--faint);cursor:default;border-color:transparent;white-space:normal;
+    line-height:1.45;font-weight:600}
+  .ctl.casc .cmini .cic{color:var(--accent)}
   /* ONE icon set for the card's actions (CAS-64). Every action icon is a stroked outline drawn from the same
      24px grid at the same 1.8 stroke weight, in the same grey — and every ON state is the same purple
      treatment. Emoji glyphs are out: they carry their own weights, fills and platform styling, which is
@@ -378,12 +447,18 @@
   .actbtn.mlbtn.pickbtn{padding:0 9px;font-size:11.5px}
   /* The three verdicts each own a colour, matching the meaning they already carry elsewhere in the app:
      not-for-me greys out, liked is the same green as a win, disliked the same red as a warning. */
-  .actbtn.on.notfor{background:rgba(107,114,128,.28);border-color:var(--grey);color:#c9d0da}
+  /* Tidying my own loose end from CAS-278: that ticket put "Won't Watch" at the red end of the watch ramp,
+     but this stub button was still painting the same answer grey. One answer, two colours, depending on
+     which surface you met it on. */
+  .actbtn.on.notfor{background:rgba(208,69,63,.20);border-color:#d0453f;color:#ffb9b3}
   .actbtn.on.liked{background:rgba(72,199,142,.18);border-color:var(--green);color:#a6e8c8}
   .actbtn.on.disliked{background:rgba(255,107,107,.16);border-color:var(--open);color:#ffbdbd}
   /* CAS-183 so-so: amber — between the green of a like and the red of a dislike, which is exactly where
      the answer sits. Not grey: grey is "not for me", an answer about a film you have NOT seen. */
   .actbtn.on.soso{background:rgba(240,163,54,.16);border-color:var(--amber);color:#ffce8f}
+  /* CAS-278 Wow!: the top of the ramp, a step brighter than Watch Again so the two greens are tellable
+     apart at a glance — they are adjacent answers and the difference between them is the whole point. */
+  .actbtn.on.wow{background:rgba(23,212,146,.20);border-color:#17d492;color:#8ff0cd}
   .actbtn.wtwbtn .chev{transition:transform .18s}
   .actbtn.wtwbtn.open{background:rgba(245,214,117,.12);border-color:rgba(245,214,117,.5);color:var(--gold)}
   .actbtn.wtwbtn.open .chev{transform:rotate(180deg)}
@@ -446,10 +521,12 @@
   .card.expanded .awx{display:flex}
   .awx .l{display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:var(--dim)}
   .awx .l b{color:var(--ink);font-weight:700}
-  /* Scale badge — tucked UNDER the poster, sharing the last grid row (and so a baseline) with the
-     awards. It's a claim ABOUT the film, not another metric alongside IMDb/RT. Gold, and it names the
-     exact tier the Cascade's Tentpole filter uses. Press it (or hover) for the signals behind it. */
-  .tentbadge{width:100%;height:24px;font:inherit;font-size:10.5px;font-weight:700;
+  /* Scale badge — CAS-276 moves it INTO the awards row, which is what this comment always claimed it was
+     doing ("sharing a baseline with the awards"); in fact it hung under the poster and stretched the
+     tombstone column instead. It's a claim ABOUT the film, not another metric alongside IMDb/RT. Gold, and
+     it names the exact tier the Cascade's Tentpole filter uses. Press it (or hover) for the signals behind
+     it. Width is now content-sized, because it sits in a wrapping row of chips rather than filling a column. */
+  .tentbadge{height:24px;font:inherit;font-size:10.5px;font-weight:700;max-width:100%;
     padding:0 6px;border-radius:8px;display:inline-flex;gap:5px;align-items:center;justify-content:center;
     white-space:nowrap;overflow:hidden;cursor:pointer;
     border:1px solid rgba(245,214,117,.45);background:rgba(245,214,117,.10);color:var(--gold)}
@@ -461,8 +538,11 @@
      JOINED by a connector line so the strip reads as one journey rather than four separate chips.
      Current is filled, past is tinted (it happened), future is ghosted and the joiner into it dims
      with it: what is ahead is a forecast, and it should not look like a fact. Each window carries
-     its date underneath, italic where the date is worked out rather than read from a listing. */
-  .bandw{background:var(--band);border-top:1px solid var(--line);padding:11px 13px}
+     its date underneath, italic AND "≈"-prefixed (CAS-310) where the date is worked out rather than
+     read from a listing — the glyph carries the meaning on touch, where italic alone does not. */
+  /* CAS-276: 11px of vertical padding around a 46px strip is a quarter of the band spent on air. 8px still
+     reads as a separate band (it has its own background and top rule to do that) without paying for it twice. */
+  .bandw{background:var(--band);border-top:1px solid var(--line);padding:8px 13px}
   /* 10px between lozenges, not the mock's 14 — the connector still reads, and the four columns have to
      hold "Upcoming" and "Premium" whole at 360px wide. An ellipsised window name is a clipped fact. */
   .avail{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
@@ -479,13 +559,13 @@
      between "this is the day" and "around then" is legible without reading the tooltip. */
   .wdate.exact{font-style:normal;color:var(--dim)}
   .win.on .wdate{color:var(--dim)}
-  .win.w-cin-upcoming.on .wpill{color:#c8cfd9;border-color:var(--grey);background:rgba(107,114,128,.25)}
+  .win.w-cin-upcoming.on .wpill{color:var(--upcoming-ink);border-color:var(--upcoming);background:rgba(var(--upcoming-rgb),.22)}
   .win.w-cin-opening.on .wpill{color:#ffc2c2;border-color:var(--open);background:rgba(255,107,107,.2)}
   .win.w-cin-cinema.on .wpill{color:#ffce8f;border-color:rgba(240,163,54,.65);background:rgba(240,163,54,.18)}
   .win.w-pvod.on .wpill{color:#d3c2ff;border-color:rgba(164,134,240,.65);background:rgba(164,134,240,.18)}
   .win.w-rental.on .wpill{color:#bcdcff;border-color:rgba(90,169,240,.7);background:rgba(90,169,240,.18)}
   .win.w-included_streaming.on .wpill{color:#a7eccb;border-color:rgba(72,199,142,.65);background:rgba(72,199,142,.2)}
-  .win.w-cin-upcoming.past .wpill{color:#c8cfd9;border-color:rgba(107,114,128,.45)}
+  .win.w-cin-upcoming.past .wpill{color:var(--upcoming-ink);border-color:rgba(var(--upcoming-rgb),.42)}
   .win.w-cin-opening.past .wpill{color:#f0b4b4;border-color:rgba(255,107,107,.32)}
   .win.w-cin-cinema.past .wpill{color:#e0b483;border-color:rgba(240,163,54,.32)}
   .win.w-pvod.past .wpill{color:#c3b3f0;border-color:rgba(164,134,240,.32)}
@@ -500,6 +580,11 @@
      says so in words. Colour alone would leave the difference invisible to anyone who can't see it. */
   .avail.est .win.on .wpill{background:var(--panel2)!important;border-style:dashed!important;
     border-color:var(--line)!important;color:var(--dim)!important}
+  /* CAS-301: the "estimated" flag on an in-cinema film is about whether it's STILL playing, not about the
+     cinema date itself (stageDate never marks "cinema" as est) — so the Cinema segment keeps the cinema
+     token instead of falling grey with the rest of the card. */
+  .avail.est .win.w-cin-cinema.on .wpill{color:#ffce8f!important;border-color:rgba(240,163,54,.65)!important;
+    background:rgba(240,163,54,.18)!important;border-style:solid!important}
   .estline{display:flex;align-items:center;gap:7px;margin-top:9px;padding:6px 10px;border-radius:9px;
     border:1px dashed var(--line);background:transparent;color:var(--dim);font-size:11.5px;font-weight:600;cursor:help}
   .esttag{font-size:9.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--faint);
@@ -512,7 +597,7 @@
   .pill.pvod{background:rgba(164,134,240,.14);border-color:rgba(164,134,240,.5);color:#d3c2ff}
   .pill.rental{background:rgba(90,169,240,.13);border-color:rgba(90,169,240,.5);color:#bcdcff}
   .pill.included_streaming{background:rgba(72,199,142,.13);border-color:rgba(72,199,142,.5);color:#a7eccb}
-  .pill.upcoming{background:rgba(107,114,128,.15);border-color:rgba(107,114,128,.5);color:#c2c9d4}
+  .pill.upcoming{background:rgba(var(--upcoming-rgb),.15);border-color:rgba(var(--upcoming-rgb),.5);color:var(--upcoming-ink)}
   .wtw-toggle{margin-top:11px;width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);
     color:var(--dim);border-radius:9px;padding:8px 11px;font-size:12px;font-weight:600;cursor:pointer;
     display:flex;justify-content:space-between;align-items:center}
@@ -527,8 +612,10 @@
   /* JustWatch attribution (CAS-127) — required credit shown with the availability list,
      deep-linking to the film's JustWatch AU page when we have it. */
   .wtwrow.jwrow{justify-content:center;background:var(--panel2)}
-  .jwattr{font-size:10.5px;color:var(--faint);text-decoration:none}
-  a.jwattr:hover{color:var(--dim);text-decoration:underline}
+  /* CAS-285: what is left on the card is a LINK, not a credit — somewhere to go for the full list of
+     options. The attribution it used to carry is stated once in About & credits. */
+  .jwgo{font-size:10.5px;color:var(--dim);text-decoration:none}
+  a.jwgo:hover{text-decoration:underline}
   .tt{display:inline-block;box-sizing:border-box;min-width:46px;text-align:center;font-size:10px;font-weight:700;padding:2px 6px;border-radius:5px;margin-right:8px;vertical-align:middle}
   .tt.sub{background:rgba(72,199,142,.16);color:#a7eccb} .tt.free{background:rgba(72,199,142,.16);color:#a7eccb}
   .tt.rent{background:rgba(90,169,240,.16);color:#bcdcff} .tt.buy{background:rgba(164,134,240,.16);color:#d3c2ff}
@@ -752,10 +839,15 @@
   .svcx:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   @media (max-width:400px){ .cascbar{--dcw:178px} }
   /* Find view (CAS-102): the deck drops to a compact RAIL so "N of N titles" and the first film sit directly
-     under the controls instead of ~1.5 screens down. Same cards, same data, same Edit / Share / × / Create —
-     the icon just moves up beside the name, the sub-line clamps to one line, and the padding tightens.
+     under the controls instead of ~1.5 screens down. Same cards, same data, same Edit / Create — the icon
+     just moves up beside the name, the sub-line clamps to one line, and the padding tightens.
      Nothing is hidden: this is the tall card made short, not a card with its controls taken away. */
-  .cascbar.rail{--dcw:196px;padding:6px 0 0}
+  /* CAS-274: …but the rail tightened its bottom padding to ZERO, and the rail is the STICKY state. So the
+     Order control ended flush with the bar's bottom edge and the listing scrolled directly under it, with
+     the first card's border sliding along the underside of the select. A sticky bar needs a gap beneath its
+     last control or the content passing behind it reads as touching it. This is the only padding on the bar
+     that has to survive the tighten, because it is the only one separating the bar from moving content. */
+  .cascbar.rail{--dcw:196px;padding:6px 0 9px}
   .cascbar.rail .casclbl{margin-bottom:2px}
   .cascbar.rail .deckstrip{padding:8px calc(50% - var(--dcw)/2) 10px}
   .cascbar.rail .dcard{min-height:0}
@@ -997,7 +1089,9 @@
   /* Legibility on a phone is the acceptance criterion, so the front layer carries its own shadow rather
      than relying on the fade alone — the fade is weakest exactly where the content is, by design. */
   .splashfront{text-shadow:0 2px 16px rgba(4,6,12,.9), 0 0 4px rgba(4,6,12,.8)}
-  .splashfront .splashword{text-shadow:0 2px 30px rgba(0,0,0,.8), 0 0 6px rgba(0,0,0,.7)}
+  .splashfront .splashword,
+  .splashfront .splashtag{text-shadow:0 2px 30px rgba(0,0,0,.8), 0 0 6px rgba(0,0,0,.7)}
+  .splashfront .splashtag{color:#fff}
   .splashfront .splashb span{color:#fff;font-weight:600}
   .splashfront .splashlogo{filter:drop-shadow(0 6px 24px rgba(124,92,255,.35))}
   @media (prefers-reduced-motion:reduce){ .splashwallgrid{filter:blur(1.2px) brightness(.72)} }
@@ -1026,14 +1120,32 @@
     object-fit:contain;margin:2px auto 0}
   @media (max-width:600px){ .splashlogo{max-width:220px} }
   .splashword{font-family:var(--font-body);font-weight:500;letter-spacing:.44em;font-size:19px;
-    padding-left:.44em;color:#fff;line-height:1;margin:14px 0 18px}
+    padding-left:.44em;color:#fff;line-height:1;margin:14px 0 0}
+  /* CAS-257: the tagline. It sits directly under the wordmark and reads as a subtitle to it, so it is
+     one type step down, tracked far less than the wordmark's .44em, and takes the wordmark's old bottom
+     margin rather than adding one of its own — the splash column is already height-bound on a 390x844
+     phone (see .splashlogo's CAS-163 note), so a new line has to pay for itself out of existing space. */
+  .splashtag{font-family:var(--font-body);font-weight:500;letter-spacing:.16em;font-size:14px;
+    padding-left:.16em;color:var(--ink);line-height:1;margin:10px 0 18px}
   /* CAS-154: the four lozenges were sized to squeeze onto one line (nowrap, 10px), which made them the
      smallest type on the splash — the one screen that has to be readable at arm's length. They now wrap
      instead of shrinking, which buys the room to take the label to 13px and the dot to 7px. */
-  .splashloz{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:18px}
+  /* CAS-258: the strip is now five windows, and the ticket asks for a fixed 2-then-3 split rather than
+     whatever the width happens to wrap to. Two explicit rows do that at every viewport: the two BEFORE
+     you can watch it at home on top, the three ways to watch it at home below. */
+  .splashloz{display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:18px}
+  .splashlozrow{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
   .splashpill{display:inline-flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--line);
     border-radius:999px;padding:7px 13px;font-size:13px;color:var(--dim);white-space:nowrap}
   .splashpill .splashdot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+  /* CAS-258: the three home windows need 335px of row and a 360px phone only offers 306. CAS-154 bought
+     the 13px label by letting the strip wrap rather than shrink, and that call still holds — so the
+     narrow-phone saving comes out of padding and gaps, never the type. Applied to both rows so the strip
+     stays one object. Measured: row two 335 → 300 at 360px, with room to spare. */
+  @media (max-width:389px){
+    .splashlozrow{gap:6px}
+    .splashpill{padding:7px 9px;gap:5px}
+  }
   .splashbullets{width:100%;display:flex;flex-direction:column;gap:13px;margin-bottom:20px}
   .splashb{display:flex;gap:12px;align-items:flex-start;text-align:left}
   .splashb .splashtick{flex:0 0 auto;width:20px;height:20px;margin-top:1px}
@@ -1156,7 +1268,12 @@
      Built self-contained and previewable in isolation (?step=<name>) until Lee wires the sequence. One
      shared full-screen frame — top bar (back + progress + LAST ONE), heading, control, live agent-voice
      summary, and a footer that carries the real running count. Chips/slider reuse the app's live controls. */
-  .sharpstep{position:fixed;inset:0;z-index:82;display:none;flex-direction:column;padding:28px 20px 24px;
+  /* CAS-262: the onboarding screens use more of the width they are given. Two things were holding them in:
+     20px of side padding on this frame, and a 360px cap on the column inside it (below). The frame itself
+     stays capped at --flow-w — that phone-width cap is CAS-188's deliberate shape and the splash and reveal
+     share it, so widening the whole flow would have been a different change from the one asked for. */
+  .sharpstep{position:fixed;inset:0;z-index:82;display:none;flex-direction:column;
+    padding:28px var(--flow-pad) 24px;
     overflow-y:auto;background:radial-gradient(120% 45% at 50% 0%,#141b30 0%,var(--bg) 42%,#080b14 100%)}
   .sharpstep.open{display:flex}
   /* CAS-157: `margin:auto` centred this block vertically, which on a sparse step (Get selective is the worst)
@@ -1164,8 +1281,18 @@
      compounds the "everything is too small" impression. Top-aligned instead: the back/progress bar belongs at
      the top of the screen, the heading reads where the eye already is, and the slack collects at the bottom
      where it looks like room rather than a mistake. Horizontal centring (the auto side margins) is kept. */
-  .osinner{width:100%;max-width:360px;margin:0 auto;display:flex;flex-direction:column;min-height:0;
+  /* CAS-262: the 360px cap is gone. It bound on nothing below a 400px phone (the frame's own padding was
+     already narrower than the cap) and on everything above one, so on a 430px handset and on desktop the
+     step sat in a 360px column inside a 460px frame with the difference doing nothing. The column now fills
+     the frame; the frame's cap is what keeps a line length readable. */
+  .osinner{width:100%;margin:0 auto;display:flex;flex-direction:column;min-height:0;
     animation:splashIn .4s ease both}
+  /* CAS-260: a pane that arrived by SLIDING must never also run splashIn. splashIn starts at
+     translateY(10px)/opacity 0, so when endSlide() took .sl-in-r off, this rule underneath it became the
+     element's animation for the first time and ran from the top — the step redrew ~10px low and jumped
+     back up, one beat after it had finished sliding in. Marked at creation and never removed; the .sl-*
+     rules are declared later at the same specificity, so they still win while the slide is running. */
+  .osinner.osslid{animation:none}
   @media (prefers-reduced-motion:reduce){ .osinner{animation:none} }
   .ostop{display:flex;align-items:center;gap:11px;margin-bottom:20px}
   .osback{width:34px;height:34px;border-radius:10px;background:var(--panel);border:1px solid var(--line);
@@ -1187,6 +1314,17 @@
   .oscount b{font-family:var(--font-display);font-size:15px;font-weight:800;color:var(--accenttext)}
   .osh{font-family:var(--font-display);font-size:20px;font-weight:700;margin:0 0 6px;color:var(--ink)}
   .ossub{color:var(--dim);font-size:13px;line-height:1.5;margin:0 0 12px}   /* CAS-130 size / CAS-138 tighten */
+  /* CAS-264: the trail. A quiet ledger, not a control — no card chrome, no tap affordance, just the rows
+     you have already answered with a hairline between them. The row for the step you are ON is lifted to
+     full ink so the newest answer reads as the live one and the ones above it read as settled. */
+  .ostrail{margin:18px 0 4px;padding-top:12px;border-top:1px solid var(--line)}
+  .otrow{display:flex;align-items:baseline;gap:10px;padding:5px 0;font-size:12px;line-height:1.45}
+  .otrow+.otrow{border-top:1px solid rgba(255,255,255,.045)}
+  .otrow .otk{flex:0 0 88px;color:var(--faint);font-weight:600;
+    text-transform:uppercase;letter-spacing:.05em;font-size:10.5px}
+  .otrow .otv{flex:1 1 auto;min-width:0;color:var(--dim)}
+  .otrow.now .otv{color:var(--ink);font-weight:600}
+  .otrow.now .otk{color:var(--accenttext)}
   .osagent{display:flex;gap:9px;background:rgba(124,92,255,.08);border:1px solid rgba(124,92,255,.42);
     border-radius:14px;padding:12px;margin:16px 0 0}
   .osagent .i{font-size:15px;line-height:1.2;flex:0 0 auto}
@@ -1473,6 +1611,17 @@
   .osskip{display:block;width:100%;text-align:center;margin-top:12px;color:var(--dim);font-size:12.5px;
     background:none;border:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
   .osskip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
+  /* CAS-268/CAS-303: Delete, tucked below Save. CAS-268's bordered full-width block read as a second button
+     the same size as Save, which is too much weight for a destructive action — CAS-303 dropped it to plain
+     underlined text, quieter than everything above it, so a thumb never lands on it by accident. It keeps
+     the danger colour (just dimmed) so it still reads as destructive, and its confirm() is what actually
+     stops a slip, not the button's size. The vertical padding stays generous even though the text shrank,
+     so the tap target is still a real target under the small label. */
+  .osdel{display:block;width:100%;text-align:center;margin-top:26px;padding:13px 4px;
+    background:none;border:none;color:var(--open);opacity:.7;font-family:var(--font-display);
+    font-size:12.5px;font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+  .osdel:hover{opacity:1}
+  .osdel:focus-visible{outline:2px solid var(--open);outline-offset:2px;opacity:1}
 
   /* ---- CAS-160: "Where & when you'll watch" — the hub's third door ----
      One row per cascade stage, wearing that stage's own colour (amber/blue/green — the same hues the
@@ -1710,6 +1859,19 @@
      being asked of you. (This is where the New / All pair used to stand.) */
   .sortbar{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:8px 12px 0}
   .sortlbl{font-size:11.5px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+  /* CAS-275: the jump rail. It scrolls horizontally rather than wrapping — a control row that grows a second
+     line changes the height of a STICKY bar, which moves the listing under the reader's thumb. Six sections
+     will not fit across 390px and are not meant to; the rail is a thing you flick, like the deck above it. */
+  .jumpbar{display:flex;align-items:center;gap:6px;margin:8px 0 0;padding:0 12px 1px;
+    overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .jumpbar::-webkit-scrollbar{display:none}
+  .jlbl{flex:none;font-size:11.5px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+  .jchip{flex:none;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--dim);font-size:11.5px;font-weight:700;
+    cursor:pointer;white-space:nowrap;font-family:inherit}
+  .jchip:hover{color:var(--ink);border-color:#3a4150}
+  .jchip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .jchip .jn{color:var(--faint);font-weight:700}
   .fglabel{display:flex;align-items:center;gap:8px;padding:15px 12px 4px;font-size:13px;font-weight:800}
   .fglabel .n{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:1px 7px;
     font-size:10.5px;color:var(--dim);font-weight:700}
@@ -1726,13 +1888,19 @@
      always is, and movement that shows which way you just went. */
   /* The cap. Same left:50% / translateX(-50%) pattern .modal has used since CAS-71 — `inset:0` sets
      left AND right, so both have to be overridden or max-width has nothing to bind against. */
+  /* CAS-305: capping the box also caps its own background, so above --flow-w (phones are already
+     narrower than that) the page behind showed through on both sides. box-shadow isn't part of the
+     capped box's own width — a solid, non-blurred one the size of the viewport paints the same
+     surface out to the edges without touching the box's layout, so the phone-width cap (CAS-188/
+     CAS-262, deliberate) is untouched. It reads seamlessly because every one of these screens already
+     fades its own gradient to solid var(--bg) well inside the box. */
   .splash,.sharpstep,.memb,.reveal{left:50%;right:auto;width:100%;max-width:var(--flow-w);
-    transform:translateX(-50%)}
+    transform:translateX(-50%);box-shadow:0 0 0 100vmax var(--bg)}
   /* The progress header. FIXED, not part of the sliding pane: the meter is a statement about the flow,
      not about the screen, so it must hold still while the screens move under it — a progress bar that
      slides away with the step it measures reads as decoration. */
   .stephdr{position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:var(--flow-w);
-    z-index:90;display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg);
+    z-index:90;display:flex;align-items:center;gap:12px;padding:12px var(--flow-pad);background:var(--bg);
     border-bottom:1px solid rgba(255,255,255,.06)}
   .stepprog{flex:1;height:6px;border-radius:999px;background:#20263a;overflow:hidden}
   .stepprog i{display:block;height:100%;width:0;border-radius:999px;background:var(--grad);
@@ -1741,7 +1909,8 @@
   /* The one Continue. Pinned to the bottom so it is in the same place on every step — you never hunt
      for it, and a long step never hides it below the fold. */
   .stepnav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:var(--flow-w);
-    z-index:90;display:flex;gap:10px;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));
+    z-index:90;display:flex;gap:10px;
+    padding:12px var(--flow-pad) calc(12px + env(safe-area-inset-bottom,0px));
     background:linear-gradient(180deg,rgba(10,14,26,0),var(--bg) 34%)}
   .stepnav .oscta{flex:1}
   /* A bare [hidden] loses to the display rules above — restate it, as .cascsearch[hidden] already has to. */
@@ -1773,7 +1942,9 @@
   @media (prefers-reduced-motion:reduce){ .stepprog i{transition:none} }
   /* ---- the two pre-meter screens ---- */
   /* Priority (CAS-189): two answers, each its own tap target, wearing the colour of the lane it means. */
-  .prioopts{display:flex;flex-direction:column;gap:14px;margin-top:6px}
+  /* CAS-306: grid rows (not flex column) so both boxes share the taller box's height even though
+     only one label wraps to two lines — flex's main axis can't stretch column items to match. */
+  .prioopts{display:grid;grid-template-rows:repeat(2,1fr);gap:14px;margin-top:6px}
   .priobtn{display:flex;align-items:center;gap:14px;width:100%;text-align:left;cursor:pointer;
     background:var(--panel);border:1.5px solid var(--line);border-radius:18px;padding:20px 18px;
     color:var(--ink);transition:transform .12s,border-color .12s}
@@ -1926,7 +2097,10 @@
           </svg>
           <span class="brand">Cascade</span>
         </span>
-        <span class="region">📍 AU</span>
+        <!-- CAS-269: the 📍 AU chip is gone. Everything in this build is AU — the pipeline is AU-only —
+             so a chip that never says anything else is a label, not information, and it was competing for
+             room on the one row that also has to hold the wordmark and four controls. The freshness date
+             below stays: that DOES change, every day, and it is the thing people check. -->
         <div class="updated" id="updated"></div>
       </div>
       <div class="hdr-actions">
@@ -1940,7 +2114,7 @@
         <div class="iconbtn" id="bell">🔔<div class="badge" id="badge" style="display:none">0</div></div>
       </div>
     </div>
-    <!-- CAS-150: the header is identity only — logo, region, freshness, and the three account icons. The
+    <!-- CAS-150: the header is identity only — logo, freshness, and the three account icons. The
          global search box, the Filters button and Save as… have all left it. Search was global over a list
          that is always scoped to one Cascade, so it was answering a question nobody was asking there; the
          selection engine is the Cascade itself; and Save as… now sits in the screen where the criteria are
@@ -1956,7 +2130,8 @@
     <div class="casclbl" id="cascLbl">Cascades</div>
     <div class="deck">
       <!-- Not a listbox: an option is not allowed to contain buttons, and the centre card carries
-           Edit / Share / Close. A group of groups keeps those buttons reachable to a screen reader. -->
+           Edit and Search (CAS-271/CAS-272 took Close and Share off it). A group of groups keeps those
+           buttons reachable to a screen reader. -->
       <div class="deckstrip" id="cascStrip" role="group" aria-label="Cascades — use the arrow keys to move between them"
            aria-keyshortcuts="ArrowLeft ArrowRight Home End"></div>
     </div>
@@ -1983,6 +2158,10 @@
         <option value="title">Title A–Z</option>
       </select>
     </div>
+    <!-- CAS-275: jump to a section of the listing. It is rendered from the sections that ACTUALLY exist in
+         the current list, so it can never offer a destination that isn't there — and it hides itself when
+         there is only one, because a jump control with one destination scrolls you nowhere. -->
+    <div class="jumpbar" id="jumpBar" hidden></div>
     <div id="cascDetail"></div>
   </div>
   <!-- ONE listing (CAS-134, and now literally one: CAS-150 removed the New / All scopes). It is everything
@@ -1995,10 +2174,23 @@
     <div id="listSaid"></div>
   </div>
 
-  <!-- Data attribution (CAS-127): availability is TMDB Watch Providers, sourced from JustWatch —
-       the credit is required and shown app-wide, in addition to the per-title credit in each
-       "Where to watch" list. Ratings/metadata credits sit alongside. -->
-  <div class="appcredit" id="appCredit">Streaming availability by JustWatch · Film data by TMDB &amp; OMDb</div>
+  <!-- CAS-285: ABOUT & CREDITS. Every data-provider attribution the app owes, in one place, off the cards.
+       Each provider's terms were read on 2026-08-01 and each line is here for a stated reason:
+         TMDB      — mandatory. The statement below is TMDB's own required wording, VERBATIM; do not reword
+                     it. Referred to only as "TMDB" or "The Movie Database", per their terms.
+         Watchmode — required on the free tier, which is the tier this uses.
+         JustWatch — required alongside TMDB's watch-provider data, which is where availability comes from.
+         OMDb      — removed: OMDb requires no attribution, so a credit we do not owe was just noise.
+       KNOWN GAP: TMDB also require their LOGO. It is not in this repo and must not be redrawn from memory —
+       an approximated trademark is worse than a missing one. Drop the official SVG in and add it here. -->
+  <section class="appcredit" id="appCredit" aria-label="About and credits">
+    <h2 class="acdt">About &amp; credits</h2>
+    <p class="acln"><span class="acslot" id="tmdbLogo" aria-hidden="true"></span>
+      This product uses the TMDB API but is not endorsed or certified by TMDB.
+      <a href="https://www.themoviedb.org" target="_blank" rel="noopener">The Movie Database ↗</a></p>
+    <p class="acln">Powered by <a href="https://api.watchmode.com" target="_blank" rel="noopener">Watchmode ↗</a></p>
+    <p class="acln">Streaming availability by <a href="https://www.justwatch.com" target="_blank" rel="noopener">JustWatch ↗</a></p>
+  </section>
   <!-- BUILD STAMP (CAS-124) — release + build provenance so staging is never mistaken for live.
        version/build/commit/builtAt are baked at build time (poc_pipeline.py --build-html, from the
        committed VERSION file + git); env is derived from the hostname at runtime by the script. -->
@@ -2224,11 +2416,21 @@
     <img class="splashlogo" src="splash-logo.svg" width="586" height="382" alt="" aria-hidden="true"
          decoding="async" loading="eager">
     <div class="splashword">CASCADE</div>
+    <!-- CAS-257: the tagline. Directly under the wordmark, so the first thing after the name says what
+         the thing IS — the bullets below say what it does. -->
+    <div class="splashtag" id="splashTag">Movie AI Agents</div>
+    <!-- CAS-258: all five windows Cascade follows, not four — Purchase was missing, which made the strip
+         quietly untrue about what the app tracks. Split 2 / 3: before it is home, then home. -->
     <div class="splashloz">
-      <span class="splashpill"><span class="splashdot" style="background:var(--grey)"></span>Upcoming</span>
-      <span class="splashpill"><span class="splashdot" style="background:var(--amber)"></span>In cinemas</span>
-      <span class="splashpill"><span class="splashdot" style="background:var(--blue)"></span>Rental</span>
-      <span class="splashpill"><span class="splashdot" style="background:var(--green)"></span>Streaming</span>
+      <div class="splashlozrow">
+        <span class="splashpill"><span class="splashdot" style="background:var(--upcoming)"></span>Upcoming</span>
+        <span class="splashpill"><span class="splashdot" style="background:var(--amber)"></span>In cinemas</span>
+      </div>
+      <div class="splashlozrow">
+        <span class="splashpill"><span class="splashdot" style="background:var(--purple)"></span>Purchase</span>
+        <span class="splashpill"><span class="splashdot" style="background:var(--blue)"></span>Rental</span>
+        <span class="splashpill"><span class="splashdot" style="background:var(--green)"></span>Streaming</span>
+      </div>
     </div>
     <div class="splashbullets">
       <div class="splashb"><svg class="splashtick" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5" stroke="#22D3EE" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>finds movies you'll love</span></div>
@@ -2238,7 +2440,9 @@
     <!-- CAS-186: two doors, not one. New here → the setup flow. Been here → straight to your own
          Cascades, without walking through a setup you already did. The primary is Sign up because a
          first visit is the common case; Log in is quiet but never hidden. -->
-    <button class="splashcta" id="splashCta" type="button">Sign up — build my first agent</button>
+    <!-- CAS-259: just "Sign up". The bullets above and the tagline already say what you get; the button
+         only has to name the door. It also puts the two doors in the same grammar — Sign up / Log in. -->
+    <button class="splashcta" id="splashCta" type="button">Sign up</button>
     <button class="splashlogin" id="splashLogin" type="button">Log in</button>
   </div>
 </div>
@@ -2327,6 +2531,11 @@ const PVOD_MIN = 19.99, RENTAL_MAX = 9.99, OPENING_WEEK_DAYS = 7;
 // keeps whatever the pipeline says. Inside it, a polled film with no digital offer at all and an opening date
 // behind us is in cinemas — that is the only window left for it to be in.
 const CINEMA_RUN_DAYS = 90;
+// CAS-289: CINEMA_RUN_DAYS is backed by a real read on the CONFIRMED path (we polled and there genuinely was
+// no digital listing) — the ESTIMATED path has no such read, only a guess from the opening date, so it may
+// not borrow the same 90-day bound. Past two weeks "likely still in cinemas" stops being honest; the film
+// moves to its next estimated window instead. poll_scheduler.CINEMA_ESTIMATE_CAP_DAYS is this constant's twin.
+const CINEMA_ESTIMATE_RUN_DAYS = 14;
 // ---- "Past opening weekend" — the fourth alert moment (CAS-68) ------------------------------------------
 // "About to leave the cinema" has no data behind it: nobody publishes the date a film comes off the screen, so
 // any countdown to it would be a fabricated timer. What IS computable from a real opening date is the moment a
@@ -2357,6 +2566,9 @@ const ICON = {
   // CAS-183 "so-so": the same 24px circle the block mark uses, with a flat mouth — neither thumb, because
   // it is neither answer, and a half-turned thumb would read as a weak version of one of them.
   soso:    svgIcon(`<circle cx="12" cy="12" r="8.6"/><path d="M8.6 14.6h6.8"/><path d="M9.4 9.6h.01"/><path d="M14.6 9.6h.01"/>`),
+  // CAS-278 "Wow!": a star, on the same 24px grid at the same stroke weight as the thumbs and the circles,
+  // so the top of the scale is drawn in the same hand as the rest of it rather than borrowing an emoji.
+  wow:     svgIcon(`<path d="M12 3.6l2.6 5.3 5.8.85-4.2 4.1 1 5.75L12 16.9l-5.2 2.7 1-5.75-4.2-4.1 5.8-.85z"/>`),
   // the chevron rotates as a whole (the class is on the <svg>, not a path — rotating a path would spin it
   // about the SVG origin, not its own centre)
   chev:    svgIcon(`<path d="m6.5 9.5 5.5 5.5 5.5-5.5"/>`, "chev"),
@@ -2368,6 +2580,11 @@ const ICON = {
   eye:     svgIcon(`<path d="M2.6 12S6 6.6 12 6.6 21.4 12 21.4 12 18 17.4 12 17.4 2.6 12 2.6 12z"/><circle cx="12" cy="12" r="2.7"/>`),
   bell:    svgIcon(`<path d="M6.4 10.2a5.6 5.6 0 0 1 11.2 0c0 4 1.5 5.4 1.5 5.4H4.9s1.5-1.4 1.5-5.4z"/><path d="M10.1 18.6a2.1 2.1 0 0 0 3.8 0"/>`),
   bellOff: svgIcon(`<path d="M6.4 10.2a5.6 5.6 0 0 1 11.2 0c0 4 1.5 5.4 1.5 5.4H4.9s1.5-1.4 1.5-5.4z"/><path d="M10.1 18.6a2.1 2.1 0 0 0 3.8 0"/><path d="M4.6 4.6 19.4 19.4"/>`),
+  // CAS-279: the deck — two cards, one behind the other. Same grid and stroke as the rest of the set, and it
+  // is the deck the control moves a film between rather than a generic folder.
+  deck:    svgIcon(`<rect x="8.2" y="4.4" width="11.4" height="13.2" rx="2.2"/><path d="M15.4 19.6H6.6a2.2 2.2 0 0 1-2.2-2.2V8.2"/>`),
+  // CAS-284: share — a box with an arrow leaving it, the platform-neutral mark for "send this somewhere else".
+  share:   svgIcon(`<path d="M12 15.4V4.2"/><path d="m8.2 7.8 3.8-3.6 3.8 3.6"/><path d="M6.4 12.4H5.2a1.6 1.6 0 0 0-1.6 1.6v5.2a1.6 1.6 0 0 0 1.6 1.6h13.6a1.6 1.6 0 0 0 1.6-1.6V14a1.6 1.6 0 0 0-1.6-1.6h-1.2"/>`),
 };
 // Journey order — Upcoming leads (a film reaches cinemas before any home window).
 // primaryStatus() takes the LAST window a film holds, so "upcoming" sitting first is safe:
@@ -2379,6 +2596,15 @@ const CASCADE = ["upcoming","opening_week","in_cinema","pvod","rental","included
 // 27 Upcoming above the one film actually on a screen. A listing answers "what can I watch", so it leads
 // with what is out and keeps Upcoming as the tail it is. Same six sections, same films, same counts.
 const LISTING_ORDER = ["opening_week","in_cinema","pvod","rental","included_streaming","upcoming"];
+// CAS-295: a CINEMA agent reads in the order a trip to the cinema is planned — what is coming, what has just
+// opened, what is on now — rather than in the order of what you can watch this minute. On that lane Upcoming
+// is not the dregs of the list: an announced film is the single most useful row a cinema-goer has, because
+// it is the one thing they can still make plans around.
+//
+// The default order everywhere else is unchanged and still ends with Upcoming, which is the right answer for
+// a streaming agent: there, an unreleased film really is the least actionable thing on the page.
+const CINEMA_LISTING_ORDER = ["upcoming","opening_week","in_cinema","pvod","rental","included_streaming"];
+const orderFor = c => (c && c.kind==="cinema") ? CINEMA_LISTING_ORDER : LISTING_ORDER;
 const STATUS_LABEL = {
   opening_week:"In Cinema · Opening week", in_cinema:"In Cinema",
   pvod:"Premium Buy/Rent (~$30)", rental:"Rent (~$7)",
@@ -2400,12 +2626,13 @@ function addDays(iso, n){ const d=new Date(iso+"T00:00:00Z"); d.setUTCDate(d.get
 function fmtDate(iso){ if(!iso) return ""; const [y,m,d]=iso.split("-"); return `${MONTHS[+m-1]} ${y.slice(2)}`; }
 // CAS-240: the same date said exactly, for the windows where we hold a real one. Month-and-year is the
 // right shape for an ESTIMATE — it says "around then" without pretending to a day — and precisely the wrong
-// shape for a date somebody published. The year is dropped when it is this one, because the strip is four
-// cells wide on a 390px phone and "26 Jul" is the part that carries the information.
+// shape for a date somebody published.
+// CAS-296: the year is always shown, even for the current year — dropping it read as ambiguous once a
+// film's window could straddle a year boundary.
 function fmtDay(iso){
   if(!iso) return "";
   const [y,m,d]=iso.split("-");
-  return `${+d} ${MONTHS[+m-1]}${y===TODAY.slice(0,4) ? "" : " "+y.slice(2)}`;
+  return `${+d} ${MONTHS[+m-1]} ${y.slice(2)}`;
 }
 function yearOf(m){ return (m.cinema_date||m.year||"").slice(0,4); }
 function esc(s){ return (s||"").replace(/</g,"&lt;"); }
@@ -2422,6 +2649,8 @@ const isEstimated = m => m.availability_confidence==="estimated";
 // CAS-237: the film opened, and its run isn't over yet. This is the whole of the evidence that a film is on
 // a screen right now — cinemas publish no offers, so there is never anything else to read.
 const inCinemaRun = m => !!m.cinema_date && m.cinema_date<=TODAY && m.cinema_date>=addDays(TODAY,-CINEMA_RUN_DAYS);
+// CAS-289: the estimated-only counterpart, capped at CINEMA_ESTIMATE_RUN_DAYS rather than CINEMA_RUN_DAYS.
+const inCinemaRunEstimated = m => !!m.cinema_date && m.cinema_date<=TODAY && m.cinema_date>=addDays(TODAY,-CINEMA_ESTIMATE_RUN_DAYS);
 const cinemaRungFor = m => m.cinema_date >= addDays(TODAY,-OPENING_WEEK_DAYS) ? "opening_week" : "in_cinema";
 // The window the pipeline worked out, kept safe before deriveStatus() overwrites m.status below.
 MOVIES.forEach(m=>{ m.claimedStatus=(m.status||[]).slice(); });
@@ -2446,8 +2675,18 @@ function deriveStatus(m){
   // cannot name. It is not an invented window (CAS-155) — it is the film's own date read against an
   // estimate that rests on nothing, which is exactly the ground CAS-227 already stands on.
   if(isEstimated(m) && claimed.length){
+    // CAS-289: this correction must use the 14-day estimated bound, not the 90-day confirmed one — otherwise
+    // it would put a film back on a screen for up to 90 days on nothing but an opening date, which is the
+    // exact over-claim this ticket exists to stop.
     if(!(m.offers||[]).length && !claimed.some(w=>["upcoming","opening_week","in_cinema"].includes(w))
-       && inCinemaRun(m)) return [cinemaRungFor(m)];
+       && inCinemaRunEstimated(m)) return [cinemaRungFor(m)];
+    // CAS-318: the flip side of that correction. CAS-289 always meant the cap to move a stale claim forward
+    // ("the film moves to its next estimated window" — cas289.spec.mjs), not just hide it while primaryStatus
+    // went on reporting the expired one — that gap is what let CAS-314's inCinemaWindow() cap disagree with
+    // primaryStatus() for the same film. A claimed cinema window this estimate can no longer vouch for is
+    // exactly as unconfirmed as a claim CAS-227 corrects the other way, so it advances the same way a title
+    // that finishes one window moves into the next.
+    if(claimed.some(w=>["opening_week","in_cinema"].includes(w)) && !inCinemaRunEstimated(m)) return ["pvod"];
     return claimed;
   }
   // CAS-227: "Upcoming" stops being true the day a film opens. The pipeline moves a title out of `upcoming`
@@ -2488,7 +2727,13 @@ MOVIES.forEach(m=>m.status=deriveStatus(m));
 
 // The state, derived from the film's REAL opening date and nothing else. A film the sim has pushed into
 // cinemas early (_simReleased) has an opening date in the future, so it is honestly not past anything yet.
-const inCinemaWindow = m => ["opening_week","in_cinema"].includes(primaryStatus(m));
+// CAS-314: primaryStatus() alone is not enough for an ESTIMATED title — deriveStatus() returns the pipeline's
+// claimed window unconditionally once a title has been claimed into it, so a claim never expires on its own.
+// This is the one place that honesty is enforced: an estimated title only holds its cinema window for
+// CINEMA_ESTIMATE_RUN_DAYS from its own opening date (CAS-289); past that it is no longer in the window as far
+// as anything reading inCinemaWindow() is concerned, even though m.status/primaryStatus still says otherwise.
+const inCinemaWindow = m => ["opening_week","in_cinema"].includes(primaryStatus(m))
+  && (!isEstimated(m) || inCinemaRunEstimated(m));
 const pastOpeningOn  = m => m.cinema_date ? addDays(m.cinema_date, PAST_OPENING_DAYS) : null;
 const isPastOpening  = (m, day=TODAY) => {
   const d=pastOpeningOn(m);
@@ -2589,17 +2834,25 @@ const disliked = loadSet("cascade_disliked");
 // because that pushes the kind down the list. It is its own answer, riding alongside `watched` the same way
 // `disliked` does, so a film ticked before today keeps meaning exactly what it meant.
 const indifferent = loadSet("cascade_indifferent");
-const isLiked    = id => watched.has(id) && !disliked.has(id) && !indifferent.has(id);
+// CAS-278: and the FIFTH — the top of the scale. "Watch Again" is a strong answer, but it is not the same
+// answer as "that was extraordinary", and a five-point scale that stops at "I'd watch it again" has no room
+// at the top for the films the whole thing exists to find. It rides alongside `watched` exactly as the other
+// two markers do, so it costs no migration: nothing is in this set until somebody puts it there, and every
+// film ticked before today keeps meaning precisely what it meant.
+const wowed = loadSet("cascade_wow");
+const isWow      = id => watched.has(id) && wowed.has(id) && !disliked.has(id) && !indifferent.has(id);
+const isLiked    = id => watched.has(id) && !wowed.has(id) && !disliked.has(id) && !indifferent.has(id);
 const isDisliked = id => watched.has(id) && disliked.has(id);
 const isSoso     = id => watched.has(id) && indifferent.has(id) && !disliked.has(id);
 // "" when you've said nothing — the only state in which the full card is drawn.
 const opinionOf  = id => blocked.has(id) ? "notfor" : isDisliked(id) ? "disliked"
-                       : isSoso(id) ? "soso" : watched.has(id) ? "liked" : "";
+                       : isSoso(id) ? "soso" : isWow(id) ? "wow" : watched.has(id) ? "liked" : "";
 // CAS-183: ONE chokepoint for every write of a watch status, so the per-account sync has a single place to
 // wrap — exactly the way saveCascades() is wrapped for the `cascades` table.
 function saveWatchStatus(){
   saveSet("cascade_watched",watched); saveSet("cascade_disliked",disliked);
   saveSet("cascade_blocked",blocked); saveSet("cascade_indifferent",indifferent);
+  saveSet("cascade_wow",wowed);
 }
 const expandedSet = new Set();   // which cards are expanded (session only)
 
@@ -2643,6 +2896,14 @@ function loadNotify(){
     e.source = e.source==="manual" ? "manual" : "auto";
     e.cascadeIds = Array.isArray(e.cascadeIds) ? e.cascadeIds : [];
     e.removed = !!e.removed;
+    // CAS-279: the two halves of "move this film to another cascade". Membership is DERIVED from an agent's
+    // criteria and rewritten on every recompute, so a move that only edited cascadeIds would be undone by
+    // the next render — a control that appears to work and silently doesn't. These are the override layer,
+    // stored the same way `removed` is, and they are the only thing that can outrank the criteria.
+    //   pinnedTo — cascade ids this film is IN by hand, whether or not their criteria match it
+    //   notIn    — cascade ids this film has been moved OUT of, whether or not their criteria match it
+    e.pinnedTo = Array.isArray(e.pinnedTo) ? e.pinnedTo.filter(x=>typeof x==="string") : [];
+    e.notIn    = Array.isArray(e.notIn)    ? e.notIn.filter(x=>typeof x==="string")    : [];
     // "You took this over from a Cascade" (CAS-100) — kept only while true, so it never becomes a false flag
     // sitting on a film you added yourself. Only a manual entry can carry it.
     if(e.claimed && e.source==="manual") e.claimed=true; else delete e.claimed;
@@ -2669,7 +2930,11 @@ function saveNotify(){
   notifySaved=s;
   try{ localStorage.setItem(NOTIFY_KEY, s); }catch(e){}
 }
-const entryFor = id => notify[id] || (notify[id]={source:"auto", cascadeIds:[], removed:false});
+const entryFor = id => notify[id] || (notify[id]={source:"auto", cascadeIds:[], removed:false, pinnedTo:[], notIn:[]});
+// CAS-279: the two override tests, defined once so the listing, the counts and the Found set cannot disagree
+// about where a film lives. An entry that predates this change has neither array and answers false to both.
+const pinnedInto = (id,c) => ((notify[id]||{}).pinnedTo||[]).includes(c.id);
+const movedOutOf = (id,c) => ((notify[id]||{}).notIn||[]).includes(c.id);
 // The live membership: auto ∪ your adds − your removes. Rebuilt by recomputeFound(), read everywhere else.
 const found = new Set();
 function recomputeFound(){
@@ -2679,7 +2944,12 @@ function recomputeFound(){
                                                     // it adds no Found membership — and since the poll's watchlist
                                                     // IS the Found set, it raises no alerts either.
     MOVIES.forEach(m=>{
-      if(!watchesFilm(m,c)) return;                 // WATCHES, not shows — see the note above matchesTaste
+      // CAS-279: a hand-move outranks the criteria in BOTH directions, and it has to do so here as well as
+      // in the listing — this is the set the poll watches, so a film moved into an agent must be watched by
+      // it (or the move buys you a row and no alerts) and one moved out must not be (or it goes on emailing
+      // you from an agent you took it off).
+      if(movedOutOf(m.tmdb_id,c)) return;
+      if(!pinnedInto(m.tmdb_id,c) && !watchesFilm(m,c)) return;   // WATCHES, not shows — see matchesTaste
       if(!hits.has(m.tmdb_id)) hits.set(m.tmdb_id, []);
       hits.get(m.tmdb_id).push(c.id);
     });
@@ -2726,8 +2996,11 @@ function savePrefs(){ try{ localStorage.setItem("cascade_prefs",
   JSON.stringify({on:prefs.on,touched:prefs.touched,sub:[...prefs.sub],store:[...prefs.store],
                   alertsOff:[...prefs.alertsOff]})); }catch(e){} }
 const prefs = loadPrefs();
-// How many times this browser has opened the app. It exists for one reason: "Finish your agent" (CAS-71) must
-// arrive AFTER the agent has proved itself, not on the first screen — so we need to know this isn't the first.
+// How many times this browser has opened the app. CAS-273 removed its ONE reader — "Finish your agent" had
+// to arrive after the agent proved itself, so it needed to know this wasn't the first visit — so the counter
+// is now written and never read. It is kept, and only because it is a COUNT: throwing it away resets every
+// existing browser to zero, and the next feature that wants "is this a returning visitor" would have to wait
+// for the history to build up again. Nothing decides anything on it today; if you add a reader, this is it.
 let visits=1;
 try{ visits=(+localStorage.getItem("cascade_visits")||0)+1; localStorage.setItem("cascade_visits", String(visits)); }catch(e){}
 // UX-psychology framings sit behind one flag so the plain version is the A/B control. Default on.
@@ -2791,7 +3064,9 @@ const activeCascade = () => cascades.find(c=>c.id===activeId) || null;
 // Stale pointer from a deleted Cascade → home base, not nowhere.
 if(activeId!==ALL_ID && !activeCascade()) setActive(ALL_ID);
 
-$("updated").textContent = "Live AU data · updated " + fmtDate(TODAY);
+// CAS-269: "Live AU data · " is gone from the freshness line for the same reason the chip is: it is a
+// constant. What is left is the one part of this line that moves.
+$("updated").textContent = "Updated " + fmtDate(TODAY);
 
 // ================= Build stamp (CAS-124) =================
 // version / build / commit / builtAt are baked at build time (from the committed VERSION file + git).
@@ -3239,7 +3514,7 @@ function passes(m){
   if(filt.genre.size && !(m.genres||[]).some(g=>filt.genre.has(g))) return false;
   if(filt.awards && !m.award) return false;
   if(!ratingOK(m, filt.imdb, filt.includeUnrated)) return false;
-  if(!budgetOK(m, filt.budget, filt.includeUnbudgeted)) return false;
+  if(!budgetOK(m, filt.budget)) return false;
   if(filt.tentpole!=="any" && !tentpoleIs(m,filt.tentpole)) return false;
   if((m.rt_critic||0) < filt.rt) return false;
   if((m.worldwide_gross||0) < filt.gross) return false;
@@ -3343,9 +3618,9 @@ const sortFor = g => sortForKey(g, filt.sort);
 // The sort key is taken from the CASCADE being shown, not from the live filt.sort — at reveal time
 // filt.sort is still whatever the previous view was using, and c.sort is what applyCascade is about to
 // put there the moment the user lands in the listing.
-function listingOrder(films, sortKey){
+function listingOrder(films, sortKey, c){
   const ordered=[], seen=new Set();
-  LISTING_ORDER.forEach(g=>{
+  orderFor(c).forEach(g=>{
     films.filter(m=>primaryStatus(m)===g).sort(sortForKey(g,sortKey))
          .forEach(m=>{ ordered.push(m); seen.add(m); });
   });
@@ -3481,8 +3756,11 @@ function availHTML(m){
     // published AU release date. A home-window date is the day Cascade FIRST SAW the film in that window —
     // window_dates is an observation log, not a publisher's calendar — so it is dated exactly and described
     // as a sighting rather than as a release, because the second would be a claim we cannot make.
+    // CAS-310: italic alone carried that difference, and a title= tooltip is unreachable on a phone (see the
+    // IMDb gate above) — so on touch the two kinds of date looked identical. "≈" is the app's own estimate
+    // glyph everywhere else (the estline, mloffers) and it reads without a hover, so it leads here too.
     const exact = sd && !sd.est;
-    const dateStr = stale ? "" : (exact ? fmtDay(sd.d) : (sd ? fmtDate(sd.d) : ""));
+    const dateStr = stale ? "" : (exact ? fmtDay(sd.d) : (sd ? "≈ "+fmtDate(sd.d) : ""));
     const estCls=(sd && sd.est && !stale) ? " est" : (exact ? " exact" : "");
     const why = !sd || stale ? ""
       : exact ? (key==="cinema" ? `AU release date: ${fmtDay(sd.d)}`
@@ -3595,6 +3873,50 @@ function creditsHTML(m){
   if((m.cast||[]).length) rows.push(`<div class="credit"><span class="clbl">Cast</span>${esc(m.cast.join(", "))}</div>`);
   return rows.length ? `<div class="credits">${rows.join("")}</div>` : "";
 }
+// ---- CAS-284: share a film -------------------------------------------------------------------------------
+// CAS-272 removed the cascade "share" for being a string on a clipboard dressed up as a share. This one is
+// different in the way that matters: a FILM has a real public identity, so there is something true to send
+// and somewhere real for it to land. It uses the platform's own share sheet where the browser has one — an
+// actual share, to actual people — and falls back to the clipboard, saying so on the button rather than
+// claiming a share that did not happen.
+//
+// It lives in the expanded card, where the ticket suggests: it is a considered action, not a one-tap verdict,
+// and the control stack below is already three decisions deep.
+function shareFilmHTML(m){
+  return `<div class="exshare"><button type="button" class="exsharebtn" onclick="event.stopPropagation();shareFilm(${m.tmdb_id})"
+      title="${escA("Share "+m.title)}" aria-label="${escA("Share "+m.title)}">${ICON.share}<span class="sl">Share</span></button></div>`;
+}
+// What we can say about the film without inventing anything: its title, its year, and the window we have
+// actually CONFIRMED it is in. An estimated window says nothing at all — the whole point of the estimate is
+// that we have not read a listing, and a share is the last place to pass a guess off as a fact.
+function shareTextFor(m){
+  const yr=yearOf(m);
+  const where = isEstimated(m) ? "" : (STATUS_LABEL[primaryStatus(m)]||"");
+  return `${m.title}${yr?` (${yr})`:""}${where?` — ${where}`:""}`;
+}
+// The film's own public page. jw_link is the one we already hold and already credit; TMDB is the fallback,
+// and it is a real permanent page for the title rather than a link back into an app with no per-film route.
+const shareUrlFor = m => m.jw_link || `https://www.themoviedb.org/movie/${m.tmdb_id}`;
+window.shareFilm = async id => {
+  const m=MOVIES.find(x=>x.tmdb_id===id); if(!m) return;
+  const url=shareUrlFor(m), text=shareTextFor(m);
+  const btn=document.querySelector(`#card-${id} .exsharebtn`);
+  const say=msg=>{ if(!btn) return; const lab=btn.querySelector(".sl"); if(!lab) return;
+                   const was=lab.textContent; lab.textContent=msg; btn.classList.add("done");
+                   setTimeout(()=>{ lab.textContent=was; btn.classList.remove("done"); }, 1800); };
+  if(navigator.share){
+    try{ await navigator.share({title:m.title, text, url}); logEvent("film_shared",{how:"sheet"}); return; }
+    // A cancelled share sheet is not a failure and must not fall through to copying something the person
+    // just decided not to send.
+    catch(e){ if(e && e.name==="AbortError") return; }
+  }
+  const payload=`${text}\n${url}`;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    try{ await navigator.clipboard.writeText(payload); logEvent("film_shared",{how:"clipboard"}); say("Copied"); return; }
+    catch(e){}
+  }
+  say("Couldn't copy");
+};
 function trailersHTML(m){
   const t=(m.trailers||[]).slice(0,4);
   const body = t.length
@@ -3645,14 +3967,17 @@ function cardHTML(m, markNew=false){
   // CAS-110: an estimated title shows no offers and no prices — see savingsHTML.
   let offers=isEstimated(m) ? [] : dedupOffers(m.offers);
   if(prefsActive()) offers=offers.filter(myService);
-  // JustWatch attribution (CAS-127) — availability comes from TMDB Watch Providers (data by
-  // JustWatch); the credit is required, and deep-links to the film's JustWatch AU page when known.
-  const jwAttr = m.jw_link
-    ? `<a class="jwattr" href="${esc(m.jw_link)}" target="_blank" rel="noopener">Streaming data by JustWatch ↗</a>`
-    : `<span class="jwattr">Streaming data by JustWatch</span>`;
+  // CAS-285: the per-title provider credit is gone from the card. The attribution is REQUIRED but it is not
+  // information about the film, and repeating it under every "where to watch" list on a 2,000-card listing
+  // is the same sentence a thousand times. It is stated once, in About & credits, which is where TMDB's own
+  // terms say it belongs. The film's JustWatch deep link is a different thing — a place you can go — and it
+  // stays on the card as a link rather than as a credit.
+  const jwLink = m.jw_link
+    ? `<a class="jwgo" href="${esc(m.jw_link)}" target="_blank" rel="noopener">See all options ↗</a>`
+    : "";
   const wtw = offers.length ? `<div class="wtw">${offers.map(o=>`<div class="wtwrow">
       <span class="svc"><span class="tt ${o.type}">${TYPE_LABEL[o.type]||o.type}</span>${svcName(o.service)}</span>
-      <span class="off">${o.price!=null?"$"+o.price.toFixed(2):""}${o.fmt?" · "+o.fmt:""}</span></div>`).join("")}<div class="wtwrow jwrow">${jwAttr}</div></div>` : "";
+      <span class="off">${o.price!=null?"$"+o.price.toFixed(2):""}${o.fmt?" · "+o.fmt:""}</span></div>`).join("")}${jwLink?`<div class="wtwrow jwrow">${jwLink}</div>`:""}</div>` : "";
   const syn = m.synopsis ? `<p class="synopsis">${esc(m.synopsis)}</p>` : "";
   const cert = m.age_rating ? `<span class="cert ${MATURE.has(m.age_rating)?'mature':''}">${m.age_rating}</span>` : "";
   // CAS-135: the chip reads the film's LANGUAGE (e.g. "English"), now that selection is language-based —
@@ -3681,18 +4006,22 @@ function cardHTML(m, markNew=false){
   return `<div class="card ${expandedSet.has(id)?'expanded':''}" id="card-${id}">
     <div class="cbody" onclick="cardTap(event,${id})">
       <div class="ctop">
+        <!-- CAS-276: the tombstone is the POSTER, and nothing else. The scale badge used to hang below it,
+             which pushed the column's bottom up to 59px past the IMDb lozenge it is supposed to finish
+             level with — measured across 355 cards, and every one of the worst offenders had a badge. -->
         <div class="ptomb">
           <div class="poster" style="${poster}">${play}</div>
-          ${badge}
         </div>
         <div class="title">${m.title}${cert}</div>
         <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
         <div class="mrow r-scores">${scoresRowHTML(m)}</div>
-        <div class="mrow r-awards">${awardChips(m)}</div>
+        <!-- …and it lands HERE, which is where its own comment always said it belonged: beside the awards,
+             sharing their baseline. It is a claim about the film, like they are. -->
+        <div class="mrow r-awards">${badge}${awardChips(m)}</div>
       </div>
-      <div class="expand">${awardsBreakdownHTML(m)}${creditsHTML(m)}${trailersHTML(m)}</div>
+      <div class="expand">${awardsBreakdownHTML(m)}${creditsHTML(m)}${trailersHTML(m)}${shareFilmHTML(m)}</div>
     </div>
     ${availHTML(m)}
     <div class="cfoot">
@@ -3702,8 +4031,11 @@ function cardHTML(m, markNew=false){
       <!-- CAS-230: the v0.8 control row — Watch status, Notify, chevron. The Pick badge and the four bare
            verdict icons are gone from the card; Pick still lives on the Found / Your Movies rows, which is
            where taking a film off your list by hand belongs. -->
+      <!-- CAS-279: Cascade sits in the MIDDLE, between the two answers about the film itself. It is the one
+           control here that is about where the film LIVES rather than what you make of it. -->
       <div class="actions">
         ${watchChipHTML(id)}
+        ${cascadeChipHTML(id)}
         ${notifyChipHTML(id)}
         ${wtwBtn}
       </div>
@@ -3715,11 +4047,15 @@ function cardHTML(m, markNew=false){
 // per film — so they behave as a radio group made of toggles: lighting one clears the other two, and pressing
 // the lit one clears it. Order is fixed everywhere they appear (card and collapsed stub), so the position of a
 // mark never changes meaning between the two.
+// CAS-278: five answers now, and ONE order for all of them — best first, everywhere they appear. The old
+// row ran Not-for-me · Liked · So-so · Disliked, which is not an order at all: the best answer sat between
+// the two worst. A scale has to read as a scale or its positions mean nothing.
 const OPINIONS = [
-  {key:"notfor",   ico:"block",   lbl:"Not for me", on:"Not for me — tap to undo",  off:"Not for me"},
-  {key:"liked",    ico:"like",    lbl:"Liked",      on:"Liked — tap to undo",       off:"Watched and liked it"},
-  {key:"soso",     ico:"soso",    lbl:"So-so",      on:"So-so — tap to undo",       off:"Watched, and it was so-so"},
-  {key:"disliked", ico:"dislike", lbl:"Disliked",   on:"Disliked — tap to undo",    off:"Watched and didn't like it"},
+  {key:"wow",      ico:"wow",     lbl:"Wow!",        on:"Wow! — tap to undo",        off:"That was extraordinary"},
+  {key:"liked",    ico:"like",    lbl:"Watch Again", on:"Watch Again — tap to undo", off:"Watched, and I'd watch it again"},
+  {key:"soso",     ico:"soso",    lbl:"So-so",       on:"So-so — tap to undo",       off:"Watched, and it was so-so"},
+  {key:"disliked", ico:"dislike", lbl:"Disliked",    on:"Disliked — tap to undo",    off:"Watched and didn't like it"},
+  {key:"notfor",   ico:"block",   lbl:"Won't Watch", on:"Won't Watch — tap to undo", off:"Not for me"},
 ];
 function opinionBtnsHTML(id, cls=""){
   const cur=opinionOf(id);
@@ -3739,15 +4075,23 @@ function opinionBtnsHTML(id, cls=""){
 // to right, so the row reads as a scale rather than as four unrelated buttons. Each carries the prototype's
 // colour. Setting one still folds the card to its stub (CAS-100) — which is why the chip on a full card is
 // always the unanswered state, and correctly so: a full card IS a film you haven't answered.
+// CAS-278: five steps, listed top to bottom best-first, on a continuous colour ramp so the list reads as a
+// scale before a single word of it is read. The ramp runs bright green -> green -> grey -> amber -> red:
+// greatness increases upward, and the neutral answer sits at the neutral colour in the middle rather than
+// borrowing a colour from either end. The panel is rendered in this array's order, so THIS is the ordering
+// the ticket asks for and there is nowhere else for it to disagree.
 const WATCH_STEPS = [
-  {key:"notfor",   ico:"block",   lbl:"Don't want", cd:"#d0453f"},
-  {key:"disliked", ico:"dislike", lbl:"Disliked",   cd:"#e08a3c"},
-  {key:"soso",     ico:"soso",    lbl:"So-so",      cd:"#8a93a6"},
-  {key:"liked",    ico:"like",    lbl:"Liked",      cd:"#37c46a"},
+  {key:"wow",      ico:"wow",     lbl:"Wow!",        cd:"#17d492"},
+  {key:"liked",    ico:"like",    lbl:"Watch Again", cd:"#37c46a"},
+  {key:"soso",     ico:"soso",    lbl:"So-so",       cd:"#8a93a6"},
+  {key:"disliked", ico:"dislike", lbl:"Disliked",    cd:"#e08a3c"},
+  {key:"notfor",   ico:"block",   lbl:"Won't Watch", cd:"#d0453f"},
 ];
 function watchChipHTML(id){
   const cur=opinionOf(id), i=WATCH_STEPS.findIndex(s=>s.key===cur), s=WATCH_STEPS[i];
-  const fill = s ? ((i+1)/WATCH_STEPS.length)*100 : 0;
+  // CAS-278: WATCH_STEPS is best-first now, so the raw index runs the wrong way — read straight it would
+  // draw the fullest bar for "Won't Watch". The bar tracks GREATNESS, so it is measured from the top.
+  const fill = s ? ((WATCH_STEPS.length-i)/WATCH_STEPS.length)*100 : 0;
   const lbl  = s ? s.lbl : "Watch status";
   const title = s ? `${s.lbl} — tap to change` : "Say whether you've watched it, and what you made of it";
   return `<button type="button" class="ctl watch" data-cid="${id}" onclick="openWatchPanel(${id},this)"
@@ -3768,14 +4112,49 @@ function watchChipHTML(id){
 // actually fire. The panel lists every option the agent HAS, whether or not the agent has it switched on,
 // because "tell me about this one film reaching rent even though my agent doesn't watch rent" is exactly
 // the thing a per-film control is for. Each option the agent does have on starts ON for the film.
-function notifyOptionsFor(c){
+// ---- CAS-280: a film can only be told about where it is still GOING -------------------------------------
+// One ladder across both lanes, in the order a film actually travels it. A film already at Rent cannot
+// "reach Rent" again, so offering the row is offering an alert that can never fire — the honesty guardrail's
+// exact case. The rungs are the option keys AGENT_WINDOWS uses, so this map and that list cannot drift.
+const WINDOW_RUNG = {upcoming:0, in_cinema:1, premium:2, rent:3, stream:4};
+// …and where the FILM is on that same ladder, read from the window it is in now.
+const STATUS_RUNG  = {upcoming:0, opening_week:1, in_cinema:1, pvod:2, rental:3, included_streaming:4};
+const filmRung = id => {
+  const m=MOVIES.find(x=>x.tmdb_id===id);
+  const r=m ? STATUS_RUNG[primaryStatus(m)] : undefined;
+  return r===undefined ? -1 : r;      // unknown window -> -1, so nothing is filtered out on a guess
+};
+// Is this row's promise already spent for a film standing on `rung`?
+//
+// Below the film: yes, unambiguously — it cannot arrive somewhere it has already left.
+//
+// LEVEL with the film: only if everything the row can fire is its own arrival. That distinction is the whole
+// subtlety of this ticket. Two rows carry a MOMENT rather than an arrival, and both are still ahead of a film
+// sitting in that very window: "In cinema" fires on PAST OPENING WEEKEND, and "Upcoming" fires when the film
+// REACHES A CINEMA. Filtering on the rung alone would have deleted both — which for a cinema agent, whose
+// listing is mostly films already in cinemas, would have emptied the Notify control on nearly every card.
+// A row is read as arrival-only when every alert it can raise is one of its own statuses.
+function rowSpentFor(w, rung){
+  const r = WINDOW_RUNG[w.key];
+  if(r===undefined) return false;                    // unknown rung -> never filtered on a guess
+  if(r < rung) return true;
+  if(r > rung) return false;
+  const own = new Set(w.status||[]);
+  return Object.keys(w.alerts||{}).every(a=>own.has(a));
+}
+// `id` is optional. Given one, the list is narrowed to that film's FUTURE rungs (CAS-280) — which is what
+// every per-film caller wants, including the chip's own "N of M", because a total that counts moments the
+// film has already passed describes a promise nobody can keep.
+function notifyOptionsFor(c, id){
   if(c===undefined) c=activeCascade();
   // In the All view there is no agent to read, and a film there can be caught by any of them — so the
   // panel offers every window rather than guessing at one type.
   const kinds = (c && (c.kind==="cinema"||c.kind==="stream")) ? [c.kind] : Object.keys(AGENT_WINDOWS);
   const watch = c ? migrateWatch(c.watchWindows||{}) : {};
+  const rung = id===undefined ? -1 : filmRung(id);
   const out=[];
   kinds.forEach(k=>AGENT_WINDOWS[k].forEach(w=>{
+    if(rung>=0 && rowSpentFor(w, rung)) return;
     const f=watch[w.key]||{};
     out.push({key:w.key, label:w.label, say:w.notifySay, cd:w.cd, agentOn:!!f.notify, alerts:w.alerts||{}});
     (w.subs||[]).forEach(sb=>out.push({
@@ -3805,7 +4184,7 @@ const filmOptOn = (id, opt) => {
 // is muted in substance, and the chip says so rather than claiming an alert it will not send.
 function filmNotifyState(id){
   if(filmMuted(id)) return {on:0, total:0, muted:true};
-  const opts=notifyOptionsFor();
+  const opts=notifyOptionsFor(undefined,id);   // CAS-280: this film's future moments only
   const on=opts.filter(o=>filmOptOn(id,o)).length;
   return {on, total:opts.length, muted:on===0};
 }
@@ -3821,33 +4200,112 @@ function notifyChipHTML(id){
       <span class="cic">${st.muted ? ICON.bellOff : ICON.bell}</span>
       <span class="clab${st.muted?" dim":""}">${lbl}</span></span></button>`;
 }
+// ---- CAS-279: the Cascade control -----------------------------------------------------------------------
+// Where this film lives, and the one gesture that changes it. Everything else on this row is an opinion about
+// the film; this is an instruction about the deck.
+//
+// The honesty problem it had to solve: cascadeIds is DERIVED from each agent's criteria and rewritten on
+// every recompute, so "move" cannot mean "edit the membership list" — the next render would put the film
+// straight back. It means "record an override the criteria cannot outvote", which is exactly how `removed`
+// has always worked. Both halves are stored, so the move survives a reload and a re-run.
+function cascadeChipHTML(id){
+  const here=cascadesFor(id);
+  const lbl = here.length===0 ? "Cascade" : here.length===1 ? here[0].name : `${here.length} cascades`;
+  const title = here.length
+    ? `In ${here.map(c=>c.name).join(", ")}. Tap to move it.`
+    : "Not in any of your cascades. Tap to put it in one.";
+  return `<button type="button" class="ctl casc" data-kid="${id}" onclick="openCascadePanel(${id},this)"
+      aria-haspopup="true" title="${escA(title)}" aria-label="${escA(title)}">
+    <span class="cmini"><i class="cfill" style="width:${here.length?100:0}%;background:var(--accent)"></i>
+      <span class="cic">${ICON.deck}</span>
+      <span class="clab${here.length?"":" dim"}">${esc(lbl)}</span></span></button>`;
+}
+window.openCascadePanel=(id, btn)=>{
+  const open=btn.closest(".actions").querySelector(".cpop");
+  const mine=open && open.classList.contains("kpop");   // CAS-281: only MY panel counts as a second tap
+  closeWatchPanel();
+  if(mine) return;                       // tapping the chip again closes the panel it opened
+  const from=activeCascade();
+  // "the OTHER cascades" — the one you are standing in is not somewhere you can move a film TO.
+  const targets=cascades.filter(c=>!from || c.id!==from.id);
+  const pop=document.createElement("div");
+  pop.className="cpop kpop";
+  // CAS-281: every card control collapses the same way, and the button says what it collapses. Three panels
+  // open off one stack; a button labelled only "Close" leaves the reader to work out which of them it means.
+  pop.innerHTML=`<button type="button" class="cclose nclose" onclick="closeWatchPanel()"
+      title="Collapse" aria-label="Collapse cascade">${ICON.chev}</button>
+    <div class="nopts">${
+      targets.length
+        ? targets.map(c=>{
+            const on=pinnedInto(id,c) || cascadesFor(id).some(x=>x.id===c.id);
+            return `<button type="button" class="nopt${on?" on":""}" data-cid="${c.id}" style="--wwc:var(--accent)"
+              aria-pressed="${on}" onclick="moveFilmTo(${id},'${c.id}')"
+              title="${escA(on?`Already in ${c.name}`:`Move this film to ${c.name}`)}">
+              <span class="wwb">✓</span><span class="nol">${c.icon} ${esc(c.name)}</span></button>`;
+          }).join("")
+        // No second agent to move it to. Say so rather than opening an empty panel, which reads as broken.
+        : `<div class="nopt nonone">${cascades.length ? "This is your only cascade — there is nowhere else to move it to."
+                                                      : "You have no cascades yet."}</div>`
+    }</div>`;
+  btn.closest(".actions").appendChild(pop);
+  positionPanel(pop);   // CAS-304
+  wirePanelSlide(pop, ".nopt[data-cid]", el=>moveFilmTo(id, el.dataset.cid));   // CAS-282
+  document.addEventListener("keydown", watchPanelKey, true);
+  const first=pop.querySelector(".nopt"); if(first && first.tagName==="BUTTON") first.focus();
+};
+// The move itself. Pin into the target; and if you were standing IN a cascade when you did it, push it out of
+// that one — that is what makes it a move rather than a copy. From the All view there is no source, so it is
+// honestly an "add to", and nothing is taken away from anywhere.
+window.moveFilmTo=(id,cid)=>{
+  const to=cascades.find(c=>c.id===cid); if(!to) return;
+  const from=activeCascade();
+  const e=entryFor(id);
+  e.pinnedTo=[...new Set([...(e.pinnedTo||[]), cid])];
+  e.notIn=(e.notIn||[]).filter(x=>x!==cid);          // moving it IN cancels any earlier move OUT of the same one
+  if(from && from.id!==cid){
+    e.notIn=[...new Set([...(e.notIn||[]), from.id])];
+    e.pinnedTo=e.pinnedTo.filter(x=>x!==from.id);
+  }
+  // A move is a statement that you want this film — so it must not stay on the "you took this off" pile.
+  e.removed=false;
+  saveNotify();
+  logEvent("film_moved",{to:to.template||"custom", from:from?(from.template||"custom"):"all"});
+  closeWatchPanel();
+  render();
+};
 window.openNotifyPanel=(id, btn)=>{
   const open=btn.closest(".actions").querySelector(".cpop");
+  const mine=open && open.classList.contains("npop");   // CAS-281: only MY panel counts as a second tap
   closeWatchPanel();
-  if(open) return;                       // tapping the chip again closes the panel it opened
-  const opts=notifyOptionsFor();
+  if(mine) return;                       // tapping the chip again closes the panel it opened
+  const opts=notifyOptionsFor(undefined,id);   // CAS-280: only what this film can still reach
   const pop=document.createElement("div");
   pop.className="cpop npop";
   // The close control is on the LEFT and points RIGHT, deliberately the mirror of the Watch-status panel's
   // (right edge, pointing left). Two panels open off the same row; if they closed from the same side with
   // the same arrow, the only thing telling you which one you had open would be its contents.
   pop.innerHTML=`<button type="button" class="cclose nclose" onclick="closeWatchPanel()"
-      title="Close" aria-label="Close">${ICON.chev}</button>
-    <div class="nopts">${opts.map(o=>{
+      title="Collapse" aria-label="Collapse notify">${ICON.chev}</button>
+    <div class="nopts">${opts.length ? opts.map(o=>{
       const on=filmOptOn(id,o);
       return `<button type="button" class="nopt${on?" on":""}${o.sub?" nsub":""}" style="--wwc:${o.cd}"
         aria-pressed="${on}" onclick="toggleFilmOpt(${id},'${o.key}')"
         title="${escA(on?`On — tap to stop hearing about this`:`Off — tap to be told ${o.say}`)}">
         <span class="wwb">✓</span><span class="nol">${esc(o.label)}</span>
         ${o.agentOn?"":`<span class="notag">not in this agent</span>`}</button>`;
-    }).join("")}</div>`;
+    }).join("")
+    // CAS-280: a film at the end of its journey has no moment left to be told about. Say that, rather than
+    // opening an empty panel or — worse — offering a row that could never fire.
+    : `<div class="nopt nonone">This film has reached its last window, so there is nothing further to be
+         told about.</div>`}</div>`;
   btn.closest(".actions").appendChild(pop);
+  positionPanel(pop);   // CAS-304
   document.addEventListener("keydown", watchPanelKey, true);
   const first=pop.querySelector(".nopt"); if(first) first.focus();
 };
 window.toggleFilmOpt=(id,key)=>{
   const e=entryFor(id);
-  const opt=notifyOptionsFor().find(o=>o.key===key); if(!opt) return;
+  const opt=notifyOptionsFor(undefined,id).find(o=>o.key===key); if(!opt) return;
   e.wins=e.wins||{};
   e.wins[key]=!filmOptOn(id,opt);
   // Touching any option un-mutes the film: a whole-film silence and a per-moment choice are two different
@@ -3859,34 +4317,106 @@ window.toggleFilmOpt=(id,key)=>{
   if(btn){ const pop=btn.closest(".actions").querySelector(".cpop");
            btn.outerHTML=notifyChipHTML(id);
            if(pop) pop.querySelectorAll(".nopt").forEach((n,i)=>{
-             const o=notifyOptionsFor()[i]; if(!o) return;
+             const o=notifyOptionsFor(undefined,id)[i]; if(!o) return;
              const on=filmOptOn(id,o);
              n.classList.toggle("on", on); n.setAttribute("aria-pressed", String(on));
            }); }
 };
+// ---- CAS-282: press-then-slide ---------------------------------------------------------------------------
+// Open the control, then keep your finger down and run it over the options: the one under it lights up, and
+// it is chosen when you lift. On a phone that turns "tap, look, aim, tap" into one gesture, and the options
+// are a vertical stack (CAS-278) so the slide is a natural thumb movement down the list.
+//
+// It does NOT replace tapping, and that is the whole difficulty. Every option is a real <button> with its own
+// onclick, so a naive implementation fires twice for one press — and because these controls TOGGLE, firing
+// twice is not a double-select, it is a select followed by an undo, i.e. a control that visibly does nothing.
+// So the rule is: a press that never moved is left entirely alone and the button's own click does the work; a
+// press that DID move is a slide, and the click it produces is swallowed exactly once.
+const SLIDE_MIN = 6;   // px before a press counts as a drag rather than a wobble
+function wirePanelSlide(pop, itemSel, onPick){
+  let id=null, x0=0, y0=0, moved=false, lastEl=null;
+  const itemAt=(x,y)=>{ const el=document.elementFromPoint(x,y); return el ? el.closest(itemSel) : null; };
+  const mark=el=>{
+    pop.querySelectorAll(itemSel).forEach(n=>n.classList.toggle("sliding", n===el));
+  };
+  pop.addEventListener("pointerdown", e=>{
+    if(!itemAt(e.clientX,e.clientY)) return;
+    id=e.pointerId; x0=e.clientX; y0=e.clientY; moved=false;
+    // NB: capture is NOT taken here. Capturing on the press redirects the whole gesture to the panel, and the
+    // click that a plain tap produces then never reaches the option's own button — which silently breaks
+    // tapping, the primary way this control is used. Capture is taken at the moment it becomes a drag.
+  });
+  pop.addEventListener("pointermove", e=>{
+    if(id!==e.pointerId) return;
+    if(!moved && Math.hypot(e.clientX-x0, e.clientY-y0) < SLIDE_MIN) return;
+    if(!moved){ moved=true; try{ pop.setPointerCapture(id); }catch(_){} }
+    e.preventDefault();                        // the page must not scroll out from under the gesture
+    const at=itemAt(e.clientX,e.clientY);
+    if(at) lastEl=at;                          // remember the last real option the finger was over
+    mark(at);
+  });
+  const finish=e=>{
+    if(id!==e.pointerId) return;
+    if(moved){ try{ pop.releasePointerCapture(id); }catch(_){} }
+    id=null;
+    if(!moved){ mark(null); lastEl=null; return; }   // a plain tap — leave it to the button's own click
+    // What you release on is what was HIGHLIGHTED. The hit test at the release point can come back empty —
+    // a finger lifted a few pixels past the last row, or beyond the edge of the viewport — and answering
+    // "nothing" there would throw away a gesture the user had already visibly completed.
+    const el=itemAt(e.clientX,e.clientY) || lastEl;
+    mark(null); lastEl=null;
+    // Swallow the click this press is about to produce, once, so the slide's choice is not immediately undone.
+    pop.addEventListener("click", ev=>{ ev.stopPropagation(); ev.preventDefault(); }, {capture:true, once:true});
+    if(el) onPick(el);
+  };
+  pop.addEventListener("pointerup", finish);
+  pop.addEventListener("pointercancel", e=>{ if(id===e.pointerId){ id=null; moved=false; mark(null); } });
+}
+// CAS-304: the panel opens upward by default (see the .cpop rule); this only flips it down when the row
+// itself doesn't have room above — measured against the sticky header, the same --hdrh the scroll math
+// elsewhere in this file already reads, so the panel never opens hidden under it.
+function positionPanel(pop){
+  const hdr=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hdrh"))||0;
+  if(pop.getBoundingClientRect().top < hdr+8) pop.classList.add("pop-down");
+}
 // One panel at a time, anchored in the .actions row (which is position:relative for exactly this).
 function closeWatchPanel(){
   document.querySelectorAll(".cpop").forEach(n=>n.remove());
   document.removeEventListener("keydown", watchPanelKey, true);
 }
 function watchPanelKey(e){ if(e.key==="Escape"){ e.stopPropagation(); closeWatchPanel(); } }
+// CAS-315: the scroll position when a watch panel opens on a card. `.card` is content-visibility:auto
+// (CAS-129, for windowing the ~2,000-card catalogue), and both focusing a button inside one and later
+// removing that button from the DOM make Chromium silently scroll the WINDOW to "reveal"/renegotiate it —
+// independent of our own fold/repaint math, not suppressed by focus()'s preventScroll option, and it happens
+// before our handlers even start running, so there is nothing in-process to intercept. keepRowInPlace snaps
+// back to this before it takes its own "was" measurement, which is the only thing that has to be correct.
+let watchPanelAnchorY=null;
 window.openWatchPanel=(id, btn)=>{
+  // CAS-281: "was MY panel already open?", not "was ANY panel open?". The old test closed whatever was open
+  // and returned, so tapping a second control while a first was open closed the first and opened nothing —
+  // a dead tap, and with three controls on the stack that is most of the taps you would make.
   const open=btn.closest(".actions").querySelector(".cpop");
+  const mine=open && !open.classList.contains("npop") && !open.classList.contains("kpop");
   closeWatchPanel();
-  if(open) return;                       // tapping the chip again closes the panel it opened
+  if(mine){ watchPanelAnchorY=null; return; }    // tapping the chip again closes the panel it opened
+  watchPanelAnchorY=scrollY;
   const cur=opinionOf(id);
   const pop=document.createElement("div");
   pop.className="cpop";
   pop.innerHTML=`<div class="csegs">${WATCH_STEPS.map(s=>{
       const on=cur===s.key;
-      return `<button type="button" class="cseg${on?" on":""}" style="${on?`background:${s.cd};color:#fff`:""}"
+      // --segc carries the step's own colour whether it is chosen or not, so the ramp is legible on arrival.
+      return `<button type="button" class="cseg${on?" on":""}" data-key="${s.key}" style="--segc:${s.cd};${on?`background:${s.cd};color:#fff`:""}"
         onclick="pickWatch(${id},'${s.key}')" aria-pressed="${on}"
         title="${escA(on?`${s.lbl} — tap to undo`:s.lbl)}"><span class="ci">${ICON[s.ico]}</span><span class="cl">${s.lbl}</span></button>`;
     }).join("")}</div><button type="button" class="cclose wclose" onclick="closeWatchPanel()"
       title="Collapse" aria-label="Collapse watch status">${ICON.chev}</button>`;
   btn.closest(".actions").appendChild(pop);
+  positionPanel(pop);   // CAS-304
+  wirePanelSlide(pop, ".cseg", el=>pickWatch(id, el.dataset.key));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
-  const first=pop.querySelector(".cseg"); if(first) first.focus();
+  const first=pop.querySelector(".cseg"); if(first) first.focus({preventScroll:true});
 };
 // Answering closes the panel first: setOpinion folds the card to its stub, and a panel left open would be
 // anchored to an .actions row that no longer exists.
@@ -3929,7 +4459,13 @@ const TAG_GROUPS = [
   // Liked and Disliked are filed apart (CAS-100): they are the two halves of what one tick used to say, they
   // pull the taste weighting in opposite directions, and a film you told us you disliked must not sit in a
   // group headed "the kind you keep".
-  {key:"liked", icon:"👍", title:"Watched · liked", colour:"var(--green)",
+  // CAS-278: Wow! gets a group of its own rather than being folded in with Watch Again. Without one, every
+  // film given the top answer would silently vanish from these receipts — `isLiked` no longer matches it —
+  // and a film disappearing because you praised it is the worst possible reading of that gesture.
+  {key:"wow", icon:"🌟", title:"Watched · wow", colour:"var(--green)",
+   set:()=>new Set([...watched].filter(isWow)),
+   blurb:"The ones that landed hardest — I keep them out of what I find for you, and I lean toward more like them"},
+  {key:"liked", icon:"👍", title:"Watched · watch again", colour:"var(--green)",
    set:()=>new Set([...watched].filter(isLiked)),
    blurb:"Seen and enjoyed — I keep them out of what I find for you, and I look for more like them"},
   {key:"disliked", icon:"👎", title:"Watched · didn't like", colour:"var(--open)",
@@ -3946,8 +4482,17 @@ const TAG_GROUPS = [
 // would always answer "none", which is not an answer: it flatly contradicts the purple chip the same film was
 // wearing a second before you ticked it.
 const wouldWatch = m => cascades.filter(c=>watchesFilm(m, {...c, excludeWatched:false, excludeBlocked:false}));
-const WIN_COLOUR = {opening_week:"var(--open)", in_cinema:"var(--amber)", pvod:"var(--purple)",
-                    rental:"var(--blue)", included_streaming:"var(--green)", upcoming:"var(--grey)"};
+// CAS-286: Upcoming takes the violet token here too — this map paints the Your Movies / Found rows, which
+// is one of the places the ticket lists.
+//
+// These are HEX rather than var(), and that is a fix, not a style choice. The one place this map is used
+// appends an alpha suffix to build the lozenge's background and border — `${WIN_COLOUR[w]}22`. Against a
+// var() that produces `var(--green)22`, which is not a colour, so EVERY row's lozenge has silently had no
+// background and no border since the map was written. Against a hex it produces `#48c78e22`, which is the
+// 8-digit hex the code was always assuming. Worth knowing that this fixes all six windows, not just this
+// ticket's one.
+const WIN_COLOUR = {opening_week:"#ff6b6b", in_cinema:"#f0a336", pvod:"#a486f0",
+                    rental:"#5aa9f0", included_streaming:"#48c78e", upcoming:"#7C5CFF"};
 function mlOffersHTML(m){
   const w=primaryStatus(m);
   const offers=isEstimated(m) ? [] : dedupOffers(m.offers);
@@ -3989,9 +4534,11 @@ function mlWhyHTML(m, groupKey){
                                                       : " — put it back and it's theirs again."}`;
   }
   const would=wouldWatch(m);   // liked / disliked / not-for-me: which radars WOULD have it, if you hadn't said so
-  const why = groupKey==="liked"    ? "you've seen it and liked it"
+  const why = groupKey==="wow"      ? "you've seen it, and it landed"
+            : groupKey==="liked"    ? "you've seen it and would watch it again"
             : groupKey==="disliked" ? "you've seen it and didn't like it"
-                                    : "it's not for you";
+            : groupKey==="soso"     ? "you've seen it and it left you cold"
+                                    : "you won't watch it";
   return would.length
     ? `${cascChips(would)} would be watching this — held back because ${why}.`
     : (cascades.length ? "No Cascade of yours matches this one."
@@ -4014,50 +4561,6 @@ function mlRowHTML(m, groupKey){
       ${opinionOf(id) ? "" : pickBtnHTML(id, "mlbtn")}
       ${opinionBtnsHTML(id, "mlbtn")}
     </div>
-  </div>`;
-}
-// ---- What each Cascade has actually done for you (retention surfacing, CAS-69) --------------------------
-// The agent's accrued value, in its own voice — and ONLY from figures we hold. The one saving this catalogue
-// can back up is money NOT spent renting: a film Cascade found for you that is included on a service you
-// already pay for, priced against that same film's real rent offer. We hold no subscription prices, so no
-// monthly saving is ever quoted; a Cascade with nothing to show says so rather than inventing a number.
-// Only films the Cascade actually FOUND count (purple). One you added by hand and it happens to match is not
-// something it found for you, and "Bargain hunter has found 6" must never be counting your own adds.
-function cascadeValue(c){
-  const films=MOVIES.filter(m=>found.has(m.tmdb_id) && foundSource(m.tmdb_id)==="auto"
-    && ((notify[m.tmdb_id]||{}).cascadeIds||[]).includes(c.id));
-  let covered=0, priced=0, saved=0;
-  films.forEach(m=>{
-    const offers=dedupOffers(m.offers||[]);
-    if(!offers.some(o=>(o.type==="sub"||o.type==="free") && prefs.sub.has(o.service))) return;
-    covered++;                                     // included on a service you actually pay for
-    const rents=offers.filter(o=>o.type==="rent" && o.price!=null).map(o=>o.price);
-    if(rents.length){ priced++; saved+=Math.min(...rents); }
-  });
-  return {n:films.length, covered, priced, saved};
-}
-function valueLine(c){
-  const v=cascadeValue(c);
-  if(!v.n) return `hasn't found anything yet — it's still watching.`;
-  const head=`has found <b>${v.n} film${v.n===1?"":"s"}</b>`;
-  if(!servicesPicked())
-    return `${head}. Tell me what you're paying for (⚙️) and I'll show you what that's worth to you.`;
-  if(!v.covered)
-    return `${head} — none of them are included on a service you pay for yet, so there's no saving I can honestly claim.`;
-  const body=`${head} — ${v.covered} of ${v.covered===v.n?"them":"those"} ${v.covered===1?"is":"are"} included on a
-    service you already pay for`;
-  return v.saved>0
-    ? `${body}, so that's <b>$${v.saved.toFixed(2)}</b> you don't have to spend renting
-       ${v.priced===v.covered ? (v.covered===1?"it":"them") : `the ${v.priced} of them we hold a rent price for`}.`
-    : `${body}.`;
-}
-function foundValueHTML(){
-  if(!cascades.length || !found.size) return "";
-  return `<div class="dgcard" style="margin-top:16px">
-    <div class="dgname">📣 What I've been doing for you</div>
-    ${cascades.map(c=>`<div class="dgrow">${c.icon} <b>${esc(c.name)}</b> ${valueLine(c)}</div>`).join("")}
-    <div class="dgnone" style="margin-top:8px">Every figure here is read from today's real offer prices. We don't
-      hold subscription prices, so we never guess at a monthly saving.</div>
   </div>`;
 }
 // ================= The Found view — the hero (CAS-70) =======================================================
@@ -4131,7 +4634,27 @@ const settleFoundView = () => { heldOpen.clear(); };
 // never fire), so `status` keeps it and `listStatus` is what decides whether it appears here. An agent with no
 // listStatus — anything built before this screen existed — lists everything it watches, as it always did.
 const listWindowOK = (m,c) => !(c.listStatus||[]).length || c.listStatus.includes(primaryStatus(m));
-const listedBy = (m,c) => matchesCriteria(m, {...c, status:[]}) && inScope(m,c) && listWindowOK(m,c);
+// CAS-279: a hand-move is the only thing that outranks an agent's criteria about where a film is listed.
+// Moved-out wins outright; pinned-in skips the criteria but still has to clear the agent's own WINDOWS,
+// because those are what the agent lists rather than what it likes — a cinema agent showing a film that is
+// only on streaming would be a lie about where you can watch it, whoever put it there.
+// CAS-290/291: a film you have ANSWERED stays in the cascade, as the one-line stub CAS-100 defined. It used
+// to be removed outright — the agent excludes what you have seen, and that exclusion reached the listing as
+// well as the watch set — so a card you tagged vanished from under the tap that tagged it, on an agent's own
+// listing, while the All view folded it in place. Two views, two answers to the same gesture.
+//
+// The exclusion is NOT weakened. It still applies to everything that counts a RESULT: the section counts and
+// the deck card count both drop tagged films, and watchesFilm/recomputeFound are untouched, so an agent
+// still stops watching and stops alerting on a film you have seen. The only thing that changes is that the
+// ROW survives, greyed and undoable, instead of disappearing.
+const listedBy = (m,c) => !movedOutOf(m.tmdb_id,c)
+  && (pinnedInto(m.tmdb_id,c)
+        ? (inScope(m,c) && listWindowOK(m,c))
+        : (matchesCriteria(m, {...c, status:[], excludeWatched:false, excludeBlocked:false})
+             && inScope(m,c) && listWindowOK(m,c)));
+// The number describing a cascade counts RESULTS, so it leaves the stubs out — the same rule the section
+// heads and the open card's own count already follow.
+const listedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m)).length;
 function scopeRows(){
   const c=activeCascade();
   // No Cascade open = the All card = the catalogue itself, which is what that card says it is.
@@ -4153,23 +4676,17 @@ function cascadeStartHTML(){
     }).join("")}</div>
   </div>`;
 }
-// ---- "Finish your agent" (CAS-71) ----------------------------------------------
-// The services question, asked at the ONE moment it's worth answering: the agent has already found you films,
-// so the ask now buys you something visible (only what you can watch, and what it saves you) instead of being
-// a toll gate on the way in. It waits for a second visit or a first override — i.e. for the thing to have
-// proved itself — and it disappears the moment services are set.
-const overrideCount = () =>
-  Object.values(notify).filter(e=>e.source==="manual" || e.removed).length + watched.size + blocked.size;
-function finishAgentHTML(){
-  if(servicesPicked() || !found.size) return "";
-  if(visits<2 && overrideCount()===0) return "";
-  return `<div class="cascstart" style="margin:12px 12px 0">
-    <div class="csh">📺 Finish your agent</div>
-    <div class="csp">I'm working on taste and price alone — I don't know what you're already paying for. Tell me,
-      and I'll only put films in front of you that you can actually watch, and show you what they're saving you.</div>
-    <button class="ctabtn" onclick="openServices()">📺 Add my services</button>
-  </div>`;
-}
+// ---- "Finish your agent" (CAS-71) — removed by CAS-273 --------------------------
+// The services question used to be asked a second time here, on top of the listing, once the agent had found
+// you something. The ask is already made where it belongs — in the flow that builds the agent, and any time
+// after that behind the ⚙️ — so this was a third place saying the same thing, and it said it by pushing the
+// films the agent had just found down the screen. An agent that has just delivered should show you the
+// delivery, not a form.
+//
+// The block is gone rather than hidden behind a flag: it left the listing's first screenful to a nag, which
+// is the opposite of what a listing is for. Services are still entirely settable, and the services banner
+// (CAS-254) still says so on any agent actually scoped to them — that one appears only when the scope is
+// really narrowing your list, which is a fact about the list rather than a request.
 // A film is 🆕 if the AGENT picked it up lately — one you pinned yourself this morning is not news to you.
 // A held film keeps the answer it had when you tapped it, so the chip on a stub doesn't flicker.
 const isFresh = m => heldOpen.has(m.tmdb_id) ? heldOpen.get(m.tmdb_id).fresh
@@ -4183,7 +4700,7 @@ function renderListChrome(){
   // With one list a first-timer lands on the catalogue instead — full of films, so never empty — and the
   // nudge would have had nowhere to appear. It sits above the listing while there are no Cascades at all,
   // and goes the moment there is one.
-  el.innerHTML = cascadeStartHTML() + finishAgentHTML();
+  el.innerHTML = cascadeStartHTML();   // CAS-273: "Finish your agent" no longer rides above the listing
 }
 // CAS-136: the membership-setup banner is no longer part of the listing — it sits at the very top of the
 // content, above the cascade scroll, so it cannot be scrolled past without being read. Still gated by
@@ -4191,14 +4708,22 @@ function renderListChrome(){
 // The three things you've SAID about films (took off / watched / not interested) are the undo for every
 // one-tap decision, so they sit under the list as receipts — in both scopes, so the undo is never somewhere
 // you have to go and find.
+// CAS-294: the watch-status groups no longer hang off the bottom of a cascade. Since CAS-290 an answered
+// film stays in the listing as its collapsed line, so those groups had become a SECOND copy of films already
+// on the screen above them — the same title twice, in two shapes, one of which was a footer nobody scrolled
+// to. Your Movies is the screen that owns "everything you have said about a film", and it reads the same
+// sets, so nothing is lost: the answer is undoable in place on the stub, and reviewable in full over there.
+//
+// What is NOT removed: the "you took these off" receipts, which are a Pick override rather than a watch
+// status and are the only undo for it.
+const SAID_HIDDEN = new Set(["found","wow","liked","soso","disliked","blocked"]);
 function renderSaid(){
   const el=$("listSaid"); if(!el) return;
-  const said=TAG_GROUPS.filter(g=>g.key!=="found")
+  const said=TAG_GROUPS.filter(g=>!SAID_HIDDEN.has(g.key))
     .map(g=>{ const ids=g.set();
               return {g, films:MOVIES.filter(m=>ids.has(m.tmdb_id) && !heldOpen.has(m.tmdb_id))}; })
     .filter(x=>x.films.length);
-  el.innerHTML=`<div style="padding:0 12px">${foundValueHTML()}</div>`
-    + said.map(({g,films})=>`<div class="mlgroup" style="padding:0 12px">
+  el.innerHTML=said.map(({g,films})=>`<div class="mlgroup" style="padding:0 12px">
       <div class="mlhead" style="color:${g.colour}">${g.icon} ${g.title}<span class="n">${films.length}</span></div>
       <div class="pnote" style="margin:-4px 0 8px">${g.blurb}</div>
       ${films.map(m=>mlRowHTML(m,g.key)).join("")}</div>`).join("");
@@ -4228,14 +4753,7 @@ window.setNotify=(id,on)=>{
   }
   logEvent("notify",{key: on ? (auto?"restore_auto":"add_manual") : (auto?"remove_auto":"unpin"), cascades:e.cascadeIds.length});
   saveNotify();
-  const m=MOVIES.find(x=>x.tmdb_id===id);
-  const names=cascadesFor(id).map(c=>c.name).join(", ");
-  toast(on
-    ? (auto ? `🔔 “${m.title}” is back on your Found list — ${names} ${e.cascadeIds.length===1?"is":"are"} watching it again`
-            : `🔔 You added “${m.title}” — you'll be alerted when it moves`)
-    : (auto ? `🚫 “${m.title}” is off your Found list — it stays off, even though ${names} still ${e.cascadeIds.length===1?"matches":"match"} it`
-            : `🚫 “${m.title}” is off your Found list`));
-  render();
+  render();   // CAS-287: the row repaints to its new state — that IS the confirmation
 };
 
 // ---- Tap the card to open it (CAS-178) ------------------------------------------
@@ -4247,6 +4765,23 @@ window.setNotify=(id,on)=>{
 // actually landed on, not where the handler is: a real element wins over the region it sits in — the
 // withheld-IMDb explainer, the scale badge, the poster's trailer link, a trailer thumbnail, and any
 // availability lozenge that becomes a button later.
+// CAS-283: while a control is open, the card is a dismiss surface and nothing else. A tap anywhere on it
+// collapses the control and does NOT expand the card.
+//
+// It is wired on the CARD rather than inside cardTap because cardTap only covers the body — the availability
+// strip and the footer deliberately opt out of it (CAS-239) — and "anywhere on the card" has to mean anywhere.
+// Capture phase, so it runs before the card's own handler and before any button inside the card: while a
+// panel is open, the first tap's whole job is to put it away.
+//
+// The panel itself is excluded, or choosing an option would be swallowed by the dismiss.
+document.addEventListener("click", e=>{
+  const pop=document.querySelector(".cpop"); if(!pop) return;
+  if(pop.contains(e.target)) return;                 // a tap inside the open control is the control's own
+  const card=e.target.closest(".card"); if(!card) return;
+  if(!card.contains(pop)) return;                    // a different card: leave it to that card's own rules
+  e.preventDefault(); e.stopPropagation();
+  closeWatchPanel();
+}, true);
 window.cardTap=(e,id)=>{
   // CAS-239: nothing in the availability strip or the footer opens the card, whichever handler the click
   // arrived through. Belt and braces on top of the strip losing its own handler: the footer is a sibling of
@@ -4351,13 +4886,21 @@ const BUDGET_BANDS = [
 const UNBUDGETED_N = MOVIES.filter(m=>!m.budget).length;
 // Same rule as an unrated film: 11 titles have no budget figure. They ride along at "Any" and drop out
 // the moment a band is picked — unless you take the escape hatch. We never guess a number we don't have.
-function budgetOK(m, band, includeUnbudgeted){
+// CAS-288 (Lee, 2026-08-01): a film with NO budget figure is excluded whenever a budget band is chosen.
+// An unknown budget cannot satisfy a budget selection — it is not a small budget, it is an absence — so the
+// old opt-in that let it through has gone, along with the parameter that carried it. At "Any" (band 0)
+// nothing is being asked, so nothing is excluded and every film passes as before.
+//
+// Scope, per the ticket: this is the explicit Budget FILTER only. The Mission scale dial is a different path
+// and is untouched — it reads worldwide gross as a fallback, so a film with no budget can still have a known
+// scale there, and CAS-288 says so explicitly.
+function budgetOK(m, band){
   if(!band) return true;
+  if(!m.budget) return false;
   const b=BUDGET_BANDS[band];
-  if(!m.budget) return !!includeUnbudgeted;
   return m.budget>=b.min && (b.max==null || m.budget<b.max);
 }
-const budgetBandCount = i => MOVIES.filter(m=>budgetOK(m,i,false)).length;
+const budgetBandCount = i => MOVIES.filter(m=>budgetOK(m,i)).length;
 
 // ---- Scale tiers: ONE badge per film, and the same rule the Tentpole filter runs (CAS-64) -------------
 // Four tiers, defined once. The card's badge and the Cascade's Tentpole filter both call scaleTier(), so a
@@ -4536,7 +5079,11 @@ const CURRENT_YEAR = ALL_YEARS[0];
 const EARLIER_YEARS = ALL_YEARS.slice(1);
 const yearCount = y => MOVIES.filter(m=>yearOf(m)===y).length;
 
-function normCascade(c){
+// CAS-261: `template:true` says "this is a preset's lane-NEUTRAL recipe, not an agent". A preset is a
+// standard offered in both lanes (CAS-160), so its stored criteria must keep every rung it was written with;
+// the lane rule is applied per lane, later, by starterPreview and by the flow's draft. Without the opt-out
+// the one normalise pass over STARTERS would lane them all as cinema and empty the streaming presets.
+function normCascade(c, opts){
   c.status = c.status||[];
   // CAS-244: the per-agent channel overrides, and the resolved answer the monitor reads. An agent that has
   // never been asked has neither, and both fill in as "everything the account allows" — which is what an
@@ -4575,6 +5122,9 @@ function normCascade(c){
   c.includeUnrated = !!c.includeUnrated;
   c.paused = !!c.paused;                      // guest mode (CAS-79): saved on-device but not watching/alerting
   c.budget = c.budget||0;                    // index into BUDGET_BANDS; 0 = Any
+  // CAS-288: nothing READS this any more — an unknown budget is excluded whenever a band is set, full stop.
+  // It is still normalised so that an agent saved before today loads without complaint, and still carried in
+  // the signature below so that flipping it does not silently look like "no change".
   c.includeUnbudgeted = !!c.includeUnbudgeted;
   c.tentpole = c.tentpole||"any";
   c.awards = !!c.awards;
@@ -4594,6 +5144,12 @@ function normCascade(c){
   // band implied. Indie was a CEILING (<$15M) with no floor at all, so it maps to Any: the honest reading of
   // an agent that asked for small films is that it never asked for a minimum.
   if(c.selScale>0 && c.selScale<1000) c.selScale = [0, 0, 15e6, 100e6][Math.round(c.selScale)] || 0;
+  // CAS-261: a lane only carries the dials it uses, and that has to be true of agents SAVED before the rule
+  // as well as agents built after it — otherwise a cinema agent from last week goes on quietly filtering on
+  // a People's-vote floor its Mission screen does not show and its auto-relax cannot loosen. laneCrit is the
+  // single definition of the rule; applying it on load is what makes it a property of the agent rather than
+  // of the screen that happened to build it.
+  if(!(opts && opts.template)) laneCrit(c, c.kind);
   // CAS-160 viewing windows. {} on everything saved before this ticket, which reads correctly: those agents
   // never expressed a preference, and their `status` still says where they hunt.
   if(typeof c.watchWindows!=="object" || c.watchWindows===null) c.watchWindows={};
@@ -4926,7 +5482,7 @@ function matchesCriteria(m,c,ignoreBlocked){
   if((c.selCritScore||c.selAwards) && !selCriticsOK(m,c)) return false;
   if(c.selScale   && selScaleMatch(m,c)===false)       return false;   // unknown(null) rides along
   if(c.selBuzz    && !selBuzzOK(m,c))                  return false;
-  if(!budgetOK(m, c.budget||0, c.includeUnbudgeted)) return false;
+  if(!budgetOK(m, c.budget||0)) return false;
   if(c.tentpole && c.tentpole!=="any" && !tentpoleIs(m,c.tentpole)) return false;
   if((m.rt_critic||0) < (c.rt||0)) return false;
   return true;
@@ -5043,7 +5599,7 @@ window.openCascade=id=>{
     if(activeId===ALL_ID) return;
     setActive(ALL_ID); settleFoundView(); clearFilters(); syncFilterUI(); restoreCascadeSearch(); render();
     logEvent("cascade_opened", {key:"all"});
-    toast(`${ALL_ICON} “All” — the whole catalogue, with nothing filtered out.`);
+
     return;
   }
   const c=cascades.find(x=>x.id===id); if(!c || activeId===id) return;
@@ -5051,10 +5607,13 @@ window.openCascade=id=>{
   logEvent("cascade_opened", {key:c.template||"custom"});
   // countCriteria() is what the Cascade SHOWS you right now, which is not the same as what it has found and is
   // watching (that's the Found list). So this line says "showing", and only the value lines say "found".
-  toast(`${c.icon} “${c.name}” — showing you ${countCriteria(c)} films right now · ${alertSummary(c)}`);
+
 };
-// Closing a Cascade lands you on All rather than on nothing — same films as before, now with a card lit.
-window.closeCascade=()=>{ setActive(ALL_ID); settleFoundView(); clearFilters(); syncFilterUI(); restoreCascadeSearch(); render(); };
+// CAS-271: the × that used to sit on an agent card is gone, and closeCascade() with it. It was never a
+// close — nothing was shut, dismissed or put away; it selected the All card, which is a thing the deck
+// already does by being scrolled to. An × on a card the user has spent time building reads as "delete
+// this", so the one control on that row that destroyed nothing was also the one that looked most like
+// it did. Selecting All is still how you leave an agent; it is just no longer disguised as an exit.
 // Filters touched by hand while a Cascade is open → offer to save them back into it.
 const sameSet=(s,a)=> s.size===a.length && a.every(v=>s.has(v));
 function cascadeDirty(){
@@ -5077,7 +5636,7 @@ window.saveCascadeEdits=()=>{
   c.includeUnrated=filt.includeUnrated; c.ratingStop=stopFor(c.imdb);
   c.budget=filt.budget; c.includeUnbudgeted=filt.includeUnbudgeted; c.tentpole=filt.tentpole;
   c.excludeWatched=filt.hideWatched; c.excludeBlocked=!filt.showHidden;
-  saveCascades(); render(); toast(`✅ Saved changes to “${c.name}”`);
+  saveCascades(); render();
 };
 
 // ---- My Cascades — coverflow deck ---------------------------------------------
@@ -5182,8 +5741,6 @@ function deckBuild(){
         <button class="ca-btn save" data-act="save" hidden>Save</button>
         <button class="ca-btn" data-act="edit">Edit</button>
         ${searchBtn(c.name)}
-        <button class="ca-btn x" data-act="share" aria-label="Share this Cascade" title="Share this Cascade">🔗</button>
-        <button class="ca-btn x" data-act="close" aria-label="Close this Cascade" title="Close this Cascade">×</button>
       </div>
     </div></div>`).join("")
   + `<div class="dcard new" role="group" aria-label="New Cascade" tabindex="-1"><div class="dc-in">
@@ -5215,19 +5772,36 @@ function deckSync(shown){
       const live=on;   // CAS-150: one list, so All's card always speaks for the list it draws
       const n=live?shown:SHOWABLE_N;             // CAS-170: the catalogue you can actually reach
       el.classList.toggle("is-active",on);
-      el.querySelector(".dc-sub").textContent=
-        `${n} film${n===1?"":"s"} ${live?"right now":"in the catalogue"} · a view, not a watch — it never alerts you`;
+      // CAS-270: the count, and nothing after it. The card is a control you flick past, not a place to
+      // read — everything the old sub-line carried is said in full on the screen the card opens.
+      el.querySelector(".dc-sub").textContent=`${n} film${n===1?"":"s"}`;
       return;
     }
     const c=deckAt(i); if(!c) return;                // the "+ New" card paints nothing
     const on=c.id===activeId;
-    const n=on?shown:countCriteria(c);               // real counts on every card — the open one shows what's on screen
+    // Real counts on every card — the open one shows what's on screen. CAS-279: a closed card counts with
+    // listedCount rather than countCriteria, because a hand-moved film is in that agent's listing and would
+    // otherwise be missing from the number describing it. The open card already reads the listing itself.
+    const n=on?shown:listedCount(c);
     el.classList.toggle("is-active",on);
     el.querySelector(".dc-icon").textContent=c.icon;
     el.querySelector(".dc-name").innerHTML=`${esc(c.name)}${on&&dirty?' <span class="dirty">· edited</span>':""}`;
+    // CAS-270: the count, and — for a streaming agent only — what the count is drawn FROM. The old line
+    // also carried the alert summary, which is a promise about the future stacked on a statement about
+    // the present; two unrelated facts in one 11px line read as neither. The bells are stated in full on
+    // the Edit screen that owns them.
+    //
+    // The scope suffix stays because for a streaming agent the count is ambiguous without it: "153 films"
+    // means something different if it is the whole catalogue than if it is only what you can already
+    // watch, and nothing else on the card says which. It is spelled out in BOTH directions — an absent
+    // suffix would just be silence, and silence is what made this ambiguous in the first place. A cinema
+    // agent has no such fork, so it gets the bare count.
     el.querySelector(".dc-sub").textContent=
-      `${n} film${n===1?"":"s"} ${on?"right now":"match now"} · ${alertSummary(c)}`
-      + (anyScope(c) ? (allScoped(c) ? " · my services" : ` · my services on ${scopeSummary(c)}`) : "");
+      `${n} film${n===1?"":"s"}`
+      + (c.kind==="stream"
+          ? " · " + (anyScope(c) ? (allScoped(c) ? "my services" : `my services on ${scopeSummary(c)}`)
+                                 : "any service")
+          : "");
     el.querySelector('[data-act="save"]').hidden=!(on&&dirty);
   });
   deckPaint();
@@ -5294,8 +5868,6 @@ deckStrip.addEventListener("click",e=>{
   const act=e.target.closest("button[data-act]")?.dataset.act;
   if(act==="new") return newCascade();
   if(act==="edit") return editCascade();
-  if(act==="share") return shareCascade();
-  if(act==="close") return closeCascade();
   if(act==="save") return saveCascadeEdits();
   if(act==="search") return onSearchIcon(card);
   if(deckDragged) return;                            // that click was the end of a drag
@@ -5511,9 +6083,9 @@ window.relaxFilter=key=>{
   if(key==="search") setSearchTerm("");   // CAS-150: the per-cascade box is the only search box now
   syncFilterUI(); render();
   const n=MOVIES.filter(passes).length;
-  toast(`Loosened — ${n} film${n===1?"":"s"} now`);   // the Cascade reads as "edited": Save it or leave it
+  // CAS-287: the count on the card and the list itself both move — no banner needed to say so.
 };
-window.resetEverything=()=>{ setActive(null); clearFilters(); syncFilterUI(); render(); toast("Reset — showing you everything again"); };
+window.resetEverything=()=>{ setActive(null); clearFilters(); syncFilterUI(); render(); };
 function emptyResultsHTML(){
   const c=activeCascade();
   const opts=relaxOptions();
@@ -5835,7 +6407,6 @@ function buildScale(){
       </div>
       <div class="rlabels" id="cBudLabels">${BUDGET_BANDS.map(b=>`<span>${b.label}</span>`).join("")}</div>
       <div class="qcap" id="cBudDesc"></div>
-      <button class="hatch" id="cUnbudgeted" role="switch" type="button" hidden></button>
     </div>
     <div class="qrow">
       <div class="qhead"><span class="qt">Tentpole</span><span class="qcap" style="margin:0" id="cTentCap"></span></div>
@@ -5859,11 +6430,7 @@ function buildScale(){
   });
   wrap.querySelector("#cBudget").oninput=e=>{
     draft.budget=+e.target.value;
-    if(!draft.budget) draft.includeUnbudgeted=false;   // at "Any" nothing is excluded — the hatch is moot
     syncScale(); refreshDraft();
-  };
-  wrap.querySelector("#cUnbudgeted").onclick=()=>{
-    draft.includeUnbudgeted=!draft.includeUnbudgeted; syncScale(); refreshDraft();
   };
   return wrap;
 }
@@ -5874,14 +6441,13 @@ function syncScale(){
   [...$("cScale").querySelectorAll(".rstops i")].forEach((el,i)=>el.classList.toggle("lit", i<=draft.budget));
   [...$("cBudLabels").children].forEach((el,i)=>el.classList.toggle("lit", i===draft.budget));
   $("cBudCap").textContent=band.label;
+  // CAS-288: choosing a band now excludes the titles with no budget figure, so the line says so. The count
+  // was already exclusive of them; what was missing was telling anyone.
   $("cBudDesc").innerHTML = draft.budget
-    ? `<b>${band.label} — ${band.hint}.</b> ${budgetBandCount(draft.budget)} titles in the catalogue sit in that band.`
+    ? `<b>${band.label} — ${band.hint}.</b> ${budgetBandCount(draft.budget)} titles sit in that band.`
+      + (UNBUDGETED_N ? ` The ${UNBUDGETED_N} titles with no budget figure are left out — an unknown budget
+         can't meet a budget bar.` : "")
     : `<b>Any budget.</b> Includes the ${UNBUDGETED_N} titles TMDB gives no budget figure for.`;
-  const hatch=$("cUnbudgeted");
-  hatch.hidden=!draft.budget || !UNBUDGETED_N;
-  hatch.classList.toggle("on", draft.includeUnbudgeted);
-  hatch.setAttribute("aria-checked", String(draft.includeUnbudgeted));
-  hatch.textContent=`${draft.includeUnbudgeted?"✓":"＋"} Include the ${UNBUDGETED_N} titles with no budget figure`;
 
   const t=draft.tentpole;
   $("cTentCap").textContent=TENTPOLE_STOPS.find(x=>x.key===t).label;
@@ -6159,8 +6725,12 @@ $("cApply").onclick=()=>{
       : isNew ? `✓ ${c.icon} ${c.name}'s on it — ${watchCount(c)} films found already. ${alertPromise(c)}`
               : `✓ ${c.icon} “${c.name}” updated — it's watching ${watchCount(c)} films now. ${alertPromise(c)}`);
 };
-$("cDelete").onclick=()=>{
-  const c=cascades.find(x=>x.id===draft.id); if(!c) return;
+// CAS-268: ONE definition of what deleting an agent means, what it warns you about, and what it leaves
+// behind — read by the old builder's Delete and by the Edit Agent page's. Two copies of this would be two
+// chances for one of them to warn about the wrong number of films, and the number is the whole warning.
+// Returns true if the agent was actually deleted, so the caller knows whether to close the screen it is on.
+function deleteAgentAsk(c){
+  if(!c) return false;
   // Under auto-membership, deleting a Cascade DOES take its films off your Found list — it was the thing
   // holding them there. Say so, with the real number, and say exactly what survives: the films you added by
   // hand (they were never this Cascade's), and your watched / not-interested marks.
@@ -6175,11 +6745,18 @@ $("cDelete").onclick=()=>{
     + (mine ? `The ${mine} film${mine===1?"":"s"} it found will drop off your Found list — it's what was watching `
               + `${mine===1?"it":"them"}. `
             : "")
-    + `Anything you added by hand stays, and your watched / not-interested marks aren't touched.`)) return;
+    + `Anything you added by hand stays, and your watched / not-interested marks aren't touched.`)) return false;
   cascades.splice(cascades.indexOf(c),1); saveCascades();
   if(activeId===c.id){ setActive(ALL_ID); clearFilters(); syncFilterUI(); }
+  logEvent("cascade_deleted",{id:c.id, films:mine});
+  // CAS-287: deleting already asks first, and the deck visibly loses the card. A banner afterwards is a
+  // third telling of the same fact.
+  return true;
+}
+$("cDelete").onclick=()=>{
+  const c=cascades.find(x=>x.id===draft.id);
+  if(!deleteAgentAsk(c)) return;
   closeModal($("builder")); render();
-  toast(`🗑️ Deleted “${c.name}”` + (mine?` — ${mine} film${mine===1?"":"s"} left your Found list`:""));
 };
 
 // ================= Service selector (insight) =================
@@ -6453,9 +7030,22 @@ const STARTERS = [
    // CAS-248: the bar a card prints has to be the bar the agent applies, and Date Night is offered in BOTH
    // lanes. Its buzz rung is real at the cinema, where buzz is a dial, and is dropped on streaming, where it
    // is not — so the label is dropped there too rather than promising a criterion the agent no longer has.
-   bar:"Well-liked · a little buzz", barBy:{stream:"Well-liked"}, cd:"var(--blue)", primary:["vote","buzz"],
+   // CAS-261: and the cinema half loses its People's-vote clause for the same reason it loses the criterion —
+   // the cinema lane does not use that dial, so a cinema Date Night is now a buzz standard and says so.
+   bar:"Well-liked · a little buzz", barBy:{cinema:"A little buzz", stream:"Well-liked"},
+   cd:"var(--blue)", primary:["vote","buzz"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:7, selCritics:0, selScale:0, selBuzz:1}},
+  // CAS-307: from Lee's 0.8.3 staging review. Cinema only, third door after Blockbusters and Date Night —
+  // Style and Rating are part of THIS preset's standard (unlike its siblings, which leave both open), so
+  // the crit carries an explicit age ladder and a genre exclude list rather than the usual empty ones.
+  {key:"family", icon:"👨‍👩‍👧‍👦", name:"Family Movies", kinds:["cinema"],
+   blurb:"Big films the whole family can watch together.",
+   frame:"wants the big films the whole family can watch together.",
+   bar:"Studio · trending", cd:"var(--purple)", primary:["scale","buzz"],
+   crit:{status:[], genre:[], age:AGE_LEVELS.filter(a=>!MATURE.has(a)), lang:[], imdb:0, rt:0, awards:false,
+         myServices:false, exclude:["Horror","Crime","Romance"],
+         selCrowd:0, selCritics:0, selScale:50e6, selBuzz:2}},
   {key:"streaming", icon:"📺", name:"Everyday Favourites", kinds:["stream"],
    // Buildspec §10 (never "your services" until services are actually added) used to need a footnote under
    // this card. CAS-160 removes the need for one: the blurb no longer claims anything about your services.
@@ -6464,7 +7054,12 @@ const STARTERS = [
    bar:"Fun-first", cd:"var(--green)", primary:["vote"],
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:6, selCritics:0, selScale:0, selBuzz:1}},
-  {key:"prestige", icon:"🏆", name:"Nominees & Awards", kinds:["cinema","stream"],
+  // CAS-261: streaming only now. This preset IS its awards rung, and the cinema lane does not use the
+  // Critics & awards dial at all (a film opening this month has no settled awards record) — so in the
+  // cinema lane it was a card promising a standard the lane could not apply. Rather than ship it with its
+  // criterion silently zeroed, it stops being offered there. That is the product call CAS-231's KNOWN GAP
+  // was waiting on.
+  {key:"prestige", icon:"🏆", name:"Nominees & Awards", kinds:["stream"],
    blurb:"Award-worthy films of any era — must-sees.",
    frame:"collects the award nominees and winners worth seeing.",
    bar:"Award nominees & winners", cd:"var(--accent)", primary:["crit"],
@@ -6501,7 +7096,7 @@ const startersFor = kind => {
   const i = list.findIndex(s=>s.key===rec);
   return i > 0 ? [list[i], ...list.slice(0,i), ...list.slice(i+1)] : list;
 };
-STARTERS.forEach(s=>normCascade(s.crit));
+STARTERS.forEach(s=>normCascade(s.crit, {template:true}));   // CAS-261: a standard, not an agent — no lane yet
 // CAS-143/144: ONE number for a preset, everywhere it is quoted. The card, the hub's hero figure and the
 // reveal must agree, so the card counts the agent it would actually BUILD — the preset's standard laid over
 // the shipped taste baseline (all genres, any year, English, all ages), measured with watchCount, which is
@@ -6519,7 +7114,10 @@ function starterWatch(s, kind){
 }
 function starterPreview(s, kind){
   const d=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
-  d.genre=[]; d.year=[]; d.lang=["en"]; d.age=AGE_LEVELS.slice();   // the taste-baseline defaults, verbatim
+  // The taste-baseline defaults, verbatim — except age, which stays the preset's OWN cap (CAS-307: Family
+  // Movies' rating ladder is part of its standard, not something the card should quote as wide open).
+  d.genre=[]; d.year=[]; d.lang=["en"];
+  d.age=(s.crit.age&&s.crit.age.length) ? s.crit.age : AGE_LEVELS.slice();
   d.selCrowd=s.crit.selCrowd||0; d.selScale=s.crit.selScale||0;
   d.selCritScore=s.crit.selCritScore||0; d.selAwards=s.crit.selAwards||0;
   d.selBuzz=s.crit.selBuzz||0; d.selOr=false;
@@ -6564,9 +7162,10 @@ window.pickStarter=key=>{
   pendingStarter=key; wiz.starter=key;   // wiz.starter feeds the reveal's lead phrase (falls back gracefully)
   logEvent("starter_picked",{key});
   // Seed the sharpening flow FROM the picked agent: its criteria (lane, alerts, rating) become the draft the
-  // sharpening screens refine, and its name is the dynamic default the name step opens on. Genres, language
-  // and age are NOT seeded here — since CAS-146 they live on the account-level taste baseline, which the
-  // flow's Style / Language / Ratings steps edit directly, and which persists between agents by design.
+  // sharpening screens refine, and its name is the dynamic default the name step opens on. Genre and age are
+  // per-agent since CAS-182 (this comment used to say otherwise, from before that ticket landed) — the Style
+  // / Ratings screens edit onbFlow.draft directly, so a preset that wants a standard of its own (CAS-307:
+  // Family Movies' rating cap and genre exclude) has to seed it here, not just the bar dials below.
   // Commit is deferred to finishSharpSequence so the payoff shows the sharpened agent, not the raw card.
   // CAS-222: the offered name is the CHANNEL plus the preset — "Cinema Blockbusters", not "Blockbusters".
   // The card names a standard, and the same standard is a different agent in each lane, so the card's own
@@ -6581,8 +7180,10 @@ window.pickStarter=key=>{
   onbFlow.draft.kind = flowKind;     // CAS-182: the priority answer rides on the agent
   // The shipped taste defaults, verbatim — exactly what each screen's copy assumes when it opens, and the
   // same four starterPreview() counts the card against, so the card's number and the flow's first count
-  // are the same measurement.
-  onbFlow.draft.genre = []; onbFlow.draft.age = []; onbFlow.draft.lang = ["en"];
+  // are the same measurement. genre/age fall back to those defaults but defer to the preset's own crit when
+  // it sets one (CAS-307), so a preset's Style/Rating standard survives into the draft instead of always
+  // being reset to wide open — draftFromTemplate already copied s.crit.exclude in above, untouched here.
+  onbFlow.draft.genre = s.crit.genre||[]; onbFlow.draft.age = s.crit.age||[]; onbFlow.draft.lang = ["en"];
   onbFlow.draft.yearStop = 0;        // Any — every year in (CAS-116)
   // CAS-144: the dials OPEN ON THE AGENT'S OWN STANDARD, not fully open. The card you just tapped quoted a
   // number ("14 films match now"); landing on a hub that says 442 because its dials were reset would make one
@@ -7619,6 +8220,72 @@ function onbSummary(){
   const lead=(step && step.lead) ? step.lead() : `watches for <b>${onbGenrePhrase()}</b>`;
   return `📓 <b>${esc(d.name)}</b> ${lead}${onbRatingClause(d)} — <span class="cnt">${n} film${n===1?"":"s"}</span> so far. I'll tell you the moment one lands on a service.`;
 }
+// ---- CAS-264: the trail — what you have said so far -------------------------------------------------
+// A line has one weakness a hub never had: on step six you cannot see step three. The flow answers that by
+// carrying every answer forward — each screen ends with the running list of what has been set, the newest
+// row last and marked as the one you are on. So Mission shows its own summary under the dials, Style shows
+// Mission's as well as its own, and by Notify the whole brief is on the screen you are finishing.
+//
+// Every value is read LIVE off the same state the screens edit (the draft, onbFlow, prefs) rather than
+// captured when a step was left, so the trail cannot go stale if you walk back and change something. Rows
+// with nothing to say are dropped rather than printed empty — an empty row is not a summary, it is noise.
+const trailGenres = () => { const g=dT().genre;
+  return g===null ? "None selected"
+       : !g.length ? "All genres"
+       : g.length<=2 ? g.join(", ")
+       : `${g.length} of ${ONB_GENRES.length}`; };
+const trailLangs = () => { const l=dT().lang;
+  return l===null ? "None selected"
+       : !l.length ? "Any language"
+       : l.length===1 ? langName(l[0])
+       : `${langName(l[0])} +${l.length-1}`; };
+const trailAge = () => { const a=dT().age;
+  return a===null ? "None selected"
+       : (!a.length || a.length===AGE_LEVELS.length) ? "All ratings"
+       : a.join(", "); };
+const trailServices = () => { const k=prefs.sub.size+prefs.store.size;
+  return k ? `${k} service${k===1?"":"s"}` : "None named yet"; };
+const trailNotify = () => {
+  const on=[notifyPrefs.inApp && "In-app", notifyPrefs.emailOn && "Email"].filter(Boolean);
+  return on.length ? on.join(", ") : "Off"; };
+// Keyed by step, so the trail can never list a step this lane does not walk — flowList() is what orders it.
+const ONB_TRAIL = {
+  priority:    {label:"Watching", value:()=> flowKind==="stream" ? "My streaming services" : "The cinema"},
+  pickagent:   {label:"Agent",    value:()=>{ const s=STARTERS.find(x=>x.key===pendingStarter);
+                                              return s ? s.name : null; }},
+  selectivity: {label:"Mission",  value:()=> hubBarSummary(), html:true},
+  name:        {label:"Name",     value:()=> (onbFlow.name||"").trim() || onbFlow.defaultName || null},
+  genres:      {label:"Style",    value:trailGenres},
+  years:       {label:"How far back", value:()=> yearsLabel(flowYearsBack())},
+  language:    {label:"Language", value:trailLangs},
+  age:         {label:"Rating",   value:trailAge},
+  services:    {label:"Services", value:trailServices},
+  notifysettings:{label:"Notify", value:trailNotify},
+};
+// The trail starts at Mission. Before it there is nothing to recap that the screen itself is not asking, and
+// the two screens before Mission are tap-to-advance — a summary under a question you answer by tapping one of
+// two buttons would be a footnote to a decision already made.
+const TRAIL_FROM = "selectivity";
+function onbTrailRows(key){
+  const list=flowList(), here=list.indexOf(key), from=list.indexOf(TRAIL_FROM);
+  if(here<0 || from<0 || here<from) return [];
+  return list.slice(0, here+1).map(k=>{
+    const t=ONB_TRAIL[k]; if(!t) return null;
+    const v=t.value();
+    return v ? {key:k, label:t.label, value:v, html:!!t.html, now:k===key} : null;
+  }).filter(Boolean);
+}
+function onbTrailHTML(key){
+  // Only inside the wired line. A standalone ?step= preview has no steps behind it, and the Briefing is a
+  // hub whose own doors already print their summaries — a trail there would be the same words twice.
+  if(!flowOn || briefOn) return "";
+  const rows=onbTrailRows(key);
+  if(!rows.length) return "";
+  return `<div class="ostrail" id="onbTrail" aria-label="What you've set so far">
+    ${rows.map(r=>`<div class="otrow${r.now?" now":""}">
+      <span class="otk">${esc(r.label)}</span>
+      <span class="otv">${r.html ? r.value : esc(r.value)}</span></div>`).join("")}</div>`;
+}
 // The quality-bar clause. The standalone previews seed an "above average+" agent, so it reads exactly like the
 // mock; but a picked agent (CAS-122) may watch every rating — and claiming "above average+" for one that
 // doesn't would be the fabricated copy the honesty guardrail forbids, so an all-ratings agent gets no clause.
@@ -7661,15 +8328,17 @@ const MISSION_DIALS_USED = {cinema:["scale","buzz"], stream:["vote","crit","scal
 // has buzz in its NAME.
 function laneCrit(c, kind){
   if(kind==="stream") c.selBuzz = 0;
+  // CAS-261: the cinema half of the same rule. Cinema is Scale + Buzz, so a vote floor, a critics score or an
+  // awards rung on a cinema agent is a filter the Mission screen never shows and the auto-relax never loosens.
+  if(kind==="cinema"){ c.selCrowd = 0; c.selCritScore = 0; c.selAwards = 0; }
   return c;
 }
-// KNOWN GAP, found by the CAS-231 invariant suite and left for Lee to rule on: MISSION_DIALS_USED gates what
-// the Mission screen SHOWS and what the auto-relax may loosen, but not what a preset may WRITE. So a cinema
-// preset can still carry a criterion on a dial the cinema lane neither shows nor relaxes — Date Night's
-// People's-vote floor of 7.0 (2 films caught where 33 qualify) and Nominees & Awards' critics rung (0 where 82
-// qualify) are both unreachable-and-active. Zeroing them is a two-line change and it is deliberately NOT made
-// here: it would leave a card titled "Nominees & Awards" quoting 82 films with no awards criterion behind it,
-// which trades a hidden filter for a false promise. Which of the two to fix, and how, is a product call.
+// CAS-261 closes the gap the note here used to describe. The product call has been made: a cinema agent uses
+// Scale and Buzz and nothing else, so a cinema preset may not carry a People's-vote, critics-score or awards
+// criterion either. Both of the offenders are dealt with at their source rather than only here — Nominees &
+// Awards is no longer offered in the cinema lane at all (its whole standard is the awards rung), and Date
+// Night's cinema card now says "A little buzz" instead of promising "Well-liked" it can no longer apply.
+// laneCrit stays the backstop so a future preset cannot re-open the gap by accident.
 const missionKind = () => {
   const k=(onbFlow.draft||{}).kind;
   return (k==="cinema"||k==="stream") ? k : flowKind;
@@ -8248,19 +8917,35 @@ const SHARP_STEPS = {
           <span class="di">${icon}</span>
           <span class="dt"><span class="dh">${label}</span><span class="ds">${esc(sum)}</span></span>
           <span class="dc">›</span></button>`;
-      return `<h2 class="osh">${stream?"Streaming":"Cinema"} Agent Briefing</h2>
-        <p class="ossub">Everything's on this page — dip into any section to change it, or just save.</p>
+      // CAS-266: "Edit Agent", plain, and the same words whichever lane the agent is in. The old title named
+      // the lane ("Cinema Agent Briefing"), which said what the agent IS on a screen you opened to change it —
+      // the screen's job is the verb, and each row below already carries the agent's own settings.
+      return `<h2 class="osh">Edit Agent</h2>
+        <p class="ossub">Reconfigure this agent here.</p>
+        <!-- CAS-267: the rows are named and ordered as onboarding asks them. Editing an agent and building
+             one are the same set of screens (CAS-182), so a person who has just been through the flow should
+             recognise this list as the same questions in the same sequence — "Set your bar" and "Genres" were
+             two different names for screens titled Mission and Style, which made the round trip read as two
+             different products. The two steps the ticket does not name keep their onboarding neighbours: How
+             far back sits after Rating and Streaming services after Language, exactly as the stream lane
+             walks them. -->
         <div class="edoors">
-          ${row("✏️","Agent name",         onbFlow.name || d.name || "Unnamed", "name")}
-          ${row("⚙️","Agent settings",     hubWatchSummary(),                   "watching")}
-          ${row("🎚️","Set your bar",       hubBarSummary(),                     "selectivity")}
-          ${row("🎭","Genres",             briefSum("genre"),                   "genres")}
+          ${row("✏️","Agent Name",         onbFlow.name || d.name || "Unnamed", "name")}
+          ${row("🎚️","Mission",            hubBarSummary(),                     "selectivity")}
+          ${row("🎭","Style",              briefSum("genre"),                   "genres")}
+          ${row("🔞","Rating",             briefSum("age"),                     "age")}
           ${stream ? row("🕰️","How far back", yearsLabel(flowYearsBack()), "years") : ""}
           ${row("💬","Language",           briefSum("lang"),                    "language")}
-          ${row("🔞","Age rating",         briefSum("age"),                     "age")}
           ${stream ? row("📺","Streaming services", briefServicesSum(), "services") : ""}
+          ${row("🔔","Notifications",      hubWatchSummary(),                   "watching")}
         </div>
-        <div class="osfoot"><button class="oscta" type="button" onclick="briefSave()">Save agent</button></div>`;
+        <!-- CAS-268: Delete only appears for an agent that EXISTS. A brand-new agent reaching this screen
+             from New Cascade (CAS-246) has never been saved, so there is nothing to delete — offering the
+             button there would either do nothing or claim to have removed something that was never on the
+             deck. Backing out is what discards an uncommitted agent, and that is already true. -->
+        <div class="osfoot"><button class="oscta" type="button" onclick="briefSave()">Save agent</button>
+          ${d.id ? `<button class="osdel" type="button" onclick="briefDelete()">Delete agent</button>` : ""}
+        </div>`;
     },
   },
   // ---- CAS-188 #1: what are you here for? -----------------------------------------------------------
@@ -8290,7 +8975,10 @@ const SHARP_STEPS = {
     noAgent: true, hub: true,        // a card IS the answer (pickStarter walks on)
     body(){
       return `<h2 class="osh">Pick a Cascade Agent</h2>
-        <p class="ossub">It goes and finds films for you, day after day — you can change everything later.</p>
+        <!-- CAS-263: the explainer now names the CHOICE on this screen rather than describing the thing
+             you are choosing. What an agent does is the previous screen's job; this one is "pick from these,
+             or build your own", which is exactly what the last card offers. Copy is the ticket's, verbatim. -->
+        <p class="ossub">Choose a pre configured Agent or go totally custom.</p>
         <div class="scards${flowKind==="stream"?" str":""}">${starterCardsHTML()}</div>`;
     },
   },
@@ -8644,10 +9332,14 @@ let onbStepKey=null;
 // in Agent Settings, reached from the Briefing. The one notification question onboarding does ask is
 // `notifysettings`, which is about how we reach YOU (in-app, email) — not about which windows, so it stays.
 // If you are adding a step here, that is the line: onboarding may ask how to reach you, never which windows.
+// CAS-265: Rating comes straight after Style. They are the two halves of one question — what you want to
+// watch, and what you will let through — so asking them back to back means the second is answered while the
+// first is still in mind, instead of across an unrelated screen. Everything else keeps the order it had; only
+// `age` moved, in both lanes.
 const FLOWS = {
-  cinema: ["priority","pickagent","selectivity","name","genres","language","age",
+  cinema: ["priority","pickagent","selectivity","name","genres","age","language",
            "keepfinding","notifysettings"],
-  stream: ["priority","pickagent","selectivity","name","genres","years","language","age","services",
+  stream: ["priority","pickagent","selectivity","name","genres","age","years","language","services",
            "keepfinding","notifysettings"],
 };
 const flowList    = () => FLOWS[flowKind] || FLOWS.cinema;
@@ -8763,8 +9455,17 @@ window.briefSave=()=>{
   const {c} = commitDraft();
   briefClose();
   showFoundList(); render();
-  toast(`✓ Saved — ${c.icon} ${esc(c.name)} is watching ${watchCount(c)} film${watchCount(c)===1?"":"s"}.`);
+
   logEvent("briefing_saved",{id:c.id, matches:watchCount(c)});
+};
+// CAS-268: the same delete the builder has always had, on the screen people now edit agents from. It reads
+// the agent off the DECK by the draft's id rather than deleting the draft, because the draft is a copy and
+// deleting a copy would leave the real agent on the deck.
+window.briefDelete=()=>{
+  const id=(onbFlow.draft||{}).id;
+  const c=cascades.find(x=>x.id===id);
+  if(!deleteAgentAsk(c)) return;
+  briefClose(); showFoundList(); render();
 };
 function briefClose(){ briefOn=false; flowStop(); }
 
@@ -9013,7 +9714,7 @@ window.flowNotify=(key,el)=>{
     const w=$("onbEmailWrap"); if(w) w.classList.toggle("show", notifyPrefs.emailOn);
     const f=$("onbEmail"); if(f && notifyPrefs.emailOn && !(notifyPrefs.email||"").trim()) f.focus();
   }
-  notifyGate();   // CAS-253: the switch and the address are one answer
+  onbRefresh();   // CAS-308: also repaints the trail's Notify row, not just the CTA gate
   logEvent("flow_notify",{key, on:notifyPrefs[key]});
 };
 // ---- the dual-pane slide ---------------------------------------------------------------------------
@@ -9030,7 +9731,9 @@ function gotoStep(key, dir){
   }
   out.removeAttribute("id");                 // $("onbStepInner") must resolve to the INCOMING pane
   const incoming=document.createElement("div");
-  incoming.className="osinner"; incoming.id="onbStepInner";
+  // CAS-260: `osslid` says "this pane got here by sliding", which suppresses the splashIn entry fade the
+  // base .osinner rule would otherwise run the moment the slide classes come off.
+  incoming.className="osinner osslid"; incoming.id="onbStepInner";
   stage.appendChild(incoming);
   renderOnbStep(key);
   // Absolutely-positioned panes contribute nothing to layout, so the stage is pinned to the taller of the
@@ -9085,6 +9788,7 @@ function renderOnbStep(key){
       ${(last&&!spoke)?`<span class="oslast">LAST ONE</span>`:""}
     </div>`}
     ${step.body()}
+    ${onbTrailHTML(key)}
     ${step.noAgent ? "" : `<div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>`}
     ${(step.hub||chromed) ? "" : `<div class="osfoot">
       <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${
@@ -9123,6 +9827,11 @@ function onbRefresh(){
   // CAS-224: a step whose chips carry live counts repaints them here, so the chips move on the same beat as
   // the headline number rather than only when the screen is rebuilt.
   if(step && step.refresh) step.refresh();
+  // CAS-264: the trail is a live read of the same state these controls edit, so it repaints on the same beat
+  // as the count. Changing a dial and watching the Mission row under it move is the whole point of putting
+  // the summary on the screen that sets it.
+  const trail=$("onbTrail");
+  if(trail) trail.outerHTML = onbTrailHTML(onbStepKey) || "";
   // CAS-253: onbRefresh rewrites the button, so the gate is reapplied after it — otherwise any repaint
   // (a toggle, a count moving) would hand back a Continue the screen is not ready for.
   if(onbStepKey==="notifysettings") notifyGate();
@@ -9243,13 +9952,22 @@ function hubDoorHTML(icon,title,sum,key){
 }
 // Both summaries are read off the SAME live state the doors edit, so a door can never advertise something
 // different from what is behind it.
+// CAS-264: …and only the dials this LANE uses. onbFlow keeps a value for every dial whatever lane you are
+// in — a streaming preset still seeds a buzz rung — but laneCrit drops the ones the lane does not use before
+// the agent ever applies them. Reading onbFlow raw therefore advertised a criterion the agent was not using:
+// a streaming Mission summary said "Talked-about buzz" for an agent with no buzz filter, which is the exact
+// thing CAS-248 removed from that screen. This summary now reports the bar that is really being applied.
 function hubBarSummary(){
+  const uses = MISSION_DIALS_USED[missionKind()] || MISSION_DIALS_USED.cinema;
   const parts=[];
-  if(onbFlow.voteVal>=VOTE_OFF)  parts.push(voteBand(onbFlow.voteVal) || onbFlow.voteVal.toFixed(1)+"+");
-  if(onbFlow.critScore)  parts.push(critScoreReadout(onbFlow.critScore));
-  if(onbFlow.awardStop)  parts.push(AWARD_STOPS[onbFlow.awardStop].label);
-  if(onbFlow.scaleVal)    parts.push(scaleReadout(onbFlow.scaleVal));
-  if(onbFlow.buzzStop)    parts.push(BUZZ_STOPS[onbFlow.buzzStop].label+" buzz");
+  if(uses.includes("vote") && onbFlow.voteVal>=VOTE_OFF)
+    parts.push(voteBand(onbFlow.voteVal) || onbFlow.voteVal.toFixed(1)+"+");
+  if(uses.includes("crit")){
+    if(onbFlow.critScore)  parts.push(critScoreReadout(onbFlow.critScore));
+    if(onbFlow.awardStop)  parts.push(AWARD_STOPS[onbFlow.awardStop].label);
+  }
+  if(uses.includes("scale") && onbFlow.scaleVal)  parts.push(scaleReadout(onbFlow.scaleVal));
+  if(uses.includes("buzz")  && onbFlow.buzzStop)  parts.push(BUZZ_STOPS[onbFlow.buzzStop].label+" buzz");
   return parts.length ? esc(parts.join(" · ")) : "No bar set — everything qualifies";
 }
 function hubTasteSummary(){
@@ -9311,7 +10029,7 @@ function openMembership(agentKey, nameOverride, cascade){
   membCascade = c || null;
   // The real haul, in the listing's own order, from the listing's own membership test (CAS-132/176) — so
   // the posters under the button are the films behind it, not a different set that happens to look nice.
-  const films = c ? listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||"availability") : [];
+  const films = c ? listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||"availability", c) : [];
   const posters = films.slice(0, MEMB_POSTERS).map(m=>{
     const bg=m.poster?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
     return `<div class="rvposter" style="${bg}" title="${escA(m.title)}"></div>`;
@@ -9542,7 +10260,7 @@ function inviteFinish(){
   showFoundList();
   render();
   const c=inviteCascade;
-  if(c) toast(`✓ ${c.icon} ${c.name}'s on the job — alerts ${agentState.alerts?"on":"off"}${agentState.learning?", learning on":""}. ${alertPromise(c)}`);
+
 }
 window.inviteFinish=inviteFinish;
 function startOnboarding(){
@@ -9681,7 +10399,7 @@ window.onbCreateAgent=()=>{
   finishOnboarding();
   showFoundList();                               // the payoff IS the front door
   render();
-  toast(`✓ ${c.icon} ${c.name}'s on it — ${watchCount(c)} films found already. ${alertPromise(c)}`);
+
 };
 
 // CAS-129: stream a list's cards in small batches across animation frames so building a big list
@@ -9732,6 +10450,7 @@ function render(){
   if(!rows.length){
     // One list, so one empty: this Cascade matches nothing right now, and that panel carries the ways out.
     wrap.innerHTML = emptyResultsHTML();
+    renderJumpBar();          // CAS-275: no sections, so no jump rail — and no stale one left behind
     markFoundSeen();
     return;
   }
@@ -9741,7 +10460,7 @@ function render(){
   // CAS-150: no blurb above the list. The section heads carry the counts where they mean something, and
   // the order is a thing you can see by reading down the list — saying it in a line was chrome, not honesty.
   wrap.innerHTML="";
-  LISTING_ORDER.forEach(g=>{
+  orderFor(activeCascade()).forEach(g=>{      // CAS-295: a cinema agent leads with Upcoming
     const items=rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g));
     if(!items.length) return;
     const live=items.filter(m=>!taggedOut(m)).length;
@@ -9751,9 +10470,70 @@ function render(){
     wrap.appendChild(grp);
     fillListChunked(grp.querySelector(".list"), items, renderGen, isFresh);
   });
+  renderJumpBar();     // after the groups exist — it is built FROM them, never from a fixed menu
   // You are looking at it — so the next visit's "since you last looked" counts from here.
   markFoundSeen();
 }
+// ---- CAS-275: jump to a section --------------------------------------------------------------------
+// The listing is sectioned by availability window and can run to the whole catalogue, so "take me to the
+// Cinema ones" was a scroll you had to do by hand past everything ahead of it.
+//
+// It is built from the sections the DOM actually holds, not from LISTING_ORDER, which is the whole point:
+// a menu of all six windows would offer destinations that aren't in this list, and a control that scrolls
+// you nowhere is exactly what CAS-271 and CAS-272 just took off the band. Same reason it hides itself at
+// fewer than two sections — one destination is not a choice.
+const SECTION_SHORT = {opening_week:"Opening", in_cinema:"Cinema", pvod:"Premium",
+                       rental:"Rent", included_streaming:"Stream", upcoming:"Upcoming"};
+function renderJumpBar(){
+  const el=$("jumpBar"); if(!el) return;
+  const groups=[...document.querySelectorAll("#groups .group")];
+  if(groups.length<2){ el.hidden=true; el.innerHTML=""; return; }
+  el.hidden=false;
+  el.innerHTML=`<span class="jlbl">Jump to</span>` + groups.map(g=>{
+    const k=g.dataset.g;
+    const n=(g.querySelector(".gcount")||{}).textContent||"";
+    return `<button type="button" class="jchip" data-jump="${k}"
+        title="${escA("Jump to "+(STATUS_LABEL[k]||k))}">
+      <span class="gdot ${k}"></span>${esc(SECTION_SHORT[k]||STATUS_LABEL[k]||k)}<span class="jn">${esc(n)}</span></button>`;
+  }).join("");
+}
+// The bar is STICKY, so scrolling a section to y=0 hides its heading behind the bar. The offset is the
+// header plus the band, measured rather than guessed — both change height with their contents.
+//
+// And it RE-AIMS, which is the part that took a bug to learn. The listing lays its cards out lazily, so a
+// long jump makes the page GROW underneath the scroll that is still in flight: measured on a cinema agent
+// after CAS-295 put its 27-film Upcoming section first, the document went from 13,632px to 17,299px during
+// a single jump, and the target heading ended ~4,000px below the fold. A jump computed once against the page
+// as it was will always undershoot whenever there is unlaid content above the target.
+//
+// So: aim, then keep re-aiming until the target stops moving. The first move is smooth because that is what
+// a jump should feel like; the corrections are instant, because a correction that animates is just another
+// thing to chase.
+window.jumpToSection = k => {
+  // How far the section's heading still has to travel to sit just clear of the sticky chrome.
+  const delta = () => {
+    const g=document.querySelector(`#groups .group[data-g="${k}"]`); if(!g) return null;
+    const bar=$("cascbar");
+    const hdr=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hdrh"))||0;
+    const occluded=(bar ? bar.getBoundingClientRect().height : 0)+hdr;
+    return g.getBoundingClientRect().top - occluded - 8;
+  };
+  const first=delta(); if(first===null) return;
+  window.scrollBy({top:first, behavior:"smooth"});
+  let tries=0;
+  const settle=()=>{
+    const d=delta();
+    if(d===null || Math.abs(d)<=4 || tries++>=40) return;   // arrived, gone, or given up rather than loop
+    window.scrollBy(0,d);
+    setTimeout(settle,80);
+  };
+  setTimeout(settle,420);                                    // let the smooth scroll have its run first
+  logEvent("jump_to_section",{key:k});
+};
+document.addEventListener("click", e=>{
+  const b=e.target.closest("#jumpBar .jchip"); if(!b) return;
+  jumpToSection(b.dataset.jump);
+});
 // ---- CAS-129: single-card updates (never rebuild the whole ~2,000-card list on one tap) --------
 // A "Not for me"/verdict just folds that film to its stub where it is, so we swap only that one node and
 // patch the visible counters — no full render() over a list that can run to the whole catalogue.
@@ -9763,6 +10543,10 @@ function patchFindCounts(){
   CASCADE.forEach(g=>{
     const gc=document.querySelector(`#groups .group[data-g="${g}"] .gcount`);
     if(gc) gc.textContent=rows.filter(m=>primaryStatus(m)===g && !taggedOut(m)).length;
+    // CAS-275: the jump chip carries the same number, so it has to be patched by the same pass — a chip
+    // still saying 12 next to a heading saying 11 is two places disagreeing about one list.
+    const jn=document.querySelector(`#jumpBar .jchip[data-jump="${g}"] .jn`);
+    if(jn && gc) jn.textContent=gc.textContent;
   });
   renderCascadeBar(shown.length);
 }
@@ -9822,6 +10606,13 @@ addEventListener("scroll", trimFoot, {passive:true});
 function keepRowInPlace(id, repaint){
   const row=rowFor(id);
   if(!row){ repaint(); return; }
+  // CAS-315: undo whatever Chromium's content-visibility reveal already did to the window before this ran —
+  // see watchPanelAnchorY above. A one-shot: only the watch-panel path sets it, so answering from the
+  // stub's own opinion buttons (no panel involved) leaves this a no-op.
+  if(watchPanelAnchorY!=null){
+    if(Math.abs(scrollY-watchPanelAnchorY)>0.5) scrollBy(0, watchPanelAnchorY-scrollY);
+    watchPanelAnchorY=null;
+  }
   const wasTop=row.getBoundingClientRect().top, wasH=row.offsetHeight;
   repaint();
   const now=rowFor(id);
@@ -9836,10 +10627,21 @@ function keepRowInPlace(id, repaint){
   const drift=now.getBoundingClientRect().top - wasTop;
   if(Math.abs(drift)>0.5) scrollBy(0, drift);
   if(!animate){ trimFoot(); return; }
+  const lockTop=now.getBoundingClientRect().top;
   requestAnimationFrame(()=>{
     now.style.transition="height .26s ease";
     now.style.height=toH+"px";
     let done=false;
+    // The row's own top must not move while it shrinks (CAS-290) — but a shrinking document can still drag
+    // the WINDOW under it (native scroll clamping/anchoring reacting to the animation, same as the browser's
+    // own reveal above), so hold the row at lockTop for the length of the transition instead of trusting the
+    // one-time drift correction above to still be true 260ms later.
+    const hold=()=>{ if(done) return;
+      const d=now.getBoundingClientRect().top-lockTop;
+      if(Math.abs(d)>0.5) scrollBy(0, d);
+      requestAnimationFrame(hold);
+    };
+    requestAnimationFrame(hold);
     const settle=()=>{ if(done) return; done=true;
       now.style.transition=""; now.style.height=""; now.style.overflow="";
       now.removeEventListener("transitionend", settle);
@@ -9860,12 +10662,13 @@ window.setOpinion=(id,kind)=>{
   // Read the film's freshness BEFORE the answer changes it, so the 🆕 chip on the stub doesn't flicker off
   // under the tap. (The ORDER can't move at all now — availability section, then date, see byTimeline.)
   const held = wasFound ? {fresh: foundSource(id)==="auto" && isNewFound(id)} : null;
-  watched.delete(id); disliked.delete(id); blocked.delete(id); indifferent.delete(id);
+  watched.delete(id); disliked.delete(id); blocked.delete(id); indifferent.delete(id); wowed.delete(id);
   if(on){
     if(kind==="notfor") blocked.add(id);
     else { watched.add(id);
            if(kind==="disliked") disliked.add(id);
-           if(kind==="soso")     indifferent.add(id); }
+           if(kind==="soso")     indifferent.add(id);
+           if(kind==="wow")      wowed.add(id); }   // CAS-278: rides alongside `watched`, like the others
     // Only a film the agent was actually offering is held in the Found view. Answering something in Find that
     // was never found would otherwise float it into "Found for you" — a list that means "the agent picked
     // these", and it didn't. In Find the stub holds its own place anyway, off the back of taggedOut.
@@ -9876,21 +10679,11 @@ window.setOpinion=(id,kind)=>{
   // FIRST — so the toast reports what actually happened, not what we assumed. The repaint runs inside
   // keepRowInPlace so the card folds (or unfolds, on the tap that clears it) exactly where you tapped it.
   keepRowInPlace(id, ()=>repaintAfterOpinion(id));   // CAS-129: swap only the tapped row, not the whole list
-  opinionToast(id, on?kind:was, on, wasFound);
 };
-// The toast says the two things a one-tap answer really did: it folded the card (and how to undo that), and —
-// because every Cascade excludes what you've seen or waved off — whether it just ended that film's alerts.
-const OPINION_SAID = {liked:"👍 Liked", disliked:"👎 Didn't like", soso:"😐 So-so", notfor:"🚫 Not for me —"};
-function opinionToast(id, kind, on, wasFound){
-  const m=MOVIES.find(x=>x.tmdb_id===id);
-  if(!on){
-    const back = !wasFound && found.has(id) ? " — back on your Found list" : "";
-    return toast(`Cleared your answer on “${m.title}”${back}`);
-  }
-  const bits=["collapsed to one line"];
-  if(wasFound && !found.has(id)) bits.push("your Cascades will stop alerting on it");
-  toast(`${OPINION_SAID[kind]} “${m.title}” — ${bits.join(" · ")}`);
-}
+// CAS-287: the toast that used to fire here is gone, and opinionToast with it. It was the worst offender the
+// ticket describes: answering a run of films is the single most repeated gesture in the app, and every answer
+// threw a banner over the bottom of the list you were working down. What it said was already on screen — the
+// card had visibly folded — so it interrupted in order to report something you had just watched happen.
 // ---- The Pick ring (CAS-100) ---------------------------------------------------
 // Agent Pick → My Pick → off → Agent Pick, for a film one of your Cascades matches. Taking it to "off" is the
 // personal override that outlasts every future run: the Cascade will go on matching it and will not put it
@@ -9903,7 +10696,7 @@ function opinionToast(id, kind, on, wasFound){
 window.cyclePick=id=>{
   const e=entryFor(id), auto=e.cascadeIds.length>0, st=pickState(id);
   const m=MOVIES.find(x=>x.tmdb_id===id);
-  const done=t=>{ saveNotify(); render(); toast(t); };
+  const done=t=>{ saveNotify(); render(); };   // CAS-287: the ring repaints; it does not also announce itself
   if(auto && st==="agent"){                        // Agent Pick → My Pick: you take it over, and we remember
     e.source="manual"; e.removed=false; e.claimed=true;
     logEvent("notify",{key:"claim_pick", cascades:e.cascadeIds.length});
@@ -10242,33 +11035,22 @@ function renderAlerts(){
 }
 let toastT; function toast(msg){const t=$("toast");t.textContent=msg;t.classList.add("show");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("show"),3200);}
 
-// ================= Share a Cascade (prototype link) =================
-// The whole radar travels in the URL — there's no backend, and a shared link must keep working when the
-// catalogue behind it has changed. So everything arriving from a URL is treated as hostile: whitelisted
-// keys only, every value checked against what the catalogue ACTUALLY has, and the result opened as a
-// DRAFT the recipient has to accept. A share link can never write to someone's saved Cascades by itself.
-const SHARE_KEYS = ["name","icon","status","genre","exclude","age","lang","culture","year","imdb","ratingStop",
-  "includeUnrated","budget","includeUnbudgeted","tentpole","awards","myServices","sort","alerts","rt"];
-const b64url = s => btoa(String.fromCharCode(...new TextEncoder().encode(s)))
-  .replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+// ================= Opening a shared Cascade (inbound only) =================
+// CAS-272: the 🔗 that MADE one of these links is gone, and shareCascade/shareLink/SHARE_KEYS/b64url with
+// it. It was never a share — there is no backend, so it copied a URL to the clipboard and left the rest to
+// you, while sitting in a control row next to Edit as though it were a peer of it. A control that hands you
+// a string and calls it "shared" promises a thing the product does not do.
+//
+// The RECEIVING half stays, and deliberately: links made before today are already out there in people's
+// messages, and a link that opens nothing is worse than a link that was never offered. Nothing in the app
+// mints a new one now, so this path only ever runs for a URL somebody already holds.
+//
+// Everything arriving from a URL is still treated as hostile: whitelisted keys only, every value checked
+// against what the catalogue ACTUALLY has, and the result opened as a DRAFT the recipient has to accept.
+// A share link can never write to someone's saved Cascades by itself.
 const unb64url = s => new TextDecoder().decode(
   Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")), c=>c.charCodeAt(0)));
 
-function shareLink(c){
-  const payload={};
-  SHARE_KEYS.forEach(k=>{ if(c[k]!==undefined) payload[k]=c[k]; });
-  const base=location.origin+location.pathname;
-  return `${base}?c=${b64url(JSON.stringify(payload))}`;
-}
-window.shareCascade=()=>{
-  const c=activeCascade(); if(!c) return;
-  logEvent("share_copied",{key:c.template||"custom"});
-  const url=shareLink(c);
-  const done=ok=>toast(ok ? `🔗 Link to “${c.name}” copied — it opens as a draft they can review`
-                          : `🔗 Copy this: ${url}`);
-  if(navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(()=>done(true), ()=>done(false));
-  else done(false);
-};
 // Keep only values this catalogue can actually serve. A link made before a genre/year/service existed —
 // or hand-edited — degrades to a narrower-but-valid radar instead of a broken one or a silent lie.
 const keepKnown = (v, allowed) => Array.isArray(v) ? v.filter(x=>allowed.includes(x)) : [];
@@ -10349,7 +11131,7 @@ function afterSignIn(){
     document.body.style.overflow="";
     showFoundList(); render();
     const n=cascades.length;
-    toast(`👋 Welcome back — ${n} Cascade${n===1?"":"s"} ${n===1?"is":"are"} still watching for you.`);
+
     logEvent("signin_returning",{cascades:n});
     return;
   }
@@ -10378,7 +11160,10 @@ if(booted){ applyCascade(booted); }
 // after all, looking at it), so asking afterwards what was new would always answer "nothing".
 const seenFound = loadSeenFound();
 render();
-const freshFound = seenFound ? [...found].filter(id=>!seenFound.has(id)) : [];
+// CAS-287 removed the "found N since you last looked" banner, so nothing reads this comparison at boot any
+// more. The SNAPSHOT itself still matters and is deliberately kept: markFoundSeen() is what the 🆕 chip on
+// each card is measured against (CAS-70 freshness), and seeding it on a first run is what stops every film
+// in the catalogue reading as new to somebody who has never seen any of them.
 if(!seenFound) markFoundSeen();   // first run: seed it, and say nothing — there is no "last time" to compare to
 // A shared link takes precedence over first-run onboarding — they arrived to look at a specific radar.
 const openedShared = openSharedFromURL();
@@ -10389,15 +11174,17 @@ const openedShared = openSharedFromURL();
 // so the screen can be reviewed on its own before Lee wires the sequence.
 if(!openedShared && previewStep && openPreviewStep(previewStep, previewAgent)){/* previewing a single step */}
 else if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
-// One screen, one message. Priority: the reset notice, then the duplicate clean-up (it changed your Cascades,
-// so it has to be said out loud), then the agent's report on what it found while you weren't looking.
+// CAS-287: two of the three arrival banners are gone. "Welcome back, N cascades are still watching" and
+// "Cascade found N films since you last looked" were both greetings thrown over the listing at the exact
+// moment you arrived to read it — and both said something the deck and the list say better, permanently,
+// without being dismissed.
+//
+// The duplicate clean-up survives, and is the one that should. It is not a confirmation of anything the user
+// did: the app CHANGED THEIR CASCADES on their behalf, on the way in, and something that edits your saved
+// work without being asked has to say so out loud.
 if(didReset) toast("🧹 Local state cleared — this is a clean first run.");
 else if(dedupedN)
   toast(`🧹 Cleaned up ${dedupedN} duplicate Cascade${dedupedN===1?"":"s"} — ${dedupedN===1?"it was an identical copy":"they were identical copies"} finding the same films twice.`);
-// The agent reports in the moment you come back — but only when it has something true to report, and only when
-// nothing else owns the screen (a shared link, or first-run setup).
-else if(freshFound.length && !openedShared && !$("onb").classList.contains("open"))
-  toast(`🔔 Cascade found ${freshFound.length} film${freshFound.length===1?"":"s"} for you since you last looked.`);
 
 // ============================================================================
 // Per-account Cascade persistence (CAS-83 / spec 26771457 §3-§4)

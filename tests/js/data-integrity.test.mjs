@@ -73,12 +73,11 @@ test("listing: every listed film carries a window the agent lists, with a label 
   }
 });
 
-// A preset on the pick-agent screen is an offer, and an offer that lists nothing is a dead end. One does
-// today — cinema/prestige, 0 films — and it is the KNOWN GAP recorded on CAS-231: the cinema presets carry
-// criteria on dials the cinema lane neither shows nor relaxes, so an awards rung nobody can see empties the
-// agent. That is CAS-231/CAS-237's to close, not this test's to hide, so this is a ratchet: it holds the
-// number of empty offers where it is and fails the moment a second one goes dark.
-const EMPTY_OFFERS_TODAY = 1;
+// A preset on the pick-agent screen is an offer, and an offer that lists nothing is a dead end. One did —
+// cinema/prestige, 0 films — which was the CAS-231 KNOWN GAP: an awards rung nobody could see, on a lane
+// with no awards dial, emptying the agent. CAS-261 closed it by taking that preset out of the cinema lane
+// altogether, so the ratchet comes down to zero. Every offer on both shortlists now lists something.
+const EMPTY_OFFERS_TODAY = 0;
 test("listing: no more offers go dark than the ones already known to be", () => {
   const empty = everyListing().filter(x => x.listed.length === 0).map(x => x.label);
   assert.ok(empty.length <= EMPTY_OFFERS_TODAY,
@@ -131,6 +130,20 @@ test("in cinema: a wide-open cinema agent loses none of them, and is not a wall 
   assert.ok(onScreen.length > 0, "the widest cinema recipe lists nothing that is on a screen (CAS-237)");
   // "Not a wall of Upcoming" as the loosest assertion that still means it. Today the widest cinema recipe
   // is 40% Upcoming; the bug was 100%. The ceiling catches the collapse coming back, not ordinary drift.
+  // CAS-314: the guard is about a POPULATED in-cinema section collapsing, not about an honestly-empty one.
+  // "Confirmed" has to mean the PIPELINE POLL itself put the film in a cinema window — m.claimedStatus, read
+  // before deriveStatus() ever touches it — not m.status/primaryStatus. CAS-227's date-correction promotes an
+  // unestimated title with no offers into in_cinema/opening_week purely from its own opening date once it has
+  // sat unpolled for a while, which is the same kind of calendar-only inference CAS-289 caps for estimated
+  // titles; it is not evidence a provider actually confirmed the film is on a screen. Today every onScreen
+  // title with m.availability_confidence !== "estimated" got there via that correction (claimedStatus is
+  // still ["upcoming"]) — there is no title left that the pipeline itself ever claimed into a cinema window,
+  // so the in-cinema section is honestly empty of real confirmation, and is allowed to skew Upcoming.
+  const rawConfirmedOnScreen = onScreen.filter(m =>
+    !E.isEstimated(m) && (m.claimedStatus || []).some(w => ["opening_week", "in_cinema"].includes(w))).length;
+  if(rawConfirmedOnScreen === 0){
+    return;
+  }
   const upcoming = listed.filter(m => E.isUpcoming(m)).length;
   const share = 100 * upcoming / Math.max(1, listed.length);
   assert.ok(share <= 90,
@@ -139,18 +152,42 @@ test("in cinema: a wide-open cinema agent loses none of them, and is not a wall 
 
 // The listing leads with what you can watch, and keeps Upcoming as the tail. Asserted on the shipped order
 // rather than on the rendering, because the reveal and the listing must walk the same sequence (CAS-176).
-test("in cinema: the listing leads with what is out and ends with what is not", () => {
+test("the listing leads with what is out and ends with what is not — on the STREAMING lane", () => {
+  // CAS-295 split this rule by lane. On streaming it is unchanged and still load-bearing: an unreleased film
+  // is the least actionable thing on the page, so it belongs at the tail.
   assert.equal(E.LISTING_ORDER[E.LISTING_ORDER.length - 1], "upcoming",
     `the listing leads with ${E.LISTING_ORDER[0]} and would put unreleased films above watchable ones`);
   assert.deepEqual([...E.LISTING_ORDER].sort(), [...E.CASCADE].sort(),
     "the listing order and the journey order are not the same six windows");
-  pickInLane(E, "cinema", "custom");
+  pickInLane(E, "stream", "custom");
   const d = E.onbApply();
-  const seq = E.listingOrder(E.MOVIES.filter(m => E.listedBy(m, d)), d.sort || "availability");
+  const seq = E.listingOrder(E.MOVIES.filter(m => E.listedBy(m, d)), d.sort || "availability", d);
   const firstUpcoming = seq.findIndex(m => E.isUpcoming(m));
   const lastReleased = seq.map(m => !E.isUpcoming(m)).lastIndexOf(true);
   if(firstUpcoming >= 0 && lastReleased >= 0) assert.ok(firstUpcoming > lastReleased,
     `an Upcoming film sits at ${firstUpcoming}, above a released one at ${lastReleased}`);
+});
+
+// CAS-295: the cinema lane reads in the order a trip to the cinema is planned, not in order of what you can
+// watch this minute. This is the deliberate reversal of the rule above, and it applies to that lane only.
+test("in cinema: the cinema lane leads with Upcoming, then Opening, then Cinema", () => {
+  // Spread into a LOCAL array first: the engine runs in a vm realm, so its Array has a different prototype
+  // and deepStrictEqual compares that too. Every other array assertion in this file does the same.
+  assert.deepEqual([...E.CINEMA_LISTING_ORDER].slice(0, 3), ["upcoming", "opening_week", "in_cinema"],
+    "the cinema lane does not open with upcoming -> opening -> in cinema");
+  assert.deepEqual([...E.CINEMA_LISTING_ORDER].sort(), [...E.CASCADE].sort(),
+    "the cinema order and the journey order are not the same six windows");
+  pickInLane(E, "cinema", "custom");
+  const d = E.onbApply();
+  assert.equal(E.orderFor(d), E.CINEMA_LISTING_ORDER, "a cinema agent is not using the cinema order");
+  const seq = E.listingOrder(E.MOVIES.filter(m => E.listedBy(m, d)), d.sort || "availability", d);
+  const lastUpcoming = seq.map(m => E.isUpcoming(m)).lastIndexOf(true);
+  const firstReleased = seq.findIndex(m => !E.isUpcoming(m));
+  if(lastUpcoming >= 0 && firstReleased >= 0) assert.ok(lastUpcoming < firstReleased,
+    `a released film sits at ${firstReleased}, above an Upcoming one at ${lastUpcoming}`);
+  // …and a streaming agent is untouched by it.
+  pickInLane(E, "stream", "custom");
+  assert.equal(E.orderFor(E.onbApply()), E.LISTING_ORDER, "the streaming lane picked up the cinema order");
 });
 
 // ---- 2. THE DATES THE CARD SHOWS ------------------------------------------------------------------------
@@ -418,17 +455,66 @@ test("critics: the score floor is continuous and only judges a film that has a s
     `${r.label} sits at ${r.v}, off the 0-100 score track`);
 });
 
+// CAS-261: read in the streaming lane, which is the lane that still HAS a Critics & awards dial. Since
+// CAS-261 a cinema agent carries no critics criterion at all, so migrating one there and then dropping it is
+// the correct outcome rather than a migration failure — that half is asserted by its own test below.
 test("critics: an agent saved under the old single ladder still means what it meant", () => {
   const cases = [[0, 0, 0], [1, 60, 0], [2, 80, 0], [3, 0, 1], [4, 0, 4]];
   for(const [legacy, score, awards] of cases){
-    const c = E.normCascade({ selCritics: legacy });
+    const c = E.normCascade({ selCritics: legacy, kind: "stream" });
     assert.equal(c.selCritScore, score, `selCritics ${legacy} migrated to a ${c.selCritScore} score floor`);
     assert.equal(c.selAwards, awards, `selCritics ${legacy} migrated to awards rung ${c.selAwards}`);
   }
   // An agent saved SINCE the split is left alone — the migration must not overwrite a real answer.
-  const fresh = E.normCascade({ selCritics: 4, selCritScore: 70, selAwards: 0 });
+  const fresh = E.normCascade({ selCritics: 4, selCritScore: 70, selAwards: 0, kind: "stream" });
   assert.equal(fresh.selCritScore, 70);
   assert.equal(fresh.selAwards, 0);
+});
+
+// CAS-261: a lane carries only the dials it uses — and that has to hold for an agent SAVED before the rule,
+// not just one built after it. Otherwise a cinema agent goes on filtering on a floor its Mission screen does
+// not show and its auto-relax cannot loosen, which is the hidden filter the whole rule exists to remove.
+test("lanes: an agent carries only the criteria its own lane can show", () => {
+  const cinema = E.normCascade({ kind: "cinema", selCrowd: 7.5, selCritScore: 80, selAwards: 3,
+                                 selScale: 56e6, selBuzz: 1 });
+  assert.equal(cinema.selCrowd, 0, "a cinema agent kept a People's-vote floor");
+  assert.equal(cinema.selCritScore, 0, "a cinema agent kept a critics-score floor");
+  assert.equal(cinema.selAwards, 0, "a cinema agent kept an awards rung");
+  assert.equal(cinema.selScale, 56e6, "a cinema agent lost Scale, which it does use");
+  assert.equal(cinema.selBuzz, 1, "a cinema agent lost Buzz, which it does use");
+
+  const stream = E.normCascade({ kind: "stream", selCrowd: 7.5, selCritScore: 80, selAwards: 3,
+                                 selScale: 56e6, selBuzz: 1 });
+  assert.equal(stream.selCrowd, 7.5, "a streaming agent lost its People's-vote floor");
+  assert.equal(stream.selCritScore, 80, "a streaming agent lost its critics-score floor");
+  assert.equal(stream.selAwards, 3, "a streaming agent lost its awards rung");
+  assert.equal(stream.selBuzz, 0, "a streaming agent kept Buzz, which it does not use");
+
+  // The rule and the dial sets are one definition, not two that can drift.
+  for(const kind of ["cinema", "stream"]){
+    const carried = { vote: "selCrowd", crit: "selCritScore", scale: "selScale", buzz: "selBuzz" };
+    const on = E.normCascade({ kind, selCrowd: 7.5, selCritScore: 80, selScale: 56e6, selBuzz: 1 });
+    for(const [dial, field] of Object.entries(carried)){
+      const used = E.MISSION_DIALS_USED[kind].includes(dial);
+      assert.equal(on[field] > 0, used, `${kind}: ${field} is ${on[field]} but ${dial} used=${used}`);
+    }
+  }
+});
+
+// CAS-261: no preset may be OFFERED in a lane that cannot apply the standard the card names.
+test("presets: every offer's standard survives its own lane", () => {
+  for(const kind of ["cinema", "stream"]){
+    for(const s of E.STARTERS.filter(x => (x.kinds || ["cinema", "stream"]).includes(kind))){
+      const before = { ...s.crit };
+      const after = E.laneCrit({ ...s.crit }, kind);
+      const dropped = ["selCrowd", "selCritScore", "selAwards", "selBuzz"]
+        .filter(f => (before[f] || 0) > 0 && !(after[f] || 0));
+      const left = ["selCrowd", "selCritScore", "selAwards", "selScale", "selBuzz"]
+        .some(f => (after[f] || 0) > 0);
+      assert.ok(dropped.length === 0 || left,
+        `${kind}/${s.key} is offered but its lane drops ${dropped.join(", ")}, leaving it with no standard`);
+    }
+  }
 });
 
 // ---- 3f. HOW FAR BACK IS A ROLLING WINDOW ON A LOG TRACK (CAS-250) --------------------------------------
@@ -567,11 +653,11 @@ test("dates: a date we hold is printed to the day, an estimate stays a month", (
 });
 
 test("dates: the day form is compact, unambiguous, and never a fabricated precision", () => {
-  // This year drops the year; another year keeps it. Both are the same shape as what fmtDate says, so the
-  // two can be told apart at a glance rather than by counting characters.
+  // CAS-296: every date shows its year, this year included — dropping it read as ambiguous once a film's
+  // window could straddle a year boundary.
   const thisYear = `${E.TODAY.slice(0, 4)}-03-07`;
   const other    = "2019-11-21";
-  assert.equal(E.fmtDay(thisYear), "7 Mar");
+  assert.equal(E.fmtDay(thisYear), `7 Mar ${E.TODAY.slice(2, 4)}`);
   assert.equal(E.fmtDay(other), "21 Nov 19");
   assert.equal(E.fmtDay(""), "", "an absent date must print nothing, never a guess");
   // An ESTIMATE is still a month and a year — a day would claim a precision the offset does not have.

@@ -9,7 +9,7 @@ async function toAgentSettings(page){
   await finishFlow(page);
   await toListing(page);
   await page.evaluate(() => window.editCascade());
-  await page.locator(".osdoor", { hasText: "Agent settings" }).click();
+  await page.locator(".osdoor", { hasText: "Notifications" }).click();   // CAS-267 renamed this row
   await expect(page.locator(".osh", { hasText: /Where & when/ })).toBeVisible();
 }
 

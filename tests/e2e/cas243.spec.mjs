@@ -9,7 +9,7 @@ test("CAS-243: Streaming settings offer Premium, Standard Rent and Streaming, ea
   await finishFlow(page);
   await toListing(page);
   await page.evaluate(() => window.editCascade());
-  await page.locator(".osdoor", { hasText: "Agent settings" }).click();
+  await page.locator(".osdoor", { hasText: "Notifications" }).click();   // CAS-267 renamed this row
   await expect(page.locator(".osh", { hasText: /Where & when/ })).toBeVisible();
 
   const lanes = await page.locator("#wwLanes .wwlane").evaluateAll(ls => ls.map(l => ({
