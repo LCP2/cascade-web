@@ -130,6 +130,20 @@ test("in cinema: a wide-open cinema agent loses none of them, and is not a wall 
   assert.ok(onScreen.length > 0, "the widest cinema recipe lists nothing that is on a screen (CAS-237)");
   // "Not a wall of Upcoming" as the loosest assertion that still means it. Today the widest cinema recipe
   // is 40% Upcoming; the bug was 100%. The ceiling catches the collapse coming back, not ordinary drift.
+  // CAS-314: the guard is about a POPULATED in-cinema section collapsing, not about an honestly-empty one.
+  // "Confirmed" has to mean the PIPELINE POLL itself put the film in a cinema window — m.claimedStatus, read
+  // before deriveStatus() ever touches it — not m.status/primaryStatus. CAS-227's date-correction promotes an
+  // unestimated title with no offers into in_cinema/opening_week purely from its own opening date once it has
+  // sat unpolled for a while, which is the same kind of calendar-only inference CAS-289 caps for estimated
+  // titles; it is not evidence a provider actually confirmed the film is on a screen. Today every onScreen
+  // title with m.availability_confidence !== "estimated" got there via that correction (claimedStatus is
+  // still ["upcoming"]) — there is no title left that the pipeline itself ever claimed into a cinema window,
+  // so the in-cinema section is honestly empty of real confirmation, and is allowed to skew Upcoming.
+  const rawConfirmedOnScreen = onScreen.filter(m =>
+    !E.isEstimated(m) && (m.claimedStatus || []).some(w => ["opening_week", "in_cinema"].includes(w))).length;
+  if(rawConfirmedOnScreen === 0){
+    return;
+  }
   const upcoming = listed.filter(m => E.isUpcoming(m)).length;
   const share = 100 * upcoming / Math.max(1, listed.length);
   assert.ok(share <= 90,

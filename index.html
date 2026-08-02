@@ -2720,7 +2720,13 @@ MOVIES.forEach(m=>m.status=deriveStatus(m));
 
 // The state, derived from the film's REAL opening date and nothing else. A film the sim has pushed into
 // cinemas early (_simReleased) has an opening date in the future, so it is honestly not past anything yet.
-const inCinemaWindow = m => ["opening_week","in_cinema"].includes(primaryStatus(m));
+// CAS-314: primaryStatus() alone is not enough for an ESTIMATED title — deriveStatus() returns the pipeline's
+// claimed window unconditionally once a title has been claimed into it, so a claim never expires on its own.
+// This is the one place that honesty is enforced: an estimated title only holds its cinema window for
+// CINEMA_ESTIMATE_RUN_DAYS from its own opening date (CAS-289); past that it is no longer in the window as far
+// as anything reading inCinemaWindow() is concerned, even though m.status/primaryStatus still says otherwise.
+const inCinemaWindow = m => ["opening_week","in_cinema"].includes(primaryStatus(m))
+  && (!isEstimated(m) || inCinemaRunEstimated(m));
 const pastOpeningOn  = m => m.cinema_date ? addDays(m.cinema_date, PAST_OPENING_DAYS) : null;
 const isPastOpening  = (m, day=TODAY) => {
   const d=pastOpeningOn(m);
@@ -3061,7 +3067,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // honest way for the live site and the preview to label themselves apart is to look at where they are
 // actually being served. So env is derived from the hostname here, at runtime — the served
 // /version.json still carries the build-branch env for machine consumers.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 280, "commit": "e828279", "builtAt": "2026-08-02T06:41:30Z", "env": "staging"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 281, "commit": "4a9a219", "builtAt": "2026-08-02T07:16:40Z", "env": "staging"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
