@@ -4372,6 +4372,13 @@ function closeWatchPanel(){
   document.removeEventListener("keydown", watchPanelKey, true);
 }
 function watchPanelKey(e){ if(e.key==="Escape"){ e.stopPropagation(); closeWatchPanel(); } }
+// CAS-315: the scroll position when a watch panel opens on a card. `.card` is content-visibility:auto
+// (CAS-129, for windowing the ~2,000-card catalogue), and both focusing a button inside one and later
+// removing that button from the DOM make Chromium silently scroll the WINDOW to "reveal"/renegotiate it —
+// independent of our own fold/repaint math, not suppressed by focus()'s preventScroll option, and it happens
+// before our handlers even start running, so there is nothing in-process to intercept. keepRowInPlace snaps
+// back to this before it takes its own "was" measurement, which is the only thing that has to be correct.
+let watchPanelAnchorY=null;
 window.openWatchPanel=(id, btn)=>{
   // CAS-281: "was MY panel already open?", not "was ANY panel open?". The old test closed whatever was open
   // and returned, so tapping a second control while a first was open closed the first and opened nothing —
@@ -4379,7 +4386,8 @@ window.openWatchPanel=(id, btn)=>{
   const open=btn.closest(".actions").querySelector(".cpop");
   const mine=open && !open.classList.contains("npop") && !open.classList.contains("kpop");
   closeWatchPanel();
-  if(mine) return;                       // tapping the chip again closes the panel it opened
+  if(mine){ watchPanelAnchorY=null; return; }    // tapping the chip again closes the panel it opened
+  watchPanelAnchorY=scrollY;
   const cur=opinionOf(id);
   const pop=document.createElement("div");
   pop.className="cpop";
@@ -4395,7 +4403,7 @@ window.openWatchPanel=(id, btn)=>{
   positionPanel(pop);   // CAS-304
   wirePanelSlide(pop, ".cseg", el=>pickWatch(id, el.dataset.key));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
-  const first=pop.querySelector(".cseg"); if(first) first.focus();
+  const first=pop.querySelector(".cseg"); if(first) first.focus({preventScroll:true});
 };
 // Answering closes the panel first: setOpinion folds the card to its stub, and a panel left open would be
 // anchored to an .actions row that no longer exists.
@@ -10585,6 +10593,13 @@ addEventListener("scroll", trimFoot, {passive:true});
 function keepRowInPlace(id, repaint){
   const row=rowFor(id);
   if(!row){ repaint(); return; }
+  // CAS-315: undo whatever Chromium's content-visibility reveal already did to the window before this ran —
+  // see watchPanelAnchorY above. A one-shot: only the watch-panel path sets it, so answering from the
+  // stub's own opinion buttons (no panel involved) leaves this a no-op.
+  if(watchPanelAnchorY!=null){
+    if(Math.abs(scrollY-watchPanelAnchorY)>0.5) scrollBy(0, watchPanelAnchorY-scrollY);
+    watchPanelAnchorY=null;
+  }
   const wasTop=row.getBoundingClientRect().top, wasH=row.offsetHeight;
   repaint();
   const now=rowFor(id);
@@ -10599,10 +10614,21 @@ function keepRowInPlace(id, repaint){
   const drift=now.getBoundingClientRect().top - wasTop;
   if(Math.abs(drift)>0.5) scrollBy(0, drift);
   if(!animate){ trimFoot(); return; }
+  const lockTop=now.getBoundingClientRect().top;
   requestAnimationFrame(()=>{
     now.style.transition="height .26s ease";
     now.style.height=toH+"px";
     let done=false;
+    // The row's own top must not move while it shrinks (CAS-290) — but a shrinking document can still drag
+    // the WINDOW under it (native scroll clamping/anchoring reacting to the animation, same as the browser's
+    // own reveal above), so hold the row at lockTop for the length of the transition instead of trusting the
+    // one-time drift correction above to still be true 260ms later.
+    const hold=()=>{ if(done) return;
+      const d=now.getBoundingClientRect().top-lockTop;
+      if(Math.abs(d)>0.5) scrollBy(0, d);
+      requestAnimationFrame(hold);
+    };
+    requestAnimationFrame(hold);
     const settle=()=>{ if(done) return; done=true;
       now.style.transition=""; now.style.height=""; now.style.overflow="";
       now.removeEventListener("transitionend", settle);
