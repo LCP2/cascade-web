@@ -37,17 +37,21 @@ jobs:
       - name: Build the app
         run: python poc_pipeline.py --build-html
 
+      # A build that changes index.html beyond its stamps means the commit shipped a stale build.
+      # Two things move on every build without any source change and must be excluded: the BUILD_INFO
+      # stamp, and the daily `const TODAY = "YYYY-MM-DD"` date (a CI run on a later calendar day than the
+      # last commit would otherwise false-fail). Real app drift still trips this.
       - name: Fail if the committed build was stale
         run: |
           set -euo pipefail
           if ! git diff --quiet -- index.html; then
-            drift=$(git diff -U0 -- index.html | grep -E '^[+-]' | grep -vE '^[+-]{3}' | grep -vc 'BUILD_INFO' || true)
+            drift=$(git diff -U0 -- index.html | grep -E '^[+-]' | grep -vE '^[+-]{3}' | grep -vcE 'BUILD_INFO|const TODAY' || true)
             git diff --stat -- index.html
             if [ "$drift" -gt 0 ]; then
               echo "::error::index.html is $drift lines behind app_template.html - rebuild and commit it"
               exit 1
             fi
-            echo "index.html differs only by its build stamp, which is expected."
+            echo "index.html differs only by its build stamp / daily date, which is expected."
           fi
 
       - name: Engine invariants + data integrity
