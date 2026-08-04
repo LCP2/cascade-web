@@ -2520,7 +2520,7 @@
         <span class="splashpill"><span class="splashdot" style="background:var(--amber)"></span>In cinemas</span>
       </div>
       <div class="splashlozrow">
-        <span class="splashpill"><span class="splashdot" style="background:var(--purple)"></span>Purchase</span>
+        <span class="splashpill"><span class="splashdot" style="background:var(--purple)"></span>Buy</span>
         <span class="splashpill"><span class="splashdot" style="background:var(--blue)"></span>Rental</span>
         <span class="splashpill"><span class="splashdot" style="background:var(--green)"></span>Streaming</span>
       </div>
@@ -2722,7 +2722,7 @@ const CINEMA_LISTING_ORDER = ["upcoming","opening_week","in_cinema","pvod","rent
 const orderFor = c => (c && c.kind==="cinema") ? CINEMA_LISTING_ORDER : LISTING_ORDER;
 const STATUS_LABEL = {
   opening_week:"In Cinema · Opening week", in_cinema:"In Cinema",
-  pvod:"Premium Buy/Rent (~$30)", rental:"Rent (~$7)",
+  pvod:"Buy/Rent (~$30)", rental:"Rent (~$7)",
   included_streaming:"Stream (included)", upcoming:"Upcoming",
   // Not an availability window (it isn't in CASCADE, so it is never a status a film HOLDS) — it's a moment,
   // and this is the label the alerts and the report print for it.
@@ -3218,7 +3218,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 314, "commit": "77d37a8", "builtAt": "2026-08-04T22:07:40Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 315, "commit": "8b1c084", "builtAt": "2026-08-04T22:29:44Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -3345,7 +3345,7 @@ const scopedFor = w => { const c=activeCascade(); return c ? !!scopeOf(c)[w] : p
 const servicesScoped = () => { const c=activeCascade(); return c ? anyScope(c) : prefs.on; };
 // Short window names for scope copy. A per-window scope has to be REPORTED per window: "my services" alone
 // is what the old global boolean said, and saying it for a Cascade scoped to Stream only would be a lie.
-const SCOPE_SHORT = {pvod:"premium", rental:"rent", included_streaming:"stream"};
+const SCOPE_SHORT = {pvod:"buy", rental:"rent", included_streaming:"stream"};
 const scopeSummary = c => HOME_KEYS.filter(k=>scopeOf(c)[k]).map(k=>SCOPE_SHORT[k]).join(" + ");
 // ignoreScope is flipped only by the no-results panel, to ask "how many would there be if the my-services
 // scope weren't applied?" — so it can price that way out honestly instead of guessing.
@@ -3429,7 +3429,7 @@ addChips("prefStoreChips", STORE_SERVICES, prefs.store, "svc", svcName);
 const ALERT_TYPES = [
   {key:"cinema",             label:"🎬 Cinema"},
   {key:"past_opening",       label:"📣 Past opening weekend"},
-  {key:"pvod",               label:"💳 Purchase"},
+  {key:"pvod",               label:"💳 Buy"},
   {key:"rental",             label:"📼 Rent"},
   {key:"included_streaming", label:"📺 Stream"},
 ];
@@ -3789,7 +3789,7 @@ function listingOrder(films, sortKey, c){
   films.forEach(m=>{ if(!seen.has(m)) ordered.push(m); });
   return ordered;
 }
-const CSTAGE_LABEL = {pvod:"Premium", rental:"Rent", included_streaming:"Stream"};
+const CSTAGE_LABEL = {pvod:"Buy", rental:"Rent", included_streaming:"Stream"};
 const EST_OFFSET = {pvod:90, rental:120, included_streaming:180};   // days after cinema (rough AU windows)
 // The first cascade slot is the CINEMA slot, tri-state: Upcoming -> Opening -> Cinema.
 function cinemaState(m){
@@ -3942,7 +3942,7 @@ function availHTML(m){
 // checked and how much it worked out.
 const ESTIMATE_SAYS = {
   upcoming:"Likely still to come", opening_week:"Likely in cinemas", in_cinema:"Likely still in cinemas",
-  pvod:"Likely to buy or rent at premium", rental:"Likely to rent", included_streaming:"Likely on streaming"};
+  pvod:"Likely to buy or rent early", rental:"Likely to rent", included_streaming:"Likely on streaming"};
 const ESTIMATE_WHY = `Cascade hasn't read this title's listings yet, so this window is worked out from how long
   ago it opened in cinemas — not from a live listing. No price and no service until it's confirmed.`;
 function estimateHTML(m){
@@ -4024,7 +4024,7 @@ function lossFrame(m,w,before){
   if(w==="rental" && rent && rent.price<=RENTAL_MAX){
     const saved = buy && buy.price>rent.price ? ` That's $${(buy.price-rent.price).toFixed(2)} you no longer have to spend.` : "";
     return before.has("pvod")
-      ? `It was premium-only until today — now $${rent.price.toFixed(2)} to rent.${saved}`
+      ? `It was buy-only until today — now $${rent.price.toFixed(2)} to rent.${saved}`
       : `Now $${rent.price.toFixed(2)} to rent.${saved}`;
   }
   return "";
@@ -5137,6 +5137,11 @@ const AVAIL_ROWS = [
    title:"Upcoming / In cinema", sub:"Announced, and on the big screen", alertName:"Cinema",
    extraAlert:{key:"past_opening", label:"📣 Past opening weekend",
                sub:`opening + ${PAST_OPENING_DAYS} days · it's had its moment, catch it before it's gone`}},
+  // CAS-359: LEFT AS "Premium"/"Purchase" ON PURPOSE — flagged for Lee, not silently collapsed. This is the
+  // one row on screen where title and alertName render side by side (buildSpine's .pill + .abell .bl on the
+  // same line): if both became "Buy" the row would show a "Buy" pill next to a "📣 Buy" bell, which reads as
+  // a broken duplicate rather than "the window" and "the bell for it". Every other Premium/Purchase surface
+  // in the app was renamed to Buy under CAS-359; only this pair is parked pending Lee's call on wording.
   {key:"pvod", alert:"pvod", windows:["pvod"], pill:"pvod",
    title:"Premium", sub:"Buy or rent early, ~$30", home:true, alertName:"Purchase"},
   {key:"rental", alert:"rental", windows:["rental"], pill:"rental",
@@ -5490,7 +5495,7 @@ const CASCADE_TEMPLATES = [
    alerts:{pvod:false, rental:false, included_streaming:true}},
   {key:"rent_radar", icon:"📼", name:"Rent radar", blurb:"Good films that reach Rent (~$7)",
    crit:{status:["rental"], genre:[], age:[], lang:["en"], imdb:6.5, rt:0, awards:false, myServices:false}},
-  {key:"bargain", icon:"🏷️", name:"Bargain hunter", blurb:"Never overpay — tell me when it drops below premium",
+  {key:"bargain", icon:"🏷️", name:"Bargain hunter", blurb:"Never overpay — tell me when it drops below $30",
    crit:{status:["rental","included_streaming"], genre:[], age:[], lang:["en"], imdb:0, rt:0, awards:false, myServices:false}},
   {key:"family", icon:"👨‍👩‍👧", name:"Family fun", blurb:"Cert-appropriate films for me and the kids",
    crit:{status:[], genre:["Family","Animation","Adventure"], age:["G","PG"], lang:["en"], imdb:6, rt:0, awards:false, myServices:false}},
@@ -5831,7 +5836,7 @@ const watchesFilm = (m,c) => matchesTaste(m,c) && inScope(m,c);
 const watchCount = c => MOVIES.filter(m=>watchesFilm(m,c)).length;
 
 const ALERT_SHORT = {cinema:"cinema", past_opening:"opening weekend", announced:"newly announced",
-                     opens_soon:"opening soon", pvod:"premium", rental:"rent",
+                     opens_soon:"opening soon", pvod:"buy", rental:"rent",
                      included_streaming:"stream"};
 // A Cascade lets a film go once it passes the last window in its scope — so the last move it can ever witness
 // is the one OUT of that window. Rows past that point are unreachable, and a bell on one of them is a switch
@@ -5853,8 +5858,8 @@ const reachableRows = c => {
   return rows;
 };
 // ---- Global alert-type exclude (CAS-103 AC4) -----------------------------------
-// One switch that outranks every Cascade: "never alert me about Purchase" means no Cascade alerts
-// you about Purchase, whatever its own bells say. It deliberately does NOT rewrite those bells —
+// One switch that outranks every Cascade: "never alert me about Buy" means no Cascade alerts
+// you about Buy, whatever its own bells say. It deliberately does NOT rewrite those bells —
 // un-mute the type and each Cascade goes back to exactly what you set it to.
 const alertMuted = k => prefs.alertsOff.has(k);
 // The ONE test for "will this bell ever actually ring": switched on, reachable for the scope, and
@@ -5873,7 +5878,7 @@ function alertSummary(c){
 // reachable-bells rule as alertSummary(), so the promise can only name a moment that can really fire.
 const ALERT_MOMENT = {cinema:"reaches a cinema", past_opening:"is past its opening weekend",
                       announced:"turns up newly announced", opens_soon:"is a week from opening",
-                      pvod:"hits premium", rental:"drops to a rental price",
+                      pvod:"hits buy", rental:"drops to a rental price",
                       included_streaming:"lands on a service"};
 function alertPromise(c){
   const on=liveAlerts(c);
@@ -7602,7 +7607,7 @@ const TELL_OPTS = [
 // Rentals — the price ceiling decides which windows the agent watches and rings.
 const PRICE_OPTS = [
   {key:"cheap",   label:"Only when it's cheap (~$7)", status:["rental"],                 alerts:{rental:true}},
-  {key:"premium", label:"Premium's OK (~$30)",        status:["pvod","rental"],          alerts:{pvod:true, rental:true}},
+  {key:"premium", label:"Buying's OK (~$30)",      status:["pvod","rental"],          alerts:{pvod:true, rental:true}},
   {key:"wait",    label:"I'll wait for streaming",    status:["included_streaming"],     alerts:{included_streaming:true}},
 ];
 // Rating bars, as catalogue-percentile stops (RATING_STOPS): "great" = top tier, the crowd/blockbuster
@@ -7960,8 +7965,8 @@ const AGENT_WINDOWS = {
   // pay $30 on opening week. They are already separate windows in the data (pvod and rental, split on the
   // real price ceiling), so this splits the control to match rather than inventing a distinction.
   stream: [
-    {key:"premium", label:"Premium", cd:"var(--purple)", status:["pvod"],
-     sub:"Out early to buy or rent, around $30.", notifySay:"when it lands early on premium",
+    {key:"premium", label:"Buy", cd:"var(--purple)", status:["pvod"],
+     sub:"Out early to buy or rent, around $30.", notifySay:"when it's out early to buy or rent",
      alerts:{pvod:true}},
     {key:"rent",   label:"Standard Rent", cd:"var(--blue)",  status:["rental"],
      sub:"Available to rent, around $7.", notifySay:"when it drops to rent", alerts:{rental:true}},
@@ -10854,9 +10859,10 @@ function render(){
 // you nowhere is exactly what CAS-271 and CAS-272 just took off the band. Same reason it hides itself at
 // fewer than two sections — one destination is not a choice.
 // CAS-321: "Premium" reads as "Buy" here — Lee's rename for the purchase-model chip — while the section
-// heading above the group (STATUS_LABEL, "Premium Buy/Rent (~$30)") is untouched; that label lives outside
-// this ticket's scope. Buy/Rent/Stream already fall in that left-to-right order because pvod, rental and
-// included_streaming do in LISTING_ORDER/CINEMA_LISTING_ORDER — the chips just walk the groups the DOM holds.
+// heading above the group (STATUS_LABEL) was, at the time, a separate "Premium Buy/Rent (~$30)" string
+// outside this ticket's scope. CAS-359 later dropped the redundant "Premium" from that heading too, so
+// both now agree on "Buy". Buy/Rent/Stream already fall in that left-to-right order because pvod, rental
+// and included_streaming do in LISTING_ORDER/CINEMA_LISTING_ORDER — the chips just walk the groups the DOM holds.
 const SECTION_SHORT = {opening_week:"Opening", in_cinema:"Cinema", pvod:"Buy",
                        rental:"Rent", included_streaming:"Stream", upcoming:"Upcoming"};
 function renderJumpBar(){
@@ -11340,7 +11346,7 @@ function alertVoice(a){
     case "rental":
       return `${lead} — “${a.title}” just dropped to a rental${svc?` on ${svc}`:""}${mine}.`;
     case "pvod":
-      return `“${a.title}” reached premium buy/rent${svc?` on ${svc}`:""} — the dear end of the cascade.`;
+      return `“${a.title}” reached buy/rent${svc?` on ${svc}`:""} — the dear end of the cascade.`;
     case "opening_week":
     case "in_cinema":
       return `${lead} — “${a.title}” is in cinemas now.`;

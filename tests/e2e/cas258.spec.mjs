@@ -4,10 +4,10 @@ import { freshApp } from "./helpers.mjs";
 
 const rgb = s => s.replace(/\s/g, "");
 
-test("CAS-258: all five windows are named, Purchase included", async ({ page }) => {
+test("CAS-258: all five windows are named, Buy (CAS-359, formerly Purchase) included", async ({ page }) => {
   await freshApp(page);
   const labels = await page.locator(".splashloz .splashpill").allTextContents();
-  expect(labels.map(s => s.trim())).toEqual(["Upcoming", "In cinemas", "Purchase", "Rental", "Streaming"]);
+  expect(labels.map(s => s.trim())).toEqual(["Upcoming", "In cinemas", "Buy", "Rental", "Streaming"]);
 });
 
 test("CAS-258: two on the first line, three on the second, at every phone width", async ({ page }) => {
