@@ -948,9 +948,9 @@
   .rlabels span{flex:1;text-align:center;font-size:9.5px;line-height:1.2;color:var(--faint);font-weight:700}
   .rlabels span:first-child{text-align:left} .rlabels span:last-child{text-align:right}
   .rlabels span.lit{color:#cfc2ff}
-  /* CAS-250: the how-far-back track is LOG-spaced, so its ticks and labels sit at a percentage rather than
-     being shared out evenly. Both are modifier classes so the rating slider, which is genuinely evenly
-     spaced, keeps the flex layout it was drawn with. */
+  /* CAS-250/340: the how-far-back track is NON-LINEARLY spaced, so its ticks and labels sit at a percentage
+     rather than being shared out evenly. Both are modifier classes so the rating slider, which is genuinely
+     evenly spaced, keeps the flex layout it was drawn with. */
   .rstops.logstops{display:block;padding:0}
   .rstops.logstops i{position:absolute;top:50%;margin-top:-5px;margin-left:-5px}
   .rlabels.loglabels{display:block;position:relative;height:14px}
@@ -3087,7 +3087,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 293, "commit": "84b4a12", "builtAt": "2026-08-04T06:49:49Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 294, "commit": "0f60056", "builtAt": "2026-08-04T07:10:08Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -5043,27 +5043,31 @@ const ALL_YEARS = [...new Set(MOVIES.map(yearOf).filter(Boolean))].sort().revers
 // months behind today, whatever today is. Written as a number of years rather than an index into a list,
 // so the value on the agent says what it means without a table to read it against.
 //
-// And the track is continuous, with the notches spaced LOGARITHMICALLY. A linear 1-50 track would bury 1,
-// 2 and 3 in the first six percent of it, and those are the settings people actually want — the difference
-// between "the last year" and "the last three" is the whole question at that end, while 40 and 45 are the
-// same answer. Log spacing gives the short windows the room they are worth. Every whole year from 1 to 50
-// is reachable by dragging; the named marks are the ones printed, and tapping one lands exactly on it.
-const YEARS_MAX = 50;
-const YEARS_NOTCHES = [1, 2, 3, 5, 10, 15, 20, 25, 50];   // ticks on the track
-const YEARS_LABELS  = [0, 1, 3, 10, 25, 50];              // …and the few that are named under it
-const YEARS_OFF_POS = 4;                                  // a dead zone at the bottom, so "Any" is gettable
-// position (0-100) -> whole years back, and back again.
+// CAS-340: redesigned as ten fixed stops rather than a continuous 1-50 drag — Any, 50, 25, 15, 10, 5, 4, 3,
+// 2, 1 — laid out furthest-back-to-most-recent, LEFT to RIGHT. The gaps are non-linear the same way the old
+// log scale was, for the same reason: the difference between "the last year" and "the last three" is the
+// whole question at the recent end, while 40 and 45 are the same answer, so 5→1 gets roughly three times the
+// width of the tightly-bunched 50→25→15 cluster. Every stop is both a tick and a printed label now — there
+// is nothing to reach for in between. "Any" sits apart from that cluster with a little more room of its own:
+// it is flush-left (CSS translateX(0), not centred like the rest), so packed as tight as 50→25→15 its label
+// would sit under 50's and swallow its tap target.
+const YEARS_STOPS     = [0, 50, 25, 15, 10, 5,  4,  3,  2,  1 ];    // left → right
+const YEARS_STOP_POS  = [0, 12, 17, 22, 32, 48, 61, 74, 87, 100];   // this stop's position (0-100), same order
+// position (0-100) -> nearest stop's whole years back, and back again.
 function yearsForPos(pos){
   const p=Math.max(0, Math.min(100, +pos||0));
-  if(p<YEARS_OFF_POS) return 0;      // strictly below: the "1" mark sits ON the boundary, and tapping it
-                                     // then dragging must not read back as Any
-  const t=(p-YEARS_OFF_POS)/(100-YEARS_OFF_POS);
-  return Math.max(1, Math.min(YEARS_MAX, Math.round(Math.exp(t*Math.log(YEARS_MAX)))));
+  let best=YEARS_STOPS[0], bestDist=Infinity;
+  YEARS_STOP_POS.forEach((sp,i)=>{ const d=Math.abs(sp-p); if(d<bestDist){ bestDist=d; best=YEARS_STOPS[i]; } });
+  return best;
 }
 function posForYears(y){
-  if(!y) return 0;
-  const t=Math.log(Math.max(1, Math.min(YEARS_MAX, y)))/Math.log(YEARS_MAX);
-  return YEARS_OFF_POS + t*(100-YEARS_OFF_POS);
+  const i=YEARS_STOPS.indexOf(y);
+  if(i>=0) return YEARS_STOP_POS[i];
+  // An agent saved before CAS-340 under the old continuous drag can carry a year that isn't one of the ten
+  // stops any more (e.g. 7, or 40) — place it at its nearest stop rather than falling off the track.
+  let best=0, bestDist=Infinity;
+  YEARS_STOPS.forEach((sy,idx)=>{ const d=Math.abs(sy-(y||0)); if(d<bestDist){ bestDist=d; best=idx; } });
+  return YEARS_STOP_POS[best];
 }
 const yearsLabel = y => !y ? "Any" : (y===1 ? "Last 1 year" : `Last ${y} years`);
 const yearsShort = y => !y ? "Any" : String(y);
@@ -5073,6 +5077,13 @@ function yearsCutoff(y){
   if(!y) return null;
   const d=new Date(TODAY+"T00:00:00Z"); d.setUTCFullYear(d.getUTCFullYear()-y);
   return d.toISOString().slice(0,10);
+}
+// CAS-340: the slider's whole sub-text now — one line, a date not a sentence. "Any" has no cutoff to name,
+// so it reads as the plain word rather than a fabricated date.
+function yearsReadout(y){
+  if(!y) return "All years";
+  const [yr,mo]=yearsCutoff(y).split("-");
+  return `From ${MONTHS[+mo-1]} ${yr}`;
 }
 // Did this film come out on or after the cutoff? A film with a real release date is judged on it — that is
 // what makes the window rolling. One with only a year is judged on the year, because that is all it has,
@@ -7136,6 +7147,9 @@ function starterPreview(s, kind){
   d.selBuzz=s.crit.selBuzz||0; d.selOr=false;
   d.status=watchToStatuses(starterWatch(s, kind));
   d.kind = kind || flowKind;
+  // CAS-340: pickStarter opens a streaming agent on 10 years back, not Any — the card has to quote the same
+  // window it is about to build, or the CAS-144 invariant breaks the moment the default stopped being wide open.
+  d.yearsBack = d.kind==="stream" ? 10 : 0;
   laneCrit(d, d.kind);                 // CAS-248: the card counts what the agent will actually apply
   return normCascade(d);
 }
@@ -7197,7 +7211,10 @@ window.pickStarter=key=>{
   // it sets one (CAS-307), so a preset's Style/Rating standard survives into the draft instead of always
   // being reset to wide open — draftFromTemplate already copied s.crit.exclude in above, untouched here.
   onbFlow.draft.genre = s.crit.genre||[]; onbFlow.draft.age = s.crit.age||[]; onbFlow.draft.lang = ["en"];
-  onbFlow.draft.yearStop = 0;        // Any — every year in (CAS-116)
+  // CAS-340: a streaming agent opens on 10 years back, not Any — cinema never shows this control, so it
+  // keeps the open default (CAS-116).
+  onbFlow.draft.yearsBack = flowKind==="stream" ? 10 : 0;
+  onbFlow.draft.yearStop = 0;        // legacy fallback field, kept for an older build reading it
   // CAS-144: the dials OPEN ON THE AGENT'S OWN STANDARD, not fully open. The card you just tapped quoted a
   // number ("14 films match now"); landing on a hub that says 442 because its dials were reset would make one
   // of those two screens a liar. So the preset's standard seeds the stops, and the hub's count is the count
@@ -8686,25 +8703,26 @@ const TB_BODIES = {
     b.querySelector('[data-a="none"]').onclick=()=>{ tasteBase.genres=null; saveTasteBase(); drawTasteRows(); };
   },
   year(b, upd){
-    // CAS-250: the same continuous log track the agent's own how-far-back uses. The slider carries a
+    // CAS-340: the same ten-stop non-linear track the agent's own how-far-back uses. The slider carries a
     // POSITION and the value is read off it, exactly as Budget & scale does — the years are not linear to
-    // the eye any more than money is.
+    // the eye any more than money is. A notch lights up when its window is a SUBSET of the current pick
+    // (y && y<=val) — "Any" (y=0) never lights, since a finite window never includes the unbounded one.
     const val=baseYearsBack();
-    const notch = y => `<span class="vnotch ${(!val ? false : y<=val) ? "lit":""}" style="left:${posForYears(y)}%"></span>`;
-    b.innerHTML=`<p class="tbhint">Slide right for the whole back-catalogue, left for only the freshest.</p>
+    const notch = y => `<span class="vnotch ${(val && y && y<=val) ? "lit":""}" style="left:${posForYears(y)}%"></span>`;
+    b.innerHTML=`<p class="tbhint">Slide left for the whole back-catalogue, right for only the freshest.</p>
       <div class="vslider">
         <div class="vtrack"><div class="vfillbar" style="width:${posForYears(val)}%"></div></div>
-        <div class="vnotches">${YEARS_NOTCHES.map(notch).join("")}</div>
+        <div class="vnotches">${YEARS_STOPS.map(notch).join("")}</div>
         <input type="range" id="tbYear" min="0" max="100" step="1" value="${posForYears(val)}"
                aria-label="How far back">
       </div>
-      <div class="vlabels">${YEARS_LABELS.map(y=>`<button type="button" class="vsnap ${y===val?"on":""}"
+      <div class="vlabels">${YEARS_STOPS.map(y=>`<button type="button" class="vsnap ${y===val?"on":""}"
         data-y="${y}" style="left:${posForYears(y)}%;transform:${posForYears(y)<=0?"translateX(0)":posForYears(y)>=100?"translateX(-100%)":"translateX(-50%)"}"
         >${esc(yearsShort(y))}</button>`).join("")}</div>`;
     const r=b.querySelector("#tbYear");
     const apply=y=>{
       tasteBase.yearsBack=y;
-      paintDial(b, posForYears(y), i=>y && YEARS_NOTCHES[i]<=y, i=>YEARS_LABELS[i]===y);
+      paintDial(b, posForYears(y), i=>y && YEARS_STOPS[i] && YEARS_STOPS[i]<=y, i=>YEARS_STOPS[i]===y);
       upd();
     };
     r.oninput=()=>apply(yearsForPos(+r.value));
@@ -9273,34 +9291,33 @@ const SHARP_STEPS = {
     say: n => `Going back <b>${esc(yearsLabel(flowYearsBack()).toLowerCase())}</b>`,
     lead(){ return `watches films <b>${onbYearPhrase()}</b>`; },
     // The app's rich slider (CAS-116): dotted track + circle stops drawn under a real range input, labels
-    // below. CAS-250 makes it continuous and log-spaced — the input carries a POSITION and the years are
-    // read off it, the same shape Budget & scale has used since CAS-166. The ticks sit at every named
-    // window; only a few are printed, because six labels is what fits and every year between them is still
-    // reachable by dragging.
+    // below. CAS-340 makes it ten fixed, non-linear-spaced stops — the input carries a POSITION and the
+    // years are read off it, the same shape Budget & scale has used since CAS-166. Every stop is now also a
+    // printed label, so there is nothing between them left to reach for.
     body(){
       const y=flowYearsBack();
       return `<p class="ossub">From all-time classics to this week's releases — everything's in by default.</p>
         <div class="osslider">
           <div class="rslider">
-            <div class="rstops logstops" aria-hidden="true">${YEARS_NOTCHES.map(n=>`<i class="${(y && n<=y)?'lit':''}" style="left:${posForYears(n)}%"></i>`).join("")}</div>
+            <div class="rstops logstops" aria-hidden="true">${YEARS_STOPS.map(n=>`<i class="${(y && n && n<=y)?'lit':''}" style="left:${posForYears(n)}%"></i>`).join("")}</div>
             <input id="onbStepYears" type="range" min="0" max="100" step="1"
                    value="${posForYears(y)}" aria-label="How far back should your agent look?">
           </div>
-          <div class="rlabels loglabels" id="onbStepYearLabels">${YEARS_LABELS.map(n=>`<button type="button" class="ysnap ${n===y?'lit':''}"
+          <div class="rlabels loglabels" id="onbStepYearLabels">${YEARS_STOPS.map(n=>`<button type="button" class="ysnap ${n===y?'lit':''}"
             data-y="${n}" style="left:${posForYears(n)}%">${esc(yearsShort(n))}</button>`).join("")}</div>
         </div>
-        <p class="osexplain" id="onbStepYearExplain">${onbYearExplain(y)}</p>
+        <p class="osexplain" id="onbStepYearExplain"><b>${esc(yearsReadout(y))}</b></p>
         <p class="ossumline" id="onbStepSay">${SHARP_STEPS.years.say(stepCount(SHARP_STEPS.years))}</p>`;
     },
     wire(){
       const r=$("onbStepYears"); if(!r) return;
       const apply=y=>{
         if(onbFlow.draft) onbFlow.draft.yearsBack=y;
-        const ex=$("onbStepYearExplain"); if(ex) ex.innerHTML=onbYearExplain(y);
+        const ex=$("onbStepYearExplain"); if(ex) ex.innerHTML=`<b>${esc(yearsReadout(y))}</b>`;
         $("onbStep").querySelectorAll(".rstops i")
-          .forEach((el,k)=>el.classList.toggle("lit", !!y && YEARS_NOTCHES[k]<=y));
+          .forEach((el,k)=>el.classList.toggle("lit", !!y && !!YEARS_STOPS[k] && YEARS_STOPS[k]<=y));
         const labs=$("onbStepYearLabels");
-        if(labs) [...labs.children].forEach((el,k)=>el.classList.toggle("lit", YEARS_LABELS[k]===y));
+        if(labs) [...labs.children].forEach((el,k)=>el.classList.toggle("lit", YEARS_STOPS[k]===y));
         onbRefresh();
       };
       r.oninput=()=>apply(yearsForPos(+r.value));
@@ -9310,16 +9327,6 @@ const SHARP_STEPS = {
     },
   },
 };
-// The one-line explainer under the years slider — honest about what the window sets aside, and about what
-// "last N years" means. It is the rolling twelve months behind today, not the calendar year: the old
-// "This year" rung admitted five days of releases on 5 January and meant something different every month.
-function onbYearExplain(y){
-  if(!y) return "<b>Any year.</b> Every release qualifies — nothing's ruled out by date.";
-  const cut=yearsCutoff(y);
-  const p=onbYearPhrase();
-  return `<b>${p.charAt(0).toUpperCase()+p.slice(1)}.</b> Anything released before ${fmtDate(cut)} is set `
-       + `aside until you widen it again.`;
-}
 let onbStepKey=null;
 // ================= CAS-188: the linear signup flow =================================================
 // R5 ended on a HUB — "Get selective", three doors, come back to it when each was confirmed. 0.8 replaces
