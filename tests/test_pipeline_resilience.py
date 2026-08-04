@@ -121,6 +121,7 @@ class BuildSurvivesAFailingOmdb(unittest.TestCase):
         patches = [
             mock.patch.object(pp, "ingest_tmdb", lambda seen: []),
             mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
             mock.patch.object(pp, "tmdb_providers", lambda tid: prov),
             mock.patch.object(pp, "has_provider_rows", lambda p: True),
             mock.patch.object(pp, "provider_offers", lambda p: [{"service": "Netflix", "type": "sub",

@@ -53,6 +53,11 @@ OPENING_WEEK_DAYS = 7            # a cinema release this recent counts as "openi
 UPCOMING_LOOKAHEAD_DAYS = int(os.getenv("UPCOMING_LOOKAHEAD_DAYS", "540"))   # ~18 months ahead
 MAX_UPCOMING            = int(os.getenv("MAX_UPCOMING", "100"))              # announced AU theatrical; TMDB detail calls only
 
+# CAS-361: widen past the theatrical scope — the newest AU-available titles (stream/rent/buy),
+# no release_type restriction, so recent streaming-only / direct-to-digital films that never
+# played a cinema (and so never match with_release_type=2|3 above) are ingested too.
+MAX_STREAMING_ONLY = int(os.getenv("MAX_STREAMING_ONLY", "2000"))   # first 100 pages @ 20/page
+
 # --- window heuristics (this is YOUR business logic, not something an API gives you) ---
 PVOD_MIN_PRICE   = 19.99          # a buy/rent at or above this, with no subscription yet, = premium early window
 RENTAL_MAX_PRICE = 9.99           # a rent at or below this = standard rental window
@@ -258,6 +263,44 @@ def _discover_au_theatrical(start: str, end: str, cap: int, seen: set) -> list[d
                 break
         page += 1
     return movies
+
+
+def _discover_au_streaming(cap: int, seen: set) -> list[dict]:
+    """CAS-361: the widened AU-available scope — watch_region + monetization types, no
+    release_type filter, newest-first (primary_release_date.desc). Catches recent
+    streaming-only/direct-to-digital titles `_discover_au_theatrical`'s type=2|3 filter
+    excludes. `seen` is shared with the theatrical/upcoming passes so nothing double-lands."""
+    movies, page = [], 1
+    max_pages = min(500, max(1, -(-cap // 20)))              # ~20 results/page; ceil, capped at TMDB's max
+    while len(movies) < cap and page <= max_pages:
+        disc = get_json(
+            f"{TMDB_BASE}/discover/movie?api_key={TMDB_KEY}&watch_region={REGION}"
+            f"&with_watch_monetization_types=flatrate|rent|buy"
+            f"&sort_by=primary_release_date.desc&page={page}"
+        )
+        results = disc.get("results", [])
+        if not results:
+            break
+        for m in results:
+            if m["id"] in seen:
+                continue
+            seen.add(m["id"])
+            detail = get_json(
+                f"{TMDB_BASE}/movie/{m['id']}?api_key={TMDB_KEY}&append_to_response=release_dates,videos,credits"
+            )
+            movies.append(_tmdb_record(detail))
+            if TMDB_PACING:
+                time.sleep(TMDB_PACING)                       # polite pacing on the detail-call loop
+            if len(movies) >= cap:
+                break
+        page += 1
+    return movies
+
+
+def ingest_tmdb_streaming(seen: set) -> list[dict]:
+    """CAS-361: the 2000 most-recently-released AU-available movies (incl. streaming-only),
+    merged/deduped into the persistent catalogue alongside the theatrical + upcoming ingest."""
+    return _discover_au_streaming(MAX_STREAMING_ONLY, seen)
 
 
 def ingest_tmdb(seen: set) -> list[dict]:
@@ -605,7 +648,7 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     # grow the catalogue with new titles TMDB surfaces that we don't already hold
     new = []
     if len(base) < CATALOGUE_TARGET:
-        new = ingest_tmdb(seen) + ingest_tmdb_upcoming(seen)
+        new = ingest_tmdb(seen) + ingest_tmdb_upcoming(seen) + ingest_tmdb_streaming(seen)
     catalogue = list(base.values()) + [m for m in new if m["tmdb_id"] not in base]
     catalogue.sort(key=lambda m: m.get("popularity") or 0, reverse=True)
     catalogue = catalogue[:CATALOGUE_TARGET]

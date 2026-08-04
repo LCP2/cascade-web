@@ -140,6 +140,7 @@ class TransientProviderDropEndToEnd(unittest.TestCase):
             mock.patch.object(pp, "ALERTS_FILE", os.path.join(state_dir, "alerts.json")),
             mock.patch.object(pp, "ingest_tmdb", lambda seen: []),
             mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
             mock.patch.object(pp, "TMDB_PACING", 0),
             mock.patch.object(pp, "enrich_omdb", lambda m: m),
         ]
