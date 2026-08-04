@@ -1299,7 +1299,11 @@
     display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:15px;flex:0 0 auto;cursor:pointer}
   .osback:hover{border-color:var(--violet)}
   .osback:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  .osprog{flex:1;height:6px;border-radius:999px;background:#20263a;overflow:hidden}
+  /* CAS-337: the screen's own title, moved into this row from a standalone heading below it — the same
+     slot the fixed wizard header's .steprow gives .osh, so both header styles read as one pattern. */
+  .ostop .osh{flex:1 1 auto;min-width:0;margin:0;font-size:19px;font-weight:500;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .osprog{height:6px;border-radius:999px;background:#20263a;overflow:hidden;margin-bottom:20px}
   .osprog i{display:block;height:100%;border-radius:999px;background:var(--grad);transition:width .4s ease}
   .oslast{font-size:10.5px;font-weight:700;letter-spacing:.06em;color:var(--accenttext);flex:0 0 auto}
   /* CAS-164: the CTA's count, mirrored at the top of the page. The button sits at the bottom of a screen you
@@ -1900,10 +1904,14 @@
      not about the screen, so it must hold still while the screens move under it — a progress bar that
      slides away with the step it measures reads as decoration. */
   .stephdr{position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:var(--flow-w);
-    z-index:90;display:flex;align-items:center;gap:12px;padding:12px var(--flow-pad);background:var(--bg);
-    border-bottom:1px solid rgba(255,255,255,.06)}
-  .stepprog{flex:1;height:6px;border-radius:999px;background:#20263a;overflow:hidden}
-  .stepprog i{display:block;height:100%;width:0;border-radius:999px;background:var(--grad);
+    z-index:90;background:var(--bg)}
+  .steprow{display:flex;align-items:center;gap:12px;padding:12px var(--flow-pad) 10px}
+  /* CAS-337: the title, inline with the back button — same slot .osh fills inside .ostop below, so the
+     two header styles (fixed wizard chrome / per-screen chrome) read as one pattern. */
+  .steprow .osh{flex:1 1 auto;min-width:0;margin:0;font-size:19px;font-weight:500;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stepprog{height:3px;border-radius:0;background:#20263a;overflow:hidden}
+  .stepprog i{display:block;height:100%;width:0;border-radius:0;background:var(--grad);
     transition:width var(--slidedur) cubic-bezier(.4,0,.2,1)}
   .steplbl{flex:0 0 auto;font-size:11.5px;font-weight:700;color:var(--dim);white-space:nowrap}
   /* The one Continue. Pinned to the bottom so it is in the same place on every step — you never hunt
@@ -1918,7 +1926,7 @@
   /* Room for both, and only while both are there: the pre-meter screens (priority, pick an agent) carry
      their own back arrow and their own tap-to-advance options, so padding them would be padding for
      chrome that isn't on the screen. */
-  .sharpstep.chromed .osinner{padding-top:52px;padding-bottom:96px}
+  .sharpstep.chromed .osinner{padding-top:60px;padding-bottom:96px}
   /* ---- the dual-pane slide ----
      Two .osinner panes live in the stage at once: the outgoing one keeps the content it was already
      painted with and walks off, the incoming one is built beside it and walks on. The stage is given the
@@ -2452,10 +2460,15 @@
      come from the live engine. Individual steps stay previewable in isolation at ?step=<name>.
      The header and the Continue bar are FIXED and live OUTSIDE the frame, because they belong to the flow
      rather than to any one screen: the screens slide under them, they do not slide with the screens. -->
+<!-- CAS-337: one row — back, title, step counter — with the progress meter reduced to a hairline
+     directly beneath it, so the standalone title row this used to sit above is gone. -->
 <div class="stephdr" id="stepHdr" hidden>
-  <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
+  <div class="steprow">
+    <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
+    <span class="osh" id="stepTitle"></span>
+    <span class="steplbl" id="stepLbl"></span>
+  </div>
   <div class="stepprog" role="progressbar" aria-label="Setup progress" id="stepProg"><i id="stepFill"></i></div>
-  <span class="steplbl" id="stepLbl"></span>
 </div>
 <div class="sharpstep" id="onbStep" role="dialog" aria-modal="true" aria-label="Set up your agent">
   <div class="osstage" id="onbStepStage"><div class="osinner" id="onbStepInner"></div></div>
@@ -3074,7 +3087,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 292, "commit": "4087ef6", "builtAt": "2026-08-04T06:20:54Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 293, "commit": "84b4a12", "builtAt": "2026-08-04T06:49:49Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -8780,6 +8793,7 @@ const SHARP_STEPS = {
   // unlocks once both are confirmed. That is the whole mechanic — progress you can see, and a reward at the
   // end of it — so there is deliberately no "keep it broad" escape any more (buildspec §7).
   selective: {
+    title: "Get selective",
     // CAS-160: three doors, so the two 15-point steps become three 10s — same 50→80 span, same 100 at the end.
     progress(){ return 50 + (onbDone.bar?10:0) + (onbDone.taste?10:0) + (onbDone.watch?10:0); },
     noAgent: true,
@@ -8800,8 +8814,7 @@ const SHARP_STEPS = {
       const funnel = n < f.base
         ? `<div class="osfunnel">out of <b>${f.base}</b> in your taste baseline · of ${f.all}</div>`
         : `<div class="osfunnel">your whole taste baseline · of ${f.all} — no bar set yet</div>`;
-      return `<h2 class="osh">Get selective</h2>
-        <div class="osbignum">${n}</div>
+      return `<div class="osbignum">${n}</div>
         <div class="osbigl">film${n===1?"":"s"} found for you right now</div>
         ${funnel}
         ${framing}
@@ -8820,6 +8833,7 @@ const SHARP_STEPS = {
   // the rest wait under "More controls" at their defaults, because a screen that opens with four bars asks a
   // person to have an opinion about four things before they've seen anything.
   selectivity: {
+    title: "Mission",
     progress: 70,
     noAgent: true,
     noSkip: true,     // inside the hub's door — the way out is Continue or Back, not a skip that means nothing
@@ -8835,8 +8849,7 @@ const SHARP_STEPS = {
       const primary = MISSION_DIALS[missionKind()] || MISSION_DIALS.cinema;
       const rest = missionRest();
       const dials = ks => ks.map(dialCardHTML).join("");
-      return `<h2 class="osh">Mission</h2>
-        <p class="ossub">Set the standards that matter here. A film has to meet <b>all</b> the ones you turn up.</p>
+      return `<p class="ossub">Set the standards that matter here. A film has to meet <b>all</b> the ones you turn up.</p>
         ${dials(primary)}
         ${rest.length ? (onbMoreOpen
           ? dials(rest)
@@ -8852,6 +8865,7 @@ const SHARP_STEPS = {
   // back to. The accordion is what turns them into a single page you can read at a glance: every row
   // states its current value in violet, so the page answers "what is my baseline?" without opening a thing.
   taste: {
+    title: "Your taste baseline",
     progress: 70,
     noAgent: true,
     noSkip: true,       // inside the hub's door — Done confirms it, Back leaves it alone
@@ -8863,8 +8877,7 @@ const SHARP_STEPS = {
     // while you are changing the very thing it measures. Up here it also finishes the subtitle's sentence:
     // "The world your agents search." / "1,461 films in your world."
     body(){
-      return `<h2 class="osh">Your taste baseline</h2>
-        <p class="ossub">The world your agents search. Tap a row to change it — one opens at a time.</p>
+      return `<p class="ossub">The world your agents search. Tap a row to change it — one opens at a time.</p>
         <p class="ossumline tbworld" id="tbWorld">${tbWorldHTML()}</p>
         <div class="tbrows" id="tbRows"></div>
         <div class="tbfoot"><span class="dotg"></span>Set once — every agent inherits it</div>`;
@@ -8877,6 +8890,7 @@ const SHARP_STEPS = {
   // The count moves live as lanes are ticked, because ticking a lane really does widen or narrow what the
   // agent watches — a screen whose controls didn't move the number would be a form, not a choice.
   watching: {
+    title: "Where & when you'll watch",
     progress: 70,
     noAgent: true,
     noSkip: true,       // inside the hub's door — Done confirms it, Back leaves it alone
@@ -8889,8 +8903,7 @@ const SHARP_STEPS = {
       // "List" and "Notify" only read as independent if you are told they are. The old subtitle described a
       // screen that did both at once and is no longer true of this one.
       const stream = agentWindowKind()==="stream";
-      return `<h2 class="osh">Where &amp; when you'll watch</h2>
-        <p class="ossub">Two separate choices per window: <b>List</b> puts those films in this agent's list, and
+      return `<p class="ossub">Two separate choices per window: <b>List</b> puts those films in this agent's list, and
           <b>Notify</b> tells you when one arrives. Neither implies the other.</p>
         <div id="wwLanes"></div>
         <div class="usec wwsec">Notify me by</div>
@@ -8904,6 +8917,7 @@ const SHARP_STEPS = {
   // off the agent itself, each opening the very screen the flow used to set it. One set of controls serves
   // first-run and edit, so the two can never drift into saying different things about the same setting.
   briefing: {
+    title: "Edit Agent",
     hub: true, noAgent: true,
     body(){
       const d=onbFlow.draft||{}, stream = d.kind==="stream";
@@ -8914,8 +8928,7 @@ const SHARP_STEPS = {
       // CAS-266: "Edit Agent", plain, and the same words whichever lane the agent is in. The old title named
       // the lane ("Cinema Agent Briefing"), which said what the agent IS on a screen you opened to change it —
       // the screen's job is the verb, and each row below already carries the agent's own settings.
-      return `<h2 class="osh">Edit Agent</h2>
-        <p class="ossub">Reconfigure this agent here.</p>
+      return `<p class="ossub">Reconfigure this agent here.</p>
         <!-- CAS-267: the rows are named and ordered as onboarding asks them. Editing an agent and building
              one are the same set of screens (CAS-182), so a person who has just been through the flow should
              recognise this list as the same questions in the same sequence — "Set your bar" and "Genres" were
@@ -8966,10 +8979,10 @@ const SHARP_STEPS = {
   // ---- CAS-188 #2: pick an agent --------------------------------------------------------------------
   // The same cards, the same live counts, in the flow's own frame rather than an overlay of their own.
   pickagent: {
+    title: "Pick a Cascade Agent",
     noAgent: true, hub: true,        // a card IS the answer (pickStarter walks on)
     body(){
-      return `<h2 class="osh">Pick a Cascade Agent</h2>
-        <!-- CAS-263: the explainer now names the CHOICE on this screen rather than describing the thing
+      return `<!-- CAS-263: the explainer now names the CHOICE on this screen rather than describing the thing
              you are choosing. What an agent does is the previous screen's job; this one is "pick from these,
              or build your own", which is exactly what the last card offers. Copy is the ticket's, verbatim. -->
         <p class="ossub">Choose a pre configured Agent or go totally custom.</p>
@@ -8981,11 +8994,11 @@ const SHARP_STEPS = {
   // CAS-146, and CAS-182 brought them back to the agent. Before CAS-188 this screen wrote onbFlow.genresOn,
   // a field onbApply had stopped reading — so it looked like it worked and changed nothing.
   genres: {
+    title: "Style",
     progress: 30,
     noAgent: true,
     body(){
-      return `<h2 class="osh">Style</h2>
-        <p class="ossub">Which genres should your agent draw from?</p>
+      return `<p class="ossub">Which genres should your agent draw from?</p>
         <div class="chips" id="onbStepGenres"></div>
         <div class="tbq tbqmin">
           <button type="button" class="q" onclick="flowSetAll('genre',true)">Select all</button>
@@ -9018,13 +9031,13 @@ const SHARP_STEPS = {
     refresh(){ paintChipCounts("onbStepGenres", genreCountsNow()); },
   },
   language: {
+    title: "Language",
     progress: 65,
     noAgent: true,
     say: langSayHTML,
     lead(){ return `watches ${onbLangPhrase()}`; },
     body(){
-      return `<h2 class="osh">Language</h2>
-        <p class="ossub">Which languages are you happy to watch in?</p>
+      return `<p class="ossub">Which languages are you happy to watch in?</p>
         <div class="chips" id="onbStepLangs"></div>
         <div class="tbq tbqmin">
           <button type="button" class="q" onclick="flowSetAll('lang',true)">Select all</button>
@@ -9057,12 +9070,12 @@ const SHARP_STEPS = {
     refresh(){ paintChipCounts("onbStepLangs", langCountsNow()); },
   },
   name: {
+    title: "Name your Agent",
     progress: 100,
     noAgent: true,
     body(){
       const dflt = onbFlow.defaultName || ONB_DEFAULT_NAME;
-      return `<h2 class="osh">Name your Agent</h2>
-        <p class="ossub">Give it a name you'll recognise. Change it any time — from Edit on its card,
+      return `<p class="ossub">Give it a name you'll recognise. Change it any time — from Edit on its card,
           whenever you like.</p>
         <input class="osfield" id="onbStepName" type="text" maxlength="40" autocomplete="off"
                placeholder="${escA(dflt)}" value="${escA(onbFlow.name)}"
@@ -9090,13 +9103,13 @@ const SHARP_STEPS = {
   // band: the flow asks it as "which of these are in?", and every rating is independently tappable, so a
   // range with a hole in it is expressible and a single tap can't silently drag a whole edge with it.
   age: {
+    title: "Ratings",
     progress: 82,
     noAgent: true,
     say: ageSayHTML,
     lead(){ return `watches <b>${onbAgePhrase()}</b>`; },
     body(){
-      return `<h2 class="osh">Ratings</h2>
-        <p class="ossub">Which ratings can your agent include? Tap to remove any you don't want.</p>
+      return `<p class="ossub">Which ratings can your agent include? Tap to remove any you don't want.</p>
         <div class="rsegwrap" id="onbStepAges" role="group" aria-label="Ratings">
           ${AGE_LEVELS.map((a,k)=>`<button type="button" class="rseg${dAgeOn(k)?" on":""}" data-i="${k}"
              aria-pressed="${dAgeOn(k)}">${esc(a)}</button>`).join("")}
@@ -9122,6 +9135,7 @@ const SHARP_STEPS = {
   // The switch is the honest half. Naming your services does not, on its own, mean "hide everything else";
   // that is a second decision, and until it is made the count must not move.
   services: {
+    title: "My services",
     progress: 95,
     noAgent: true,
     // The honest pair. `n` is what the agent WATCHES, and watching is deliberately not service-scoped
@@ -9139,8 +9153,7 @@ const SHARP_STEPS = {
       // CAS-251: two sections, because renting and subscribing are two different things you pay for and a
       // person knows exactly which of each they have. Each leads with the services carrying the most of
       // THIS catalogue and hides the tail behind "more", so the screen opens at a size you can answer.
-      return `<h2 class="osh">My services</h2>
-        <p class="ossub">Which do you already pay for? Your agent uses this to tell you what a film is
+      return `<p class="ossub">Which do you already pay for? Your agent uses this to tell you what a film is
           costing you — and, if you want, to leave out what you'd have to buy.</p>
         <div class="svcsec"><div class="svcsech">My Rental Services</div>
           <div class="chips" id="onbStepStores"></div></div>
@@ -9202,13 +9215,13 @@ const SHARP_STEPS = {
   // person can narrow themselves down to almost nothing, and the honest answer to a small number is not
   // "loosen up" — it is "an agent that never stops looking is exactly what a small number needs".
   keepfinding: {
+    title: "Cascade Agents keep finding",
     progress: 90,
     noAgent: true,
     noSkip: true,          // CAS-339: nothing here to skip — it's outside the counted flow now, own chrome
     cta: "Continue",
     body(){
-      return `<h2 class="osh">Cascade Agents keep finding</h2>
-        <p class="kflead">Don't worry if your selections are so precise that <b>few movies are found right
+      return `<p class="kflead">Don't worry if your selections are so precise that <b>few movies are found right
           now</b>.</p>
         <p class="kflead">Your agent will keep searching — and tell you about movies as they appear.</p>
         <!-- CAS-226: two tiers now, per the prototype's .exprice. This reverses the CAS-188 note that used to
@@ -9228,13 +9241,13 @@ const SHARP_STEPS = {
   // been scheduled. Delivery is the monitor's ticket (CAS-185); saying otherwise would be a capability we
   // have not built.
   notifysettings: {
+    title: "How will your agent notify you about Movies?",
     progress: 100,
     noAgent: true,
     cta: "Continue",
     body(){
       const on=k=>notifyPrefs[k]?" on":"";
-      return `<h2 class="osh">How will your agent notify you about Movies?</h2>
-        <button type="button" class="bigtoggle${on("inApp")}" onclick="flowNotify('inApp',this)">
+      return `<button type="button" class="bigtoggle${on("inApp")}" onclick="flowNotify('inApp',this)">
           <span class="btmain">Allow in-app notifications</span><span class="btcheck">✓</span></button>
         <button type="button" class="bigtoggle${on("emailOn")}" onclick="flowNotify('emailOn',this)">
           <span class="btmain">Send me alerts by email</span><span class="btcheck">✓</span></button>
@@ -9252,6 +9265,7 @@ const SHARP_STEPS = {
     },
   },
   years: {
+    title: "How far back?",
     progress: 48,
     noAgent: true,
     // CAS-234 names Style, Language and Ratings; How far back carries the identical third count and gets
@@ -9265,8 +9279,7 @@ const SHARP_STEPS = {
     // reachable by dragging.
     body(){
       const y=flowYearsBack();
-      return `<h2 class="osh">How far back?</h2>
-        <p class="ossub">From all-time classics to this week's releases — everything's in by default.</p>
+      return `<p class="ossub">From all-time classics to this week's releases — everything's in by default.</p>
         <div class="osslider">
           <div class="rslider">
             <div class="rstops logstops" aria-hidden="true">${YEARS_NOTCHES.map(n=>`<i class="${(y && n<=y)?'lit':''}" style="left:${posForYears(n)}%"></i>`).join("")}</div>
@@ -9768,6 +9781,7 @@ function paintFlowChrome(key, step, n){
   $("stepFill").style.width = Math.round((i+1)/counted.length*100)+"%";
   $("stepProg").setAttribute("aria-valuenow", String(i+1));
   $("stepLbl").textContent = `Step ${i+1} of ${counted.length}`;
+  $("stepTitle").textContent = step.title || "";
   const cta=$("flowCta"); if(cta) cta.textContent=stepCtaText(step, n);
 }
 function renderOnbStep(key){
@@ -9788,9 +9802,10 @@ function renderOnbStep(key){
   $("onbStepInner").innerHTML = `
     ${chromed ? "" : `<div class="ostop">
       <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
-      ${(prog==null||spoke) ? "" : `<div class="osprog"><i style="width:${prog}%"></i></div>`}
+      ${step.title ? `<h2 class="osh${step.titleClass ? " "+step.titleClass : ""}">${escA(step.title)}</h2>` : ""}
       ${(last&&!spoke)?`<span class="oslast">LAST ONE</span>`:""}
-    </div>`}
+    </div>
+    ${(prog==null||spoke) ? "" : `<div class="osprog"><i style="width:${prog}%"></i></div>`}`}
     ${step.body()}
     ${onbTrailHTML(key)}
     ${step.noAgent ? "" : `<div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>`}
@@ -9804,16 +9819,22 @@ function renderOnbStep(key){
   paintFlowChrome(key, step, n);
 }
 // CAS-180: the count belongs immediately above the FIRST thing you select, not above the screen's title —
-// on "Where & when you'll watch" that means above the Cinema row. It is placed after the step's intro
-// (its heading and, if it has one, its subtitle) rather than written into each body, so every screen gets
-// it in the same position and no body has to remember to include it.
+// on "Where & when you'll watch" that means above the Cinema row. It is placed after the step's subtitle
+// rather than written into each body, so every screen gets it in the same position and no body has to
+// remember to include it.
+// CAS-337: the title itself is no longer a reliable anchor — a chromed step's title lives in the fixed
+// header outside this pane, and a non-chromed step's sits inside the .ostop row rather than as a sibling
+// of the body. The subtitle is still always a direct child of the pane, on every step that has a count to
+// place, so it alone is the anchor now.
 function placeStepCount(step, n){
   const html=stepCountHTML(step, n);
   if(!html) return;
-  const inner=$("onbStepInner"), h=inner.querySelector(".osh");
-  if(!h) return;
-  const sub=(h.nextElementSibling && h.nextElementSibling.classList.contains("ossub")) ? h.nextElementSibling : h;
-  sub.insertAdjacentHTML("afterend", html);
+  const inner=$("onbStepInner");
+  const sub=inner.querySelector(".ossub");
+  if(sub){ sub.insertAdjacentHTML("afterend", html); return; }
+  const ostop=inner.querySelector(".ostop");
+  if(ostop) ostop.insertAdjacentHTML("afterend", html);
+  else inner.insertAdjacentHTML("afterbegin", html);
 }
 function onbRefresh(){
   const s=$("onbStepSum"); if(s) s.innerHTML=onbSummary();
