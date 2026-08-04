@@ -3074,7 +3074,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 291, "commit": "4fcc34c", "builtAt": "2026-08-04T06:11:13Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 292, "commit": "4087ef6", "builtAt": "2026-08-04T06:20:54Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -9157,7 +9157,10 @@ const SHARP_STEPS = {
       const draw=(boxId, list, set)=>{
         const box=$(boxId); if(!box) return;
         const open = !!svcMore[boxId];
-        const shown = open ? list : list.slice(0, SVC_LEAD);
+        // CAS-341: alphabetical, not catalogue-count order — a name you're looking for (HBO Max included)
+        // is where you expect it, whether it's in the lead row or behind "more", instead of buried by rank.
+        const alpha=[...list].sort((a,b)=>svcName(a).localeCompare(svcName(b)));
+        const shown = open ? alpha : alpha.slice(0, SVC_LEAD);
         box.innerHTML="";
         shown.forEach(svc=>{
           const c=document.createElement("button");
@@ -9174,11 +9177,11 @@ const SHARP_STEPS = {
           };
           box.appendChild(c);
         });
-        if(list.length > SVC_LEAD){
+        if(alpha.length > SVC_LEAD){
           const more=document.createElement("button");
           more.type="button"; more.className="chip svcmore";
           // The count is the real remainder, so "more" never promises a tail that isn't there.
-          more.textContent = open ? "− less" : `+ ${list.length-SVC_LEAD} more`;
+          more.textContent = open ? "− less" : `+ ${alpha.length-SVC_LEAD} more`;
           more.onclick=()=>{ svcMore[boxId]=!open; draw(boxId, list, set); };
           box.appendChild(more);
         }
