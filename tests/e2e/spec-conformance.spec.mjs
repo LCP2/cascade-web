@@ -139,7 +139,7 @@ test("CAS-228: Agent Settings shows only the agent type's own windows, each with
   expect(state.list, "…but must not be listed").not.toContain("upcoming");
 });
 
-test("CAS-230: the film card carries Watch status + Notify + chevron, not the old icon row", async ({ page }) => {
+test("CAS-230: the film card carries Watch + Agent + Watched, not the old icon row", async ({ page }) => {
   await toShortlist(page, "cinema");
   const cards = await shortlistCards(page);
   await pickCard(page, cards[0].name);
@@ -151,27 +151,27 @@ test("CAS-230: the film card carries Watch status + Notify + chevron, not the ol
   const controls = await first.locator(".actions > *").evaluateAll(els => els.map(e => ({
     cls: e.className, text: (e.textContent || "").trim(),
   })));
-  // CAS-279 adds a third labelled chip — Cascade — between the two answers about the film itself, so this
-  // row is four controls now rather than the three CAS-230 shipped. The shape the ticket cares about is
-  // unchanged: labelled chips plus the chevron, and none of the old bare verdict icons.
-  expect(controls.length, JSON.stringify(controls)).toBe(4);
-  expect(controls[0].cls).toMatch(/\bctl\b.*\bwatch\b/);
-  expect(controls[0].text).toMatch(/Watch status/i);
+  // CAS-348 dropped the standalone chevron/service-list button (card expand/collapse is body-tap, CAS-178;
+  // the per-film service shortcut moved inline onto the green availability bar) and settled the row at
+  // exactly three equal controls — Watch, Agent, Watched (CAS-349 retaxonomized the first and third, in
+  // place, off the same `.ctl.notify`/`.ctl.casc`/`.ctl.watch` DOM this test already asserted).
+  expect(controls.length, JSON.stringify(controls)).toBe(3);
+  expect(controls[0].cls).toMatch(/\bctl\b.*\bnotify\b/);
+  expect(controls[0].text).toMatch(/Watch/i);
   expect(controls[1].cls).toMatch(/\bctl\b.*\bcasc\b/);
-  expect(controls[2].cls).toMatch(/\bctl\b/);
-  expect(controls[2].text).toMatch(/Notify|Muted/i);
-  expect(controls[3].cls).toMatch(/wtwbtn/);
+  expect(controls[2].cls).toMatch(/\bctl\b.*\bwatch\b/);
+  expect(controls[2].text).toMatch(/Watched/i);
   // The old row is gone: no Pick badge, no bare verdict buttons.
-  await expect(first.locator(".actions .pickbtn, .actions .actbtn:not(.wtwbtn)")).toHaveCount(0);
+  await expect(first.locator(".actions .pickbtn, .actions .actbtn")).toHaveCount(0);
 
-  // The Watch-status chip opens the answers, and choosing one lands it.
+  // The Watched chip opens the answers, and choosing one lands it.
   // CAS-278 supersedes the four CAS-183 answers with five, listed best-first: the old expectation here was
   // ["Don't want", "Disliked", "So-so", "Liked"] — worst-first, with the best answer sitting between the two
   // worst. cas278.spec.mjs owns the ordering and the ramp; this test only cares that the chip still opens a
   // real set of answers and that picking one registers.
   await first.locator(".ctl.watch").click();
   const segs = await page.locator(".cpop .cseg .cl").allTextContents();
-  expect(segs.map(s => s.trim())).toEqual(["Wow!", "Watch Again", "So-so", "Disliked", "Won't Watch"]);
+  expect(segs.map(s => s.trim())).toEqual(["Wow!", "Watch Again", "Enjoyed", "So-so", "Disliked"]);
   const cardId = await first.getAttribute("id");
   await page.locator(".cpop .cseg").filter({ has: page.getByText("Watch Again", { exact: true }) }).click();
   // What the chip has to achieve is that the answer LANDS — the film joins the watched set that feeds Your

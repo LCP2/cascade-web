@@ -2,10 +2,12 @@
 import { test, expect } from "@playwright/test";
 import { toShortlist, shortlistCards, pickCard, finishFlow, toListing } from "./helpers.mjs";
 
+// CAS-349: the aria-labels follow the retaxonomy — `.ctl.watch` (the opinion panel) collapses "watched" now,
+// `.ctl.notify` (the availability panel) collapses "watch". Still two distinct, honest names, one per control.
 const CONTROLS = [
-  { sel: ".ctl.watch",  name: "watch status" },
+  { sel: ".ctl.watch",  name: "watched" },
   { sel: ".ctl.casc",   name: "cascade" },
-  { sel: ".ctl.notify", name: "notify" },
+  { sel: ".ctl.notify", name: "watch" },
 ];
 
 async function toCard(page){

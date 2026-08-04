@@ -21,6 +21,19 @@ async function answerFirst(page, seg = 1){
   return { id, title };
 }
 
+// CAS-349: "Won't Watch" moved off the Watched `.cseg` panel to the Watch panel's "Never" row — same
+// `blocked` set, different control.
+async function answerNever(page){
+  const card = page.locator("#groups .card").first();
+  await card.scrollIntoViewIfNeeded();
+  const id = Number((await card.getAttribute("id")).replace("card-", ""));
+  const title = (await card.locator(".title").textContent()).trim();
+  await card.locator(".ctl.notify").click();
+  await card.locator('.cpop .nopt[data-wk="never"]').click();
+  await settleListing(page);
+  return { id, title };
+}
+
 test("CAS-293: a film you have answered is still findable by name", async ({ page }) => {
   await agentListing(page);
   const { id, title } = await answerFirst(page);
@@ -33,17 +46,17 @@ test("CAS-293: a film you have answered is still findable by name", async ({ pag
   expect(found, `"${title}" was answered and then could not be found in its own cascade`).toBe(true);
 });
 
-test("CAS-293: it is findable for every answer, including Won't Watch", async ({ page }) => {
-  for(const seg of [0, 4]){          // Wow! and Won't Watch — the two stored differently
+test("CAS-293: it is findable for every answer, including Never", async ({ page }) => {
+  for(const answer of [() => answerFirst(page, 0), () => answerNever(page)]){    // Wow! and Never — the two stored differently
     await agentListing(page);
-    const { id, title } = await answerFirst(page, seg);
+    const { id, title } = await answer();
     const found = await page.evaluate(([i, t]) => {
       filt.search = t.toLowerCase().slice(0, 10);
       const hit = scopeRows().some(m => m.tmdb_id === i);
       filt.search = "";
       return hit;
     }, [id, title]);
-    expect(found, `answer ${seg} made "${title}" unfindable`).toBe(true);
+    expect(found, `"${title}" became unfindable`).toBe(true);
   }
 });
 

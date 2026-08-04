@@ -21,6 +21,18 @@ async function answerFirst(page, seg = 1){
   return { id, title };
 }
 
+// CAS-349: "Never" is reached through the Watch panel now, not a `.cseg` on the Watched one.
+async function answerNever(page){
+  const card = page.locator("#groups .card").first();
+  await card.scrollIntoViewIfNeeded();
+  const id = Number((await card.getAttribute("id")).replace("card-", ""));
+  const title = (await card.locator(".title").textContent()).trim();
+  await card.locator(".ctl.notify").click();
+  await card.locator('.cpop .nopt[data-wk="never"]').click();
+  await settleListing(page);
+  return { id, title };
+}
+
 test("CAS-294: answering a film adds no group to the foot of the cascade", async ({ page }) => {
   await agentListing(page);
   const before = await page.locator("#listSaid .mlgroup").count();
@@ -36,6 +48,9 @@ test("CAS-294: every watch answer stays out of the footer", async ({ page }) => 
     if(rows === 0) break;
     await answerFirst(page, seg);
   }
+  // Never (CAS-349's relabelled/moved "Won't Watch") is on the Watch panel now, not one of these five `.cseg`
+  // answers — exercised separately so this loop still covers the blocked path it always meant to.
+  if(await page.locator("#groups .card").count() > 0) await answerNever(page);
   const text = (await page.locator("#listSaid").textContent()) || "";
   for(const heading of ["Watched · wow", "Watched · watch again", "Watched · so-so",
                         "Watched · didn't like", "Not for me"]){

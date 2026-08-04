@@ -23,13 +23,27 @@ async function answerFirst(page, seg){
   return { id, h };
 }
 
-// Every answer must be cancellable, not just the friendly ones. "Won't Watch" is the one the ticket names.
+// CAS-349: "Won't Watch" is no longer one of the Watched panel's `.cseg` answers — it moved to the Watch
+// panel's "Never" row, same `blocked` flag, different control. Reached via `.ctl.notify` + `.nopt[data-wk]`.
+async function answerNever(page){
+  const card = page.locator("#groups .card").first();
+  await card.scrollIntoViewIfNeeded();
+  const id = Number((await card.getAttribute("id")).replace("card-", ""));
+  const h = (await card.boundingBox()).height;
+  await card.locator(".ctl.notify").click();
+  await card.locator('.cpop .nopt[data-wk="never"]').click();
+  await settleListing(page);
+  await expect(page.locator(`#groups .stub[id="card-${id}"]`)).toHaveCount(1);
+  return { id, h };
+}
+
+// Every answer must be cancellable, not just the friendly ones.
 const ANSWERS = [
   { seg: 0, key: "wow",      name: "Wow!" },
   { seg: 1, key: "liked",    name: "Watch Again" },
-  { seg: 2, key: "soso",     name: "So-so" },
-  { seg: 3, key: "disliked", name: "Disliked" },
-  { seg: 4, key: "notfor",   name: "Won't Watch" },
+  { seg: 2, key: "enjoyed",  name: "Enjoyed" },
+  { seg: 3, key: "soso",     name: "So-so" },
+  { seg: 4, key: "disliked", name: "Disliked" },
 ];
 
 for(const a of ANSWERS){
@@ -51,9 +65,27 @@ for(const a of ANSWERS){
   });
 }
 
+// "Never" is the ticket's own example, and it's reached through the Watch panel now, not the Watched one —
+// same underlying `notfor`/`blocked` flag, so it still has to be cancellable the same way as every answer above.
+test("CAS-292: Never can be switched off and the card comes back", async ({ page }) => {
+  await agentListing(page);
+  const { id, h } = await answerNever(page);
+  expect(await page.evaluate(i => opinionOf(i), id)).toBe("notfor");
+
+  await page.evaluate(i => setOpinion(i, "notfor"), id);
+  await settleListing(page);
+
+  expect(await page.evaluate(i => opinionOf(i), id), "the answer did not clear").toBe("");
+  const card = page.locator(`#groups .card[id="card-${id}"]`);
+  await expect(card, "the card did not come back").toHaveCount(1);
+  await expect(page.locator(`#groups .stub[id="card-${id}"]`)).toHaveCount(0);
+  const back = (await card.boundingBox()).height;
+  expect(Math.abs(back - h), `card was ${h}px, came back ${back}px`).toBeLessThan(40);
+});
+
 test("CAS-292: cancelling from the stub's own control works, not just from the API", async ({ page }) => {
   await agentListing(page);
-  const { id } = await answerFirst(page, 4);          // Won't Watch, the ticket's example
+  const { id } = await answerNever(page);          // Never, the ticket's example
   const stub = page.locator(`#groups .stub[id="card-${id}"]`);
   // The lit button in the stub's row is the undo.
   const lit = stub.locator(".actbtn.on");
@@ -94,7 +126,7 @@ test("CAS-292: cancelling puts the film back in the section count", async ({ pag
 
 test("CAS-292: cancelling survives a reload — it really cleared, it did not just repaint", async ({ page }) => {
   await agentListing(page);
-  const { id } = await answerFirst(page, 3);
+  const { id } = await answerFirst(page, 4);
   await page.evaluate(i => setOpinion(i, "disliked"), id);
   await settleListing(page);
   await page.reload();
