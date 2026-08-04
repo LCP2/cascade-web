@@ -339,14 +339,13 @@
   .exsharebtn:hover{color:var(--ink);border-color:#3a4150}
   .exsharebtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .exsharebtn.done{color:var(--green);border-color:rgba(72,199,142,.55)}
-  /* CAS-304: back to a left-to-right row (reverting CAS-277's stack, per Lee's 0.8.3 review). The three
-     controls share the row equally, each label still ellipsizing rather than wrapping if it runs out of
-     room, so a control that has to abbreviate itself still says what it does. Where-to-watch is a bare
-     chevron, not a decision about the film, so it keeps its small fixed size at the end of the row. */
+  /* CAS-304: back to a left-to-right row (reverting CAS-277's stack, per Lee's 0.8.3 review). CAS-348: the
+     row is exactly three controls now — notify, agent, watch status — sharing it equally, each label still
+     ellipsizing rather than wrapping if it runs out of room, so a control that has to abbreviate itself
+     still says what it does. */
   .actions{display:flex;flex-direction:row;align-items:stretch;gap:8px;margin-top:12px}
   .actions .ctl,
   .actions .ctl.watch{flex:1 1 0;min-width:0}
-  .actions .wtwbtn{flex:none}
   /* ---- CAS-230: the v0.8 card controls (proto/cascade-08 listing card) ----
      Two labelled chips instead of six bare icons. A chip says in words what it is for; four unlabelled
      verdict icons only said it to someone who already knew. The fill bar behind the label is the same
@@ -482,10 +481,6 @@
   /* CAS-278 Wow!: the top of the ramp, a step brighter than Watch Again so the two greens are tellable
      apart at a glance — they are adjacent answers and the difference between them is the whole point. */
   .actbtn.on.wow{background:rgba(23,212,146,.20);border-color:#17d492;color:#8ff0cd}
-  .actbtn.wtwbtn .chev{transition:transform .18s}
-  .actbtn.wtwbtn.open{background:rgba(245,214,117,.12);border-color:rgba(245,214,117,.5);color:var(--gold)}
-  .actbtn.wtwbtn.open .chev{transform:rotate(180deg)}
-  .actbtn.wtwbtn.off{opacity:.35;cursor:not-allowed}
   /* ---- undo-collapse: a tagged film shrinks to one line, it never vanishes (CAS-64) ---- */
   /* Tagging something Watched / Not-interested used to delete it from the screen with no way back except a
      filter you'd have to go and find. Now the row stays, greyed, carrying the very icon that removed it —
@@ -1028,11 +1023,18 @@
     border-radius:9px;padding:8px 10px;margin-top:8px;line-height:1.45}
   /* ---- UX-psychology framings (contrast / loss) — flag-toggleable ---- */
   .saveline{margin-top:11px;font-size:11.5px;font-weight:700;line-height:1.45;padding:7px 10px;border-radius:9px;
-    background:rgba(72,199,142,.12);border:1px solid rgba(72,199,142,.45);color:#a7eccb}
+    background:rgba(72,199,142,.12);border:1px solid rgba(72,199,142,.45);color:#a7eccb;
+    display:flex;align-items:center;justify-content:space-between;gap:10px}
   /* rent-only: a fact, not a win — the green is reserved for "you already have this" */
   .saveline.plain{background:var(--panel2);border-color:var(--line);color:var(--dim)}
   .saveline.plain b{color:#bcdcff}
   .saveline b{color:#d9ffec}
+  /* CAS-348: the services shortcut lives INSIDE the green bar, on cards that have one — same colour and
+     weight as the bar's own text, not a separate button, so it reads as part of the claim it's attached to. */
+  .svcbtn{flex:none;display:inline-flex;align-items:center;gap:3px;background:none;border:0;padding:0;
+    font:inherit;font-weight:700;color:inherit;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+  .svcbtn .chev{width:13px;height:13px;transition:transform .18s}
+  .svcbtn.open .chev{transform:rotate(180deg)}
   .alert .frame{font-size:11.5px;font-weight:600;line-height:1.45;margin-top:8px;padding:7px 9px;border-radius:8px;
     background:rgba(240,163,54,.1);border:1px solid rgba(240,163,54,.35);color:#ffce8f}
   /* ---- setup meter (goal-gradient — counts only real, already-true state) ---- */
@@ -3189,7 +3191,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 309, "commit": "907fdac", "builtAt": "2026-08-04T10:58:49Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 310, "commit": "29847fe", "builtAt": "2026-08-04T11:15:49Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -3934,7 +3936,7 @@ function estimateHTML(m){
 // It's the factual where-to-watch line, so it shows regardless of the UX flag — a price and a service are
 // facts, not persuasion. The A/B flag still adds the psychology on top: the endowment nudge when it's a
 // service you already pay for, and the buy-vs-rent contrast where a genuinely cheaper path exists.
-function savingsHTML(m){
+function savingsHTML(m, canExpand){
   // CAS-110: never a price against a window nobody confirmed. An estimated title has no offers today, and if
   // one ever arrives on a title still marked estimated it is not evidence of anything — the price line waits
   // for the poll that confirms the window it belongs to.
@@ -3954,7 +3956,14 @@ function savingsHTML(m){
     const svc=svcName((mine[0]||subs[0]).service);
     const own=(ux.on && mine.length) ? " — which you already pay for" : "";
     const alt=rent ? `, or pay <b>$${rent.price.toFixed(2)}</b> to rent` : "";
-    return `<div class="saveline">✓ Included on <b>${esc(svc)}</b>${alt}${own}</div>`;
+    // CAS-348: the services list used to open only from the row's chevron button, which the control-row
+    // redesign removes. On a card wearing this bar, the bar itself carries the shortcut instead — per film,
+    // not per agent, so it is correct on the mixed All/Home view too.
+    const svcAff = canExpand
+      ? `<button type="button" class="svcbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')"
+           title="Show all services" aria-label="Show all services">Services${ICON.chev}</button>`
+      : "";
+    return `<div class="saveline">✓ Included on <b>${esc(svc)}</b>${alt}${own}${svcAff}</div>`;
   }
   if(rent){
     const cheaper=(ux.on && buy && buy.price>rent.price)
@@ -4126,10 +4135,6 @@ function cardHTML(m, markNew=false){
          onclick="event.stopPropagation()" title="Play the trailer" aria-label="${escA("Play the trailer for "+m.title)}">▶</a>`
     : "";
   const badge = scaleBadge(m);
-  const wtwBtn = offers.length
-    ? `<button class="actbtn wtwbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')" title="Where to watch (${offers.length})">${ICON.chev}</button>`
-    : `<button class="actbtn wtwbtn off" disabled
-        title="${isEstimated(m)?"Not confirmed yet — there's no listing to show":"No home offers yet"}">${ICON.chev}</button>`;
   // What's new is a fact about the film — the day Cascade first picked it up — so it is stated ON the film,
   // and nowhere else (CAS-107). It no longer decides where the film sits in the list, and the header no longer
   // dresses the whole list up as news; the chip just tells you which of these you haven't seen before.
@@ -4161,18 +4166,19 @@ function cardHTML(m, markNew=false){
     ${availHTML(m)}
     <div class="cfoot">
       ${estimateHTML(m)}
-      ${savingsHTML(m)}
+      ${savingsHTML(m, offers.length>0)}
       ${wtw}
-      <!-- CAS-230: the v0.8 control row — Watch status, Notify, chevron. The Pick badge and the four bare
-           verdict icons are gone from the card; Pick still lives on the Found / Your Movies rows, which is
-           where taking a film off your list by hand belongs. -->
+      <!-- CAS-348: exactly three equal-width controls, ordered by function — notify, then agent, then watch
+           status. The row hugs whichever availability line the card is showing (green bar / status strip /
+           estimate / rent-only), not the card bottom. The old standalone expand chevron and service-list
+           button are gone: card expand/collapse is by body tap (CAS-178), and the service list opens from
+           the green bar itself when the film has one (see savingsHTML). -->
       <!-- CAS-279: Cascade sits in the MIDDLE, between the two answers about the film itself. It is the one
            control here that is about where the film LIVES rather than what you make of it. -->
       <div class="actions">
-        ${watchChipHTML(id)}
-        ${cascadeChipHTML(id)}
         ${notifyChipHTML(id)}
-        ${wtwBtn}
+        ${cascadeChipHTML(id)}
+        ${watchChipHTML(id)}
       </div>
     </div>
   </div>`;
@@ -4935,8 +4941,8 @@ window.toggleExpand=id=>{
   const c=document.getElementById("card-"+id); if(!c) return;
   c.classList.toggle("expanded", on);
   // opening the card also reveals its "where to watch" list (if it has offers)
-  const wtw=c.querySelector(".wtw"), wtwBtn=c.querySelector(".wtwbtn");
-  if(wtw){ wtw.classList.toggle("open", on); if(wtwBtn) wtwBtn.classList.toggle("open", on); }
+  const wtw=c.querySelector(".wtw"), svcBtn=c.querySelector(".svcbtn");
+  if(wtw){ wtw.classList.toggle("open", on); if(svcBtn) svcBtn.classList.toggle("open", on); }
 };
 function activeCount(){
   let n=filt.status.size+filt.year.size+filt.age.size+filt.culture.size+filt.lang.size+filt.genre.size;
