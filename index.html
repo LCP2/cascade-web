@@ -3149,7 +3149,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 297, "commit": "a05bf1b", "builtAt": "2026-08-04T08:02:39Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 300, "commit": "9b18b9f", "builtAt": "2026-08-04T08:31:44Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3412,11 +3412,7 @@ function openModal(el){ el.classList.add("open"); document.body.style.overflow="
 function closeModal(el){
   el.classList.remove("open");
   if(!document.querySelector(".modal.open")) document.body.style.overflow="";
-  // CAS-182: the services row of the Agent Briefing hands off to the Preferences modal, which sits UNDER
-  // the flow frame in the stack — so the Briefing has to step aside for it and come back when it closes.
-  // Coming back is the whole point: a row that dumped you on the listing would break the hub.
-  if(briefResume){ const id=briefResume; briefResume=null; briefOpen(id); }
-  else if(typeof accountResume==="function") accountResume();   // CAS-206: same rule for Account
+  if(typeof accountResume==="function") accountResume();   // CAS-206: Account steps aside for a modal, then resumes
 }
 // CAS-150: the Filters button is gone from the header — the selection engine is the Cascade itself, and a
 // second one sitting above it was the clutter this ticket is about. The panel's controls stay in the DOM
@@ -9526,10 +9522,10 @@ function briefOpen(id){
   logEvent("briefing_opened",{id});
   gotoStep("briefing","none");
 }
-let briefResume=null;
-window.briefGo=step=>{ logEvent("briefing_row",{step});
-  if(step==="services"){ briefResume=(onbFlow.draft||{}).id||null; briefClose(); openModal($("prefs")); return; }
-  gotoStep(step,"fwd"); };
+// CAS-343: every Briefing row — including "Streaming services" — opens the same SHARP_STEPS spoke the
+// linear onboarding flow uses, so behaviour and styling always match. It used to divert to the older
+// standalone Preferences modal, which had drifted out of sync (no alphabetised chips, no lead/"more" rows).
+window.briefGo=step=>{ logEvent("briefing_row",{step}); gotoStep(step,"fwd"); };
 // CAS-246: hand the just-picked agent to the Briefing WITHOUT committing it. briefOpen() reads a SAVED
 // cascade off the deck; this agent has never been saved, and saving it here so the hub had something to read
 // would put an agent nobody confirmed onto the deck — and leave it there if they backed out. So the draft
