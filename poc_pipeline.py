@@ -754,11 +754,12 @@ def build_version_info() -> dict:
     version              — hand-bumped SemVer from the committed VERSION file (the only manual step).
     major/minor/patch    — parsed from version.
     build/commit/builtAt — derived automatically from git at build time; never hand-edited.
-    env                  — the environment this artifact was BUILT for: CASCADE_ENV if set, else the
-                           branch (main -> production, else staging). NOTE: the visible in-app badge
-                           re-derives env from the hostname at RUNTIME, so the live site self-labels
-                           correctly even though promote is a plain staging->main merge (no rebuild).
-                           This baked value is the build-branch record for /version.json consumers."""
+
+    No "env" field here (CAS-324): version.json is mirrored byte-for-byte from staging to main by
+    promote.yml's pure merge, so a value baked in at build time (necessarily on staging) would still
+    read "staging" once mirrored to prod — there is no build-time value that is correct in both places.
+    env is instead resolved at RUNTIME from the hostname, by whoever is reading the stamp (see
+    RUNTIME_ENV in app_template.html for the in-app badge)."""
     version = "0.0.0"
     try:
         version = (open(VERSION_FILE, encoding="utf-8").read().strip() or version)
@@ -768,14 +769,11 @@ def build_version_info() -> dict:
         try:    return int(x)
         except Exception: return 0
     major, minor, patch = ([_int(p) for p in version.split(".")] + [0, 0, 0])[:3]
-    branch = _git("rev-parse", "--abbrev-ref", "HEAD")
-    env    = os.environ.get("CASCADE_ENV") or ("production" if branch == "main" else "staging")
     return {
         "version": version, "major": major, "minor": minor, "patch": patch,
         "build":   _int(_git("rev-list", "--count", "HEAD")),
         "commit":  _git("rev-parse", "--short", "HEAD") or "unknown",
         "builtAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "env":     env,
     }
 
 
@@ -796,7 +794,7 @@ def build_html(records: list[dict] | None = None):
     # Machine-readable stamp served at /version.json (same origin as the app).
     with open(VERSION_JSON, "w", encoding="utf-8") as f:
         json.dump(info, f, separators=(",", ":")); f.write("\n")
-    print(f"stamped v{info['version']} · build {info['build']} · {info['commit']} · env {info['env']}")
+    print(f"stamped v{info['version']} · build {info['build']} · {info['commit']}")
 
 
 def _apply_scripted_change(records: list[dict]):
