@@ -1857,25 +1857,51 @@
   .nlchip{font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px;
     background:var(--panel2);border:1px solid var(--accent);color:#cfc2ff;white-space:nowrap}
   .nlmiss{font-size:11px;color:var(--faint);line-height:1.5;margin-top:8px;font-style:italic}
-  /* ---- The list's order control (CAS-150) ---- */
-  /* It belongs to the Cascade whose list it orders, so it sits under the deck rather than up in the header
-     with the app-wide controls. Right-aligned and quiet: it is an adjustment to the list, not a question
-     being asked of you. (This is where the New / All pair used to stand.) */
-  .sortbar{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:8px 12px 0}
-  .sortlbl{font-size:11.5px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
-  /* CAS-275: the jump rail. It scrolls horizontally rather than wrapping — a control row that grows a second
+  /* ---- The list's Jump-to + Order row (CAS-321) ---- */
+  /* CAS-150/CAS-275 used to stack the sort row above the jump rail above the services banner: three rows
+     of chrome before the first card. CAS-321 folds jump-to and sort into ONE row — chips left, sort pinned
+     right — so the listing starts a screenful sooner. The services "scoped" banner that used to sit under
+     them is gone outright (its job — saying the list is narrowed to your services — is now obvious from the
+     Buy/Rent/Stream chips themselves); the "empty scope" warning stays, because that one is actionable. */
+  .listctl{display:flex;align-items:stretch;gap:8px;margin:8px 12px 0}
+  /* CAS-275: the jump rail scrolls horizontally rather than wrapping — a control row that grows a second
      line changes the height of a STICKY bar, which moves the listing under the reader's thumb. Six sections
      will not fit across 390px and are not meant to; the rail is a thing you flick, like the deck above it. */
-  .jumpbar{display:flex;align-items:center;gap:6px;margin:8px 0 0;padding:0 12px 1px;
+  .jumpbar{flex:1;min-width:0;position:relative;display:flex;align-items:center;gap:6px;
     overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
   .jumpbar::-webkit-scrollbar{display:none}
-  .jlbl{flex:none;font-size:11.5px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+  /* CAS-321: a subtle fade at the scrollable edge, shown only while there is more to scroll to (see the
+     .overflowing toggle in renderJumpBar) — the sort button is OUTSIDE this rail, so the fade never covers it. */
+  .jumpbar.overflowing::after{content:"";position:absolute;top:0;right:0;bottom:0;width:22px;
+    background:linear-gradient(to right,transparent,var(--bg));pointer-events:none}
   .jchip{flex:none;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;
     border:1px solid var(--line);background:var(--panel2);color:var(--dim);font-size:11.5px;font-weight:700;
     cursor:pointer;white-space:nowrap;font-family:inherit}
   .jchip:hover{color:var(--ink);border-color:#3a4150}
   .jchip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .jchip .jn{color:var(--faint);font-weight:700}
+  /* CAS-321: within this row only, the Buy (pvod) dot reads amber rather than the section heading's purple —
+     Lee's colour call for the three purchase-model chips (Buy/Rent/Stream = amber/blue/green). The group
+     heading above the section keeps its own purple dot; the two are different surfaces, not a mismatch. */
+  .jumpbar .gdot.pvod{background:var(--amber)}
+  /* The sort control mirrors a jchip's box exactly, so it sits the same height and lines up on the row.
+     Icon-only on phone; the current-sort label + chevron reveal from 560px, per CAS-321. */
+  .sortctl{position:relative;flex:none;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;
+    border-radius:20px;border:1px solid var(--line);background:var(--panel2);color:var(--dim);
+    font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .sortctl:hover{color:var(--ink);border-color:#3a4150}
+  .sortic{font-size:13px;line-height:1;position:relative}
+  .sortdot{position:absolute;top:-3px;right:-3px;width:7px;height:7px;border-radius:50%;
+    background:var(--cyan);border:1.5px solid var(--panel2)}
+  .sortcur,.sortchev{display:none}
+  .sortchev{font-size:9px;color:var(--faint)}
+  @media (min-width:560px){ .sortcur,.sortchev{display:inline} }
+  /* The real control: a native select, invisible and stretched over the whole pill, so a tap anywhere on the
+     pill opens the OS's own picker — which already shows the current sort selected and lets it be changed,
+     satisfying the "menu" acceptance criterion without a hand-rolled dropdown. */
+  .sortctl select{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;
+    opacity:0;cursor:pointer;-webkit-appearance:none;appearance:none}
+  .sortctl select:focus-visible ~ .sortic{outline:2px solid var(--cyan);outline-offset:2px}
   .fglabel{display:flex;align-items:center;gap:8px;padding:15px 12px 4px;font-size:13px;font-weight:800}
   .fglabel .n{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:1px 7px;
     font-size:10.5px;color:var(--dim);font-weight:700}
@@ -2150,26 +2176,34 @@
              placeholder="Search this cascade" autocomplete="off" aria-label="Search this cascade">
       <button class="searchclear show" id="cascSearchClose" aria-label="Close search" type="button">×</button>
     </div>
-    <!-- CAS-150: the sort control belongs to the list, so it sits with the Cascade that draws it — directly
-         under the cascade row, immediately above the listing it orders. (It replaces the New / All toggle
-         that stood here, which CAS-150 removes: there is one list again, and it is everything the open
-         Cascade matches.) -->
-    <div class="sortbar" id="sortBar">
-      <label class="sortlbl" for="sort">Order</label>
-      <select id="sort">
-        <option value="availability">Availability ▾</option>
-        <option value="imdb">IMDb rating</option>
-        <option value="rt">RT critic</option>
-        <option value="gross">Box office</option>
-        <option value="popularity">Most anticipated</option>
-        <option value="cinema">Newest cinema</option>
-        <option value="title">Title A–Z</option>
-      </select>
+    <!-- CAS-321: jump-to chips and the order control share one row — chips left (scrolling if they would
+         overflow), sort pinned right. CAS-150 put sort here; CAS-275 added the jump rail as a second row
+         above it; CAS-321 merges the two so the listing loses a whole row of chrome before the first card. -->
+    <div class="listctl" id="listCtl">
+      <!-- CAS-275: jump to a section of the listing. It is rendered from the sections that ACTUALLY exist in
+           the current list, so it can never offer a destination that isn't there — and it hides itself when
+           there is only one, because a jump control with one destination scrolls you nowhere. -->
+      <div class="jumpbar" id="jumpBar" hidden></div>
+      <!-- CAS-150: the sort control belongs to the list, so it sits with the Cascade that draws it. (It
+           replaces the New / All toggle that stood here, which CAS-150 removes: there is one list again,
+           and it is everything the open Cascade matches.) The native <select> is invisible and stretched
+           over the pill — see .sortctl select — so this stays a real, accessible menu rather than a
+           hand-rolled one, while reading as an icon-only button per CAS-321. -->
+      <div class="sortctl" id="sortCtl">
+        <select id="sort" aria-label="Order">
+          <option value="availability">Availability</option>
+          <option value="imdb">IMDb rating</option>
+          <option value="rt">RT critic</option>
+          <option value="gross">Box office</option>
+          <option value="popularity">Most anticipated</option>
+          <option value="cinema">Newest cinema</option>
+          <option value="title">Title A–Z</option>
+        </select>
+        <span class="sortic" aria-hidden="true">⇅<span class="sortdot" id="sortDot" hidden></span></span>
+        <span class="sortcur" id="sortCur"></span>
+        <span class="sortchev" aria-hidden="true">▾</span>
+      </div>
     </div>
-    <!-- CAS-275: jump to a section of the listing. It is rendered from the sections that ACTUALLY exist in
-         the current list, so it can never offer a destination that isn't there — and it hides itself when
-         there is only one, because a jump control with one destination scrolls you nowhere. -->
-    <div class="jumpbar" id="jumpBar" hidden></div>
     <div id="cascDetail"></div>
   </div>
   <!-- ONE listing (CAS-134, and now literally one: CAS-150 removed the New / All scopes). It is everything
@@ -3400,7 +3434,14 @@ updatePrefSwitch(); updatePrefBtn(); updateUxSwitch();
 // Landing somewhere on purpose (the reveal, the membership start, onboarding) means landing on the agent's
 // own list — which is now simply the list, so this only settles the films you have already answered.
 function showFoundList(){ settleFoundView(); }
-$("sort").onchange=e=>{filt.sort=e.target.value;render();};
+// CAS-321: the invisible <select> is the only thing that changes filt.sort; this just repaints the pill
+// around it (current-sort label for wide viewports, the active-dot for "you're off the default").
+function syncSortCtl(){
+  const opt=$("sort").querySelector(`option[value="${filt.sort}"]`);
+  $("sortCur").textContent=opt?opt.textContent:"";
+  $("sortDot").hidden=(filt.sort==="availability");
+}
+$("sort").onchange=e=>{filt.sort=e.target.value;syncSortCtl();render();};
 $("imdbMin").oninput=e=>{filt.imdb=+e.target.value;$("imdbVal").textContent=filt.imdb?filt.imdb.toFixed(1)+"+":"Any";render();};
 $("rtMin").oninput=e=>{filt.rt=+e.target.value;$("rtVal").textContent=filt.rt?filt.rt+"%+":"Any";render();};
 $("grossMin").onchange=e=>{filt.gross=+e.target.value;render();};
@@ -3425,7 +3466,7 @@ function syncFilterUI(){
   $("rtMin").value=filt.rt;     $("rtVal").textContent=filt.rt?filt.rt+"%+":"Any";
   $("grossMin").value=filt.gross;
   $("budgetBand").value=filt.budget; $("tentpoleSel").value=filt.tentpole;
-  $("sort").value=filt.sort;
+  $("sort").value=filt.sort; syncSortCtl();
 }
 $("resetBtn").onclick=()=>{ setActive(ALL_ID); clearFilters(); syncFilterUI(); render(); };
 
@@ -6136,11 +6177,9 @@ function emptyResultsHTML(){
 }
 
 // ---- CAS-254: dismissing the services banner ---------------------------------------------------------
-// Per STATE, not per banner: closing "here is what your list is scoped to" must not also silence "your
-// scope is catching nothing", which is the one you would most want to see. Session-scoped on purpose — a
-// fact about your list is worth saying again next time you open the app, and a banner you can never get
-// back is worse than one that returns.
-const svcNoteHidden = {scoped:false, empty:false};
+// Only one state left after CAS-321 (see renderCascadeBar) — kept keyed by state rather than a bare flag
+// since svcNoteClose()/dismissSvcNote() are still state-parameterised call sites.
+const svcNoteHidden = {empty:false};
 const svcNoteClose = state => `<button type="button" class="svcx" aria-label="Dismiss"
   title="Dismiss" onclick="dismissSvcNote('${state}')">×</button>`;
 window.dismissSvcNote = state => {
@@ -6171,24 +6210,16 @@ function renderCascadeBar(shown){
     </div>`;
   }
   // ---- CAS-254: the services banner ------------------------------------------------------------------
-  // Two states, and until CAS-252 the app only had copy for the broken one. With services PICKED and the
-  // scope on, the list really is narrowed and the banner's job is to say so — otherwise a short list looks
-  // like a thin catalogue rather than a filter you switched on. With NONE picked it is a warning, because
-  // nothing qualifies and the way out has to be one tap away.
-  //
-  // Dismissible either way, and dismissed per state rather than once for both: closing "here is what your
-  // list is scoped to" must not also silence "your scope is catching nothing", which is the one you would
-  // most want to see. It is remembered for the session only — a fact about your list is worth saying again
-  // next time you open the app, and a banner you can never get back is worse than one that returns.
-  if(c && anyScope(c)){
+  // Used to be two states. CAS-321 removed the "scoped" one outright — "we're only showing films on your
+  // services" was chrome sitting above the very row (the new Jump-to/Order line) whose Buy/Rent/Stream
+  // chips already say the same thing by what they count, and removing it is most of that ticket's reclaimed
+  // vertical space. The "empty" state stays: it's a warning, not a status update — nothing qualifies and the
+  // way out has to stay one tap away. Still dismissible, still session-scoped: a fact worth repeating next
+  // time you open the app, and a banner you can never get back is worse than one that returns.
+  if(c && anyScope(c) && !servicesPicked()){
     const where = allScoped(c) ? "" : ` in <b>${scopeSummary(c)}</b>`;
-    const state = servicesPicked() ? "scoped" : "empty";
-    if(!svcNoteHidden[state]){
-      html += servicesPicked()
-        ? `<div class="warnnote info" data-svcnote="scoped">${svcNoteClose("scoped")}
-             <span>📺 We're only showing films on your streaming services${where} — ${prefs.sub.size+prefs.store.size}
-             service${(prefs.sub.size+prefs.store.size)===1?"":"s"} named. Change them any time in ⚙️.</span></div>`
-        : `<div class="warnnote" data-svcnote="empty">${svcNoteClose("empty")}
+    if(!svcNoteHidden.empty){
+      html += `<div class="warnnote" data-svcnote="empty">${svcNoteClose("empty")}
              <span>“${esc(c.name)}” only wants films on your services${where} — and you haven't named any yet,
              so nothing qualifies.<br>${pickServicesCTA()}</span></div>`;
     }
@@ -10466,6 +10497,7 @@ function render(){
   const shown=rows.filter(m=>!taggedOut(m));
   const stubbed=rows.length-shown.length;
   renderCascadeBar(shown.length);
+  syncSortCtl();   // CAS-321: keeps the sort pill's label/dot honest even when filt.sort changed elsewhere
   // CAS-102's compact deck was tied to the old Find view. With one listing there is one deck state: the rail,
   // so the results lead wherever you are. (Kept as a class rather than deleted — the deck CSS still owns it.)
   const bar=$("cascbar");
@@ -10514,20 +10546,28 @@ function render(){
 // a menu of all six windows would offer destinations that aren't in this list, and a control that scrolls
 // you nowhere is exactly what CAS-271 and CAS-272 just took off the band. Same reason it hides itself at
 // fewer than two sections — one destination is not a choice.
-const SECTION_SHORT = {opening_week:"Opening", in_cinema:"Cinema", pvod:"Premium",
+// CAS-321: "Premium" reads as "Buy" here — Lee's rename for the purchase-model chip — while the section
+// heading above the group (STATUS_LABEL, "Premium Buy/Rent (~$30)") is untouched; that label lives outside
+// this ticket's scope. Buy/Rent/Stream already fall in that left-to-right order because pvod, rental and
+// included_streaming do in LISTING_ORDER/CINEMA_LISTING_ORDER — the chips just walk the groups the DOM holds.
+const SECTION_SHORT = {opening_week:"Opening", in_cinema:"Cinema", pvod:"Buy",
                        rental:"Rent", included_streaming:"Stream", upcoming:"Upcoming"};
 function renderJumpBar(){
   const el=$("jumpBar"); if(!el) return;
   const groups=[...document.querySelectorAll("#groups .group")];
   if(groups.length<2){ el.hidden=true; el.innerHTML=""; return; }
   el.hidden=false;
-  el.innerHTML=`<span class="jlbl">Jump to</span>` + groups.map(g=>{
+  el.innerHTML=groups.map(g=>{
     const k=g.dataset.g;
     const n=(g.querySelector(".gcount")||{}).textContent||"";
     return `<button type="button" class="jchip" data-jump="${k}"
         title="${escA("Jump to "+(STATUS_LABEL[k]||k))}">
       <span class="gdot ${k}"></span>${esc(SECTION_SHORT[k]||STATUS_LABEL[k]||k)}<span class="jn">${esc(n)}</span></button>`;
   }).join("");
+  // CAS-321: the right-edge fade (see .jumpbar.overflowing::after) only earns its keep once the rail
+  // actually scrolls — a fade over a strip that fits is just noise, and the sort pill sits outside the
+  // rail either way so this never touches it.
+  el.classList.toggle("overflowing", el.scrollWidth>el.clientWidth+1);
 }
 // The bar is STICKY, so scrolling a section to y=0 hides its heading behind the bar. The offset is the
 // header plus the band, measured rather than guessed — both change height with their contents.
