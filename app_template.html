@@ -9587,6 +9587,11 @@ function flowNext(){
 function flowBack(){
   const list=flowList(), i=list.indexOf(onbStepKey);
   if(i>0) return gotoStep(list[i-1],"back");
+  // CAS-347: off the front of the flow. Only the actual first-run entry (splashGo/afterSignIn) has the
+  // splash underneath to back out to — "+ New Cascade" (flowNewAgent) is launched from an already-open
+  // deck, which is still mounted behind the overlay, so closing the flow is the whole fix. Showing the
+  // splash on top of it booted a signed-in user back to the login wall.
+  if(flowNewAgent) return flowStop();
   flowStop(); showSplash();                  // off the front of the flow → back out to the splash
 }
 window.flowPriority=kind=>{ flowKind=kind; logEvent("flow_priority",{kind}); flowNext(); };
