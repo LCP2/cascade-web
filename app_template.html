@@ -265,14 +265,16 @@
      card is built around. Width is the only number that changes: the height follows from the 2:3 that
      CAS-184 fixed, so nothing else in the grid has to move. */
   /* CAS-276: the tombstone spans down to the SCORES row and stops there — which is the row holding the IMDb
-     lozenge, so the column now ends where the ticket asks it to. The awards row runs the full width beneath
-     both columns instead of being squeezed into the ~195px right-hand one: with the scale badge joining it
-     (it used to hang off the poster) three chips in a 195px column wrapped to three lines and made the card
-     ~60px taller than the information in it. Across the full width they sit on one. */
+     lozenge, so the column now ends where the ticket asks it to. */
   /* CAS-323: 112px, not 124 (~10% down), and the grid itself overhangs .cbody's left padding by that same
      13px (margin-left/width below) so the poster sits flush against the card's left edge — trimming the
      gutter without touching .cbody's padding, which .expand (credits/trailers/share) still relies on for
      its own left inset. Both the poster shrink and the reclaimed gutter go to the minmax(0,1fr) text column. */
+  /* CAS-353: awards moves back under the IMDb line (the text column only), not full width. CAS-276 spread it
+     across both columns because a 195px column wrapped three chips to three lines — but CAS-323's narrower
+     tombstone already gave that column back to the text side, and the review screenshot showed the full-width
+     row reading as a stray line floating under the poster rather than a continuation of the scores it belongs
+     with. If a future card grows enough chips to wrap again, that is what .mrow's own wrap-safety is for. */
   .ctop{display:grid;grid-template-columns:112px minmax(0,1fr);column-gap:12px;row-gap:9px;
     margin-left:-13px;width:calc(100% + 13px);
     grid-template-areas:
@@ -281,7 +283,7 @@
       "tomb syn"
       "tomb money"
       "tomb scores"
-      "awards awards"}
+      ".    awards"}
   .ptomb{grid-area:tomb;align-self:start;display:flex;flex-direction:column;gap:8px;width:112px}
   .poster{width:100%;aspect-ratio:2/3;border-radius:10px;
     background:var(--panel2) center/cover no-repeat;position:relative;
@@ -301,7 +303,10 @@
   /* CAS-276: the Style line rides UP against the title. It is the title's qualifier — "Nosferatu, a horror
      in English" is one thought — and a full 9px grid gutter between them read as two separate facts. The
      negative margin buys that row's worth of space for the synopsis rather than returning it to the grid. */
-  .metaline{grid-area:meta;margin-top:-6px;font-size:13px;color:var(--dim);line-height:1.4;
+  /* CAS-353: min-width:0 is not redundant with the column's own minmax(0,1fr) — Safari on iPhone was measured
+     failing to shrink THIS item below its text's natural width (genres+language is the longest run on a
+     streaming card; a cinema card's shorter line never hit the bug), so the line wrapped instead of eliding. */
+  .metaline{grid-area:meta;min-width:0;margin-top:-6px;font-size:13px;color:var(--dim);line-height:1.4;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .culttag{color:var(--faint)}
   /* CAS-276: three lines, not two. Two lines of a synopsis is enough to start a sentence and not enough to
