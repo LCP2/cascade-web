@@ -9201,6 +9201,7 @@ const SHARP_STEPS = {
   keepfinding: {
     progress: 90,
     noAgent: true,
+    noSkip: true,          // CAS-339: nothing here to skip — it's outside the counted flow now, own chrome
     cta: "Continue",
     body(){
       return `<h2 class="osh">Cascade Agents keep finding</h2>
@@ -9308,12 +9309,14 @@ let onbStepKey=null;
 // R5 ended on a HUB — "Get selective", three doors, come back to it when each was confirmed. 0.8 replaces
 // that with a straight line you tap through, because a hub asks you to plan your own route through a thing
 // you have never seen, and a line does not.
-//   priority → pick an agent → mission (the bar) → name → style → language → ratings → keep-finding →
+//   priority → pick an agent → mission (the bar) → name → style → ratings → keep-finding →
 //   notify settings → [commit] → the payoff → membership
-// Seven of those are the COUNTED steps the meter reports. Priority and pick-an-agent sit before it because
+// Five of those are the COUNTED steps the meter reports. Priority and pick-an-agent sit before it because
 // you have not begun setting an agent up until you have one, and membership sits after it because it is the
-// offer, not another form to get through. Seven is also the number the header says out loud, so the two can
-// never disagree: flowCounted().length is the only place it is written down.
+// offer, not another form to get through. keep-finding sits inside the line too (CAS-339) but is not a
+// question with an answer, so it is walked and shown like any other step yet carries no number of its own —
+// flowCounted() is the one place both the exclusion and the total are written down, so the two can never
+// disagree.
 // CAS-199: the streaming lane asks two more questions, so the flow is per-lane and the meter counts the
 // lane you are actually in. "How far back" only means something where the catalogue has depth — a cinema
 // listing is this month's releases and asking someone to date-limit it would be a control with nothing to
@@ -9338,7 +9341,10 @@ const FLOWS = {
            "keepfinding","notifysettings"],
 };
 const flowList    = () => FLOWS[flowKind] || FLOWS.cinema;
-const flowCounted = () => flowList().slice(2);
+// CAS-339: keepfinding is walked (it's still in FLOWS, still gets a Back/Continue) but is not one of the
+// COUNTED steps the meter reports — same reason priority/pickagent aren't: it isn't a question with an
+// answer, so putting a number on it would make the header lie about how many are left.
+const flowCounted = () => flowList().slice(2).filter(k => k!=="keepfinding");
 // The priority answer is not a label — it seeds the windows the agent actually watches, so the choice
 // moves the count on every screen after it. pickStarter lays a saved answer for that same agent over it.
 // CAS-197: a cinema agent starts with BOTH cinema moments on — the film reaching a cinema, and the film
