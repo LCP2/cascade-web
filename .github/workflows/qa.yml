@@ -1,7 +1,13 @@
 # .github/workflows/qa.yml — Codynamics Development Standard (Cascade web)
 # The quality gate. Runs the full verify suite on every push to staging. Green here is the
-# only thing that lets promote.yml ship. Split out of the old release.yml `qa` job unchanged
-# except for name/trigger — same proven toolchain (python + pinned Chromium) and stale-build guard.
+# only thing that lets promote.yml ship.
+#
+# CAS-325: split into independent jobs (no `needs` between them except where a job genuinely
+# needs the built index.html) so everything starts at once instead of queueing behind one
+# runner, and e2e is sharded across parallel jobs. GitHub already fails the whole workflow's
+# conclusion the moment any one job fails, which is the exact thing promote.yml's `workflow_run`
+# gate reads — so a red shard (or a red engine/data/monitor job) still blocks promote with no
+# extra merge/gate job needed.
 name: qa
 
 on:
@@ -16,23 +22,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  qa:
+  # Confirms the committed index.html matches what app_template.html + movies.json actually
+  # build to. Independent of every other job below — none of them trust the committed
+  # index.html, they each build their own.
+  build-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - run: npm ci
-
-      - name: Install the matching browser
-        run: npx playwright install --with-deps chromium
 
       - name: Build the app
         run: python poc_pipeline.py --build-html
@@ -54,21 +54,97 @@ jobs:
             echo "index.html differs only by its build stamp / daily date, which is expected."
           fi
 
+  # Reads the freshly built index.html (its own build, not build-check's — see header note).
+  engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: python poc_pipeline.py --build-html
+
       - name: Engine invariants + data integrity
         run: npm run test:engine
+
+  # movies.json is a committed catalogue file, not a build output, so this needs no build step.
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Catalogue data quality
-        run: npm run test:data
+        run: python -m unittest discover -s tests
+
+  # Also reads movies.json straight from the checkout — no build step needed here either.
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Monitor
         run: |
-          npm run test:monitor
+          python -m unittest discover -s monitor/tests
           python -m monitor --dry-run
-      - name: End to end
-        run: npm run test:e2e
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: npm ci
+      - run: python poc_pipeline.py --build-html
+
+      # Browser binaries are the slow part of `playwright install`. Cache them keyed on the
+      # pinned @playwright/test version (via package-lock.json) so a normal run restores from
+      # cache instead of downloading — only a version bump pays the download cost again.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+
+      - name: Install the matching browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install browser OS dependencies (binary already cached)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: End to end (shard ${{ matrix.shard }}/${{ strategy.job-total }})
+        run: npx playwright test --shard=${{ matrix.shard }}/${{ strategy.job-total }}
 
       - name: Keep the report when it goes red
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-shard-${{ matrix.shard }}
           path: playwright-report/
           retention-days: 7
