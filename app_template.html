@@ -2146,6 +2146,9 @@
         <!-- Your Movies (CAS-183): everything you've said about a film, and how your services cover it. -->
         <div class="iconbtn" id="moviesBtn" title="Your Movies" role="button" tabindex="0"
              aria-label="Your Movies" onclick="openYourMovies()">🎞️</div>
+        <!-- Service analysis (CAS-344): a header entry point until the top menu (CAS-345) exists to hold it. -->
+        <div class="iconbtn" id="svcAnalysisBtn" title="Service analysis" role="button" tabindex="0"
+             aria-label="Service analysis" onclick="openSvcAnalysis()">📊</div>
         <!-- Account (CAS-206): the Account SCREEN. Signing in is one row inside it — the magic-link panel
              from CAS-82, opened rather than duplicated. -->
         <div class="iconbtn" id="accountBtn" title="Account" role="button" tabindex="0" aria-label="Account"
@@ -2334,8 +2337,8 @@
   <div class="chips" id="prefSubChips"></div>
   <div class="flabel">Rent / Buy — stores I use</div>
   <div class="chips" id="prefStoreChips"></div>
-  <div class="flabel">Which service covers what Cascade found?</div>
-  <div id="svcAdvice"></div>
+  <!-- CAS-344: the "Which service covers what Cascade found?" coverage block moved off this modal onto its
+       own Service analysis page (#svcAnalysis) so it isn't buried in Preferences. -->
   <!-- Global alert-type exclude (CAS-103 AC4). The one place to stop a KIND of alert without
        editing every Cascade one at a time. -->
   <div class="flabel">Never alert me about</div>
@@ -2529,6 +2532,13 @@
      happens in the magic-link panel (CAS-82), which this screen opens rather than duplicates. -->
 <div class="uscreen" id="accountScreen" role="dialog" aria-modal="true" aria-label="Account">
   <div class="uwrap" id="accountBody"></div>
+</div>
+
+<!-- SERVICE ANALYSIS (CAS-344) — the "which service covers what your agents found" view, given its own
+     page instead of living inside Preferences. Body rendered by renderSvcAnalysis(). Its permanent entry
+     point is the top menu (CAS-345); until that ships it opens from the header icon in .hdr-actions. -->
+<div class="uscreen" id="svcAnalysis" role="dialog" aria-modal="true" aria-label="Service analysis">
+  <div class="uwrap" id="svcAnalysisBody"></div>
 </div>
 
 <div class="stepnav" id="stepNav" hidden>
@@ -6881,45 +6891,58 @@ function serviceAdvice(){
           inCinema:noHome.length-upcoming, upcoming,
           ranked, uncovered:home.length-covered.size};
 }
-function renderServiceAdvice(){
-  const el=$("svcAdvice"); if(!el) return;
+function renderSvcAnalysis(){
+  const el=$("svcAnalysisBody"); if(!el) return;
   const a=serviceAdvice();
+  let body;
   if(!a.total){
-    el.innerHTML=`<div class="pnote">Create a Cascade and it starts finding films for you — then we'll work out
+    body=`<div class="pnote">Create a Cascade and it starts finding films for you — then we'll work out
       which service covers the most of them, and what renting them instead would cost you.</div>`;
-    return;
+  } else {
+    const notes=[];
+    if(a.inCinema) notes.push(`${a.inCinema} of the ${a.total} film${a.total===1?"":"s"} on your Found list
+      ${a.inCinema===1?"is":"are"} still in cinemas, so no service can cover ${a.inCinema===1?"it":"them"} yet.`);
+    if(a.upcoming) notes.push(`${a.upcoming} ${a.upcoming===1?"hasn't":"haven't"} been released yet — your
+      Cascades are watching ${a.upcoming===1?"it":"them"} all the way in.`);
+    if(a.uncovered) notes.push(`${a.uncovered} ${a.uncovered===1?"is":"are"} rent-or-buy only so far —
+      not included on any service.`);
+    if(!a.ranked.length){
+      body=`<div class="pnote">Nothing on your Found list is included on a service yet. ${notes.join(" ")}</div>`;
+    } else {
+      notes.push(`Coverage is counted from the real AU offer data. We don't hold subscription prices, so we
+        won't guess at a monthly saving — the rent figure is simply what those films would cost you instead.`);
+      const rows=a.ranked.map((e,i)=>{
+        const n=e.films.length, pct=Math.round(n/a.home*100);
+        const rent = e.priced
+          ? `<div class="advrent">Renting ${e.priced===n?(n===1?"it":"those"):`the ${e.priced} of them we have a price for`}
+               instead: <b>$${e.rentTotal.toFixed(2)}</b></div>`
+          : "";
+        return `<div class="adv ${i===0?"top":""}">
+          <div class="advhead">
+            <span class="advsvc">${i===0?"🥇 ":""}${esc(svcName(e.svc))}</span>
+            ${prefs.sub.has(e.svc)?'<span class="advhave">✓ you have it</span>':""}
+          </div>
+          <div class="advwhy">Covers <b>${n} of the ${a.home}</b> film${a.home===1?"":"s"} on your Found list that have reached home.</div>
+          <div class="advbar"><span style="width:${pct}%"></span></div>
+          ${rent}</div>`;
+      }).join("");
+      body=rows+`<div class="advfoot">${notes.join(" ")}</div>`;
+    }
   }
-  const notes=[];
-  if(a.inCinema) notes.push(`${a.inCinema} of the ${a.total} film${a.total===1?"":"s"} on your Found list
-    ${a.inCinema===1?"is":"are"} still in cinemas, so no service can cover ${a.inCinema===1?"it":"them"} yet.`);
-  if(a.upcoming) notes.push(`${a.upcoming} ${a.upcoming===1?"hasn't":"haven't"} been released yet — your
-    Cascades are watching ${a.upcoming===1?"it":"them"} all the way in.`);
-  if(a.uncovered) notes.push(`${a.uncovered} ${a.uncovered===1?"is":"are"} rent-or-buy only so far —
-    not included on any service.`);
-  if(!a.ranked.length){
-    el.innerHTML=`<div class="pnote">Nothing on your Found list is included on a service yet.
-      ${notes.join(" ")}</div>`;
-    return;
-  }
-  notes.push(`Coverage is counted from the real AU offer data. We don't hold subscription prices, so we won't
-    guess at a monthly saving — the rent figure is simply what those films would cost you instead.`);
-  const rows=a.ranked.slice(0,5).map((e,i)=>{
-    const n=e.films.length, pct=Math.round(n/a.home*100);
-    const rent = e.priced
-      ? `<div class="advrent">Renting ${e.priced===n?(n===1?"it":"those"):`the ${e.priced} of them we have a price for`}
-           instead: <b>$${e.rentTotal.toFixed(2)}</b></div>`
-      : "";
-    return `<div class="adv ${i===0?"top":""}">
-      <div class="advhead">
-        <span class="advsvc">${i===0?"🥇 ":""}${esc(svcName(e.svc))}</span>
-        ${prefs.sub.has(e.svc)?'<span class="advhave">✓ you have it</span>':""}
-      </div>
-      <div class="advwhy">Covers <b>${n} of the ${a.home}</b> film${a.home===1?"":"s"} on your Found list that have reached home.</div>
-      <div class="advbar"><span style="width:${pct}%"></span></div>
-      ${rent}</div>`;
-  }).join("");
-  el.innerHTML=rows+`<div class="advfoot">${notes.join(" ")}</div>`;
+  el.innerHTML=`
+    <div class="ostop"><button class="osback" type="button" onclick="closeSvcAnalysis()" aria-label="Back">←</button>
+      <h2 class="osh">Service analysis</h2></div>
+    <p class="ossub">Which service covers the most of what your agents found — and what renting those films
+      would cost you instead.</p>
+    ${body}`;
 }
+window.openSvcAnalysis=()=>{
+  renderSvcAnalysis();
+  $("svcAnalysis").scrollTop=0;
+  $("svcAnalysis").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("svc_analysis_opened",{ranked:serviceAdvice().ranked.length});
+};
+window.closeSvcAnalysis=()=>{ $("svcAnalysis").classList.remove("open"); document.body.style.overflow=""; };
 
 // ================= Setup meter + first-run onboarding =================
 // Goal-gradient: the meter never starts at zero. Honesty guardrail: it only counts things that are
@@ -10539,7 +10562,8 @@ function render(){
   if(!bar.classList.contains("rail")){ bar.classList.add("rail"); deckCentre(deckIdx,false); }
   renderListChrome();
   renderSaid();     // membership changes from a card, from the list itself, or from a Cascade — one repaint covers all
-  updatePrefSwitch(); updatePrefBtn(); updateUxSwitch(); refreshSetupMeters(); renderServiceAdvice();
+  updatePrefSwitch(); updatePrefBtn(); updateUxSwitch(); refreshSetupMeters();
+  if($("svcAnalysis").classList.contains("open")) renderSvcAnalysis();
   syncAlertPrefChips();
   // Smart defaults: label the apply control with its payoff, not a bare "Done".
   $("filtersDone").textContent = ux.on
