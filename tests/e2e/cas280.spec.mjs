@@ -92,37 +92,49 @@ test("CAS-280: an upcoming film still gets the whole ladder", async ({ page }) =
   expect(keys).toContain("upcoming");
 });
 
-test("CAS-280: the chip's count describes only reachable moments", async ({ page }) => {
+// CAS-349: the Watch chip (`filmNotifyState`/`notifyChipHTML`) reads `watchLevelsFor`'s narrower four-level
+// ladder now, not the full `notifyOptionsFor` list (which still includes Upcoming and its sub-moments, and
+// still backs the agent-level alert simulation — see catchReason/simulateDay, unchanged). The two lists are
+// no longer meant to agree; this test now checks the chip's own invariant instead of the old cross-check.
+test("CAS-349: the chip's count describes only the film's still-reachable watch levels", async ({ page }) => {
   await freshApp(page);
   const ok = await page.evaluate(() => {
     const m = MOVIES.find(x => primaryStatus(x) === "rental");
     if(!m) return null;
     const st = filmNotifyState(m.tmdb_id);
-    return st.total === notifyOptionsFor(null, m.tmdb_id).length;
+    const levels = watchLevelsFor(m.tmdb_id);
+    return {
+      matchesNonSpent: st.total === levels.filter(l => !l.spent).length,
+      // In-Cinema and Premium are both behind a Rent-window film — neither should be counted as live.
+      excludesPassed: levels.filter(l => l.spent).every(l => ["in_cinema", "premium"].includes(l.key)),
+    };
   });
   test.skip(ok === null, "no rental film today");
-  expect(ok, "the chip counted moments the film had already passed").toBe(true);
+  expect(ok.matchesNonSpent, "the chip's total must equal the non-spent levels, no more, no less").toBe(true);
+  expect(ok.excludesPassed, "only levels behind Rent may be marked spent for a Rent-window film").toBe(true);
 });
 
-test("CAS-280: the panel says so rather than opening empty", async ({ page }) => {
+test("CAS-349: the panel says so when the agent tracks no level for the film, but Never still works", async ({ page }) => {
   await toShortlist(page, "stream");
   const cards = await shortlistCards(page);
   await pickCard(page, cards[0].name);
   await finishFlow(page);
   await toListing(page);
 
-  // Find a listed film that is already at the end of the ladder.
+  // Find a listed film the agent tracks nothing about (watchLevelsFor empty) — the new, narrower version of
+  // "ran out of moments": Never is the one row a genuinely empty ladder must still offer.
   const cardId = await page.evaluate(() => {
     const el = [...document.querySelectorAll("#groups .card")].find(c => {
       const id = Number(c.id.replace("card-", ""));
-      return notifyOptionsFor(null, id).length === 0;
+      return watchLevelsFor(id).length === 0;
     });
     return el ? el.id : null;
   });
-  test.skip(!cardId, "no listed film has run out of moments today");
+  test.skip(!cardId, "this agent tracks at least one level for every listed film today");
 
   await page.locator(`#${cardId} .ctl.notify`).click();
   await expect(page.locator(".cpop.npop")).toBeVisible();
   await expect(page.locator(".cpop.npop .nonone")).toBeVisible();
-  await expect(page.locator(".cpop.npop .nopt:not(.nonone)")).toHaveCount(0);
+  await expect(page.locator(".cpop.npop .nopt[data-wk]")).toHaveCount(1);
+  await expect(page.locator('.cpop.npop .nopt[data-wk="never"]')).toBeVisible();
 });

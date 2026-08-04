@@ -121,6 +121,7 @@ class BuildSurvivesAFailingOmdb(unittest.TestCase):
         patches = [
             mock.patch.object(pp, "ingest_tmdb", lambda seen: []),
             mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
             mock.patch.object(pp, "tmdb_providers", lambda tid: prov),
             mock.patch.object(pp, "has_provider_rows", lambda p: True),
             mock.patch.object(pp, "provider_offers", lambda p: [{"service": "Netflix", "type": "sub",
@@ -192,6 +193,48 @@ class BuildSurvivesAFailingOmdb(unittest.TestCase):
             catalogue, _ = self._run()
         self.assertTrue(catalogue[0]["status"])                     # it has SOME window
         self.assertEqual(catalogue[0]["availability_source"], "estimated_unpolled")
+
+
+def _tmdb_detail(release_dates_au, **kw):
+    """A minimal TMDB /movie/{id} detail payload, AU release_dates only — enough for _tmdb_record to map."""
+    d = {"id": 1, "imdb_id": "tt0000001", "title": "Test Film", "release_date": "2026-01-01",
+         "genres": [], "production_countries": [], "original_language": "en",
+         "release_dates": {"results": [{"iso_3166_1": "AU", "release_dates": release_dates_au}]},
+         "videos": {"results": []}, "credits": {"cast": [], "crew": []}}
+    d.update(kw)
+    return d
+
+
+class CinemaReleaseFromReleaseDates(unittest.TestCase):
+    """CAS-360: every AU release_dates type is stored, and cinema_release is true only for a type-3 record."""
+
+    def test_a_type_3_record_sets_cinema_release_true(self):
+        m = pp._tmdb_record(_tmdb_detail([{"type": 3, "release_date": "2026-03-01T00:00:00.000Z",
+                                            "certification": "M"}]))
+        self.assertTrue(m["cinema_release"])
+        self.assertEqual(m["release_dates"], [{"region": "AU", "type": 3, "date": "2026-03-01"}])
+
+    def test_a_type_2_limited_record_does_not_set_cinema_release(self):
+        """Type 2 (limited theatrical) still drives the existing cinema_date, but not the new type-3-only flag."""
+        m = pp._tmdb_record(_tmdb_detail([{"type": 2, "release_date": "2026-03-01T00:00:00.000Z",
+                                            "certification": "M"}]))
+        self.assertFalse(m["cinema_release"])
+        self.assertEqual(m["cinema_date"], "2026-03-01")   # unchanged behaviour
+        self.assertEqual(m["release_dates"], [{"region": "AU", "type": 2, "date": "2026-03-01"}])
+
+    def test_every_type_is_persisted_even_though_only_type_3_is_acted_on(self):
+        m = pp._tmdb_record(_tmdb_detail([
+            {"type": 4, "release_date": "2026-02-01T00:00:00.000Z", "certification": ""},
+            {"type": 3, "release_date": "2026-03-01T00:00:00.000Z", "certification": "M"},
+            {"type": 6, "release_date": "2026-06-01T00:00:00.000Z", "certification": ""},
+        ]))
+        self.assertTrue(m["cinema_release"])
+        self.assertEqual([rd["type"] for rd in m["release_dates"]], [4, 3, 6])
+
+    def test_no_au_release_dates_leaves_cinema_release_false(self):
+        m = pp._tmdb_record(_tmdb_detail([]))
+        self.assertFalse(m["cinema_release"])
+        self.assertEqual(m["release_dates"], [])
 
 
 class BudgetsFitTheFreeTier(unittest.TestCase):

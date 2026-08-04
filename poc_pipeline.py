@@ -53,6 +53,11 @@ OPENING_WEEK_DAYS = 7            # a cinema release this recent counts as "openi
 UPCOMING_LOOKAHEAD_DAYS = int(os.getenv("UPCOMING_LOOKAHEAD_DAYS", "540"))   # ~18 months ahead
 MAX_UPCOMING            = int(os.getenv("MAX_UPCOMING", "100"))              # announced AU theatrical; TMDB detail calls only
 
+# CAS-361: widen past the theatrical scope — the newest AU-available titles (stream/rent/buy),
+# no release_type restriction, so recent streaming-only / direct-to-digital films that never
+# played a cinema (and so never match with_release_type=2|3 above) are ingested too.
+MAX_STREAMING_ONLY = int(os.getenv("MAX_STREAMING_ONLY", "2000"))   # first 100 pages @ 20/page
+
 # --- window heuristics (this is YOUR business logic, not something an API gives you) ---
 PVOD_MIN_PRICE   = 19.99          # a buy/rent at or above this, with no subscription yet, = premium early window
 RENTAL_MAX_PRICE = 9.99           # a rent at or below this = standard rental window
@@ -175,10 +180,17 @@ TMDB_BASE = "https://api.themoviedb.org/3"
 def _tmdb_record(detail: dict) -> dict:
     """Map one TMDB detail payload to our skeleton record."""
     cinema_date, age_rating = None, None
+    # CAS-360: every AU release_dates entry (all types 1-6), kept for future use — only type 3
+    # (general theatrical) is acted on today, via cinema_release below.
+    release_dates, cinema_release = [], False
     for entry in detail.get("release_dates", {}).get("results", []):
         if entry["iso_3166_1"] == REGION:
             for rd in entry["release_dates"]:
-                if rd["type"] in (2, 3):
+                rtype = rd["type"]
+                release_dates.append({"region": REGION, "type": rtype, "date": rd["release_date"][:10]})
+                if rtype == 3:
+                    cinema_release = True
+                if rtype in (2, 3):
                     cinema_date = rd["release_date"][:10]
                 cert = (rd.get("certification") or "").strip()
                 if cert and not age_rating:      # AU classification (G/PG/M/MA15+/R18+)
@@ -199,6 +211,8 @@ def _tmdb_record(detail: dict) -> dict:
         "year": (detail.get("release_date") or "----")[:4],
         "genres": [g["name"] for g in detail.get("genres", [])],
         "cinema_date": cinema_date,
+        "cinema_release": cinema_release,     # CAS-360: had an AU type-3 (general theatrical) release
+        "release_dates": release_dates,       # CAS-360: every AU release_dates type, stored for future use
         "age_rating": age_rating,
         "worldwide_gross": detail.get("revenue") or None,   # single global number, often incomplete
         "budget": detail.get("budget") or None,             # TMDB budget (0 when unknown) — a badge, never a ranker:
@@ -249,6 +263,44 @@ def _discover_au_theatrical(start: str, end: str, cap: int, seen: set) -> list[d
                 break
         page += 1
     return movies
+
+
+def _discover_au_streaming(cap: int, seen: set) -> list[dict]:
+    """CAS-361: the widened AU-available scope — watch_region + monetization types, no
+    release_type filter, newest-first (primary_release_date.desc). Catches recent
+    streaming-only/direct-to-digital titles `_discover_au_theatrical`'s type=2|3 filter
+    excludes. `seen` is shared with the theatrical/upcoming passes so nothing double-lands."""
+    movies, page = [], 1
+    max_pages = min(500, max(1, -(-cap // 20)))              # ~20 results/page; ceil, capped at TMDB's max
+    while len(movies) < cap and page <= max_pages:
+        disc = get_json(
+            f"{TMDB_BASE}/discover/movie?api_key={TMDB_KEY}&watch_region={REGION}"
+            f"&with_watch_monetization_types=flatrate|rent|buy"
+            f"&sort_by=primary_release_date.desc&page={page}"
+        )
+        results = disc.get("results", [])
+        if not results:
+            break
+        for m in results:
+            if m["id"] in seen:
+                continue
+            seen.add(m["id"])
+            detail = get_json(
+                f"{TMDB_BASE}/movie/{m['id']}?api_key={TMDB_KEY}&append_to_response=release_dates,videos,credits"
+            )
+            movies.append(_tmdb_record(detail))
+            if TMDB_PACING:
+                time.sleep(TMDB_PACING)                       # polite pacing on the detail-call loop
+            if len(movies) >= cap:
+                break
+        page += 1
+    return movies
+
+
+def ingest_tmdb_streaming(seen: set) -> list[dict]:
+    """CAS-361: the 2000 most-recently-released AU-available movies (incl. streaming-only),
+    merged/deduped into the persistent catalogue alongside the theatrical + upcoming ingest."""
+    return _discover_au_streaming(MAX_STREAMING_ONLY, seen)
 
 
 def ingest_tmdb(seen: set) -> list[dict]:
@@ -462,6 +514,49 @@ def derive_status(movie: dict, offers: list[dict], today: datetime.date) -> list
 
 
 # ---------------------------------------------------------------------------
+# 4b. MONOTONIC GUARD (CAS-355) — the single source of truth for "how far a title
+#     has travelled" toward more availability, and the gate that stops a transient
+#     JustWatch AU sync gap from writing a backward status. Both poc_pipeline (below)
+#     and monitor/transitions.py (which imports AVAILABILITY_TIERS/tier_rank from here)
+#     use it, so "forward" means the same thing to the writer and the alert reader.
+# ---------------------------------------------------------------------------
+AVAILABILITY_TIERS = ["upcoming", "in_cinema", "pvod", "rental", "included_streaming"]
+DOWNGRADE_CONFIRM_RUNS = 2   # consecutive runs a lower reading must repeat before it is trusted
+
+def tier_rank(status) -> int:
+    """Highest AVAILABILITY_TIERS rank held anywhere in `status` (a status list/set), or
+    -1 if it holds none of the named tiers."""
+    ranks = [AVAILABILITY_TIERS.index(w) for w in status if w in AVAILABILITY_TIERS]
+    return max(ranks) if ranks else -1
+
+def apply_monotonic_status(m: dict, candidate: list[str], confidence: str, today: datetime.date) -> None:
+    """Commit `candidate` as m['status'] — unless it is a BACKWARD move (a lower tier than
+    the status m already holds), in which case the existing status is kept and the
+    regression is only committed once the SAME candidate has been read on
+    DOWNGRADE_CONFIRM_RUNS consecutive runs. That is the difference between a real
+    de-listing and a one-day gap in the AU provider feed (CAS-334/CAS-355): the feed can
+    drop a title's rows for a day and pick it back up the next, and a single such gap must
+    never write a status a user could be alerted on losing."""
+    prev = m.get("status") or []
+    if not prev or tier_rank(candidate) >= tier_rank(prev):
+        m["status"] = candidate
+        m["availability_confidence"] = confidence
+        m.pop("pending_downgrade", None)
+        return
+    pending = m.get("pending_downgrade")
+    if pending and pending.get("to") == candidate:
+        pending["runs"] = pending.get("runs", 1) + 1
+    else:
+        pending = {"to": candidate, "runs": 1, "since": today.isoformat()}
+    if pending["runs"] >= DOWNGRADE_CONFIRM_RUNS:
+        m["status"] = candidate
+        m["availability_confidence"] = confidence
+        m.pop("pending_downgrade", None)
+    else:
+        m["pending_downgrade"] = pending   # held back — m["status"] stays at `prev`
+
+
+# ---------------------------------------------------------------------------
 # 5. DIFF — compare today's status set to the stored one, emit change events
 # ---------------------------------------------------------------------------
 STATUS_LABEL = {
@@ -482,8 +577,14 @@ def diff_and_alert(today_records: list[dict]) -> list[dict]:
         before = set(prev.get(m["tmdb_id"], {}).get("status", []))
         after  = set(m["status"])
         opened = after - before
+        before_rank = tier_rank(before)
         for w in opened:
-            if before:  # only alert on genuine transitions, not first sighting
+            # CAS-355: a newly-present window only alerts when it is FORWARD progress —
+            # strictly further along AVAILABILITY_TIERS than anything the title already
+            # held. Without this, a title that lost a high tier and landed on a lower one
+            # (included_streaming -> rental, via a transient AU provider gap) read as
+            # "gained rental" and fired a false alert; a real backward move never should.
+            if before and tier_rank([w]) > before_rank:
                 events.append({
                     "tmdb_id": m["tmdb_id"],
                     "title": m["title"],
@@ -547,7 +648,7 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     # grow the catalogue with new titles TMDB surfaces that we don't already hold
     new = []
     if len(base) < CATALOGUE_TARGET:
-        new = ingest_tmdb(seen) + ingest_tmdb_upcoming(seen)
+        new = ingest_tmdb(seen) + ingest_tmdb_upcoming(seen) + ingest_tmdb_streaming(seen)
     catalogue = list(base.values()) + [m for m in new if m["tmdb_id"] not in base]
     catalogue.sort(key=lambda m: m.get("popularity") or 0, reverse=True)
     catalogue = catalogue[:CATALOGUE_TARGET]
@@ -594,13 +695,11 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                 m["jw_link"] = prov.get("jw_link")           # JustWatch deep-out + attribution
                 if has_provider_rows(prov):
                     m["offers"] = provider_offers(prov)
-                    m["status"] = derive_from_providers(m, prov, today)
-                    m["availability_confidence"] = "confirmed"   # as of today's provider snapshot
+                    apply_monotonic_status(m, derive_from_providers(m, prov, today), "confirmed", today)
                 else:                                        # JustWatch has no AU row -> honest estimate
                     w, conf = ps.estimate_status(m, today, offsets)
                     m["offers"] = []
-                    m["status"] = [w]
-                    m["availability_confidence"] = conf
+                    apply_monotonic_status(m, [w], conf, today)
                 m["last_polled"] = today.isoformat()
                 m["availability_source"] = "tmdb_providers"
             else:
@@ -638,7 +737,7 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                     wm_fails += 1
                 elif wm_offers:                              # richer than providers: real prices/formats
                     m["offers"] = wm_offers
-                    m["status"] = derive_status(m, wm_offers, today)
+                    apply_monotonic_status(m, derive_status(m, wm_offers, today), "confirmed", today)
                     m["availability_source"] = "watchmode_enriched"
                 time.sleep(TMDB_PACING)
             if TMDB_PACING:
@@ -754,11 +853,12 @@ def build_version_info() -> dict:
     version              — hand-bumped SemVer from the committed VERSION file (the only manual step).
     major/minor/patch    — parsed from version.
     build/commit/builtAt — derived automatically from git at build time; never hand-edited.
-    env                  — the environment this artifact was BUILT for: CASCADE_ENV if set, else the
-                           branch (main -> production, else staging). NOTE: the visible in-app badge
-                           re-derives env from the hostname at RUNTIME, so the live site self-labels
-                           correctly even though promote is a plain staging->main merge (no rebuild).
-                           This baked value is the build-branch record for /version.json consumers."""
+
+    No "env" field here (CAS-324): version.json is mirrored byte-for-byte from staging to main by
+    promote.yml's pure merge, so a value baked in at build time (necessarily on staging) would still
+    read "staging" once mirrored to prod — there is no build-time value that is correct in both places.
+    env is instead resolved at RUNTIME from the hostname, by whoever is reading the stamp (see
+    RUNTIME_ENV in app_template.html for the in-app badge)."""
     version = "0.0.0"
     try:
         version = (open(VERSION_FILE, encoding="utf-8").read().strip() or version)
@@ -768,14 +868,11 @@ def build_version_info() -> dict:
         try:    return int(x)
         except Exception: return 0
     major, minor, patch = ([_int(p) for p in version.split(".")] + [0, 0, 0])[:3]
-    branch = _git("rev-parse", "--abbrev-ref", "HEAD")
-    env    = os.environ.get("CASCADE_ENV") or ("production" if branch == "main" else "staging")
     return {
         "version": version, "major": major, "minor": minor, "patch": patch,
         "build":   _int(_git("rev-list", "--count", "HEAD")),
         "commit":  _git("rev-parse", "--short", "HEAD") or "unknown",
         "builtAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "env":     env,
     }
 
 
@@ -796,7 +893,7 @@ def build_html(records: list[dict] | None = None):
     # Machine-readable stamp served at /version.json (same origin as the app).
     with open(VERSION_JSON, "w", encoding="utf-8") as f:
         json.dump(info, f, separators=(",", ":")); f.write("\n")
-    print(f"stamped v{info['version']} · build {info['build']} · {info['commit']} · env {info['env']}")
+    print(f"stamped v{info['version']} · build {info['build']} · {info['commit']}")
 
 
 def _apply_scripted_change(records: list[dict]):

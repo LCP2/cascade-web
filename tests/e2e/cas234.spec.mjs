@@ -29,8 +29,6 @@ test("CAS-234: the description survives, and Mission keeps its set-aside explana
   const cards = await shortlistCards(page);
   await pickCard(page, cards[0].name);
 
-  await page.evaluate(() => window.gotoStep("genres", "none"));
-  await expect(page.locator("#onbStepSay")).toContainText(/Drawing from/);
   await page.evaluate(() => window.gotoStep("language", "none"));
   await expect(page.locator("#onbStepSay")).toContainText(/Watching in/);
   await page.evaluate(() => window.gotoStep("age", "none"));

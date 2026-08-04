@@ -60,7 +60,7 @@ test("CAS-282: sliding down the Watch Status options picks the one you release o
   await showPanel(card, ".ctl.watch");
   const segs = card.locator(".cpop .cseg");
   await expect(segs).toHaveCount(5);
-  await slide(page, segs.nth(0), segs.nth(3));      // Wow! -> Disliked
+  await slide(page, segs.nth(0), segs.nth(4));      // Wow! -> Disliked (CAS-349: now the fifth step, index 4)
   await expect.poll(() => page.evaluate(i => opinionOf(i), id)).toBe("disliked");
 });
 

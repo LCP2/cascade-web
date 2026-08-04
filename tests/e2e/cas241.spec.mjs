@@ -48,7 +48,8 @@ test("CAS-311: the five answers are not squeezed at 360px", async ({ page }) => 
   const labels = await segs.locator(".cl").evaluateAll(els => els.map(e => ({
     text: e.textContent.trim(), clipped: e.scrollWidth > e.clientWidth + 1,
   })));
-  expect(labels.map(l => l.text)).toEqual(["Wow!", "Watch Again", "So-so", "Disliked", "Won't Watch"]);
+  // CAS-349: "Won't Watch" moved to the Watch panel's "Never"; "Enjoyed" is the new fifth answer here.
+  expect(labels.map(l => l.text)).toEqual(["Wow!", "Watch Again", "Enjoyed", "So-so", "Disliked"]);
   for(const l of labels) expect(l.clipped, `"${l.text}" is being truncated at 360px`).toBe(false);
 });
 

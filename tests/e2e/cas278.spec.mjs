@@ -2,7 +2,9 @@
 import { test, expect } from "@playwright/test";
 import { toShortlist, shortlistCards, pickCard, finishFlow, toListing } from "./helpers.mjs";
 
-const ORDER = ["Wow!", "Watch Again", "So-so", "Disliked", "Won't Watch"];
+// CAS-349: "Won't Watch" moved off this ladder entirely (it's "Never" on the Watch panel now); "Enjoyed" is
+// the new fifth step, between Watch Again and So-so.
+const ORDER = ["Wow!", "Watch Again", "Enjoyed", "So-so", "Disliked"];
 
 async function openWatchPanel(page){
   await toShortlist(page, "cinema");
@@ -84,10 +86,13 @@ test("CAS-278: the chip's fill tracks greatness, not list position", async ({ pa
 
   const wow = await fillFor("wow");
   const soso = await fillFor("soso");
-  const wont = await fillFor("notfor");
+  // CAS-349: "notfor" is no longer on this ladder (moved to the Watch panel's "Never") — a blocked film never
+  // reaches this chip at all (taggedOut() sends it to the stub) — so the worst rank to test against here is
+  // now Disliked, the ladder's actual last step.
+  const worst = await fillFor("disliked");
   expect(wow, "the best answer should draw the fullest bar").toBe(100);
   expect(wow).toBeGreaterThan(soso);
-  expect(soso).toBeGreaterThan(wont);
+  expect(soso).toBeGreaterThan(worst);
 });
 
 test("CAS-278: a Wow! film still appears in the receipts rather than vanishing", async ({ page }) => {

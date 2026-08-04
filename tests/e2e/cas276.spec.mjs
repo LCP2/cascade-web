@@ -55,7 +55,7 @@ test("CAS-276: the scale badge sits with the awards, not under the poster", asyn
   expect(where.inAwards, "no card in this listing carries a scale badge at all").toBeGreaterThan(0);
 });
 
-test("CAS-276: the awards row keeps to one line now it has the full width", async ({ page }) => {
+test("CAS-353: the awards row doesn't regress to the old three-line wrap", async ({ page }) => {
   await toAgentListing(page);
   const tallest = await page.evaluate(() => {
     let max = 0;
@@ -64,8 +64,11 @@ test("CAS-276: the awards row keeps to one line now it has the full width", asyn
     });
     return max;
   });
-  // Squeezed into the ~195px right-hand column with the badge, this row reached 89.6px — three wrapped lines.
-  expect(tallest, `the awards row is ${tallest}px tall`).toBeLessThanOrEqual(40);
+  // CAS-353 moved this row back under the IMDb line — the text column only, not the full card width CAS-276
+  // gave it — so it wrapping to two lines in that narrower column is expected (that's what .mrow's own
+  // flex-wrap is for) and no longer the bug this test guards. What's still a bug is the ORIGINAL bug: squeezed
+  // into the ~195px column alongside the scale badge, this row used to reach 89.6px — three wrapped lines.
+  expect(tallest, `the awards row is ${tallest}px tall`).toBeLessThan(89.6);
 });
 
 test("CAS-276: the Style line rides up under the title", async ({ page }) => {

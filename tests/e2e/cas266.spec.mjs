@@ -10,7 +10,9 @@ async function toEdit(page, kind){
   await finishFlow(page);
   await toListing(page);
   await page.evaluate(() => window.editCascade());
-  await expect(page.locator(".osh").first()).toBeVisible();
+  // CAS-337 put the fixed step header's title span on the same .osh class as the per-step heading, so an
+  // unscoped .osh now also matches that (hidden, stale-text) header — scope to the rendered step body.
+  await expect(page.locator("#onbStepInner .osh").first()).toBeVisible();
 }
 
 for(const kind of ["cinema", "stream"]){

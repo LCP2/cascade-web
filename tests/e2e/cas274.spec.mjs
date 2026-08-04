@@ -4,6 +4,9 @@
 // scroll — a geometric "does any card overlap the sort control" check is always true and proves nothing. What
 // the ticket is actually about is the bar reserving space below its last control, and painting that space, so
 // the content sliding underneath never reads as touching the select. That is what these tests pin.
+//
+// The Order control's id was #sortBar when this spec was written; CAS-321 merged the sort pill and the
+// jump-to chips into one #listCtl row, and the pill itself is #sortCtl — #sortBar no longer exists.
 import { test, expect } from "@playwright/test";
 import { toShortlist, shortlistCards, pickCard, finishFlow, toListing } from "./helpers.mjs";
 
@@ -21,7 +24,7 @@ test("CAS-274: there is real space between the Order control and the bar's botto
   await toAgentListing(page);
   const gap = await page.evaluate(() => {
     const bar = document.querySelector("#cascbar").getBoundingClientRect();
-    const sort = document.querySelector("#sortBar").getBoundingClientRect();
+    const sort = document.querySelector("#sortCtl").getBoundingClientRect();
     return bar.bottom - sort.bottom;
   });
   expect(gap, "the Order control sits hard against the bottom of the sticky bar").toBeGreaterThanOrEqual(6);
@@ -33,7 +36,7 @@ test("CAS-274: the gap survives scrolling, which is when it matters", async ({ p
   await page.waitForTimeout(250);
   const gap = await page.evaluate(() => {
     const bar = document.querySelector("#cascbar").getBoundingClientRect();
-    const sort = document.querySelector("#sortBar").getBoundingClientRect();
+    const sort = document.querySelector("#sortCtl").getBoundingClientRect();
     return bar.bottom - sort.bottom;
   });
   expect(gap).toBeGreaterThanOrEqual(6);

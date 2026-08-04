@@ -549,25 +549,27 @@ test("how far back: widening the window never loses a film, and a film is judged
   if(undated) assert.equal(E.releasedSince(undated, cut), E.yearOf(undated) >= cut.slice(0, 4));
 });
 
-test("how far back: the track is continuous and log-spaced, and every named window is reachable", () => {
+test("how far back: the track is ten fixed, non-linear-spaced stops, and every one is reachable (CAS-340)", () => {
   const landed = new Set(Array.from({ length: 101 }, (_, p) => E.yearsForPos(p)));
-  for(const y of E.YEARS_NOTCHES) assert.ok(landed.has(y),
-    `${y} years is a named notch that no slider position lands on`);
-  assert.ok(landed.size > E.YEARS_NOTCHES.length + 5,
-    `only ${landed.size} distinct windows across the whole track — it is still a stop ladder`);
-  // Log-spaced means the short windows get the room: 1→3 must take more of the track than 25→50, which is
-  // the whole argument for not making it linear.
-  const short = E.posForYears(3) - E.posForYears(1);
-  const long  = E.posForYears(50) - E.posForYears(25);
-  assert.ok(short > long, `1→3 spans ${short.toFixed(1)}% and 25→50 spans ${long.toFixed(1)}% — not log-spaced`);
+  assert.equal(landed.size, E.YEARS_STOPS.length,
+    `expected exactly the ${E.YEARS_STOPS.length} stops, landed on ${landed.size}`);
+  for(const y of E.YEARS_STOPS) assert.ok(landed.has(y), `${y} years is a stop no slider position lands on`);
+  // Non-linear means the recent years get the room: 2→1 must take more of the track than 25→50, which is
+  // the whole argument for compressing the older end. CAS-340 runs the track furthest-back-left to
+  // most-recent-right, so the recent gap is (1's position - 2's position).
+  const short = E.posForYears(1) - E.posForYears(2);
+  const long  = E.posForYears(25) - E.posForYears(50);
+  assert.ok(short > long, `2→1 spans ${short.toFixed(1)}% and 25→50 spans ${long.toFixed(1)}% — not non-linear`);
   // Position and value round-trip, and the marks stay on the track.
-  for(const y of E.YEARS_NOTCHES){
+  for(const y of E.YEARS_STOPS){
     const p = E.posForYears(y);
     assert.ok(p >= 0 && p <= 100, `${y} years sits at ${p}%`);
     assert.equal(E.yearsForPos(p), y, `${y} years maps to ${p}% which reads back as ${E.yearsForPos(p)}`);
   }
+  // CAS-340: furthest-back on the left, most recent on the right.
   assert.equal(E.yearsForPos(0), 0, "the bottom of the track must be Any");
-  assert.equal(E.posForYears(0), 0);
+  assert.equal(E.posForYears(0), 0, "Any sits at the very left");
+  assert.equal(E.posForYears(1), 100, "the tightest window sits at the very right");
 });
 
 test("how far back: an agent saved under the old rung keeps its window", () => {
@@ -789,13 +791,64 @@ test("my services: a scoped window only ever shows films the picked services car
       const scoped = E.normCascade({ ...E.onbApply(), myServices: { pvod: true, rental: true, included_streaming: true } });
       for(const m of E.MOVIES){
         if(!E.matchesCriteria(m, scoped)) continue;
-        if(!E.HOME_KEYS.includes(E.primaryStatus(m))) continue;   // cinema and upcoming are not on any service
-        assert.ok(E.matchesServices(m),
-          `${label}: shows ${m.title} at ${E.primaryStatus(m)} under a my-services scope that none of its ` +
-          `offers (${(m.offers || []).map(o => o.service).join(", ") || "none"}) satisfies`);
+        const ps = E.primaryStatus(m);
+        if(!E.HOME_KEYS.includes(ps)) continue;   // cinema and upcoming are not on any service
+        // CAS-342: "on a service" has to mean an offer belonging to the window the film actually landed in
+        // — an owned rental satisfying a film that only reads back as "on your services" through a
+        // streaming offer nobody here holds is exactly the bug this ticket closes.
+        assert.ok(E.matchesServices(m, ps),
+          `${label}: shows ${m.title} at ${ps} under a my-services scope that none of its ` +
+          `${ps} offers (${(m.offers || []).map(o => o.service).join(", ") || "none"}) satisfies`);
       }
     }
   });
+});
+
+// CAS-342: the catalogue currently carries no film with both a confirmed subscription AND a confirmed
+// cheap-rental offer at once (a real dual title would need both, which today's feed just doesn't have) —
+// so the cheapest-wins routing can only be proven with a plain object standing in for one. primaryStatus()
+// and matchesServices() read only `status`/`offers` off whatever they're given, so this needs no MOVIES
+// membership at all.
+test("my services: a dual rent+stream title routes by which of MY OWN services actually reaches it", () => {
+  const sub = new Set(E.prefs.sub), store = new Set(E.prefs.store), on = E.prefs.on;
+  const dualStatus = ["rental", "included_streaming"];
+  const filmOn = (streamSvc, rentSvc) => ({
+    title: "Cheapest-Wins Test Film", status: dualStatus,
+    offers: [{ type: "sub", service: streamSvc, price: null }, { type: "rent", service: rentSvc, price: 5.99 }],
+  });
+  try {
+    E.prefs.sub.clear(); E.prefs.sub.add("Netflix");
+    E.prefs.store.clear(); E.prefs.store.add("Apple TV Store");
+    E.prefs.on = true;
+
+    // Owns the rental only (streaming offer is on a service nobody here holds): must file — and be
+    // reachable for — Rent, not Stream. This is bug (a)'s exact shape: HBO offered, only Netflix picked.
+    const rentalOnly = filmOn("HBO Max", "Apple TV Store");
+    assert.equal(E.primaryStatus(rentalOnly), "rental",
+      "owns only the rental side of a dual title but it still filed under Stream");
+    assert.equal(E.matchesServices(rentalOnly, "rental"), true, "the owned rental offer was not recognised");
+    assert.equal(E.matchesServices(rentalOnly, "included_streaming"), false,
+      "an HBO offer nobody here holds still counts as \"on your services\" for Stream");
+
+    // Owns the streaming side only: files under Stream, same as the ladder's unscoped default.
+    const streamOnly = filmOn("Netflix", "Some Other Rental Store");
+    assert.equal(E.primaryStatus(streamOnly), "included_streaming",
+      "owns the streaming side of a dual title but it did not file under Stream");
+
+    // Owns both: streaming is as free as it gets, so it still wins over paying to rent.
+    const both = filmOn("Netflix", "Apple TV Store");
+    assert.equal(E.primaryStatus(both), "included_streaming",
+      "owning both sides of a dual title stopped preferring the free (already-paid) one");
+
+    // Scope OFF entirely: the ladder's unscoped default (streaming preferred) is untouched by ownership.
+    E.prefs.on = false;
+    assert.equal(E.primaryStatus(rentalOnly), "included_streaming",
+      "the unscoped default must still prefer streaming regardless of who owns what");
+  } finally {
+    E.prefs.sub.clear(); sub.forEach(x => E.prefs.sub.add(x));
+    E.prefs.store.clear(); store.forEach(x => E.prefs.store.add(x));
+    E.prefs.on = on;
+  }
 });
 
 // CAS-252: the switch used to be inert until a service was named, so with it ON and nothing picked the
