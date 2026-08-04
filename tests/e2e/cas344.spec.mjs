@@ -1,6 +1,8 @@
 // CAS-344: the "Which service covers what your agents found" coverage view gets its own Service analysis
-// page, reached from a header icon (its permanent home is the CAS-345 top menu once that ships), and is no
-// longer duplicated inside the My streaming services modal.
+// page, and is no longer duplicated inside the My streaming services modal. Its entry point (a standalone
+// header icon, #svcAnalysisBtn) was a stopgap "until the top menu (CAS-345) exists to hold it" — CAS-345
+// shipped that menu and folded the icon into it, so opening the page here goes through openSvcAnalysis()
+// directly; the menu's own click path is covered by cas345.spec.mjs.
 import { test, expect } from "@playwright/test";
 import { toShortlist, shortlistCards, pickCard, finishFlow, toListing } from "./helpers.mjs";
 
@@ -12,17 +14,17 @@ async function toListingWithAgent(page){
   await toListing(page);
 }
 
-test("CAS-344: the header icon opens the Service analysis page", async ({ page }) => {
+test("CAS-344: opening the Service analysis page shows the coverage view", async ({ page }) => {
   await toListingWithAgent(page);
   await expect(page.locator("#svcAnalysis")).not.toHaveClass(/open/);
-  await page.locator("#svcAnalysisBtn").click();
+  await page.evaluate(() => window.openSvcAnalysis());
   await expect(page.locator("#svcAnalysis")).toHaveClass(/open/);
   await expect(page.locator("#svcAnalysis .osh", { hasText: "Service analysis" })).toBeVisible();
 });
 
 test("CAS-344: the coverage rows are ordered by coverage descending and match the real data", async ({ page }) => {
   await toListingWithAgent(page);
-  await page.locator("#svcAnalysisBtn").click();
+  await page.evaluate(() => window.openSvcAnalysis());
   const ranked = await page.evaluate(() => serviceAdvice().ranked);
   const rows = page.locator("#svcAnalysis .adv");
   await expect(rows).toHaveCount(ranked.length);
@@ -38,7 +40,7 @@ test("CAS-344: the coverage rows are ordered by coverage descending and match th
 
 test("CAS-344: back returns to the listing, and the coverage block is gone from My streaming services", async ({ page }) => {
   await toListingWithAgent(page);
-  await page.locator("#svcAnalysisBtn").click();
+  await page.evaluate(() => window.openSvcAnalysis());
   await expect(page.locator("#svcAnalysis")).toHaveClass(/open/);
   await page.locator("#svcAnalysis .osback").click();
   await expect(page.locator("#svcAnalysis")).not.toHaveClass(/open/);

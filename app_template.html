@@ -155,6 +155,19 @@
   .iconbtn.on{border-color:var(--green);background:rgba(72,199,142,.14)}
   .iconbtn .badge{position:absolute;top:-6px;right:-6px;background:var(--rt);color:#fff;font-size:10px;
     font-weight:800;min-width:18px;height:18px;border-radius:10px;display:grid;place-items:center;padding:0 4px}
+  /* Top menu (CAS-345): an anchored dropdown, not a full-screen sheet — opens directly below the hamburger
+     and right-aligned to it (right:0 against the wrap, which is exactly as wide as the icon), so it never
+     spans past the icon that opened it. */
+  .navmenu-wrap{position:relative}
+  .navmenu{position:absolute;top:calc(100% + 8px);right:0;z-index:60;display:none;flex-direction:column;
+    min-width:180px;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    box-shadow:0 12px 28px rgba(0,0,0,.4);overflow:hidden}
+  .navmenu.open{display:flex}
+  .navitem{display:block;width:100%;text-align:left;background:transparent;border:0;
+    border-bottom:1px solid var(--line);color:var(--ink);font-size:14px;font-weight:600;
+    padding:12px 14px;cursor:pointer}
+  .navitem:last-child{border-bottom:0}
+  .navitem:hover,.navitem:focus-visible{background:var(--panel2)}
   .search{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
     border-radius:10px;padding:11px 40px 11px 12px;font-size:16px}
   .search::placeholder{color:var(--faint)}
@@ -2146,14 +2159,22 @@
         <!-- Your Movies (CAS-183): everything you've said about a film, and how your services cover it. -->
         <div class="iconbtn" id="moviesBtn" title="Your Movies" role="button" tabindex="0"
              aria-label="Your Movies" onclick="openYourMovies()">🎞️</div>
-        <!-- Service analysis (CAS-344): a header entry point until the top menu (CAS-345) exists to hold it. -->
-        <div class="iconbtn" id="svcAnalysisBtn" title="Service analysis" role="button" tabindex="0"
-             aria-label="Service analysis" onclick="openSvcAnalysis()">📊</div>
-        <!-- Account (CAS-206): the Account SCREEN. Signing in is one row inside it — the magic-link panel
-             from CAS-82, opened rather than duplicated. -->
-        <div class="iconbtn" id="accountBtn" title="Account" role="button" tabindex="0" aria-label="Account"
-             onclick="openAccount()">👤</div>
         <div class="iconbtn" id="bell">🔔<div class="badge" id="badge" style="display:none">0</div></div>
+        <!-- Top menu (CAS-345): the account/about surfaces — Account, My services, Service analysis, About —
+             that used to be scattered across separate header icons (and, for About, buried in the My streaming
+             services modal) now live in one anchored dropdown. Account (CAS-206) and Service analysis
+             (CAS-344, which called this menu its permanent entry point) had their own icons here; both are
+             folded in, so the header goes back to the three-icon count CAS-183 set out. -->
+        <div class="navmenu-wrap">
+          <div class="iconbtn" id="navMenuBtn" title="Menu" role="button" tabindex="0" aria-haspopup="true"
+               aria-expanded="false" aria-controls="navMenu" aria-label="Menu" onclick="toggleNavMenu(event)">☰</div>
+          <div class="navmenu" id="navMenu" role="menu" aria-label="Menu">
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('account')">Account</button>
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('services')">My services</button>
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('svcAnalysis')">Service analysis</button>
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('about')">About</button>
+          </div>
+        </div>
       </div>
     </div>
     <!-- CAS-150: the header is identity only — logo, freshness, and the three account icons. The
@@ -2527,18 +2548,25 @@
   <div class="invcard" id="migrateBody"></div>
 </div>
 
-<!-- ACCOUNT (CAS-206 / CAS-210) — the person icon's screen: what every new agent starts from, how you
-     are told by default, and the membership. Body rendered by renderAccount(). Signing in itself still
-     happens in the magic-link panel (CAS-82), which this screen opens rather than duplicates. -->
+<!-- ACCOUNT (CAS-206 / CAS-210) — what every new agent starts from, how you are told by default, and the
+     membership. Body rendered by renderAccount(). Signing in itself still happens in the magic-link panel
+     (CAS-82), which this screen opens rather than duplicates. Reached from the top menu (CAS-345). -->
 <div class="uscreen" id="accountScreen" role="dialog" aria-modal="true" aria-label="Account">
   <div class="uwrap" id="accountBody"></div>
 </div>
 
 <!-- SERVICE ANALYSIS (CAS-344) — the "which service covers what your agents found" view, given its own
-     page instead of living inside Preferences. Body rendered by renderSvcAnalysis(). Its permanent entry
-     point is the top menu (CAS-345); until that ships it opens from the header icon in .hdr-actions. -->
+     page instead of living inside Preferences. Body rendered by renderSvcAnalysis(). Reached from the top
+     menu (CAS-345), its permanent entry point. -->
 <div class="uscreen" id="svcAnalysis" role="dialog" aria-modal="true" aria-label="Service analysis">
   <div class="uwrap" id="svcAnalysisBody"></div>
+</div>
+
+<!-- ABOUT (CAS-345) — the top menu's fourth surface. This ticket is the route/page shell only; CAS-346
+     moves the actual build-info block (version/build/commit/env/builtAt), currently on the My streaming
+     services modal, in here. -->
+<div class="uscreen" id="aboutScreen" role="dialog" aria-modal="true" aria-label="About">
+  <div class="uwrap" id="aboutBody"></div>
 </div>
 
 <div class="stepnav" id="stepNav" hidden>
@@ -6943,6 +6971,46 @@ window.openSvcAnalysis=()=>{
   logEvent("svc_analysis_opened",{ranked:serviceAdvice().ranked.length});
 };
 window.closeSvcAnalysis=()=>{ $("svcAnalysis").classList.remove("open"); document.body.style.overflow=""; };
+
+// ================= Top menu (CAS-345) =================
+// One anchored dropdown for the account/about surfaces that used to be separate header icons (Account,
+// Service analysis) or buried inside My streaming services (About). Dismiss on an outside tap or on
+// picking an item — never left open behind whatever screen it just opened.
+function renderAbout(){
+  $("aboutBody").innerHTML=`
+    <div class="ostop"><button class="osback" type="button" onclick="closeAbout()" aria-label="Back">←</button>
+      <h2 class="osh">About</h2></div>`;
+}
+window.openAbout=()=>{
+  renderAbout();
+  $("aboutScreen").scrollTop=0;
+  $("aboutScreen").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("about_opened",{});
+};
+window.closeAbout=()=>{ $("aboutScreen").classList.remove("open"); document.body.style.overflow=""; };
+window.toggleNavMenu=e=>{
+  e && e.stopPropagation();
+  const open=!$("navMenu").classList.contains("open");
+  $("navMenu").classList.toggle("open", open);
+  $("navMenuBtn").setAttribute("aria-expanded", open ? "true" : "false");
+};
+window.closeNavMenu=()=>{
+  $("navMenu").classList.remove("open");
+  $("navMenuBtn").setAttribute("aria-expanded","false");
+};
+window.navMenuGo=key=>{
+  closeNavMenu();
+  logEvent("nav_menu_item",{item:key});
+  if(key==="account") openAccount();
+  else if(key==="services") openPrefs();
+  else if(key==="svcAnalysis") openSvcAnalysis();
+  else if(key==="about") openAbout();
+};
+document.addEventListener("click", e=>{
+  if(!$("navMenu").classList.contains("open")) return;
+  if(e.target.closest("#navMenu, #navMenuBtn")) return;
+  closeNavMenu();
+});
 
 // ================= Setup meter + first-run onboarding =================
 // Goal-gradient: the meter never starts at zero. Honesty guardrail: it only counts things that are
@@ -11746,7 +11814,7 @@ else if(dedupedN)
 <script type="module">
 (() => {
   const gid = id => document.getElementById(id);
-  const modal = gid('authModal'), btn = gid('accountBtn');
+  const modal = gid('authModal');
   const toastSafe = m => { try{ if(typeof window.toast === 'function') window.toast(m); }catch(e){} };
 
   const openAuth  = () => { modal.classList.add('open'); document.body.style.overflow = 'hidden'; };
@@ -11755,12 +11823,11 @@ else if(dedupedN)
   const showPanel = which => ['authGuest','authSignedOut','authSignedIn']
     .forEach(p => gid(p).style.display = (p === which ? 'block' : 'none'));
 
-  // CAS-206: the header's 👤 opens the ACCOUNT SCREEN now, not this panel — the panel is one row inside
-  // it. So this module no longer binds the header button; it only keeps the panel's own Done, and exposes
-  // openAuth for the Account screen's "Signed in / Not signed in" row to call.
+  // CAS-206: the header's 👤 opened the ACCOUNT SCREEN, not this panel — the panel is one row inside it.
+  // CAS-345 moved that entry point off its own header icon into the top menu's "Account" item, which
+  // gets its Enter/Space handling for free from armSwitches() (every .iconbtn is wired there), so this
+  // module no longer needs its own keydown shim for a button it never owned the click of anyway.
   window.CascadeOpenAuth = openAuth;
-  btn.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' '){
-    e.preventDefault(); if(typeof window.openAccount === 'function') window.openAccount(); } });
   gid('authDone').addEventListener('click', closeAuth);
 
   // A config is only "real" if both fields are filled and not the example placeholders.
