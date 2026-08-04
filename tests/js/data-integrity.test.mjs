@@ -791,13 +791,64 @@ test("my services: a scoped window only ever shows films the picked services car
       const scoped = E.normCascade({ ...E.onbApply(), myServices: { pvod: true, rental: true, included_streaming: true } });
       for(const m of E.MOVIES){
         if(!E.matchesCriteria(m, scoped)) continue;
-        if(!E.HOME_KEYS.includes(E.primaryStatus(m))) continue;   // cinema and upcoming are not on any service
-        assert.ok(E.matchesServices(m),
-          `${label}: shows ${m.title} at ${E.primaryStatus(m)} under a my-services scope that none of its ` +
-          `offers (${(m.offers || []).map(o => o.service).join(", ") || "none"}) satisfies`);
+        const ps = E.primaryStatus(m);
+        if(!E.HOME_KEYS.includes(ps)) continue;   // cinema and upcoming are not on any service
+        // CAS-342: "on a service" has to mean an offer belonging to the window the film actually landed in
+        // — an owned rental satisfying a film that only reads back as "on your services" through a
+        // streaming offer nobody here holds is exactly the bug this ticket closes.
+        assert.ok(E.matchesServices(m, ps),
+          `${label}: shows ${m.title} at ${ps} under a my-services scope that none of its ` +
+          `${ps} offers (${(m.offers || []).map(o => o.service).join(", ") || "none"}) satisfies`);
       }
     }
   });
+});
+
+// CAS-342: the catalogue currently carries no film with both a confirmed subscription AND a confirmed
+// cheap-rental offer at once (a real dual title would need both, which today's feed just doesn't have) —
+// so the cheapest-wins routing can only be proven with a plain object standing in for one. primaryStatus()
+// and matchesServices() read only `status`/`offers` off whatever they're given, so this needs no MOVIES
+// membership at all.
+test("my services: a dual rent+stream title routes by which of MY OWN services actually reaches it", () => {
+  const sub = new Set(E.prefs.sub), store = new Set(E.prefs.store), on = E.prefs.on;
+  const dualStatus = ["rental", "included_streaming"];
+  const filmOn = (streamSvc, rentSvc) => ({
+    title: "Cheapest-Wins Test Film", status: dualStatus,
+    offers: [{ type: "sub", service: streamSvc, price: null }, { type: "rent", service: rentSvc, price: 5.99 }],
+  });
+  try {
+    E.prefs.sub.clear(); E.prefs.sub.add("Netflix");
+    E.prefs.store.clear(); E.prefs.store.add("Apple TV Store");
+    E.prefs.on = true;
+
+    // Owns the rental only (streaming offer is on a service nobody here holds): must file — and be
+    // reachable for — Rent, not Stream. This is bug (a)'s exact shape: HBO offered, only Netflix picked.
+    const rentalOnly = filmOn("HBO Max", "Apple TV Store");
+    assert.equal(E.primaryStatus(rentalOnly), "rental",
+      "owns only the rental side of a dual title but it still filed under Stream");
+    assert.equal(E.matchesServices(rentalOnly, "rental"), true, "the owned rental offer was not recognised");
+    assert.equal(E.matchesServices(rentalOnly, "included_streaming"), false,
+      "an HBO offer nobody here holds still counts as \"on your services\" for Stream");
+
+    // Owns the streaming side only: files under Stream, same as the ladder's unscoped default.
+    const streamOnly = filmOn("Netflix", "Some Other Rental Store");
+    assert.equal(E.primaryStatus(streamOnly), "included_streaming",
+      "owns the streaming side of a dual title but it did not file under Stream");
+
+    // Owns both: streaming is as free as it gets, so it still wins over paying to rent.
+    const both = filmOn("Netflix", "Apple TV Store");
+    assert.equal(E.primaryStatus(both), "included_streaming",
+      "owning both sides of a dual title stopped preferring the free (already-paid) one");
+
+    // Scope OFF entirely: the ladder's unscoped default (streaming preferred) is untouched by ownership.
+    E.prefs.on = false;
+    assert.equal(E.primaryStatus(rentalOnly), "included_streaming",
+      "the unscoped default must still prefer streaming regardless of who owns what");
+  } finally {
+    E.prefs.sub.clear(); sub.forEach(x => E.prefs.sub.add(x));
+    E.prefs.store.clear(); store.forEach(x => E.prefs.store.add(x));
+    E.prefs.on = on;
+  }
 });
 
 // CAS-252: the switch used to be inert until a service was named, so with it ON and nothing picked the

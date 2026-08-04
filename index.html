@@ -2769,7 +2769,30 @@ function deriveStatus(m){
   if(s.size===0) return claimed.length ? claimed : [(cd && cd<=TODAY) ? "in_cinema" : "upcoming"];
   return CASCADE.filter(x=>s.has(x));
 }
-const primaryStatus = m => m.status[m.status.length-1];
+// CAS-342: which of a dual rent/stream title's two home windows the viewer's OWN picked services actually
+// reach. A subscription already paid for is as free as it gets, so between windows the viewer can reach it
+// through, streaming beats a rental price every time — see primaryStatus below.
+function ownReach(m){
+  const o=m.offers||[];
+  return {
+    stream: o.some(x=>windowOf(x)==="included_streaming" && myService(x)),
+    rent:   o.some(x=>windowOf(x)==="rental" && myService(x)),
+  };
+}
+// CASCADE's order alone always prefers streaming over a same-title rental (included_streaming sorts last)
+// — the right DEFAULT, since a free win beats a paid one. But once "only my services" is scoped to either
+// window, the question changes from "which window does the ladder prefer" to "which of MY OWN services
+// actually gets me this film" (CAS-342): a title reachable only through an owned rental, not the owned-
+// looking streaming offer someone else pays for, has to file — and show its green bar — under Rent.
+function primaryStatus(m){
+  const st=m.status, last=st[st.length-1];
+  if(st.includes("rental") && st.includes("included_streaming") && (scopedFor("rental")||scopedFor("included_streaming"))){
+    const own=ownReach(m);
+    if(own.stream) return "included_streaming";
+    if(own.rent) return "rental";
+  }
+  return last;
+}
 MOVIES.forEach(m=>m.status=deriveStatus(m));
 
 // The state, derived from the film's REAL opening date and nothing else. A film the sim has pushed into
@@ -3121,7 +3144,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 295, "commit": "707d17e", "builtAt": "2026-08-04T07:23:43Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 296, "commit": "5534d72", "builtAt": "2026-08-04T07:54:32Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 (function stampBuild(){
@@ -3255,9 +3278,14 @@ function myService(o){
   if(o.type==="rent"||o.type==="buy") return prefs.store.has(k);
   return false;
 }
-function matchesServices(m){
+function matchesServices(m, w){
   const o=m.offers||[];
   if(!o.length) return true;                 // in cinema / upcoming — always visible
+  // CAS-342: scoped to a specific window, "on your services" has to mean an offer that actually BELONGS to
+  // that window — an owned rental must not wave a film into the Stream section, and an owned subscription
+  // must not wave one into Rent. Callers asking the wider "is this on anything I have" question (no window
+  // given, e.g. the My Services count) keep the any-offer answer, which is what they've always meant.
+  if(w) return o.some(x=>windowOf(x)===w && myService(x));
   return o.some(myService);
 }
 
@@ -3554,7 +3582,8 @@ function passes(m){
   // it ON and nothing picked, the screen said "only showing films on your services" over the whole
   // catalogue. Nothing is on your services when you have none, and 0 is the honest answer; the screen says
   // so in words and offers the way out, which is a better answer than quietly ignoring what was asked.
-  if(!ignoreScope && scopedFor(primaryStatus(m)) && !matchesServices(m)) return false;
+  const ps=primaryStatus(m);
+  if(!ignoreScope && scopedFor(ps) && !matchesServices(m, ps)) return false;
   if(filt.foundOnly && !found.has(id)) return false;
   if(filt.search && !m.title.toLowerCase().includes(filt.search)) return false;
   if(!statusOK(m)) return false;
@@ -3868,8 +3897,12 @@ function savingsHTML(m){
   const rents=offers.filter(o=>o.type==="rent"&&o.price!=null).sort((a,b)=>a.price-b.price);
   const buys =offers.filter(o=>o.type==="buy" &&o.price!=null).sort((a,b)=>a.price-b.price);
   const rent=rents[0], buy=buys[0];
-  if(subs.length){
-    const mine=subs.filter(o=>prefs.sub.has(o.service));
+  const mine=subs.filter(o=>prefs.sub.has(svcCanon(o.service)));
+  // CAS-342: "only my services" makes the green bar's claim personal — a film that only reaches you
+  // through a rental your own store carries must not wear a green "Included on {service nobody here pays
+  // for}" bar just because SOME subscription lists it. Unscoped, any subscription offer is still honest
+  // "where to watch" information, owned or not, so the wider list stands.
+  if(subs.length && (!prefsActive() || mine.length)){
     const svc=svcName((mine[0]||subs[0]).service);
     const own=(ux.on && mine.length) ? " — which you already pay for" : "";
     const alt=rent ? `, or pay <b>$${rent.price.toFixed(2)}</b> to rent` : "";
@@ -3897,7 +3930,7 @@ function lossFrame(m,w,before){
   if(w==="included_streaming"){
     const subs=offers.filter(o=>o.type==="sub"||o.type==="free");
     if(!subs.length) return "";
-    const mine=subs.filter(o=>prefs.sub.has(o.service));
+    const mine=subs.filter(o=>prefs.sub.has(svcCanon(o.service)));
     const svc=svcName((mine[0]||subs[0]).service);
     if(mine.length)
       return rent ? `It's on ${svc} — which you already pay for. Don't spend $${rent.price.toFixed(2)} renting it.`
@@ -5518,8 +5551,9 @@ function matchesCriteria(m,c,ignoreBlocked){
   if(!passesTasteBase(m)) return false;
   if(c.excludeBlocked!==false && !ignoreBlocked && blocked.has(m.tmdb_id)) return false;
   if(c.excludeWatched!==false && watched.has(m.tmdb_id)) return false;
-  if(scopeOf(c)[primaryStatus(m)] && !matchesServices(m)) return false;   // CAS-252: see passes()
-  if(c.status.length && !c.status.includes(primaryStatus(m))) return false;
+  const ps=primaryStatus(m);
+  if(scopeOf(c)[ps] && !matchesServices(m, ps)) return false;   // CAS-252/342: see passes()
+  if(c.status.length && !c.status.includes(ps)) return false;
   if((c.exclude||[]).length && (m.genres||[]).some(g=>c.exclude.includes(g))) return false;   // skip beats match
   // CAS-182: cleared means cleared. A dimension holding null admits nothing, so the count says 0 rather
   // than quietly reverting to the whole catalogue behind a screen of switched-off chips.
@@ -10834,8 +10868,9 @@ function catchReason(m, c, w, services){
     if(opt && !filmOptOn(m.tmdb_id, opt)) return `you turned this film's ${opt.label} alert off`;
   }
   // Per-window: a Cascade scoped to Stream only must still shout about a Rent drop on a service you don't
-  // have. The scope that decides is the one on the window the film actually LANDED in.
-  if(scopeOf(c)[w] && servicesPicked() && !matchesServices(m))
+  // have. The scope that decides is the one on the window the film actually LANDED in — and CAS-342 means
+  // that has to be tested against an offer belonging to THIS window, not any offer on any of your services.
+  if(scopeOf(c)[w] && servicesPicked() && !matchesServices(m, w))
     return (services && services.length) ? `it landed on ${services.join(", ")} — not one of your services`
                                          : `it isn't on any of your services`;
   // "past_opening" is a moment, not a window, so it has no row in WINDOW_ROW — it IS its own alert key. Without
