@@ -15,7 +15,9 @@ test("CAS-319: the genres step carries no ossumline / 'Drawing from' text", asyn
 
   // The Style trail row (a different line, further down the flow) still summarises the genre pick —
   // this ticket removes the one line under the chips, not the running trail.
-  await page.evaluate(() => window.gotoStep("language", "none"));
+  // CAS-338 dropped Language from the wired flow, so Age — not Language — is now the next flow step
+  // downstream of Style in the stream lane; the trail assertion just needs a step FLOWS.stream still walks.
+  await page.evaluate(() => window.gotoStep("age", "none"));
   const trail = await page.locator(".otrow", { has: page.locator(".otk", { hasText: "Style" }) }).first();
   await expect(trail).toBeVisible();
   await expect(trail).not.toContainText(/Drawing from/);

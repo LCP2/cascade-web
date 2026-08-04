@@ -15,16 +15,17 @@ for(const kind of ["cinema", "stream"]){
 test("CAS-265: nothing else changed places", async ({ page }) => {
   await freshApp(page);
   const flows = await page.evaluate(() => ({ cinema: FLOWS.cinema, stream: FLOWS.stream }));
-  // Same steps, same lanes — only `age` moved.
+  // Same steps, same lanes — only `age` moved. CAS-338 later dropped `language` from both lanes entirely
+  // (the control survives in Agent Settings / Edit Agent), so it is no longer one of the steps being compared.
   expect(flows.cinema.filter(k => k !== "age"))
-    .toEqual(["priority", "pickagent", "selectivity", "name", "genres", "language",
+    .toEqual(["priority", "pickagent", "selectivity", "name", "genres",
               "keepfinding", "notifysettings"]);
   expect(flows.stream.filter(k => k !== "age"))
-    .toEqual(["priority", "pickagent", "selectivity", "name", "genres", "years", "language",
+    .toEqual(["priority", "pickagent", "selectivity", "name", "genres", "years",
               "services", "keepfinding", "notifysettings"]);
 });
 
-test("CAS-265: walking the flow really hits Rating before Language", async ({ page }) => {
+test("CAS-265: walking the flow really hits Rating right after Style", async ({ page }) => {
   await freshApp(page);
   await page.locator("#splashCta").click();
   await expect(page.locator(".priobtn").first()).toBeVisible();
@@ -44,7 +45,8 @@ test("CAS-265: walking the flow really hits Rating before Language", async ({ pa
   }
   expect(seen.indexOf("age"), "Rating never came up").toBeGreaterThan(-1);
   expect(seen.indexOf("age")).toBe(seen.indexOf("genres") + 1);
-  expect(seen.indexOf("age")).toBeLessThan(seen.indexOf("language"));
+  // CAS-338: Language is no longer a wired-flow step in either lane — walking the cinema flow never lands on it.
+  expect(seen).not.toContain("language");
 
   // The meter still counts every step exactly once — a reorder must not renumber the line.
   const label = await page.locator("#stepLbl").textContent();
