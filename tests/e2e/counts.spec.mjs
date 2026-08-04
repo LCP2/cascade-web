@@ -91,7 +91,7 @@ test("every card's window chip is the window its data puts it in", async ({ page
     // The lit cell of the availability strip is `.avail .win.on`, and its label is the `.wpill` inside it. The
     // first cell is the cinema slot and is tri-state (Upcoming / Opening / Cinema); the other three are fixed.
     const SLOT = { upcoming:"Upcoming", opening_week:"Opening", in_cinema:"Cinema",
-                   pvod:"Buy", rental:"Rent", included_streaming:"Stream" };
+                   pvod:"Premium", rental:"Rent", included_streaming:"Stream" };
     const out = [], checked = [];
     for(const card of document.querySelectorAll("#groups .card")){
       const id = Number(card.id.replace("card-", ""));

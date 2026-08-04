@@ -363,12 +363,12 @@ test("alerts: a saved agent from before this screen is never armed on its behalf
 });
 
 // ---- 3d. THE PAY-PER-FILM WINDOWS ARE TWO, NOT ONE (CAS-243) --------------------------------------------
-test("windows: a streaming agent is offered Buy, Standard Rent and Streaming, one status each", () => {
+test("windows: a streaming agent is offered Premium, Standard Rent and Streaming, one status each", () => {
   // Joined rather than deep-equalled: these arrays are built inside the vm realm, so their prototype is not
   // the host's and a strict deep-equal of two identical arrays fails (the same trap as the status order).
   const wins = E.AGENT_WINDOWS.stream;
   assert.equal(wins.map(w => w.key).join(","), "premium,rent,stream");
-  assert.equal(wins.map(w => w.label).join(","), "Buy,Standard Rent,Streaming");
+  assert.equal(wins.map(w => w.label).join(","), "Premium,Standard Rent,Streaming");
   // Each window owns its own status and its own bell — the split is only real if nothing overlaps.
   const seen = new Set();
   for(const w of wins){
@@ -388,9 +388,9 @@ test("windows: a new streaming agent takes rent and streaming, and is never opte
   const seed = E.PRIORITY_WATCH.stream;
   assert.ok(seed.rent && seed.rent.list && seed.rent.notify, "Standard Rent is not on for a new agent");
   assert.ok(seed.stream && seed.stream.list && seed.stream.notify, "Streaming is not on for a new agent");
-  assert.ok(!seed.premium, "a new streaming agent is opted into Buy, which costs ~$30 a film");
+  assert.ok(!seed.premium, "a new streaming agent is opted into Premium, which costs ~$30 a film");
   // …and the window is still OFFERED, or it could never be switched on.
-  assert.ok(E.agentWindow("premium", "stream"), "Buy is not on the screen at all");
+  assert.ok(E.agentWindow("premium", "stream"), "Premium is not on the screen at all");
 });
 
 test("windows: an agent that asked for premium under the old model gets the premium window", () => {

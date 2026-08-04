@@ -28,7 +28,7 @@ test("CAS-349: the Watch panel offers only levels the film can be watched at, ne
   const joined = rows.join(" | ");
   expect(joined, "Upcoming has no watch level of its own and must never appear here").not.toMatch(/Upcoming/);
   // A cinema agent's own ladder tops out at In-Cinema; it never reaches into the streaming lane.
-  expect(joined, "a cinema agent must not be offered a home level").not.toMatch(/Buy|Standard Rent|Streaming/);
+  expect(joined, "a cinema agent must not be offered a home level").not.toMatch(/Premium|Standard Rent|Streaming/);
   // Never is always offered, whatever the film's own journey looks like.
   expect(joined, "Never must always be on the panel").toMatch(/Never/);
 });
@@ -37,14 +37,14 @@ test("CAS-349: everything the agent has switched on starts ticked for the film",
   const card = await toFirstCard(page, "stream");
   await card.locator(".ctl.notify").click();
   const pop = card.locator(".cpop.npop");
-  // Buy (CAS-359, formerly Premium) is off for a new streaming agent (CAS-243) — Rent and Streaming are its live levels.
+  // Premium is off for a new streaming agent (CAS-243) — Rent and Streaming are its live levels.
   const rows = await pop.locator(".nopt").allTextContents();
   test.skip(!rows.join(" | ").match(/Standard Rent/),
     "this agent's first card has already passed Rent (CAS-280/CAS-349 greying)");
   const rent = pop.locator('.nopt[data-wk="rent"]');
   await expect(rent).toHaveAttribute("aria-pressed", "true");
-  const buy = pop.locator(".nopt", { hasText: "Buy" });
-  await expect(buy, "Buy is off for a fresh streaming agent, so it must not be offered").toHaveCount(0);
+  const premium = pop.locator(".nopt", { hasText: "Premium" });
+  await expect(premium, "Premium is off for a fresh streaming agent, so it must not be offered").toHaveCount(0);
 });
 
 test("CAS-349: a level the film has already passed is shown, greyed, and cannot be picked", async ({ page }) => {
@@ -161,16 +161,15 @@ test("CAS-245: the close sits on the LEFT and points RIGHT, the mirror of Watche
 
 // CAS-245's own version of this test opted a film INTO a window the agent itself didn't watch — the honest
 // thing for a plain Notify toggle to allow. CAS-349 explicitly reverses that for Watch: "show ONLY the
-// levels the agent/cascade is configured to track". Buy (CAS-359, formerly Premium) is off for a fresh
-// streaming agent (CAS-243), so it must be ABSENT from the panel, full stop — there is no per-film opt-in
-// around that any more.
+// levels the agent/cascade is configured to track". Premium is off for a fresh streaming agent (CAS-243), so
+// it must be ABSENT from the panel, full stop — there is no per-film opt-in around that any more.
 test("CAS-349: a level the agent does not track does not appear at all", async ({ page }) => {
   const card = await toFirstCard(page, "stream");
   const id = Number((await card.getAttribute("id")).replace("card-", ""));
   const tracked = await page.evaluate(i => watchLevelsFor(i).map(l => l.key), id);
-  expect(tracked, "Buy must not be one of a fresh streaming agent's levels").not.toContain("premium");
+  expect(tracked, "Premium must not be one of a fresh streaming agent's levels").not.toContain("premium");
 
   await card.locator(".ctl.notify").click();
-  const buy = card.locator(".cpop.npop .nopt", { hasText: "Buy" });
-  await expect(buy).toHaveCount(0);
+  const premium = card.locator(".cpop.npop .nopt", { hasText: "Premium" });
+  await expect(premium).toHaveCount(0);
 });

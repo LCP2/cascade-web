@@ -1,13 +1,14 @@
-// CAS-359: user-facing "Premium" and "Purchase" become "Buy" everywhere the pvod window is named — a
-// label/copy change only, the underlying `pvod`/`premium` keys are untouched. One row is the deliberate
-// exception: the per-Cascade editor's spine (buildSpine, #cSpine) prints the window's own title next to its
-// alertName on the same line, and both were about to become the same word ("Buy" pill next to a "📣 Buy"
-// bell) — a genuine duplicate-label collision, not a plain rename, so it stays "Premium"/"Purchase" pending
-// Lee's call on wording (see the comment above that row in app_template.html).
+// CAS-359 (2026-08-05 correction): user-facing "Purchase" and "Buy" become "Premium" everywhere the pvod
+// window is named — a label/copy change only, the underlying `pvod`/`premium` keys are untouched. This
+// reverses the ticket's earlier "Buy" direction (see git history for the prior commit). One row is the
+// deliberate exception: the per-Cascade editor's spine (buildSpine, #cSpine) prints the window's own title
+// next to its alertName on the same line, and both would become the same word ("Premium" pill next to a
+// "📣 Premium" bell) — a genuine duplicate-label collision, not a plain rename, so it stays
+// "Premium"/"Purchase" pending Lee's call on wording (see the comment above that row in app_template.html).
 import { test, expect } from "@playwright/test";
 import { toShortlist, shortlistCards, pickCard, finishFlow, toListing, settleListing } from "./helpers.mjs";
 
-test("CAS-359: the card's availability strip names the pvod window Buy, not Premium", async ({ page }) => {
+test("CAS-359: the card's availability strip names the pvod window Premium, not Buy", async ({ page }) => {
   await toShortlist(page, "stream");
   const cards = await shortlistCards(page);
   await pickCard(page, cards[0].name);
@@ -25,10 +26,10 @@ test("CAS-359: the card's availability strip names the pvod window Buy, not Prem
     return (card.querySelector(".avail .win.on .wpill")?.textContent || "").trim();
   });
   test.skip(result === null, "no film is in the pvod window today");
-  expect(result).toBe("Buy");
+  expect(result).toBe("Premium");
 });
 
-test("CAS-359: the global 'never alert me' pvod chip reads Buy, not Purchase", async ({ page }) => {
+test("CAS-359: the global 'never alert me' pvod chip reads Premium, not Buy", async ({ page }) => {
   await toShortlist(page, "stream");
   const cards = await shortlistCards(page);
   await pickCard(page, cards[0].name);
@@ -39,10 +40,10 @@ test("CAS-359: the global 'never alert me' pvod chip reads Buy, not Purchase", a
   await page.locator(".navitem", { hasText: "My services" }).click();
   await expect(page.locator("#prefs")).toHaveClass(/open/);
   const chip = page.locator('#prefAlertChips .chip[data-val="pvod"]');
-  await expect(chip).toHaveText("💳 Buy");
+  await expect(chip).toHaveText("💳 Premium");
 });
 
-test("CAS-359: every other Premium/Purchase surface renamed to Buy, keys and identifiers untouched", async ({ page }) => {
+test("CAS-359: every other Purchase/Buy surface renamed to Premium, keys and identifiers untouched", async ({ page }) => {
   await toShortlist(page, "cinema");
   const values = await page.evaluate(() => ({
     statusLabel: STATUS_LABEL.pvod,
@@ -57,13 +58,13 @@ test("CAS-359: every other Premium/Purchase surface renamed to Buy, keys and ide
     watchLevelKeys: WATCH_LEVEL_KEYS.includes("premium"),
     pvodStillAKey: ALL_WINDOWS.includes("pvod"),
   }));
-  expect(values.statusLabel).not.toMatch(/Premium/);
-  expect(values.cstageLabel).toBe("Buy");
-  expect(values.scopeShort).toBe("buy");
-  expect(values.alertShort).toBe("buy");
-  expect(values.alertMoment).not.toMatch(/premium/);
-  expect(values.alertTypeLabel).toBe("💳 Buy");
-  expect(values.streamAgentLabel).toBe("Buy");
+  expect(values.statusLabel).not.toMatch(/^Buy/);
+  expect(values.cstageLabel).toBe("Premium");
+  expect(values.scopeShort).toBe("premium");
+  expect(values.alertShort).toBe("premium");
+  expect(values.alertMoment).not.toMatch(/buy/);
+  expect(values.alertTypeLabel).toBe("💳 Premium");
+  expect(values.streamAgentLabel).toBe("Premium");
   expect(values.windowRungKey).toBe(2);
   expect(values.watchLevelKeys).toBe(true);
   expect(values.pvodStillAKey).toBe(true);
@@ -73,8 +74,8 @@ test("CAS-359: the flagged AVAIL_ROWS collision is still parked, not silently co
   await toShortlist(page, "cinema");
   const row = await page.evaluate(() => AVAIL_ROWS.find(r => r.key === "pvod"));
   // Documents the deliberate exception: if this ever starts failing because someone renamed both fields to
-  // "Buy", that's the duplicate-label collision the ticket comment warns about — it needs Lee's decision on
-  // wording, not a reflexive fix.
+  // the same word, that's the duplicate-label collision the ticket comment warns about — it needs Lee's
+  // decision on wording, not a reflexive fix.
   expect(row.title).toBe("Premium");
   expect(row.alertName).toBe("Purchase");
 });
