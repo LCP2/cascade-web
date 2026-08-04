@@ -2373,9 +2373,6 @@
   <div class="pnote">Adds a savings line to cards where a genuinely cheaper path exists, a live result count on
     the Filters apply button, and loss-framed alert copy. Switch it off for the plain version — that's the A/B control.
     Every figure is read from the real offer prices; we never show a saving or a countdown we can't back up.</div>
-  <!-- About / build provenance (CAS-124): the same stamp as the footer, in the settings surface. -->
-  <div class="flabel">About</div>
-  <div class="pnote" id="aboutBuild">—</div>
 </div>
 
 <!-- ACCOUNT modal (CAS-82 / spec 26771457 §4) — magic-link sign-in. Three states, toggled by
@@ -2562,9 +2559,9 @@
   <div class="uwrap" id="svcAnalysisBody"></div>
 </div>
 
-<!-- ABOUT (CAS-345) — the top menu's fourth surface. This ticket is the route/page shell only; CAS-346
-     moves the actual build-info block (version/build/commit/env/builtAt), currently on the My streaming
-     services modal, in here. -->
+<!-- ABOUT (CAS-345 route shell / CAS-346 content) — the top menu's fourth surface. Holds the build
+     provenance stamp (version/build/commit/env/builtAt) that used to live on the My streaming services
+     modal. Body rendered by renderAbout(). -->
 <div class="uscreen" id="aboutScreen" role="dialog" aria-modal="true" aria-label="About">
   <div class="uwrap" id="aboutBody"></div>
 </div>
@@ -3187,28 +3184,35 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 302, "commit": "b09d774", "builtAt": "2026-08-04T08:53:00Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 305, "commit": "9d1e34f", "builtAt": "2026-08-04T09:21:46Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
-(function stampBuild(){
+const buildCore = () => {
   const b = BUILD_INFO || {};
-  const core = ["v" + (b.version || "0.0.0"),
-                "build " + (b.build != null ? b.build : "?"),
-                (b.commit || "unknown")].join(" · ");
+  return ["v" + (b.version || "0.0.0"),
+          "build " + (b.build != null ? b.build : "?"),
+          (b.commit || "unknown")].join(" · ");
+};
+(function stampBuild(){
   const foot = $("buildStamp");
   if(foot){
-    foot.append(core + " · ");
+    foot.append(buildCore() + " · ");
     const env = document.createElement("span");
     env.className = "env " + RUNTIME_ENV;
     env.textContent = RUNTIME_ENV;
     foot.appendChild(env);
   }
-  const about = $("aboutBuild");
-  if(about){
-    about.textContent = core + " · env: " + RUNTIME_ENV
-                      + (b.builtAt ? " · built " + b.builtAt : "");
-  }
 })();
+// CAS-346: the About page's build provenance stamp. #aboutBuild is created fresh each time renderAbout()
+// runs (the page is off-DOM until opened), so — unlike the footer stamp above — this can't be a one-shot
+// load-time IIFE; it has to be called from renderAbout() itself.
+function stampAboutBuild(){
+  const about = $("aboutBuild");
+  if(!about) return;
+  const b = BUILD_INFO || {};
+  about.textContent = buildCore() + " · env: " + RUNTIME_ENV
+                    + (b.builtAt ? " · built " + b.builtAt : "");
+}
 
 // ================= Usage log (local only) =================
 // The question this exists to answer: does anyone FIND "My Cascades", and which templates resonate?
@@ -6979,7 +6983,10 @@ window.closeSvcAnalysis=()=>{ $("svcAnalysis").classList.remove("open"); documen
 function renderAbout(){
   $("aboutBody").innerHTML=`
     <div class="ostop"><button class="osback" type="button" onclick="closeAbout()" aria-label="Back">←</button>
-      <h2 class="osh">About</h2></div>`;
+      <h2 class="osh">About</h2></div>
+    <div class="flabel">Build</div>
+    <div class="pnote" id="aboutBuild">—</div>`;
+  stampAboutBuild();
 }
 window.openAbout=()=>{
   renderAbout();
