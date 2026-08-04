@@ -68,9 +68,10 @@ test("CAS-264: each later page carries the steps before it", async ({ page }) =>
       `${seen[i].key} shows fewer answers (${seen[i].labels.join(",")}) than ${seen[i-1].key}`)
       .toBeGreaterThanOrEqual(seen[i-1].labels.length);
   }
-  // …and by the last screen the whole brief is on it.
+  // …and by the last screen the whole brief is on it. (CAS-320 removed the WATCHING row from the trail —
+  // there is no step left that fills it, so it is intentionally absent here.)
   const last = seen[seen.length - 1];
-  expect(last.labels).toEqual(expect.arrayContaining(["WATCHING", "AGENT", "MISSION", "NAME", "STYLE"]));
+  expect(last.labels).toEqual(expect.arrayContaining(["AGENT", "MISSION", "NAME", "STYLE"]));
 });
 
 test("CAS-264: the newest answer is the one marked live", async ({ page }) => {
@@ -106,7 +107,16 @@ test("CAS-264: the streaming lane lists its own steps, not the cinema lane's", a
   await pickCard(page, "Everyday Favourites");
   await page.waitForTimeout(500);
   const rows = await trail(page);
-  expect(rows.find(r => r[0] === "WATCHING")[1]).toBe("My streaming services");
   // "How far back" and "Services" are streaming-only steps, so they cannot appear before they are walked.
   expect(rows.map(r => r[0])).not.toContain("SERVICES");
+  expect(rows.map(r => r[0])).not.toContain("HOW FAR BACK");
+
+  // Walk on to Services — a step the cinema lane's FLOWS entry never has — and confirm the trail picks it up.
+  for(let i = 0; i < 8; i++){
+    const key = await stepKey(page);
+    if(key === "services") break;
+    await next(page);
+  }
+  const later = await trail(page);
+  expect(later.map(r => r[0]), "the streaming lane never reached its own Services step").toContain("SERVICES");
 });
