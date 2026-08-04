@@ -462,6 +462,49 @@ def derive_status(movie: dict, offers: list[dict], today: datetime.date) -> list
 
 
 # ---------------------------------------------------------------------------
+# 4b. MONOTONIC GUARD (CAS-355) — the single source of truth for "how far a title
+#     has travelled" toward more availability, and the gate that stops a transient
+#     JustWatch AU sync gap from writing a backward status. Both poc_pipeline (below)
+#     and monitor/transitions.py (which imports AVAILABILITY_TIERS/tier_rank from here)
+#     use it, so "forward" means the same thing to the writer and the alert reader.
+# ---------------------------------------------------------------------------
+AVAILABILITY_TIERS = ["upcoming", "in_cinema", "pvod", "rental", "included_streaming"]
+DOWNGRADE_CONFIRM_RUNS = 2   # consecutive runs a lower reading must repeat before it is trusted
+
+def tier_rank(status) -> int:
+    """Highest AVAILABILITY_TIERS rank held anywhere in `status` (a status list/set), or
+    -1 if it holds none of the named tiers."""
+    ranks = [AVAILABILITY_TIERS.index(w) for w in status if w in AVAILABILITY_TIERS]
+    return max(ranks) if ranks else -1
+
+def apply_monotonic_status(m: dict, candidate: list[str], confidence: str, today: datetime.date) -> None:
+    """Commit `candidate` as m['status'] — unless it is a BACKWARD move (a lower tier than
+    the status m already holds), in which case the existing status is kept and the
+    regression is only committed once the SAME candidate has been read on
+    DOWNGRADE_CONFIRM_RUNS consecutive runs. That is the difference between a real
+    de-listing and a one-day gap in the AU provider feed (CAS-334/CAS-355): the feed can
+    drop a title's rows for a day and pick it back up the next, and a single such gap must
+    never write a status a user could be alerted on losing."""
+    prev = m.get("status") or []
+    if not prev or tier_rank(candidate) >= tier_rank(prev):
+        m["status"] = candidate
+        m["availability_confidence"] = confidence
+        m.pop("pending_downgrade", None)
+        return
+    pending = m.get("pending_downgrade")
+    if pending and pending.get("to") == candidate:
+        pending["runs"] = pending.get("runs", 1) + 1
+    else:
+        pending = {"to": candidate, "runs": 1, "since": today.isoformat()}
+    if pending["runs"] >= DOWNGRADE_CONFIRM_RUNS:
+        m["status"] = candidate
+        m["availability_confidence"] = confidence
+        m.pop("pending_downgrade", None)
+    else:
+        m["pending_downgrade"] = pending   # held back — m["status"] stays at `prev`
+
+
+# ---------------------------------------------------------------------------
 # 5. DIFF — compare today's status set to the stored one, emit change events
 # ---------------------------------------------------------------------------
 STATUS_LABEL = {
@@ -482,8 +525,14 @@ def diff_and_alert(today_records: list[dict]) -> list[dict]:
         before = set(prev.get(m["tmdb_id"], {}).get("status", []))
         after  = set(m["status"])
         opened = after - before
+        before_rank = tier_rank(before)
         for w in opened:
-            if before:  # only alert on genuine transitions, not first sighting
+            # CAS-355: a newly-present window only alerts when it is FORWARD progress —
+            # strictly further along AVAILABILITY_TIERS than anything the title already
+            # held. Without this, a title that lost a high tier and landed on a lower one
+            # (included_streaming -> rental, via a transient AU provider gap) read as
+            # "gained rental" and fired a false alert; a real backward move never should.
+            if before and tier_rank([w]) > before_rank:
                 events.append({
                     "tmdb_id": m["tmdb_id"],
                     "title": m["title"],
@@ -594,13 +643,11 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                 m["jw_link"] = prov.get("jw_link")           # JustWatch deep-out + attribution
                 if has_provider_rows(prov):
                     m["offers"] = provider_offers(prov)
-                    m["status"] = derive_from_providers(m, prov, today)
-                    m["availability_confidence"] = "confirmed"   # as of today's provider snapshot
+                    apply_monotonic_status(m, derive_from_providers(m, prov, today), "confirmed", today)
                 else:                                        # JustWatch has no AU row -> honest estimate
                     w, conf = ps.estimate_status(m, today, offsets)
                     m["offers"] = []
-                    m["status"] = [w]
-                    m["availability_confidence"] = conf
+                    apply_monotonic_status(m, [w], conf, today)
                 m["last_polled"] = today.isoformat()
                 m["availability_source"] = "tmdb_providers"
             else:
@@ -638,7 +685,7 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                     wm_fails += 1
                 elif wm_offers:                              # richer than providers: real prices/formats
                     m["offers"] = wm_offers
-                    m["status"] = derive_status(m, wm_offers, today)
+                    apply_monotonic_status(m, derive_status(m, wm_offers, today), "confirmed", today)
                     m["availability_source"] = "watchmode_enriched"
                 time.sleep(TMDB_PACING)
             if TMDB_PACING:

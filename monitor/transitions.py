@@ -42,7 +42,9 @@ from typing import Optional
 # Single source of truth for the rental price ceiling + subscription test. poc_pipeline
 # already classified each film into its `status` set using these; we reuse the same number
 # only to pick the SERVICE NAMES / PRICE to show for a moment, never to re-decide the window.
-from poc_pipeline import RENTAL_MAX_PRICE
+# tier_rank is the same monotonic-progress test poc_pipeline uses to guard m["status"]
+# itself (CAS-355) — reused here so a moment only ever fires for FORWARD progress.
+from poc_pipeline import RENTAL_MAX_PRICE, tier_rank
 
 DEFAULT_WEEKEND_N = 4  # days after opening that "past opening weekend" fires (tunable)
 DEFAULT_SOON_N    = 7  # days BEFORE opening that "opening next week" fires (tunable) — CAS-242
@@ -170,9 +172,15 @@ def compute_transitions(
 
         # --- status-derived moments: a window the film has newly ENTERED ---
         # Guarded by seen_before so a film's first appearance never fires (it wasn't a change).
+        # CAS-355: also guarded to FORWARD progress only — a moment's tier must rank higher than
+        # anything the film already held. Without this, a title that lost a high tier and landed
+        # on a lower one (e.g. included_streaming -> rental, from a transient AU provider gap)
+        # read as "gained rental" and fired a false downgrade alert; a real backward move never
+        # should generate one, confirmed regression or not.
         if seen_before:
+            before_rank = tier_rank(before)
             for moment, status in _STATUS_MOMENTS:
-                if status in after and status not in before:
+                if status in after and status not in before and tier_rank([status]) > before_rank:
                     services, price = _detail_for(moment, m)
                     transitions.append(Transition(mid, m.get("title", ""), moment,
                                                   services=services, price=price, movie=m))
