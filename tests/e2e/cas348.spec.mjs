@@ -70,6 +70,31 @@ test("CAS-348: exactly three equal-width controls, ordered notify / agent / watc
   expect(Math.abs(widths[1] - widths[2])).toBeLessThanOrEqual(1);
 });
 
+test("CAS-348: at the reference phone width, every control label renders in full — icon drops rather than the label truncating", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  const cards = await shortlistCards(page);
+  await pickCard(page, cards[0].name);
+  await finishFlow(page);
+  await toListing(page);
+  const card = page.locator("#groups .card").first();
+  await expect(card).toBeVisible();
+  expect(page.viewportSize().width, "these three controls are only guaranteed to fit at the reference phone width (CAS-162/200)").toBeLessThanOrEqual(400);
+
+  // Watch status only ever shows its "unanswered" label here — answering it collapses the card to a stub
+  // (opinionOf's own comment: "" is "the only state in which the full card is drawn") — so "Watch status",
+  // "Agent" and whichever Notify label the film starts with are the full set of labels this row ever renders.
+  const labels = card.locator(".actions .ctl .clab");
+  await expect(labels).toHaveCount(3);
+  const overflow = await labels.evaluateAll(els => els.map(el => ({
+    text: el.textContent.trim(), clipped: el.scrollWidth > el.clientWidth + 1,
+  })));
+  for(const o of overflow) expect(o.clipped, `"${o.text}" is clipped at the reference phone width`).toBe(false);
+
+  const iconsVisible = await card.locator(".actions .ctl .cic").evaluateAll(els =>
+    els.filter(el => getComputedStyle(el).display !== "none").length);
+  expect(iconsVisible, "icons must give way to full labels at the reference phone width").toBe(0);
+});
+
 test("CAS-348: the control row hugs the availability block, not the card bottom", async ({ page }) => {
   await toShortlist(page, "cinema");
   const cards = await shortlistCards(page);
