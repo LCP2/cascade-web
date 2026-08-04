@@ -553,6 +553,9 @@
   /* Accolades are the one thing on the card allowed to be gold. */
   .m.osc{border-color:rgba(245,214,117,.4);color:#d9c9a0} .m.osc b{color:var(--gold);font-weight:700}
   .m.awd b{color:#c7cede}
+  /* CAS-360: a claim about the film's release history (had an AU cinema release), not an accolade — its
+     own colour rather than borrowing gold from the awards chips beside it. */
+  .m.cinema{border-color:rgba(122,162,255,.4);color:#c3cdf2}
   .awx{display:none;margin-top:11px;padding-top:10px;border-top:1px solid var(--line);flex-direction:column;gap:5px}
   .card.expanded .awx{display:flex}
   .awx .l{display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:var(--dim)}
@@ -3614,6 +3617,12 @@ function awardChips(m){
   if((a.wins||0)>(a.oscW||0)) c+=`<span class="m awd">🏅 <b>${a.wins}</b> win${a.wins>1?"s":""}</span>`;
   return c;
 }
+// CAS-360: type-3 ONLY — a limited (type 2) or any other TMDB release_dates type never earns this tag.
+// Release history, not a live "in cinemas now" status: a film can carry it long after it has left cinemas.
+function cinemaReleaseChip(m){
+  return m.cinema_release
+    ? `<span class="m cinema" title="Had a general theatrical release in AU cinemas">🎬 Cinema Release</span>` : "";
+}
 // The breakdown, on the opened card. Same numbers, said in full — nothing here that isn't in the
 // film's own award line.
 function awardsBreakdownHTML(m){
@@ -4186,7 +4195,7 @@ function cardHTML(m, markNew=false){
         <div class="mrow r-scores">${scoresRowHTML(m)}</div>
         <!-- …and it lands HERE, which is where its own comment always said it belonged: beside the awards,
              sharing their baseline. It is a claim about the film, like they are. -->
-        <div class="mrow r-awards">${badge}${awardChips(m)}</div>
+        <div class="mrow r-awards">${badge}${cinemaReleaseChip(m)}${awardChips(m)}</div>
       </div>
       <div class="expand">${awardsBreakdownHTML(m)}${creditsHTML(m)}${trailersHTML(m)}${shareFilmHTML(m)}</div>
     </div>
@@ -5442,6 +5451,9 @@ function normCascade(c, opts){
   c.includeUnbudgeted = !!c.includeUnbudgeted;
   c.tentpole = c.tentpole||"any";
   c.awards = !!c.awards;
+  // CAS-360: streaming-only Mission checkbox — narrows to films with an AU type-3 (general theatrical)
+  // release. Zeroed for cinema agents by laneCrit, same as the other lane-specific dials.
+  c.cinemaReleaseOnly = !!c.cinemaReleaseOnly;
   c.selCrowd = c.selCrowd||0; c.selScale = c.selScale||0;
   // CAS-249: the old single 0-4 ladder, unpacked into the two questions it was conflating. An agent saved
   // before this change is converted rather than reset — its rung meant something and it goes on meaning it.
@@ -5540,6 +5552,7 @@ cascades.forEach(normCascade);   // saved Cascades are filled out here, not at l
 const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.age, c.lang, c.culture, c.year,
   c.imdb, c.rt, c.awards, c.budget, c.includeUnbudgeted, c.includeUnrated, c.tentpole,
   c.selCrowd||0, c.selCritScore||0, c.selAwards||0, c.selScale||0, c.selBuzz||0, !!c.selOr, c.yearsBack||0,
+  !!c.cinemaReleaseOnly,
   c.myServices, c.alerts, c.sort||"imdb", c.excludeWatched, c.excludeBlocked,
   // CAS-160: the viewing windows are part of "the alert moments" too. Three of them (announced / 1 month /
   // 1 week out) all resolve to the same `status`, so without this line two agents that differ only in when
@@ -5797,6 +5810,9 @@ function matchesCriteria(m,c,ignoreBlocked){
   if((c.selCritScore||c.selAwards) && !selCriticsOK(m,c)) return false;
   if(c.selScale   && selScaleMatch(m,c)===false)       return false;   // unknown(null) rides along
   if(c.selBuzz    && !selBuzzOK(m,c))                  return false;
+  // CAS-360: streaming Mission checkbox — an AU type-3 (general theatrical) release, release history
+  // rather than a live "in cinemas now" status. laneCrit keeps this false on every cinema agent.
+  if(c.cinemaReleaseOnly && !m.cinema_release)         return false;
   if(!budgetOK(m, c.budget||0)) return false;
   if(c.tentpole && c.tentpole!=="any" && !tentpoleIs(m,c.tentpole)) return false;
   if((m.rt_critic||0) < (c.rt||0)) return false;
@@ -6537,7 +6553,7 @@ function commitDraft(){
     budget:draft.budget, includeUnbudgeted:draft.includeUnbudgeted, tentpole:draft.tentpole,
     selCrowd:draft.selCrowd, selCritScore:draft.selCritScore, selAwards:draft.selAwards,
     selScale:draft.selScale, selBuzz:draft.selBuzz, selOr:draft.selOr,
-    awards:draft.awards, myServices:{...draft.myServices},
+    awards:draft.awards, cinemaReleaseOnly:draft.cinemaReleaseOnly, myServices:{...draft.myServices},
     excludeWatched:draft.excludeWatched, excludeBlocked:draft.excludeBlocked,
     sort:draft.sort||"imdb", alerts:draft.alerts, watchWindows:draft.watchWindows,
     // CAS-228: listStatus travels with status. Left out, the agent on disk would watch the right windows and
@@ -8696,7 +8712,7 @@ function laneCrit(c, kind){
   if(kind==="stream") c.selBuzz = 0;
   // CAS-261: the cinema half of the same rule. Cinema is Scale + Buzz, so a vote floor, a critics score or an
   // awards rung on a cinema agent is a filter the Mission screen never shows and the auto-relax never loosens.
-  if(kind==="cinema"){ c.selCrowd = 0; c.selCritScore = 0; c.selAwards = 0; }
+  if(kind==="cinema"){ c.selCrowd = 0; c.selCritScore = 0; c.selAwards = 0; c.cinemaReleaseOnly = false; }
   return c;
 }
 // CAS-261 closes the gap the note here used to describe. The product call has been made: a cinema agent uses
@@ -8879,6 +8895,21 @@ function wireDials(){
       b.onclick=()=>{ const v=+b.dataset.i; r.value=v; apply(v); };
     });
   });
+}
+// CAS-360: the streaming Mission's "Cinema Release" checkbox. Not a dial — it carries no card of its own,
+// so it is wired separately from wireDials rather than folded into the CONT_DIALS/STEP_DIALS loops above.
+function wireCinemaReleaseToggle(){
+  const cr=$("onbCinemaRelease"); if(!cr) return;
+  const paint=()=>{
+    const on=!!onbFlow.draft.cinemaReleaseOnly;
+    cr.classList.toggle("on", on);
+    cr.setAttribute("aria-checked", String(on));
+  };
+  paint();
+  cr.onclick=()=>{
+    onbFlow.draft.cinemaReleaseOnly=!onbFlow.draft.cinemaReleaseOnly;
+    onbFlow.barTouched=true; paint(); selRefresh();
+  };
 }
 // ---- Taste-baseline accordion (CAS-146) -----------------------------------------------------------
 let tbOpen = null;   // which row is expanded — exactly one, or none
@@ -9204,15 +9235,22 @@ const SHARP_STEPS = {
       const primary = MISSION_DIALS[missionKind()] || MISSION_DIALS.cinema;
       const rest = missionRest();
       const dials = ks => ks.map(dialCardHTML).join("");
+      // CAS-360: streaming-only — release history, not a live "in cinemas now" status, so it has no place
+      // on a cinema agent's Mission (which already watches films on their way to a cinema).
+      const cinemaOnly = missionKind()==="stream" ? `<div class="switch mini" id="onbCinemaRelease" role="switch">
+          <span>🎬 Only movies that had a Cinema Release
+            <small style="color:var(--faint)">— an AU cinema (not limited) release, at any point</small></span>
+          <span class="knob"></span></div>` : "";
       return `<p class="ossub">Set the standards that matter here. A film has to meet <b>all</b> the ones you turn up.</p>
         ${dials(primary)}
         ${rest.length ? (onbMoreOpen
           ? dials(rest)
           : `<button type="button" class="osmore" onclick="onbShowMore()">＋ More controls · ${
                rest.map(k=>DIAL_DEFS[k].label).join(", ")}</button>`) : ""}
+        ${cinemaOnly}
         <p class="ossumline" id="onbSelSay">${selSayHtml()}</p>`;
     },
-    wire(){ wireDials(); },
+    wire(){ wireDials(); wireCinemaReleaseToggle(); },
   },
   // ---- Your taste baseline (CAS-146 / r5-prototype screenTaste) ------------------------------------
   // Four dimensions on ONE page, one open at a time. The old flow asked them as four separate screens,

@@ -175,10 +175,17 @@ TMDB_BASE = "https://api.themoviedb.org/3"
 def _tmdb_record(detail: dict) -> dict:
     """Map one TMDB detail payload to our skeleton record."""
     cinema_date, age_rating = None, None
+    # CAS-360: every AU release_dates entry (all types 1-6), kept for future use — only type 3
+    # (general theatrical) is acted on today, via cinema_release below.
+    release_dates, cinema_release = [], False
     for entry in detail.get("release_dates", {}).get("results", []):
         if entry["iso_3166_1"] == REGION:
             for rd in entry["release_dates"]:
-                if rd["type"] in (2, 3):
+                rtype = rd["type"]
+                release_dates.append({"region": REGION, "type": rtype, "date": rd["release_date"][:10]})
+                if rtype == 3:
+                    cinema_release = True
+                if rtype in (2, 3):
                     cinema_date = rd["release_date"][:10]
                 cert = (rd.get("certification") or "").strip()
                 if cert and not age_rating:      # AU classification (G/PG/M/MA15+/R18+)
@@ -199,6 +206,8 @@ def _tmdb_record(detail: dict) -> dict:
         "year": (detail.get("release_date") or "----")[:4],
         "genres": [g["name"] for g in detail.get("genres", [])],
         "cinema_date": cinema_date,
+        "cinema_release": cinema_release,     # CAS-360: had an AU type-3 (general theatrical) release
+        "release_dates": release_dates,       # CAS-360: every AU release_dates type, stored for future use
         "age_rating": age_rating,
         "worldwide_gross": detail.get("revenue") or None,   # single global number, often incomplete
         "budget": detail.get("budget") or None,             # TMDB budget (0 when unknown) — a badge, never a ranker:
