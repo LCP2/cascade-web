@@ -234,7 +234,9 @@
      either side of every card, which is a poster's worth of width spent on air. 5px keeps the cards from
      touching the frame and hands the rest to the tombstone. */
   .list{padding:0 5px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;margin-bottom:11px;overflow:hidden;
+  /* CAS-373: brighter than --line (adjacent cards read as one continuous panel otherwise) but still subtle
+     — no glow, no shadow, just a border a shade past the page's own hairlines. */
+  .card{background:var(--panel);border:1px solid rgba(255,255,255,.14);border-radius:16px;margin-bottom:11px;overflow:hidden;
     transition:box-shadow .3s ease,border-color .3s ease;
     /* CAS-129: windowing. The browser skips layout+paint for cards outside the viewport, so only the
        visible handful of the ~2,000-card catalogue actually renders; contain-intrinsic-size:auto
@@ -275,15 +277,20 @@
      tombstone already gave that column back to the text side, and the review screenshot showed the full-width
      row reading as a stray line floating under the poster rather than a continuation of the scores it belongs
      with. If a future card grows enough chips to wrap again, that is what .mrow's own wrap-safety is for. */
-  .ctop{display:grid;grid-template-columns:112px minmax(0,1fr);column-gap:12px;row-gap:9px;
+  /* CAS-373: row-gap down to 7 (from 9) and the tombstone's rows (title..scores) tightened elsewhere so the
+     text column's bottom lands level with the poster's — see .synopsis/.metaline. The badge row (Landmark/
+     Anticipated) moves out from under "tomb" into its own row, left-aligned under the poster, with the
+     awards chips beside it in the text column — same row, so the two read as one line even though they are
+     two grid cells. */
+  .ctop{display:grid;grid-template-columns:112px minmax(0,1fr);column-gap:12px;row-gap:7px;
     margin-left:-13px;width:calc(100% + 13px);
     grid-template-areas:
-      "tomb title"
-      "tomb meta"
-      "tomb syn"
-      "tomb money"
-      "tomb scores"
-      ".    awards"}
+      "tomb  title"
+      "tomb  meta"
+      "tomb  syn"
+      "tomb  money"
+      "tomb  scores"
+      "badge awards"}
   .ptomb{grid-area:tomb;align-self:start;display:flex;flex-direction:column;gap:8px;width:112px}
   .poster{width:100%;aspect-ratio:2/3;border-radius:10px;
     background:var(--panel2) center/cover no-repeat;position:relative;
@@ -294,9 +301,15 @@
     background:rgba(10,14,26,.72);border:1px solid rgba(255,255,255,.35);color:#fff;font-size:11px;
     display:grid;place-items:center;text-decoration:none;line-height:1}
   .pplay:hover{border-color:#fff}
-  .title{grid-area:title;font-size:16.5px;font-weight:750;line-height:1.25;cursor:pointer}
-  .cert{display:inline-block;font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:5px;
-    border:1px solid #5b6472;color:#d6dce6;background:#232a35;margin-left:6px;vertical-align:middle;letter-spacing:.3px;white-space:nowrap}
+  /* CAS-373: collapsed, the title is ONE line — a long one squeezed the rating badge off it entirely, or
+     onto a second line of its own. .titletext takes the ellipsis and the badge is flex:none, so it always
+     has room and never wraps. Expanded, the row switches to wrap and the full title is shown (below). */
+  .title{grid-area:title;display:flex;align-items:baseline;gap:6px;min-width:0;
+    font-size:16.5px;font-weight:750;line-height:1.25;cursor:pointer}
+  .titletext{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .card.expanded .titletext{overflow:visible;white-space:normal;text-overflow:clip}
+  .cert{flex:none;display:inline-block;font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:5px;
+    border:1px solid #5b6472;color:#d6dce6;background:#232a35;vertical-align:middle;letter-spacing:.3px;white-space:nowrap}
   .cert.mature{border-color:#c0563f;color:#ffb9a6;background:rgba(192,86,63,.16)}
   /* CAS-179: no date on the top line any more — the film's dates are all in the availability strip,
      where they belong to a window each. This line is what the film IS: its genres and its language. */
@@ -311,8 +324,11 @@
   .culttag{color:var(--faint)}
   /* CAS-276: three lines, not two. Two lines of a synopsis is enough to start a sentence and not enough to
      finish one, which is the worst of both — it costs the height and delivers a fragment. The room comes
-     from the badge leaving the tombstone and the Style line moving up, so the card does not simply grow. */
-  .synopsis{grid-area:syn;font-size:14px;color:#c8d0da;line-height:1.5;margin:0;
+     from the badge leaving the tombstone and the Style line moving up, so the card does not simply grow.
+     CAS-373: still three lines, but a touch smaller/tighter so the text column's bottom (the scores row)
+     lands level with the poster's — the ticket's own alignment ask — measured against the 112px tombstone's
+     168px (2:3) height. */
+  .synopsis{grid-area:syn;font-size:13px;color:#c8d0da;line-height:1.38;margin:0;
     display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
   .card.expanded .synopsis{-webkit-line-clamp:unset;display:block}
   .expand{max-height:0;opacity:0;overflow:hidden;transition:max-height .4s ease,opacity .3s ease}
@@ -344,7 +360,8 @@
      the DOM classes stay `.ctl.notify`/`.ctl.casc`/`.ctl.watch` — see CAS-349's comments on notifyChipHTML
      and watchChipHTML) — sharing it equally, each label still ellipsizing rather than wrapping if it runs
      out of room, so a control that has to abbreviate itself still says what it does. */
-  .actions{display:flex;flex-direction:row;align-items:stretch;gap:8px;margin-top:12px}
+  /* CAS-373: 9px, not 12 — the row is shorter now (see .cmini) so it needs less air above it too. */
+  .actions{display:flex;flex-direction:row;align-items:stretch;gap:8px;margin-top:9px}
   .actions .ctl,
   .actions .ctl.watch{flex:1 1 0;min-width:0}
   /* ---- CAS-230: the v0.8 card controls (proto/cascade-08 listing card) ----
@@ -356,14 +373,16 @@
   .ctl{position:relative;flex:none;background:none;border:0;padding:0;cursor:pointer;
     -webkit-tap-highlight-color:transparent}
   .ctl.watch{min-width:0}
-  /* CAS-277: every chip fills the column, so the label has room whatever it says. */
-  .cmini{display:flex;width:100%;align-items:center;gap:7px;height:38px;padding:0 12px;border-radius:11px;
+  /* CAS-277: every chip fills the column, so the label has room whatever it says.
+     CAS-373: 33px, not 38 — Watch/Agent/Watched were the tallest thing left on a tightened card. Still a
+     33px-tall, full-width tap target, which stays comfortably reasonable next to the 44px guidance. */
+  .cmini{display:flex;width:100%;align-items:center;gap:7px;height:33px;padding:0 12px;border-radius:10px;
     background:var(--panel2);border:1px solid var(--line);position:relative;overflow:hidden;
     font-family:inherit;font-size:12.5px;font-weight:650;color:var(--ink);line-height:1}
   .ctl.watch .cmini{width:100%}
   .cmini .cfill{position:absolute;inset:0 auto 0 0;width:0;opacity:.22;transition:width .26s cubic-bezier(.3,1,.4,1)}
   .cmini .cic{position:relative;z-index:1;display:grid;place-items:center;line-height:0;color:#8b93a1}
-  .cmini .cic svg{width:17px;height:17px;display:block}
+  .cmini .cic svg{width:15px;height:15px;display:block}
   .cmini .clab{position:relative;z-index:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cmini .clab.dim{color:var(--dim);font-weight:500}
   .ctl.on .cmini .cic{color:var(--cyan)}
@@ -524,7 +543,14 @@
      and the only colour in the row is the 6px source dot that says which body the number came from.
      A figure we don't hold reads "–" (and never "$–": there is no dollar sign on a number we lack). */
   .mrow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;align-content:center;min-width:0}
-  .r-money{grid-area:money} .r-scores{grid-area:scores} .r-awards{grid-area:awards}
+  .r-money{grid-area:money} .r-scores{grid-area:scores}
+  /* CAS-373: the badge (Landmark/Anticipated/…) now sits in its own row directly under the poster, left
+     column, and the awards chips share that row in the text column — column-aligned with IMDb above them.
+     Awards must never wrap (the ticket's own words), so this one row trades wrap for horizontal scroll —
+     the same trade-off .trailers already makes — rather than clipping a chip's figures outright. */
+  .r-badge{grid-area:badge;align-self:start}
+  .r-awards{grid-area:awards;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+  .r-awards::-webkit-scrollbar{display:none}
   /* Sized so Budget and Gross sit side by side in the ~174px the right-hand column has on a 390px
      phone. They still WRAP rather than clip if a figure runs long — a truncated dollar amount is a
      wrong number, which is worse than a second line. */
@@ -1050,9 +1076,12 @@
   .warnnote{font-size:11.5px;color:#ffce8f;background:rgba(240,163,54,.1);border:1px solid rgba(240,163,54,.4);
     border-radius:9px;padding:8px 10px;margin-top:8px;line-height:1.45}
   /* ---- UX-psychology framings (contrast / loss) — flag-toggleable ---- */
+  /* CAS-373: never wraps — a full-width panel is the one thing a phone-width card has no room to give a
+     second line to. .savetxt carries the ellipsis so a long service name/price truncates instead. */
   .saveline{margin-top:11px;font-size:11.5px;font-weight:700;line-height:1.45;padding:7px 10px;border-radius:9px;
     background:rgba(72,199,142,.12);border:1px solid rgba(72,199,142,.45);color:#a7eccb;
-    display:flex;align-items:center;justify-content:space-between;gap:10px}
+    display:flex;align-items:center;justify-content:space-between;gap:10px;overflow:hidden}
+  .savetxt{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* rent-only: a fact, not a win — the green is reserved for "you already have this" */
   .saveline.plain{background:var(--panel2);border-color:var(--line);color:var(--dim)}
   .saveline.plain b{color:#bcdcff}
@@ -4002,9 +4031,12 @@ function savingsHTML(m, canExpand){
   // through a rental your own store carries must not wear a green "Included on {service nobody here pays
   // for}" bar just because SOME subscription lists it. Unscoped, any subscription offer is still honest
   // "where to watch" information, owned or not, so the wider list stands.
+  // CAS-373: "Included on" -> "On" and "— which you already pay for" -> "(already paid)" so the sentence
+  // reads sensibly at its shortest — and the text still rides in a .savetxt span that ellipsizes rather than
+  // wraps, for the (rarer) long service name or rent-price case this trim doesn't cover.
   if(subs.length && (!prefsActive() || mine.length)){
     const svc=svcName((mine[0]||subs[0]).service);
-    const own=(ux.on && mine.length) ? " — which you already pay for" : "";
+    const own=(ux.on && mine.length) ? " (already paid)" : "";
     const alt=rent ? `, or pay <b>$${rent.price.toFixed(2)}</b> to rent` : "";
     // CAS-348: the services list used to open only from the row's chevron button, which the control-row
     // redesign removes. On a card wearing this bar, the bar itself carries the shortcut instead — per film,
@@ -4013,12 +4045,12 @@ function savingsHTML(m, canExpand){
       ? `<button type="button" class="svcbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')"
            title="Show all services" aria-label="Show all services">Services${ICON.chev}</button>`
       : "";
-    return `<div class="saveline">✓ Included on <b>${esc(svc)}</b>${alt}${own}${svcAff}</div>`;
+    return `<div class="saveline"><span class="savetxt">✓ On <b>${esc(svc)}</b>${alt}${own}</span>${svcAff}</div>`;
   }
   if(rent){
     const cheaper=(ux.on && buy && buy.price>rent.price)
       ? ` — <b>$${(buy.price-rent.price).toFixed(2)}</b> less than buying at $${buy.price.toFixed(2)}` : "";
-    return `<div class="saveline plain">Rent for <b>$${rent.price.toFixed(2)}</b> on ${esc(svcName(rent.service))}${cheaper}</div>`;
+    return `<div class="saveline plain"><span class="savetxt">Rent for <b>$${rent.price.toFixed(2)}</b> on ${esc(svcName(rent.service))}${cheaper}</span></div>`;
   }
   return "";   // buy-only / premium: no rental and no subscription — there's no honest one-liner to write
 }
@@ -4202,14 +4234,17 @@ function cardHTML(m, markNew=false){
         <div class="ptomb">
           <div class="poster" style="${poster}">${play}</div>
         </div>
-        <div class="title">${m.title}${cert}</div>
+        <!-- CAS-373: the title text gets its own span so it (not the badge) is what truncates — the rating
+             badge is flex:none and always shows, collapsed or expanded. -->
+        <div class="title"><span class="titletext">${m.title}</span>${cert}</div>
         <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
         <div class="mrow r-scores">${scoresRowHTML(m)}</div>
-        <!-- …and it lands HERE, which is where its own comment always said it belonged: beside the awards,
-             sharing their baseline. It is a claim about the film, like they are. -->
-        <div class="mrow r-awards">${badge}${cinemaReleaseChip(m)}${awardChips(m)}</div>
+        <!-- CAS-373: the badge (Landmark/Anticipated/…) moves under the poster, left column; the awards
+             chips keep the text column, same row — row-aligned with the badge, column-aligned with IMDb. -->
+        <div class="mrow r-badge">${badge}</div>
+        <div class="mrow r-awards">${cinemaReleaseChip(m)}${awardChips(m)}</div>
       </div>
       <div class="expand">${awardsBreakdownHTML(m)}${creditsHTML(m)}${trailersHTML(m)}${shareFilmHTML(m)}</div>
     </div>
