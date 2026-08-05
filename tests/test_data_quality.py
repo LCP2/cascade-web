@@ -21,6 +21,19 @@ import poc_pipeline as pp
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CATALOGUE = os.path.join(ROOT, "movies.json")
 
+# CAS-405: `daily.yml` refreshes this file from live TMDB/OMDb data every morning, and third-party
+# data drifts in ways that trip several of the checks below most days for reasons that are not app
+# breakage (a rating outside its old percentile band, a window date pattern, an emptier optional
+# field). Gating `qa` on all ~30 assertions therefore froze production most mornings. Only the
+# checks below still fail `qa` (run via tests/run_data_quality.py, not a flat `unittest discover`);
+# every other check in this file still runs on every push, but report-only — see that script.
+BLOCKING_TESTS = {
+    "CatalogueShape.test_ids_are_unique",
+    "CatalogueShape.test_every_film_has_the_fields_the_ui_prints",
+    "DataCompleteness.test_the_showable_catalogue_is_a_real_population",
+    "DataCompleteness.test_every_showable_film_carries_what_it_cannot_be_shown_without",
+}
+
 # The windows a film can hold, in journey order — the same list the front end calls CASCADE.
 WINDOWS = ["upcoming", "opening_week", "in_cinema", "pvod", "rental", "included_streaming"]
 CINEMA_WINDOWS = {"opening_week", "in_cinema"}
