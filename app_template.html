@@ -8187,7 +8187,7 @@ const SCALE_REF = [
   {d:1e6,   label:"Indie"},
   {d:15e6,  label:"Studio"},
   {d:100e6, label:"Blockbuster"},
-  {d:250e6, label:"Megabudget"},
+  {d:250e6, label:"Mega"},
 ];
 const SCALE_SEG = 100;                                    // slider units between one named stop and the next
 const SCALE_POS_MAX = SCALE_SEG*(SCALE_REF.length-1);
@@ -9057,9 +9057,9 @@ const DIAL_DEFS = {
   crit:  {em:"🏅", label:"Critics & awards", how:"What professional critics and awards thought.",
           cont:"crit", also:{stops:AWARD_STOPS, key:"awardStop", dial:"awards",
                              cap:"…and how decorated. A winner clears every nomination rung."}},
-  scale: {em:"🎬", label:"Budget & scale", how:"How big the film is — from a small indie to a huge blockbuster.",
+  scale: {em:"🎬", label:"Movie Budget", how:"How big the film is — from a small indie to a huge blockbuster.",
           cont:"scale"},
-  buzz:  {em:"🔥", label:"Buzz", how:"How much people are talking about it right now.", isNew:true,
+  buzz:  {em:"🔥", label:"Movie Buzz", how:"How much people are talking about it right now.", isNew:true,
           stops:BUZZ_STOPS, key:"buzzStop"},
 };
 let onbMoreOpen=false;
@@ -9132,6 +9132,9 @@ function dialCardHTML(k){
   })();
   if(cont){
     const marks=cont.marks(curV);
+    // CAS-390: "Mega" (was "Megabudget") is short enough that the budget dial's five stops fit one row,
+    // so it opts out of the stagger other 5-stop dials still use for longer labels.
+    const stag=marks.length>=5 && d.cont!=="scale";
     // The marker labels are buttons: "the existing dots become snap points" (CAS-166) means the four sizes
     // you used to pick from are still one tap away, they just no longer bound what you can choose.
     return `<div class="osdial" data-dial="${d.cont}">${head}
@@ -9141,7 +9144,7 @@ function dialCardHTML(k){
         <input type="range" id="onbDial_${d.cont}" min="${cont.min}" max="${cont.max}" step="${cont.step}"
                value="${cont.rawOf(curV)}" aria-label="${escA(cont.aria)}">
       </div>
-      <div class="vlabels${marks.length>=5?" stag":""}">${marks.map((mk,i)=>`<button type="button" class="vsnap ${mk.lit?"on":""} ${i%2?"lo":""}" data-snap="${mk.snap}"
+      <div class="vlabels${stag?" stag":""}">${marks.map((mk,i)=>`<button type="button" class="vsnap ${mk.lit?"on":""} ${stag&&i%2?"lo":""}" data-snap="${mk.snap}"
         style="left:${mk.pos}%;transform:${mk.pos<=0?"translateX(0)":mk.pos>=100?"translateX(-100%)":"translateX(-50%)"}">${esc(mk.label)}${mk.sub?`<small>${esc(mk.sub)}</small>`:""}</button>`).join("")}</div>
       ${alsoHTML}
     </div>`;
