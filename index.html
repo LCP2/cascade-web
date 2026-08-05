@@ -3316,7 +3316,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 354, "commit": "0bb32fc", "builtAt": "2026-08-05T22:48:13Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 355, "commit": "339a611", "builtAt": "2026-08-05T23:01:11Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8933,11 +8933,11 @@ function onbSummary(){
 // Every value is read LIVE off the same state the screens edit (the draft, onbFlow, prefs) rather than
 // captured when a step was left, so the trail cannot go stale if you walk back and change something. Rows
 // with nothing to say are dropped rather than printed empty — an empty row is not a summary, it is noise.
-const trailGenres = () => { const g=dT().genre;
+const trailGenres = () => { const g=dT().genre, ex=genreExcludeSuffix();
   return g===null ? "None selected"
-       : !g.length ? "All genres"
-       : g.length<=2 ? g.join(", ")
-       : `${g.length} of ${ONB_GENRES.length}`; };
+       : !g.length ? "All genres"+ex
+       : g.length<=2 ? g.join(", ")+ex
+       : `${g.length} of ${ONB_GENRES.length}`+ex; };
 const trailLangs = () => { const l=dT().lang;
   return l===null ? "None selected"
        : !l.length ? "Any language"
@@ -9282,6 +9282,14 @@ const dSet = (v, all) => new Set(v===null ? [] : (v||[]).length ? v : all);
 const dGenreSet = () => dSet(dT().genre, ONB_GENRES);
 const dLangSet  = () => dSet(dT().lang,  LANG_OPTS);
 const dAgeSet   = () => dSet(dT().age,   AGE_LEVELS);
+// CAS-397: `exclude` is a preset-seeded skip list (Family Movies) that this screen's chips never exposed —
+// a genre could be silently dropped with nothing on the Style screen or its summary saying so. This is the
+// one place both readers of that gap (the chip paint and the two "All genres" summaries) get their words.
+const dExcludeSet = () => new Set(dT().exclude||[]);
+const genreExcludeSuffix = () => {
+  const ex=[...dExcludeSet()];
+  return ex.length ? ` except ${ex.join(", ")}` : "";
+};
 // Ratings are a LIST, not a range, so each one is independently in or out and a tap means exactly what it
 // looks like. (The taste-baseline accordion keeps its lo..hi band; that is a different control on a
 // different screen, and this one no longer has to pretend a tap is a drag.)
@@ -9298,6 +9306,9 @@ function dAgeToggle(k){
 window.flowSetAll=(key,on)=>{
   if(!onbFlow.draft) return;
   onbFlow.draft[key] = on ? [] : null;
+  // CAS-397: Select all / Clear all is this screen's own "everything" button — a preset's exclude list
+  // (the same hidden filter a chip tap now clears) must not survive it either.
+  if(key==="genre") onbFlow.draft.exclude = [];
   renderOnbStep(onbStepKey);
 };
 // The selection lines under each picker. Plain lines, never boxes (buildspec §8): each states what is
@@ -9712,22 +9723,31 @@ const SHARP_STEPS = {
     },
     wire(){
       const box=$("onbStepGenres"); if(!box) return;
-      const on=dGenreSet();
+      const on=dGenreSet(), excl=dExcludeSet();
       // CAS-224: the agent's own numbers, not GENRE_COUNT's catalogue-wide ones.
       const counts=genreCountsNow();
       box.innerHTML="";
       ONB_GENRES.forEach(g=>{
+        // CAS-397: a genre a preset put on `exclude` (Family Movies' Horror/Crime/Romance) was never
+        // subtracted here, so the chip showed it as included while the matcher was still dropping it —
+        // the chip face IS this agent's Style criterion, so it has to read what the matcher reads.
+        const isOn=on.has(g) && !excl.has(g);
         const c=document.createElement("button");
         c.type="button";
-        c.className="chip gen"+(on.has(g)?" on":"");
+        c.className="chip gen"+(isOn?" on":"");
         c.dataset.chipkey=g;
-        c.setAttribute("aria-pressed", String(on.has(g)));
+        c.setAttribute("aria-pressed", String(isOn));
         c.innerHTML=`${esc(g)} <span class="chcount" style="opacity:.55">· ${counts[g]||0}</span>`;
         c.onclick=()=>{
-          on.has(g) ? on.delete(g) : on.add(g);
-          onbFlow.draft.genre = tbStore(new Set(ONB_GENRES.filter(x=>on.has(x))), ONB_GENRES);
-          c.classList.toggle("on", on.has(g)); c.setAttribute("aria-pressed", String(on.has(g)));
-          onbRefresh();
+          // CAS-397: this screen is the one control for the whole genre axis, so a tap resolves BOTH fields —
+          // the include list AND any preset exclude get flattened into the include list alone. Otherwise a
+          // tap on Horror (currently off via exclude) had nothing to turn off, and every other preset-excluded
+          // chip stayed silently excluded until the whole draft was rebuilt some other way.
+          const nowOn=new Set(ONB_GENRES.filter(x=>on.has(x) && !excl.has(x)));
+          isOn ? nowOn.delete(g) : nowOn.add(g);
+          onbFlow.draft.genre = tbStore(new Set(nowOn), ONB_GENRES);
+          onbFlow.draft.exclude = [];
+          renderOnbStep("genres");   // exclude clearing can flip OTHER chips' state too — repaint them all
         };
         box.appendChild(c);
       });
@@ -10378,10 +10398,13 @@ function briefSum(key){
   const all={genre:ONB_GENRES, lang:LANG_OPTS, age:AGE_LEVELS}[key];
   const noneWord={genre:"No genres", lang:"No languages", age:"No ratings"}[key];
   const allWord ={genre:"All genres", lang:"Any language", age:"All ratings"}[key];
+  // CAS-397: exclude is a genre-axis criterion the include list alone cannot show — "All genres" must not
+  // print over a standing skip list, or the row is exactly the hidden filter the ticket is about.
+  const exSuffix = key==="genre" ? genreExcludeSuffix() : "";
   if(v===null) return noneWord;
-  if(!v.length || v.length===all.length) return allWord;
+  if(!v.length || v.length===all.length) return allWord+exSuffix;
   if(key==="lang") return v.map(langName).join(", ");
-  return v.length<=3 ? v.join(", ") : `${v.length} of ${all.length}`;
+  return (v.length<=3 ? v.join(", ") : `${v.length} of ${all.length}`)+exSuffix;
 }
 function briefServicesSum(){
   const n=prefs.sub.size+prefs.store.size;
