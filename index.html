@@ -3293,7 +3293,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 342, "commit": "ac37ab5", "builtAt": "2026-08-05T07:13:32Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 343, "commit": "f8ed684", "builtAt": "2026-08-05T07:19:53Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -9675,16 +9675,24 @@ const SHARP_STEPS = {
     title: "My services",
     progress: 95,
     noAgent: true,
-    // The honest pair. `n` is what the agent WATCHES, and watching is deliberately not service-scoped
-    // (matchesTaste drops myServices — CAS-132: an agent goes on following a film whatever you subscribe
-    // to today). So this line must not imply the count is filtered; it reports the second number the
-    // screen is actually about — how many of those films you can watch on what you already pay for.
+    // CAS-381: what the agent WATCHES stays unfiltered (matchesTaste drops myServices — CAS-132: an agent
+    // goes on following a film whatever you subscribe to today), so `total` below is always the raw
+    // onbCount(). But this screen's own headline/CTA (`count()` below) is what the toggle is FOR — "Only
+    // show films on my services" — so once it's on, the header and Continue count switch to the same
+    // filtered number this line already computes as `mine`, instead of sitting frozen at the raw total.
+    count(){
+      if(!onbFlow.draft || menuStepOn) return null;    // same guard as the default stepCount() path
+      if(!prefs.on) return onbCount();
+      if(!servicesPicked()) return 0;                  // toggle on, nothing named yet — nothing to show
+      return MOVIES.filter(m=>watchesFilm(m, onbApply()) && matchesServices(m)).length;
+    },
     say: n => {
       const k=prefs.sub.size+prefs.store.size;      // CAS-251: both sections count as "your services"
       if(!k) return `No services named yet · ${flowCnt(n)}`;
+      const total=onbCount();
       const mine=MOVIES.filter(m=>watchesFilm(m, onbApply()) && matchesServices(m)).length;
       return `<b>${k} service${k===1?"":"s"}</b> · <span class="cnt">${mine}</span> of your agent's
-        ${n} film${n===1?"":"s"} ${mine===1?"is":"are"} on ${k===1?"it":"them"} right now.`;
+        ${total} film${total===1?"":"s"} ${mine===1?"is":"are"} on ${k===1?"it":"them"} right now.`;
     },
     body(){
       // CAS-251: two sections, because renting and subscribing are two different things you pay for and a
