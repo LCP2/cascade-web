@@ -7340,7 +7340,7 @@ window.navMenuGo=key=>{
   closeNavMenu();
   logEvent("nav_menu_item",{item:key});
   if(key==="account") openAccount();
-  else if(key==="services") openPrefs();
+  else if(key==="services") openMenuServices();
   else if(key==="svcAnalysis") openSvcAnalysis();
   else if(key==="about") openAbout();
 };
@@ -8662,7 +8662,10 @@ function stepCount(step){
   // CAS-188: the flow's first two screens run BEFORE an agent exists, and a count of what "your agent"
   // is watching when there is no agent is not a small number — it is not a number at all. Null, and the
   // mirror and the button simply don't print one.
-  return onbFlow.draft ? onbCount() : null;
+  // CAS-377: the top-menu's own spoke is a global settings screen, not one agent's, so it never quotes a
+  // count either — even though onbFlow.draft may still be holding whichever agent was last edited (it is
+  // only cleared by the next flowStart/briefOpen, so a stale draft is not evidence of a "current" agent here).
+  return (onbFlow.draft && !menuStepOn) ? onbCount() : null;
 }
 function stepCtaText(step, n){
   const c = step && step.cta;
@@ -9698,7 +9701,11 @@ const SHARP_STEPS = {
           <span class="btmain">Only show films on my services</span><span class="btcheck">✓</span></button>
         <p class="osexplain">Your agent keeps watching everything either way — this only changes what
           the list shows you.</p>
-        <p class="ossumline" id="onbStepSay">${SHARP_STEPS.services.say(stepCount(SHARP_STEPS.services))}</p>`;
+        ${(!menuStepOn && onbFlow.draft) ? `<p class="ossumline" id="onbStepSay">${SHARP_STEPS.services.say(stepCount(SHARP_STEPS.services))}</p>` : ""}`;
+      // CAS-377: the "N of your agent's M films" line only makes sense with ONE agent open (onboarding or a
+      // Briefing draft) — the top-menu's own spoke is a global settings screen with no single agent in view,
+      // so it leaves the line out rather than quoting whichever agent's draft happens to still be sitting in
+      // onbFlow (draft is only cleared by the next flowStart/briefOpen, so it can be stale here).
     },
     wire(){
       // Each section draws itself, so the two are the same control twice rather than two that can drift.
@@ -9924,6 +9931,12 @@ let flowNewAgent=false;
 let flowKind="cinema";         // what the priority screen answered
 let flowSlideT=null;
 const flowChromed = key => flowOn && flowCounted().includes(key);
+// CAS-377: the top-menu "My services" row opens the same My-services step a Briefing row does — one screen
+// you came into and go straight back out of, no hub behind it — so it is a "spoke" exactly like a Briefing
+// row's (no progress rail, CTA reads Done). menuStepOn is the menu's own flag, kept separate from briefOn
+// since there is no Briefing hub to return to here.
+let menuStepOn=false;
+const stepSpoke = key => menuStepOn || (briefOn && key!=="briefing");
 function flowStart(){
   flowOn=true; flowNewAgent=false;
   onbDone=freshDone(); onbDoor=null; onbDoorIdx=0; onbDonePulse=null;
@@ -9933,7 +9946,7 @@ function flowStart(){
   gotoStep("priority","none");
 }
 function flowStop(){
-  flowOn=false; flowNewAgent=false; briefOn=false;
+  flowOn=false; flowNewAgent=false; briefOn=false; menuStepOn=false;
   if(flowSlideT){ clearTimeout(flowSlideT); flowSlideT=null; endSlide(); }
   $("onbStep").classList.remove("open","chromed","sliding"); document.body.style.overflow="";
   $("stepHdr").hidden=true; $("stepNav").hidden=true;
@@ -10024,6 +10037,18 @@ window.briefDelete=()=>{
   briefClose(); showFoundList(); render();
 };
 function briefClose(){ briefOn=false; flowStop(); }
+
+// CAS-377: the top-menu "My services" row opens the same My-services step onboarding and the Briefing use,
+// bare (title + Done, the toggle, the provider chips) — not the older standalone Preferences modal, which
+// had drifted out of sync (no alphabetised chips, no lead/"more" rows, no Apple TV+ naming) the same way the
+// Briefing's own row once had before CAS-343 fixed it there. There is no hub behind this door, so it is its
+// own spoke flag rather than reusing briefOn.
+window.openMenuServices=()=>{
+  flowStop(); menuStepOn=true;
+  $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("services_opened",{picked:prefs.sub.size+prefs.store.size});
+  gotoStep("services","none");
+};
 
 // ================= CAS-183 / CAS-209: Your Movies ====================================================
 // Everything you have told the app about a film, read back off the very sets the cards write — so this
@@ -10335,12 +10360,13 @@ function renderOnbStep(key){
   // frame, so the step must not draw its own — two back arrows and two Continues on one screen is exactly
   // what the fixed chrome exists to remove. A standalone ?step= preview still draws both.
   const chromed = flowChromed(key);
-  // A Briefing spoke is one screen you came into and will come straight back out of, so it carries no
-  // progress rail (there is no sequence to be N-of) and its button says Done rather than Continue.
-  const spoke = briefOn && key!=="briefing";
+  // A Briefing spoke, or the top-menu's own spoke (CAS-377), is one screen you came into and will come
+  // straight back out of, so it carries no progress rail (there is no sequence to be N-of) and its button
+  // says Done rather than Continue.
+  const spoke = stepSpoke(key);
   $("onbStepInner").innerHTML = `
     ${chromed ? "" : `<div class="ostop">
-      <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
+      ${menuStepOn ? "" : `<button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>`}
       ${step.title ? `<h2 class="osh${step.titleClass ? " "+step.titleClass : ""}">${escA(step.title)}</h2>` : ""}
       ${(last&&!spoke)?`<span class="oslast">LAST ONE</span>`:""}
     </div>
@@ -10383,7 +10409,10 @@ function onbRefresh(){
   const n = stepCount(step);
   // CAS-188: exactly one of these exists at a time — the step's own footer button on a ?step= preview, the
   // fixed bar's on the wired flow.
-  const b=$("onbStepCta")||$("flowCta"); if(b) b.textContent = stepCtaText(step, n);
+  // CAS-377: a spoke's button reads Done, same as the initial paint — without this a chip toggle repainted
+  // it back to "Continue" a beat after render, which a Briefing or top-menu spoke must never say.
+  const b=$("onbStepCta")||$("flowCta");
+  if(b) b.textContent = stepSpoke(onbStepKey) ? `Done${ctaCount(n)}` : stepCtaText(step, n);
   const top=$("onbStepCount");
   if(top && n!=null) top.innerHTML = `<b>${n}</b> film${n===1?"":"s"} match right now`;
   // CAS-198: the third printer, off the same n.

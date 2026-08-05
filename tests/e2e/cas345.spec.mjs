@@ -48,11 +48,15 @@ test("CAS-345: Account opens the Account screen and closes the menu", async ({ p
   await expect(page.locator("#accountScreen")).toHaveClass(/open/);
 });
 
-test("CAS-345: My services opens the My streaming services modal", async ({ page }) => {
+// CAS-377: My services now opens the shared My-services step (see tests/e2e/cas377.spec.mjs), not the
+// older standalone Preferences modal this used to open.
+test("CAS-345: My services opens the shared My-services step, not the old modal", async ({ page }) => {
   await toListingWithAgent(page);
   await page.locator("#navMenuBtn").click();
   await page.locator("#navMenu .navitem", { hasText: "My services" }).click();
-  await expect(page.locator("#prefs")).toHaveClass(/open/);
+  await expect(page.locator("#onbStep")).toHaveClass(/open/);
+  expect(await page.evaluate(() => onbStepKey)).toBe("services");
+  await expect(page.locator("#prefs")).not.toHaveClass(/open/);
 });
 
 test("CAS-345: Service analysis is the menu's permanent entry point to the CAS-344 page", async ({ page }) => {
