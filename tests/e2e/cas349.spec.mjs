@@ -50,7 +50,10 @@ test("CAS-349: Enjoyed is undoable from the stub, and the stub says Enjoyed", as
   await expect(stub).toContainText("Enjoyed");
   const lit = stub.locator(".actbtn.on.enjoyed");
   await expect(lit).toHaveCount(1);
+  // CAS-376: the stub icon now opens the same rating menu as the full card's Watched chip instead of
+  // toggling directly — re-picking the lit segment there is the undo.
   await lit.click();
+  await stub.locator(".cpop .cseg").filter({ hasText: "Enjoyed" }).click();
   await settleListing(page);
   expect(await page.evaluate(i => opinionOf(i), id)).toBe("");
 });

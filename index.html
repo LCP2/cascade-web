@@ -544,11 +544,25 @@
     border-radius:16px;padding:9px 9px 9px 13px;margin-bottom:11px;opacity:.9;transition:opacity .18s;
     content-visibility:auto;contain-intrinsic-size:auto 46px}   /* CAS-129: windowing (see .card) */
   .stub:hover,.stub:focus-within{opacity:1}
+  /* CAS-376: content-visibility:auto always applies paint containment (spec, not just the off-screen-skip
+     part), which clips anything painted outside the row's own one-line box — the rating menu popup is many
+     lines taller. .ratingopen (added/removed around the panel's own open/close, see closeWatchPanel) lifts
+     it for exactly as long as the popup needs to paint past the row's edge.
+     Paint containment also forces its own stacking context, implicitly z-index:0 among siblings sorted by
+     DOM order — so even unclipped, the popup would paint UNDER whichever neighbour row (above or below,
+     depending which way it opens) happens to sit later in that order. An explicit z-index opts back into
+     ordinary stacking so this row's popup wins over its neighbours' one-line boxes while it's open. */
+  .stub.ratingopen{content-visibility:visible;position:relative;z-index:5}
   .stubname{flex:1;min-width:0;font-size:14.5px;font-weight:750;color:var(--ink);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .stubwhy{font-size:11.5px;font-weight:700;color:var(--dim);white-space:nowrap;flex-shrink:0}
   .actbtn.stubbtn{width:32px;height:28px;border-radius:9px;flex-shrink:0}
   .actbtn.stubbtn svg{width:16px;height:16px}
+  /* CAS-376: the stub's single rating icon reuses the shared .actions/.ctl plumbing (openWatchPanel anchors
+     its popup off the nearest .actions) purely so the panel can open here too — none of that construct's own
+     row/chip layout applies, so it is pinned back down to just the one icon-sized button. */
+  .stub .actions{margin-top:0;flex:none}
+  .stub .actions .ctl{position:relative;flex:none}
   /* ---- The information chips (CAS-179 / I7 + I9) --------------------------------
      Money and scores sit on TWO wrap-safe rows instead of one scrolling strip: a row that scrolls
      sideways hides the last figure on it, which on a 390px phone was always Gross. Both rows wrap,
@@ -3284,7 +3298,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 336, "commit": "ed4409f", "builtAt": "2026-08-05T05:02:27Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 337, "commit": "3747972", "builtAt": "2026-08-05T05:55:19Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -4780,6 +4794,11 @@ function closeWatchPanel(){
   // clear it here, the one place every panel close already runs through, so no caller has to remember to.
   document.querySelectorAll(".ctl.open").forEach(b=>{ b.classList.remove("open"); b.setAttribute("aria-expanded","false"); });
   document.querySelectorAll(".cpop").forEach(n=>n.remove());
+  // CAS-376: the stub's own content-visibility:auto (CAS-129) clips anything a descendant paints outside
+  // its one-line box — including this panel, which is many lines taller. openWatchPanel lifts that
+  // clip by adding .ratingopen for exactly as long as the panel is open; this is the one place every close
+  // already runs through, so it comes back off here regardless of which of those paths ended it.
+  document.querySelectorAll(".stub.ratingopen").forEach(s=>s.classList.remove("ratingopen"));
   document.removeEventListener("keydown", watchPanelKey, true);
 }
 function watchPanelKey(e){ if(e.key==="Escape"){ e.stopPropagation(); closeWatchPanel(); } }
@@ -4796,8 +4815,9 @@ window.openWatchPanel=(id, btn)=>{
   // a dead tap, and with three controls on the stack that is most of the taps you would make.
   const open=btn.closest(".actions").querySelector(".cpop");
   const mine=open && !open.classList.contains("npop") && !open.classList.contains("kpop");
-  closeWatchPanel();
+  closeWatchPanel();   // CAS-376: also strips any stub's .ratingopen — so that has to be (re)added AFTER this
   if(mine){ watchPanelAnchorY=null; return; }    // tapping the chip again closes the panel it opened
+  const stub=btn.closest(".stub"); if(stub) stub.classList.add("ratingopen");
   watchPanelAnchorY=scrollY;
   const cur=opinionOf(id);
   const pop=document.createElement("div");
@@ -4831,16 +4851,31 @@ window.pickWatch=(id,key)=>{ closeWatchPanel(); setOpinion(id,key); };
 const filmMuted = id => !!(notify[id] && notify[id].muted);
 // ---- The collapsed stub (CAS-64, made unconditional in CAS-100) ----------------
 // What a film becomes the moment you say Liked / Disliked / Not for me: one greyed line, in the position the
-// card was already in, carrying its title and the same three buttons with your answer lit. Press the lit one
+// card was already in, carrying its title and your answer lit. Press the lit one (or its menu's lit segment)
 // and the full card is back where it was. A film NEVER disappears out from under the tap that tagged it, and
 // it no longer takes a filter setting to make it fold — you answered, so it folds.
+// CAS-376: this used to render all six OPINIONS buttons inline, which squeezed the title unreadable on a
+// phone (as little as one letter of it). Now it shows only the CURRENT answer's icon, and the freed width
+// goes to the title. Wow!/Watch Again/Enjoyed/So-so/Disliked all have a row in the Watched panel's rating
+// menu (CAS-374) they can be re-picked or undone from, same as the full card's Watched chip, so tapping opens
+// that. Never has no row there — only the Watch panel's own Never row does — so its icon keeps the direct
+// tap-to-undo it always had (CAS-292's "not just from the API" guarantee); giving it a menu with nothing in
+// it to undo it from would be a real loss, not just a re-skin.
 function stubHTML(m){
   const id=m.tmdb_id, cur=opinionOf(id);
-  const lbl=(OPINIONS.find(o=>o.key===cur)||{}).lbl||"";
+  const op=OPINIONS.find(o=>o.key===cur);
+  const lbl=op?op.lbl:"";
+  const isNever=cur==="notfor";
+  const title=op?`${op.lbl} — tap to ${isNever?"undo":"change"}`:"Say what you made of it";
+  const onclick=isNever?`setOpinion(${id},'notfor')`:`openWatchPanel(${id},this)`;
   return `<div class="stub" id="card-${id}">
     <span class="stubname">${esc(m.title)}</span>
     <span class="stubwhy">${lbl}</span>
-    ${opinionBtnsHTML(id, "stubbtn")}
+    <span class="actions">
+      <button type="button" class="ctl actbtn stubbtn${op?" on "+op.key:""}" onclick="${onclick}"
+        ${isNever?"":'aria-haspopup="true" aria-expanded="false"'}
+        title="${escA(title)}" aria-label="${escA(title)}">${op?ICON[op.ico]:ICON.eye}</button>
+    </span>
   </div>`;
 }
 // ================= Found (CAS-67) =================
