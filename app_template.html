@@ -799,8 +799,6 @@
      the whole listing. Nothing else about the sticky pin changed. */
   .cascbar{--dcw:206px;--dgap:12px;padding:11px 0 2px;
     position:sticky;top:var(--hdrh,0px);z-index:20;background:var(--bg)}
-  .casclbl{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:700;
-    margin:0 12px 4px}
   /* CAS-136: the per-cascade search box the 🔍 on a card reveals. */
   .cascsearch{display:flex;align-items:center;gap:6px;margin:8px 12px 0;position:relative}
   .cascsearch[hidden]{display:none}   /* a bare [hidden] loses to the class rule above — restate it */
@@ -841,6 +839,10 @@
   .dcard.agent-cin.is-centre.is-active .dc-name{color:#ffce8f}
   .dcard.agent-str.is-centre.is-active .dc-name{color:#a7eccb}
   .dc-icon{font-size:18px;line-height:1}
+  /* CAS-371: the icon sits inline with a "CINEMA AGENT" / "STREAMING AGENT" label — the type label carries
+     the exact type styling the old #cascLbl heading used, so removing that heading loses no information. */
+  .dc-top{display:flex;align-items:center;gap:6px}
+  .dc-type{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:700}
   /* CAS-136/CAS-150: every cascade carries its own search, and since CAS-150 it rides in the card's control
      row with Edit / 🔗 / × rather than floating over the corner — it is one of the things you do to the
      Cascade you have open, so it sits with the others and inherits their look. */
@@ -887,12 +889,12 @@
      last control or the content passing behind it reads as touching it. This is the only padding on the bar
      that has to survive the tighten, because it is the only one separating the bar from moving content. */
   .cascbar.rail{--dcw:196px;padding:6px 0 9px}
-  .cascbar.rail .casclbl{margin-bottom:2px}
   .cascbar.rail .deckstrip{padding:8px calc(50% - var(--dcw)/2) 10px}
   .cascbar.rail .dcard{min-height:0}
   .cascbar.rail .dc-in{padding:8px 10px;flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:7px}
   .cascbar.rail .dc-icon{font-size:15px}
-  .cascbar.rail .dc-name{margin-top:0;font-size:12.5px;flex:1 1 auto;min-width:0}
+  .cascbar.rail .dc-top{flex:1 0 100%}
+  .cascbar.rail .dc-name{margin-top:3px;font-size:12.5px;flex:1 0 100%;min-width:0}
   .cascbar.rail .dc-sub{flex:1 0 100%;margin-top:3px;font-size:10.5px;line-height:1.35;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cascbar.rail .dc-acts{flex:1 0 100%;padding-top:7px}
@@ -2223,7 +2225,8 @@
 
   <!-- CAS-172: the 1px #cascAnchor marker that used to sit here is gone with the collapse it measured. -->
   <div class="cascbar" id="cascbar">
-    <div class="casclbl" id="cascLbl">Agents</div>
+    <!-- CAS-371: the "AGENTS" heading is gone — the agent box is the first thing in the bar now, so
+         everything below it sits that much higher. -->
     <div class="deck">
       <!-- Not a listbox: an option is not allowed to contain buttons, and the centre card carries
            Edit and Search (CAS-271/CAS-272 took Close and Share off it). A group of groups keeps those
@@ -2238,33 +2241,33 @@
              placeholder="Search this cascade" autocomplete="off" aria-label="Search this cascade">
       <button class="searchclear show" id="cascSearchClose" aria-label="Close search" type="button">×</button>
     </div>
-    <!-- CAS-321: jump-to chips and the order control share one row — chips left (scrolling if they would
-         overflow), sort pinned right. CAS-150 put sort here; CAS-275 added the jump rail as a second row
-         above it; CAS-321 merges the two so the listing loses a whole row of chrome before the first card. -->
+    <!-- CAS-371: sort's real home is the open agent's (or All's) action row inside the deck above, next to
+         Edit and search — deckSync() moves this exact node there on every render, so the live <select>
+         keeps its value and listeners rather than being torn down and rebuilt. This is only where it starts
+         before JS runs its first render(); nothing here is meant to ever be visible. The native <select> is
+         invisible and stretched over the pill — see .sortctl select — so this stays a real, accessible menu
+         rather than a hand-rolled one, while reading as an icon-only button per CAS-321. -->
+    <div class="sortctl" id="sortCtl">
+      <select id="sort" aria-label="Order">
+        <option value="availability">Availability</option>
+        <option value="imdb">IMDb rating</option>
+        <option value="rt">RT critic</option>
+        <option value="gross">Box office</option>
+        <option value="popularity">Most anticipated</option>
+        <option value="cinema">Newest cinema</option>
+        <option value="title">Title A–Z</option>
+      </select>
+      <span class="sortic" aria-hidden="true">⇅<span class="sortdot" id="sortDot" hidden></span></span>
+      <span class="sortcur" id="sortCur"></span>
+      <span class="sortchev" aria-hidden="true">▾</span>
+    </div>
+    <!-- CAS-275: jump to a section of the listing. It is rendered from the sections that ACTUALLY exist in
+         the current list, so it can never offer a destination that isn't there — and it hides itself when
+         there is only one, because a jump control with one destination scrolls you nowhere. CAS-371 took the
+         order control out of this row (it now rides with the open agent card, above) — chips are all that's
+         left, so the row is just the jump rail now. -->
     <div class="listctl" id="listCtl">
-      <!-- CAS-275: jump to a section of the listing. It is rendered from the sections that ACTUALLY exist in
-           the current list, so it can never offer a destination that isn't there — and it hides itself when
-           there is only one, because a jump control with one destination scrolls you nowhere. -->
       <div class="jumpbar" id="jumpBar" hidden></div>
-      <!-- CAS-150: the sort control belongs to the list, so it sits with the Cascade that draws it. (It
-           replaces the New / All toggle that stood here, which CAS-150 removes: there is one list again,
-           and it is everything the open Cascade matches.) The native <select> is invisible and stretched
-           over the pill — see .sortctl select — so this stays a real, accessible menu rather than a
-           hand-rolled one, while reading as an icon-only button per CAS-321. -->
-      <div class="sortctl" id="sortCtl">
-        <select id="sort" aria-label="Order">
-          <option value="availability">Availability</option>
-          <option value="imdb">IMDb rating</option>
-          <option value="rt">RT critic</option>
-          <option value="gross">Box office</option>
-          <option value="popularity">Most anticipated</option>
-          <option value="cinema">Newest cinema</option>
-          <option value="title">Title A–Z</option>
-        </select>
-        <span class="sortic" aria-hidden="true">⇅<span class="sortdot" id="sortDot" hidden></span></span>
-        <span class="sortcur" id="sortCur"></span>
-        <span class="sortchev" aria-hidden="true">▾</span>
-      </div>
     </div>
     <div id="cascDetail"></div>
   </div>
@@ -5988,6 +5991,7 @@ window.saveCascadeEdits=()=>{
 // card at the right end, and depth (scale/rotate/blur) is applied per frame from each card's LAYOUT
 // position — offsetLeft, NOT getBoundingClientRect, which would feed our own transforms back in.
 const deckStrip=$("cascStrip");
+const sortCtl=$("sortCtl");   // CAS-371: one live node, reparented into the open card's .dc-acts — see deckSync()
 const deckMotion=matchMedia("(prefers-reduced-motion: reduce)");
 const deckCards=()=>[...deckStrip.children];
 // Deck order: [0] the built-in All card, [1 … n] your Cascades, [n+1] "+ New Cascade". Every index that
@@ -6075,9 +6079,13 @@ function deckBuild(){
   // CAS-203: the card wears the agent's own lane. This is the ONE place the type is stated on the listing
   // now — CAS-204 takes the stripe off the film cards, because a colour repeated on every row stops being
   // information — so an agent card has to carry it.
+  // CAS-371: the icon rides inline with a "CINEMA AGENT" / "STREAMING AGENT" label — the one place the
+  // type is spelled out in words, colour (above) is the at-a-glance version. Name and film-count still
+  // start at the box's own left padding, same as the label row — .dc-in is a plain vertical stack, so
+  // nothing here indents under the icon.
   + cascades.map(c=>`
     <div class="dcard agent-${c.kind==="stream"?"str":"cin"}" role="group" aria-label="${esc(c.name)}" tabindex="-1" data-id="${c.id}"><div class="dc-in">
-      <div class="dc-icon">${c.icon}</div>
+      <div class="dc-top"><span class="dc-icon">${c.icon}</span><span class="dc-type">${c.kind==="stream"?"Streaming":"Cinema"} agent</span></div>
       <div class="dc-name">${esc(c.name)}</div>
       <div class="dc-sub"></div>
       <div class="dc-acts">
@@ -6147,6 +6155,11 @@ function deckSync(shown){
           : "");
     el.querySelector('[data-act="save"]').hidden=!(on&&dirty);
   });
+  // CAS-371: sort rides with whichever card is open (All included) — moved, not rebuilt, into that card's
+  // action row alongside Edit/search, so it inherits the exact same is-centre.is-active visibility the
+  // other controls already use. A no-op appendChild if it's already there.
+  const actsHome=deckStrip.querySelector(".dcard.is-active .dc-acts");
+  if(actsHome && sortCtl.parentElement!==actsHome) actsHome.appendChild(sortCtl);
   deckPaint();
 }
 deckStrip.addEventListener("scroll",()=>{
@@ -6159,6 +6172,9 @@ deckStrip.addEventListener("scroll",()=>{
   },120);
 },{passive:true});
 deckStrip.addEventListener("keydown",e=>{
+  // CAS-371: the sort <select> now rides inside the deck — its own keys (Enter/Space to open, arrows to
+  // change value) are its business, not the card carousel's.
+  if(e.target.closest("#sortCtl")) return;
   const last=deckCount()-1;
   if(e.key==="Enter"||e.key===" "){
     e.preventDefault();
@@ -6188,7 +6204,7 @@ deckStrip.addEventListener("wheel",e=>{
 },{passive:false});
 // Mouse drag. Touch is left alone: native momentum + snap already do exactly what we want.
 deckStrip.addEventListener("pointerdown",e=>{
-  if(e.pointerType!=="mouse"||e.button!==0||e.target.closest("button")) return;
+  if(e.pointerType!=="mouse"||e.button!==0||e.target.closest("button")||e.target.closest("#sortCtl")) return;
   drag={x:e.clientX,left:deckStrip.scrollLeft,moved:0,id:e.pointerId}; deckDragged=false;
   deckStrip.classList.add("dragging");
 });
@@ -6208,6 +6224,7 @@ deckStrip.addEventListener("pointerup",deckDragEnd);
 deckStrip.addEventListener("pointercancel",deckDragEnd);
 deckStrip.addEventListener("click",e=>{
   const card=e.target.closest(".dcard"); if(!card) return;
+  if(e.target.closest("#sortCtl")) return;   // CAS-371: its own click, not a card re-select
   const act=e.target.closest("button[data-act]")?.dataset.act;
   if(act==="new") return newCascade();
   if(act==="edit") return editCascade();

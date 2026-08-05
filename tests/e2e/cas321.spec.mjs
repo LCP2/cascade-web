@@ -1,5 +1,8 @@
-// CAS-321: the Jump-to + Order controls become one row (chips left, sort pinned right), the "JUMP TO" /
-// "ORDER" text labels are dropped, and the "We're only showing films on your services" banner is gone.
+// CAS-321: the "JUMP TO" / "ORDER" text labels are dropped, and the "We're only showing films on your
+// services" banner is gone.
+// CAS-371 later took the Order control out of this row entirely — it rides in the open agent's own card
+// now (see cas371.spec.mjs) — so the "chips and sort share one row" premise this file used to open with is
+// gone; #listCtl is the jump rail alone.
 import { test, expect } from "@playwright/test";
 import { toShortlist, shortlistCards, pickCard, finishFlow, toListing, sectionCounts } from "./helpers.mjs";
 
@@ -11,20 +14,12 @@ async function toAgentListing(page, kind = "stream"){
   await toListing(page);
 }
 
-test("CAS-321: jump-to chips and the sort control share one row", async ({ page }) => {
+test("CAS-321: the jump-to row no longer carries the sort control", async ({ page }) => {
   await toAgentListing(page);
   await expect(page.locator("#listCtl")).toBeVisible();
-  // Both live inside the same row, not stacked as the old sortbar/jumpbar pair.
   expect(await page.evaluate(() => !!document.querySelector("#listCtl #jumpBar"))).toBe(true);
-  expect(await page.evaluate(() => !!document.querySelector("#listCtl #sortCtl"))).toBe(true);
-
-  const sections = await sectionCounts(page);
-  test.skip(sections.length < 2, "this agent's listing has only one section today");
-  const tops = await page.evaluate(() => ({
-    jump: document.querySelector("#jumpBar").getBoundingClientRect().top,
-    sort: document.querySelector("#sortCtl").getBoundingClientRect().top,
-  }));
-  expect(Math.abs(tops.jump - tops.sort), "chips and sort must sit on the same line").toBeLessThanOrEqual(2);
+  // CAS-371: sort left this row for the open agent card's action row.
+  expect(await page.evaluate(() => !!document.querySelector("#listCtl #sortCtl"))).toBe(false);
 });
 
 test("CAS-321: the old \"JUMP TO\" / \"ORDER\" text labels are gone", async ({ page }) => {
@@ -69,7 +64,7 @@ test("CAS-321: chips read Buy / Rent / Stream, left to right, with a dot and a c
   if(buy) expect(buy.label).toContain("Buy");
 });
 
-test("CAS-321: the sort control is icon-only on phone and stays pinned while chips scroll", async ({ page }) => {
+test("CAS-321: the jump rail is icon-only chips on phone and never wraps", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });   // the width the ticket calls out
   await toAgentListing(page);
 
@@ -80,15 +75,11 @@ test("CAS-321: the sort control is icon-only on phone and stays pinned while chi
   expect(narrow.curShown, "no visible current-sort label at 375px").toBe(false);
 
   const geo = await page.evaluate(() => {
-    const row = document.querySelector("#listCtl").getBoundingClientRect();
     const jump = document.querySelector("#jumpBar").getBoundingClientRect();
-    const sort = document.querySelector("#sortCtl").getBoundingClientRect();
-    return { rowH: row.height, jumpBottom: jump.bottom, jumpTop: jump.top, sortRight: sort.right, rowRight: row.right };
+    return { jumpBottom: jump.bottom, jumpTop: jump.top };
   });
   // A single line: the row is not tall enough to hold a second stacked row of chips.
   expect(geo.jumpBottom - geo.jumpTop, "the jump rail must not wrap to a second line").toBeLessThan(40);
-  // The sort pill sits pinned at the row's right edge.
-  expect(Math.abs(geo.sortRight - geo.rowRight)).toBeLessThanOrEqual(2);
 });
 
 test("CAS-321: from 560px the sort pill expands to show the current sort and a chevron", async ({ page }) => {
