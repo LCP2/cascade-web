@@ -2,7 +2,8 @@
 // CAS-349 retaxonomized it (same `.ctl.notify` / `openNotifyPanel` / `.nopt` machinery) into the Watch
 // control: only the levels a film can actually be WATCHED at (no Upcoming), greyed rather than hidden once
 // passed, an auto-tick cascade, mutually-exclusive streaming tiers, and a bottom "Never" row. This file now
-// tests that shape; the close-button handedness half (CAS-245's own contrast with Watched) is unchanged.
+// tests that shape; CAS-245's own close-button handedness contrast is gone with CAS-374's removal of the
+// in-panel chevrons, replaced below by the edge-alignment contrast CAS-374 asks for instead.
 import { test, expect } from "@playwright/test";
 import { toShortlist, shortlistCards, pickCard, finishFlow, toListing, settleListing } from "./helpers.mjs";
 
@@ -137,26 +138,28 @@ test("CAS-349: Never clears the film's future ticks and blocks it, the same flag
   await expect(page.locator(`#groups .stub[id="card-${id}"]`)).toHaveCount(1);
 });
 
-test("CAS-245: the close sits on the LEFT and points RIGHT, the mirror of Watched", async ({ page }) => {
+test("CAS-374: Watch opens left-aligned under its chip, Watched opens right-aligned under its", async ({ page }) => {
   const card = await toFirstCard(page, "cinema");
 
   await card.locator(".ctl.notify").click();
   const notifyGeom = await card.locator(".cpop.npop").evaluate(pop => {
-    const close = pop.querySelector(".cclose"), body = pop.querySelector(".nopts");
-    return { close: close.getBoundingClientRect().left, body: body.getBoundingClientRect().left,
-             rotate: getComputedStyle(close.querySelector("svg")).transform };
+    const actions = pop.closest(".actions").getBoundingClientRect(), box = pop.getBoundingClientRect();
+    return { fromLeft: box.left - actions.left, width: box.width, actionsWidth: actions.width };
   });
-  expect(notifyGeom.close, "the Watch close must be left of its options").toBeLessThan(notifyGeom.body);
-  expect(notifyGeom.rotate, "a down chevron must be rotated to point somewhere").not.toBe("none");
+  expect(notifyGeom.fromLeft, "the Watch panel must hug the row's left edge").toBeLessThan(2);
+  expect(notifyGeom.width, "the Watch panel must be content-width, not stretched across the row")
+    .toBeLessThan(notifyGeom.actionsWidth);
 
   // …and the Watched panel is the other way round, which is the contrast the ticket asks for.
   await page.keyboard.press("Escape");
   await card.locator(".ctl.watch").click();
   const watchGeom = await card.locator(".cpop").evaluate(pop => {
-    const close = pop.querySelector(".cclose"), body = pop.querySelector(".csegs");
-    return { close: close.getBoundingClientRect().left, body: body.getBoundingClientRect().left };
+    const actions = pop.closest(".actions").getBoundingClientRect(), box = pop.getBoundingClientRect();
+    return { fromRight: actions.right - box.right, width: box.width, actionsWidth: actions.width };
   });
-  expect(watchGeom.close, "the Watched close must be right of its options").toBeGreaterThan(watchGeom.body);
+  expect(watchGeom.fromRight, "the Watched panel must hug the row's right edge").toBeLessThan(2);
+  expect(watchGeom.width, "the Watched panel must be content-width, not stretched across the row")
+    .toBeLessThan(watchGeom.actionsWidth);
 });
 
 // CAS-245's own version of this test opted a film INTO a window the agent itself didn't watch — the honest

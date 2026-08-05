@@ -1,4 +1,8 @@
 // CAS-281: every card control collapses, by a button that says what it collapses.
+// CAS-374 moved that button, for Watch and Watched, from a dedicated in-panel chevron to the chip that
+// opened the panel — tapping it again is now the whole gesture (see cas374.spec.mjs). Agent (.ctl.casc)
+// keeps its own dedicated collapse button, so the original "has a collapse button" coverage below still
+// applies to it alone; a parallel pair of tests covers the chip-is-the-toggle behaviour for the other two.
 import { test, expect } from "@playwright/test";
 import { toShortlist, shortlistCards, pickCard, finishFlow, toListing } from "./helpers.mjs";
 
@@ -9,6 +13,8 @@ const CONTROLS = [
   { sel: ".ctl.casc",   name: "cascade" },
   { sel: ".ctl.notify", name: "watch" },
 ];
+const BTN_CONTROLS = CONTROLS.filter(c => c.sel === ".ctl.casc");
+const CHIP_CONTROLS = CONTROLS.filter(c => c.sel !== ".ctl.casc");
 
 async function toCard(page){
   await toShortlist(page, "cinema");
@@ -21,7 +27,7 @@ async function toCard(page){
   return card;
 }
 
-for(const c of CONTROLS){
+for(const c of BTN_CONTROLS){
   test(`CAS-281: the ${c.name} control has a collapse button`, async ({ page }) => {
     const card = await toCard(page);
     await card.locator(c.sel).click();
@@ -40,6 +46,18 @@ for(const c of CONTROLS){
     expect(box.width, "a collapse you cannot hit is not a collapse").toBeGreaterThanOrEqual(40);
     expect(box.height).toBeGreaterThanOrEqual(40);
     await card.locator(".cpop .cclose").click();
+    await expect(card.locator(".cpop")).toHaveCount(0);
+  });
+}
+
+for(const c of CHIP_CONTROLS){
+  test(`CAS-374: the ${c.name} chip itself collapses the panel it opened, with no separate button`, async ({ page }) => {
+    const card = await toCard(page);
+    const chip = card.locator(c.sel);
+    await chip.click();
+    await expect(card.locator(".cpop")).toBeVisible();
+    await expect(card.locator(".cpop .cclose")).toHaveCount(0);
+    await chip.click();
     await expect(card.locator(".cpop")).toHaveCount(0);
   });
 }

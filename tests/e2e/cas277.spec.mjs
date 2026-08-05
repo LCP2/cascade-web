@@ -18,10 +18,11 @@ test("CAS-277: both panels still open and anchor to the stack", async ({ page })
   await toAgentListing(page);
   const card = page.locator("#groups .card").first();
 
-  await card.locator(".ctl.watch").click();
+  const watchChip = card.locator(".ctl.watch");
+  await watchChip.click();
   await expect(card.locator(".cpop")).toBeVisible();
   await expect(card.locator(".cpop .cseg").first()).toBeVisible();
-  await card.locator(".cpop .cclose").click();
+  await watchChip.click();   // CAS-374: the chip is its own collapse now, no separate close button
   await expect(card.locator(".cpop")).toHaveCount(0);
 
   await card.locator(".ctl.notify").click();

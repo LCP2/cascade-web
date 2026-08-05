@@ -383,9 +383,15 @@
   .cmini .cfill{position:absolute;inset:0 auto 0 0;width:0;opacity:.22;transition:width .26s cubic-bezier(.3,1,.4,1)}
   .cmini .cic{position:relative;z-index:1;display:grid;place-items:center;line-height:0;color:#8b93a1}
   .cmini .cic svg{width:15px;height:15px;display:block}
-  .cmini .clab{position:relative;z-index:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cmini .clab{position:relative;z-index:1;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cmini .clab.dim{color:var(--dim);font-weight:500}
   .ctl.on .cmini .cic{color:var(--cyan)}
+  /* CAS-374: the Watch/Watched chip is now the toggle for its own panel — this arrow is the only cue for
+     open vs closed, since the separate collapse chevron inside the panel is gone. Down = closed, and it
+     flips to point up (the panel now sits above it, open) rather than getting a second, different glyph. */
+  .cmini .ctog{position:relative;z-index:1;flex:none;display:grid;place-items:center;line-height:0;color:#8b93a1}
+  .cmini .ctog svg{width:12px;height:12px;display:block;transition:transform .15s}
+  .ctl.open .cmini .ctog svg{transform:rotate(180deg)}
   .ctl:hover .cmini{border-color:#3a4150}
   .ctl:focus-visible .cmini{outline:2px solid var(--cyan);outline-offset:2px}
   /* CAS-348 (0.8.5 staging review): three equal columns leave too little room on a phone for the icon AND
@@ -399,10 +405,16 @@
      card, and a panel below would be off the bottom of a card sitting at the foot of the viewport. When
      there isn't room above (the row is near the top of the viewport), JS adds .pop-down and it opens below
      instead — the original prototype behaviour. */
-  .cpop{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:60;
+  .cpop{position:absolute;bottom:calc(100% + 8px);z-index:60;
     display:flex;align-items:center;gap:5px;background:#0e1626;border:1px solid rgba(255,255,255,.16);
     border-radius:12px;padding:4px;box-shadow:0 14px 34px rgba(0,0,0,.7)}
   .cpop.pop-down{bottom:auto;top:calc(100% + 8px)}
+  /* CAS-374: Agent (out of scope for this ticket) keeps the original panel, stretched across the whole row.
+     Watch and Watched are content-width now — only as wide as their rows need — and edge-aligned under the
+     chip that opens them: .al-l under the Watch chip (the row's left edge), .al-r under Watched (the right). */
+  .cpop.kpop{left:0;right:0}
+  .cpop.al-l{left:0;width:max-content;max-width:min(280px,calc(100vw - 32px))}
+  .cpop.al-r{right:0;width:max-content;max-width:min(280px,calc(100vw - 32px))}
   /* CAS-278: the five answers run TOP TO BOTTOM, best first, so the list is read as a scale. Across a row
      they cannot be: five labels plus a close button on a 360px phone is about 40px of text each, and the
      old four already needed the icon stacked over the label to survive it. Down the column every label is
@@ -434,19 +446,15 @@
   .cclose{flex:none;width:44px;height:44px;border-radius:9px;border:1px solid rgba(255,255,255,.12);
     background:rgba(255,255,255,.05);color:#c9d0da;cursor:pointer;display:grid;place-items:center;line-height:0}
   .cclose svg{width:16px;height:16px;display:block}
-  /* One chevron, pointed by the panel it closes. The Watched panel (`.ctl.watch`, CAS-349 relabel) sits on
-     the right and collapses leftward, so its arrow says "<"; the Watch panel (`.ctl.notify`, CAS-245's
-     Notify, CAS-349 retaxonomy) sits on the left and says ">". Two panels open off the same row, and which
-     way the arrow points is the cheapest way to tell them apart. */
-  .wclose svg{transform:rotate(90deg)}
   .cclose:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  /* CAS-245/CAS-349: the Watch panel. Same shell as the Watched one, opposite handedness — its close sits on
-     the LEFT and points RIGHT, where the other sits on the right and points left. Two panels open off the
-     same row, so the side you close from is the cheapest way to tell them apart at a glance. */
-  .npop{gap:6px}
+  /* CAS-374: Watch and Watched dropped their in-panel close chevrons — the chip that opened the panel is now
+     the only toggle for it (see .ctog above). Agent still opens its own full-row panel with a close button
+     of its own (out of scope for that ticket), so .nclose survives for it alone. */
   .nclose{order:-1}
   .nclose svg{transform:rotate(-90deg)}
-  .nopts{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0;max-height:196px;overflow-y:auto}
+  /* CAS-374: no inner scroll — every row has to be reachable without a nested scrollbar on an iPhone, so
+     the list grows to whatever height its rows need instead of capping and clipping them. */
+  .nopts{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
   .nopt{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 10px;border-radius:9px;
     background:rgba(255,255,255,.05);border:1px solid transparent;font-family:inherit;font-size:12px;
     font-weight:600;color:var(--dim);cursor:pointer;line-height:1.2}
@@ -4331,10 +4339,11 @@ function watchChipHTML(id){
   const lbl  = s ? s.lbl : "Watched";
   const title = s ? `${s.lbl} — tap to change` : "Say whether you've watched it, and what you made of it";
   return `<button type="button" class="ctl watch" data-cid="${id}" onclick="openWatchPanel(${id},this)"
-      aria-haspopup="true" title="${escA(title)}" aria-label="${escA(title)}">
+      aria-haspopup="true" aria-expanded="false" title="${escA(title)}" aria-label="${escA(title)}">
     <span class="cmini"><i class="cfill" style="width:${fill}%;background:${s?s.cd:"transparent"}"></i>
       <span class="cic">${s ? ICON[s.ico] : ICON.eye}</span>
-      <span class="clab${s?"":" dim"}">${lbl}</span></span></button>`;
+      <span class="clab${s?"":" dim"}">${lbl}</span>
+      <span class="ctog">${ICON.chev}</span></span></button>`;
 }
 // The notify chip is a plain on/off, not the prototype's four-moment multi-select. Those four moments (1 month
 // out, 1 week out, today, post-opening) have never existed below the UI — CAS-160 recorded them and said so —
@@ -4475,11 +4484,12 @@ function notifyChipHTML(id){
   // everywhere else on the card (the availability bar, the window lozenges) — reusing it here says the same
   // thing the same way, rather than borrowing the on-state colour every other control uses for "a choice was made".
   return `<button type="button" class="ctl notify${st.current?" on":""}" data-nid="${id}"
-      onclick="openNotifyPanel(${id},this)" aria-haspopup="true" aria-pressed="${st.current}"
+      onclick="openNotifyPanel(${id},this)" aria-haspopup="true" aria-expanded="false" aria-pressed="${st.current}"
       title="${escA(title)}" aria-label="${escA(title)}">
     <span class="cmini"><i class="cfill" style="width:${st.total?100*st.on/st.total:0}%;background:var(--green)"></i>
       <span class="cic">${st.muted ? ICON.bellOff : (st.current ? ICON.watched : ICON.bell)}</span>
-      <span class="clab${st.current?"":" dim"}">${lbl}</span></span></button>`;
+      <span class="clab${st.current?"":" dim"}">${lbl}</span>
+      <span class="ctog">${ICON.chev}</span></span></button>`;
 }
 // ---- CAS-279: the Cascade control -----------------------------------------------------------------------
 // Where this film lives, and the one gesture that changes it. Everything else on this row is an opinion about
@@ -4598,13 +4608,9 @@ window.openNotifyPanel=(id, btn)=>{
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
   const pop=document.createElement("div");
-  pop.className="cpop npop";
-  // The close control is on the LEFT and points RIGHT, deliberately the mirror of the Watched panel's
-  // (right edge, pointing left). Two panels open off the same row; if they closed from the same side with
-  // the same arrow, the only thing telling you which one you had open would be its contents.
-  pop.innerHTML=`<button type="button" class="cclose nclose" onclick="closeWatchPanel()"
-      title="Collapse" aria-label="Collapse watch">${ICON.chev}</button>
-    <div class="nopts">${watchPanelRowsHTML(id)}</div>`;
+  // CAS-374: content-width, left-aligned under the Watch chip — no in-panel close, the chip is the toggle.
+  pop.className="cpop npop al-l";
+  pop.innerHTML=`<div class="nopts">${watchPanelRowsHTML(id)}</div>`;
   btn.closest(".actions").appendChild(pop);
   positionPanel(pop);   // CAS-304
   // CAS-349: press-drag-release now lives here too, same gesture as the Watched panel's — release on the row
@@ -4617,6 +4623,7 @@ window.openNotifyPanel=(id, btn)=>{
     else toggleFilmOpt(id, wk);
   });
   document.addEventListener("keydown", watchPanelKey, true);
+  btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
   const first=pop.querySelector(".nopt:not(.spent)"); if(first) first.focus();
 };
 // Swap the chip and, if the panel is open, its rows — one repaint shared by every Watch action below, since
@@ -4626,7 +4633,13 @@ function repaintWatchControl(id){
   const btn=document.querySelector(`#card-${id} .actions .ctl.notify`); if(!btn) return;
   const pop=btn.closest(".actions").querySelector(".cpop.npop");
   btn.outerHTML=notifyChipHTML(id);
-  if(pop) pop.querySelector(".nopts").innerHTML=watchPanelRowsHTML(id);
+  if(pop){
+    pop.querySelector(".nopts").innerHTML=watchPanelRowsHTML(id);
+    // The chip node above was just replaced (outerHTML) — the panel is still open, so the fresh chip needs
+    // the open state re-applied; nothing set it because it never went through openNotifyPanel this time.
+    const newBtn=document.querySelector(`#card-${id} .actions .ctl.notify`);
+    if(newBtn){ newBtn.classList.add("open"); newBtn.setAttribute("aria-expanded","true"); }
+  }
 }
 window.toggleFilmOpt=(id,key)=>{
   const levels=watchLevelsFor(id);
@@ -4737,6 +4750,9 @@ function positionPanel(pop){
 }
 // One panel at a time, anchored in the .actions row (which is position:relative for exactly this).
 function closeWatchPanel(){
+  // CAS-374: the chip that opened a panel carries its own open/closed state now (.open, aria-expanded) —
+  // clear it here, the one place every panel close already runs through, so no caller has to remember to.
+  document.querySelectorAll(".ctl.open").forEach(b=>{ b.classList.remove("open"); b.setAttribute("aria-expanded","false"); });
   document.querySelectorAll(".cpop").forEach(n=>n.remove());
   document.removeEventListener("keydown", watchPanelKey, true);
 }
@@ -4759,19 +4775,20 @@ window.openWatchPanel=(id, btn)=>{
   watchPanelAnchorY=scrollY;
   const cur=opinionOf(id);
   const pop=document.createElement("div");
-  pop.className="cpop";
+  // CAS-374: content-width, right-aligned under the Watched chip — no in-panel close, the chip is the toggle.
+  pop.className="cpop al-r";
   pop.innerHTML=`<div class="csegs">${WATCH_STEPS.map(s=>{
       const on=cur===s.key;
       // --segc carries the step's own colour whether it is chosen or not, so the ramp is legible on arrival.
       return `<button type="button" class="cseg${on?" on":""}" data-key="${s.key}" style="--segc:${s.cd};${on?`background:${s.cd};color:#fff`:""}"
         onclick="pickWatch(${id},'${s.key}')" aria-pressed="${on}"
         title="${escA(on?`${s.lbl} — tap to undo`:s.lbl)}"><span class="ci">${ICON[s.ico]}</span><span class="cl">${s.lbl}</span></button>`;
-    }).join("")}</div><button type="button" class="cclose wclose" onclick="closeWatchPanel()"
-      title="Collapse" aria-label="Collapse watched">${ICON.chev}</button>`;
+    }).join("")}</div>`;
   btn.closest(".actions").appendChild(pop);
   positionPanel(pop);   // CAS-304
   wirePanelSlide(pop, ".cseg", el=>pickWatch(id, el.dataset.key));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
+  btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
   const first=pop.querySelector(".cseg"); if(first) first.focus({preventScroll:true});
 };
 // Answering closes the panel first: setOpinion folds the card to its stub, and a panel left open would be
