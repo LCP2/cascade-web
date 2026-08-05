@@ -128,6 +128,9 @@ class BuildSurvivesAFailingOmdb(unittest.TestCase):
                                                                 "price": None, "format": "HD"}]),
             mock.patch.object(pp, "derive_from_providers", lambda m, p, t: ["included_streaming"]),
             mock.patch.object(pp, "TMDB_PACING", 0),
+            # CAS-379: these titles predate cinema_release too, but this class is about OMDb
+            # resilience — a no-op here keeps that backfill path from making its own network call.
+            mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
         ]
         for p in patches:
             p.start(); self.addCleanup(p.stop)
@@ -235,6 +238,102 @@ class CinemaReleaseFromReleaseDates(unittest.TestCase):
         m = pp._tmdb_record(_tmdb_detail([]))
         self.assertFalse(m["cinema_release"])
         self.assertEqual(m["release_dates"], [])
+
+
+def _release_dates_payload(release_dates_au):
+    """A minimal TMDB /movie/{id}/release_dates payload — the lighter, dedicated endpoint
+    enrich_cinema_release uses for the CAS-379 back-fill (results at the top level, unlike the
+    full /movie/{id} detail's release_dates.results nesting _tmdb_record reads)."""
+    return {"id": 1, "results": [{"iso_3166_1": "AU", "release_dates": release_dates_au}]}
+
+
+class EnrichCinemaReleaseBackfillsAnOldRecord(unittest.TestCase):
+    """CAS-379: enrich_cinema_release is the one-off back-fill for a record built before CAS-360
+    ever gave it a cinema_release key."""
+
+    def test_a_type_3_release_sets_cinema_release_true(self):
+        m = {"tmdb_id": 1}
+        with mock.patch.object(pp, "get_json", return_value=_release_dates_payload(
+                [{"type": 3, "release_date": "2026-03-01T00:00:00.000Z"}])):
+            pp.enrich_cinema_release(m)
+        self.assertTrue(m["cinema_release"])
+        self.assertEqual(m["release_dates"], [{"region": "AU", "type": 3, "date": "2026-03-01"}])
+
+    def test_no_type_3_release_leaves_it_false(self):
+        m = {"tmdb_id": 1}
+        with mock.patch.object(pp, "get_json", return_value=_release_dates_payload(
+                [{"type": 2, "release_date": "2026-03-01T00:00:00.000Z"}])):
+            pp.enrich_cinema_release(m)
+        self.assertFalse(m["cinema_release"])
+
+
+class CinemaReleaseBackfillDuringBuild(unittest.TestCase):
+    """CAS-379: the "Only movies that had a Cinema Release" toggle read 0 films because every
+    catalogue record predates cinema_release (CAS-360) — build_live_catalogue carries base records
+    forward unchanged, so the field never existed on any of them. It must notice a record with no
+    cinema_release key at all and back-fill it under its own budget, leaving a record that already
+    carries the key (even False) untouched."""
+
+    def setUp(self):
+        self.today = datetime.date(2026, 8, 5)
+        prov = {"jw_link": "https://jw/x", "rows": {"flatrate": [{"provider_name": "Netflix"}]}}
+        patches = [
+            mock.patch.object(pp, "ingest_tmdb", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
+            mock.patch.object(pp, "tmdb_providers", lambda tid: prov),
+            mock.patch.object(pp, "has_provider_rows", lambda p: True),
+            mock.patch.object(pp, "provider_offers", lambda p: [{"service": "Netflix", "type": "sub",
+                                                                "price": None, "format": "HD"}]),
+            mock.patch.object(pp, "derive_from_providers", lambda m, p, t: ["included_streaming"]),
+            mock.patch.object(pp, "enrich_omdb", lambda m: m),
+            mock.patch.object(pp, "TMDB_PACING", 0),
+        ]
+        for p in patches:
+            p.start(); self.addCleanup(p.stop)
+
+    def _run(self, base):
+        return pp.build_live_catalogue(self.today, base, {}, ondemand_ids=[])
+
+    def test_a_record_missing_the_key_gets_backfilled(self):
+        m = _title(1)
+        self.assertNotIn("cinema_release", m)
+        with mock.patch.object(pp, "enrich_cinema_release",
+                               lambda mv: mv.update(cinema_release=True, release_dates=[]) or mv):
+            catalogue, counts = self._run([m])
+        self.assertTrue(catalogue[0]["cinema_release"])
+        self.assertEqual(counts["cinema_calls"], 1)
+
+    def test_a_record_that_already_has_the_key_is_left_alone(self):
+        m = _title(1, cinema_release=False)
+        with mock.patch.object(pp, "enrich_cinema_release",
+                               side_effect=AssertionError("must not re-fetch a record that already has the field")):
+            catalogue, counts = self._run([m])
+        self.assertFalse(catalogue[0]["cinema_release"])
+        self.assertEqual(counts["cinema_calls"], 0)
+
+    def test_the_backfill_budget_caps_calls_per_run(self):
+        base = [_title(i) for i in range(1, 4)]
+        with mock.patch.object(pp, "CINEMA_RELEASE_BACKFILL_BUDGET", 2), \
+             mock.patch.object(pp, "enrich_cinema_release",
+                               lambda mv: mv.update(cinema_release=True, release_dates=[]) or mv):
+            catalogue, counts = self._run(base)
+        self.assertEqual(counts["cinema_calls"], 2)
+        self.assertEqual(sum(1 for m in catalogue if "cinema_release" in m), 2)
+
+    def test_a_stopping_error_halts_the_backfill_for_the_rest_of_the_run(self):
+        base = [_title(i) for i in range(1, 4)]
+        calls = []
+
+        def boom(mv):
+            calls.append(mv["tmdb_id"])
+            raise _http_error(401, b'{"status_message":"Invalid API key"}')
+
+        with mock.patch.object(pp, "enrich_cinema_release", boom):
+            catalogue, counts = self._run(base)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(counts["cinema_stopped"])
+        self.assertEqual(counts["cinema_fails"], 1)
 
 
 class BudgetsFitTheFreeTier(unittest.TestCase):
