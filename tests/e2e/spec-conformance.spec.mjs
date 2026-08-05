@@ -193,9 +193,12 @@ test("CAS-218 / CAS-222: the card is Blockbusters, the agent is Cinema Blockbust
     await page.waitForTimeout(120);
   }
   expect(await step()).toBe("name");
+  // CAS-372 dropped the "Cinema "/"Streaming " prefix from the Name step's own prefill — the card is still
+  // "Blockbusters" and the AGENT is still disambiguated as "Cinema Blockbusters" everywhere else this name is
+  // offered (the card, starterPreview); only the box the user types into no longer shows the channel word.
   const field = page.locator("#onbStepName");
-  await expect(field).toHaveValue("Cinema Blockbusters");
-  expect(await field.getAttribute("placeholder")).toBe("Cinema Blockbusters");
+  await expect(field).toHaveValue("Blockbusters");
+  expect(await field.getAttribute("placeholder")).toBe("Blockbusters");
 });
 
 test("CAS-226: the membership price box is the prototype's two-tier panel", async ({ page }) => {

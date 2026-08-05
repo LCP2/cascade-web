@@ -7491,6 +7491,15 @@ const RECOMMENDED_FOR = {cinema:"cinema", stream:"streaming"};
 // them apart.
 const CHANNEL_WORD = {cinema:"Cinema", stream:"Streaming"};
 const starterAgentName = (s, kind) => `${CHANNEL_WORD[kind || flowKind] || CHANNEL_WORD.cinema} ${s.name}`;
+// CAS-372: the Name-your-Agent step drops this same channel word from what it prefills/saves — a prefilled
+// field reads as a decision already made, and "Streaming " in front of every offered name was that decision,
+// not the preset's. The channel word still disambiguates everywhere else this name is offered (the card,
+// starterPreview) — only the box you type into strips it.
+const stripChannelPrefix = name => {
+  const n = String(name||"");
+  for(const w of Object.values(CHANNEL_WORD)){ if(n.startsWith(w+" ")) return n.slice(w.length+1); }
+  return n;
+};
 // CAS-247: the RECOMMENDED preset leads its lane. STARTERS is written in one order and offered in two, and
 // that order put Everyday Favourites — the one the streaming lane recommends — third, under two presets a
 // person is being told not to take first. The recommendation and the position now agree, without a second
@@ -9486,17 +9495,21 @@ const SHARP_STEPS = {
     progress: 100,
     noAgent: true,
     body(){
-      const dflt = onbFlow.defaultName || ONB_DEFAULT_NAME;
+      const dflt = stripChannelPrefix(onbFlow.defaultName || ONB_DEFAULT_NAME);
       return `<p class="ossub">Give it a name you'll recognise. Change it any time — from Edit on its card,
           whenever you like.</p>
         <input class="osfield" id="onbStepName" type="text" maxlength="40" autocomplete="off"
-               placeholder="${escA(dflt)}" value="${escA(onbFlow.name)}"
+               placeholder="${escA(dflt)}" value="${escA(stripChannelPrefix(onbFlow.name))}"
                aria-label="Name your agent">
         <p class="osexplain" id="onbNameNote"></p>`;
     },
     wire(){
       const el=$("onbStepName"); if(!el) return;
-      const note=$("onbNameNote"), dflt = onbFlow.defaultName || ONB_DEFAULT_NAME;
+      // CAS-372: body() already stripped the prefix from what's on screen — sync the model to match, so
+      // accepting the prefill as-is (never touching the field) saves the un-prefixed name too, same as
+      // CAS-191 keeps the offer and the blank-field fallback as one string.
+      onbFlow.name = el.value;
+      const note=$("onbNameNote"), dflt = stripChannelPrefix(onbFlow.defaultName || ONB_DEFAULT_NAME);
       // A pre-filled field you have to select-all before you can retype is a field that reads as
       // finished. Focusing it offers the whole name, so replacing it is one gesture.
       el.onfocus=()=>{ try{ el.select(); }catch(e){} };
