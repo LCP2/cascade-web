@@ -336,6 +336,117 @@ class CinemaReleaseBackfillDuringBuild(unittest.TestCase):
         self.assertEqual(counts["cinema_fails"], 1)
 
 
+class OmdbBackfillIsPrioritised(unittest.TestCase):
+    """CAS-384: walking `catalogue` in popularity order let a handful of popular slow-tier titles
+    exhaust the budget before every active title got scored, and a title skipped one run had no
+    better odds of being reached the next. Order must be (active tier first, then oldest
+    last_polled), reusing the poll_tier/last_polled fields CAS-109 already writes."""
+
+    def setUp(self):
+        self.today = datetime.date(2026, 8, 5)
+        prov = {"jw_link": "https://jw/x", "rows": {"flatrate": [{"provider_name": "Netflix"}]}}
+        patches = [
+            mock.patch.object(pp, "ingest_tmdb", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
+            mock.patch.object(pp, "has_provider_rows", lambda p: True),
+            mock.patch.object(pp, "provider_offers", lambda p: [{"service": "Netflix", "type": "sub",
+                                                                "price": None, "format": "HD"}]),
+            mock.patch.object(pp, "derive_from_providers", lambda m, p, t: ["included_streaming"]),
+            mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
+            mock.patch.object(pp, "TMDB_PACING", 0),
+            mock.patch.object(pp, "OMDB_DAILY_BUDGET", 1),
+            mock.patch.object(pp, "OMDB_REFRESH_BUDGET", 0),
+        ]
+        for p in patches:
+            p.start(); self.addCleanup(p.stop)
+        self._prov = prov
+
+    def _run(self, base):
+        return pp.build_live_catalogue(self.today, base, {}, ondemand_ids=[])
+
+    def test_active_tier_is_backfilled_before_slow_tier(self):
+        # Far more popular, but settled on streaming long ago (slow tier).
+        slow = _title(1, cinema_date="2024-01-01", status=["included_streaming"],
+                      imdb_rating=None, imdb_votes=None, popularity=100.0)
+        # Barely popular, but just opened in cinemas (active tier).
+        active = _title(2, cinema_date=self.today.isoformat(), status=[],
+                        imdb_rating=None, imdb_votes=None, popularity=1.0)
+        calls = []
+
+        def spy(m):
+            calls.append(m["tmdb_id"]); m["imdb_rating"] = 5.0; return m
+
+        with mock.patch.object(pp, "tmdb_providers", lambda tid: self._prov), \
+             mock.patch.object(pp, "enrich_omdb", spy):
+            self._run([slow, active])
+
+        self.assertEqual(calls, [2], "active tier must be backfilled before slow tier regardless of popularity")
+
+    def test_within_a_tier_a_stale_last_polled_title_goes_first(self):
+        # Both slow tier and equally released; one's TMDB-provider poll fails this run so its
+        # last_polled stays old, the other's succeeds and gets stamped today.
+        fresh = _title(1, cinema_date="2024-01-01", status=["included_streaming"],
+                       imdb_rating=None, imdb_votes=None, last_polled="2026-08-04", popularity=100.0)
+        stale = _title(2, cinema_date="2024-01-01", status=["included_streaming"],
+                       imdb_rating=None, imdb_votes=None, last_polled="2026-01-01", popularity=1.0)
+
+        def prov(tid):
+            if tid == 2:
+                raise _http_error(500)
+            return self._prov
+
+        calls = []
+
+        def spy(m):
+            calls.append(m["tmdb_id"]); m["imdb_rating"] = 5.0; return m
+
+        with mock.patch.object(pp, "tmdb_providers", prov), mock.patch.object(pp, "enrich_omdb", spy):
+            self._run([fresh, stale])
+
+        self.assertEqual(calls, [2], "the title with the oldest last_polled must be backfilled first")
+
+
+class CrossRunDailySpendSharesOneCap(unittest.TestCase):
+    """CAS-384: OMDb's free tier is counted per key per day, not per run (CAS-161's own comment: "how a
+    second run happened the same day" earned the 2026-07-24 401 — and the same shape recurred on
+    2026-08-05). A second run the same day must see what an earlier run already spent."""
+
+    def setUp(self):
+        self.today = datetime.date(2026, 8, 5)
+        prov = {"jw_link": "https://jw/x", "rows": {"flatrate": [{"provider_name": "Netflix"}]}}
+        patches = [
+            mock.patch.object(pp, "ingest_tmdb", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
+            mock.patch.object(pp, "tmdb_providers", lambda tid: prov),
+            mock.patch.object(pp, "has_provider_rows", lambda p: True),
+            mock.patch.object(pp, "provider_offers", lambda p: [{"service": "Netflix", "type": "sub",
+                                                                "price": None, "format": "HD"}]),
+            mock.patch.object(pp, "derive_from_providers", lambda m, p, t: ["included_streaming"]),
+            mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
+            mock.patch.object(pp, "TMDB_PACING", 0),
+        ]
+        for p in patches:
+            p.start(); self.addCleanup(p.stop)
+
+    def test_a_second_same_day_run_gets_a_shrunk_pot(self):
+        base = [_title(i, imdb_rating=None, imdb_votes=None) for i in range(1, 4)]
+        with mock.patch.object(pp, "enrich_omdb", lambda m: m.update(imdb_rating=5.0) or m):
+            _, counts = pp.build_live_catalogue(
+                self.today, base, {}, ondemand_ids=[],
+                omdb_spent_today=pp.OMDB_FREE_TIER_CAP - 1)   # only one call left in today's real cap
+        self.assertEqual(counts["omdb_calls"], 1)
+
+    def test_a_fully_spent_day_makes_no_omdb_calls(self):
+        base = [_title(i, imdb_rating=None, imdb_votes=None) for i in range(1, 4)]
+        with mock.patch.object(pp, "enrich_omdb",
+                               side_effect=AssertionError("must not call OMDb — today's cap is already spent")):
+            _, counts = pp.build_live_catalogue(
+                self.today, base, {}, ondemand_ids=[], omdb_spent_today=pp.OMDB_FREE_TIER_CAP)
+        self.assertEqual(counts["omdb_calls"], 0)
+
+
 class BudgetsFitTheFreeTier(unittest.TestCase):
     def test_the_two_omdb_pots_share_one_daily_cap(self):
         """They are spent against ONE allowance, counted per key per day — so their SUM is what matters.
