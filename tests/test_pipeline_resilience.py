@@ -336,6 +336,121 @@ class CinemaReleaseBackfillDuringBuild(unittest.TestCase):
         self.assertEqual(counts["cinema_fails"], 1)
 
 
+def _wikidata_payload(rows):
+    """A minimal Wikidata SPARQL JSON results shape — one binding per (category, result[, person])."""
+    bindings = []
+    for category, result, person in rows:
+        b = {"awardLabel": {"value": category}, "result": {"value": result}}
+        if person:
+            b["personLabel"] = {"value": person}
+        bindings.append(b)
+    return {"results": {"bindings": bindings}}
+
+
+class EnrichWikidataAwardsParsesTheSparqlResult(unittest.TestCase):
+    """CAS-322: turn Wikidata's SPARQL rows into { category, result, person? } entries."""
+
+    def test_a_film_level_win_has_no_person(self):
+        m = {"imdb_id": "tt0000001"}
+        with mock.patch.object(pp, "get_json", return_value=_wikidata_payload(
+                [("Academy Award for Best Picture", "Won", None)])):
+            pp.enrich_wikidata_awards(m)
+        self.assertEqual(m["oscar_detail"],
+                         [{"category": "Academy Award for Best Picture", "result": "Won"}])
+        self.assertTrue(m["oscar_detail_checked"])
+
+    def test_a_personal_category_carries_the_winner(self):
+        m = {"imdb_id": "tt0000002"}
+        with mock.patch.object(pp, "get_json", return_value=_wikidata_payload(
+                [("Academy Award for Best Director", "Won", "Christopher Nolan")])):
+            pp.enrich_wikidata_awards(m)
+        self.assertEqual(m["oscar_detail"], [{"category": "Academy Award for Best Director",
+                                              "result": "Won", "person": "Christopher Nolan"}])
+
+    def test_no_rows_caches_an_empty_list_not_a_missing_field(self):
+        m = {"imdb_id": "tt0000003"}
+        with mock.patch.object(pp, "get_json", return_value=_wikidata_payload([])):
+            pp.enrich_wikidata_awards(m)
+        self.assertEqual(m["oscar_detail"], [])
+        self.assertTrue(m["oscar_detail_checked"])
+
+
+class WikidataAwardBackfillDuringBuild(unittest.TestCase):
+    """CAS-322: only a title OMDb already flagged as having Oscar activity (`award` won/nominated)
+    is looked up, and only once — a bounded, converging backfill, not a per-run full sweep."""
+
+    def setUp(self):
+        self.today = datetime.date(2026, 8, 6)
+        prov = {"jw_link": "https://jw/x", "rows": {"flatrate": [{"provider_name": "Netflix"}]}}
+        patches = [
+            mock.patch.object(pp, "ingest_tmdb", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
+            mock.patch.object(pp, "tmdb_providers", lambda tid: prov),
+            mock.patch.object(pp, "has_provider_rows", lambda p: True),
+            mock.patch.object(pp, "provider_offers", lambda p: [{"service": "Netflix", "type": "sub",
+                                                                "price": None, "format": "HD"}]),
+            mock.patch.object(pp, "derive_from_providers", lambda m, p, t: ["included_streaming"]),
+            mock.patch.object(pp, "enrich_omdb", lambda m: m),
+            mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
+            mock.patch.object(pp, "TMDB_PACING", 0),
+            mock.patch.object(pp, "WIKIDATA_PACING", 0),
+        ]
+        for p in patches:
+            p.start(); self.addCleanup(p.stop)
+
+    def _run(self, base):
+        return pp.build_live_catalogue(self.today, base, {}, ondemand_ids=[])
+
+    def test_an_awarded_title_gets_backfilled(self):
+        m = _title(1, cinema_release=True, award="won")
+        with mock.patch.object(pp, "enrich_wikidata_awards",
+                               lambda mv: mv.update(oscar_detail=[{"category": "Best Picture",
+                                                                    "result": "Won"}],
+                                                     oscar_detail_checked=True) or mv):
+            catalogue, counts = self._run([m])
+        self.assertEqual(catalogue[0]["oscar_detail"], [{"category": "Best Picture", "result": "Won"}])
+        self.assertEqual(counts["wikidata_calls"], 1)
+
+    def test_a_title_with_no_award_is_never_queried(self):
+        m = _title(1, cinema_release=True)
+        with mock.patch.object(pp, "enrich_wikidata_awards",
+                               side_effect=AssertionError("must not query a title with no award flag")):
+            catalogue, counts = self._run([m])
+        self.assertNotIn("oscar_detail", catalogue[0])
+        self.assertEqual(counts["wikidata_calls"], 0)
+
+    def test_an_already_checked_title_is_left_alone(self):
+        m = _title(1, cinema_release=True, award="won", oscar_detail=[], oscar_detail_checked=True)
+        with mock.patch.object(pp, "enrich_wikidata_awards",
+                               side_effect=AssertionError("must not re-query an already-checked title")):
+            catalogue, counts = self._run([m])
+        self.assertEqual(counts["wikidata_calls"], 0)
+
+    def test_the_backfill_budget_caps_calls_per_run(self):
+        base = [_title(i, cinema_release=True, award="won") for i in range(1, 4)]
+        with mock.patch.object(pp, "WIKIDATA_BACKFILL_BUDGET", 2), \
+             mock.patch.object(pp, "enrich_wikidata_awards",
+                               lambda mv: mv.update(oscar_detail=[], oscar_detail_checked=True) or mv):
+            catalogue, counts = self._run(base)
+        self.assertEqual(counts["wikidata_calls"], 2)
+        self.assertEqual(sum(1 for m in catalogue if m.get("oscar_detail_checked")), 2)
+
+    def test_a_stopping_error_halts_the_backfill_for_the_rest_of_the_run(self):
+        base = [_title(i, cinema_release=True, award="won") for i in range(1, 4)]
+        calls = []
+
+        def boom(mv):
+            calls.append(mv["tmdb_id"])
+            raise _http_error(401, b'{"error":"limited"}')
+
+        with mock.patch.object(pp, "enrich_wikidata_awards", boom):
+            catalogue, counts = self._run(base)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(counts["wikidata_stopped"])
+        self.assertEqual(counts["wikidata_fails"], 1)
+
+
 class OmdbBackfillIsPrioritised(unittest.TestCase):
     """CAS-384: walking `catalogue` in popularity order let a handful of popular slow-tier titles
     exhaust the budget before every active title got scored, and a title skipped one run had no

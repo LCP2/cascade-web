@@ -78,6 +78,14 @@ jobs:
         run: npm run test:engine
 
   # movies.json is a committed catalogue file, not a build output, so this needs no build step.
+  #
+  # CAS-405: `daily.yml` refreshes movies.json from live TMDB/OMDb data every morning, and that
+  # live drift used to trip most of test_data_quality.py's ~30 assertions on an ordinary day,
+  # turning this job red and blocking `promote` for reasons that were not app breakage. Only the
+  # test_data_quality checks that are genuine app-breakers still gate this job (run via
+  # run_data_quality.py, see its header + BLOCKING_TESTS in test_data_quality.py); every other
+  # check in that file still runs and is printed, but report-only. The other two files here
+  # (mocked-network pipeline invariants, not live-data drift) are unaffected and still block.
   data:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -87,8 +95,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Catalogue data quality
-        run: python -m unittest discover -s tests
+      - name: Pipeline invariants
+        run: |
+          python -m unittest discover -s tests -p "test_monotonic_status.py"
+          python -m unittest discover -s tests -p "test_pipeline_resilience.py"
+
+      - name: Catalogue data quality (blocking app-breakers; rest report-only)
+        run: python -m tests.run_data_quality
 
   # Also reads movies.json straight from the checkout — no build step needed here either.
   monitor:

@@ -403,9 +403,11 @@
   .ctl:focus-visible .cmini{outline:2px solid var(--cyan);outline-offset:2px}
   /* CAS-348 (0.8.5 staging review): three equal columns leave too little room on a phone for the icon AND
      the full label — the label lost, ellipsising to a single letter. Full legibility wins: the icon goes,
-     the label keeps every column's whole width for itself. */
-  @media (max-width:400px){
-    .actions .cmini{padding:0 8px}
+     the label keeps every column's whole width for itself.
+     CAS-398: 400px missed most iPhones (390-430px logical width) — "Watched" (longest label + caret) still
+     ellipsised at those widths because the icon hadn't been hidden yet. Raised to 430px to actually cover them. */
+  @media (max-width:430px){
+    .actions .cmini{padding:0 8px;gap:5px}
     .actions .cmini .cic{display:none}
   }
   /* CAS-304: the panel opens ABOVE the control row by default — the row is usually the last thing on the
@@ -1120,6 +1122,10 @@
   .saveline{margin-top:11px;font-size:11.5px;font-weight:700;line-height:1.45;padding:7px 10px;border-radius:9px;
     background:rgba(72,199,142,.12);border:1px solid rgba(72,199,142,.45);color:#a7eccb;
     display:flex;align-items:center;justify-content:space-between;gap:10px;overflow:hidden}
+  /* CAS-399: when the bar carries the Services affordance, the WHOLE bar is the toggle, not just the
+     chevron control inside it — so it needs its own pointer cursor and focus ring. */
+  .saveline.svctog{cursor:pointer}
+  .saveline.svctog:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .savetxt{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* rent-only: a fact, not a win — the green is reserved for "you already have this" */
   .saveline.plain{background:var(--panel2);border-color:var(--line);color:var(--dim)}
@@ -2100,16 +2106,23 @@
   /* CAS-306: grid rows (not flex column) so both boxes share the taller box's height even though
      only one label wraps to two lines — flex's main axis can't stretch column items to match. */
   .prioopts{display:grid;grid-template-rows:repeat(2,1fr);gap:14px;margin-top:6px}
-  .priobtn{display:flex;align-items:center;gap:14px;width:100%;text-align:left;cursor:pointer;
-    background:var(--panel);border:1.5px solid var(--line);border-radius:18px;padding:20px 18px;
-    color:var(--ink);transition:transform .12s,border-color .12s}
-  .priobtn:hover{border-color:var(--accent)}
+  .priobtn{display:flex;align-items:center;gap:16px;width:100%;text-align:left;cursor:pointer;
+    background:var(--panel);border:1.5px solid var(--line);border-radius:20px;padding:22px 20px;
+    color:var(--ink);transition:transform .12s,border-color .12s,box-shadow .12s}
+  .priobtn:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 10px 24px rgba(0,0,0,.35)}
   .priobtn:active{transform:scale(.99)}
   .priobtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  .priobtn.cin{border-left:4px solid var(--amber)}
-  .priobtn.str{border-left:4px solid var(--green)}
-  .prioic{font-size:30px;line-height:1;flex:0 0 auto}
-  .priotx{font-size:16px;font-weight:600;line-height:1.3}
+  .priobtn.cin{border-left:5px solid var(--amber)}
+  .priobtn.str{border-left:5px solid var(--green)}
+  .prioictile{display:flex;align-items:center;justify-content:center;flex:0 0 auto;
+    width:56px;height:56px;border-radius:16px}
+  .priobtn.cin .prioictile{background:rgba(240,163,54,.15)}
+  .priobtn.str .prioictile{background:rgba(72,199,142,.15)}
+  .prioic{font-size:30px;line-height:1}
+  .priotx{font-size:17.5px;font-weight:600;line-height:1.35;flex:1 1 auto}
+  .priochev{font-size:20px;line-height:1;flex:0 0 auto}
+  .priobtn.cin .priochev{color:var(--amber)}
+  .priobtn.str .priochev{color:var(--green)}
   .priostmt{margin:22px 2px 0;font-size:13.5px;color:var(--dim);line-height:1.5;text-align:center}
   /* Select-all / clear-all is a SECONDARY row at the bottom of the picker, not a pair of buttons competing
      with the chips above them: compact, underlined, low-contrast — there when you want it, never the first
@@ -2792,14 +2805,13 @@ const CASCADE = ["upcoming","opening_week","in_cinema","pvod","rental","included
 // 27 Upcoming above the one film actually on a screen. A listing answers "what can I watch", so it leads
 // with what is out and keeps Upcoming as the tail it is. Same six sections, same films, same counts.
 const LISTING_ORDER = ["opening_week","in_cinema","pvod","rental","included_streaming","upcoming"];
-// CAS-295: a CINEMA agent reads in the order a trip to the cinema is planned — what is coming, what has just
-// opened, what is on now — rather than in the order of what you can watch this minute. On that lane Upcoming
-// is not the dregs of the list: an announced film is the single most useful row a cinema-goer has, because
-// it is the one thing they can still make plans around.
+// CAS-394: reverses CAS-295. A CINEMA agent now reads oldest cinema date first — In Cinema (already open)
+// leads and Upcoming (the least settled plan, furthest out) sits last — so the sections read as a timeline
+// you can actually act on tonight, working down toward what you can only still plan for.
 //
 // The default order everywhere else is unchanged and still ends with Upcoming, which is the right answer for
 // a streaming agent: there, an unreleased film really is the least actionable thing on the page.
-const CINEMA_LISTING_ORDER = ["upcoming","opening_week","in_cinema","pvod","rental","included_streaming"];
+const CINEMA_LISTING_ORDER = ["opening_week","in_cinema","pvod","rental","included_streaming","upcoming"];
 const orderFor = c => (c && c.kind==="cinema") ? CINEMA_LISTING_ORDER : LISTING_ORDER;
 const STATUS_LABEL = {
   opening_week:"In Cinema · Opening week", in_cinema:"In Cinema",
@@ -2910,6 +2922,10 @@ function deriveStatus(m){
   // the catalogue's own dates are never rewritten. It is the one thing allowed to put a film on the big screen
   // that the data doesn't have there, because it has explicitly just moved it and announces the move.
   if(m._simReleased) s.add(cd && cd >= addDays(TODAY,-OPENING_WEEK_DAYS) ? "opening_week" : "in_cinema");
+  // CAS-395: the pipeline is the authority that a CONFIRMED film's theatrical run is still current
+  // (claimedStatus holds in_cinema) — trust that alongside whatever the offers below resolve to, rather
+  // than only when there are no offers at all. A film can be on a screen and already have a home offer.
+  if(claimed.includes("in_cinema") && inCinemaRun(m)) s.add(cinemaRungFor(m));
   if(!hasSub && ((dearestBuy!=null&&dearestBuy>=PVOD_MIN)||(cheapestRent!=null&&cheapestRent>=PVOD_MIN))) s.add("pvod");
   if(cheapestRent!=null && cheapestRent<=RENTAL_MAX) s.add("rental");
   if(hasSub) s.add("included_streaming");
@@ -2935,6 +2951,11 @@ function ownReach(m){
 // looking streaming offer someone else pays for, has to file — and show its green bar — under Rent.
 function primaryStatus(m){
   const st=m.status, last=st[st.length-1];
+  // CAS-395: a film still on a screen right now outranks the fact that CASCADE would otherwise show
+  // whichever home window it has ALSO reached — "furthest travelled" only makes sense once cinema
+  // availability is truly behind a film, not while it is simultaneous with a pvod/rent/stream offer.
+  if(st.includes("opening_week")) return "opening_week";
+  if(st.includes("in_cinema")) return "in_cinema";
   if(st.includes("rental") && st.includes("included_streaming") && (scopedFor("rental")||scopedFor("included_streaming"))){
     const own=ownReach(m);
     if(own.stream) return "included_streaming";
@@ -3555,7 +3576,7 @@ ALERT_TYPES.forEach(t=>{
 // One delegated pass makes them all reachable (Tab) and operable (Enter/Space), including the ones the
 // editor builds after this runs.
 function armSwitches(root){
-  (root||document).querySelectorAll(".switch, .iconbtn").forEach(s=>{
+  (root||document).querySelectorAll(".switch, .iconbtn, .svctog").forEach(s=>{
     if(s.dataset.kb) return;
     s.dataset.kb="1";
     if(!s.hasAttribute("tabindex")) s.tabIndex=0;
@@ -3692,9 +3713,30 @@ function parseAwards(t){
   const a={oscW:oscW?+oscW:0, oscN:oscN?+oscN:0, wins:wins?+wins:null, noms:noms?+noms:null};
   return (a.oscW||a.oscN||a.wins!=null||a.noms!=null) ? a : null;
 }
+// CAS-322: specific Oscar categories/winners from Wikidata (m.oscar_detail), when the daily
+// pipeline has enriched this title — richer than the free-text count parseAwards reads below.
+// Matches the ticket's own worked example ("Best Picture — Won", "Best Director — Won (Christopher
+// Nolan)") right on the chip, not hidden behind a hover tooltip. Wins first, then nominations,
+// capped at two chips + a "+N more" summary so the row stays compact (composes with CAS-373's
+// one-line award row). null (not enriched, or enriched with nothing found) means "fall back to the
+// plain count" — never an empty row for a film with awards.
+function oscarChips(m){
+  const list=m.oscar_detail;
+  if(!Array.isArray(list) || !list.length) return null;
+  const sorted=[...list].sort((a,b)=>(a.result==="Won"?0:1)-(b.result==="Won"?0:1));
+  const full=o=>`${o.category}${o.person?" ("+o.person+")":""} — ${o.result}`;
+  const shown=sorted.slice(0,2), rest=sorted.slice(2);
+  let c=shown.map(o=>`<span class="m ${o.result==="Won"?"osc":"awd"}" title="${escA(full(o))}">`+
+    `${o.result==="Won"?"🏆":"✦"} <b>${esc(o.category)}</b> — ${o.result}`+
+    `${o.person?` <span class="lab">(${esc(o.person)})</span>`:""}</span>`).join("");
+  if(rest.length) c+=`<span class="m awd" title="${escA(rest.map(full).join("; "))}">+${rest.length} more</span>`;
+  return c;
+}
 // Three chips at most, and the third only when there are wins beyond the Oscars already named — the
 // row is a summary, not a list. Which award, in which category, in which year, is a separate job.
 function awardChips(m){
+  const oscar=oscarChips(m);
+  if(oscar!==null) return oscar;
   const a=parseAwards(m.award_text);
   if(!a) return "";
   let c="";
@@ -3712,6 +3754,14 @@ function cinemaReleaseChip(m){
 // The breakdown, on the opened card. Same numbers, said in full — nothing here that isn't in the
 // film's own award line.
 function awardsBreakdownHTML(m){
+  const list=m.oscar_detail;
+  if(Array.isArray(list) && list.length){
+    const sorted=[...list].sort((a,b)=>(a.result==="Won"?0:1)-(b.result==="Won"?0:1));
+    const l=sorted.map(o=>`<div class="l">${o.result==="Won"?"🏆":"✦"} <span>`+
+      `${o.result==="Won"?"<b>Won</b>":"Nominated"} — <b>${esc(o.category)}</b>`+
+      `${o.person?` (${esc(o.person)})`:""}</span></div>`);
+    return `<div class="awx">${l.join("")}</div>`;
+  }
   const a=parseAwards(m.award_text);
   if(!a) return "";
   const l=[];
@@ -3824,6 +3874,16 @@ function byTimeline(a,b){
   if(!db) return -1;
   return db.localeCompare(da);
 }
+// CAS-394: the cinema lane's default reads the same timeline the other way — oldest cinema date at the
+// top — so a trip-planning read moves from what already opened toward what is still to come, Upcoming's
+// furthest-out title last rather than first (see sortForKey).
+function byTimelineAsc(a,b){
+  const da=a.cinema_date||"", db=b.cinema_date||"";
+  if(!da && !db) return byRatingDesc(a,b);
+  if(!da) return 1;
+  if(!db) return -1;
+  return da.localeCompare(db);
+}
 function sortMoviesBy(a,b,key){
   switch(key){
     case "availability": return byTimeline(a,b);
@@ -3857,12 +3917,12 @@ const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
 // explicit sort exactly as before — this is the pre-release section's rule, not a global reversal.
 // The sorts that ARE meaningful pre-release still win: Title stays alphabetical because the user asked
 // for alphabetical, and Cinema date is this order already.
-const sortForKey = (g,key) =>
+const sortForKey = (g,key,cinema) =>
     (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byTimeline
-  : key==="availability" ? byTimeline
+  : key==="availability" ? (cinema ? byTimelineAsc : byTimeline)
   : key==="imdb" ? byRatingDesc
   : ((a,b)=>sortMoviesBy(a,b,key));
-const sortFor = g => sortForKey(g, filt.sort);
+const sortFor = (g,c) => sortForKey(g, filt.sort, c && c.kind==="cinema");
 // ---- The listing's order, as one function (CAS-176) -----------------------------
 // The listing is sections in CASCADE order, each sorted by sortFor(); the reveal is the same films as one
 // flat grid. For the two to be the same SEQUENCE, the flat one has to walk the same sections in the same
@@ -3876,7 +3936,7 @@ const sortFor = g => sortForKey(g, filt.sort);
 function listingOrder(films, sortKey, c){
   const ordered=[], seen=new Set();
   orderFor(c).forEach(g=>{
-    films.filter(m=>primaryStatus(m)===g).sort(sortForKey(g,sortKey))
+    films.filter(m=>primaryStatus(m)===g).sort(sortForKey(g,sortKey,c && c.kind==="cinema"))
          .forEach(m=>{ ordered.push(m); seen.add(m); });
   });
   // A film whose window isn't one of the six sections has no section to sit in, so the listing never shows
@@ -4080,15 +4140,20 @@ function savingsHTML(m, canExpand){
   // CAS-348: the services list used to open only from the row's chevron button, which the control-row
   // redesign removes. On a card wearing this bar, the bar itself carries the shortcut instead — per film,
   // not per agent, so it is correct on the mixed All/Home view too.
-  const svcAff = canExpand
-    ? `<button type="button" class="svcbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')"
-         title="Show all services" aria-label="Show all services">Services${ICON.chev}</button>`
+  const svcAff = canExpand ? `<span class="svcbtn">Services${ICON.chev}</span>` : "";
+  // CAS-399: when the bar carries the Services affordance, the whole bar is the toggle (not just the
+  // chevron control) — a real click/tap/keyboard target, with the chevron's open state still synced via
+  // .svcbtn so the existing card-expand wiring (~line 5325) keeps working unchanged.
+  const svcTogClass = canExpand ? " svctog" : "";
+  const svcTogAttrs = canExpand
+    ? ` role="button" tabindex="0" aria-label="Show all services"
+         onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.querySelector('.svcbtn').classList.toggle('open')"`
     : "";
   if(subs.length && (!prefsActive() || mine.length)){
     const svc=svcName((mine[0]||subs[0]).service);
     const own=(ux.on && mine.length) ? " (already paid)" : "";
     const alt=rent ? `, or pay <b>$${rent.price.toFixed(2)}</b> to rent` : "";
-    return `<div class="saveline"><span class="savetxt">✓ On <b>${esc(svc)}</b>${alt}${own}</span>${svcAff}</div>`;
+    return `<div class="saveline${svcTogClass}"${svcTogAttrs}><span class="savetxt">✓ On <b>${esc(svc)}</b>${alt}${own}</span>${svcAff}</div>`;
   }
   if(rent && rent.price<=RENTAL_MAX){
     const cheaper=(ux.on && buy && buy.price>rent.price)
@@ -4101,7 +4166,7 @@ function savingsHTML(m, canExpand){
   const premium = buy || rent;
   if(premium){
     const verb = premium.type==="buy" ? "Buy" : "Rent";
-    return `<div class="saveline plain"><span class="savetxt">${verb} for <b>$${premium.price.toFixed(2)}</b> on ${esc(svcName(premium.service))}</span>${svcAff}</div>`;
+    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt">${verb} for <b>$${premium.price.toFixed(2)}</b> on ${esc(svcName(premium.service))}</span>${svcAff}</div>`;
   }
   return "";   // no priced offer at all — nothing honest to write
 }
@@ -6387,7 +6452,6 @@ deckStrip.addEventListener("click",e=>{
   if(deckDragged) return;                            // that click was the end of a drag
   const i=deckCards().indexOf(card);
   deckUsed(deckDragged?"drag":"tap");
-  if(deckIsNew(i)){ deckFocus(i,true); deckCentre(i,true); return newCascade(); }
   deckGo(i,true);
 });
 let deckResizeT=null;
@@ -8142,7 +8206,7 @@ const SCALE_REF = [
   {d:1e6,   label:"Indie"},
   {d:15e6,  label:"Studio"},
   {d:100e6, label:"Blockbuster"},
-  {d:250e6, label:"Megabudget"},
+  {d:250e6, label:"Mega"},
 ];
 const SCALE_SEG = 100;                                    // slider units between one named stop and the next
 const SCALE_POS_MAX = SCALE_SEG*(SCALE_REF.length-1);
@@ -8888,11 +8952,11 @@ function onbSummary(){
 // Every value is read LIVE off the same state the screens edit (the draft, onbFlow, prefs) rather than
 // captured when a step was left, so the trail cannot go stale if you walk back and change something. Rows
 // with nothing to say are dropped rather than printed empty — an empty row is not a summary, it is noise.
-const trailGenres = () => { const g=dT().genre;
+const trailGenres = () => { const g=dT().genre, ex=genreExcludeSuffix();
   return g===null ? "None selected"
-       : !g.length ? "All genres"
-       : g.length<=2 ? g.join(", ")
-       : `${g.length} of ${ONB_GENRES.length}`; };
+       : !g.length ? "All genres"+ex
+       : g.length<=2 ? g.join(", ")+ex
+       : `${g.length} of ${ONB_GENRES.length}`+ex; };
 const trailLangs = () => { const l=dT().lang;
   return l===null ? "None selected"
        : !l.length ? "Any language"
@@ -8934,7 +8998,7 @@ function onbTrailRows(key){
 function onbTrailHTML(key){
   // Only inside the wired line. A standalone ?step= preview has no steps behind it, and the Briefing is a
   // hub whose own doors already print their summaries — a trail there would be the same words twice.
-  if(!flowOn || briefOn) return "";
+  if(!flowOn || briefOn || key==="keepfinding") return "";
   const rows=onbTrailRows(key);
   if(!rows.length) return "";
   return `<div class="ostrail" id="onbTrail" aria-label="What you've set so far">
@@ -9012,9 +9076,9 @@ const DIAL_DEFS = {
   crit:  {em:"🏅", label:"Critics & awards", how:"What professional critics and awards thought.",
           cont:"crit", also:{stops:AWARD_STOPS, key:"awardStop", dial:"awards",
                              cap:"…and how decorated. A winner clears every nomination rung."}},
-  scale: {em:"🎬", label:"Budget & scale", how:"How big the film is — from a small indie to a huge blockbuster.",
+  scale: {em:"🎬", label:"Movie Budget", how:"How big the film is — from a small indie to a huge blockbuster.",
           cont:"scale"},
-  buzz:  {em:"🔥", label:"Buzz", how:"How much people are talking about it right now.", isNew:true,
+  buzz:  {em:"🔥", label:"Movie Buzz", how:"How much people are talking about it right now.", isNew:true,
           stops:BUZZ_STOPS, key:"buzzStop"},
 };
 let onbMoreOpen=false;
@@ -9087,6 +9151,9 @@ function dialCardHTML(k){
   })();
   if(cont){
     const marks=cont.marks(curV);
+    // CAS-390: "Mega" (was "Megabudget") is short enough that the budget dial's five stops fit one row,
+    // so it opts out of the stagger other 5-stop dials still use for longer labels.
+    const stag=marks.length>=5 && d.cont!=="scale";
     // The marker labels are buttons: "the existing dots become snap points" (CAS-166) means the four sizes
     // you used to pick from are still one tap away, they just no longer bound what you can choose.
     return `<div class="osdial" data-dial="${d.cont}">${head}
@@ -9096,7 +9163,7 @@ function dialCardHTML(k){
         <input type="range" id="onbDial_${d.cont}" min="${cont.min}" max="${cont.max}" step="${cont.step}"
                value="${cont.rawOf(curV)}" aria-label="${escA(cont.aria)}">
       </div>
-      <div class="vlabels${marks.length>=5?" stag":""}">${marks.map((mk,i)=>`<button type="button" class="vsnap ${mk.lit?"on":""} ${i%2?"lo":""}" data-snap="${mk.snap}"
+      <div class="vlabels${stag?" stag":""}">${marks.map((mk,i)=>`<button type="button" class="vsnap ${mk.lit?"on":""} ${stag&&i%2?"lo":""}" data-snap="${mk.snap}"
         style="left:${mk.pos}%;transform:${mk.pos<=0?"translateX(0)":mk.pos>=100?"translateX(-100%)":"translateX(-50%)"}">${esc(mk.label)}${mk.sub?`<small>${esc(mk.sub)}</small>`:""}</button>`).join("")}</div>
       ${alsoHTML}
     </div>`;
@@ -9237,6 +9304,14 @@ const dSet = (v, all) => new Set(v===null ? [] : (v||[]).length ? v : all);
 const dGenreSet = () => dSet(dT().genre, ONB_GENRES);
 const dLangSet  = () => dSet(dT().lang,  LANG_OPTS);
 const dAgeSet   = () => dSet(dT().age,   AGE_LEVELS);
+// CAS-397: `exclude` is a preset-seeded skip list (Family Movies) that this screen's chips never exposed —
+// a genre could be silently dropped with nothing on the Style screen or its summary saying so. This is the
+// one place both readers of that gap (the chip paint and the two "All genres" summaries) get their words.
+const dExcludeSet = () => new Set(dT().exclude||[]);
+const genreExcludeSuffix = () => {
+  const ex=[...dExcludeSet()];
+  return ex.length ? ` except ${ex.join(", ")}` : "";
+};
 // Ratings are a LIST, not a range, so each one is independently in or out and a tap means exactly what it
 // looks like. (The taste-baseline accordion keeps its lo..hi band; that is a different control on a
 // different screen, and this one no longer has to pretend a tap is a drag.)
@@ -9253,6 +9328,9 @@ function dAgeToggle(k){
 window.flowSetAll=(key,on)=>{
   if(!onbFlow.draft) return;
   onbFlow.draft[key] = on ? [] : null;
+  // CAS-397: Select all / Clear all is this screen's own "everything" button — a preset's exclude list
+  // (the same hidden filter a chip tap now clears) must not survive it either.
+  if(key==="genre") onbFlow.draft.exclude = [];
   renderOnbStep(onbStepKey);
 };
 // The selection lines under each picker. Plain lines, never boxes (buildspec §8): each states what is
@@ -9626,11 +9704,13 @@ const SHARP_STEPS = {
       return `<h2 class="osh prioh">What matters most right now?</h2>
         <div class="prioopts">
           <button class="priobtn cin" type="button" onclick="flowPriority('cinema')">
-            <span class="prioic">🎬</span>
-            <span class="priotx">Never miss a great film on the big screen.</span></button>
+            <span class="prioictile"><span class="prioic">🎬</span></span>
+            <span class="priotx">Never miss a great film on the big screen.</span>
+            <span class="priochev">›</span></button>
           <button class="priobtn str" type="button" onclick="flowPriority('stream')">
-            <span class="prioic">📺</span>
-            <span class="priotx">Always know what to stream next.</span></button>
+            <span class="prioictile"><span class="prioic">📺</span></span>
+            <span class="priotx">Always know what to stream next.</span>
+            <span class="priochev">›</span></button>
         </div>
         <p class="priostmt">Just a starting point — add as many Cascade Agents as you like.</p>`;
     },
@@ -9665,22 +9745,31 @@ const SHARP_STEPS = {
     },
     wire(){
       const box=$("onbStepGenres"); if(!box) return;
-      const on=dGenreSet();
+      const on=dGenreSet(), excl=dExcludeSet();
       // CAS-224: the agent's own numbers, not GENRE_COUNT's catalogue-wide ones.
       const counts=genreCountsNow();
       box.innerHTML="";
       ONB_GENRES.forEach(g=>{
+        // CAS-397: a genre a preset put on `exclude` (Family Movies' Horror/Crime/Romance) was never
+        // subtracted here, so the chip showed it as included while the matcher was still dropping it —
+        // the chip face IS this agent's Style criterion, so it has to read what the matcher reads.
+        const isOn=on.has(g) && !excl.has(g);
         const c=document.createElement("button");
         c.type="button";
-        c.className="chip gen"+(on.has(g)?" on":"");
+        c.className="chip gen"+(isOn?" on":"");
         c.dataset.chipkey=g;
-        c.setAttribute("aria-pressed", String(on.has(g)));
+        c.setAttribute("aria-pressed", String(isOn));
         c.innerHTML=`${esc(g)} <span class="chcount" style="opacity:.55">· ${counts[g]||0}</span>`;
         c.onclick=()=>{
-          on.has(g) ? on.delete(g) : on.add(g);
-          onbFlow.draft.genre = tbStore(new Set(ONB_GENRES.filter(x=>on.has(x))), ONB_GENRES);
-          c.classList.toggle("on", on.has(g)); c.setAttribute("aria-pressed", String(on.has(g)));
-          onbRefresh();
+          // CAS-397: this screen is the one control for the whole genre axis, so a tap resolves BOTH fields —
+          // the include list AND any preset exclude get flattened into the include list alone. Otherwise a
+          // tap on Horror (currently off via exclude) had nothing to turn off, and every other preset-excluded
+          // chip stayed silently excluded until the whole draft was rebuilt some other way.
+          const nowOn=new Set(ONB_GENRES.filter(x=>on.has(x) && !excl.has(x)));
+          isOn ? nowOn.delete(g) : nowOn.add(g);
+          onbFlow.draft.genre = tbStore(new Set(nowOn), ONB_GENRES);
+          onbFlow.draft.exclude = [];
+          renderOnbStep("genres");   // exclude clearing can flip OTHER chips' state too — repaint them all
         };
         box.appendChild(c);
       });
@@ -9903,8 +9992,8 @@ const SHARP_STEPS = {
     noSkip: true,          // CAS-339: nothing here to skip — it's outside the counted flow now, own chrome
     cta: "Continue",
     body(){
-      return `<p class="kflead">Don't worry if your selections are so precise that <b>few movies are found right
-          now</b>.</p>
+      return `<p class="kflead">Don't worry if your selections are so precise that few movies are found right
+          now.</p>
         <p class="kflead">Your agent will keep searching — and tell you about movies as they appear.</p>
         <!-- CAS-226: two tiers now, per the prototype's .exprice. This reverses the CAS-188 note that used to
              live here, which kept the price as ONE sentence on ONE source line because that sentence had been
@@ -9923,13 +10012,14 @@ const SHARP_STEPS = {
   // been scheduled. Delivery is the monitor's ticket (CAS-185); saying otherwise would be a capability we
   // have not built.
   notifysettings: {
-    title: "How will your agent notify you about Movies?",
+    title: "Agent notifications",
     progress: 100,
     noAgent: true,
     cta: "Continue",
     body(){
       const on=k=>notifyPrefs[k]?" on":"";
-      return `<button type="button" class="bigtoggle${on("inApp")}" onclick="flowNotify('inApp',this)">
+      return `<p class="ossub">As new movies come along that meet your brief, this agent will ping you. How would you like to be notified?</p>
+        <button type="button" class="bigtoggle${on("inApp")}" onclick="flowNotify('inApp',this)">
           <span class="btmain">Allow in-app notifications</span><span class="btcheck">✓</span></button>
         <button type="button" class="bigtoggle${on("emailOn")}" onclick="flowNotify('emailOn',this)">
           <span class="btmain">Send me alerts by email</span><span class="btcheck">✓</span></button>
@@ -10331,10 +10421,13 @@ function briefSum(key){
   const all={genre:ONB_GENRES, lang:LANG_OPTS, age:AGE_LEVELS}[key];
   const noneWord={genre:"No genres", lang:"No languages", age:"No ratings"}[key];
   const allWord ={genre:"All genres", lang:"Any language", age:"All ratings"}[key];
+  // CAS-397: exclude is a genre-axis criterion the include list alone cannot show — "All genres" must not
+  // print over a standing skip list, or the row is exactly the hidden filter the ticket is about.
+  const exSuffix = key==="genre" ? genreExcludeSuffix() : "";
   if(v===null) return noneWord;
-  if(!v.length || v.length===all.length) return allWord;
+  if(!v.length || v.length===all.length) return allWord+exSuffix;
   if(key==="lang") return v.map(langName).join(", ");
-  return v.length<=3 ? v.join(", ") : `${v.length} of ${all.length}`;
+  return (v.length<=3 ? v.join(", ") : `${v.length} of ${all.length}`)+exSuffix;
 }
 function briefServicesSum(){
   const n=prefs.sub.size+prefs.store.size;
@@ -11176,8 +11269,9 @@ function render(){
   // CAS-150: no blurb above the list. The section heads carry the counts where they mean something, and
   // the order is a thing you can see by reading down the list — saying it in a line was chrome, not honesty.
   wrap.innerHTML="";
-  orderFor(activeCascade()).forEach(g=>{      // CAS-295: a cinema agent leads with Upcoming
-    const items=rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g));
+  const ac=activeCascade();
+  orderFor(ac).forEach(g=>{      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
+    const items=rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g,ac));
     if(!items.length) return;
     const live=items.filter(m=>!taggedOut(m)).length;
     const grp=document.createElement("div"); grp.className="group"; grp.dataset.g=g;
@@ -12016,11 +12110,23 @@ else if(dedupedN)
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("cascades").select("*");   // RLS: only mine
     if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); return; }
-    const remote = (data||[]).map(rowToCascade);
+    let remote = (data||[]).map(rowToCascade);
     const localOnes = cascades.slice();
+    // CAS-393: the membership step's own email gate (CAS-387) can create this account seconds after
+    // finishSharpSequence() committed the agent onboarding just built — so the account this fetch reads
+    // back is, correctly, one that has never synced anything yet. Without this, that agent (still sitting
+    // in `cascades` locally) gets wiped by the plain replace below and only reappears if the user notices
+    // and accepts the "bring this device's work with you" offer. There is no ambiguity to ask about here
+    // the way CAS-212's merge is for a genuine returning device: this account IS new and this agent IS its
+    // first one, so it is folded straight in rather than left to the dialog, and pushed up in the same sync
+    // pass that already exists for every other edit (scheduleSync below).
+    const justOnboarded = membCascade && localOnes.some(x=>x.id===membCascade.id) &&
+                           !remote.some(x=>cascSigOf(x)===cascSigOf(membCascade));
+    if(justOnboarded) remote=[...remote, membCascade];
     const sigs = new Set(remote.map(cascSigOf));
     pendingMerge.cascades = localOnes.filter(x=>!sigs.has(cascSigOf(x)));
     replaceCascades(remote);
+    if(justOnboarded) scheduleSync();
     offerMerge();
     if(typeof afterSignIn==="function") afterSignIn();
   }
