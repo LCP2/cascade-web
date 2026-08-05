@@ -12509,6 +12509,11 @@ else if(dedupedN)
   const setSignedOut = () => {
     api.user = null; api.session = null; api.status = 'signed-out';
     showPanel('authSignedOut');
+    // CAS-401: route every signed-out resolution — boot with no session, a sign-out, or a lapsed
+    // token — back to the splash front door, not left sitting in the interface. Guarded on splash
+    // not already being open so first-run's own showSplash() (which fires first, synchronously,
+    // before this async module resolves) doesn't get a redundant duplicate call.
+    if(!gid('splash').classList.contains('open') && typeof window.showSplash === 'function') window.showSplash();
   };
   const setGuest = () => {
     api.enabled = false; api.user = null; api.session = null; api.status = 'guest';
@@ -12580,8 +12585,11 @@ else if(dedupedN)
     });
 
     gid('authSignOut').addEventListener('click', async () => {
+      // CAS-401: signOut() drives the SIGNED_OUT branch above (setSignedOut), which is what routes
+      // to splash now — every sign-out path lands there the same way, button included. This handler's
+      // own job shrinks to just closing the modal.
       try { await supa.auth.signOut(); } catch(err){ console.warn(err); }
-      closeAuth(); toastSafe('Signed out.');
+      closeAuth();
     });
   })();
 })();
