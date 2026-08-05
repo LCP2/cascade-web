@@ -3307,7 +3307,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 352, "commit": "12af690", "builtAt": "2026-08-05T22:23:22Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 353, "commit": "a0ba5fc", "builtAt": "2026-08-05T22:36:55Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -12054,11 +12054,23 @@ else if(dedupedN)
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("cascades").select("*");   // RLS: only mine
     if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); return; }
-    const remote = (data||[]).map(rowToCascade);
+    let remote = (data||[]).map(rowToCascade);
     const localOnes = cascades.slice();
+    // CAS-393: the membership step's own email gate (CAS-387) can create this account seconds after
+    // finishSharpSequence() committed the agent onboarding just built — so the account this fetch reads
+    // back is, correctly, one that has never synced anything yet. Without this, that agent (still sitting
+    // in `cascades` locally) gets wiped by the plain replace below and only reappears if the user notices
+    // and accepts the "bring this device's work with you" offer. There is no ambiguity to ask about here
+    // the way CAS-212's merge is for a genuine returning device: this account IS new and this agent IS its
+    // first one, so it is folded straight in rather than left to the dialog, and pushed up in the same sync
+    // pass that already exists for every other edit (scheduleSync below).
+    const justOnboarded = membCascade && localOnes.some(x=>x.id===membCascade.id) &&
+                           !remote.some(x=>cascSigOf(x)===cascSigOf(membCascade));
+    if(justOnboarded) remote=[...remote, membCascade];
     const sigs = new Set(remote.map(cascSigOf));
     pendingMerge.cascades = localOnes.filter(x=>!sigs.has(cascSigOf(x)));
     replaceCascades(remote);
+    if(justOnboarded) scheduleSync();
     offerMerge();
     if(typeof afterSignIn==="function") afterSignIn();
   }
