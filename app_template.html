@@ -2901,7 +2901,7 @@ function dedupOffers(offers){
   return [...map.values()].sort((a,b)=> (tOrder[a.type]-tOrder[b.type]) || ((a.price||0)-(b.price||0)) || a.service.localeCompare(b.service));
 }
 const TYPE_LABEL={sub:"Stream",free:"Free",rent:"Rent",buy:"Buy"};
-const SVC_DISPLAY={"Amazon":"Amazon Prime"};
+const SVC_DISPLAY={"Amazon":"Amazon Prime","Apple TV":"Apple TV+"};
 // ---- CAS-251: one entry per service, not one per billing variant --------------------------------------
 // The provider feed names a service once per way you can pay for it: Netflix and "Netflix Standard with
 // Ads", Paramount Plus and "Paramount Plus Premium" and "Paramount Plus Basic with Ads" and "Paramount+
@@ -3336,6 +3336,12 @@ function svcListFor(types){
 const SUB_SERVICES=svcListFor(["sub","free"]);
 const STORE_SERVICES=svcListFor(["rent","buy"]);
 const SVC_LEAD = 8;   // how many lead a section before "more" — two rows of chips on a 390px phone
+// CAS-369: the streaming section's always-shown set is these 10 major providers by name, not "whichever
+// carry the most of this catalogue" — a person scanning for their own services expects the household names
+// up front regardless of how this particular catalogue snapshot happens to rank them. Canonical (post
+// svcCanon) spellings, alphabetical by display name.
+const PRIMARY_SUB_SERVICES = ["Amazon Prime Video","Apple TV","BINGE","Disney Plus","Foxtel Now","HBO Max",
+  "Netflix","Paramount Plus","SBS On Demand","Stan"].filter(s=>SUB_SERVICES.includes(s));
 // Which sections are expanded, by box id. Held outside the step so re-rendering the screen (which the
 // live count does on every tap) does not fold a tail the user has just opened.
 const svcMore = {};
@@ -9553,13 +9559,23 @@ const SHARP_STEPS = {
     },
     wire(){
       // Each section draws itself, so the two are the same control twice rather than two that can drift.
-      const draw=(boxId, list, set)=>{
+      // `primary`, when given, fixes the always-shown set/order (CAS-369) instead of leading with the
+      // catalogue's top N; "+ more" then reveals only the rest, alphabetically.
+      const draw=(boxId, list, set, primary)=>{
         const box=$(boxId); if(!box) return;
         const open = !!svcMore[boxId];
         // CAS-341: alphabetical, not catalogue-count order — a name you're looking for (HBO Max included)
         // is where you expect it, whether it's in the lead row or behind "more", instead of buried by rank.
         const alpha=[...list].sort((a,b)=>svcName(a).localeCompare(svcName(b)));
-        const shown = open ? alpha : alpha.slice(0, SVC_LEAD);
+        let shown, moreCount;
+        if(primary){
+          const rest=alpha.filter(s=>!primary.includes(s));
+          shown = open ? [...primary, ...rest] : primary;
+          moreCount = rest.length;
+        } else {
+          shown = open ? alpha : alpha.slice(0, SVC_LEAD);
+          moreCount = alpha.length - SVC_LEAD;
+        }
         box.innerHTML="";
         shown.forEach(svc=>{
           const c=document.createElement("button");
@@ -9576,17 +9592,17 @@ const SHARP_STEPS = {
           };
           box.appendChild(c);
         });
-        if(alpha.length > SVC_LEAD){
+        if(moreCount > 0){
           const more=document.createElement("button");
           more.type="button"; more.className="chip svcmore";
           // The count is the real remainder, so "more" never promises a tail that isn't there.
-          more.textContent = open ? "− less" : `+ ${alpha.length-SVC_LEAD} more`;
-          more.onclick=()=>{ svcMore[boxId]=!open; draw(boxId, list, set); };
+          more.textContent = open ? "− less" : `+ ${moreCount} more`;
+          more.onclick=()=>{ svcMore[boxId]=!open; draw(boxId, list, set, primary); };
           box.appendChild(more);
         }
       };
       draw("onbStepStores", STORE_SERVICES, prefs.store);
-      draw("onbStepSvcs",   SUB_SERVICES,   prefs.sub);
+      draw("onbStepSvcs",   SUB_SERVICES,   prefs.sub, PRIMARY_SUB_SERVICES);
       const tog=$("onbSvcOnly");
       if(tog) tog.onclick=()=>{
         prefs.on=!prefs.on; savePrefs();
