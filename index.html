@@ -2490,24 +2490,21 @@
       broken, it just stays on this device. See <code>config.example.js</code> in the repo for the one-line setup.</div>
   </div>
 
-  <!-- config present, signed out → email + password (CAS-317: replaces the old magic-link flow, which
-       can't work with the fictitious test emails onboarding needs to support) -->
+  <!-- config present, signed out → email-only, no password (CAS-387: password switched off in Supabase;
+       replaces CAS-317's email+password flow, which itself replaced the old magic-link flow that couldn't
+       work with the fictitious test emails onboarding needs to support) -->
   <div id="authSignedOut" style="display:none">
-    <div class="pnote">Enter your email and password to log in, or create a new account — any email
-      works, including a made-up one, so you can try Cascade without a real inbox. Your Cascades then
-      sync to your account across devices.</div>
+    <div class="pnote">Enter your email to sign in, or create a new account — any email works, including
+      a made-up one, so you can try Cascade without a real inbox. Your Cascades then sync to your account
+      across devices.</div>
     <!-- CAS-186: what a guest actually stands to lose, counted rather than asserted. Filled in by
          paintGuestStake() and hidden entirely when there is nothing on this device to save. -->
     <div class="pnote" id="authGuestStake" style="display:none"></div>
     <div class="flabel">Email</div>
     <input id="authEmail" class="namein" type="email" inputmode="email" autocomplete="email"
            placeholder="you@example.com">
-    <div class="flabel">Password</div>
-    <input id="authPassword" class="namein" type="password" autocomplete="current-password"
-           placeholder="Your password">
     <div class="cascfoot" style="margin-top:12px">
-      <button class="secbtn" id="authLogin">Log in</button>
-      <button class="applybtn" id="authSignup">Create account</button>
+      <button class="applybtn" id="authContinue">Continue</button>
     </div>
     <div id="authMsg" class="pnote" style="margin-top:10px"></div>
   </div>
@@ -3303,7 +3300,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 345, "commit": "c4e223b", "builtAt": "2026-08-05T07:43:03Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 347, "commit": "0be82f8", "builtAt": "2026-08-05T09:06:50Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -10720,6 +10717,9 @@ function openMembership(agentKey, nameOverride, cascade){
     ? `<p class="membhaul">${c.icon} <b>${esc(name)}</b> is already watching
         <span class="cnt">${n} film${n===1?"":"s"}</span> for you, and it never stops looking.</p>`
     : "";
+  // CAS-387: a configured, signed-out build needs an email to create the real account this button
+  // starts — a signed-in return visit (or a guest/no-config build, per CascadeAuth.enabled) skips it.
+  const needsEmail = membNeedsEmail();
   $("membBody").innerHTML = `
     <span class="cascpill">CASCADE</span>
     <h2 class="membh">Cascade Membership</h2>
@@ -10731,6 +10731,11 @@ function openMembership(agentKey, nameOverride, cascade){
         <span class="mbtx"><span class="mbt">${esc(b.name)}</span><span class="mbd">${esc(b.sub)}</span></span>
       </div>`).join("")}
     </div>
+    ${needsEmail ? `
+    <div class="flabel">Email</div>
+    <input id="membEmail" class="namein" type="email" inputmode="email" autocomplete="email"
+           placeholder="you@example.com">
+    <p class="fielderr" id="membEmailErr" role="alert" hidden></p>` : ""}
     <button class="membcta" type="button" onclick="membStart()">Start my free month</button>
     ${posters?`<div class="rvgrid membgrid">${posters}</div>`:""}
     <p class="membproto">Prototype — no account, no payment, no real charge.</p>`;
@@ -10752,29 +10757,57 @@ function closeMembership(){ $("membScreen").classList.remove("open"); document.b
 // the compositor has shown it — because a plain setTimeout(0) can still run before the paint.
 // membStarting is the double-tap guard; it also survives the work throwing, via the finally.
 let membStarting=false;
+// CAS-387: only a configured, signed-out build needs the email gate — guest (no config.js, e.g. the
+// e2e suite) and an already-signed-in return visit have nothing to create and skip it.
+function membNeedsEmail(){
+  const a=window.CascadeAuth;
+  return !!(a && a.enabled && a.status!=="signed-in");
+}
+function membEmailError(msg){
+  const err=$("membEmailErr"); if(!err) return;
+  err.hidden=!msg; err.textContent=msg||"";
+}
 window.membStart=()=>{
   if(membStarting) return;              // second tap while the listing builds — ignore, don't queue
+  const needsEmail=membNeedsEmail();
+  let email=null;
+  if(needsEmail){
+    email=($("membEmail").value||"").trim();
+    if(!emailValid(email)){
+      membEmailError("That doesn't look like an email address — check it and try again.");
+      $("membEmail").focus();
+      return;
+    }
+    membEmailError(null);
+  }
   membStarting=true;
   const btn=document.querySelector(".membcta");
+  const idle=()=>{
+    membStarting=false;
+    // If the work threw before closeMembership(), the screen is still up — hand the button back rather
+    // than leaving a spinner that can never resolve.
+    if($("membScreen").classList.contains("open") && btn){
+      btn.disabled=false; btn.classList.remove("busy"); btn.removeAttribute("aria-busy");
+      btn.textContent="Start my free month";
+    }
+  };
   if(btn){
     btn.disabled=true; btn.classList.add("busy"); btn.setAttribute("aria-busy","true");
-    btn.innerHTML=`<span class="btnspin"></span>Starting your free month…`;
+    btn.innerHTML=`<span class="btnspin"></span>${needsEmail?"Setting up your account…":"Starting your free month…"}`;
   }
   logEvent("membership_start");
   // The membership screen stays up until the listing is ready, so the spinner is what the user watches
   // instead of a half-built page. closeMembership() is the last thing, once there is something to reveal.
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+  const proceed=()=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
     try{ membStartWork(); }
-    finally{
-      membStarting=false;
-      // If the work threw before closeMembership(), the screen is still up — hand the button back rather
-      // than leaving a spinner that can never resolve.
-      if($("membScreen").classList.contains("open") && btn){
-        btn.disabled=false; btn.classList.remove("busy"); btn.removeAttribute("aria-busy");
-        btn.textContent="Start my free month";
-      }
-    }
+    finally{ idle(); }
   }));
+  if(needsEmail){
+    window.CascadeAuth.continueWithEmail(email).then(result=>{
+      if(result.ok) proceed();
+      else{ membEmailError(result.error||"Could not create your account — try again."); idle(); }
+    });
+  } else proceed();
 };
 function membStartWork(){
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
@@ -12298,15 +12331,20 @@ else if(dedupedN)
 })();
 </script>
 
-<!-- ACCOUNT / EMAIL+PASSWORD AUTH (CAS-82 / spec 26771457 §4; password auth per CAS-317).
+<!-- ACCOUNT / EMAIL-ONLY AUTH (CAS-82 / spec 26771457 §4; email-only per CAS-387 — Supabase password
+     requirement switched off 2026-08-05, superseding CAS-317's email+password).
      Self-contained ES module (deferred, runs after the DOM + the classic script above).
      - Reads window.CASCADE_CONFIG from the optional git-ignored config.js.
      - NO network import in guest mode (no/placeholder config) → the page works fully offline,
        which is what lets CI and the dry-run build pass without keys.
      - Only the anon key is ever used here (public-safe; RLS protects the data). The service_role
        key must never reach the front-end.
-     - Exposes window.CascadeAuth { enabled, client, user, session, status } and dispatches a
-       'cascade-auth-change' event so the persistence story (CAS-83) can hook in without edits here. -->
+     - Exposes window.CascadeAuth { enabled, client, user, session, status, continueWithEmail } and
+       dispatches a 'cascade-auth-change' event so the persistence story (CAS-83) can hook in without
+       edits here. continueWithEmail(email) is the one entry point both this panel and the membership
+       step's email gate call: it signs in, falling back to signUp when no account exists yet, using a
+       password the caller never sees or chooses (see derivePassword below). Test-phase only — anyone
+       who knows/guesses an email can enter that account; a real credential is a later ticket. -->
 <script type="module">
 (() => {
   const gid = id => document.getElementById(id);
@@ -12332,9 +12370,20 @@ else if(dedupedN)
   const placeholder = v => !v || /YOUR|your-|example/i.test(v);
   const configured = !placeholder(url) && !placeholder(key);
 
-  const api = window.CascadeAuth = { enabled: configured, client: null, user: null, session: null, status: 'guest' };
+  const api = window.CascadeAuth = { enabled: configured, client: null, user: null, session: null, status: 'guest',
+    continueWithEmail: async () => ({ ok: false, error: 'Account sync is not available right now.' }) };
   const announce = () => window.dispatchEvent(new CustomEvent('cascade-auth-change',
     { detail: { user: api.user, session: api.session, status: api.status } }));
+
+  // CAS-387: a deterministic, hidden password derived from the email itself — Supabase's signUp/
+  // signInWithPassword still take a password server-side even with the project's password requirement
+  // off, and this is the simplest mechanism that lets the SAME made-up email always reach the SAME
+  // account on any device, with nothing for the user to set or remember.
+  const derivePassword = async email => {
+    const bytes = new TextEncoder().encode('cascade-cas387::' + email.trim().toLowerCase());
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+  };
 
   // CAS-317: found while verifying this module — setSignedIn/Out/Guest each referenced an undefined
   // `btn` (the header account icon CAS-345 removed in favour of the top-menu Account item), throwing
@@ -12368,6 +12417,20 @@ else if(dedupedN)
       setGuest(); announce(); return;
     }
 
+    // CAS-387: try signing in first — the common case once an email has been used once — and only
+    // fall back to creating the account when no account exists yet. Either path lands the same
+    // signed-in session, which onAuthStateChange below picks up and reflects into the UI.
+    api.continueWithEmail = async email => {
+      try {
+        const password = await derivePassword(email);
+        const signIn = await supa.auth.signInWithPassword({ email, password });
+        if(!signIn.error) return { ok: true };
+        const signUp = await supa.auth.signUp({ email, password });
+        if(signUp.error) return { ok: false, error: signUp.error.message };
+        return { ok: true };
+      } catch(err){ return { ok: false, error: (err && err.message) || String(err) }; }
+    };
+
     // Reflect the current session (survives reloads), then keep the UI in step with every auth event.
     try {
       const { data: { session } } = await supa.auth.getSession();
@@ -12380,39 +12443,29 @@ else if(dedupedN)
       api.session = session || null;
       if(session){
         setSignedIn(session.user);
-        if(event === 'SIGNED_IN'){ toastSafe('Signed in — your Cascades now sync to your account.'); closeAuth(); }
+        // CAS-387: continueWithEmail() also fires this from the membership step's own gate, where this
+        // modal was never opened — only react here (toast + close) when it actually is.
+        if(event === 'SIGNED_IN' && modal.classList.contains('open')){
+          toastSafe('Signed in — your Cascades now sync to your account.'); closeAuth();
+        }
       }
       else setSignedOut();
       announce();
     });
 
-    // CAS-317: email + password replaces the old magic-link flow — it's the only mechanism that can
-    // sign a made-up test email straight in (a link has to be delivered and clicked; a password doesn't).
-    const readCreds = () => {
+    // CAS-387: email-only, no password field — readEmail() is the same validation the membership
+    // step's own gate uses, kept local here since this module never shares scope with that script.
+    const readEmail = () => {
       const email = (gid('authEmail').value || '').trim();
-      const password = gid('authPassword').value || '';
       if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ msg.textContent = 'Please enter a valid email address.'; return null; }
-      if(password.length < 6){ msg.textContent = 'Password must be at least 6 characters.'; return null; }
-      return { email, password };
+      return email;
     };
 
-    gid('authLogin').addEventListener('click', async () => {
-      const creds = readCreds(); if(!creds) return;
+    gid('authContinue').addEventListener('click', async () => {
+      const email = readEmail(); if(!email) return;
       msg.textContent = 'Signing in…';
-      try {
-        const { error } = await supa.auth.signInWithPassword(creds);
-        if(error) msg.textContent = 'Could not sign in: ' + error.message;
-      } catch(err){ msg.textContent = 'Could not sign in: ' + ((err && err.message) || err); }
-    });
-
-    gid('authSignup').addEventListener('click', async () => {
-      const creds = readCreds(); if(!creds) return;
-      msg.textContent = 'Creating your account…';
-      try {
-        const { data, error } = await supa.auth.signUp(creds);
-        if(error) msg.textContent = 'Could not create account: ' + error.message;
-        else if(!data.session) msg.textContent = 'Account created, but no session was returned — check the Supabase "Confirm email" setting.';
-      } catch(err){ msg.textContent = 'Could not create account: ' + ((err && err.message) || err); }
+      const result = await api.continueWithEmail(email);
+      if(!result.ok) msg.textContent = 'Could not sign in: ' + result.error;
     });
 
     gid('authSignOut').addEventListener('click', async () => {
