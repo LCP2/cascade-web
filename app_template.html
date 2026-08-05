@@ -3699,9 +3699,30 @@ function parseAwards(t){
   const a={oscW:oscW?+oscW:0, oscN:oscN?+oscN:0, wins:wins?+wins:null, noms:noms?+noms:null};
   return (a.oscW||a.oscN||a.wins!=null||a.noms!=null) ? a : null;
 }
+// CAS-322: specific Oscar categories/winners from Wikidata (m.oscar_detail), when the daily
+// pipeline has enriched this title — richer than the free-text count parseAwards reads below.
+// Matches the ticket's own worked example ("Best Picture — Won", "Best Director — Won (Christopher
+// Nolan)") right on the chip, not hidden behind a hover tooltip. Wins first, then nominations,
+// capped at two chips + a "+N more" summary so the row stays compact (composes with CAS-373's
+// one-line award row). null (not enriched, or enriched with nothing found) means "fall back to the
+// plain count" — never an empty row for a film with awards.
+function oscarChips(m){
+  const list=m.oscar_detail;
+  if(!Array.isArray(list) || !list.length) return null;
+  const sorted=[...list].sort((a,b)=>(a.result==="Won"?0:1)-(b.result==="Won"?0:1));
+  const full=o=>`${o.category}${o.person?" ("+o.person+")":""} — ${o.result}`;
+  const shown=sorted.slice(0,2), rest=sorted.slice(2);
+  let c=shown.map(o=>`<span class="m ${o.result==="Won"?"osc":"awd"}" title="${escA(full(o))}">`+
+    `${o.result==="Won"?"🏆":"✦"} <b>${esc(o.category)}</b> — ${o.result}`+
+    `${o.person?` <span class="lab">(${esc(o.person)})</span>`:""}</span>`).join("");
+  if(rest.length) c+=`<span class="m awd" title="${escA(rest.map(full).join("; "))}">+${rest.length} more</span>`;
+  return c;
+}
 // Three chips at most, and the third only when there are wins beyond the Oscars already named — the
 // row is a summary, not a list. Which award, in which category, in which year, is a separate job.
 function awardChips(m){
+  const oscar=oscarChips(m);
+  if(oscar!==null) return oscar;
   const a=parseAwards(m.award_text);
   if(!a) return "";
   let c="";
@@ -3719,6 +3740,14 @@ function cinemaReleaseChip(m){
 // The breakdown, on the opened card. Same numbers, said in full — nothing here that isn't in the
 // film's own award line.
 function awardsBreakdownHTML(m){
+  const list=m.oscar_detail;
+  if(Array.isArray(list) && list.length){
+    const sorted=[...list].sort((a,b)=>(a.result==="Won"?0:1)-(b.result==="Won"?0:1));
+    const l=sorted.map(o=>`<div class="l">${o.result==="Won"?"🏆":"✦"} <span>`+
+      `${o.result==="Won"?"<b>Won</b>":"Nominated"} — <b>${esc(o.category)}</b>`+
+      `${o.person?` (${esc(o.person)})`:""}</span></div>`);
+    return `<div class="awx">${l.join("")}</div>`;
+  }
   const a=parseAwards(m.award_text);
   if(!a) return "";
   const l=[];

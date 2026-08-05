@@ -116,15 +116,24 @@ OMDB_FREE_TIER_CAP  = int(os.getenv("OMDB_FREE_TIER_CAP", "1000"))   # what we b
 # handful of runs instead.
 CINEMA_RELEASE_BACKFILL_BUDGET = int(os.getenv("CINEMA_RELEASE_BACKFILL_BUDGET", "500"))
 
+# CAS-322: specific Oscar categories/winners from Wikidata (free SPARQL endpoint, no API key —
+# so unlike OMDb/Watchmode this needs no key to be "live", only a network path). Scope is bounded
+# to titles OMDb already flagged as having Oscar activity (movie["award"] in won/nominated), and
+# each title is looked up once and cached (`oscar_detail_checked`) — a converging backfill, not a
+# per-run full sweep, and politely paced against a public shared endpoint.
+WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
+WIKIDATA_BACKFILL_BUDGET = int(os.getenv("WIKIDATA_BACKFILL_BUDGET", "200"))
+WIKIDATA_PACING = float(os.getenv("WIKIDATA_PACING", "0.2"))
+
 
 # ---------------------------------------------------------------------------
 # tiny HTTP helper
 # ---------------------------------------------------------------------------
-def get_json(url: str, retries: int = 4) -> dict:
+def get_json(url: str, retries: int = 4, headers: dict | None = None) -> dict:
     """GET + parse JSON, with polite backoff on rate-limit / transient server errors.
     CAS-128: the full-catalogue ingest + daily provider sweep make many calls, so honour
     HTTP 429 (Retry-After when given, else exponential) and retry 5xx a few times."""
-    req = urllib.request.Request(url, headers={"User-Agent": "cascade-poc/0.1"})
+    req = urllib.request.Request(url, headers={"User-Agent": "cascade-poc/0.1", **(headers or {})})
     for attempt in range(retries + 1):
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
@@ -411,6 +420,78 @@ def _oscar_status(awards: str) -> str | None:
     if "Oscar" in head or "Academy Award" in head:
         return "won" if head.lstrip().lower().startswith("won") else "nominated"
     return None
+
+
+# CAS-322: SPARQL for one film's Academy Award record by IMDb id (P345). Film-level categories
+# come off the film item's own P166 (award received) / P1411 (nominated for) statements; personal
+# categories (Best Actor, Best Director, ...) come off a person's P166/P1411 statement carrying a
+# P1686 ("for work") qualifier pointing back at this film. wd:Q19020 = "Academy Awards".
+#
+# Validated live against Oppenheimer (tt15398776) during the build: this correctly returns Best
+# Picture (Won) and Best Director (Won, Christopher Nolan) — the ticket's own worked example. The
+# ticket also offers a label-match fallback ("or a label contains 'Academy Award'") for
+# categories Wikidata hasn't tagged with P361; tried live, it reliably timed out the query (WDQS's
+# label-service labels are indexed, but a raw rdfs:label + FILTER(CONTAINS(...)) scan is not), so
+# it was dropped rather than shipped as a source of flaky, slow enrichment runs. Net effect: some
+# categories that exist in Wikidata but aren't P361-tagged (this ticket's own Best Actor example,
+# Cillian Murphy, among them) won't surface — a coverage gap in the free source's tagging
+# consistency, not a defect in this query; "Oscars first... best-effort" per the ticket's scope.
+_WIKIDATA_AWARDS_SPARQL = """
+SELECT ?awardLabel ?result ?personLabel WHERE {{
+  ?film wdt:P345 "{imdb_id}".
+  {{ ?film p:P166 ?s. ?s ps:P166 ?award. BIND("Won" AS ?result) }}
+  UNION {{ ?film p:P1411 ?s. ?s ps:P1411 ?award. BIND("Nominated" AS ?result) }}
+  UNION {{ ?p p:P166 ?s. ?s ps:P166 ?award; pq:P1686 ?film. BIND("Won" AS ?result).
+           ?p rdfs:label ?personLabel . FILTER(LANG(?personLabel)="en") }}
+  UNION {{ ?p p:P1411 ?s. ?s ps:P1411 ?award; pq:P1686 ?film. BIND("Nominated" AS ?result).
+           ?p rdfs:label ?personLabel . FILTER(LANG(?personLabel)="en") }}
+  ?award wdt:P361 wd:Q19020 .
+  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }}
+}}
+"""
+
+
+def enrich_wikidata_awards(movie: dict) -> dict:
+    """CAS-322: specific Oscar categories (+ winner name for personal ones), from Wikidata by
+    IMDb id — richer than OMDb's free-text award count. Only called for titles OMDb already
+    flagged as having Oscar activity; cached onto the record (`oscar_detail`,
+    `oscar_detail_checked`) so a title is looked up once, not on every run.
+
+    Wikidata sometimes carries redundant statements for one category — a film both "won" and
+    "nominated" for the same category (an editor kept the nomination record after the win), and an
+    ensemble award like Best Picture qualified onto several different producers' items. Neither is
+    a second fact worth a second card line, so results are grouped by category: the best result
+    (Won beats Nominated) wins, and a person is only named when exactly one is credited for that
+    result — Best Director names its one winner; Best Picture's several producers collapse to the
+    plain category line, same as the ticket's own worked example shows."""
+    sparql = _WIKIDATA_AWARDS_SPARQL.format(imdb_id=movie["imdb_id"])
+    url = WIKIDATA_ENDPOINT + "?query=" + urllib.parse.quote(sparql) + "&format=json"
+    data = get_json(url, headers={
+        "Accept": "application/sparql-results+json",
+        "User-Agent": "cascade-movies-poc/0.1 (https://cascademovies.com; lee@codynamics.com.au) award-enrichment",
+    })
+    by_category = {}
+    for row in data.get("results", {}).get("bindings", []):
+        category = (row.get("awardLabel") or {}).get("value")
+        result = (row.get("result") or {}).get("value")
+        if not category or not result:
+            continue
+        person = (row.get("personLabel") or {}).get("value")
+        g = by_category.setdefault(category, {"results": set(), "won_by": set(), "nom_by": set()})
+        g["results"].add(result)
+        if person:
+            (g["won_by"] if result == "Won" else g["nom_by"]).add(person)
+    detail = []
+    for category, g in by_category.items():
+        result = "Won" if "Won" in g["results"] else "Nominated"
+        persons = g["won_by"] if result == "Won" else g["nom_by"]
+        entry = {"category": category, "result": result}
+        if len(persons) == 1:
+            entry["person"] = next(iter(persons))
+        detail.append(entry)
+    movie["oscar_detail"] = detail
+    movie["oscar_detail_checked"] = True
+    return movie
 
 
 # ---------------------------------------------------------------------------
@@ -741,8 +822,9 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     # CAS-161: per-API health for this run. `*_open` goes False the first time an API says something that is
     # true of the whole run (cap hit, key rejected) rather than of one title; the `*_fails` tallies are the
     # honest count of titles that kept yesterday's data, printed at the end so a degraded run is visible.
-    omdb_open = wm_open = prov_open = cinema_open = True
-    omdb_fails = wm_fails = prov_fails = cinema_fails = 0
+    omdb_open = wm_open = prov_open = cinema_open = wikidata_open = True
+    omdb_fails = wm_fails = prov_fails = cinema_fails = wikidata_fails = 0
+    wikidata_calls = 0
 
     def _omdb(m):
         """One guarded OMDb enrich. Returns True if the caller should count a spend."""
@@ -850,22 +932,45 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
         elif (m.get("imdb_votes") or 0) < IMDB_MIN_VOTES and omdb_refresh > 0:
             _omdb(m); omdb_calls += 1; omdb_refresh -= 1
 
+    # CAS-322: Wikidata Oscar-detail backfill. Scope is a title OMDb already flagged as having Oscar
+    # activity (`award` in won/nominated) and not yet looked up — bounded, converging over runs, not
+    # the whole catalogue. No API key needed (Wikidata's SPARQL endpoint is free/public), so this pot
+    # is spent whenever there are candidates, independent of the TMDB/OMDb/Watchmode LIVE keys.
+    wikidata_backfill = WIKIDATA_BACKFILL_BUDGET
+    wikidata_candidates = [m for m in catalogue
+                           if m.get("award") in ("won", "nominated") and m.get("imdb_id")
+                           and not m.get("oscar_detail_checked")]
+    for m in wikidata_candidates:
+        if not wikidata_open or wikidata_backfill <= 0:
+            break
+        _, outcome = _api_call("Wikidata", enrich_wikidata_awards, m)
+        wikidata_calls += 1; wikidata_backfill -= 1
+        if outcome == "stop":
+            wikidata_open = False
+        if outcome != "ok":
+            wikidata_fails += 1
+        if WIKIDATA_PACING:
+            time.sleep(WIKIDATA_PACING)
+
     counts = dict(sched["counts"])
     counts.update(provider_calls=provider_calls, wm_calls=wm_calls, omdb_calls=omdb_calls,
-                  cinema_calls=cinema_calls,
+                  cinema_calls=cinema_calls, wikidata_calls=wikidata_calls,
                   ondemand=len(ondemand_set), catalogue=len(catalogue),
                   # CAS-161: a degraded run must SAY it was degraded. Silence here would let the catalogue
                   # quietly go stale for days while every run still reported success.
                   omdb_fails=omdb_fails, wm_fails=wm_fails, provider_fails=prov_fails, cinema_fails=cinema_fails,
+                  wikidata_fails=wikidata_fails,
                   omdb_stopped=not omdb_open, wm_stopped=not wm_open, providers_stopped=not prov_open,
-                  cinema_stopped=not cinema_open)
-    if omdb_fails or wm_fails or prov_fails or cinema_fails:
+                  cinema_stopped=not cinema_open, wikidata_stopped=not wikidata_open)
+    if omdb_fails or wm_fails or prov_fails or cinema_fails or wikidata_fails:
         print(f"[warn] degraded enrichment: {prov_fails} TMDB-provider, {omdb_fails} OMDb, {wm_fails} "
-              f"Watchmode, {cinema_fails} TMDB-release_dates title(s) kept their previous data"
+              f"Watchmode, {cinema_fails} TMDB-release_dates, {wikidata_fails} Wikidata title(s) kept "
+              f"their previous data"
               + (" — OMDb stopped early" if not omdb_open else "")
               + (" — Watchmode stopped early" if not wm_open else "")
               + (" — TMDB providers stopped early" if not prov_open else "")
-              + (" — TMDB release_dates stopped early" if not cinema_open else ""))
+              + (" — TMDB release_dates stopped early" if not cinema_open else "")
+              + (" — Wikidata stopped early" if not wikidata_open else ""))
     if OMDB_DAILY_BUDGET + OMDB_REFRESH_BUDGET > OMDB_FREE_TIER_CAP:
         print(f"[warn] OMDb budgets total {OMDB_DAILY_BUDGET + OMDB_REFRESH_BUDGET} against a "
               f"{OMDB_FREE_TIER_CAP}/day cap — a single run can exhaust the key.")
@@ -893,7 +998,8 @@ def run(simulate_day: bool = False):
                                                wm_spent_today=prior_spend.get("wm_spent", 0))
         print(f"[live] catalogue {len(records)} | TMDB provider calls {counts['provider_calls']} (free, no quota) "
               f"| Watchmode on-demand {counts['wm_calls']}/{ONDEMAND_WM_CAP} | OMDb backfill {counts['omdb_calls']} "
-              f"| cinema_release backfill {counts['cinema_calls']}/{CINEMA_RELEASE_BACKFILL_BUDGET}")
+              f"| cinema_release backfill {counts['cinema_calls']}/{CINEMA_RELEASE_BACKFILL_BUDGET} "
+              f"| Wikidata Oscar backfill {counts['wikidata_calls']}/{WIKIDATA_BACKFILL_BUDGET}")
         os.makedirs(STATE_DIR, exist_ok=True)
         json.dump(wm_cache, open(WM_CACHE_FILE, "w"), indent=2)
         _save_daily_spend(today, prior_spend.get("omdb_spent", 0) + counts["omdb_calls"],
