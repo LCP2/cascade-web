@@ -470,6 +470,9 @@
     display:grid;place-items:center;font-size:9px;font-weight:800;color:transparent}
   .nopt.on{color:var(--ink);border-color:var(--wwc)}
   .nopt.on .wwb{background:var(--wwc);border-color:var(--wwc);color:#0b1016}
+  /* CAS-382: the Filter panel's rows are a multi-select, unlike every other .nopt list (single choice, hence
+     the round mark) — a square tick box is the honest shape for "pick as many as you like". */
+  .nopt .wwb.sq{border-radius:4px}
   .nopt .nol{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* An option this agent doesn't watch is still offered — that is the point of a per-film control — but it
      says so, or a lit row would read as "my agent does this" rather than "just this film". */
@@ -902,6 +905,9 @@
      row with Edit / 🔗 / × rather than floating over the corner — it is one of the things you do to the
      Cascade you have open, so it sits with the others and inherits their look. */
   .dc-search.on{border-color:var(--accent);color:#cfc2ff;background:rgba(124,92,255,.18)}
+  /* CAS-382: same on-state treatment as search's own lit 🔍 — one lit-control convention for the row. */
+  .dc-filter.on{border-color:var(--accent);color:#cfc2ff;background:rgba(124,92,255,.18)}
+  .dc-filter svg{width:14px;height:14px;display:block}
   .dc-name{font-size:13.5px;font-weight:800;margin-top:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .dcard.is-centre.is-active .dc-name{color:#cfc2ff}
   .dc-sub{font-size:11px;color:var(--dim);margin-top:4px;line-height:1.4;display:none}
@@ -2775,6 +2781,9 @@ const ICON = {
   deck:    svgIcon(`<rect x="8.2" y="4.4" width="11.4" height="13.2" rx="2.2"/><path d="M15.4 19.6H6.6a2.2 2.2 0 0 1-2.2-2.2V8.2"/>`),
   // CAS-284: share — a box with an arrow leaving it, the platform-neutral mark for "send this somewhere else".
   share:   svgIcon(`<path d="M12 15.4V4.2"/><path d="m8.2 7.8 3.8-3.6 3.8 3.6"/><path d="M6.4 12.4H5.2a1.6 1.6 0 0 0-1.6 1.6v5.2a1.6 1.6 0 0 0 1.6 1.6h13.6a1.6 1.6 0 0 0 1.6-1.6V14a1.6 1.6 0 0 0-1.6-1.6h-1.2"/>`),
+  // CAS-382: a funnel — the platform-neutral mark for "narrow this list", drawn on the same 24px grid and
+  // stroke weight as the rest of the set.
+  filter:  svgIcon(`<path d="M4.2 5.4h15.6l-6 7.2v6l-3.6 1.8v-7.8z"/>`),
 };
 // Journey order — Upcoming leads (a film reaches cinemas before any home window).
 // primaryStatus() takes the LAST window a film holds, so "upcoming" sitting first is safe:
@@ -3232,7 +3241,8 @@ const filt={status:new Set(), year:new Set(), age:new Set(), culture:new Set(), 
   imdb:0, rt:0, gross:0, search:"", foundOnly:false, hideWatched:false, showHidden:false, awards:false,
   sort:"availability",     // CAS-148: the forward availability timeline is the default order (byTimeline)
   includeUnrated:false,    // set by the open Cascade's escape hatch; off by default = unrated titles drop out
-  budget:0, includeUnbudgeted:false, tentpole:"any"};
+  budget:0, includeUnbudgeted:false, tentpole:"any",
+  watchTiers:new Set()};   // CAS-382: the agent's own Filter control — see watchTiersById
 const $=id=>document.getElementById(id);
 
 // ---- My Cascades: saved living searches (prototype state — localStorage, per device) ----
@@ -3293,7 +3303,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 343, "commit": "f8ed684", "builtAt": "2026-08-05T07:19:53Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 344, "commit": "6593e02", "builtAt": "2026-08-05T07:36:35Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -3638,6 +3648,7 @@ function clearFilters(){
   filt.imdb=0;filt.rt=0;filt.gross=0;filt.foundOnly=false;filt.hideWatched=false;filt.showHidden=false;
   filt.awards=false;filt.search="";filt.includeUnrated=false;
   filt.budget=0;filt.includeUnbudgeted=false;filt.tentpole="any";
+  filt.watchTiers.clear();
 }
 // Push filt back onto the Filters modal's controls (a Cascade sets filters programmatically).
 function syncFilterUI(){
@@ -4500,6 +4511,30 @@ function watchIsCurrent(id){
   const rung=filmRung(id);
   return watchLevelsFor(id).some(l=>WINDOW_RUNG[l.key]===rung && filmOptOn(id,l));
 }
+// ---- CAS-382: the agent's own Filter control ------------------------------------------------------------
+// The same five priorities the Watch panel above lets you set on ONE film (premium/rent's own levels, plus
+// the three streaming tiers), offered here as a multi-select DISPLAY filter instead — "show me only the
+// films I've marked Standard Rent" rather than "mark this one film Standard Rent". Reusing filmOptOn/
+// streamTier rather than a parallel field means a film's filter membership can never drift from what its own
+// Watch panel actually says about it.
+const FILTER_TIERS = [
+  {key:"premium", label:"Premium",       cd:"var(--purple)"},
+  {key:"rent",    label:"Standard Rent", cd:"var(--blue)"},
+  ...STREAM_TIERS.map(t=>({key:t.key, label:t.label, cd:"var(--green)"})),
+];
+// Does this film currently carry tier `key`? Premium/Rent read the film's own ticked watch level; the three
+// streaming tiers additionally need Streaming itself ticked AND that tier chosen (streamTier defaults to
+// "must", same default pickStreamTier/watchPanelRowsHTML use, so an untouched streaming pick still counts).
+function filmHasWatchTier(id, key){
+  const levels=watchLevelsFor(id);
+  if(key==="premium" || key==="rent"){
+    const l=levels.find(x=>x.key===key);
+    return !!(l && filmOptOn(id,l));
+  }
+  const l=levels.find(x=>x.key==="stream");
+  if(!l || !filmOptOn(id,l)) return false;
+  return (entryFor(id).streamTier||"must")===key;
+}
 // The chip's summary. `muted` is still the field it has always been — a whole-film silence — and it stays
 // the thing catchReason reads first. Counted over the levels still worth ticking: a passed level carries no
 // future promise, so it would only make the "N of M" undercount what is actually still live.
@@ -5088,7 +5123,12 @@ function scopeRows(){
   const c=activeCascade();
   // No Cascade open = the All card = the catalogue itself, which is what that card says it is.
   const rows = c ? MOVIES.filter(m=>listedBy(m,c)) : MOVIES.filter(passesOrStub);
-  return filt.search ? rows.filter(m=>m.title.toLowerCase().includes(filt.search)) : rows;
+  const searched = filt.search ? rows.filter(m=>m.title.toLowerCase().includes(filt.search)) : rows;
+  // CAS-382: no tier ticked = no filter, same "nothing picked = show everything" rule every other chip set
+  // in `passes()` follows.
+  return filt.watchTiers.size
+    ? searched.filter(m=>[...filt.watchTiers].some(k=>filmHasWatchTier(m.tmdb_id,k)))
+    : searched;
 }
 // First run: the deck is just the "+ New" card, which asks for a decision without offering a reason. Give them
 // three real starting points instead — each with the number of films it catches TODAY, so the payoff is visible
@@ -6051,13 +6091,15 @@ window.openCascade=id=>{
   // answered under one agent must not turn up as a stub on another agent's New list.
   if(id===ALL_ID){
     if(activeId===ALL_ID) return;
-    setActive(ALL_ID); settleFoundView(); clearFilters(); syncFilterUI(); restoreCascadeSearch(); render();
+    setActive(ALL_ID); settleFoundView(); clearFilters(); syncFilterUI(); restoreCascadeSearch();
+    closeFilterPanel(); restoreCascadeWatchTiers(); render();
     logEvent("cascade_opened", {key:"all"});
 
     return;
   }
   const c=cascades.find(x=>x.id===id); if(!c || activeId===id) return;
-  setActive(id); settleFoundView(); applyCascade(c); restoreCascadeSearch(); render();
+  setActive(id); settleFoundView(); applyCascade(c); restoreCascadeSearch();
+  closeFilterPanel(); restoreCascadeWatchTiers(); render();
   logEvent("cascade_opened", {key:c.template||"custom"});
   // countCriteria() is what the Cascade SHOWS you right now, which is not the same as what it has found and is
   // watching (that's the Found list). So this line says "showing", and only the value lines say "found".
@@ -6177,6 +6219,11 @@ function deckBuild(){
   const searchBtn = label =>
     `<button class="ca-btn x dc-search" data-act="search" type="button" aria-label="Search ${escA(label)}"
              title="Search this cascade">🔍</button>`;
+  // CAS-382: alongside Edit/search, same row. All has no watch-priority concept of its own (it isn't
+  // watching anything, it's the whole catalogue), so it doesn't get one.
+  const filterBtn = label =>
+    `<button class="ca-btn x dc-filter" data-act="filter" type="button" aria-haspopup="true" aria-expanded="false"
+             aria-label="Filter ${escA(label)} by watch priority" title="Filter by watch priority">${ICON.filter}</button>`;
   deckStrip.innerHTML=`
     <div class="dcard all" role="group" aria-label="All — the whole catalogue" tabindex="-1" data-id="${ALL_ID}"><div class="dc-in">
       <div class="dc-icon">${ALL_ICON}</div>
@@ -6200,6 +6247,7 @@ function deckBuild(){
         <button class="ca-btn save" data-act="save" hidden>Save</button>
         <button class="ca-btn" data-act="edit">Edit</button>
         ${searchBtn(c.name)}
+        ${filterBtn(c.name)}
       </div>
     </div></div>`).join("")
   + `<div class="dcard new" role="group" aria-label="New Agent" tabindex="-1"><div class="dc-in">
@@ -6338,6 +6386,7 @@ deckStrip.addEventListener("click",e=>{
   if(act==="edit") return editCascade();
   if(act==="save") return saveCascadeEdits();
   if(act==="search") return onSearchIcon(card);
+  if(act==="filter") return onFilterIcon(card, e.target.closest("button[data-act]"));
   if(deckDragged) return;                            // that click was the end of a drag
   const i=deckCards().indexOf(card);
   deckUsed(deckDragged?"drag":"tap");
@@ -6412,6 +6461,82 @@ function restoreCascadeSearch(){
 }
 $("cascSearchInput").oninput=e=>setSearchTerm(e.target.value);
 $("cascSearchClose").onclick=()=>closeCascadeSearch();
+
+// ---- CAS-382: per-agent Filter (watch-priority) ------------------------------------------------------
+// Same rule as search just above: the ticked tiers belong to the agent you're viewing, so leaving one and
+// coming back to it later restores what was ticked. Session-only — nothing here is written to localStorage,
+// so a reload starts clean rather than silently narrowing next visit's list with a filter nobody can see.
+const watchTiersById={};
+function setWatchTiers(keys){
+  filt.watchTiers=new Set(keys);
+  if(filt.watchTiers.size) watchTiersById[activeId]=[...filt.watchTiers]; else delete watchTiersById[activeId];
+}
+function restoreCascadeWatchTiers(){ filt.watchTiers=new Set(watchTiersById[activeId]||[]); }
+function paintFilterBtns(){
+  deckCards().forEach(el=>el.querySelector(".dc-filter")
+    ?.classList.toggle("on", el.dataset.id===activeId && !!filt.watchTiers.size));
+}
+function closeFilterPanel(){
+  document.querySelectorAll(".cpop.fpop").forEach(n=>n.remove());
+  deckStrip.querySelectorAll(".dc-filter.open").forEach(b=>{ b.classList.remove("open"); b.setAttribute("aria-expanded","false"); });
+}
+function filterPanelRowsHTML(){
+  return FILTER_TIERS.map(t=>{
+    const on=filt.watchTiers.has(t.key);
+    return `<button type="button" class="nopt${on?" on":""}" style="--wwc:${t.cd}" data-tier="${t.key}"
+      aria-pressed="${on}" onclick="toggleFilterTier('${t.key}')"
+      title="${escA(on?`${t.label} — tap to clear`:`Show only ${t.label}`)}">
+      <span class="wwb sq">✓</span><span class="nol">${esc(t.label)}</span></button>`;
+  }).join("");
+}
+// The deck strip clips vertical overflow on purpose (.deckstrip's overflow-y:hidden — it's what keeps a
+// neighbouring card's coverflow tilt from poking out above/below the rail), so a popup parented inside a
+// .dcard the way the per-film .cpop panels are would be invisible half the time. #cascbar, one level up, has
+// no such clip and is itself the sticky-positioned box (CAS-136) — so the panel is parented there instead,
+// with its own position computed from the button's rect rather than the CSS's normal 100%-of-offset-parent
+// rule, which assumes the anchor IS the offset parent.
+function positionFilterPanel(pop, btn){
+  const bar=$("cascbar"), barR=bar.getBoundingClientRect(), btnR=btn.getBoundingClientRect();
+  const h=pop.offsetHeight;
+  const opensUp = (btnR.bottom+8+h > innerHeight) && (btnR.top-8-h > 0);
+  pop.style.right=Math.max(8, barR.right-btnR.right)+"px";
+  pop.style.top = opensUp ? (btnR.top-barR.top-8-h)+"px" : (btnR.bottom-barR.top+8)+"px";
+}
+function onFilterIcon(card, btn){
+  const id=card.dataset.id; if(!id) return;             // All / New have no watch-priority filter
+  const already=btn.classList.contains("open");
+  closeFilterPanel();
+  if(already) return;                                    // second tap closes it
+  const pop=document.createElement("div");
+  pop.className="cpop fpop al-r";
+  pop.style.cssText="position:absolute;bottom:auto";     // override the class's 100%-of-offset-parent default
+  pop.innerHTML=`<div class="nopts">${filterPanelRowsHTML()}</div>`;
+  $("cascbar").appendChild(pop);
+  positionFilterPanel(pop, btn);
+  wirePanelSlide(pop, ".nopt[data-tier]", el=>toggleFilterTier(el.dataset.tier));   // CAS-282
+  btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
+  logEvent("cascade_filter_opened");
+}
+// Multi-select: a tap toggles just that one row and the panel stays open, unlike every single-answer .cpop
+// (Watch, Watched, Sort) where picking IS closing.
+window.toggleFilterTier=key=>{
+  const s=new Set(filt.watchTiers);
+  s.has(key) ? s.delete(key) : s.add(key);
+  setWatchTiers(s);
+  const pop=document.querySelector(".cpop.fpop");
+  if(pop) pop.querySelector(".nopts").innerHTML=filterPanelRowsHTML();
+  render();
+};
+// A tap outside the panel (but on the card it belongs to, or anywhere else) closes it — the same convention
+// the per-film .cpop panels use (CAS-283), scoped here to the deck instead of a film card.
+document.addEventListener("click", e=>{
+  if(!document.querySelector(".cpop.fpop")) return;
+  if(e.target.closest(".cpop.fpop") || e.target.closest(".dc-filter")) return;
+  closeFilterPanel();
+}, true);
+document.addEventListener("keydown", e=>{
+  if(e.key==="Escape" && document.querySelector(".cpop.fpop")) closeFilterPanel();
+});
 
 // ---- Save as… — what you have built, as a standing Cascade (CAS-101, moved by CAS-150) ------
 // It has moved out of the old header filter row and into the Cascade EDITOR, which is now the only screen
@@ -6593,6 +6718,7 @@ window.dismissSvcNote = state => {
 function renderCascadeBar(shown){
   deckSync(shown);
   paintSearchBtns();     // deckSync may have rebuilt the cards, taking the lit 🔍 with them
+  paintFilterBtns();     // CAS-382: same reason — deckBuild() drops the lit funnel along with everything else
   const c=activeCascade();
   let html="";
   // Guest mode (CAS-79): the agent is saved but paused. Show its honest status, an honest re-invite tied to a
