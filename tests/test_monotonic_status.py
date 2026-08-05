@@ -143,6 +143,9 @@ class TransientProviderDropEndToEnd(unittest.TestCase):
             mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
             mock.patch.object(pp, "TMDB_PACING", 0),
             mock.patch.object(pp, "enrich_omdb", lambda m: m),
+            # CAS-379: this fixture's titles predate cinema_release too; a no-op keeps that
+            # back-fill path (orthogonal to what this class tests) from hitting the network.
+            mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
         ]
         for p in patches:
             p.start(); self.addCleanup(p.stop)

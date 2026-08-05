@@ -106,6 +106,15 @@ IMDB_MIN_VOTES      = int(os.getenv("IMDB_MIN_VOTES", "1000"))   # keep in step 
 OMDB_REFRESH_BUDGET = int(os.getenv("OMDB_REFRESH_BUDGET", "100"))
 OMDB_FREE_TIER_CAP  = int(os.getenv("OMDB_FREE_TIER_CAP", "1000"))   # what we believe the key is allowed/day
 
+# CAS-379: cinema_release (CAS-360) was added after the persistent catalogue already existed, and
+# build_live_catalogue carries every pre-existing base record forward unchanged — only NEW titles
+# `ingest_tmdb*` discovers ever pass through `_tmdb_record`. So every record from before the field
+# existed is permanently missing it, which is why the streaming Mission's "Cinema Release" toggle
+# matched nothing. Back-fill it under its own budget; TMDB has no daily cap (unlike OMDb/Watchmode)
+# but a one-shot full re-fetch of the whole catalogue is still wasteful, so this converges over a
+# handful of runs instead.
+CINEMA_RELEASE_BACKFILL_BUDGET = int(os.getenv("CINEMA_RELEASE_BACKFILL_BUDGET", "500"))
+
 
 # ---------------------------------------------------------------------------
 # tiny HTTP helper
@@ -227,6 +236,23 @@ def _tmdb_record(detail: dict) -> dict:
         "director": ", ".join(directors[:2]) or None,
         "cast": cast,
     }
+
+
+def enrich_cinema_release(movie: dict) -> dict:
+    """CAS-379: back-fill `cinema_release`/`release_dates` on a record built before CAS-360
+    added them. One lighter release_dates-only call (not the full detail _tmdb_record uses,
+    since everything else on the record is already populated)."""
+    data = get_json(f"{TMDB_BASE}/movie/{movie['tmdb_id']}/release_dates?api_key={TMDB_KEY}")
+    cinema_release, release_dates = False, []
+    for entry in data.get("results", []):
+        if entry["iso_3166_1"] == REGION:
+            for rd in entry["release_dates"]:
+                release_dates.append({"region": REGION, "type": rd["type"], "date": rd["release_date"][:10]})
+                if rd["type"] == 3:
+                    cinema_release = True
+    movie["cinema_release"] = cinema_release
+    movie["release_dates"] = release_dates
+    return movie
 
 
 def _discover_au_theatrical(start: str, end: str, cap: int, seen: set) -> list[dict]:
@@ -673,14 +699,15 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     # Watchmode is on-demand only now: the poll-set matters just for the engaged titles.
     sched = ps.select_daily_poll_set(catalogue, today, ondemand_ids=ondemand_ids)
     ondemand_set = {m["tmdb_id"] for m in sched["ondemand"]}
-    provider_calls = wm_calls = omdb_calls = 0
+    provider_calls = wm_calls = omdb_calls = cinema_calls = 0
     omdb_budget, wm_budget = OMDB_DAILY_BUDGET, ONDEMAND_WM_CAP
     omdb_refresh = OMDB_REFRESH_BUDGET          # CAS-156: separate pot, so back-fill is never crowded out
+    cinema_backfill = CINEMA_RELEASE_BACKFILL_BUDGET   # CAS-379: its own pot, same reasoning
     # CAS-161: per-API health for this run. `*_open` goes False the first time an API says something that is
     # true of the whole run (cap hit, key rejected) rather than of one title; the `*_fails` tallies are the
     # honest count of titles that kept yesterday's data, printed at the end so a degraded run is visible.
-    omdb_open = wm_open = prov_open = True
-    omdb_fails = wm_fails = prov_fails = 0
+    omdb_open = wm_open = prov_open = cinema_open = True
+    omdb_fails = wm_fails = prov_fails = cinema_fails = 0
 
     def _omdb(m):
         """One guarded OMDb enrich. Returns True if the caller should count a spend."""
@@ -693,6 +720,16 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
         return True
 
     for m in catalogue:
+        # CAS-379: back-fill pre-CAS-360 records regardless of poll tier — an upcoming title carried
+        # forward from before the field existed is just as stuck as a released one.
+        if "cinema_release" not in m and cinema_open and cinema_backfill > 0:
+            _, cinema_outcome = _api_call("TMDB release_dates", enrich_cinema_release, m)
+            cinema_calls += 1; cinema_backfill -= 1
+            if cinema_outcome == "stop":
+                cinema_open = False
+            if cinema_outcome != "ok":
+                cinema_fails += 1
+
         tier = ps.classify_tier(m, today)
         m["poll_tier"] = tier
         if tier == "none":                                   # upcoming — known from TMDB date
@@ -768,17 +805,20 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
 
     counts = dict(sched["counts"])
     counts.update(provider_calls=provider_calls, wm_calls=wm_calls, omdb_calls=omdb_calls,
+                  cinema_calls=cinema_calls,
                   ondemand=len(ondemand_set), catalogue=len(catalogue),
                   # CAS-161: a degraded run must SAY it was degraded. Silence here would let the catalogue
                   # quietly go stale for days while every run still reported success.
-                  omdb_fails=omdb_fails, wm_fails=wm_fails, provider_fails=prov_fails,
-                  omdb_stopped=not omdb_open, wm_stopped=not wm_open, providers_stopped=not prov_open)
-    if omdb_fails or wm_fails or prov_fails:
+                  omdb_fails=omdb_fails, wm_fails=wm_fails, provider_fails=prov_fails, cinema_fails=cinema_fails,
+                  omdb_stopped=not omdb_open, wm_stopped=not wm_open, providers_stopped=not prov_open,
+                  cinema_stopped=not cinema_open)
+    if omdb_fails or wm_fails or prov_fails or cinema_fails:
         print(f"[warn] degraded enrichment: {prov_fails} TMDB-provider, {omdb_fails} OMDb, {wm_fails} "
-              f"Watchmode title(s) kept their previous data"
+              f"Watchmode, {cinema_fails} TMDB-release_dates title(s) kept their previous data"
               + (" — OMDb stopped early" if not omdb_open else "")
               + (" — Watchmode stopped early" if not wm_open else "")
-              + (" — TMDB providers stopped early" if not prov_open else ""))
+              + (" — TMDB providers stopped early" if not prov_open else "")
+              + (" — TMDB release_dates stopped early" if not cinema_open else ""))
     if OMDB_DAILY_BUDGET + OMDB_REFRESH_BUDGET > OMDB_FREE_TIER_CAP:
         print(f"[warn] OMDb budgets total {OMDB_DAILY_BUDGET + OMDB_REFRESH_BUDGET} against a "
               f"{OMDB_FREE_TIER_CAP}/day cap — a single run can exhaust the key.")
@@ -802,7 +842,8 @@ def run(simulate_day: bool = False):
         records, counts = build_live_catalogue(today, base_records, wm_cache,
                                                offsets=offsets, ondemand_ids=ondemand_ids)
         print(f"[live] catalogue {len(records)} | TMDB provider calls {counts['provider_calls']} (free, no quota) "
-              f"| Watchmode on-demand {counts['wm_calls']}/{ONDEMAND_WM_CAP} | OMDb backfill {counts['omdb_calls']}")
+              f"| Watchmode on-demand {counts['wm_calls']}/{ONDEMAND_WM_CAP} | OMDb backfill {counts['omdb_calls']} "
+              f"| cinema_release backfill {counts['cinema_calls']}/{CINEMA_RELEASE_BACKFILL_BUDGET}")
         os.makedirs(STATE_DIR, exist_ok=True)
         json.dump(wm_cache, open(WM_CACHE_FILE, "w"), indent=2)
     else:
