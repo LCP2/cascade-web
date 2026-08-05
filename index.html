@@ -1122,6 +1122,10 @@
   .saveline{margin-top:11px;font-size:11.5px;font-weight:700;line-height:1.45;padding:7px 10px;border-radius:9px;
     background:rgba(72,199,142,.12);border:1px solid rgba(72,199,142,.45);color:#a7eccb;
     display:flex;align-items:center;justify-content:space-between;gap:10px;overflow:hidden}
+  /* CAS-399: when the bar carries the Services affordance, the WHOLE bar is the toggle, not just the
+     chevron control inside it — so it needs its own pointer cursor and focus ring. */
+  .saveline.svctog{cursor:pointer}
+  .saveline.svctog:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .savetxt{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* rent-only: a fact, not a win — the green is reserved for "you already have this" */
   .saveline.plain{background:var(--panel2);border-color:var(--line);color:var(--dim)}
@@ -3317,7 +3321,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 361, "commit": "c1dcc95", "builtAt": "2026-08-05T23:22:42Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 362, "commit": "08106bc", "builtAt": "2026-08-05T23:28:56Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -3572,7 +3576,7 @@ ALERT_TYPES.forEach(t=>{
 // One delegated pass makes them all reachable (Tab) and operable (Enter/Space), including the ones the
 // editor builds after this runs.
 function armSwitches(root){
-  (root||document).querySelectorAll(".switch, .iconbtn").forEach(s=>{
+  (root||document).querySelectorAll(".switch, .iconbtn, .svctog").forEach(s=>{
     if(s.dataset.kb) return;
     s.dataset.kb="1";
     if(!s.hasAttribute("tabindex")) s.tabIndex=0;
@@ -4136,15 +4140,20 @@ function savingsHTML(m, canExpand){
   // CAS-348: the services list used to open only from the row's chevron button, which the control-row
   // redesign removes. On a card wearing this bar, the bar itself carries the shortcut instead — per film,
   // not per agent, so it is correct on the mixed All/Home view too.
-  const svcAff = canExpand
-    ? `<button type="button" class="svcbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')"
-         title="Show all services" aria-label="Show all services">Services${ICON.chev}</button>`
+  const svcAff = canExpand ? `<span class="svcbtn">Services${ICON.chev}</span>` : "";
+  // CAS-399: when the bar carries the Services affordance, the whole bar is the toggle (not just the
+  // chevron control) — a real click/tap/keyboard target, with the chevron's open state still synced via
+  // .svcbtn so the existing card-expand wiring (~line 5325) keeps working unchanged.
+  const svcTogClass = canExpand ? " svctog" : "";
+  const svcTogAttrs = canExpand
+    ? ` role="button" tabindex="0" aria-label="Show all services"
+         onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.querySelector('.svcbtn').classList.toggle('open')"`
     : "";
   if(subs.length && (!prefsActive() || mine.length)){
     const svc=svcName((mine[0]||subs[0]).service);
     const own=(ux.on && mine.length) ? " (already paid)" : "";
     const alt=rent ? `, or pay <b>$${rent.price.toFixed(2)}</b> to rent` : "";
-    return `<div class="saveline"><span class="savetxt">✓ On <b>${esc(svc)}</b>${alt}${own}</span>${svcAff}</div>`;
+    return `<div class="saveline${svcTogClass}"${svcTogAttrs}><span class="savetxt">✓ On <b>${esc(svc)}</b>${alt}${own}</span>${svcAff}</div>`;
   }
   if(rent && rent.price<=RENTAL_MAX){
     const cheaper=(ux.on && buy && buy.price>rent.price)
@@ -4157,7 +4166,7 @@ function savingsHTML(m, canExpand){
   const premium = buy || rent;
   if(premium){
     const verb = premium.type==="buy" ? "Buy" : "Rent";
-    return `<div class="saveline plain"><span class="savetxt">${verb} for <b>$${premium.price.toFixed(2)}</b> on ${esc(svcName(premium.service))}</span>${svcAff}</div>`;
+    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt">${verb} for <b>$${premium.price.toFixed(2)}</b> on ${esc(svcName(premium.service))}</span>${svcAff}</div>`;
   }
   return "";   // no priced offer at all — nothing honest to write
 }
