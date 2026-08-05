@@ -10,10 +10,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
-<!-- Account config (CAS-82 / spec 26771457 §4): a git-ignored config.js sets
-     window.CASCADE_CONFIG = { SUPABASE_URL, SUPABASE_ANON_KEY } (anon key only — public-safe).
-     It is optional: if the file is absent this 404s harmlessly and the page loads in guest
-     mode (localStorage), so CI / the dry-run build work with no keys. See config.example.js. -->
+<!-- Account config (CAS-82 / spec 26771457 §4; committed per CAS-317): config.js sets
+     window.CASCADE_CONFIG = { SUPABASE_URL, SUPABASE_ANON_KEY } (anon key only — public-safe;
+     Row-Level Security protects the data). If the file is ever absent this 404s harmlessly and
+     the page loads in guest mode (localStorage) instead. See config.example.js for the template. -->
 <script src="config.js"></script>
 <style>
   :root{
@@ -184,6 +184,12 @@
   .modal{position:fixed;top:0;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;
     background:var(--bg);z-index:50;display:none;overflow-y:auto;padding:0 16px 60px}
   .modal.open{display:block}
+  /* CAS-317: found verifying the email+password flow — the account modal is the one .modal that CAS-186
+     deliberately opens WHILE the splash (z-index 80) is still showing behind it, so backing out lands you
+     exactly where you were. At the shared z-index:50 every other .modal uses, the still-open splash simply
+     sat on top and ate every click and tap in the panel — sign-in from the front door was unusable. Every
+     other .modal only ever opens over the plain listing, so this is scoped to #authModal, not the class. */
+  #authModal.open{z-index:81}
   .modalhead{position:sticky;top:0;background:var(--bg);display:flex;justify-content:space-between;align-items:center;
     padding:14px 0 12px;border-bottom:1px solid var(--line);margin-bottom:6px;z-index:2}
   .modalhead h3{margin:0;font-size:17px;font-weight:800}
@@ -202,7 +208,8 @@
      can't SEE that you've Tabbed to is not keyboard-operable in any way that matters. */
   .chip:focus-visible,.qpill:focus-visible,.hatch:focus-visible,.ebtn:focus-visible,.cschip:focus-visible,
   .mlbtn:focus-visible,.ca-btn:focus-visible,.tpl:focus-visible,.actbtn:focus-visible,
-  .iconbtn:focus-visible,.donebtn:focus-visible,.applybtn:focus-visible,.dangerbtn:focus-visible{
+  .iconbtn:focus-visible,.donebtn:focus-visible,.applybtn:focus-visible,.dangerbtn:focus-visible,
+  .secbtn:focus-visible{
     outline:2px solid var(--accent);outline-offset:2px}
   .chips{display:flex;flex-wrap:wrap;gap:7px}
   .chip{font-size:12px;padding:6px 11px;border-radius:20px;border:1px solid var(--line);
@@ -1080,6 +1087,10 @@
     font-size:14.5px;font-weight:800;cursor:pointer}
   .applybtn:disabled{background:var(--panel2);color:var(--faint);cursor:not-allowed}
   .dangerbtn{background:var(--panel2);border:1px solid #5c3540;color:#ffb9a6;border-radius:11px;
+    padding:13px 14px;font-size:14px;font-weight:700;cursor:pointer}
+  /* CAS-317: neutral secondary action beside an .applybtn (e.g. "Log in" next to "Create account") —
+     .dangerbtn's red tint would misread as a destructive action here. */
+  .secbtn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:11px;
     padding:13px 14px;font-size:14px;font-weight:700;cursor:pointer}
   .warnnote{font-size:11.5px;color:#ffce8f;background:rgba(240,163,54,.1);border:1px solid rgba(240,163,54,.4);
     border-radius:9px;padding:8px 10px;margin-top:8px;line-height:1.45}
@@ -2448,7 +2459,7 @@
     Every figure is read from the real offer prices; we never show a saving or a countdown we can't back up.</div>
 </div>
 
-<!-- ACCOUNT modal (CAS-82 / spec 26771457 §4) — magic-link sign-in. Three states, toggled by
+<!-- ACCOUNT modal (CAS-82 / spec 26771457 §4; email+password per CAS-317). Three states, toggled by
      the auth module at the end of <body>: #authGuest (no config), #authSignedOut (config present,
      not signed in), #authSignedIn (session active). -->
 <div class="modal" id="authModal">
@@ -2464,18 +2475,24 @@
       broken, it just stays on this device. See <code>config.example.js</code> in the repo for the one-line setup.</div>
   </div>
 
-  <!-- config present, signed out → email → magic link -->
+  <!-- config present, signed out → email + password (CAS-317: replaces the old magic-link flow, which
+       can't work with the fictitious test emails onboarding needs to support) -->
   <div id="authSignedOut" style="display:none">
-    <div class="pnote">Sign in with a one-tap link — no password. Enter your email and we'll send you a
-      link that signs you straight in. Your Cascades then sync to your account across devices.</div>
+    <div class="pnote">Enter your email and password to log in, or create a new account — any email
+      works, including a made-up one, so you can try Cascade without a real inbox. Your Cascades then
+      sync to your account across devices.</div>
     <!-- CAS-186: what a guest actually stands to lose, counted rather than asserted. Filled in by
          paintGuestStake() and hidden entirely when there is nothing on this device to save. -->
     <div class="pnote" id="authGuestStake" style="display:none"></div>
     <div class="flabel">Email</div>
     <input id="authEmail" class="namein" type="email" inputmode="email" autocomplete="email"
            placeholder="you@example.com">
+    <div class="flabel">Password</div>
+    <input id="authPassword" class="namein" type="password" autocomplete="current-password"
+           placeholder="Your password">
     <div class="cascfoot" style="margin-top:12px">
-      <button class="applybtn" id="authSendLink">Send my sign-in link</button>
+      <button class="secbtn" id="authLogin">Log in</button>
+      <button class="applybtn" id="authSignup">Create account</button>
     </div>
     <div id="authMsg" class="pnote" style="margin-top:10px"></div>
   </div>
@@ -2619,8 +2636,9 @@
 </div>
 
 <!-- ACCOUNT (CAS-206 / CAS-210) — what every new agent starts from, how you are told by default, and the
-     membership. Body rendered by renderAccount(). Signing in itself still happens in the magic-link panel
-     (CAS-82), which this screen opens rather than duplicates. Reached from the top menu (CAS-345). -->
+     membership. Body rendered by renderAccount(). Signing in itself still happens in the email+password
+     panel (CAS-82 / CAS-317), which this screen opens rather than duplicates. Reached from the top menu
+     (CAS-345). -->
 <div class="uscreen" id="accountScreen" role="dialog" aria-modal="true" aria-label="Account">
   <div class="uwrap" id="accountBody"></div>
 </div>
@@ -12120,7 +12138,7 @@ else if(dedupedN)
 })();
 </script>
 
-<!-- ACCOUNT / MAGIC-LINK AUTH (CAS-82 / spec 26771457 §4).
+<!-- ACCOUNT / EMAIL+PASSWORD AUTH (CAS-82 / spec 26771457 §4; password auth per CAS-317).
      Self-contained ES module (deferred, runs after the DOM + the classic script above).
      - Reads window.CASCADE_CONFIG from the optional git-ignored config.js.
      - NO network import in guest mode (no/placeholder config) → the page works fully offline,
@@ -12158,20 +12176,22 @@ else if(dedupedN)
   const announce = () => window.dispatchEvent(new CustomEvent('cascade-auth-change',
     { detail: { user: api.user, session: api.session, status: api.status } }));
 
+  // CAS-317: found while verifying this module — setSignedIn/Out/Guest each referenced an undefined
+  // `btn` (the header account icon CAS-345 removed in favour of the top-menu Account item), throwing
+  // before ever reaching showPanel() below it. That left every state — including plain guest — painting
+  // a blank modal. Account status now shows only via renderAccount() / the top-menu Account item, per
+  // CAS-345, so there is nothing left for this module to toggle a class on.
   const setSignedIn = user => {
     api.user = user; api.status = 'signed-in';
     gid('authWho').textContent = (user && user.email) || 'your account';
-    btn.classList.add('on'); btn.title = 'Account — ' + ((user && user.email) || 'signed in');
     showPanel('authSignedIn');
   };
   const setSignedOut = () => {
     api.user = null; api.session = null; api.status = 'signed-out';
-    btn.classList.remove('on'); btn.title = 'Account — sign in';
     showPanel('authSignedOut');
   };
   const setGuest = () => {
     api.enabled = false; api.user = null; api.session = null; api.status = 'guest';
-    btn.classList.remove('on'); btn.title = 'Account — guest (connect to sync)';
     showPanel('authGuest');
   };
 
@@ -12188,8 +12208,7 @@ else if(dedupedN)
       setGuest(); announce(); return;
     }
 
-    // Reflect the current session (survives reloads; also catches the magic-link return),
-    // then keep the UI in step with every auth event.
+    // Reflect the current session (survives reloads), then keep the UI in step with every auth event.
     try {
       const { data: { session } } = await supa.auth.getSession();
       api.session = session || null;
@@ -12199,22 +12218,41 @@ else if(dedupedN)
 
     supa.auth.onAuthStateChange((event, session) => {
       api.session = session || null;
-      if(session){ setSignedIn(session.user); if(event === 'SIGNED_IN') toastSafe('Signed in — your Cascades now sync to your account.'); }
+      if(session){
+        setSignedIn(session.user);
+        if(event === 'SIGNED_IN'){ toastSafe('Signed in — your Cascades now sync to your account.'); closeAuth(); }
+      }
       else setSignedOut();
       announce();
     });
 
-    gid('authSendLink').addEventListener('click', async () => {
+    // CAS-317: email + password replaces the old magic-link flow — it's the only mechanism that can
+    // sign a made-up test email straight in (a link has to be delivered and clicked; a password doesn't).
+    const readCreds = () => {
       const email = (gid('authEmail').value || '').trim();
-      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ msg.textContent = 'Please enter a valid email address.'; return; }
-      msg.textContent = 'Sending…';
+      const password = gid('authPassword').value || '';
+      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ msg.textContent = 'Please enter a valid email address.'; return null; }
+      if(password.length < 6){ msg.textContent = 'Password must be at least 6 characters.'; return null; }
+      return { email, password };
+    };
+
+    gid('authLogin').addEventListener('click', async () => {
+      const creds = readCreds(); if(!creds) return;
+      msg.textContent = 'Signing in…';
       try {
-        const { error } = await supa.auth.signInWithOtp({ email,
-          options: { emailRedirectTo: location.href.split('#')[0] } });
-        msg.textContent = error
-          ? 'Could not send the link: ' + error.message
-          : 'Check your email — we sent a one-tap sign-in link to ' + email + '.';
-      } catch(err){ msg.textContent = 'Could not send the link: ' + ((err && err.message) || err); }
+        const { error } = await supa.auth.signInWithPassword(creds);
+        if(error) msg.textContent = 'Could not sign in: ' + error.message;
+      } catch(err){ msg.textContent = 'Could not sign in: ' + ((err && err.message) || err); }
+    });
+
+    gid('authSignup').addEventListener('click', async () => {
+      const creds = readCreds(); if(!creds) return;
+      msg.textContent = 'Creating your account…';
+      try {
+        const { data, error } = await supa.auth.signUp(creds);
+        if(error) msg.textContent = 'Could not create account: ' + error.message;
+        else if(!data.session) msg.textContent = 'Account created, but no session was returned — check the Supabase "Confirm email" setting.';
+      } catch(err){ msg.textContent = 'Could not create account: ' + ((err && err.message) || err); }
     });
 
     gid('authSignOut').addEventListener('click', async () => {

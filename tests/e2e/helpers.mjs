@@ -14,8 +14,9 @@ export const PRESET_NAMES = {
   stream: ["Loved & Acclaimed", "Date Night", "Everyday Favourites", "Nominees & Awards", "Totally Custom"],
 };
 
-/** A first-run app with nothing remembered — the splash, every time. */
-export async function freshApp(page){
+/** The raw navigation freshApp does, with no opinion on config.js — cas317.spec.mjs needs this bare, since
+ * it registers its own config.js/esm.sh routes and a route added later always wins over one added earlier. */
+export async function gotoFresh(page){
   await page.goto("/index.html");
   await page.evaluate(() => { try{ localStorage.clear(); }catch(e){} });
   await page.goto("/index.html");
@@ -24,6 +25,16 @@ export async function freshApp(page){
   // knowing before writing any page.evaluate against this app; it cost a run to learn.
   await page.waitForFunction(() => typeof flowStart === "function" && Array.isArray(MOVIES));
   return page;
+}
+
+/** A first-run app with nothing remembered — the splash, every time. */
+export async function freshApp(page){
+  // CAS-317: config.js is now a real, committed file carrying production Supabase credentials (that's
+  // the ticket's whole point) — but the suite must stay guest-mode and network-free, exactly as it was
+  // when config.js didn't exist, or every test would start hitting the live project. Only cas317.spec.mjs
+  // opts back in, with a fake config + fake Supabase client of its own (via gotoFresh, above).
+  await page.route("**/config.js", route => route.fulfill({ status: 404, body: "" }));
+  return gotoFresh(page);
 }
 
 /** Read the integer out of a "28 films match right now" / "Continue · 28 films" style string. */
