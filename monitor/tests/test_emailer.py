@@ -9,9 +9,11 @@ from monitor.matching import Hit
 from monitor.transitions import Transition
 
 
-def _hit(title, moment, cascade, services=None, price=None):
+def _hit(title, moment, cascade, services=None, price=None, prior_window=None):
     t = Transition(movie_id="1", title=title, moment=moment,
                    services=services or [], price=price, movie={})
+    if prior_window is not None:
+        t.prior_window = prior_window
     return Hit(user_id="user-A", cascade_id="c1", cascade_name=cascade, transition=t)
 
 
@@ -60,7 +62,7 @@ class RenderTests(unittest.TestCase):
         for part in (d["html"], d["text"]):
             self.assertIn("Rent Riser", part)
             self.assertIn("Stream Arrival", part)
-            self.assertIn("Drama rentals", part)      # which Cascade caught it
+            self.assertIn("Drama rentals", part)      # which Cascade caught it — now the section header
             self.assertIn("Comedy on Stan", part)
         self.assertIn("$6.99", d["html"])             # real price, real service
         self.assertIn("Now on Stan", d["html"])
@@ -75,6 +77,43 @@ class RenderTests(unittest.TestCase):
     def test_site_url_default_is_the_live_site(self):
         d = render_digest(self.hits)
         self.assertIn("lcp2.github.io/cascade-web", d["html"])
+
+
+class SectioningTests(unittest.TestCase):
+    def setUp(self):
+        self.hits = [
+            _hit("Warfare", "hits_cinema", "Cinema date night", prior_window="upcoming"),
+            _hit("The Long Walk", "past_opening_weekend", "Cinema date night"),
+            _hit("Sinners", "hits_stream", "Everyday favourites", services=["Netflix"], prior_window="rental"),
+        ]
+
+    def test_sections_are_grouped_by_agent_alphabetically(self):
+        d = render_digest(self.hits, site_url="https://example.test/app/")
+        for part in (d["html"], d["text"]):
+            self.assertLess(part.index("Cinema date night"), part.index("Everyday favourites"))
+
+    def test_no_per_line_found_by_tag(self):
+        d = render_digest(self.hits, site_url="https://example.test/app/")
+        for part in (d["html"], d["text"]):
+            self.assertNotIn("Found by your", part)
+
+    def test_move_line_shown_when_prior_window_known(self):
+        d = render_digest(self.hits, site_url="https://example.test/app/")
+        for part in (d["html"], d["text"]):
+            self.assertIn("Upcoming → In cinema", part)
+            self.assertIn("Rent → Stream", part)
+
+    def test_no_move_line_when_prior_window_unknown(self):
+        d = render_digest(self.hits, site_url="https://example.test/app/")
+        for part in (d["html"], d["text"]):
+            self.assertIn("Past its opening weekend", part)
+        # "The Long Walk" has no prior_window set — never invent a move for it.
+        self.assertNotIn("→ Past", d["html"])
+
+    def test_rendering_is_deterministic(self):
+        d1 = render_digest(self.hits, site_url="https://example.test/app/")
+        d2 = render_digest(self.hits, site_url="https://example.test/app/")
+        self.assertEqual(d1, d2)
 
 
 if __name__ == "__main__":
