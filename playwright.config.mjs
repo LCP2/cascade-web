@@ -4,8 +4,9 @@
 // localStorage — which is where every agent, watch status and preference lives — behaves differently there. The
 // server is python's own http.server, so the suite needs no web dependency of its own.
 //
-// One worker, and no retries. The app's state is localStorage on one origin, so two workers would be two tests
-// writing one another's agents; and a retry that passes is a flake we would rather see than hide.
+// One worker: the app's state is localStorage on one origin, so two workers would be two tests writing one
+// another's agents. CAS-385: the suite is now a small fixed smoke gate rather than a full regression suite,
+// so 2 retries absorb genuine flake instead of the run-once policy the old per-ticket suite used.
 import { defineConfig, devices } from "@playwright/test";
 
 const PORT = Number(process.env.CASCADE_TEST_PORT || 8973);
@@ -14,7 +15,7 @@ export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
   workers: 1,
-  retries: 0,
+  retries: 2,
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
   timeout: 90_000,

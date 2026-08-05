@@ -628,6 +628,22 @@ _RUN_DATE = datetime.date.today().isoformat()
 def today_records_date(): return _RUN_DATE
 
 
+def _dedupe_by_tmdb_id(movies: list[dict]) -> list[dict]:
+    """CAS-383: a title must never appear twice in the catalogue. The ingest passes already
+    thread a shared `seen` set so this shouldn't happen from a single run, but a corrupted
+    base snapshot (e.g. a git merge of two divergent histories touching the same generated
+    file) can still hand this function a list with repeats — so collapse defensively rather
+    than trust the caller. When a tmdb_id repeats, keep the record with the most recent
+    `last_polled` (freshest availability data); fall back to the first occurrence."""
+    best: dict[int, dict] = {}
+    for m in movies:
+        tid = m["tmdb_id"]
+        prior = best.get(tid)
+        if prior is None or (m.get("last_polled") or "") > (prior.get("last_polled") or ""):
+            best[tid] = m
+    return list(best.values())
+
+
 # ---------------------------------------------------------------------------
 # CAS-109 — build the persistent catalogue, poll only the daily set, carry the rest
 # ---------------------------------------------------------------------------
@@ -650,6 +666,7 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     if len(base) < CATALOGUE_TARGET:
         new = ingest_tmdb(seen) + ingest_tmdb_upcoming(seen) + ingest_tmdb_streaming(seen)
     catalogue = list(base.values()) + [m for m in new if m["tmdb_id"] not in base]
+    catalogue = _dedupe_by_tmdb_id(catalogue)
     catalogue.sort(key=lambda m: m.get("popularity") or 0, reverse=True)
     catalogue = catalogue[:CATALOGUE_TARGET]
 
