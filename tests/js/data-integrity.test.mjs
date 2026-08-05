@@ -168,23 +168,33 @@ test("the listing leads with what is out and ends with what is not — on the ST
     `an Upcoming film sits at ${firstUpcoming}, above a released one at ${lastReleased}`);
 });
 
-// CAS-295: the cinema lane reads in the order a trip to the cinema is planned, not in order of what you can
-// watch this minute. This is the deliberate reversal of the rule above, and it applies to that lane only.
-test("in cinema: the cinema lane leads with Upcoming, then Opening, then Cinema", () => {
+// CAS-394: reverses CAS-295. The cinema lane now leads with what is out (same shape as the streaming lane
+// above) and ends with Upcoming, but the in-section timeline runs the other way: oldest cinema date first,
+// so a released film sits above one that opened more recently, and Upcoming's soonest release leads its
+// furthest-out one. This applies to the cinema lane only.
+test("in cinema: the cinema lane leads with what is out, ends with Upcoming, oldest cinema date first", () => {
   // Spread into a LOCAL array first: the engine runs in a vm realm, so its Array has a different prototype
   // and deepStrictEqual compares that too. Every other array assertion in this file does the same.
-  assert.deepEqual([...E.CINEMA_LISTING_ORDER].slice(0, 3), ["upcoming", "opening_week", "in_cinema"],
-    "the cinema lane does not open with upcoming -> opening -> in cinema");
+  assert.equal(E.CINEMA_LISTING_ORDER[E.CINEMA_LISTING_ORDER.length - 1], "upcoming",
+    `the cinema lane ends with ${E.CINEMA_LISTING_ORDER[E.CINEMA_LISTING_ORDER.length - 1]}, not upcoming`);
   assert.deepEqual([...E.CINEMA_LISTING_ORDER].sort(), [...E.CASCADE].sort(),
     "the cinema order and the journey order are not the same six windows");
   pickInLane(E, "cinema", "custom");
   const d = E.onbApply();
   assert.equal(E.orderFor(d), E.CINEMA_LISTING_ORDER, "a cinema agent is not using the cinema order");
   const seq = E.listingOrder(E.MOVIES.filter(m => E.listedBy(m, d)), d.sort || "availability", d);
-  const lastUpcoming = seq.map(m => E.isUpcoming(m)).lastIndexOf(true);
-  const firstReleased = seq.findIndex(m => !E.isUpcoming(m));
-  if(lastUpcoming >= 0 && firstReleased >= 0) assert.ok(lastUpcoming < firstReleased,
-    `a released film sits at ${firstReleased}, above an Upcoming one at ${lastUpcoming}`);
+  const lastReleased = seq.map(m => !E.isUpcoming(m)).lastIndexOf(true);
+  const firstUpcoming = seq.findIndex(m => E.isUpcoming(m));
+  if(lastReleased >= 0 && firstUpcoming >= 0) assert.ok(lastReleased < firstUpcoming,
+    `an Upcoming film sits at ${firstUpcoming}, above a released one at ${lastReleased}`);
+  // …and within any one section, the oldest cinema date leads — the opposite direction from the streaming
+  // lane's timeline.
+  const dated = seq.filter(m => m.cinema_date);
+  for(let i = 1; i < dated.length; i++){
+    if(E.primaryStatus(dated[i]) !== E.primaryStatus(dated[i - 1])) continue;   // only within one section
+    assert.ok(dated[i].cinema_date >= dated[i - 1].cinema_date,
+      `${dated[i - 1].title} (${dated[i - 1].cinema_date}) sits above ${dated[i].title} (${dated[i].cinema_date}) — the cinema lane should read oldest first`);
+  }
   // …and a streaming agent is untouched by it.
   pickInLane(E, "stream", "custom");
   assert.equal(E.orderFor(E.onbApply()), E.LISTING_ORDER, "the streaming lane picked up the cinema order");

@@ -2799,14 +2799,13 @@ const CASCADE = ["upcoming","opening_week","in_cinema","pvod","rental","included
 // 27 Upcoming above the one film actually on a screen. A listing answers "what can I watch", so it leads
 // with what is out and keeps Upcoming as the tail it is. Same six sections, same films, same counts.
 const LISTING_ORDER = ["opening_week","in_cinema","pvod","rental","included_streaming","upcoming"];
-// CAS-295: a CINEMA agent reads in the order a trip to the cinema is planned — what is coming, what has just
-// opened, what is on now — rather than in the order of what you can watch this minute. On that lane Upcoming
-// is not the dregs of the list: an announced film is the single most useful row a cinema-goer has, because
-// it is the one thing they can still make plans around.
+// CAS-394: reverses CAS-295. A CINEMA agent now reads oldest cinema date first — In Cinema (already open)
+// leads and Upcoming (the least settled plan, furthest out) sits last — so the sections read as a timeline
+// you can actually act on tonight, working down toward what you can only still plan for.
 //
 // The default order everywhere else is unchanged and still ends with Upcoming, which is the right answer for
 // a streaming agent: there, an unreleased film really is the least actionable thing on the page.
-const CINEMA_LISTING_ORDER = ["upcoming","opening_week","in_cinema","pvod","rental","included_streaming"];
+const CINEMA_LISTING_ORDER = ["opening_week","in_cinema","pvod","rental","included_streaming","upcoming"];
 const orderFor = c => (c && c.kind==="cinema") ? CINEMA_LISTING_ORDER : LISTING_ORDER;
 const STATUS_LABEL = {
   opening_week:"In Cinema · Opening week", in_cinema:"In Cinema",
@@ -3316,7 +3315,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 358, "commit": "f394180", "builtAt": "2026-08-05T23:11:14Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 359, "commit": "103ef13", "builtAt": "2026-08-05T23:17:50Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -3869,6 +3868,16 @@ function byTimeline(a,b){
   if(!db) return -1;
   return db.localeCompare(da);
 }
+// CAS-394: the cinema lane's default reads the same timeline the other way — oldest cinema date at the
+// top — so a trip-planning read moves from what already opened toward what is still to come, Upcoming's
+// furthest-out title last rather than first (see sortForKey).
+function byTimelineAsc(a,b){
+  const da=a.cinema_date||"", db=b.cinema_date||"";
+  if(!da && !db) return byRatingDesc(a,b);
+  if(!da) return 1;
+  if(!db) return -1;
+  return da.localeCompare(db);
+}
 function sortMoviesBy(a,b,key){
   switch(key){
     case "availability": return byTimeline(a,b);
@@ -3902,12 +3911,12 @@ const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
 // explicit sort exactly as before — this is the pre-release section's rule, not a global reversal.
 // The sorts that ARE meaningful pre-release still win: Title stays alphabetical because the user asked
 // for alphabetical, and Cinema date is this order already.
-const sortForKey = (g,key) =>
+const sortForKey = (g,key,cinema) =>
     (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byTimeline
-  : key==="availability" ? byTimeline
+  : key==="availability" ? (cinema ? byTimelineAsc : byTimeline)
   : key==="imdb" ? byRatingDesc
   : ((a,b)=>sortMoviesBy(a,b,key));
-const sortFor = g => sortForKey(g, filt.sort);
+const sortFor = (g,c) => sortForKey(g, filt.sort, c && c.kind==="cinema");
 // ---- The listing's order, as one function (CAS-176) -----------------------------
 // The listing is sections in CASCADE order, each sorted by sortFor(); the reveal is the same films as one
 // flat grid. For the two to be the same SEQUENCE, the flat one has to walk the same sections in the same
@@ -3921,7 +3930,7 @@ const sortFor = g => sortForKey(g, filt.sort);
 function listingOrder(films, sortKey, c){
   const ordered=[], seen=new Set();
   orderFor(c).forEach(g=>{
-    films.filter(m=>primaryStatus(m)===g).sort(sortForKey(g,sortKey))
+    films.filter(m=>primaryStatus(m)===g).sort(sortForKey(g,sortKey,c && c.kind==="cinema"))
          .forEach(m=>{ ordered.push(m); seen.add(m); });
   });
   // A film whose window isn't one of the six sections has no section to sit in, so the listing never shows
@@ -11250,8 +11259,9 @@ function render(){
   // CAS-150: no blurb above the list. The section heads carry the counts where they mean something, and
   // the order is a thing you can see by reading down the list — saying it in a line was chrome, not honesty.
   wrap.innerHTML="";
-  orderFor(activeCascade()).forEach(g=>{      // CAS-295: a cinema agent leads with Upcoming
-    const items=rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g));
+  const ac=activeCascade();
+  orderFor(ac).forEach(g=>{      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
+    const items=rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g,ac));
     if(!items.length) return;
     const live=items.filter(m=>!taggedOut(m)).length;
     const grp=document.createElement("div"); grp.className="group"; grp.dataset.g=g;
