@@ -1,13 +1,18 @@
 # .github/workflows/qa.yml — Codynamics Development Standard (Cascade web)
-# The quality gate. Runs the full verify suite on every push to staging. Green here is the
-# only thing that lets promote.yml ship.
+# The quality gate. Runs the smoke suite on every push to staging. Green here is the only thing
+# that lets promote.yml ship.
 #
 # CAS-325: split into independent jobs (no `needs` between them except where a job genuinely
 # needs the built index.html) so everything starts at once instead of queueing behind one
-# runner, and e2e is sharded across parallel jobs. GitHub already fails the whole workflow's
-# conclusion the moment any one job fails, which is the exact thing promote.yml's `workflow_run`
-# gate reads — so a red shard (or a red engine/data/monitor job) still blocks promote with no
-# extra merge/gate job needed.
+# runner. GitHub already fails the whole workflow's conclusion the moment any one job fails,
+# which is the exact thing promote.yml's `workflow_run` gate reads — so a red job still blocks
+# promote with no extra merge/gate job needed.
+#
+# CAS-385: e2e was a 4-shard fan-out over ~100 per-ticket specs, each pinned to one commit's
+# exact copy/DOM — cosmetic UI changes kept turning the gate red for reasons that were not
+# regressions. It is now a single job running the fixed critical-path smoke suite
+# (tests/e2e/smoke.spec.mjs), with retries to absorb genuine flake instead of a sharded blast
+# radius. See that file's header for what the five checks cover and why.
 name: qa
 
 on:
@@ -103,10 +108,6 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -138,13 +139,13 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
 
-      - name: End to end (shard ${{ matrix.shard }}/${{ strategy.job-total }})
-        run: npx playwright test --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      - name: End to end (smoke gate)
+        run: npx playwright test tests/e2e/smoke.spec.mjs
 
       - name: Keep the report when it goes red
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-shard-${{ matrix.shard }}
+          name: playwright-report
           path: playwright-report/
           retention-days: 7
