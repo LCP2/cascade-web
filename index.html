@@ -3284,7 +3284,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 335, "commit": "b2883c1", "builtAt": "2026-08-05T04:46:01Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 336, "commit": "ed4409f", "builtAt": "2026-08-05T05:02:27Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -4060,25 +4060,33 @@ function savingsHTML(m, canExpand){
   // CAS-373: "Included on" -> "On" and "— which you already pay for" -> "(already paid)" so the sentence
   // reads sensibly at its shortest — and the text still rides in a .savetxt span that ellipsizes rather than
   // wraps, for the (rarer) long service name or rent-price case this trim doesn't cover.
+  // CAS-348: the services list used to open only from the row's chevron button, which the control-row
+  // redesign removes. On a card wearing this bar, the bar itself carries the shortcut instead — per film,
+  // not per agent, so it is correct on the mixed All/Home view too.
+  const svcAff = canExpand
+    ? `<button type="button" class="svcbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')"
+         title="Show all services" aria-label="Show all services">Services${ICON.chev}</button>`
+    : "";
   if(subs.length && (!prefsActive() || mine.length)){
     const svc=svcName((mine[0]||subs[0]).service);
     const own=(ux.on && mine.length) ? " (already paid)" : "";
     const alt=rent ? `, or pay <b>$${rent.price.toFixed(2)}</b> to rent` : "";
-    // CAS-348: the services list used to open only from the row's chevron button, which the control-row
-    // redesign removes. On a card wearing this bar, the bar itself carries the shortcut instead — per film,
-    // not per agent, so it is correct on the mixed All/Home view too.
-    const svcAff = canExpand
-      ? `<button type="button" class="svcbtn" onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.classList.toggle('open')"
-           title="Show all services" aria-label="Show all services">Services${ICON.chev}</button>`
-      : "";
     return `<div class="saveline"><span class="savetxt">✓ On <b>${esc(svc)}</b>${alt}${own}</span>${svcAff}</div>`;
   }
-  if(rent){
+  if(rent && rent.price<=RENTAL_MAX){
     const cheaper=(ux.on && buy && buy.price>rent.price)
       ? ` — <b>$${(buy.price-rent.price).toFixed(2)}</b> less than buying at $${buy.price.toFixed(2)}` : "";
     return `<div class="saveline plain"><span class="savetxt">Rent for <b>$${rent.price.toFixed(2)}</b> on ${esc(svcName(rent.service))}${cheaper}</span></div>`;
   }
-  return "";   // buy-only / premium: no rental and no subscription — there's no honest one-liner to write
+  // CAS-375: Premium status — a purchase, or a rent offer priced at the premium tier (>RENTAL_MAX), with
+  // no standard-priced rental and no subscription. This used to fall through to "" (no row, no Services
+  // affordance at all). Give it the same one-line + Services button the other statuses get.
+  const premium = buy || rent;
+  if(premium){
+    const verb = premium.type==="buy" ? "Buy" : "Rent";
+    return `<div class="saveline plain"><span class="savetxt">${verb} for <b>$${premium.price.toFixed(2)}</b> on ${esc(svcName(premium.service))}</span>${svcAff}</div>`;
+  }
+  return "";   // no priced offer at all — nothing honest to write
 }
 
 // ---- Loss framing on alerts ----------------------------------------------------
