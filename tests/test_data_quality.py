@@ -16,6 +16,8 @@ import json
 import os
 import unittest
 
+import poc_pipeline as pp
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CATALOGUE = os.path.join(ROOT, "movies.json")
 
@@ -140,22 +142,34 @@ class StatusAgreesWithTheCalendar(unittest.TestCase):
         cls.movies = cls.doc["movies"]
         cls.today = parse_date(cls.doc["generated"]) or datetime.date.today()
 
-    def test_no_film_is_in_a_cinema_and_at_home_at_once(self):
-        bad = [(m["title"], m["status"]) for m in self.movies
-               if set(m["status"]) & CINEMA_WINDOWS and set(m["status"]) & HOME_WINDOWS]
-        self.assertEqual(bad, [], f"films in a cinema window AND a home window: {bad[:5]}")
-
-    def test_a_cinema_window_never_holds_a_rental_price(self):
-        # This is exactly what CAS-155 found: rent/buy offers with null prices meant every price rule missed,
-        # and a date-based fallback declared the film "in cinemas" while the data said rental.
+    def test_a_cinema_window_stays_inside_its_run(self):
+        # CAS-395: a film in a cinema window AND a home window at once is now expected — being on a screen
+        # and having already picked up a home (buy/rent/stream) offer are not mutually exclusive, and a
+        # film that opened today with a same-day pre-order was exactly what the old "zero offers" gate was
+        # wrongly hiding. What still has to hold is the DATE: a cinema window is only honest while the
+        # title's own AU opening is recent enough to still be a live theatrical run.
         bad = []
         for m in self.movies:
             if not (set(m["status"]) & CINEMA_WINDOWS):
                 continue
-            priced = [o for o in m["offers"] if o.get("type") in ("rent", "buy", "sub", "free")]
-            if priced:
-                bad.append((m["title"], m["status"], len(priced)))
-        self.assertEqual(bad, [], f"cinema-window films carrying home offers: {bad[:5]}")
+            cd = parse_date(m.get("cinema_date"))
+            if not cd or cd > self.today or cd < self.today - datetime.timedelta(days=pp.CINEMA_RUN_DAYS):
+                bad.append((m["title"], m["status"], m.get("cinema_date")))
+        self.assertEqual(bad, [], f"cinema-window films whose opening date is outside the run: {bad[:5]}")
+
+    def test_a_cinema_window_never_holds_a_null_priced_offer(self):
+        # This is exactly what CAS-155 found: rent/buy offers with null prices meant every price rule missed,
+        # and a date-based fallback declared the film "in cinemas" while the data said rental. CAS-395 lets a
+        # cinema window carry REAL priced home offers now, but a null-priced one is still the CAS-155 fault.
+        bad = []
+        for m in self.movies:
+            if not (set(m["status"]) & CINEMA_WINDOWS):
+                continue
+            nullpriced = [o for o in m["offers"]
+                          if o.get("type") in ("rent", "buy") and o.get("price") is None]
+            if nullpriced:
+                bad.append((m["title"], m["status"], len(nullpriced)))
+        self.assertEqual(bad, [], f"cinema-window films carrying null-priced home offers: {bad[:5]}")
 
     def test_upcoming_films_are_not_already_out(self):
         # A film whose only window is `upcoming` while its opening date has passed is mislabelled — the state

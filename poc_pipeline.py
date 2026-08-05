@@ -61,6 +61,12 @@ MAX_STREAMING_ONLY = int(os.getenv("MAX_STREAMING_ONLY", "2000"))   # first 100 
 # --- window heuristics (this is YOUR business logic, not something an API gives you) ---
 PVOD_MIN_PRICE   = 19.99          # a buy/rent at or above this, with no subscription yet, = premium early window
 RENTAL_MAX_PRICE = 9.99           # a rent at or below this = standard rental window
+# CAS-395: how long after its AU cinema_date a title still counts as "in cinema now" — independent of
+# whether it has ALSO picked up a home (buy/rent/stream) offer. A film can be simultaneously on a screen
+# and on premium/rental/streaming; the two are not exclusive. Matches app_template.html's client-side
+# CINEMA_RUN_DAYS (also 90) so the pipeline's claim and the client's own confirmed-path cap never disagree,
+# the mismatch CAS-314/CAS-318 had to reconcile.
+CINEMA_RUN_DAYS = int(os.getenv("CINEMA_RUN_DAYS", "90"))
 
 STATE_DIR = os.path.join(os.path.dirname(__file__), "state")
 SNAPSHOT_FILE = os.path.join(STATE_DIR, "last_snapshot.json")
@@ -533,13 +539,24 @@ def derive_from_providers(movie: dict, prov: dict, today: datetime.date) -> list
                             TMDB gives no price, so premium vs standard can't use
                             PVOD_MIN_PRICE — a rentable title is the standard window,
                             a buy-only title is the earlier premium/PVOD window.
-      else               -> in_cinema if it has opened, otherwise upcoming."""
+      else               -> in_cinema if it has opened, otherwise upcoming.
+    CAS-395: a title still inside its AU theatrical run (cinema_date within CINEMA_RUN_DAYS) carries
+    in_cinema ALONGSIDE whatever home window its offers resolve to — a film that has just opened often
+    already has a pre-order/rent row, and the old code let that one row erase in_cinema entirely, which
+    is why the shipped catalogue's In Cinema list had collapsed to a couple of titles."""
+    windows = []
     if prov.get("flatrate") or prov.get("free") or prov.get("ads"):
-        return ["included_streaming"]
-    if prov.get("rent") or prov.get("buy"):
-        return ["rental"] if prov.get("rent") else ["pvod"]
+        windows.append("included_streaming")
+    elif prov.get("rent") or prov.get("buy"):
+        windows.append("rental" if prov.get("rent") else "pvod")
     cd = movie.get("cinema_date")
-    return ["in_cinema"] if (cd and cd <= today.isoformat()) else ["upcoming"]
+    opened = bool(cd and cd <= today.isoformat())
+    still_running = opened and cd >= (today - datetime.timedelta(days=CINEMA_RUN_DAYS)).isoformat()
+    if still_running:
+        windows.append("in_cinema")
+    if not windows:
+        windows.append("in_cinema" if opened else "upcoming")
+    return windows
 
 
 def has_provider_rows(prov: dict) -> bool:
@@ -597,9 +614,10 @@ def derive_status(movie: dict, offers: list[dict], today: datetime.date) -> list
     cheapest_rent = min((o["price"] for o in rents), default=None)
     dearest_buy   = max((o["price"] for o in buys),  default=None)
 
-    # In cinema: theatrical date has passed and it hasn't hit any home offer yet
+    # In cinema: theatrical date has passed and is still inside its AU run (CAS-395: no longer gated on
+    # having zero home offers — a film can be in cinemas and on premium/rental/streaming at once).
     cd = movie.get("cinema_date")
-    in_cinema_window = cd and cd <= today.isoformat() and not offers
+    in_cinema_window = cd and cd <= today.isoformat() and cd >= (today - datetime.timedelta(days=CINEMA_RUN_DAYS)).isoformat()
     if in_cinema_window:
         status.add("in_cinema")
 

@@ -2917,6 +2917,10 @@ function deriveStatus(m){
   // the catalogue's own dates are never rewritten. It is the one thing allowed to put a film on the big screen
   // that the data doesn't have there, because it has explicitly just moved it and announces the move.
   if(m._simReleased) s.add(cd && cd >= addDays(TODAY,-OPENING_WEEK_DAYS) ? "opening_week" : "in_cinema");
+  // CAS-395: the pipeline is the authority that a CONFIRMED film's theatrical run is still current
+  // (claimedStatus holds in_cinema) — trust that alongside whatever the offers below resolve to, rather
+  // than only when there are no offers at all. A film can be on a screen and already have a home offer.
+  if(claimed.includes("in_cinema") && inCinemaRun(m)) s.add(cinemaRungFor(m));
   if(!hasSub && ((dearestBuy!=null&&dearestBuy>=PVOD_MIN)||(cheapestRent!=null&&cheapestRent>=PVOD_MIN))) s.add("pvod");
   if(cheapestRent!=null && cheapestRent<=RENTAL_MAX) s.add("rental");
   if(hasSub) s.add("included_streaming");
@@ -2942,6 +2946,11 @@ function ownReach(m){
 // looking streaming offer someone else pays for, has to file — and show its green bar — under Rent.
 function primaryStatus(m){
   const st=m.status, last=st[st.length-1];
+  // CAS-395: a film still on a screen right now outranks the fact that CASCADE would otherwise show
+  // whichever home window it has ALSO reached — "furthest travelled" only makes sense once cinema
+  // availability is truly behind a film, not while it is simultaneous with a pvod/rent/stream offer.
+  if(st.includes("opening_week")) return "opening_week";
+  if(st.includes("in_cinema")) return "in_cinema";
   if(st.includes("rental") && st.includes("included_streaming") && (scopedFor("rental")||scopedFor("included_streaming"))){
     const own=ownReach(m);
     if(own.stream) return "included_streaming";
@@ -3307,7 +3316,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 353, "commit": "a0ba5fc", "builtAt": "2026-08-05T22:36:55Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 354, "commit": "0bb32fc", "builtAt": "2026-08-05T22:48:13Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
