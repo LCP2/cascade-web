@@ -2145,11 +2145,6 @@
   .ussub{font-size:12px;color:var(--dim)}
   .uchev{flex:0 0 auto;color:var(--dim);font-size:18px}
   .ucap{font-size:12.5px;color:var(--dim);margin-bottom:12px}
-  .umeter{margin-bottom:12px} .umeter:last-child{margin-bottom:0}
-  .umeter-top{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin-bottom:5px}
-  .umeter-n{color:var(--ink);font-weight:600} .umeter-m{color:var(--dim);white-space:nowrap}
-  .umeter-track{height:8px;border-radius:999px;background:rgba(255,255,255,.07);overflow:hidden}
-  .umeter-track i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--green))}
   .unone{font-size:12.5px;color:var(--faint);line-height:1.6}
   /* The film list a group opens into — the card's own poster row, kept small. */
   .ulist{display:flex;flex-direction:column;gap:8px;margin-top:4px}
@@ -3298,7 +3293,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 339, "commit": "f1900f9", "builtAt": "2026-08-05T06:44:54Z"};
+const BUILD_INFO = {"version": "0.8.2", "major": 0, "minor": 8, "patch": 2, "build": 340, "commit": "ab4b45e", "builtAt": "2026-08-05T06:53:38Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -10054,8 +10049,8 @@ window.openMenuServices=()=>{
 // Everything you have told the app about a film, read back off the very sets the cards write — so this
 // screen cannot disagree with the card you tapped. Three groups, in the order the ticket names them:
 // what your agents are still tracking for you, what you have watched, and what you have set aside.
-// The streaming analysis underneath is counted, not illustrated: which of YOUR services covers the films
-// your agents found, and which services you don't have are carrying the most of them.
+// CAS-378: the streaming-analysis section that used to sit under these groups was a duplicate of the
+// menu's Service analysis (CAS-344) — removed, that page is the single source of truth.
 let ymOpen=null;                       // which group is expanded, or null
 const ymFilm = id => MOVIES.find(m=>m.tmdb_id===id);
 // Every group counts only what it can actually SHOW. An answer you gave to a film that has since left the
@@ -10085,35 +10080,6 @@ function ymFilmHTML(id){
       <div class="ufsub">${STATUS_LABEL[primaryStatus(m)]||""}${said?` · ${said}`:""}</div>
     </div></div>`;
 }
-// Which of the user's own services carry the films their agents found. Real: it counts the offers on the
-// found set. With no services picked there is nothing to measure, and the screen says exactly that rather
-// than drawing three meters off nothing.
-function ymCoverage(){
-  const mine=[...prefs.sub], ids=[...found];
-  if(!mine.length || !ids.length) return null;
-  const films=ids.map(ymFilm).filter(Boolean);
-  const rows=mine.map(svc=>({svc, n:films.filter(m=>(m.offers||[]).some(o=>o.service===svc && (o.type==="sub"||o.type==="free"))).length}))
-                 .filter(r=>r.n>0).sort((a,b)=>b.n-a.n);
-  return rows.length ? {total:films.length, rows} : {total:films.length, rows:[]};
-}
-// And the other way round: services you do NOT subscribe to, ranked by how many of your agents' films they
-// are holding. This is the honest version of "services with great content for you right now" — it is a count
-// of films this agent already found, not a recommendation we invented.
-function ymOpportunity(){
-  const mine=new Set(prefs.sub), ids=[...found];
-  if(!ids.length) return null;
-  const films=ids.map(ymFilm).filter(Boolean), tally={};
-  films.forEach(m=>{
-    new Set((m.offers||[]).filter(o=>o.type==="sub"||o.type==="free").map(o=>o.service))
-      .forEach(svc=>{ if(!mine.has(svc)) tally[svc]=(tally[svc]||0)+1; });
-  });
-  const rows=Object.entries(tally).map(([svc,n])=>({svc,n})).sort((a,b)=>b.n-a.n).slice(0,4);
-  return rows.length ? {total:films.length, rows} : null;
-}
-const ymMeter = (name, n, total) =>
-  `<div class="umeter"><div class="umeter-top"><span class="umeter-n">${esc(name)}</span>
-     <span class="umeter-m">${n} of ${total}</span></div>
-   <div class="umeter-track"><i style="width:${total?Math.round(n/total*100):0}%"></i></div></div>`;
 function renderYourMovies(){
   const grp=YM_GROUPS.map(g=>{
     const ids=g.ids(), open=ymOpen===g.key;
@@ -10127,28 +10093,12 @@ function renderYourMovies(){
             ids.length>40 ? `<p class="unone" style="margin-top:9px">…and ${ids.length-40} more.</p>` : ""}`
         : `<p class="unone">Nothing here yet.</p>`}</div>` : ""}`;
   }).join("");
-  const cov=ymCoverage(), opp=ymOpportunity();
-  const covHTML = !prefs.sub.size
-    ? `<p class="unone">You haven't told Cascade which services you have yet, so there is nothing to measure.
-       Add them in Preferences and this fills in.</p>`
-    : (cov && cov.rows.length)
-      ? cov.rows.map(r=>ymMeter(r.svc, r.n, cov.total)).join("")
-      : `<p class="unone">None of your services is carrying anything your agents have found right now.</p>`;
   $("yourMoviesBody").innerHTML=`
     <div class="ostop"><button class="osback" type="button" onclick="closeYourMovies()" aria-label="Back">←</button></div>
     <h2 class="osh">Your Movies</h2>
-    <p class="ossub">Everything your agents have surfaced, and how well your services are serving you.</p>
+    <p class="ossub">Everything your agents have surfaced.</p>
     <div class="usec">Movie selections</div>
-    <div class="ucard">${grp}</div>
-    <div class="usec">Streaming analysis</div>
-    <div class="ucard ucardpad">
-      <div class="ucap">Which of your services covers what Cascade found</div>
-      ${covHTML}
-    </div>
-    ${opp ? `<div class="ucard ucardpad">
-      <div class="ucap">Services you don't have, holding the most of what Cascade found</div>
-      ${opp.rows.map(r=>ymMeter(r.svc, r.n, opp.total)).join("")}
-    </div>` : ""}`;
+    <div class="ucard">${grp}</div>`;
 }
 window.ymToggle=key=>{ ymOpen = ymOpen===key ? null : key; renderYourMovies(); };
 window.openYourMovies=()=>{
