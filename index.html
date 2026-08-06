@@ -3323,7 +3323,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 373, "commit": "3620d3b", "builtAt": "2026-08-06T06:42:33Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 374, "commit": "1487645", "builtAt": "2026-08-06T06:52:37Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8690,6 +8690,17 @@ function onbApply(){
   return normCascade(d);
 }
 const onbCount = () => watchCount(onbApply());
+// CAS-413: the live number every step's mirror + CTA shows (via stepCount() below) has to match what the
+// saved listing will display, so once "only my services" is on it must apply the same scope passes()/the
+// listing use. watchCount() deliberately does NOT (CAS-381/CAS-132: the agent's WATCH set stays unfiltered
+// by services, so it can still notice and mute a film outside them) — so the number shown on screen needs
+// its own read, same predicate the dedicated Services-step count already used before this ticket.
+function onbShownCount(){
+  const c=onbApply();
+  if(!anyScope(c)) return watchCount(c);
+  if(!servicesPicked()) return 0;
+  return MOVIES.filter(m=>watchesFilm(m,c) && matchesServices(m)).length;
+}
 // ---- CAS-224: per-chip counts, measured off the agent instead of the catalogue --------------------------
 // The Style chips quoted GENRE_COUNT — how many films in the WHOLE catalogue carry that genre — on a page
 // whose own headline said "28 films match right now". Drama · 752 above a total of 28 isn't a small
@@ -8822,7 +8833,7 @@ const tasteBaseCount = () => MOVIES.filter(m=>showable(m) && passesTasteBase(m) 
 // `now` is null before an agent draft exists (the baseline is reachable on its own, with no agent to
 // narrow anything) — and a null number is simply not printed rather than printed as a zero.
 const onbFunnel = () => ({all:SHOWABLE_N, base:tasteBaseCount(),
-                          now:onbFlow.draft ? onbCount() : null});
+                          now:onbFlow.draft ? onbShownCount() : null});
 function tbWorldHTML(){
   const f=onbFunnel();
   const world=`<span class="cnt">${f.base} film${f.base===1?"":"s"}</span> in your world${
@@ -8857,7 +8868,7 @@ function stepCount(step){
   // CAS-377: the top-menu's own spoke is a global settings screen, not one agent's, so it never quotes a
   // count either — even though onbFlow.draft may still be holding whichever agent was last edited (it is
   // only cleared by the next flowStart/briefOpen, so a stale draft is not evidence of a "current" agent here).
-  return (onbFlow.draft && !menuStepOn) ? onbCount() : null;
+  return (onbFlow.draft && !menuStepOn) ? onbShownCount() : null;
 }
 function stepCtaText(step, n){
   const c = step && step.cta;
@@ -9900,9 +9911,7 @@ const SHARP_STEPS = {
     // filtered number this line already computes as `mine`, instead of sitting frozen at the raw total.
     count(){
       if(!onbFlow.draft || menuStepOn) return null;    // same guard as the default stepCount() path
-      if(!prefs.on) return onbCount();
-      if(!servicesPicked()) return 0;                  // toggle on, nothing named yet — nothing to show
-      return MOVIES.filter(m=>watchesFilm(m, onbApply()) && matchesServices(m)).length;
+      return onbShownCount();                          // CAS-413: now the shared read every step uses
     },
     say: n => {
       const k=prefs.sub.size+prefs.store.size;      // CAS-251: both sections count as "your services"
