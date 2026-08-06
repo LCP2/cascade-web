@@ -3321,7 +3321,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 370, "commit": "15a97a6", "builtAt": "2026-08-06T00:15:15Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 371, "commit": "54343cc", "builtAt": "2026-08-06T00:45:50Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -12075,8 +12075,15 @@ else if(dedupedN)
   }
   function loadGuest(){ replaceCascades(loadCascades()); }
 
-  // ---- write path: upsert current, prune the rest --------------------------
+  // ---- write path: upsert current, delete only what THIS device watched disappear -------------------
+  // CAS-408: the old prune deleted every account row "not on this device's screen" — which silently
+  // swept up rows this device had simply never LOADED (created on another device, or not yet pulled),
+  // not only rows the user actually removed. `cascadeBaseline` is what this device last confirmed the
+  // account really holds (its own last successful load or push); a delete is computed against THAT
+  // private baseline, never against the live account, so this device can only ever delete an id it
+  // itself watched drop out of its own list — exactly what the Delete button (and nothing else) does.
   let syncTimer=null, syncing=false, syncAgain=false;
+  let cascadeBaseline=null;   // null until the first load/sync — nothing is deleted before there's a baseline
   function scheduleSync(){ clearTimeout(syncTimer); syncTimer=setTimeout(runSync, 400); }
   async function runSync(){
     if(!accountActive()) return;
@@ -12093,12 +12100,15 @@ else if(dedupedN)
       const { error } = await c.from("cascades").upsert(rows, { onConflict:"id" });
       if(error){ console.warn("Cascade upsert", error); return; }
     }
-    // Delete any of my rows that are no longer on screen (covers the Delete button).
-    const ids = cascades.map(x=>x.id).filter(isUuid);
-    let del = c.from("cascades").delete().eq("user_id", owner);
-    if(ids.length) del = del.not("id","in","("+ids.join(",")+")");
-    const { error } = await del;
-    if(error) console.warn("Cascade prune", error);
+    const ids = new Set(cascades.map(x=>x.id).filter(isUuid));
+    if(cascadeBaseline){
+      const gone=[...cascadeBaseline].filter(id=>!ids.has(id));
+      if(gone.length){
+        const { error } = await c.from("cascades").delete().eq("user_id", owner).in("id", gone);
+        if(error){ console.warn("Cascade delete", error); return; }
+      }
+    }
+    cascadeBaseline = ids;
   }
 
   // ---- read path: adopt the account, and offer to bring this device's work with you ----
@@ -12114,6 +12124,7 @@ else if(dedupedN)
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("cascades").select("*");   // RLS: only mine
     if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); return; }
+    cascadeBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
     let remote = (data||[]).map(rowToCascade);
     const localOnes = cascades.slice();
     // CAS-393: the membership step's own email gate (CAS-387) can create this account seconds after
@@ -12133,6 +12144,34 @@ else if(dedupedN)
     if(justOnboarded) scheduleSync();
     offerMerge();
     if(typeof afterSignIn==="function") afterSignIn();
+  }
+  // ---- CAS-408: live reconciliation, so two devices converge without re-signing-in -------------------
+  // loadAccount() REPLACES the screen and offers to bring stray local work up — right for a fresh
+  // sign-in, wrong for a routine background refresh (it would re-fire afterSignIn()'s splash/modal
+  // side effects on every tab focus). This MERGES instead: a Cascade new or edited on another device is
+  // folded in by id; a Cascade this device knows was in the account (cascadeBaseline) but has now gone
+  // is dropped locally (another device deleted it); anything this device has created but not yet pushed
+  // (its id isn't in cascadeBaseline yet) is left alone, so a refresh landing mid-edit never undoes work
+  // still in flight.
+  async function reconcileCascades(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("cascades").select("*");
+    if(error){ console.warn("Cascade reconcile", error); return; }
+    const remote=(data||[]).map(rowToCascade);
+    const remoteIds=new Set(remote.map(x=>x.id));
+    remote.forEach(r=>{
+      const i=cascades.findIndex(x=>x.id===r.id);
+      if(i>=0) cascades[i]=r; else cascades.push(r);
+    });
+    if(cascadeBaseline){
+      for(let i=cascades.length-1;i>=0;i--){
+        const id=cascades[i].id;
+        if(cascadeBaseline.has(id) && !remoteIds.has(id)) cascades.splice(i,1);
+      }
+    }
+    if(activeId!==ALL_ID && !cascades.some(x=>x.id===activeId)) setActive(ALL_ID);
+    cascadeBaseline=remoteIds;
+    if(typeof render==="function") render();
   }
   // What this device is carrying that the account has not got. Filled by the two loaders as they run,
   // then offered once — the two answers arrive from different requests, so the offer waits for both.
@@ -12210,6 +12249,7 @@ else if(dedupedN)
     } else if(currentUser !== null){
       // Signed out → back to the on-device set, and the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); realAlerts=[]; updateBadge();
+      cascadeBaseline=null; filmBaseline=null; pickBaseline=null;
     }
   });
   // If a session was already restored before this listener attached, adopt it now.
@@ -12217,6 +12257,20 @@ else if(dedupedN)
     currentUser = uid();
     loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts();
   }
+  // CAS-408: two devices only converge without a live subscription if SOMETHING re-pulls the account
+  // — sign-in alone left a device that never signs out again permanently stuck on whatever it saw at
+  // its last sign-in. Returning to the tab is the natural moment: skip it while a push from THIS
+  // device is in flight or queued, so a reconcile pull can never land on top of an edit that hasn't
+  // reached the account yet and read as if it had been undone.
+  function reconcileOnReturn(){
+    if(!accountActive()) return;
+    if(!syncing && !syncTimer) reconcileCascades();
+    if(!filmSyncing && !filmTimer) reconcileFilms();
+  }
+  window.addEventListener("focus", reconcileOnReturn);
+  document.addEventListener("visibilitychange", () => {
+    if(document.visibilityState==="visible") reconcileOnReturn();
+  });
 
   // ==========================================================================
   // CAS-183: watch status per account (`user_films`)
@@ -12248,6 +12302,7 @@ else if(dedupedN)
     if(typeof render==="function") render();
   }
   let filmTimer=null, filmSyncing=false, filmAgain=false;
+  let filmBaseline=null;   // CAS-408: same private-baseline diff as cascadeBaseline above
   function scheduleFilmSync(){ clearTimeout(filmTimer); filmTimer=setTimeout(runFilmSync, 400); }
   async function runFilmSync(){
     if(!accountActive()) return;
@@ -12264,24 +12319,44 @@ else if(dedupedN)
       const { error } = await c.from("user_films").upsert(rows, { onConflict:"user_id,movie_id" });
       if(error){ console.warn("user_films upsert", error); return; }
     }
-    // Anything the user has since cleared has no row on screen, so it must have none in the account.
-    const ids=rows.map(r=>r.movie_id);
-    let del = c.from("user_films").delete().eq("user_id", owner);
-    if(ids.length) del = del.not("movie_id","in","("+ids.map(x=>`"${x}"`).join(",")+")");
-    const { error } = await del;
-    if(error) console.warn("user_films prune", error);
+    // CAS-408: delete only ids THIS device watched drop out of its own baseline (an opinion cleared
+    // here) — never everything else the account has that isn't on this device's screen, which used to
+    // sweep up watch statuses another device set and this one hadn't loaded yet.
+    const ids=new Set(rows.map(r=>r.movie_id));
+    if(filmBaseline){
+      const gone=[...filmBaseline].filter(id=>!ids.has(id));
+      if(gone.length){
+        const { error } = await c.from("user_films").delete().eq("user_id", owner).in("movie_id", gone);
+        if(error){ console.warn("user_films delete", error); return; }
+      }
+    }
+    filmBaseline=ids;
   }
   async function loadAccountFilms(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("user_films").select("movie_id,status");   // RLS: only mine
     if(error){ console.warn("user_films load", error); return; }
     const remote=data||[];
+    filmBaseline=new Set(remote.map(r=>String(r.movie_id)));
     // CAS-212: what this device has said about films the account has said nothing about. Computed
     // BEFORE the account's rows replace the local sets, because after that the answer is gone.
     const known=new Set((remote||[]).map(r=>String(r.movie_id)));
     pendingMerge.films = filmRows().filter(r=>!known.has(String(r.movie_id)));
     applyFilmRows(remote);
     offerMerge();
+  }
+  // CAS-408: background convergence, mirroring reconcileCascades — remote is the union of every
+  // device's explicit answers, so it can just be re-applied; a not-yet-pushed local answer survives
+  // because it is already the value applyFilmRows would set for that id when the remote has no row.
+  async function reconcileFilms(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("user_films").select("movie_id,status");
+    if(error){ console.warn("user_films reconcile", error); return; }
+    const remote=data||[];
+    const remoteIds=new Set(remote.map(r=>String(r.movie_id)));
+    const localOnly=filmRows().filter(r=>!remoteIds.has(String(r.movie_id)));
+    applyFilmRows([...remote, ...localOnly]);
+    filmBaseline=remoteIds;
   }
   function loadGuestFilms(){
     watched.clear();    loadSet("cascade_watched").forEach(id=>watched.add(id));
@@ -12329,6 +12404,11 @@ else if(dedupedN)
     return out;
   }
   let notifyTimer=null;
+  // CAS-408: same private-baseline shape as the two syncs above. There is no load-from-account for
+  // film_picks (nothing reads it back into `notify`), so the baseline starts null and the first push of
+  // a session is upsert-only — it deletes nothing until it has seen at least one prior push of its own
+  // to diff against, rather than guessing from the live table.
+  let pickBaseline=null;
   function scheduleNotifySync(){ clearTimeout(notifyTimer); notifyTimer=setTimeout(runNotifySync, 500); }
   async function runNotifySync(){
     const c=client(), owner=uid(); if(!c||!owner) return;
@@ -12340,11 +12420,15 @@ else if(dedupedN)
         const { error } = await c.from("film_picks").upsert(rows, { onConflict:"user_id,movie_id" });
         if(error) console.warn("film_picks upsert", error);
       }
-      const ids=rows.map(r=>r.movie_id);
-      let del=c.from("film_picks").delete().eq("user_id", owner);
-      if(ids.length) del=del.not("movie_id","in","("+ids.map(x=>`"${x}"`).join(",")+")");
-      const { error:de } = await del;
-      if(de) console.warn("film_picks prune", de);
+      const ids=new Set(rows.map(r=>r.movie_id));
+      if(pickBaseline){
+        const gone=[...pickBaseline].filter(id=>!ids.has(id));
+        if(gone.length){
+          const { error:de } = await c.from("film_picks").delete().eq("user_id", owner).in("movie_id", gone);
+          if(de) console.warn("film_picks delete", de);
+        }
+      }
+      pickBaseline=ids;
     }catch(err){ console.warn("Cascade: notify sync failed", err); }
   }
   async function loadNotifyPrefs(){
@@ -12442,7 +12526,10 @@ else if(dedupedN)
                                 // CAS-212: the merge seam, exposed the same way the shape mappers are —
                                 // it is the one decision in here with no UI of its own to poke at, and a
                                 // rule about what does NOT get copied has to be testable.
-                                pendingMerge, offerMerge, renderMigrate };
+                                pendingMerge, offerMerge, renderMigrate,
+                                // CAS-408: the live-reconcile seam, so the cross-device convergence story
+                                // can be exercised without waiting on a real focus/visibilitychange event.
+                                reconcileCascades, reconcileFilms };
 })();
 </script>
 
