@@ -885,10 +885,16 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                 if has_provider_rows(prov):
                     m["offers"] = provider_offers(prov)
                     apply_monotonic_status(m, derive_from_providers(m, prov, today), "confirmed", today)
-                else:                                        # JustWatch has no AU row -> honest estimate
-                    w, conf = ps.estimate_status(m, today, offsets)
+                else:
+                    # CAS-412: JustWatch has no AU row at all, so there is no real offer to back a home
+                    # window (pvod/rental/included_streaming). estimate_status's age ladder used to be
+                    # used here, but it can invent a paid tier (e.g. "pvod", once a title outlives the
+                    # in-cinema estimate cap) with zero offers behind it and no route back to in_cinema,
+                    # since the ladder never re-computes a lower answer as the same title ages further.
+                    # derive_from_providers' own cinema-date-only fallback (empty `prov` in every window
+                    # check) is offer-honest: in_cinema while the title is still opened, upcoming before.
                     m["offers"] = []
-                    apply_monotonic_status(m, [w], conf, today)
+                    apply_monotonic_status(m, derive_from_providers(m, prov, today), "estimated", today)
                 m["last_polled"] = today.isoformat()
                 m["availability_source"] = "tmdb_providers"
             else:
