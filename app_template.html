@@ -11693,7 +11693,12 @@ function simulateDay(){
 function windowOf(o){
   if(o.type==="sub"||o.type==="free") return "included_streaming";
   if(o.type==="buy") return "pvod";
-  if(o.type==="rent") return (o.price!=null&&o.price<=RENTAL_MAX)?"rental":"pvod";
+  // CAS-414: TMDB (the primary AU source) never carries a price — every rent offer in the live
+  // catalogue reads price:null, so gating on a KNOWN cheap price made this branch return "pvod" for
+  // every rent offer that ever exists, and matchesServices(m,"rental") could never match anything.
+  // Match the pipeline's own default (derive_from_providers: any rent row = rental unless proven
+  // pvod-priced) — only a CONFIRMED premium price (Watchmode enrichment) pushes it to pvod.
+  if(o.type==="rent") return (o.price!=null&&o.price>RENTAL_MAX)?"pvod":"rental";
   return "";
 }
 // ---- Per-Cascade digest: what each radar caught, and what it kept quiet ---------
