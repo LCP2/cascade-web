@@ -2505,7 +2505,9 @@
 
   <!-- config present, signed out → email-only, no password (CAS-387: password switched off in Supabase;
        replaces CAS-317's email+password flow, which itself replaced the old magic-link flow that couldn't
-       work with the fictitious test emails onboarding needs to support) -->
+       work with the fictitious test emails onboarding needs to support). CAS-411: magic-link is back, but
+       only as a last-resort fallback inside continueWithEmail() for an account whose derived password no
+       longer signs it in — not as the primary flow, so made-up test emails are unaffected in the common case. -->
   <div id="authSignedOut" style="display:none">
     <div class="pnote">Enter your email to sign in, or create a new account — any email works, including
       a made-up one, so you can try Cascade without a real inbox. Your Cascades then sync to your account
@@ -10901,7 +10903,10 @@ window.membStart=()=>{
   }));
   if(needsEmail){
     window.CascadeAuth.continueWithEmail(email).then(result=>{
-      if(result.ok) proceed();
+      if(result.ok && !result.otpSent) proceed();
+      // CAS-411: otpSent means a magic link went out but there's no session yet — don't proceed
+      // as if signed in; tell the user what to do next and hand the button back.
+      else if(result.ok) { membEmailError("We've sent a sign-in link to that email — click it, then try again."); idle(); }
       else{ membEmailError(result.error||"Could not create your account — try again."); idle(); }
     });
   } else proceed();
@@ -12638,8 +12643,17 @@ else if(dedupedN)
         const signIn = await supa.auth.signInWithPassword({ email, password });
         if(!signIn.error) return { ok: true };
         const signUp = await supa.auth.signUp({ email, password });
-        if(signUp.error) return { ok: false, error: signUp.error.message };
-        return { ok: true };
+        if(!signUp.error) return { ok: true };
+        // CAS-411: an account can exist but still fail signInWithPassword — Supabase's "Confirm
+        // email" leaving it unconfirmed, or a password derived under an older scheme (pre-CAS-387).
+        // signUp then reports "already registered", which used to dead-end here with neither path
+        // working. Fall back to a one-off magic link so an existing user always has a way in.
+        if(/already registered/i.test(signUp.error.message || '')){
+          const otp = await supa.auth.signInWithOtp({ email });
+          if(!otp.error) return { ok: true, otpSent: true };
+          return { ok: false, error: otp.error.message };
+        }
+        return { ok: false, error: signUp.error.message };
       } catch(err){ return { ok: false, error: (err && err.message) || String(err) }; }
     };
 
@@ -12678,6 +12692,7 @@ else if(dedupedN)
       msg.textContent = 'Signing in…';
       const result = await api.continueWithEmail(email);
       if(!result.ok) msg.textContent = 'Could not sign in: ' + result.error;
+      else if(result.otpSent) msg.textContent = "We've sent a sign-in link to that email — click it to finish.";
     });
 
     gid('authSignOut').addEventListener('click', async () => {
