@@ -183,5 +183,50 @@ class TransientProviderDropEndToEnd(unittest.TestCase):
         self.assertEqual(events[0]["new_window"], "included_streaming")
 
 
+class ZeroAuRowsNeverInventAPaidTier(unittest.TestCase):
+    """CAS-412: when TMDB/JustWatch AU returns literally no provider row, there is no real offer
+    to back a home window. The old code fell to estimate_status's age ladder here, which — once
+    a title outlived the 14-day in-cinema estimate cap — guessed "pvod" out of thin air and then
+    kept re-guessing the SAME "pvod" every subsequent run (the ladder never ages back down), so a
+    title that lost its only offer got stranded above the cinema window forever. This exercises
+    the real write path (poc_pipeline.build_live_catalogue), mocking only the network call."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        state_dir = self._tmp.name
+        empty_prov = {"flatrate": [], "rent": [], "buy": [], "ads": [], "free": [], "jw_link": None}
+        patches = [
+            mock.patch.object(pp, "STATE_DIR", state_dir),
+            mock.patch.object(pp, "SNAPSHOT_FILE", os.path.join(state_dir, "last_snapshot.json")),
+            mock.patch.object(pp, "ALERTS_FILE", os.path.join(state_dir, "alerts.json")),
+            mock.patch.object(pp, "ingest_tmdb", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
+            mock.patch.object(pp, "TMDB_PACING", 0),
+            mock.patch.object(pp, "enrich_omdb", lambda m: m),
+            mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
+            mock.patch.object(pp, "tmdb_providers", lambda tid: empty_prov),
+        ]
+        for p in patches:
+            p.start(); self.addCleanup(p.stop)
+
+    def test_a_title_with_no_offers_and_a_past_cinema_date_settles_on_in_cinema(self):
+        # The Odyssey (CAS-412): a real buy/rent offer once put it at pvod, that offer is gone,
+        # AU now returns zero rows outright, and the title opened 21 days ago — past the old
+        # ladder's 14-day in-cinema cap, which used to make it read "pvod" with zero offers.
+        opened_21_days_ago = (datetime.date(2026, 8, 6) - datetime.timedelta(days=21)).isoformat()
+        base = [_title(1, status=["pvod"], cinema_date=opened_21_days_ago, offers=[])]
+
+        day1, _ = pp.build_live_catalogue(datetime.date(2026, 8, 6), base, {}, ondemand_ids=[])
+        self.assertEqual(day1[0]["status"], ["pvod"])                # first zero-offer read: held (CAS-355)
+        self.assertEqual(day1[0]["offers"], [])
+        self.assertEqual(day1[0]["pending_downgrade"]["to"], ["in_cinema"])
+
+        day2, _ = pp.build_live_catalogue(datetime.date(2026, 8, 7), day1, {}, ondemand_ids=[])
+        self.assertEqual(day2[0]["status"], ["in_cinema"])           # same candidate again: confirmed
+        self.assertNotIn("pending_downgrade", day2[0])
+
+
 if __name__ == "__main__":
     unittest.main()
