@@ -644,12 +644,15 @@ test("services: the leading services really do lead", () => {
 });
 
 // ---- 3h. AN EXACT DATE LOOKS DIFFERENT FROM AN ESTIMATE (CAS-240) ---------------------------------------
+// CAS-426: the current window's date is inline in the availability capsule (bandHTML); the other three
+// windows' dates moved to the "Windows" line in the offers expander (windowsLineHTML) — same data, split
+// across the two places the redesign put it, so a date check has to look at both.
 test("dates: a date we hold is printed to the day, an estimate stays a month", () => {
   const withCinema = SHOWABLE.filter(m => m.cinema_date);
   assert.ok(withCinema.length > 0, "no film has a cinema date — this test would prove nothing");
   let exact = 0, estimated = 0;
   for(const m of SHOWABLE.slice(0, 400)){
-    const html = E.availHTML(m);
+    const html = E.bandHTML(m, "") + E.windowsLineHTML(m);
     for(const key of ["cinema", "pvod", "rental", "included_streaming"]){
       const sd = E.stageDate(m, key);
       if(!sd) continue;
@@ -677,7 +680,8 @@ test("dates: the day form is compact, unambiguous, and never a fabricated precis
   const est = E.MOVIES.find(m => { const s = E.stageDate(m, "included_streaming"); return s && s.est; });
   if(est){
     const sd = E.stageDate(est, "included_streaming");
-    assert.ok(E.availHTML(est).includes(E.fmtDate(sd.d)) || sd.d < E.TODAY,
+    const html = E.bandHTML(est, "") + E.windowsLineHTML(est);
+    assert.ok(html.includes(E.fmtDate(sd.d)) || sd.d < E.TODAY,
       `${est.title}: an estimated streaming date is not printed in its month form`);
   }
 });
