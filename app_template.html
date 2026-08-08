@@ -4079,8 +4079,13 @@ const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
 // explicit sort exactly as before — this is the pre-release section's rule, not a global reversal.
 // The sorts that ARE meaningful pre-release still win: Title stays alphabetical because the user asked
 // for alphabetical, and Cinema date is this order already.
+// CAS-430: a cinema agent's In Cinema section is the trip-planning line CAS-394 promised — oldest
+// cinema_date at the top — and that has to hold under every sort key, not just "availability". A
+// Blockbuster-style agent (sort:"popularity") was falling through to sortMoviesBy and losing the
+// oldest-first read entirely.
 const sortForKey = (g,key,cinema) =>
     (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byTimeline
+  : (cinema && g==="in_cinema") ? byTimelineAsc
   : key==="availability" ? (cinema ? byTimelineAsc : byTimeline)
   : key==="imdb" ? byRatingDesc
   : ((a,b)=>sortMoviesBy(a,b,key));
