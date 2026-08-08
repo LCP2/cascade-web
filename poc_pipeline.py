@@ -56,7 +56,11 @@ MAX_UPCOMING            = int(os.getenv("MAX_UPCOMING", "100"))              # a
 # CAS-361: widen past the theatrical scope — the newest AU-available titles (stream/rent/buy),
 # no release_type restriction, so recent streaming-only / direct-to-digital films that never
 # played a cinema (and so never match with_release_type=2|3 above) are ingested too.
-MAX_STREAMING_ONLY = int(os.getenv("MAX_STREAMING_ONLY", "2000"))   # first 100 pages @ 20/page
+# CAS-422: this is the one ingest pass with real headroom — scripts/catalogue_sizing.py measured
+# the widened AU-watchable pool at ~90,704 total_results, versus the theatrical pass's ~1,870
+# (already near-saturated per CAS-335's appraisal). Raising this cap is what grows the catalogue;
+# raising MAX_TITLES would buy nothing, since the theatrical pool itself is the smaller number.
+MAX_STREAMING_ONLY = int(os.getenv("MAX_STREAMING_ONLY", "4000"))   # first 200 pages @ 20/page
 
 # --- window heuristics (this is YOUR business logic, not something an API gives you) ---
 PVOD_MIN_PRICE   = 19.99          # a buy/rent at or above this, with no subscription yet, = premium early window
@@ -88,10 +92,15 @@ LIVE = bool(TMDB_KEY and OMDB_KEY and WATCHMODE_KEY)
 
 # CAS-109 — poll-tiering + free-tier-capped scheduler (staging prototype).
 import poll_scheduler as ps
-CATALOGUE_TARGET = int(os.getenv("CATALOGUE_TARGET", str(MAX_TITLES)))
-                         # CAS-128: persistent browsable catalogue size — defaults to MAX_TITLES so the
-                         # ~300 cap is gone and the full ingested AU set is held. Availability is free
-                         # (TMDB Providers), so catalogue size no longer gates the daily budget.
+CATALOGUE_TARGET = int(os.getenv("CATALOGUE_TARGET", "6000"))
+                         # CAS-128: persistent browsable catalogue size — was pinned to MAX_TITLES (the
+                         # theatrical-pass cap) so the ~300 cap was gone and the full ingested AU set held.
+                         # CAS-422: decoupled from MAX_TITLES — theatrical+upcoming+streaming can now sum
+                         # past 5,000 (MAX_TITLES=5000 is the theatrical pass's own cap, not the merged
+                         # total), so pinning this to it silently truncated the wider streaming ingest
+                         # (CAS-361) back down. 6,000 covers the ~5,700 target with headroom; still
+                         # env-overridable. Availability is free (TMDB Providers), so catalogue size no
+                         # longer gates the daily budget.
 
 # CAS-127 — TMDB Watch Providers is the primary availability source (free, no quota).
 # It runs once per released title per day across the WHOLE catalogue, so pace it politely
