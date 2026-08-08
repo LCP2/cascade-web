@@ -554,10 +554,11 @@ def derive_from_providers(movie: dict, prov: dict, today: datetime.date) -> list
     still_running = opened and cd >= (today - datetime.timedelta(days=CINEMA_RUN_DAYS)).isoformat()
     # CAS-418 (walk back CAS-395): in_cinema is EXCLUSIVE with home offers — a film with a rent/stream/
     # buy offer is never filed under the big screen (engine invariant #55). So in_cinema is only ever the
-    # answer when NO home window resolved. An offer-less opened title is in_cinema; the front end hides it
-    # once past its theatrical run (inCinemaWindow gates on the run), so gating here on `opened` is safe.
+    # answer when NO home window resolved. An offer-less title is in_cinema only within CINEMA_RUN_DAYS of
+    # opening (still_running); past its run, an offer-less title falls to upcoming (CAS-418 item 4) rather
+    # than staying stamped in_cinema forever.
     if not windows:
-        windows.append("in_cinema" if opened else "upcoming")
+        windows.append("in_cinema" if still_running else "upcoming")
     return windows
 
 
