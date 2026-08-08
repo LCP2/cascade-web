@@ -373,9 +373,9 @@
   .exsharebtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .exsharebtn.done{color:var(--green);border-color:rgba(72,199,142,.55)}
   /* CAS-304: back to a left-to-right row (reverting CAS-277's stack, per Lee's 0.8.3 review). CAS-348: the
-     row is exactly three controls now — Watch, Agent, Watched (CAS-349 retaxonomized the first and third;
-     the DOM classes stay `.ctl.notify`/`.ctl.casc`/`.ctl.watch` — see CAS-349's comments on notifyChipHTML
-     and watchChipHTML) — sharing it equally, each label still ellipsizing rather than wrapping if it runs
+     row is exactly three controls now — Notify, Agent, Watched (CAS-349 retaxonomized the first and third,
+     CAS-427 relabelled the first again; the DOM classes stay `.ctl.notify`/`.ctl.casc`/`.ctl.watch` — see
+     CAS-349's comments on notifyChipHTML and watchChipHTML) — sharing it equally, each label still ellipsizing rather than wrapping if it runs
      out of room, so a control that has to abbreviate itself still says what it does. */
   /* CAS-373: 9px, not 12 — the row is shorter now (see .cmini) so it needs less air above it too. */
   .actions{display:flex;flex-direction:row;align-items:stretch;gap:8px;margin-top:9px}
@@ -429,8 +429,8 @@
     border-radius:12px;padding:4px;box-shadow:0 14px 34px rgba(0,0,0,.7)}
   .cpop.pop-down{bottom:auto;top:calc(100% + 8px)}
   /* CAS-374: Agent (out of scope for this ticket) keeps the original panel, stretched across the whole row.
-     Watch and Watched are content-width now — only as wide as their rows need — and edge-aligned under the
-     chip that opens them: .al-l under the Watch chip (the row's left edge), .al-r under Watched (the right). */
+     Notify and Watched are content-width now — only as wide as their rows need — and edge-aligned under the
+     chip that opens them: .al-l under the Notify chip (the row's left edge), .al-r under Watched (the right). */
   .cpop.kpop{left:0;right:0}
   .cpop.al-l{left:0;width:max-content;max-width:min(280px,calc(100vw - 32px))}
   .cpop.al-r{right:0;width:max-content;max-width:min(280px,calc(100vw - 32px))}
@@ -486,10 +486,6 @@
      the round mark) — a square tick box is the honest shape for "pick as many as you like". */
   .nopt .wwb.sq{border-radius:4px}
   .nopt .nol{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  /* An option this agent doesn't watch is still offered — that is the point of a per-film control — but it
-     says so, or a lit row would read as "my agent does this" rather than "just this film". */
-  .nopt .notag{flex:none;font-size:9.5px;font-weight:700;color:var(--faint);text-transform:uppercase;
-    letter-spacing:.04em}
   .nopt:hover{color:var(--ink)}
   .nopt:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
   /* CAS-279: the empty state of the Cascade panel. A panel that opens onto nothing reads as broken, so it
@@ -3394,7 +3390,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 401, "commit": "3c54da4", "builtAt": "2026-08-08T07:52:45Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 402, "commit": "f7b6c04", "builtAt": "2026-08-08T08:06:47Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -4568,12 +4564,13 @@ function watchChipHTML(id){
 // CAS-245: …and it is a PANEL now, not a single switch. The moments the four-way prototype control wanted
 // have existed since CAS-242 and CAS-243 — the windows and sub-moments an agent carries in its settings —
 // so the honesty objection that kept this on/off is answered: every row here is a moment the monitor can
-// actually fire. The panel lists every option the agent HAS, whether or not the agent has it switched on,
-// because "tell me about this one film reaching rent even though my agent doesn't watch rent" is exactly
-// the thing a per-film control is for. Each option the agent does have on starts ON for the film.
+// actually fire.
 // CAS-349: this control is retaxonomized "Watch" — the ladder below (WINDOW_RUNG/STATUS_RUNG/filmRung) and
 // `filmOptOn`'s wins-map are unchanged and still what everything here reads and writes; watchLevelsFor and
 // the panel below it are the new, narrower reading of them.
+// CAS-427: relabelled "Notify", and the panel now lists only the options the agent's OWN Notify option has
+// switched on (watchLevelsFor's `agentOn`) — a level the agent merely Lists, or hasn't touched at all, no
+// longer appears here greyed with a "not in this agent" tag; it is simply not offered.
 // ---- CAS-280: a film can only be told about where it is still GOING -------------------------------------
 // One ladder across both lanes, in the order a film actually travels it. A film already at Rent cannot
 // "reach Rent" again, so offering the row is offering an alert that can never fire — the honesty guardrail's
@@ -4691,8 +4688,10 @@ const FILTER_TIERS = [
   ...STREAM_TIERS.map(t=>({key:t.key, label:t.label, cd:"var(--green)"})),
 ];
 // Does this film currently carry tier `key`? Premium/Rent read the film's own ticked watch level; the three
-// streaming tiers additionally need Streaming itself ticked AND that tier chosen (streamTier defaults to
-// "must", same default pickStreamTier/watchPanelRowsHTML use, so an untouched streaming pick still counts).
+// streaming tiers additionally need Streaming itself ticked AND that tier chosen. CAS-427 removed the per-film
+// tier picker from the Notify panel (streamTier is now only ever set to its "must" default, by toggleFilmOpt),
+// so in practice only Must Watch is reachable here any more — this control (CAS-382) is out of that ticket's
+// scope and untouched, but it inherits the consequence.
 function filmHasWatchTier(id, key){
   const levels=watchLevelsFor(id);
   if(key==="premium" || key==="rent"){
@@ -4703,20 +4702,21 @@ function filmHasWatchTier(id, key){
   if(!l || !filmOptOn(id,l)) return false;
   return (entryFor(id).streamTier||"must")===key;
 }
-// The chip's summary. `muted` is still the field it has always been — a whole-film silence — and it stays
-// the thing catchReason reads first. Counted over the levels still worth ticking: a passed level carries no
-// future promise, so it would only make the "N of M" undercount what is actually still live.
+// The chip's summary. CAS-427: counted over the options this agent has actually enabled Notify for — a level
+// the agent only Lists (never asked this control about) is not one of the "N of M" the chip can honestly cite,
+// and a passed level carries no future promise either, so both are excluded the same way.
 function filmNotifyState(id){
-  if(filmMuted(id)) return {on:0, total:0, muted:true, current:false};
-  const levels=watchLevelsFor(id).filter(l=>!l.spent);
+  const levels=watchLevelsFor(id).filter(l=>!l.spent && l.agentOn);
   const on=levels.filter(l=>filmOptOn(id,l)).length;
-  return {on, total:levels.length, muted:on===0, current:watchIsCurrent(id)};
+  return {on, total:levels.length, current:watchIsCurrent(id)};
 }
 function notifyChipHTML(id){
   const st=filmNotifyState(id);
-  const lbl = st.muted ? "Muted" : (st.on && st.on<st.total ? `Watch · ${st.on}` : "Watch");
-  const title = st.muted ? "Nothing about this film will reach you. Tap to choose what does."
-              : st.total===0 ? "This agent isn't tracking a level for this film yet. Tap to pick where you want to watch it, or say Never."
+  // CAS-427: nothing ticked is just "Notify", not "Muted" — Never is the film's own always-available exit, so
+  // zero-on is a resting state rather than a silence that needs naming.
+  const lbl = st.on && st.on<st.total ? `Notify · ${st.on}` : "Notify";
+  const title = st.total===0 ? "This agent isn't tracking a level for this film yet. Tap to pick where you want to watch it, or say Never."
+              : st.on===0 ? "Nothing about this film will reach you yet. Tap to choose what does."
               : `You'll be told when this film reaches ${st.on} of ${st.total} levels you've picked. Tap to change.`;
   // CAS-349: green (not the generic gold "on") is the film's OWN colour for "you can watch this right now"
   // everywhere else on the card (the availability bar, the window lozenges) — reusing it here says the same
@@ -4725,7 +4725,7 @@ function notifyChipHTML(id){
       onclick="openNotifyPanel(${id},this)" aria-haspopup="true" aria-expanded="false" aria-pressed="${st.current}"
       title="${escA(title)}" aria-label="${escA(title)}">
     <span class="cmini"><i class="cfill" style="width:${st.total?100*st.on/st.total:0}%;background:var(--green)"></i>
-      <span class="cic">${st.muted ? ICON.bellOff : (st.current ? ICON.watched : ICON.bell)}</span>
+      <span class="cic">${st.current ? ICON.watched : ICON.bell}</span>
       <span class="clab${st.current?"":" dim"}">${lbl}</span>
       <span class="ctog">${ICON.chev}</span></span></button>`;
 }
@@ -4802,32 +4802,18 @@ window.moveFilmTo=(id,cid)=>{
   closeWatchPanel();
   render();
 };
-// The Watch panel's rows: one per level (streaming expands to its three tiers), then Never at the foot —
-// always present, per the ticket, so it is never a second control to go and find.
+// The Notify panel's rows: one per level this agent's own Notify option enables (CAS-427 — a level the agent
+// hasn't opted into isn't offered here at all, not shown greyed), then Never at the foot — always present,
+// per the ticket, so it is never a second control to go and find.
 function watchPanelRowsHTML(id){
-  const levels=watchLevelsFor(id);
-  const rows=[];
-  levels.forEach(l=>{
-    if(l.key==="stream"){
-      const tier=entryFor(id).streamTier||"must", streamOn=filmOptOn(id,l);
-      STREAM_TIERS.forEach(t=>{
-        const on=streamOn && tier===t.key;
-        rows.push(`<button type="button" class="nopt${on?" on":""}${l.spent?" spent":""}"
-          style="--wwc:${l.cd}" data-wk="stream" data-tier="${t.key}" aria-pressed="${on}"
-          ${l.spent?"disabled":`onclick="pickStreamTier(${id},'${t.key}')"`}
-          title="${escA(l.spent?"Already reached":`${on?"On":"Off"} — tap to mark ${t.label}`)}">
-          <span class="wwb">✓</span><span class="nol">${esc(t.label)}</span>
-          ${l.agentOn?"":`<span class="notag">not in this agent</span>`}</button>`);
-      });
-    } else {
-      const on=filmOptOn(id,l);
-      rows.push(`<button type="button" class="nopt${on?" on":""}${l.spent?" spent":""}"
-        style="--wwc:${l.cd}" data-wk="${l.key}" aria-pressed="${on}"
-        ${l.spent?"disabled":`onclick="toggleFilmOpt(${id},'${l.key}')"`}
-        title="${escA(l.spent?"Already reached":`${on?"On":"Off"} — tap to mark ${l.label}`)}">
-        <span class="wwb">✓</span><span class="nol">${esc(l.label)}</span>
-        ${l.agentOn?"":`<span class="notag">not in this agent</span>`}</button>`);
-    }
+  const levels=watchLevelsFor(id).filter(l=>l.agentOn);
+  const rows=levels.map(l=>{
+    const on=filmOptOn(id,l);
+    return `<button type="button" class="nopt${on?" on":""}${l.spent?" spent":""}"
+      style="--wwc:${l.cd}" data-wk="${l.key}" aria-pressed="${on}"
+      ${l.spent?"disabled":`onclick="toggleFilmOpt(${id},'${l.key}')"`}
+      title="${escA(l.spent?"Already reached":`${on?"On":"Off"} — tap to mark ${l.label}`)}">
+      <span class="wwb">✓</span><span class="nol">${esc(l.label)}</span></button>`;
   });
   // CAS-280's honesty rule, restated for the new ladder: nothing to say "yes" to is still worth saying,
   // rather than opening onto a near-empty panel that reads as broken.
@@ -4846,18 +4832,17 @@ window.openNotifyPanel=(id, btn)=>{
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
   const pop=document.createElement("div");
-  // CAS-374: content-width, left-aligned under the Watch chip — no in-panel close, the chip is the toggle.
+  // CAS-374: content-width, left-aligned under the Notify chip — no in-panel close, the chip is the toggle.
   pop.className="cpop npop al-l";
   pop.innerHTML=`<div class="nopts">${watchPanelRowsHTML(id)}</div>`;
   btn.closest(".actions").appendChild(pop);
   positionPanel(pop);   // CAS-304
   // CAS-349: press-drag-release now lives here too, same gesture as the Watched panel's — release on the row
-  // under your finger ticks it (or auto-ticks, or picks a tier, or says Never). Spent rows are excluded from
-  // the hit-test, so a slide passing over one behaves exactly like the disabled tap: a no-op.
+  // under your finger ticks it (or auto-ticks, or says Never). Spent rows are excluded from the hit-test, so
+  // a slide passing over one behaves exactly like the disabled tap: a no-op.
   wirePanelSlide(pop, ".nopt[data-wk]:not(.spent)", el=>{
     const wk=el.dataset.wk;
     if(wk==="never") pickNever(id);
-    else if(el.dataset.tier) pickStreamTier(id, el.dataset.tier);
     else toggleFilmOpt(id, wk);
   });
   document.addEventListener("keydown", watchPanelKey, true);
@@ -4900,21 +4885,6 @@ window.toggleFilmOpt=(id,key)=>{
   e.muted=false;
   saveNotify();
   logEvent("film_watch_level",{level:key, on:!!e.wins[key]});
-  repaintWatchControl(id);
-};
-// The three streaming tiers are single-select: picking one switches it (and ticks Streaming, if it wasn't
-// already); tapping the tier that's already active clears Streaming rather than leaving it stuck ticked with
-// no way to turn off from this row.
-window.pickStreamTier=(id,tier)=>{
-  const row=watchLevelsFor(id).find(l=>l.key==="stream"); if(!row || row.spent) return;
-  const e=entryFor(id);
-  e.wins=e.wins||{};
-  const on=filmOptOn(id,row);
-  if(on && e.streamTier===tier) e.wins.stream=false;
-  else { e.wins.stream=true; e.streamTier=tier; }
-  e.muted=false;
-  saveNotify();
-  logEvent("film_watch_level",{level:`stream.${tier}`, on:!!e.wins.stream});
   repaintWatchControl(id);
 };
 // "Never" clears every future tick (the greyed/passed ones are left alone — they're a record, not a promise)
@@ -5044,8 +5014,8 @@ window.pickWatch=(id,key)=>{ closeWatchPanel(); setOpinion(id,key); };
 //
 // CAS-245 replaced the whole-film toggle that used to set this with the per-moment panel, and left the FIELD
 // alone on purpose: a film someone muted before this change stays muted, catchReason still reads it first,
-// and touching any row in the panel clears it. Silencing a film is still one gesture — turn every row off,
-// which the chip then reports as "Muted" — so nothing was taken away, only said more precisely.
+// and touching any row in the panel clears it. CAS-427: the chip itself no longer names this state "Muted" —
+// zero-on just reads as plain "Notify" — but the field and catchReason's own message are untouched.
 const filmMuted = id => !!(notify[id] && notify[id].muted);
 // ---- The collapsed stub (CAS-64, made unconditional in CAS-100) ----------------
 // What a film becomes the moment you say Liked / Disliked / Not for me: one greyed line, in the position the
@@ -8590,7 +8560,7 @@ function drawWatchLanes(){
       <p class="agwsub">${esc(w.sub)}</p>
       <div class="agwrow">
         ${sw("list","List", lst, `Include ${w.label.toLowerCase()} films in this agent's list`)}
-        ${sw("notify","Notify", nt, `Alert me ${w.notifySay}`)}
+        ${sw("notify","Notify option", nt, `Alert me ${w.notifySay}`)}
       </div>${subs}</div>`;
   }).join("");
 }
@@ -10259,24 +10229,25 @@ const flowList    = () => FLOWS[flowKind] || FLOWS.cinema;
 const flowCounted = () => flowList().slice(2).filter(k => k!=="keepfinding");
 // The priority answer is not a label — it seeds the windows the agent actually watches, so the choice
 // moves the count on every screen after it. pickStarter lays a saved answer for that same agent over it.
-// CAS-197: a cinema agent starts with BOTH cinema moments on — the film reaching a cinema, and the film
+// CAS-197: a cinema agent starts LISTING both cinema moments — the film reaching a cinema, and the film
 // getting past its opening weekend. They are the two the monitor actually has moments for (hits_cinema,
 // past_opening_weekend), and they answer two different questions: "it's on" and "the crowds have gone".
+// (CAS-427: listing them is still automatic; alerting on them is not — see PRIORITY_WATCH below.)
 // CAS-228/229: these are the defaults onboarding applies WITHOUT asking, in the new per-window shape. A cinema
-// agent lists Upcoming and In cinema and alerts on both moments; a streaming agent lists Rent and Streaming
-// and alerts on both. Both notify flags are on precisely because the two cinema moments belong to the two
-// different windows (see AGENT_WINDOWS) — "In-cinema release + Past-opening-weekend", said as windows.
-// CAS-242 (2): a cinema agent starts with everything on, sub-moments included — a new agent is being briefed
-// by the person who is about to use it, so the assumption is "tell me everything about the big screen" and
-// the screen right there is where they take any of it away.
+// agent lists Upcoming and In cinema; a streaming agent lists Rent and Streaming — the windows a new agent of
+// that kind actually watches, said honestly, before it has been asked to alert on anything.
+// CAS-427: Notify itself starts OFF for every window — "no Notify option is ticked by default", so the user
+// ticks what they want rather than the app pre-arming a bell nobody asked to ring. (wwToggleWin still arms a
+// window's own sub-moments the first time its Notify switch is turned ON, same as it always has — this only
+// changes when that first arming happens: on the user's own tap, not silently at agent creation.)
 const PRIORITY_WATCH = {
-  cinema:{ upcoming:{list:true, notify:true, subs:{announced:true, opens_soon:true}},
-           in_cinema:{list:true, notify:true} },
+  cinema:{ upcoming:{list:true, notify:false},
+           in_cinema:{list:true, notify:false} },
   // CAS-243: and a streaming agent starts on the two windows a night in actually means — standard rent and
   // streaming. Premium is deliberately absent rather than present-and-off: at ~$30 it is the one window
   // nobody should be opted into by default, and the lane is drawn with both switches off so turning it on
   // is one tap away.
-  stream:{ rent:{list:true, notify:true},     stream:{list:true, notify:true} },
+  stream:{ rent:{list:true, notify:false},    stream:{list:true, notify:false} },
 };
 let flowOn=false;              // inside the wired flow (vs a standalone ?step= preview)
 // CAS-246: this run of the flow is making a SECOND agent from the deck, so it stops after the agent is

@@ -353,11 +353,12 @@ test("alerts: a sub-moment writes an alert only when its own bell is on", () => 
       `${key} defaults ON — an agent built in the editor would start emailing about it unasked`);
     assert.ok(s.sub && s.sub.length > 20, `${s.key} does not say what it actually fires on`);
   }
-  // A cinema agent starts with everything on, sub-moments included — the ticket's stated assumption.
+  // CAS-427: a new cinema agent Lists Upcoming but does not alert on it — no Notify option is ticked by
+  // default, sub-moments included, until the person turns the bell on for themselves.
   const seed = E.PRIORITY_WATCH.cinema.upcoming;
-  assert.ok(seed.notify && seed.subs, "a new cinema agent no longer starts with the Upcoming bell on");
-  for(const s of win.subs) assert.equal(seed.subs[s.key], true,
-    `a new cinema agent starts with ${s.key} off, against the ticket's everything-on assumption`);
+  assert.ok(seed.list, "a new cinema agent does not list Upcoming");
+  assert.ok(!seed.notify, "a new cinema agent starts with the Upcoming bell on, against CAS-427's default-off rule");
+  assert.ok(!seed.subs, "a new cinema agent starts with pre-armed sub-moments, against CAS-427's default-off rule");
 });
 
 test("alerts: a saved agent from before this screen is never armed on its behalf", () => {
@@ -396,8 +397,11 @@ test("windows: a streaming agent is offered Premium, Standard Rent and Streaming
 
 test("windows: a new streaming agent takes rent and streaming, and is never opted into $30", () => {
   const seed = E.PRIORITY_WATCH.stream;
-  assert.ok(seed.rent && seed.rent.list && seed.rent.notify, "Standard Rent is not on for a new agent");
-  assert.ok(seed.stream && seed.stream.list && seed.stream.notify, "Streaming is not on for a new agent");
+  assert.ok(seed.rent && seed.rent.list, "Standard Rent is not listed for a new agent");
+  assert.ok(seed.stream && seed.stream.list, "Streaming is not listed for a new agent");
+  // CAS-427: List is still automatic; Notify is not — nothing is ticked until the person taps it themselves.
+  assert.ok(!seed.rent.notify, "Standard Rent's bell is on by default, against CAS-427's default-off rule");
+  assert.ok(!seed.stream.notify, "Streaming's bell is on by default, against CAS-427's default-off rule");
   assert.ok(!seed.premium, "a new streaming agent is opted into Premium, which costs ~$30 a film");
   // …and the window is still OFFERED, or it could never be switched on.
   assert.ok(E.agentWindow("premium", "stream"), "Premium is not on the screen at all");
