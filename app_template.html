@@ -230,6 +230,12 @@
   .slider .val{font-size:13px;font-weight:700;min-width:44px;text-align:right}
   .reset{margin-top:16px;font-size:12px;color:var(--dim);background:none;border:none;cursor:pointer;text-decoration:underline}
   .count{font-size:12px;color:var(--dim);margin:12px 12px 0}
+  /* CAS-421: the outgoing list stays on screen, blurred, while the new agent's list streams in behind it —
+     the redraw happens under the blur instead of as a visible pause/flash. Cleared by render() itself once
+     every group's fillListChunked has finished, not on a timer. */
+  #groups{transition:filter .25s ease}
+  #groups.listloading{filter:blur(5px);pointer-events:none}
+  @media (prefers-reduced-motion:reduce){ #groups{transition:none} }
   .group{margin-top:6px}
   .grouphead{display:flex;align-items:center;gap:8px;padding:12px 12px 8px;font-size:13px;font-weight:800;letter-spacing:.2px}
   .gdot{width:9px;height:9px;border-radius:50%}
@@ -912,10 +918,13 @@
   .dc-filter svg{width:14px;height:14px;display:block}
   .dc-name{font-size:13.5px;font-weight:800;margin-top:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .dcard.is-centre.is-active .dc-name{color:#cfc2ff}
-  .dc-sub{font-size:11px;color:var(--dim);margin-top:4px;line-height:1.4;display:none}
-  .dcard.is-centre .dc-sub{display:block}
-  .dc-acts{display:none;gap:6px;margin-top:auto;padding-top:9px}
-  .dcard.is-centre.is-active .dc-acts,.dcard.new.is-centre .dc-acts{display:flex}
+  /* CAS-421: sub/acts used to be display:none until a card became is-centre.is-active, so the moment a
+     swipe settled the card popped taller — a reflow on top of the coverflow's own blur→sharp motion. They
+     now render at every position (so a peeked card is the SAME layout as the active one, just blurred by
+     deckPaint()'s existing filter) and only the interaction — not the paint — is gated on being the open card. */
+  .dc-sub{font-size:11px;color:var(--dim);margin-top:4px;line-height:1.4}
+  .dc-acts{display:flex;gap:6px;margin-top:auto;padding-top:9px;pointer-events:none}
+  .dcard.is-centre.is-active .dc-acts,.dcard.new.is-centre .dc-acts{pointer-events:auto}
   .dcard.new .dc-in{border-style:dashed;border-color:#4c4270}
   .dcard.new .dc-icon,.dcard.new .dc-name{color:var(--accenttext)}
   /* The built-in All card: home base. Reads as belonging to the deck but not as one of YOUR agents — it
@@ -6155,13 +6164,16 @@ window.openCascade=id=>{
   if(id===ALL_ID){
     if(activeId===ALL_ID) return;
     setActive(ALL_ID); settleFoundView(); clearFilters(); syncFilterUI(); restoreCascadeSearch();
-    closeFilterPanel(); restoreCascadeWatchTiers(); render();
+    closeFilterPanel(); restoreCascadeWatchTiers();
+    $("groups").classList.add("listloading");   // CAS-421: held blurred till the new agent's list is ready
+    render();
     logEvent("cascade_opened", {key:"all"});
 
     return;
   }
   const c=cascades.find(x=>x.id===id); if(!c || activeId===id) return;
   setActive(id); settleFoundView(); applyCascade(c); restoreCascadeSearch();
+  $("groups").classList.add("listloading");     // CAS-421: held blurred till the new agent's list is ready
   closeFilterPanel(); restoreCascadeWatchTiers(); render();
   logEvent("cascade_opened", {key:c.template||"custom"});
   // countCriteria() is what the Cascade SHOWS you right now, which is not the same as what it has found and is
@@ -11228,20 +11240,25 @@ window.onbCreateAgent=()=>{
 // fills in over the next frames. `gen` ties a fill to the render() that started it: a newer render()
 // bumps renderGen and any stale fill stops on its next frame instead of racing the new one.
 let renderGen=0;
-function fillListChunked(listEl, items, gen, freshFn){
+// CAS-421: onDone fires exactly once per call — on the normal last batch AND on the early-abort branch
+// (a superseded render or a detached list), so a caller counting outstanding fills to know when the
+// whole list is ready never hangs waiting on a fill that stopped without finishing.
+function fillListChunked(listEl, items, gen, freshFn, onDone){
   let i=0; const BATCH=36;
   const step=()=>{
-    if(gen!==renderGen || !listEl.isConnected) return;
+    if(gen!==renderGen || !listEl.isConnected){ onDone && onDone(); return; }
     let buf=""; const end=Math.min(items.length, i+BATCH);
     for(; i<end; i++){ const m=items[i];
       buf += taggedOut(m) ? stubHTML(m) : cardHTML(m, freshFn?freshFn(m):false); }
     listEl.insertAdjacentHTML("beforeend", buf);
     if(i<items.length) requestAnimationFrame(step);
+    else onDone && onDone();
   };
   step();
 }
 function render(){
   renderGen++;   // CAS-129: supersede any card-fill still streaming from a previous render
+  const myGen=renderGen;   // CAS-421: only THIS render may lift the blur it didn't set
   // The re-run. Every paint re-selects each Cascade's auto set from scratch and re-applies your overrides on
   // top — so a criteria edit, a new Cascade, a deleted one, a film you just marked watched, a service you just
   // picked, all land in the Found list immediately, and none of them can clobber an override. It's cheap
@@ -11269,11 +11286,14 @@ function render(){
     ? (shown.length ? `Show ${shown.length} film${shown.length===1?"":"s"}` : "No films match")
     : "Done";
   const wrap=$("groups");
+  // CAS-421: unblur only if no later render() has taken over the list since this one started.
+  const listReady=()=>{ if(myGen===renderGen) wrap.classList.remove("listloading"); };
   if(!rows.length){
     // One list, so one empty: this Cascade matches nothing right now, and that panel carries the ways out.
     wrap.innerHTML = emptyResultsHTML();
     renderJumpBar();          // CAS-275: no sections, so no jump rail — and no stale one left behind
     markFoundSeen();
+    listReady();
     return;
   }
   // CAS-129: build the group shells now (cheap) but STREAM their cards in batches (fillListChunked)
@@ -11283,15 +11303,20 @@ function render(){
   // the order is a thing you can see by reading down the list — saying it in a line was chrome, not honesty.
   wrap.innerHTML="";
   const ac=activeCascade();
-  orderFor(ac).forEach(g=>{      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
-    const items=rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g,ac));
-    if(!items.length) return;
+  // CAS-421: the groups this pass will actually render, decided up front — so `pending` starts at its
+  // final count before any fillListChunked can call back and never dips to zero between groups.
+  const groups=orderFor(ac)      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
+    .map(g=>({g, items:rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g,ac))}))
+    .filter(x=>x.items.length);
+  let pending=groups.length;
+  const oneListDone=()=>{ if(--pending<=0) listReady(); };
+  groups.forEach(({g,items})=>{
     const live=items.filter(m=>!taggedOut(m)).length;
     const grp=document.createElement("div"); grp.className="group"; grp.dataset.g=g;
     grp.innerHTML=`<div class="grouphead"><span class="gdot ${g}"></span>${STATUS_LABEL[g]}
       <span class="gcount">${live}</span></div><div class="list"></div>`;
     wrap.appendChild(grp);
-    fillListChunked(grp.querySelector(".list"), items, renderGen, isFresh);
+    fillListChunked(grp.querySelector(".list"), items, renderGen, isFresh, oneListDone);
   });
   renderJumpBar();     // after the groups exist — it is built FROM them, never from a fixed menu
   // You are looking at it — so the next visit's "since you last looked" counts from here.
