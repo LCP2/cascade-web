@@ -428,10 +428,9 @@
     display:flex;align-items:center;gap:5px;background:#0e1626;border:1px solid rgba(255,255,255,.16);
     border-radius:12px;padding:4px;box-shadow:0 14px 34px rgba(0,0,0,.7)}
   .cpop.pop-down{bottom:auto;top:calc(100% + 8px)}
-  /* CAS-374: Agent (out of scope for this ticket) keeps the original panel, stretched across the whole row.
-     Notify and Watched are content-width now — only as wide as their rows need — and edge-aligned under the
-     chip that opens them: .al-l under the Notify chip (the row's left edge), .al-r under Watched (the right). */
-  .cpop.kpop{left:0;right:0}
+  /* CAS-374/CAS-428: every card panel is content-width now — only as wide as its rows need — and
+     edge-aligned under the chip that opens it: .al-l under Notify and Lists (the row's left edge), .al-r
+     under Watched (the right). The old full-row .kpop chrome went with the Agent "move" panel it belonged to. */
   .cpop.al-l{left:0;width:max-content;max-width:min(280px,calc(100vw - 32px))}
   .cpop.al-r{right:0;width:max-content;max-width:min(280px,calc(100vw - 32px))}
   /* CAS-278: the five answers run TOP TO BOTTOM, best first, so the list is read as a scale. Across a row
@@ -454,23 +453,10 @@
      without looking chosen — the finger is usually covering the row, so the cue is the ring and the lift. */
   .cpop .sliding{background:rgba(255,255,255,.14);border-color:var(--segc,var(--accent));
     box-shadow:0 0 0 2px var(--segc,var(--accent)) inset;color:var(--ink)}
-  .cpop.kpop .sliding{--segc:var(--accent)}
   /* The gesture owns the vertical axis while it is running, so the page cannot scroll out from under it. */
   .cpop .csegs,.cpop .nopts{touch-action:pan-x}
   .cseg:hover{color:var(--ink);border-color:#3a4150}
   .cseg:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
-  /* CAS-241: a thumb, not a fingernail. 28px wide was under half the 44px the rest of the card's controls
-     are drawn at, on the one button whose whole job is "put this away". The width comes off the four
-     segments beside it, which is why the labels are asserted intact at 360px rather than assumed. */
-  .cclose{flex:none;width:44px;height:44px;border-radius:9px;border:1px solid rgba(255,255,255,.12);
-    background:rgba(255,255,255,.05);color:#c9d0da;cursor:pointer;display:grid;place-items:center;line-height:0}
-  .cclose svg{width:16px;height:16px;display:block}
-  .cclose:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  /* CAS-374: Watch and Watched dropped their in-panel close chevrons — the chip that opened the panel is now
-     the only toggle for it (see .ctog above). Agent still opens its own full-row panel with a close button
-     of its own (out of scope for that ticket), so .nclose survives for it alone. */
-  .nclose{order:-1}
-  .nclose svg{transform:rotate(-90deg)}
   /* CAS-374: no inner scroll — every row has to be reachable without a nested scrollbar on an iPhone, so
      the list grows to whatever height its rows need instead of capping and clipping them. */
   .nopts{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
@@ -498,6 +484,12 @@
   /* Never sits apart from the levels above it — a different KIND of answer (exclude, not track) — so it gets
      a hairline rule of its own rather than reading as one more level on the same ladder. */
   .nopt.never{margin-top:4px;border-top:1px solid rgba(255,255,255,.1);border-radius:0 0 9px 9px;padding-top:9px}
+  /* CAS-428: same "a different kind of row" hairline as .nopt.never, for the Lists panel's "＋ New list" —
+     a separate class because it isn't an exclude answer, just a row that sits apart from the ticks above it. */
+  .nopt.sep{margin-top:4px;border-top:1px solid rgba(255,255,255,.1);border-radius:0 0 9px 9px;padding-top:9px}
+  .nopt.newlistrow{cursor:default}
+  .newlistin{width:100%;background:transparent;border:0;outline:0;font:inherit;color:var(--ink);padding:0}
+  .newlistin::placeholder{color:var(--faint)}
   .ctl.casc .cmini .cic{color:var(--accent)}
   /* ONE icon set for the card's actions (CAS-64). Every action icon is a stroked outline drawn from the same
      24px grid at the same 1.8 stroke weight, in the same grey — and every ON state is the same purple
@@ -2216,6 +2208,21 @@
   .agcount{flex:0 0 auto;text-align:right;padding-left:4px}
   .agcount b{display:block;font-size:18px;font-weight:800;color:var(--ink);line-height:1.1}
   .agcount span{font-size:10px;color:var(--dim)}
+  /* ---- CAS-428: Lists screen — same .ucard/.urow row language as Account, plus rename/delete affordances
+     no other .urow row needs (a List is the one thing here you can rename or remove yourself). ---- */
+  .listact{flex:0 0 auto;width:30px;height:30px;border-radius:8px;border:1px solid var(--line);
+    background:rgba(255,255,255,.04);color:var(--dim);cursor:pointer;display:grid;place-items:center;
+    font-size:13px;line-height:1;margin-left:2px}
+  .listact:hover{color:var(--ink);border-color:#3a4150}
+  .listact:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .listact.danger:hover{color:#e0574f;border-color:rgba(224,87,79,.5)}
+  .listnamein{flex:1;min-width:0;background:transparent;border:0;border-bottom:1px solid var(--line);
+    outline:0;font:inherit;font-size:14.5px;font-weight:600;color:var(--ink);padding:2px 0}
+  .listnewbtn{display:block;width:100%;margin-top:10px;padding:12px;border-radius:12px;
+    border:1px dashed var(--line);background:transparent;color:var(--dim);font-family:inherit;
+    font-size:13px;font-weight:700;cursor:pointer;text-align:center}
+  .listnewbtn:hover{color:var(--ink);border-color:#3a4150}
+  .listnewbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   /* The film list a group opens into — the card's own poster row, kept small. */
   .ulist{display:flex;flex-direction:column;gap:8px;margin-top:4px}
   .urowfilm{display:flex;gap:10px;align-items:center;background:var(--panel2);border:1px solid var(--line);
@@ -2343,6 +2350,7 @@
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('account')">Account</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('services')">My services</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('svcAnalysis')">Service analysis</button>
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('lists')">Lists</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('about')">About</button>
           </div>
         </div>
@@ -2740,6 +2748,13 @@
      menu (CAS-345), its permanent entry point. -->
 <div class="uscreen" id="svcAnalysis" role="dialog" aria-modal="true" aria-label="Service analysis">
   <div class="uwrap" id="svcAnalysisBody"></div>
+</div>
+
+<!-- LISTS (CAS-428) — manage the user's own manual collections: create, rename, delete. A different screen
+     from Agents (CAS-424, criteria-driven and reorderable) — these are hand-picked and have no order of their
+     own. Body rendered by renderListsScreen(). Reached from the top menu. -->
+<div class="uscreen" id="listsScreen" role="dialog" aria-modal="true" aria-label="Lists">
+  <div class="uwrap" id="listsBody"></div>
 </div>
 
 <!-- ABOUT (CAS-345 route shell / CAS-346 content) — the top menu's fourth surface. Holds the build
@@ -3380,6 +3395,83 @@ const activeCascade = () => cascades.find(c=>c.id===activeId) || null;
 // Stale pointer from a deleted Cascade → home base, not nowhere.
 if(activeId!==ALL_ID && !activeCascade()) setActive(ALL_ID);
 
+// ---- CAS-428: Lists — user-curated, manual collections (a different thing from an Agent) ---------------
+// An Agent is auto-populated by its own criteria; a List is the opposite — nothing lands in one except by
+// a tick, and a film can sit in as many at once as you like. That is why membership is a plain array on the
+// film, not a single "home" the way the old Agent-move panel worked: there is no moving OUT of a List when
+// you tick another one.
+function loadLists(){
+  try{
+    const a=JSON.parse(localStorage.getItem("cascade_lists")||"[]");
+    if(!Array.isArray(a)) return [];
+    return a.filter(l=>l && typeof l.id==="string" && typeof l.name==="string");
+  }catch(e){ return []; }
+}
+function saveLists(){ try{ localStorage.setItem("cascade_lists", JSON.stringify(lists)); }catch(e){} }
+const lists = loadLists();
+
+const LIST_FILMS_KEY="cascade_list_films";
+function loadListMembership(){
+  let m={};
+  try{ const o=JSON.parse(localStorage.getItem(LIST_FILMS_KEY)||"{}"); if(o && typeof o==="object" && !Array.isArray(o)) m=o; }catch(e){}
+  Object.keys(m).forEach(k=>{
+    m[k]=Array.isArray(m[k]) ? [...new Set(m[k].filter(x=>typeof x==="string"))] : [];
+    if(!m[k].length) delete m[k];
+  });
+  return m;
+}
+// filmId (string key) -> list id[]. Kept separate from `notify` on purpose: recomputeFound() rebuilds and
+// prunes notify entries every render, and a List tick has nothing to do with any Cascade's criteria — folding
+// it into that object would mean a film with no Cascade match and no manual find would have its List
+// membership silently swept away the next time render() ran.
+const listMembership = loadListMembership();
+let listMembershipSaved=null;
+function saveListMembership(){
+  const s=JSON.stringify(listMembership);
+  if(s===listMembershipSaved) return;
+  listMembershipSaved=s;
+  try{ localStorage.setItem(LIST_FILMS_KEY, s); }catch(e){}
+}
+const listsFor = id => (listMembership[id]||[]).map(lid=>lists.find(l=>l.id===lid)).filter(Boolean);
+const inList = (id,lid) => (listMembership[id]||[]).includes(lid);
+function toggleFilmList(id, lid){
+  const key=String(id);
+  const arr = listMembership[key] || (listMembership[key]=[]);
+  const i=arr.indexOf(lid);
+  if(i>=0) arr.splice(i,1); else arr.push(lid);
+  if(!arr.length) delete listMembership[key];
+  saveListMembership();
+}
+function listFilmCount(lid){
+  let n=0; for(const k in listMembership){ if((listMembership[k]||[]).includes(lid)) n++; } return n;
+}
+function createList(name){
+  const nm=(name||"").trim(); if(!nm) return null;
+  const l={id:cascadeNewId(), name:nm};
+  lists.push(l);
+  saveLists();
+  logEvent("list_created",{});
+  return l;
+}
+function renameListTo(id,name){
+  const nm=(name||"").trim(); if(!nm) return;
+  const l=lists.find(x=>x.id===id); if(!l) return;
+  l.name=nm;
+  saveLists();
+  logEvent("list_renamed",{});
+}
+function removeList(id){
+  const i=lists.findIndex(x=>x.id===id); if(i<0) return;
+  lists.splice(i,1);
+  saveLists();
+  Object.keys(listMembership).forEach(k=>{
+    const arr=listMembership[k], j=arr.indexOf(id);
+    if(j>=0){ arr.splice(j,1); if(!arr.length) delete listMembership[k]; }
+  });
+  saveListMembership();
+  logEvent("list_deleted",{});
+}
+
 // CAS-269: "Live AU data · " is gone from the freshness line for the same reason the chip is: it is a
 // constant. What is left is the one part of this line that moves.
 $("updated").textContent = "Updated " + fmtDate(TODAY);
@@ -3390,7 +3482,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 402, "commit": "f7b6c04", "builtAt": "2026-08-08T08:06:47Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 403, "commit": "69b1950", "builtAt": "2026-08-08T08:38:09Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -4476,11 +4568,12 @@ function cardHTML(m, markNew=false){
            estimate / rent-only), not the card bottom. The old standalone expand chevron and service-list
            button are gone: card expand/collapse is by body tap (CAS-178), and the service list now opens
            from inside the availability capsule when the film has one (see bandHTML/savingsHTML). -->
-      <!-- CAS-279: Cascade sits in the MIDDLE, between the two answers about the film itself. It is the one
-           control here that is about where the film LIVES rather than what you make of it. -->
+      <!-- CAS-279/CAS-428: Lists sits in the MIDDLE, between the two answers about the film itself. It is the
+           one control here that is about your own manual collections, not what you make of the film or how
+           you're told about it. -->
       <div class="actions">
         ${notifyChipHTML(id)}
-        ${cascadeChipHTML(id)}
+        ${listsChipHTML(id)}
         ${watchChipHTML(id)}
       </div>
     </div>
@@ -4729,78 +4822,88 @@ function notifyChipHTML(id){
       <span class="clab${st.current?"":" dim"}">${lbl}</span>
       <span class="ctog">${ICON.chev}</span></span></button>`;
 }
-// ---- CAS-279: the Cascade control -----------------------------------------------------------------------
-// Where this film lives, and the one gesture that changes it. Everything else on this row is an opinion about
-// the film; this is an instruction about the deck.
-//
-// The honesty problem it had to solve: cascadeIds is DERIVED from each agent's criteria and rewritten on
-// every recompute, so "move" cannot mean "edit the membership list" — the next render would put the film
-// straight back. It means "record an override the criteria cannot outvote", which is exactly how `removed`
-// has always worked. Both halves are stored, so the move survives a reload and a re-run.
-function cascadeChipHTML(id){
-  const here=cascadesFor(id);
-  const lbl = "Agent";
+// ---- CAS-428: the Lists control (replaces the CAS-279 Agent/"move" control) -----------------------------
+// A List is a manual, user-picked collection — the opposite of an Agent, which is auto-populated by its own
+// criteria. So unlike the old Agent control, there is no "move" here: ticking one List never un-ticks another,
+// and the chip is a plain count of how many the film is in right now (listsFor/listMembership, above).
+function listsChipHTML(id){
+  const here=listsFor(id);
+  const lbl = here.length ? `Lists · ${here.length}` : "Lists";
   const title = here.length
-    ? `In ${here.map(c=>c.name).join(", ")}. Tap to move it.`
-    : "Not in any of your cascades. Tap to put it in one.";
-  return `<button type="button" class="ctl casc" data-kid="${id}" onclick="openCascadePanel(${id},this)"
+    ? `In ${here.map(l=>l.name).join(", ")}. Tap to add or remove.`
+    : "Not in any of your lists. Tap to add it to one.";
+  // DOM class stays `.ctl.casc` — see the CAS-427 comment above .actions for why this file keeps a control's
+  // original class through a relabel rather than chasing every CSS selector each time the name changes.
+  return `<button type="button" class="ctl casc" data-kid="${id}" onclick="openListsPanel(${id},this)"
       aria-haspopup="true" title="${escA(title)}" aria-label="${escA(title)}">
     <span class="cmini"><i class="cfill" style="width:${here.length?100:0}%;background:var(--accent)"></i>
       <span class="cic">${ICON.deck}</span>
       <span class="clab${here.length?"":" dim"}">${esc(lbl)}</span></span></button>`;
 }
-window.openCascadePanel=(id, btn)=>{
+// The panel's rows: one per List (a true multi-select, hence the square .wwb.sq tick — see the CAS-382 CSS
+// comment on that class), plus an always-present "＋ New list" row at the foot.
+function listsPanelRowsHTML(id){
+  const rows=lists.map(l=>{
+    const on=inList(id,l.id);
+    return `<button type="button" class="nopt${on?" on":""}" data-lid="${l.id}" style="--wwc:var(--accent)"
+      aria-pressed="${on}" onclick="toggleFilmListAndRepaint(${id},'${l.id}')"
+      title="${escA(on?`In ${l.name} — tap to remove`:`Add to ${l.name}`)}">
+      <span class="wwb sq">✓</span><span class="nol">${esc(l.name)}</span></button>`;
+  }).join("");
+  const none = lists.length ? "" : `<div class="nopt nonone">You have no lists yet — add one below.</div>`;
+  const addRow = `<button type="button" class="nopt sep" data-role="newlist"
+      onclick="openNewListRow(${id},this)" title="Create a new list">
+      <span class="nol">＋ New list</span></button>`;
+  return none + rows + addRow;
+}
+window.openListsPanel=(id, btn)=>{
   const open=btn.closest(".actions").querySelector(".cpop");
-  const mine=open && open.classList.contains("kpop");   // CAS-281: only MY panel counts as a second tap
+  const mine=open && open.classList.contains("lpop");   // CAS-281: only MY panel counts as a second tap
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
-  const from=activeCascade();
-  // "the OTHER cascades" — the one you are standing in is not somewhere you can move a film TO.
-  const targets=cascades.filter(c=>!from || c.id!==from.id);
   const pop=document.createElement("div");
-  pop.className="cpop kpop";
-  // CAS-281: every card control collapses the same way, and the button says what it collapses. Three panels
-  // open off one stack; a button labelled only "Close" leaves the reader to work out which of them it means.
-  pop.innerHTML=`<button type="button" class="cclose nclose" onclick="closeWatchPanel()"
-      title="Collapse" aria-label="Collapse cascade">${ICON.chev}</button>
-    <div class="nopts">${
-      targets.length
-        ? targets.map(c=>{
-            const on=pinnedInto(id,c) || cascadesFor(id).some(x=>x.id===c.id);
-            return `<button type="button" class="nopt${on?" on":""}" data-cid="${c.id}" style="--wwc:var(--accent)"
-              aria-pressed="${on}" onclick="moveFilmTo(${id},'${c.id}')"
-              title="${escA(on?`Already in ${c.name}`:`Move this film to ${c.name}`)}">
-              <span class="wwb">✓</span><span class="nol">${c.icon} ${esc(c.name)}</span></button>`;
-          }).join("")
-        // No second agent to move it to. Say so rather than opening an empty panel, which reads as broken.
-        : `<div class="nopt nonone">${cascades.length ? "This is your only cascade — there is nowhere else to move it to."
-                                                      : "You have no cascades yet."}</div>`
-    }</div>`;
+  // CAS-374-style chrome: content-width, left-aligned under the chip, no in-panel close — the chip is the toggle.
+  pop.className="cpop lpop al-l";
+  pop.innerHTML=`<div class="nopts">${listsPanelRowsHTML(id)}</div>`;
   btn.closest(".actions").appendChild(pop);
   positionPanel(pop);   // CAS-304
-  wirePanelSlide(pop, ".nopt[data-cid]", el=>moveFilmTo(id, el.dataset.cid));   // CAS-282
+  wirePanelSlide(pop, ".nopt[data-lid]", el=>toggleFilmListAndRepaint(id, el.dataset.lid));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
+  btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
   const first=pop.querySelector(".nopt"); if(first && first.tagName==="BUTTON") first.focus();
 };
-// The move itself. Pin into the target; and if you were standing IN a cascade when you did it, push it out of
-// that one — that is what makes it a move rather than a copy. From the All view there is no source, so it is
-// honestly an "add to", and nothing is taken away from anywhere.
-window.moveFilmTo=(id,cid)=>{
-  const to=cascades.find(c=>c.id===cid); if(!to) return;
-  const from=activeCascade();
-  const e=entryFor(id);
-  e.pinnedTo=[...new Set([...(e.pinnedTo||[]), cid])];
-  e.notIn=(e.notIn||[]).filter(x=>x!==cid);          // moving it IN cancels any earlier move OUT of the same one
-  if(from && from.id!==cid){
-    e.notIn=[...new Set([...(e.notIn||[]), from.id])];
-    e.pinnedTo=e.pinnedTo.filter(x=>x!==from.id);
+// Swap the chip and, if the panel is open, its rows — same shared-repaint shape as Watch/Notify's own control.
+function repaintListsControl(id){
+  const btn=document.querySelector(`#card-${id} .actions .ctl.casc`); if(!btn) return;
+  const pop=btn.closest(".actions").querySelector(".cpop.lpop");
+  btn.outerHTML=listsChipHTML(id);
+  if(pop){
+    pop.querySelector(".nopts").innerHTML=listsPanelRowsHTML(id);
+    const newBtn=document.querySelector(`#card-${id} .actions .ctl.casc`);
+    if(newBtn){ newBtn.classList.add("open"); newBtn.setAttribute("aria-expanded","true"); }
   }
-  // A move is a statement that you want this film — so it must not stay on the "you took this off" pile.
-  e.removed=false;
-  saveNotify();
-  logEvent("film_moved",{to:to.template||"custom", from:from?(from.template||"custom"):"all"});
-  closeWatchPanel();
-  render();
+}
+window.toggleFilmListAndRepaint=(id,lid)=>{
+  toggleFilmList(id,lid);
+  logEvent("film_list_toggle",{on:inList(id,lid)});
+  repaintListsControl(id);
+};
+// "＋ New list": the row becomes a text input in place, rather than opening a second modal on top of the
+// panel — create it, then it's already ticked, exactly as the acceptance criteria ask for.
+window.openNewListRow=(id, rowBtn)=>{
+  rowBtn.outerHTML=`<div class="nopt sep newlistrow" data-role="newlist">
+    <input type="text" class="newlistin" maxlength="40" placeholder="List name" autocomplete="off"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+      onblur="commitNewList(${id},this)"></div>`;
+  const pop=document.querySelector(`#card-${id} .actions .cpop.lpop`);
+  const inp=pop && pop.querySelector(".newlistin");
+  if(inp) setTimeout(()=>inp.focus(),0);
+};
+window.commitNewList=(id, inputEl)=>{
+  if(!inputEl || !inputEl.isConnected) return;   // already committed via Enter; blur firing after is a no-op
+  const name=(inputEl.value||"").trim();
+  if(name){ const l=createList(name); if(l) toggleFilmList(id, l.id); }
+  repaintListsControl(id);
 };
 // The Notify panel's rows: one per level this agent's own Notify option enables (CAS-427 — a level the agent
 // hasn't opted into isn't offered here at all, not shown greyed), then Never at the foot — always present,
@@ -4982,7 +5085,7 @@ window.openWatchPanel=(id, btn)=>{
   // and returned, so tapping a second control while a first was open closed the first and opened nothing —
   // a dead tap, and with three controls on the stack that is most of the taps you would make.
   const open=btn.closest(".actions").querySelector(".cpop");
-  const mine=open && !open.classList.contains("npop") && !open.classList.contains("kpop");
+  const mine=open && !open.classList.contains("npop") && !open.classList.contains("lpop");
   closeWatchPanel();   // CAS-376: also strips any stub's .ratingopen — so that has to be (re)added AFTER this
   if(mine){ watchPanelAnchorY=null; return; }    // tapping the chip again closes the panel it opened
   const stub=btn.closest(".stub"); if(stub) stub.classList.add("ratingopen");
@@ -7610,6 +7713,7 @@ window.navMenuGo=key=>{
   if(key==="account") openAccount();
   else if(key==="services") openMenuServices();
   else if(key==="svcAnalysis") openSvcAnalysis();
+  else if(key==="lists") openListsScreen();
   else if(key==="about") openAbout();
 };
 document.addEventListener("click", e=>{
@@ -10543,6 +10647,85 @@ window.closeAgentsScreen=()=>{
   $("agentsBtn").classList.remove("active"); $("agentsBtn").setAttribute("aria-expanded","false");
 };
 
+// ---- CAS-428: Lists screen — create / rename / delete, mirroring the Agents screen's shell but with no
+// reorder (a List has no order of its own) and its own row actions instead. ----------------------------
+function listRowHTML(l){
+  const n=listFilmCount(l.id);
+  return `<div class="urow nodiv listrow" data-lid="${escA(l.id)}">
+    <span class="uic">📋</span>
+    <span class="utxt">
+      <span class="ut" data-role="name">${esc(l.name)}</span>
+      <span class="ussub">${n} film${n===1?"":"s"}</span>
+    </span>
+    <button type="button" class="listact" onclick="startRenameList('${l.id}')"
+      title="Rename ${escA(l.name)}" aria-label="Rename ${escA(l.name)}">✎</button>
+    <button type="button" class="listact danger" onclick="confirmDeleteList('${l.id}')"
+      title="Delete ${escA(l.name)}" aria-label="Delete ${escA(l.name)}">🗑</button>
+  </div>`;
+}
+function renderListsScreen(){
+  const n=lists.length;
+  $("listsBody").innerHTML=`
+    <div class="ostop"><button class="osback" type="button" onclick="closeListsScreen()" aria-label="Back">←</button></div>
+    <div class="agshdr"><h2 class="osh">Lists</h2><span class="agscount">${n} list${n===1?"":"s"}</span></div>
+    <p class="ossub">Your own hand-picked collections. Nothing lands in one except by you, and a film can be
+      in as many as you like — unlike an agent, a List has no criteria of its own.</p>
+    <div class="ucard" id="listsCard">
+      ${lists.length ? lists.map(listRowHTML).join("")
+        : `<div class="urow nodiv"><span class="utxt"><span class="ut">No lists yet</span>
+             <span class="ussub">Add one below, or from a film's Lists control.</span></span></div>`}
+    </div>
+    <button type="button" class="listnewbtn" id="listNewBtn" onclick="startCreateListRow()">＋ New list</button>`;
+}
+window.openListsScreen=()=>{
+  renderListsScreen();
+  $("listsScreen").scrollTop=0;
+  $("listsScreen").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("lists_screen_opened",{count:lists.length});
+};
+window.closeListsScreen=()=>{
+  $("listsScreen").classList.remove("open"); document.body.style.overflow="";
+};
+window.startRenameList=(id)=>{
+  const row=document.querySelector(`.listrow[data-lid="${id}"]`); if(!row) return;   // ids are our own uuids — safe unescaped in an attribute selector
+  const l=lists.find(x=>x.id===id); if(!l) return;
+  const nameEl=row.querySelector('[data-role="name"]'); if(!nameEl) return;
+  nameEl.outerHTML=`<input type="text" class="listnamein" data-role="name" maxlength="40" value="${escA(l.name)}"
+    onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+    onblur="commitRenameList('${id}',this)">`;
+  const inp=row.querySelector(".listnamein");
+  if(inp){ inp.focus(); inp.select(); }
+};
+window.commitRenameList=(id, inputEl)=>{
+  if(!inputEl || !inputEl.isConnected) return;
+  const name=(inputEl.value||"").trim();
+  if(name) renameListTo(id, name);
+  renderListsScreen();
+};
+window.confirmDeleteList=(id)=>{
+  const l=lists.find(x=>x.id===id); if(!l) return;
+  const n=listFilmCount(id);
+  if(!confirm(`Delete the list "${l.name}"?\n\n${n?`It has ${n} film${n===1?"":"s"} in it — `:""}This can't be undone.`)) return;
+  removeList(id);
+  renderListsScreen();
+  if(typeof render==="function") render();
+};
+window.startCreateListRow=()=>{
+  const btn=$("listNewBtn"); if(!btn) return;
+  btn.outerHTML=`<div class="ucard" id="listNewRow" style="margin-top:8px"><div class="urow nodiv">
+    <span class="uic">📋</span>
+    <input type="text" class="listnamein" id="listNewInput" maxlength="40" placeholder="List name" autocomplete="off"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+      onblur="commitCreateListRow(this)"></div></div>`;
+  const inp=$("listNewInput"); if(inp) inp.focus();
+};
+window.commitCreateListRow=(inputEl)=>{
+  if(!inputEl || !inputEl.isConnected) return;
+  const name=(inputEl.value||"").trim();
+  if(name) createList(name);
+  renderListsScreen();
+};
+
 // A reordered id list, from wherever it came from (a drag or an arrow key) — always the FULL set, so a
 // short list from a stale event can never silently drop an agent from `cascades`.
 function commitAgentOrder(idsInOrder){
@@ -12501,21 +12684,23 @@ else if(dedupedN)
     if(cascades.some(x=>typeof x.order==="number")) cascades.sort((a,b)=>(a.order??1e9)-(b.order??1e9));
     if(typeof render==="function") render();
   }
-  // What this device is carrying that the account has not got. Filled by the two loaders as they run,
-  // then offered once — the two answers arrive from different requests, so the offer waits for both.
-  const pendingMerge = {cascades:null, films:null, asked:false};
-  const mergeReady = () => pendingMerge.cascades!==null && pendingMerge.films!==null;
-  const mergeCount = () => (pendingMerge.cascades||[]).length + (pendingMerge.films||[]).length;
+  // What this device is carrying that the account has not got. Filled by the three loaders as they run,
+  // then offered once — the answers arrive from different requests, so the offer waits for all of them.
+  // CAS-428: `lists` joins `cascades`/`films` here rather than getting a dialog of its own.
+  const pendingMerge = {cascades:null, films:null, lists:null, asked:false};
+  const mergeReady = () => pendingMerge.cascades!==null && pendingMerge.films!==null && pendingMerge.lists!==null;
+  const mergeCount = () => (pendingMerge.cascades||[]).length + (pendingMerge.films||[]).length + (pendingMerge.lists||[]).length;
   function offerMerge(){
     if(pendingMerge.asked || !mergeReady()) return;
     if(!mergeCount()){ pendingMerge.asked=true; return; }   // nothing to bring — say nothing
     pendingMerge.asked=true;
     renderMigrate();
     $("migrateSheet").classList.add("open"); document.body.style.overflow="hidden";
-    logEvent("merge_offered",{cascades:(pendingMerge.cascades||[]).length, films:(pendingMerge.films||[]).length});
+    logEvent("merge_offered",{cascades:(pendingMerge.cascades||[]).length, films:(pendingMerge.films||[]).length,
+                               lists:(pendingMerge.lists||[]).length});
   }
   function renderMigrate(){
-    const nc=(pendingMerge.cascades||[]).length, nf=(pendingMerge.films||[]).length;
+    const nc=(pendingMerge.cascades||[]).length, nf=(pendingMerge.films||[]).length, nl=(pendingMerge.lists||[]).length;
     const line = (n,one,many) => n ? `<div class="invrow"><div class="ir-main">
       <div class="ir-name">${n} ${n===1?one:many}</div>
       <div class="ir-sub">${n===1?"It's":"They're"} saved in this browser only right now.</div></div></div>` : "";
@@ -12525,6 +12710,7 @@ else if(dedupedN)
         browser and not in the account yet:</p>
       ${line(nc,"Cascade","Cascades")}
       ${line(nf,"film you've marked","films you've marked")}
+      ${line(nl,"list","lists")}
       <p class="invnote">Adding them never overwrites anything: a Cascade the account already has is
         skipped, and a film the account already has an answer for keeps that answer.</p>
       <button class="invnext" type="button" onclick="mergeAccept()">Add ${mergeCount()===1?"it":"them"} to my account</button>
@@ -12532,7 +12718,7 @@ else if(dedupedN)
   }
   function closeMigrate(){ $("migrateSheet").classList.remove("open"); document.body.style.overflow=""; }
   window.mergeAccept = async () => {
-    const add=pendingMerge.cascades||[], films=pendingMerge.films||[];
+    const add=pendingMerge.cascades||[], films=pendingMerge.films||[], addLists=pendingMerge.lists||[];
     closeMigrate();
     // A local Cascade may carry an id this account has never seen; it keeps it (they are uuids), and
     // upsert on that id is an insert.
@@ -12544,17 +12730,167 @@ else if(dedupedN)
       if(f.status==="disliked") disliked.add(id);
       if(f.status==="soso")     indifferent.add(id);
     });
+    addLists.forEach(l=>lists.push({id:l.id, name:l.name}));
     recomputeFound();
-    await runSync(); await runFilmSync();
+    await runSync(); await runFilmSync(); await runListsSync();
     if(typeof render==="function") render();
-    logEvent("merge_accepted",{cascades:add.length, films:films.length});
-    toast(`☁️ Added ${add.length?`${add.length} Cascade${add.length===1?"":"s"}`:""}${add.length&&films.length?" and ":""}${films.length?`${films.length} film${films.length===1?"":"s"}`:""} to your account.`);
+    logEvent("merge_accepted",{cascades:add.length, films:films.length, lists:addLists.length});
+    const bits=[add.length?`${add.length} Cascade${add.length===1?"":"s"}`:"",
+                films.length?`${films.length} film${films.length===1?"":"s"}`:"",
+                addLists.length?`${addLists.length} list${addLists.length===1?"":"s"}`:""].filter(Boolean);
+    toast(`☁️ Added ${bits.join(", ")} to your account.`);
   };
   window.mergeDecline = () => {
     closeMigrate();
-    logEvent("merge_declined",{cascades:(pendingMerge.cascades||[]).length, films:(pendingMerge.films||[]).length});
+    logEvent("merge_declined",{cascades:(pendingMerge.cascades||[]).length, films:(pendingMerge.films||[]).length,
+                                lists:(pendingMerge.lists||[]).length});
     toast("👍 Left on this device. Sign out any time and they'll be here.");
   };
+
+  // ==========================================================================
+  // CAS-428: Lists per account (`lists` + `list_films`)
+  // --------------------------------------------------------------------------
+  // Two tables, mirroring the shapes already here: `lists` is upsert/baseline-diff-delete exactly like
+  // `cascades` (one small row per list); `list_films` is upsert/baseline-diff-delete exactly like
+  // `user_films`, except its primary key is three columns (user, film, list) because — unlike a watch
+  // status — a film can carry several rows at once. Both ride the SAME debounce/baseline pair, since in
+  // practice a list edit and a membership tick happen together (create a list, then tick it).
+  // ==========================================================================
+  function listToRow(l){ return { id:l.id, user_id:uid(), name:l.name||"My list" }; }
+  function rowToList(row){ return { id:row.id, name:row.name||"My list" }; }
+  function listFilmRows(){
+    const owner=uid(), out=[];
+    for(const fid in listMembership){
+      (listMembership[fid]||[]).forEach(lid=>out.push({user_id:owner, movie_id:String(fid), list_id:lid}));
+    }
+    return out;
+  }
+  let listsTimer=null, listsSyncing=false, listsAgain=false;
+  let listsBaseline=null, listFilmBaseline=null;
+  function scheduleListsSync(){ clearTimeout(listsTimer); listsTimer=setTimeout(runListsSync, 400); }
+  async function runListsSync(){
+    if(!accountActive()) return;
+    if(listsSyncing){ listsAgain=true; return; }
+    listsSyncing=true;
+    try{ await syncListsToAccount(); await syncListFilmsToAccount(); }
+    catch(err){ console.warn("Cascade: lists sync failed", err); }
+    finally{ listsSyncing=false; if(listsAgain){ listsAgain=false; scheduleListsSync(); } }
+  }
+  async function syncListsToAccount(){
+    const c=client(), owner=uid(); if(!c||!owner) return;
+    const rows=lists.map(listToRow);
+    if(rows.length){
+      const { error } = await c.from("lists").upsert(rows, { onConflict:"id" });
+      if(error){ console.warn("Lists upsert", error); return; }
+    }
+    const ids=new Set(lists.map(x=>x.id).filter(isUuid));
+    if(listsBaseline){
+      const gone=[...listsBaseline].filter(id=>!ids.has(id));
+      if(gone.length){
+        const { error } = await c.from("lists").delete().eq("user_id", owner).in("id", gone);
+        if(error){ console.warn("Lists delete", error); return; }
+      }
+    }
+    listsBaseline=ids;
+  }
+  async function syncListFilmsToAccount(){
+    const c=client(), owner=uid(); if(!c||!owner) return;
+    const rows=listFilmRows();
+    if(rows.length){
+      const { error } = await c.from("list_films").upsert(rows, { onConflict:"user_id,movie_id,list_id" });
+      if(error){ console.warn("list_films upsert", error); return; }
+    }
+    const keys=new Set(rows.map(r=>`${r.movie_id}:${r.list_id}`));
+    if(listFilmBaseline){
+      const gone=[...listFilmBaseline].filter(k=>!keys.has(k));
+      if(gone.length){
+        // No composite .in() over two columns in supabase-js — a handful of per-row deletes is fine for
+        // membership churn, which is small (one tick at a time).
+        await Promise.all(gone.map(k=>{
+          const [movie_id,list_id]=k.split(":");
+          return c.from("list_films").delete().eq("user_id",owner).eq("movie_id",movie_id).eq("list_id",list_id);
+        }));
+      }
+    }
+    listFilmBaseline=keys;
+  }
+  async function loadListsAccount(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("lists").select("*");
+    if(error){ console.warn("Lists load", error); return; }
+    listsBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
+    const remote = (data||[]).map(rowToList);
+    const localOnes = lists.slice();
+    // A List has no criteria to build a signature from the way cascSigOf does — its name is the whole
+    // object, so a case-insensitive name match is what "the account already has this" has to mean here.
+    const sig = l => (l.name||"").trim().toLowerCase();
+    const remoteSigs = new Set(remote.map(sig));
+    pendingMerge.lists = localOnes.filter(l=>!remoteSigs.has(sig(l)));
+    lists.length=0; remote.forEach(l=>lists.push(l));
+    await loadListMembershipAccount();
+    if(typeof render==="function") render();
+    offerMerge();
+  }
+  async function loadListMembershipAccount(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("list_films").select("movie_id,list_id");
+    if(error){ console.warn("list_films load", error); return; }
+    const remote=data||[];
+    listFilmBaseline=new Set(remote.map(r=>`${r.movie_id}:${r.list_id}`));
+    Object.keys(listMembership).forEach(k=>delete listMembership[k]);
+    remote.forEach(r=>{
+      const arr=listMembership[r.movie_id] || (listMembership[r.movie_id]=[]);
+      if(!arr.includes(r.list_id)) arr.push(r.list_id);
+    });
+  }
+  // CAS-408-style background convergence — see reconcileCascades for the fuller comment on why a reconcile
+  // (merge) and a load (replace) are different operations.
+  async function reconcileLists(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("lists").select("*");
+    if(error){ console.warn("Lists reconcile", error); return; }
+    const remote=(data||[]).map(rowToList);
+    const remoteIds=new Set(remote.map(x=>x.id));
+    remote.forEach(r=>{
+      const i=lists.findIndex(x=>x.id===r.id);
+      if(i>=0) lists[i]=r; else lists.push(r);
+    });
+    if(listsBaseline){
+      for(let i=lists.length-1;i>=0;i--){
+        const id=lists[i].id;
+        if(listsBaseline.has(id) && !remoteIds.has(id)) lists.splice(i,1);
+      }
+    }
+    listsBaseline=remoteIds;
+    if(typeof render==="function") render();
+  }
+  async function reconcileListMembership(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("list_films").select("movie_id,list_id");
+    if(error){ console.warn("list_films reconcile", error); return; }
+    const remote=data||[];
+    const remoteKeys=new Set(remote.map(r=>`${r.movie_id}:${r.list_id}`));
+    const localOnly = listFilmBaseline
+      ? listFilmRows().filter(r=>{
+          const k=`${r.movie_id}:${r.list_id}`;
+          return !listFilmBaseline.has(k) && !remoteKeys.has(k);
+        })
+      : [];
+    Object.keys(listMembership).forEach(k=>delete listMembership[k]);
+    [...remote, ...localOnly].forEach(r=>{
+      const arr=listMembership[r.movie_id] || (listMembership[r.movie_id]=[]);
+      if(!arr.includes(r.list_id)) arr.push(r.list_id);
+    });
+    listFilmBaseline=remoteKeys;
+    if(typeof render==="function") render();
+  }
+  function loadGuestLists(){
+    replaceListsInPlace(loadLists());
+    Object.keys(listMembership).forEach(k=>delete listMembership[k]);
+    Object.assign(listMembership, loadListMembership());
+    if(typeof render==="function") render();
+  }
+  function replaceListsInPlace(arr){ lists.length=0; arr.forEach(l=>lists.push(l)); }
 
   // ---- wrap the one save chokepoint ----------------------------------------
   // Guest: write localStorage as before. Signed-in: don't touch the guest key (so sign-out returns
@@ -12564,6 +12900,16 @@ else if(dedupedN)
     if(accountActive()) scheduleSync();
     else saveCascadesLocal();
   };
+  const saveListsLocal = saveLists;
+  saveLists = function(){
+    if(accountActive()) scheduleListsSync();
+    else saveListsLocal();
+  };
+  const saveListMembershipLocal = saveListMembership;
+  saveListMembership = function(){
+    if(accountActive()) scheduleListsSync();
+    else saveListMembershipLocal();
+  };
 
   // ---- react to auth state --------------------------------------------------
   let currentUser = null;
@@ -12572,18 +12918,18 @@ else if(dedupedN)
     if(acct() && acct().status==="signed-in" && owner){
       if(owner !== currentUser){
         currentUser = owner;
-        loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts();
+        loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount();
       }
     } else if(currentUser !== null){
       // Signed out → back to the on-device set, and the bell stops showing another account's news.
-      currentUser = null; loadGuest(); loadGuestFilms(); realAlerts=[]; updateBadge();
-      cascadeBaseline=null; filmBaseline=null; pickBaseline=null;
+      currentUser = null; loadGuest(); loadGuestFilms(); loadGuestLists(); realAlerts=[]; updateBadge();
+      cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null;
     }
   });
   // If a session was already restored before this listener attached, adopt it now.
   if(accountActive()){
     currentUser = uid();
-    loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts();
+    loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount();
   }
   // CAS-408: two devices only converge without a live subscription if SOMETHING re-pulls the account
   // — sign-in alone left a device that never signs out again permanently stuck on whatever it saw at
@@ -12594,6 +12940,7 @@ else if(dedupedN)
     if(!accountActive()) return;
     if(!syncing && !syncTimer) reconcileCascades();
     if(!filmSyncing && !filmTimer) reconcileFilms();
+    if(!listsSyncing && !listsTimer){ reconcileLists(); reconcileListMembership(); }
   }
   window.addEventListener("focus", reconcileOnReturn);
   document.addEventListener("visibilitychange", () => {
@@ -12857,7 +13204,10 @@ else if(dedupedN)
                                 pendingMerge, offerMerge, renderMigrate,
                                 // CAS-408: the live-reconcile seam, so the cross-device convergence story
                                 // can be exercised without waiting on a real focus/visibilitychange event.
-                                reconcileCascades, reconcileFilms };
+                                reconcileCascades, reconcileFilms,
+                                // CAS-428: Lists' own load/sync/reconcile seam, same shape as the above.
+                                loadListsAccount, syncListsNow: runListsSync, listToRow, rowToList, listFilmRows,
+                                reconcileLists, reconcileListMembership };
 })();
 </script>
 
