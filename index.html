@@ -2881,6 +2881,8 @@ const STATUS_LABEL = {
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const FMT_RANK = {SD:1, HD:2, "4K":3};
 const MATURE = new Set(["MA15+","MA 15+","R18+","R 18+","X18+","X 18+"]);
+// CAS-425: the other end of the ladder — G/PG, the ratings a non-Family agent starts with OFF by default.
+const GENTLE = new Set(["G","PG"]);
 const LANG_NAMES = {en:"English",ja:"Japanese",ko:"Korean",zh:"Chinese",cn:"Chinese",yue:"Cantonese",
   hi:"Hindi",ta:"Tamil",te:"Telugu",ml:"Malayalam",kn:"Kannada",bn:"Bengali",mr:"Marathi",pa:"Punjabi",
   fr:"French",de:"German",it:"Italian",es:"Spanish",pt:"Portuguese",ru:"Russian",sv:"Swedish",
@@ -3378,7 +3380,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 399, "commit": "f49ac56", "builtAt": "2026-08-08T07:31:13Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 400, "commit": "d4bc507", "builtAt": "2026-08-08T07:38:17Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7907,8 +7909,11 @@ function starterPreview(s, kind){
   const d=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
   // The taste-baseline defaults, verbatim — except age, which stays the preset's OWN cap (CAS-307: Family
   // Movies' rating ladder is part of its standard, not something the card should quote as wide open).
+  // CAS-425: for a preset that leaves age open, the card has to quote the same name-based default pickStarter
+  // is about to build (CAS-144) — G/PG off unless the offered name says Family, never AGE_LEVELS wide open.
   d.genre=[]; d.year=[]; d.lang=["en"];
-  d.age=(s.crit.age&&s.crit.age.length) ? s.crit.age : AGE_LEVELS.slice();
+  d.age=(s.crit.age&&s.crit.age.length) ? s.crit.age
+    : (/family/i.test(s.name) ? AGE_LEVELS.filter(a=>!MATURE.has(a)) : AGE_LEVELS.filter(a=>!GENTLE.has(a)));
   d.selCrowd=s.crit.selCrowd||0; d.selScale=s.crit.selScale||0;
   d.selCritScore=s.crit.selCritScore||0; d.selAwards=s.crit.selAwards||0;
   d.selBuzz=s.crit.selBuzz||0; d.selOr=false;
@@ -7977,7 +7982,14 @@ window.pickStarter=key=>{
   // are the same measurement. genre/age fall back to those defaults but defer to the preset's own crit when
   // it sets one (CAS-307), so a preset's Style/Rating standard survives into the draft instead of always
   // being reset to wide open — draftFromTemplate already copied s.crit.exclude in above, untouched here.
-  onbFlow.draft.genre = s.crit.genre||[]; onbFlow.draft.age = s.crit.age||[]; onbFlow.draft.lang = ["en"];
+  // CAS-425: when a preset leaves age open, the DEFAULT itself still depends on the offered name — a
+  // Family agent starts with the mature end (MA15+/R18+) off, everything else starts with G/PG off, so
+  // general discovery is not padded with kids' titles by default. Keyed off dfltName, case-insensitive, once
+  // at creation — never re-derived from a later rename.
+  onbFlow.draft.genre = s.crit.genre||[];
+  onbFlow.draft.age = (s.crit.age && s.crit.age.length) ? s.crit.age
+    : (/family/i.test(dfltName) ? AGE_LEVELS.filter(a=>!MATURE.has(a)) : AGE_LEVELS.filter(a=>!GENTLE.has(a)));
+  onbFlow.draft.lang = ["en"];
   // CAS-340: a streaming agent opens on 10 years back, not Any — cinema never shows this control, so it
   // keeps the open default (CAS-116).
   onbFlow.draft.yearsBack = flowKind==="stream" ? 10 : 0;
