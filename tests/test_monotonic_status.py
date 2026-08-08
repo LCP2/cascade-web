@@ -228,5 +228,82 @@ class ZeroAuRowsNeverInventAPaidTier(unittest.TestCase):
         self.assertNotIn("pending_downgrade", day2[0])
 
 
+class AnEstimatedTierIsNotOwedTheTransientGapHold(unittest.TestCase):
+    """CAS-418: apply_monotonic_status's 2-run hold exists to protect a CONFIRMED tier (a real
+    offer) from a one-day AU-feed gap (CAS-355, exercised above). A tier stamped "estimated" was
+    never backed by a real offer, so — unlike the CAS-412 case above, whose base title carries
+    the default "confirmed" confidence — it must not wait for DOWNGRADE_CONFIRM_RUNS either:
+    908 titles on live were frozen exactly this way (CAS-418), some indefinitely, because a
+    failed poll never advances the counter."""
+
+    def test_a_backward_move_off_an_estimated_tier_commits_on_the_first_read(self):
+        m = {"status": ["pvod"], "availability_confidence": "estimated"}
+        pp.apply_monotonic_status(m, ["in_cinema"], "estimated", datetime.date(2026, 8, 7))
+        self.assertEqual(m["status"], ["in_cinema"])
+        self.assertNotIn("pending_downgrade", m)
+
+    def test_a_confirmed_tier_is_unaffected_and_still_held(self):
+        m = {"status": ["included_streaming"], "availability_confidence": "confirmed"}
+        pp.apply_monotonic_status(m, ["rental"], "estimated", datetime.date(2026, 8, 7))
+        self.assertEqual(m["status"], ["included_streaming"])
+        self.assertIn("pending_downgrade", m)
+
+
+class DeriveFromProvidersFallbackRespectsTheCinemaRun(unittest.TestCase):
+    """CAS-418 item 4: the offer-less fallback used to key off `opened` (cinema_date <= today),
+    so a title that left cinemas years ago and lost its only offer read as "in_cinema" right
+    now — turning a phantom-streaming title into an equally phantom in-cinema one. It must key
+    off `still_running` (the same CINEMA_RUN_DAYS test the branch above it uses) instead."""
+
+    def test_offer_less_and_still_within_its_run_reads_in_cinema(self):
+        recent = (datetime.date(2026, 8, 7) - datetime.timedelta(days=10)).isoformat()
+        windows = pp.derive_from_providers({"cinema_date": recent}, {}, datetime.date(2026, 8, 7))
+        self.assertEqual(windows, ["in_cinema"])
+
+    def test_offer_less_and_long_past_its_run_does_not_read_in_cinema(self):
+        long_ago = (datetime.date(2026, 8, 7) - datetime.timedelta(days=400)).isoformat()
+        windows = pp.derive_from_providers({"cinema_date": long_ago}, {}, datetime.date(2026, 8, 7))
+        self.assertNotIn("in_cinema", windows)
+
+
+class AFailedPollDoesNotFreezeAPhantomTierEither(unittest.TestCase):
+    """CAS-418 item 3: a title already stuck on an offer-less "estimated" tier must heal even
+    when TODAY's poll fails outright, not just when it succeeds with zero AU rows — otherwise an
+    intermittently-failing provider call is exactly how a title got stranded indefinitely in the
+    first place (the counter in test_pipeline_resilience's "failing provider call" case only
+    protects a CONFIRMED tier, unaffected by this)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        state_dir = self._tmp.name
+        patches = [
+            mock.patch.object(pp, "STATE_DIR", state_dir),
+            mock.patch.object(pp, "SNAPSHOT_FILE", os.path.join(state_dir, "last_snapshot.json")),
+            mock.patch.object(pp, "ALERTS_FILE", os.path.join(state_dir, "alerts.json")),
+            mock.patch.object(pp, "ingest_tmdb", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
+            mock.patch.object(pp, "TMDB_PACING", 0),
+            mock.patch.object(pp, "enrich_omdb", lambda m: m),
+            mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
+            mock.patch.object(pp, "tmdb_providers",
+                               mock.Mock(side_effect=RuntimeError("network down"))),
+        ]
+        for p in patches:
+            p.start(); self.addCleanup(p.stop)
+
+    def test_a_failed_poll_still_heals_an_offer_less_paid_tier(self):
+        long_ago = (datetime.date(2026, 8, 7) - datetime.timedelta(days=400)).isoformat()
+        base = [_title(1, status=["included_streaming"], cinema_date=long_ago,
+                        availability_confidence="estimated", offers=[])]
+
+        day1, _ = pp.build_live_catalogue(datetime.date(2026, 8, 7), base, {}, ondemand_ids=[])
+
+        self.assertNotIn("included_streaming", day1[0]["status"])    # no offer ever backed it
+        self.assertEqual(day1[0]["offers"], [])
+        self.assertNotIn("pending_downgrade", day1[0])
+
+
 if __name__ == "__main__":
     unittest.main()

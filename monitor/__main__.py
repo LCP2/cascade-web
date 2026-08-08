@@ -200,7 +200,14 @@ def main(argv=None) -> int:
         # One row per hit that WAS delivered, by either channel, and never one for a hit that was not.
         delivered = {id(h): h for h in mailable}
         delivered.update({id(h): h for h in appable})
-        written_total += store.insert_notifications(notification_rows({user_id: list(delivered.values())}))
+        # CAS-416: the ledger write is best-effort. Delivery already happened above (the email sent,
+        # or in-app was chosen), so a DB/ledger hiccup here must be a logged warning, never a crash
+        # that aborts the rest of the run — the alternative is silently dropping every later user.
+        try:
+            written_total += store.insert_notifications(notification_rows({user_id: list(delivered.values())}))
+        except Exception as err:  # noqa: BLE001 — a ledger-write failure must not abort the run
+            print(f"[monitor] could not write ledger for {user_id}: {err} — delivery stands, will "
+                  "retry the ledger row next run.")
 
     if args.dry_run:
         would = sum(len(h) for h in by_user.values())
