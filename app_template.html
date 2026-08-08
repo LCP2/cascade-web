@@ -11974,11 +11974,16 @@ function afterSignIn(){
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
   if(splashUp){ $("splash").classList.remove("open"); flowStop(); }
   document.body.style.overflow="";
-  showFoundList(); render();
   if(cascades.length){
+    // CAS-420: arrival at an account with agents already made is arrival at the FIRST one — All is a
+    // view you choose, not the default you land on. openCascade() covers setActive + the switcher
+    // highlight + the repaint in one call; a device already sitting on a specific agent is left alone.
+    if(activeId===ALL_ID) openCascade(cascades[0].id);
+    else { showFoundList(); render(); }
     logEvent("signin_returning",{cascades:cascades.length});
     return;
   }
+  showFoundList(); render();
   // CAS-403: an empty account still lands on the app (the empty-deck quick-starts), never the
   // onboarding wizard — signing in is arrival, not a first run. The wizard stays reachable from the
   // splash's own entry point for a genuine new user who chooses it.
