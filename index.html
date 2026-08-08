@@ -153,6 +153,10 @@
   .iconbtn{position:relative;cursor:pointer;font-size:19px;background:var(--panel2);border:1px solid var(--line);
     border-radius:12px;width:40px;height:40px;display:grid;place-items:center}
   .iconbtn.on{border-color:var(--green);background:rgba(72,199,142,.14)}
+  /* CAS-424: the Agents icon lights up with the brand gradient while its screen is open — the one header
+     icon that opens a full screen of its own rather than a menu or a modal, so it gets the same "you are
+     here" treatment the primary CTAs use (var(--grad), spec 26640386 §1). */
+  .iconbtn.active{background:var(--grad);border-color:transparent;color:#fff}
   .iconbtn .badge{position:absolute;top:-6px;right:-6px;background:var(--rt);color:#fff;font-size:10px;
     font-weight:800;min-width:18px;height:18px;border-radius:10px;display:grid;place-items:center;padding:0 4px}
   /* Top menu (CAS-345): an anchored dropdown, not a full-screen sheet — opens directly below the hamburger
@@ -2170,6 +2174,38 @@
   .uchev{flex:0 0 auto;color:var(--dim);font-size:18px}
   .ucap{font-size:12.5px;color:var(--dim);margin-bottom:12px}
   .unone{font-size:12.5px;color:var(--faint);line-height:1.6}
+  /* ---- CAS-424: Agents screen — the list, and its drag-to-reorder rows ----
+     Same card language as the deck (agent-cin/agent-str, --dcc, 3px left accent) so a row and its carousel
+     card read as the same object seen two ways. */
+  .agshdr{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .agscount{font-size:13px;font-weight:600;color:var(--dim);white-space:nowrap}
+  .agkey{display:flex;align-items:center;gap:8px;font-size:10.5px;text-transform:uppercase;
+    letter-spacing:.05em;color:var(--faint);margin:14px 2px 8px}
+  .agkey::before,.agkey::after{content:"";flex:1;height:1px;background:var(--line)}
+  .aglist{display:flex;flex-direction:column;gap:10px}
+  .agrow{position:relative;display:flex;align-items:center;gap:10px;background:var(--panel);
+    border:1px solid var(--line);border-left:3px solid var(--dcc,var(--accent));border-radius:14px;
+    padding:10px 12px;touch-action:pan-y}
+  .agrow.agent-cin{--dcc:var(--amber)}
+  .agrow.agent-str{--dcc:var(--green)}
+  .agrow.dragging{box-shadow:0 16px 32px rgba(0,0,0,.5);z-index:5;background:var(--panel2)}
+  .aggrip{flex:0 0 auto;width:28px;height:44px;display:grid;place-items:center;color:var(--dim);
+    cursor:grab;touch-action:none;font-size:16px;border-radius:8px}
+  .aggrip:hover{color:var(--ink)}
+  .aggrip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .agrow.dragging .aggrip{cursor:grabbing}
+  .agicon{flex:0 0 auto;width:38px;height:38px;border-radius:10px;display:grid;place-items:center;
+    font-size:18px;background:rgba(255,255,255,.06)}
+  .agrow.agent-cin .agicon{background:rgba(240,163,54,.16)}
+  .agrow.agent-str .agicon{background:rgba(72,199,142,.16)}
+  .agmain{flex:1;min-width:0;display:flex;flex-direction:column}
+  .agtype{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;color:var(--dcc,var(--accent))}
+  .agname{font-size:15px;font-weight:800;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .agsum{font-size:11.5px;color:var(--dim);margin-top:3px;line-height:1.4;display:-webkit-box;
+    -webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .agcount{flex:0 0 auto;text-align:right;padding-left:4px}
+  .agcount b{display:block;font-size:18px;font-weight:800;color:var(--ink);line-height:1.1}
+  .agcount span{font-size:10px;color:var(--dim)}
   /* The film list a group opens into — the card's own poster row, kept small. */
   .ulist{display:flex;flex-direction:column;gap:8px;margin-top:4px}
   .urowfilm{display:flex;gap:10px;align-items:center;background:var(--panel2);border:1px solid var(--line);
@@ -2272,6 +2308,15 @@
         <div class="updated" id="updated"></div>
       </div>
       <div class="hdr-actions">
+        <!-- Agents (CAS-424): every agent, one row each, reorderable — the leftmost header icon (mockup
+             CAS-424.png), a stacked-rows glyph lit with the brand gradient while the screen is open. -->
+        <div class="iconbtn" id="agentsBtn" title="Agents" role="button" tabindex="0" aria-haspopup="dialog"
+             aria-expanded="false" aria-label="Agents" onclick="openAgentsScreen()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true" focusable="false" width="19" height="19">
+            <path d="M4 7h16"/><path d="M4 12h10"/><path d="M4 17h16"/>
+          </svg>
+        </div>
         <!-- Your Movies (CAS-183): everything you've said about a film, and how your services cover it. -->
         <div class="iconbtn" id="moviesBtn" title="Your Movies" role="button" tabindex="0"
              aria-label="Your Movies" onclick="openYourMovies()">🎞️</div>
@@ -2658,6 +2703,12 @@
      plus how well the services you pay for cover what your agents found. Body rendered by renderYourMovies(). -->
 <div class="uscreen" id="yourMovies" role="dialog" aria-modal="true" aria-label="Your Movies">
   <div class="uwrap" id="yourMoviesBody"></div>
+</div>
+
+<!-- AGENTS (CAS-424): every agent in one place — type, a summary of its selections, its film count, and
+     drag-to-reorder (top of the list = leftmost in the carousel). Body rendered by renderAgentsScreen(). -->
+<div class="uscreen" id="agentsScreen" role="dialog" aria-modal="true" aria-label="Agents">
+  <div class="uwrap" id="agentsBody"></div>
 </div>
 
 <!-- GUEST → ACCOUNT (CAS-212) — the one offer, shown once on sign-in when this device is carrying
@@ -3327,7 +3378,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 398, "commit": "2ba50c1", "builtAt": "2026-08-08T07:05:10Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 399, "commit": "f49ac56", "builtAt": "2026-08-08T07:31:13Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5786,6 +5837,11 @@ const CASCADE_TEMPLATES = [
 ];
 CASCADE_TEMPLATES.forEach(t=>normCascade(t.crit));
 cascades.forEach(normCascade);   // saved Cascades are filled out here, not at load — ALERT_DEFAULTS lives above
+// CAS-424: the Agents screen's own reorder position. An agent saved before this screen existed has never
+// had one — it keeps the position it already holds in the array (which IS the deck order), stamped once so
+// a later cross-device load has something to sort by. `saveCascades()` never runs from this default-fill
+// pass, so an account that has never opened the Agents screen is never written to just for loading.
+cascades.forEach((c,i)=>{ if(typeof c.order!=="number") c.order=i; });
 
 // ---- No duplicate Cascades (CAS-72) --------------------------------------------
 // Tapping a template twice gave you two identical Cascades, and the demo state had accumulated four identical
@@ -6908,7 +6964,9 @@ function commitDraft(){
     listStatus:draft.listStatus,
     yearStop:draft.yearStop, yearsBack:draft.yearsBack, kind:draft.kind});
   normCascade(c);
-  if(isNew) cascades.push(c);
+  // CAS-424: a brand new agent joins the Agents order at the end (rightmost) rather than defaulting to 0
+  // and jumping the queue ahead of every agent already reordered.
+  if(isNew){ c.order=cascades.length; cascades.push(c); }
   saveCascades(); setActive(c.id); applyCascade(c);
   // The template key and the shape of the radar — never its name, which is the one thing the user typed.
   logEvent(isNew?"cascade_created":"cascade_edited",
@@ -10366,6 +10424,194 @@ window.openYourMovies=()=>{
 };
 window.closeYourMovies=()=>{ $("yourMovies").classList.remove("open"); document.body.style.overflow=""; };
 
+// ================= CAS-424: Agents screen =============================================================
+// A new VIEW of the same agents the deck already carries — not a new data model. Reordering here reorders
+// the live `cascades` array itself, which is what the deck already renders in (cascSig() is order-sensitive),
+// so a drag lands in the carousel the moment it's committed. Type, name and film count are read straight off
+// c.kind / c.name / listedCount(c) — the same fields the deck card shows — so the two can never disagree.
+
+// ---- the row's "summary statement of the selections" (availability/channel, quality bar, genres, ratings,
+// services, era) — composed from the agent's own saved criteria, reusing the same phrase-builders the
+// editor and the deck's own sub-line already use (voteBand/critScoreReadout/scaleReadout/BUZZ_STOPS from the
+// Mission screen, scopeSummary/anyScope/allScoped from the deck's dc-sub, yearsLabel from the taste baseline).
+// Every segment is dropped when it is at its default — a bar of "everything qualifies" for every dimension
+// would not help tell two agents apart, which is the whole point of this line.
+const AGENT_LANE_WINDOWS = {cinema:["upcoming","opening_week","in_cinema"], stream:["pvod","rental","included_streaming"]};
+function agentWindowSum(c){
+  if(c.kind==="stream")
+    return anyScope(c) ? (allScoped(c) ? "On my services" : `My services on ${scopeSummary(c)}`) : "Any service";
+  const all=AGENT_LANE_WINDOWS.cinema;
+  const list=(c.listStatus&&c.listStatus.length) ? c.listStatus : (c.status&&c.status.length) ? c.status : all;
+  const hasUpcoming=list.includes("upcoming");
+  const hasInCinema=list.includes("opening_week")||list.includes("in_cinema");
+  if(hasInCinema&&hasUpcoming) return "Upcoming & in cinema";
+  if(hasInCinema) return "In cinema now";
+  if(hasUpcoming) return "Upcoming";
+  return "In cinema";
+}
+function agentBarSummary(c){
+  const uses=MISSION_DIALS_USED[c.kind]||MISSION_DIALS_USED.cinema;
+  const parts=[];
+  if(uses.includes("vote") && c.selCrowd>=VOTE_OFF) parts.push(voteBand(c.selCrowd)||c.selCrowd.toFixed(1)+"+");
+  if(uses.includes("crit")){
+    if(c.selCritScore) parts.push(critScoreReadout(c.selCritScore));
+    if(c.selAwards)    parts.push(AWARD_STOPS[c.selAwards].label);
+  }
+  if(uses.includes("scale") && c.selScale) parts.push(scaleReadout(c.selScale));
+  if(uses.includes("buzz")  && c.selBuzz)  parts.push(BUZZ_STOPS[c.selBuzz].label+" buzz");
+  if(c.tentpole && c.tentpole!=="any") parts.push((TENTPOLE_STOPS.find(t=>t.key===c.tentpole)||{}).label||c.tentpole);
+  if(c.awards) parts.push("award winners only");
+  if(c.imdb)   parts.push(`rated ${c.imdb.toFixed(1)}+`);
+  if(c.rt)     parts.push(`critics ${c.rt}%+`);
+  if(c.budget) parts.push((BUDGET_BANDS[c.budget]||{}).hint||"");
+  return parts.filter(Boolean).join(" · ");
+}
+function agentGenreSum(c){
+  if(c.genre===null) return "No genres";
+  const ex=(c.exclude||[]).length ? ` except ${c.exclude.join(", ")}` : "";
+  if(!c.genre.length) return ex ? `Any genre${ex}` : "";
+  return (c.genre.length<=3 ? c.genre.join(", ") : `${c.genre.length} genres`)+ex;
+}
+function agentAgeSum(c){
+  if(c.age===null) return "No ratings";
+  if(!c.age.length || c.age.length>=AGE_LEVELS.length) return "";
+  return c.age.join(", ");
+}
+function agentEraSum(c){
+  if((c.year||[]).length) return c.year.slice().sort().reverse().join(", ");
+  return c.yearsBack ? yearsLabel(c.yearsBack) : "";
+}
+function agentRowSummary(c){
+  const bits=[agentWindowSum(c), agentBarSummary(c), agentGenreSum(c), agentAgeSum(c), agentEraSum(c)].filter(Boolean);
+  if(bits.length<2) bits.push("Nothing else narrowed");
+  return bits.join(" · ");
+}
+
+function renderAgentsScreen(){
+  const n=cascades.length;
+  const rows=cascades.map(c=>{
+    const shown=listedCount(c);
+    return `
+    <div class="agrow agent-${c.kind==="stream"?"str":"cin"}" data-id="${escA(c.id)}">
+      <span class="aggrip" data-role="grip" role="button" tabindex="0"
+            aria-label="Reorder ${escA(c.name)}. Use the arrow keys or drag to move it." title="Drag to reorder">☰</span>
+      <span class="agicon" aria-hidden="true">${c.icon}</span>
+      <span class="agmain">
+        <span class="agtype">${c.kind==="stream"?"Streaming":"Cinema"} agent</span>
+        <span class="agname">${esc(c.name)}</span>
+        <span class="agsum">${esc(agentRowSummary(c))}</span>
+      </span>
+      <span class="agcount"><b>${shown}</b><span>film${shown===1?"":"s"}</span></span>
+    </div>`;
+  }).join("");
+  $("agentsBody").innerHTML=`
+    <div class="ostop"><button class="osback" type="button" onclick="closeAgentsScreen()" aria-label="Back">←</button></div>
+    <div class="agshdr"><h2 class="osh">Agents</h2><span class="agscount">${n} agent${n===1?"":"s"}</span></div>
+    <p class="ossub">Drag to reorder. The order here is the order across the top of the app — the top agent
+      is the leftmost in your deck.</p>
+    ${n>1 ? `<div class="agkey"><span>Leftmost</span><span>Rightmost</span></div>` : ""}
+    <div class="aglist" id="agList" role="list" aria-label="Your agents, in deck order">
+      ${rows || `<p class="unone">No agents yet.</p>`}
+    </div>`;
+  wireAgentsDrag();
+}
+window.openAgentsScreen=()=>{
+  renderAgentsScreen();
+  $("agentsScreen").scrollTop=0;
+  $("agentsScreen").classList.add("open"); document.body.style.overflow="hidden";
+  $("agentsBtn").classList.add("active"); $("agentsBtn").setAttribute("aria-expanded","true");
+  logEvent("agents_screen_opened",{count:cascades.length});
+};
+window.closeAgentsScreen=()=>{
+  $("agentsScreen").classList.remove("open"); document.body.style.overflow="";
+  $("agentsBtn").classList.remove("active"); $("agentsBtn").setAttribute("aria-expanded","false");
+};
+
+// A reordered id list, from wherever it came from (a drag or an arrow key) — always the FULL set, so a
+// short list from a stale event can never silently drop an agent from `cascades`.
+function commitAgentOrder(idsInOrder){
+  const byId=new Map(cascades.map(c=>[c.id,c]));
+  const reordered=idsInOrder.map(id=>byId.get(id)).filter(Boolean);
+  if(reordered.length!==cascades.length) return;
+  cascades.length=0; reordered.forEach(c=>cascades.push(c));
+  cascades.forEach((c,i)=>{ c.order=i; });
+  saveCascades();
+  renderAgentsScreen();
+  if(typeof render==="function") render();
+  logEvent("agents_reordered",{count:cascades.length});
+}
+// Pointer-driven vertical reorder, grip-initiated (CAS-424: "drag to reorder... a grip handle on the left of
+// each row"). Siblings are shifted with a transform while the drag is live — the DOM itself is left alone
+// until drop — so the row positions this math is based on never move out from under it mid-drag the way a
+// live splice/insertBefore would (each such mutation reflows every offsetTop below it).
+function wireAgentsDrag(){
+  const list=$("agList"); if(!list) return;
+  let drag=null;
+  const startDrag=(grip, clientY, pointerId)=>{
+    const row=grip.closest(".agrow"); if(!row) return;
+    const rows=[...list.children];
+    drag={row, id:pointerId, startY:clientY, rows, tops:rows.map(r=>r.offsetTop),
+          from:rows.indexOf(row), to:rows.indexOf(row), step:row.offsetHeight+10};
+    row.classList.add("dragging");
+    try{ grip.setPointerCapture(pointerId); }catch(_){}
+  };
+  list.querySelectorAll(".aggrip").forEach(grip=>{
+    grip.addEventListener("pointerdown", e=>{ e.preventDefault(); startDrag(grip, e.clientY, e.pointerId); });
+    // Keyboard equivalent (CAS-424 AC: "the user can reorder the rows" — a grip that only responds to a
+    // pointer would leave that unmet for anyone who can't drag). Swaps with the neighbour and re-focuses
+    // the same grip in its new spot, so repeated presses walk the row up or down the list.
+    grip.addEventListener("keydown", e=>{
+      if(e.key!=="ArrowUp" && e.key!=="ArrowDown") return;
+      e.preventDefault();
+      const row=grip.closest(".agrow");
+      const ids=[...list.children].map(r=>r.dataset.id);
+      const i=ids.indexOf(row.dataset.id);
+      const j=e.key==="ArrowUp" ? i-1 : i+1;
+      if(j<0 || j>=ids.length) return;
+      [ids[i],ids[j]]=[ids[j],ids[i]];
+      commitAgentOrder(ids);
+      const focusId=row.dataset.id;
+      requestAnimationFrame(()=>{
+        const g=list.querySelector(`.agrow[data-id="${CSS.escape(focusId)}"] .aggrip`);
+        if(g) g.focus();
+      });
+    });
+  });
+  list.addEventListener("pointermove", e=>{
+    if(!drag || e.pointerId!==drag.id) return;
+    const dy=e.clientY-drag.startY;
+    drag.row.style.transform=`translateY(${dy}px)`;
+    const mid=drag.tops[drag.from]+drag.row.offsetHeight/2+dy;
+    let to=0;
+    drag.tops.forEach((t,i)=>{ if(mid > t+drag.row.offsetHeight/2) to=i; });
+    if(to!==drag.to){
+      drag.to=to;
+      drag.rows.forEach((r,i)=>{
+        if(r===drag.row) return;
+        let shift=0;
+        if(drag.from<to && i>drag.from && i<=to) shift=-drag.step;
+        if(drag.from>to && i>=to && i<drag.from) shift=drag.step;
+        r.style.transform = shift ? `translateY(${shift}px)` : "";
+      });
+    }
+  });
+  const endDrag=e=>{
+    if(!drag || e.pointerId!==drag.id) return;
+    drag.row.classList.remove("dragging");
+    drag.row.style.transform="";
+    drag.rows.forEach(r=>{ r.style.transform=""; });
+    if(drag.to!==drag.from){
+      const ids=drag.rows.map(r=>r.dataset.id);
+      const [moved]=ids.splice(drag.from,1);
+      ids.splice(drag.to,0,moved);
+      commitAgentOrder(ids);
+    }
+    drag=null;
+  };
+  list.addEventListener("pointerup", endDrag);
+  list.addEventListener("pointercancel", endDrag);
+}
+
 // ================= CAS-206 / CAS-210: Account =======================================================
 // Three real sections and one honest one. Every row here either DOES something or says out loud that it
 // does not yet — a settings screen listing controls that quietly do nothing is the worst kind of screen,
@@ -12199,6 +12445,10 @@ else if(dedupedN)
     if(justOnboarded) remote=[...remote, membCascade];
     const sigs = new Set(remote.map(cascSigOf));
     pendingMerge.cascades = localOnes.filter(x=>!sigs.has(cascSigOf(x)));
+    // CAS-424: `order` rides in `criteria` like every other field (cascadeToRow copies the whole object), so
+    // the Agents screen's reorder — done on any device — is what this sort restores here. Nothing to sort by
+    // (nobody has ever reordered) leaves the account's own row order alone.
+    remote.sort((a,b)=>(a.order??1e9)-(b.order??1e9));
     replaceCascades(remote);
     if(justOnboarded) scheduleSync();
     offerMerge();
@@ -12230,6 +12480,9 @@ else if(dedupedN)
     }
     if(activeId!==ALL_ID && !cascades.some(x=>x.id===activeId)) setActive(ALL_ID);
     cascadeBaseline=remoteIds;
+    // CAS-424: converge on whichever device last reordered — only once anyone actually has, so a background
+    // reconcile never reshuffles an account nobody has touched the Agents screen on.
+    if(cascades.some(x=>typeof x.order==="number")) cascades.sort((a,b)=>(a.order??1e9)-(b.order??1e9));
     if(typeof render==="function") render();
   }
   // What this device is carrying that the account has not got. Filled by the two loaders as they run,
