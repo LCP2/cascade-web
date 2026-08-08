@@ -3483,7 +3483,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 404, "commit": "6ceb806", "builtAt": "2026-08-08T08:49:34Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 405, "commit": "cd18071", "builtAt": "2026-08-08T11:00:25Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -4079,8 +4079,13 @@ const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
 // explicit sort exactly as before — this is the pre-release section's rule, not a global reversal.
 // The sorts that ARE meaningful pre-release still win: Title stays alphabetical because the user asked
 // for alphabetical, and Cinema date is this order already.
+// CAS-430: a cinema agent's In Cinema section is the trip-planning line CAS-394 promised — oldest
+// cinema_date at the top — and that has to hold under every sort key, not just "availability". A
+// Blockbuster-style agent (sort:"popularity") was falling through to sortMoviesBy and losing the
+// oldest-first read entirely.
 const sortForKey = (g,key,cinema) =>
     (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byTimeline
+  : (cinema && g==="in_cinema") ? byTimelineAsc
   : key==="availability" ? (cinema ? byTimelineAsc : byTimeline)
   : key==="imdb" ? byRatingDesc
   : ((a,b)=>sortMoviesBy(a,b,key));
