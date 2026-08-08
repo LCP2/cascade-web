@@ -645,33 +645,35 @@
   .wdot.w-cin-upcoming{--dotc:var(--upcoming-ink)} .wdot.w-cin-opening{--dotc:#f0b4b4}
   .wdot.w-cin-cinema{--dotc:#e0b483} .wdot.w-pvod{--dotc:#c3b3f0}
   .wdot.w-rental{--dotc:#9fc4ef} .wdot.w-included_streaming{--dotc:#8fd5b3}
-  .wline{flex:0 1 16px;min-width:8px;height:0;border-top:2px solid rgba(255,255,255,.24)}
+  .wline{flex:1 1 16px;min-width:8px;height:0;border-top:2px solid rgba(255,255,255,.24)}
   .wline.fut{border-top-style:dashed;border-top-color:rgba(255,255,255,.16)}
-  /* The capsule is the one lit stop on the line — window label + date on the left, the existing
-     .saveline services line fused on the right of a hairline divider when the film has offers. */
-  .cap{flex:1 1 auto;min-width:0;overflow:hidden;display:flex;align-items:center;gap:8px;
-    padding:6px 11px;border-radius:16px;border:1px solid var(--line);background:var(--panel2);color:var(--faint)}
+  /* CAS-429: the capsule hugs its own content — a compact pill, not a bar stretched to fill the row — so
+     it sizes with flex:none while the .wline segments either side (flex:1 1 16px, above) grow to take up
+     whatever room that leaves. Lighter too: no outer glow, a thin border, tight padding. */
+  .cap{flex:none;min-width:0;max-width:100%;overflow:hidden;display:flex;align-items:center;gap:6px;
+    padding:5px 9px;border-radius:14px;border:1px solid var(--line);background:var(--panel2);color:var(--faint)}
   .capwin{flex:0 0 auto;display:flex;align-items:center;gap:5px;font-size:12px;font-weight:800;white-space:nowrap}
   .capicon{font-size:12px;line-height:1}
-  .capdate{font-size:11px;font-weight:700;opacity:.85;font-variant-numeric:tabular-nums}
-  .capdate.est{font-style:italic;opacity:.75}
+  /* CAS-429: the date is secondary to the window label, not co-equal with it — smaller and dimmer. */
+  .capdate{font-size:10px;font-weight:600;opacity:.6;font-variant-numeric:tabular-nums}
+  .capdate.est{font-style:italic}
   .capdate.exact{font-style:normal}
   .capdiv{flex:0 0 auto;width:1px;align-self:stretch;background:currentColor;opacity:.25}
   /* Fused inside the capsule: strip the block-level chrome .saveline carries when it stands alone
-     (CAS-348/399/423), keep its text colours and toggle behaviour exactly as they are today. */
-  .cap>.saveline{margin-top:0;padding:0;background:transparent;border:0;border-radius:0;flex:1 1 auto;min-width:0}
-  .cap.w-cin-upcoming{color:var(--upcoming-ink);border-color:var(--upcoming);background:rgba(var(--upcoming-rgb),.22);
-    box-shadow:0 0 14px -4px rgba(var(--upcoming-rgb),.6)}
-  .cap.w-cin-opening{color:#ffc2c2;border-color:var(--open);background:rgba(255,107,107,.2);
-    box-shadow:0 0 14px -4px rgba(255,107,107,.55)}
-  .cap.w-cin-cinema{color:#ffce8f;border-color:rgba(240,163,54,.65);background:rgba(240,163,54,.18);
-    box-shadow:0 0 14px -4px rgba(240,163,54,.55)}
-  .cap.w-pvod{color:#d3c2ff;border-color:rgba(164,134,240,.65);background:rgba(164,134,240,.18);
-    box-shadow:0 0 14px -4px rgba(164,134,240,.55)}
-  .cap.w-rental{color:#bcdcff;border-color:rgba(90,169,240,.7);background:rgba(90,169,240,.18);
-    box-shadow:0 0 14px -4px rgba(90,169,240,.55)}
-  .cap.w-included_streaming{color:#a7eccb;border-color:rgba(72,199,142,.65);background:rgba(72,199,142,.2);
-    box-shadow:0 0 14px -4px rgba(72,199,142,.55)}
+     (CAS-348/399/423), keep its toggle behaviour exactly as it is today. CAS-429: also strip .plain's own
+     background/text-colour override (`.cap>.saveline.plain`, matching its specificity) — dead weight left
+     over from when this bar could render standalone, which was silently painting the rent/premium capsule
+     a flat panel colour instead of letting it inherit the capsule's own colour-coded tint (the "black
+     background" bug). */
+  .cap>.saveline,.cap>.saveline.plain{margin-top:0;padding:0;background:transparent;border:0;border-radius:0;
+    flex:1 1 auto;min-width:0;color:inherit}
+  .cap>.saveline b,.cap>.saveline.plain b{color:inherit}
+  .cap.w-cin-upcoming{color:var(--upcoming-ink);border-color:var(--upcoming);background:rgba(var(--upcoming-rgb),.22)}
+  .cap.w-cin-opening{color:#ffc2c2;border-color:var(--open);background:rgba(255,107,107,.2)}
+  .cap.w-cin-cinema{color:#ffce8f;border-color:rgba(240,163,54,.65);background:rgba(240,163,54,.18)}
+  .cap.w-pvod{color:#d3c2ff;border-color:rgba(164,134,240,.65);background:rgba(164,134,240,.18)}
+  .cap.w-rental{color:#bcdcff;border-color:rgba(90,169,240,.7);background:rgba(90,169,240,.18)}
+  .cap.w-included_streaming{color:#a7eccb;border-color:rgba(72,199,142,.65);background:rgba(72,199,142,.2)}
   /* ---- Estimated availability (CAS-110) ----
      A window Cascade has NOT confirmed must not be able to pass for one it has. The lit capsule loses its
      fill and glow and goes dashed and grey — the same shape, visibly not the same claim. */
@@ -680,8 +682,7 @@
   /* CAS-301: the "estimated" flag on an in-cinema film is about whether it's STILL playing, not about the
      cinema date itself (stageDate never marks "cinema" as est) — so the Cinema capsule keeps its token. */
   .avail2.est .cap.w-cin-cinema{color:#ffce8f!important;border-color:rgba(240,163,54,.65)!important;
-    background:rgba(240,163,54,.18)!important;border-style:solid!important;
-    box-shadow:0 0 14px -4px rgba(240,163,54,.55)!important}
+    background:rgba(240,163,54,.18)!important;border-style:solid!important}
   .estline{display:flex;align-items:center;gap:7px;margin-top:9px;padding:6px 10px;border-radius:9px;
     border:1px dashed var(--line);background:transparent;color:var(--dim);font-size:11.5px;font-weight:600;cursor:help}
   .esttag{font-size:9.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--faint);
@@ -3482,7 +3483,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 403, "commit": "69b1950", "builtAt": "2026-08-08T08:38:09Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 404, "commit": "6ceb806", "builtAt": "2026-08-08T08:49:34Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -4213,7 +4214,9 @@ window.showImdbWhy=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(imd
 // expander's Windows line (windowsLineHTML) rather than repeating four date lines on the card face.
 const CAP_LABEL={upcoming:"Upcoming",opening:"Opening",cinema:"In cinemas",
   pvod:"Premium",rental:"Rent",included_streaming:"Streaming"};
-const WIN_ICON={upcoming:"🗓️",opening:"🎬",cinema:"🎬",pvod:"⭐",rental:"🎫",included_streaming:"▶️"};
+// CAS-429: the streaming icon is a plain ▶ (no VS16), not the "▶️" emoji — most fonts render that as a
+// boxed white-triangle-on-blue glyph, which reads as its own icon rather than the capsule's own green tint.
+const WIN_ICON={upcoming:"🗓️",opening:"🎬",cinema:"🎬",pvod:"⭐",rental:"🎫",included_streaming:"▶"};
 const WINDOW_SLOTS=["cinema","pvod","rental","included_streaming"];
 // Shared by the capsule (current window only) and the expander's Windows line (all four): an ESTIMATED
 // date for a window the film has not reached, which has already been and gone, is an estimate reality
@@ -4317,13 +4320,16 @@ function savingsHTML(m, canExpand){
   // through a rental your own store carries must not wear a green "Included on {service nobody here pays
   // for}" bar just because SOME subscription lists it. Unscoped, any subscription offer is still honest
   // "where to watch" information, owned or not, so the wider list stands.
-  // CAS-373: "Included on" -> "On" and "— which you already pay for" -> "(already paid)" so the sentence
-  // reads sensibly at its shortest — and the text still rides in a .savetxt span that ellipsizes rather than
-  // wraps, for the (rarer) long service name or rent-price case this trim doesn't cover.
+  // CAS-373/429: trimmed to its shortest reading — no "Included on"/"On", no "(already paid)" parenthetical.
+  // Green already carries "a service you already pay for", so the word would only repeat the colour. The
+  // text still rides in a .savetxt span that ellipsizes rather than wraps, for the (rarer) long service
+  // name or rent-price case this trim doesn't cover.
   // CAS-348: the services list used to open only from the row's chevron button, which the control-row
   // redesign removes. On a card wearing this bar, the bar itself carries the shortcut instead — per film,
   // not per agent, so it is correct on the mixed All/Home view too.
-  const svcAff = canExpand ? `<span class="svcbtn">Services${ICON.chev}</span>` : "";
+  // CAS-429: the affordance is a bare chevron now — "Services" was redundant with the capsule it's already
+  // inside of.
+  const svcAff = canExpand ? `<span class="svcbtn">${ICON.chev}</span>` : "";
   // CAS-399: when the bar carries the Services affordance, the whole bar is the toggle (not just the
   // chevron control) — a real click/tap/keyboard target, with the chevron's open state still synced via
   // .svcbtn so the existing card-expand wiring (~line 5325) keeps working unchanged.
@@ -4336,19 +4342,21 @@ function savingsHTML(m, canExpand){
     const alt=(rent && rent.price!=null) ? `, or pay <b>$${rent.price.toFixed(2)}</b> to rent` : "";
     if(mine.length){
       const svc=svcName(mine[0].service);
-      const own=ux.on ? " (already paid)" : "";
-      return `<div class="saveline${svcTogClass}"${svcTogAttrs}><span class="savetxt">✓ On <b>${esc(svc)}</b>${alt}${own}</span>${svcAff}</div>`;
+      return `<div class="saveline${svcTogClass}"${svcTogAttrs}><span class="savetxt">✓ <b>${esc(svc)}</b>${alt}</span>${svcAff}</div>`;
     }
     const svc=svcName(subs[0].service);
-    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt">On <b>${esc(svc)}</b>${alt}</span>${svcAff}</div>`;
+    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt"><b>${esc(svc)}</b>${alt}</span>${svcAff}</div>`;
   }
   // CAS-423: an unpriced rent offer is what windowOf() defaults to "rental" (never pvod) absent a confirmed
   // premium price, so it belongs in this branch too — same bar, just without a figure it doesn't have.
   if(rent && (rent.price==null || rent.price<=RENTAL_MAX)){
-    const priceTxt = rent.price!=null ? ` for <b>$${rent.price.toFixed(2)}</b>` : "";
+    // CAS-429: the capsule's own window label already says "Rent" (CAP_LABEL.rental), so repeating the verb
+    // here just to say it again was the redundant copy the capsule needed stripped — the price and service
+    // are the only facts this line adds.
+    const priceTxt = rent.price!=null ? `<b>$${rent.price.toFixed(2)}</b> · ` : "";
     const cheaper=(ux.on && buy && buy.price!=null && rent.price!=null && buy.price>rent.price)
       ? ` — <b>$${(buy.price-rent.price).toFixed(2)}</b> less than buying at $${buy.price.toFixed(2)}` : "";
-    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt">Rent${priceTxt} on ${esc(svcName(rent.service))}${cheaper}</span>${svcAff}</div>`;
+    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt">${priceTxt}${esc(svcName(rent.service))}${cheaper}</span>${svcAff}</div>`;
   }
   // CAS-375: Premium status — a purchase, or a rent offer priced at the premium tier (>RENTAL_MAX), with
   // no standard-priced rental and no subscription. This used to fall through to "" (no row, no Services
