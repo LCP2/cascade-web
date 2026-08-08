@@ -2011,21 +2011,17 @@
      Lee's colour call for the three purchase-model chips (Buy/Rent/Stream = amber/blue/green). The group
      heading above the section keeps its own purple dot; the two are different surfaces, not a mismatch. */
   .jumpbar .gdot.pvod{background:var(--amber)}
-  /* The sort control mirrors a jchip's box exactly, so it sits the same height and lines up on the row.
-     Icon-only on phone; the current-sort label + chevron reveal from 560px, per CAS-321. */
-  .sortctl{position:relative;flex:none;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;
-    border-radius:20px;border:1px solid var(--line);background:var(--panel2);color:var(--dim);
-    font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap}
-  .sortctl:hover{color:var(--ink);border-color:#3a4150}
+  /* CAS-419: the sort control is a .ca-btn.x, exactly like the adjacent search/filter icon buttons, so the
+     row reads as one set of icons at every width instead of a wide text pill that could spill past the
+     card's edge. The active-dot still marks "off the default"; the current choice is a tooltip (title on
+     the wrapper, set by syncSortCtl) plus the selected option inside the native picker itself. */
+  .sortctl{position:relative}
   .sortic{font-size:13px;line-height:1;position:relative}
   .sortdot{position:absolute;top:-3px;right:-3px;width:7px;height:7px;border-radius:50%;
     background:var(--cyan);border:1.5px solid var(--panel2)}
-  .sortcur,.sortchev{display:none}
-  .sortchev{font-size:9px;color:var(--faint)}
-  @media (min-width:560px){ .sortcur,.sortchev{display:inline} }
-  /* The real control: a native select, invisible and stretched over the whole pill, so a tap anywhere on the
-     pill opens the OS's own picker — which already shows the current sort selected and lets it be changed,
-     satisfying the "menu" acceptance criterion without a hand-rolled dropdown. */
+  /* The real control: a native select, invisible and stretched over the whole button, so a tap anywhere on
+     the icon opens the OS's own picker — which already shows the current sort selected and lets it be
+     changed, satisfying the "menu" acceptance criterion without a hand-rolled dropdown. */
   .sortctl select{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;
     opacity:0;cursor:pointer;-webkit-appearance:none;appearance:none}
   .sortctl select:focus-visible ~ .sortic{outline:2px solid var(--cyan);outline-offset:2px}
@@ -2321,9 +2317,10 @@
          Edit and search — deckSync() moves this exact node there on every render, so the live <select>
          keeps its value and listeners rather than being torn down and rebuilt. This is only where it starts
          before JS runs its first render(); nothing here is meant to ever be visible. The native <select> is
-         invisible and stretched over the pill — see .sortctl select — so this stays a real, accessible menu
-         rather than a hand-rolled one, while reading as an icon-only button per CAS-321. -->
-    <div class="sortctl" id="sortCtl">
+         invisible and stretched over the button — see .sortctl select — so this stays a real, accessible
+         menu rather than a hand-rolled one, while reading as an icon button (CAS-419) matching Edit/search/
+         filter in the same row. -->
+    <div class="sortctl ca-btn x" id="sortCtl">
       <select id="sort" aria-label="Order">
         <option value="availability">Availability</option>
         <option value="imdb">IMDb rating</option>
@@ -2334,8 +2331,6 @@
         <option value="title">Title A–Z</option>
       </select>
       <span class="sortic" aria-hidden="true">⇅<span class="sortdot" id="sortDot" hidden></span></span>
-      <span class="sortcur" id="sortCur"></span>
-      <span class="sortchev" aria-hidden="true">▾</span>
     </div>
     <!-- CAS-275: jump to a section of the listing. It is rendered from the sections that ACTUALLY exist in
          the current list, so it can never offer a destination that isn't there — and it hides itself when
@@ -3323,7 +3318,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 388, "commit": "e6555f4", "builtAt": "2026-08-08T01:41:02Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 389, "commit": "b07e1bb", "builtAt": "2026-08-08T02:11:08Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -3650,11 +3645,11 @@ updatePrefSwitch(); updatePrefBtn(); updateUxSwitch();
 // Landing somewhere on purpose (the reveal, the membership start, onboarding) means landing on the agent's
 // own list — which is now simply the list, so this only settles the films you have already answered.
 function showFoundList(){ settleFoundView(); }
-// CAS-321: the invisible <select> is the only thing that changes filt.sort; this just repaints the pill
-// around it (current-sort label for wide viewports, the active-dot for "you're off the default").
+// CAS-419: the invisible <select> is the only thing that changes filt.sort; this just repaints the icon
+// button around it — a tooltip naming the current order, and the active-dot for "you're off the default".
 function syncSortCtl(){
   const opt=$("sort").querySelector(`option[value="${filt.sort}"]`);
-  $("sortCur").textContent=opt?opt.textContent:"";
+  $("sortCtl").title="Order: "+(opt?opt.textContent:"");
   $("sortDot").hidden=(filt.sort==="availability");
 }
 $("sort").onchange=e=>{filt.sort=e.target.value;syncSortCtl();render();};
