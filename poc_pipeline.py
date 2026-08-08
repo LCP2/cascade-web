@@ -555,7 +555,13 @@ def derive_from_providers(movie: dict, prov: dict, today: datetime.date) -> list
     if still_running:
         windows.append("in_cinema")
     if not windows:
-        windows.append("in_cinema" if opened else "upcoming")
+        # CAS-418: an offer-less title past its AU run is not "in cinema" just because it once
+        # opened — gate on still_running (the same test the branch above uses), not the cheaper
+        # `opened` check, or a years-old offer-less title reads as showing right now. There is no
+        # honest terminal tier yet for "left cinemas, no home offer" (a real one is a separate
+        # design call), so "upcoming" is the least-wrong placeholder: it never blocks a later
+        # forward move once a real offer appears.
+        windows.append("in_cinema" if still_running else "upcoming")
     return windows
 
 
@@ -662,9 +668,15 @@ def apply_monotonic_status(m: dict, candidate: list[str], confidence: str, today
     DOWNGRADE_CONFIRM_RUNS consecutive runs. That is the difference between a real
     de-listing and a one-day gap in the AU provider feed (CAS-334/CAS-355): the feed can
     drop a title's rows for a day and pick it back up the next, and a single such gap must
-    never write a status a user could be alerted on losing."""
+    never write a status a user could be alerted on losing.
+
+    CAS-418: that protection is only earned by a tier a real offer once backed. A tier
+    stamped "estimated" was never confirmed by an offer in the first place (or already lost
+    the one it had), so holding it back just freezes a phantom listing for longer — commit
+    the offer-honest candidate immediately instead of waiting on DOWNGRADE_CONFIRM_RUNS."""
     prev = m.get("status") or []
-    if not prev or tier_rank(candidate) >= tier_rank(prev):
+    prev_confidence = m.get("availability_confidence")
+    if not prev or tier_rank(candidate) >= tier_rank(prev) or prev_confidence == "estimated":
         m["status"] = candidate
         m["availability_confidence"] = confidence
         m.pop("pending_downgrade", None)
@@ -909,6 +921,14 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                     m["offers"] = []
                     m["status"] = [w]
                     m["availability_confidence"] = conf
+                    m["availability_source"] = "estimated_unpolled"
+                elif m.get("availability_confidence") == "estimated":
+                    # CAS-418: the held tier was already offer-less, so a failed poll must not
+                    # freeze it either — fall back to the same offer-honest, date-based window
+                    # the "no AU rows" branch above uses, not the age ladder (CAS-412), which
+                    # can reinvent a paid tier with nothing backing it.
+                    apply_monotonic_status(m, derive_from_providers(m, {}, today), "estimated", today)
+                    m["offers"] = []
                     m["availability_source"] = "estimated_unpolled"
 
             # ON-DEMAND Watchmode enrichment: exact prices + deep-links for engaged titles only.
