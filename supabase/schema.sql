@@ -2,7 +2,7 @@
 -- Source of truth: Confluence "Cascade Web — Architecture & CC Build Spec" §3.
 -- Apply this in the Supabase SQL editor (see supabase/README.md). Safe to re-run.
 --
--- Six tables:
+-- Eight tables:
 --   cascades      — one row per saved agent, per user (the user owns their rows via RLS).
 --   user_prefs    — the account-level defaults a NEW agent starts from, plus the services the
 --                   user actually pays for. CAS-211.
@@ -12,6 +12,10 @@
 --                   have muted everywhere. CAS-185.
 --   film_picks    — one row per (user, film) the user has hand-added or hand-removed from
 --                   their Found list. An "off" here outranks their own Cascade. CAS-185.
+--   lists         — one row per user-curated collection (name only). Manual, not criteria-driven
+--                   — the opposite of a cascade. CAS-428.
+--   list_films    — one row per (user, film, list): a film can sit in several lists at once, so
+--                   this is a true join table, unlike user_films/film_picks. CAS-428.
 --   notifications — the alert ledger; the daily monitoring job writes it with the
 --                   service_role key (which bypasses RLS) and de-dupes against it so the
 --                   same (cascade, movie, moment) is never delivered twice. The app reads
@@ -162,6 +166,52 @@ create policy film_picks_owner on public.film_picks
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
+-- lists — a user's own hand-picked collections (CAS-428)
+-- ---------------------------------------------------------------------------
+-- Same small-row-per-item shape as cascades, but deliberately not jsonb: a list is just a name,
+-- with none of the shape-changes-every-release history that criteria has, so a plain column stays
+-- honest instead of anticipating a flexibility this table has never needed.
+create table if not exists public.lists (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  name       text not null default 'My list',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.lists enable row level security;
+
+drop policy if exists lists_owner on public.lists;
+create policy lists_owner on public.lists
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create index if not exists lists_user_id_idx on public.lists (user_id);
+
+-- ---------------------------------------------------------------------------
+-- list_films — film <-> list membership (CAS-428)
+-- ---------------------------------------------------------------------------
+-- One row per (user, film, list) — a genuine join table, unlike user_films/film_picks, whose one
+-- row per (user, film) encodes a single mutually-exclusive answer. A film can be in several lists
+-- at once, so the primary key has to include list_id. list_id cascades on delete so removing a
+-- list from `lists` cleans up its memberships for free, matching what the client's removeList()
+-- already does to its own local `listMembership` object.
+create table if not exists public.list_films (
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  movie_id   text not null,
+  list_id    uuid not null references public.lists(id) on delete cascade,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, movie_id, list_id)
+);
+
+alter table public.list_films enable row level security;
+
+drop policy if exists list_films_owner on public.list_films;
+create policy list_films_owner on public.list_films
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create index if not exists list_films_list_id_idx on public.list_films (list_id);
+
+-- ---------------------------------------------------------------------------
 -- notifications — the alert ledger (de-dupe: never email the same
 -- movie+moment twice per cascade)
 -- ---------------------------------------------------------------------------
@@ -236,4 +286,14 @@ create trigger film_picks_set_updated_at
 drop trigger if exists user_prefs_set_updated_at on public.user_prefs;
 create trigger user_prefs_set_updated_at
   before update on public.user_prefs
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists lists_set_updated_at on public.lists;
+create trigger lists_set_updated_at
+  before update on public.lists
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists list_films_set_updated_at on public.list_films;
+create trigger list_films_set_updated_at
+  before update on public.list_films
   for each row execute function public.set_updated_at();
