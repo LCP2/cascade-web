@@ -12010,11 +12010,16 @@ function afterSignIn(){
   if(splashUp){ $("splash").classList.remove("open"); flowStop(); }
   document.body.style.overflow="";
   if(cascades.length){
-    // CAS-420: arrival at an account with agents already made is arrival at the FIRST one — All is a
-    // view you choose, not the default you land on. openCascade() covers setActive + the switcher
-    // highlight + the repaint in one call; a device already sitting on a specific agent is left alone.
-    if(activeId===ALL_ID) openCascade(cascades[0].id);
-    else { showFoundList(); render(); }
+    // CAS-420/CAS-409: arrival at an account with agents already made is arrival at the FIRST one — All
+    // is a view you choose, not the default you land on. Always land there, not only when the incoming
+    // view happened to be All: CAS-420's "device already on a specific agent, leave it" carve-out let a
+    // restored session's activeId already NAME a real agent whose filters had still never actually been
+    // applied this boot (the top-of-file activeCascade() lookup runs before loadAccount() has populated
+    // `cascades`), so it kept rendering as the unfiltered All list despite activeId being correct.
+    // openCascade()'s own "already active, do nothing" guard would hit that exact case, so clear activeId
+    // first to force it through setActive + applyCascade + the switcher highlight + the repaint.
+    activeId=null;
+    openCascade(cascades[0].id);
     logEvent("signin_returning",{cascades:cascades.length});
     return;
   }
@@ -12739,9 +12744,23 @@ else if(dedupedN)
     gid('authContinue').addEventListener('click', async () => {
       const email = readEmail(); if(!email) return;
       msg.textContent = 'Signing in…';
+      // CAS-409: afterSignIn() only hid the splash once loadAccount()'s network round trip had finished,
+      // so every sign-in visibly flashed splash -> app. Hide it the moment Continue is pressed instead —
+      // restoring it whenever this attempt did NOT land a signed-in session (a hard failure, or the
+      // CAS-411 magic-link fallback still waiting on the user's inbox), since neither has anywhere to
+      // have arrived at yet.
+      const splash = gid('splash');
+      const splashWasOpen = splash.classList.contains('open');
+      if(splashWasOpen) splash.classList.remove('open');
       const result = await api.continueWithEmail(email);
-      if(!result.ok) msg.textContent = 'Could not sign in: ' + result.error;
-      else if(result.otpSent) msg.textContent = "We've sent a sign-in link to that email — click it to finish.";
+      if(!result.ok){
+        msg.textContent = 'Could not sign in: ' + result.error;
+        if(splashWasOpen) splash.classList.add('open');
+      }
+      else if(result.otpSent){
+        msg.textContent = "We've sent a sign-in link to that email — click it to finish.";
+        if(splashWasOpen) splash.classList.add('open');
+      }
     });
 
     gid('authSignOut').addEventListener('click', async () => {
