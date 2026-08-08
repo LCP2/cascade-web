@@ -552,16 +552,12 @@ def derive_from_providers(movie: dict, prov: dict, today: datetime.date) -> list
     cd = movie.get("cinema_date")
     opened = bool(cd and cd <= today.isoformat())
     still_running = opened and cd >= (today - datetime.timedelta(days=CINEMA_RUN_DAYS)).isoformat()
-    if still_running:
-        windows.append("in_cinema")
+    # CAS-418 (walk back CAS-395): in_cinema is EXCLUSIVE with home offers — a film with a rent/stream/
+    # buy offer is never filed under the big screen (engine invariant #55). So in_cinema is only ever the
+    # answer when NO home window resolved. An offer-less opened title is in_cinema; the front end hides it
+    # once past its theatrical run (inCinemaWindow gates on the run), so gating here on `opened` is safe.
     if not windows:
-        # CAS-418: an offer-less title past its AU run is not "in cinema" just because it once
-        # opened — gate on still_running (the same test the branch above uses), not the cheaper
-        # `opened` check, or a years-old offer-less title reads as showing right now. There is no
-        # honest terminal tier yet for "left cinemas, no home offer" (a real one is a separate
-        # design call), so "upcoming" is the least-wrong placeholder: it never blocks a later
-        # forward move once a real offer appears.
-        windows.append("in_cinema" if still_running else "upcoming")
+        windows.append("in_cinema" if opened else "upcoming")
     return windows
 
 
@@ -623,9 +619,8 @@ def derive_status(movie: dict, offers: list[dict], today: datetime.date) -> list
     # In cinema: theatrical date has passed and is still inside its AU run (CAS-395: no longer gated on
     # having zero home offers — a film can be in cinemas and on premium/rental/streaming at once).
     cd = movie.get("cinema_date")
-    in_cinema_window = cd and cd <= today.isoformat() and cd >= (today - datetime.timedelta(days=CINEMA_RUN_DAYS)).isoformat()
-    if in_cinema_window:
-        status.add("in_cinema")
+    # CAS-418 (walk back CAS-395): in_cinema is EXCLUSIVE with home offers — only assigned in the
+    # offer-less fallback below, never alongside a rent/stream/buy window.
 
     # Premium (PVOD): a dear buy/rent exists and it's not yet on subscription
     if not has_sub and ((dearest_buy and dearest_buy >= PVOD_MIN_PRICE) or
