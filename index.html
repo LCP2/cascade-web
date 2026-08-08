@@ -3327,7 +3327,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 396, "commit": "6a23886", "builtAt": "2026-08-08T03:55:23Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 397, "commit": "761f2e0", "builtAt": "2026-08-08T05:25:00Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -4132,8 +4132,13 @@ function savingsHTML(m, canExpand){
   const offers=dedupOffers(m.offers||[]);
   if(!offers.length) return "";
   const subs =offers.filter(o=>o.type==="sub"||o.type==="free");
-  const rents=offers.filter(o=>o.type==="rent"&&o.price!=null).sort((a,b)=>a.price-b.price);
-  const buys =offers.filter(o=>o.type==="buy" &&o.price!=null).sort((a,b)=>a.price-b.price);
+  // CAS-423: a rent/buy offer without a price is still an offer — TMDB routinely supplies a rent row with
+  // no price at all (see windowOf, ~line 11721), and that unpriced row is what puts the film in the Rent
+  // window in the first place. Filtering price!=null here dropped that row entirely, so a genuinely-rentable
+  // film with no PRICED offer got no Services bar at all. Priced offers still sort first; unpriced ones sort
+  // last and print without a "$X.XX" figure — "price where known", never a guess.
+  const rents=offers.filter(o=>o.type==="rent").sort((a,b)=>(a.price??Infinity)-(b.price??Infinity));
+  const buys =offers.filter(o=>o.type==="buy" ).sort((a,b)=>(a.price??Infinity)-(b.price??Infinity));
   const rent=rents[0], buy=buys[0];
   const mine=subs.filter(o=>prefs.sub.has(svcCanon(o.service)));
   // CAS-342: "only my services" makes the green bar's claim personal — a film that only reaches you
@@ -4156,7 +4161,7 @@ function savingsHTML(m, canExpand){
          onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.querySelector('.svcbtn').classList.toggle('open')"`
     : "";
   if(subs.length){
-    const alt=rent ? `, or pay <b>$${rent.price.toFixed(2)}</b> to rent` : "";
+    const alt=(rent && rent.price!=null) ? `, or pay <b>$${rent.price.toFixed(2)}</b> to rent` : "";
     if(mine.length){
       const svc=svcName(mine[0].service);
       const own=ux.on ? " (already paid)" : "";
@@ -4165,18 +4170,23 @@ function savingsHTML(m, canExpand){
     const svc=svcName(subs[0].service);
     return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt">On <b>${esc(svc)}</b>${alt}</span>${svcAff}</div>`;
   }
-  if(rent && rent.price<=RENTAL_MAX){
-    const cheaper=(ux.on && buy && buy.price>rent.price)
+  // CAS-423: an unpriced rent offer is what windowOf() defaults to "rental" (never pvod) absent a confirmed
+  // premium price, so it belongs in this branch too — same bar, just without a figure it doesn't have.
+  if(rent && (rent.price==null || rent.price<=RENTAL_MAX)){
+    const priceTxt = rent.price!=null ? ` for <b>$${rent.price.toFixed(2)}</b>` : "";
+    const cheaper=(ux.on && buy && buy.price!=null && rent.price!=null && buy.price>rent.price)
       ? ` — <b>$${(buy.price-rent.price).toFixed(2)}</b> less than buying at $${buy.price.toFixed(2)}` : "";
-    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt">Rent for <b>$${rent.price.toFixed(2)}</b> on ${esc(svcName(rent.service))}${cheaper}</span>${svcAff}</div>`;
+    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt">Rent${priceTxt} on ${esc(svcName(rent.service))}${cheaper}</span>${svcAff}</div>`;
   }
   // CAS-375: Premium status — a purchase, or a rent offer priced at the premium tier (>RENTAL_MAX), with
   // no standard-priced rental and no subscription. This used to fall through to "" (no row, no Services
   // affordance at all). Give it the same one-line + Services button the other statuses get.
+  // CAS-423: same "price where known" treatment — an unpriced buy offer still names where to buy it.
   const premium = buy || rent;
   if(premium){
     const verb = premium.type==="buy" ? "Buy" : "Rent";
-    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt">${verb} for <b>$${premium.price.toFixed(2)}</b> on ${esc(svcName(premium.service))}</span>${svcAff}</div>`;
+    const priceTxt = premium.price!=null ? ` for <b>$${premium.price.toFixed(2)}</b>` : "";
+    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt">${verb}${priceTxt} on ${esc(svcName(premium.service))}</span>${svcAff}</div>`;
   }
   return "";   // no priced offer at all — nothing honest to write
 }
