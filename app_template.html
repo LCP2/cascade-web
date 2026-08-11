@@ -985,6 +985,16 @@
      now render at every position (so a peeked card is the SAME layout as the active one, just blurred by
      deckPaint()'s existing filter) and only the interaction — not the paint — is gated on being the open card. */
   .dc-sub{font-size:11px;color:var(--dim);margin-top:4px;line-height:1.4}
+  /* CAS-441: quiet, always-on — not a chip you set, just a fact about the agent, so it carries none of the
+     .ctl fill-bar/on-state machinery. Same interaction gating as .dc-acts (CAS-421): painted at every deck
+     position, only tappable once the card is centred + open. */
+  .dc-learn{display:flex;align-items:center;gap:6px;margin-top:8px;padding:5px 10px;border-radius:999px;
+    border:1px solid var(--dcc,var(--line));background:transparent;color:var(--dcc,var(--dim));
+    font-size:10.5px;font-weight:700;cursor:pointer;width:fit-content;pointer-events:none}
+  .dc-learn svg{width:13px;height:13px;flex:0 0 auto}
+  .dc-learn b{text-transform:uppercase;letter-spacing:.4px}
+  .dc-learn span{color:var(--dim);font-weight:600}
+  .dcard.is-centre.is-active .dc-learn{pointer-events:auto}
   .dc-acts{display:flex;gap:6px;margin-top:auto;padding-top:9px;pointer-events:none}
   .dcard.is-centre.is-active .dc-acts,.dcard.new.is-centre .dc-acts{pointer-events:auto}
   .dcard.new .dc-in{border-style:dashed;border-color:#4c4270}
@@ -2260,6 +2270,34 @@
   .agcount{flex:0 0 auto;text-align:right;padding-left:4px}
   .agcount b{display:block;font-size:18px;font-weight:800;color:var(--ink);line-height:1.1}
   .agcount span{font-size:10px;color:var(--dim)}
+  /* CAS-441: same quiet-indicator language as the deck's .dc-learn, sized for the row. The Agents screen
+     has no coverflow focus state to gate on, so it is interactive from the moment it paints. */
+  .ag-learn{display:inline-flex;align-items:center;gap:5px;margin-top:6px;padding:4px 9px;border-radius:999px;
+    border:1px solid var(--dcc,var(--line));background:transparent;color:var(--dcc,var(--dim));
+    font-size:10.5px;font-weight:700;cursor:pointer;width:fit-content}
+  .ag-learn svg{width:12px;height:12px;flex:0 0 auto}
+  .ag-learn b{text-transform:uppercase;letter-spacing:.4px}
+  .ag-learn span{color:var(--dim);font-weight:600}
+  /* ---- CAS-441: Review panel — the agent's own profile, opened from either .dc-learn or .ag-learn.
+     Reuses the .uscreen/.usec/.ucard shell every other full-screen page (Agents/Lists/...) already uses, so
+     it costs no new page chrome — only the content inside is new. Profiling only: no advice, no Apply. ---- */
+  .revcard{padding:14px 16px}
+  .revbar{display:flex;height:10px;border-radius:999px;overflow:hidden;background:var(--panel2)}
+  .revbar i{display:block;height:100%}
+  .revlegwrap{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+  .revleg{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--dim)}
+  .revleg i{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .revleg b{color:var(--ink)}
+  .revsplit{display:flex;gap:18px;flex-wrap:wrap}
+  .revsplit>div{flex:1 1 140px;min-width:0}
+  .revcolh{font-size:11.5px;font-weight:700;margin:0 0 8px;text-transform:uppercase;letter-spacing:.4px}
+  .revcolh.lands{color:var(--green)}
+  .revcolh.misses{color:var(--amber)}
+  .chip.on.lands{background:rgba(72,199,142,.18);border-color:var(--green);color:#a7eccb;cursor:default}
+  .chip.on.misses{background:rgba(240,163,54,.18);border-color:var(--amber);color:#ffce8f;cursor:default}
+  .revsig p{font-size:13px;color:var(--dim);line-height:1.5;margin:0 0 8px}
+  .revsig p:last-child{margin-bottom:0}
+  .revsig b{color:var(--ink)}
   /* ---- CAS-428: Lists screen — same .ucard/.urow row language as Account, plus rename/delete affordances
      no other .urow row needs (a List is the one thing here you can rename or remove yourself). ---- */
   .listact{flex:0 0 auto;width:30px;height:30px;border-radius:8px;border:1px solid var(--line);
@@ -2796,6 +2834,14 @@
   <div class="uwrap" id="agentsBody"></div>
 </div>
 
+<!-- REVIEW (CAS-441, Phase 1 of the CAS-440 Learning Agents spike) — a manual, profiling-only read-out of
+     how one agent is landing for the user: their own watched verdicts on its films, what lands vs misses,
+     and their Notify/Lists signals. No advice, no Apply — that's Phase 2/3. Opened from the deck card's or
+     the Agents-row's LEARNING indicator. Body rendered by renderReviewScreen(). -->
+<div class="uscreen" id="reviewScreen" role="dialog" aria-modal="true" aria-label="Review this agent">
+  <div class="uwrap" id="reviewBody"></div>
+</div>
+
 <!-- GUEST → ACCOUNT (CAS-212) — the one offer, shown once on sign-in when this device is carrying
      something the account has not got. Body rendered by renderMigrate(). -->
 <div class="invite" id="migrateSheet" role="dialog" aria-modal="true" aria-label="Bring your work with you">
@@ -2944,6 +2990,10 @@ const ICON = {
   // CAS-382: a funnel — the platform-neutral mark for "narrow this list", drawn on the same 24px grid and
   // stroke weight as the rest of the set.
   filter:  svgIcon(`<path d="M4.2 5.4h15.6l-6 7.2v6l-3.6 1.8v-7.8z"/>`),
+  // CAS-441: radar rings round a still centre — "quietly reading you", not an alert glyph. Same grid/weight
+  // as the rest of the set; the centre dot is the one filled mark in ICON, deliberately, so it reads as a
+  // sensor rather than another outline badge.
+  learn:   svgIcon(`<circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>`),
 };
 // Journey order — Upcoming leads (a film reaches cinemas before any home window).
 // primaryStatus() takes the LAST window a film holds, so "upcoming" sitting first is safe:
@@ -6706,6 +6756,10 @@ function deckBuild(){
       <div class="dc-top"><span class="dc-icon">${c.icon}</span><span class="dc-type">${c.kind==="stream"?"Streaming":"Cinema"} agent</span></div>
       <div class="dc-name">${esc(c.name)}</div>
       <div class="dc-sub"></div>
+      <button type="button" class="dc-learn" data-act="review" aria-haspopup="dialog"
+          title="See how ${escA(c.name)} is learning from you"
+          aria-label="Review ${escA(c.name)} — see how it's learning from you">
+        ${ICON.learn}<b>Learning</b><span> · tap to review</span></button>
       <div class="dc-acts">
         <button class="ca-btn save" data-act="save" hidden>Save</button>
         <button class="ca-btn" data-act="edit">Edit</button>
@@ -6850,6 +6904,7 @@ deckStrip.addEventListener("click",e=>{
   if(act==="save") return saveCascadeEdits();
   if(act==="search") return onSearchIcon(card);
   if(act==="filter") return onFilterIcon(card, e.target.closest("button[data-act]"));
+  if(act==="review") return openReviewScreen(card.dataset.id);
   if(deckDragged) return;                            // that click was the end of a drag
   const i=deckCards().indexOf(card);
   deckUsed(deckDragged?"drag":"tap");
@@ -10834,6 +10889,10 @@ function renderAgentsScreen(){
         <span class="agtype">${c.kind==="stream"?"Streaming":"Cinema"} agent</span>
         <span class="agname">${esc(c.name)}</span>
         <span class="agsum">${esc(agentRowSummary(c))}</span>
+        <button type="button" class="ag-learn" onclick="openReviewScreen('${escA(c.id)}')" aria-haspopup="dialog"
+            title="See how ${escA(c.name)} is learning from you"
+            aria-label="Review ${escA(c.name)} — see how it's learning from you">
+          ${ICON.learn}<b>Learning</b><span> · tap to review</span></button>
       </span>
       <span class="agcount"><b>${shown}</b><span>film${shown===1?"":"s"}</span></span>
     </div>`;
@@ -10859,6 +10918,127 @@ window.openAgentsScreen=()=>{
 window.closeAgentsScreen=()=>{
   $("agentsScreen").classList.remove("open"); document.body.style.overflow="";
   $("agentsBtn").classList.remove("active"); $("agentsBtn").setAttribute("aria-expanded","false");
+};
+
+// ---- CAS-441: Review this agent (Phase 1 of the CAS-440 Learning Agents spike) ---------------------------
+// Profiling only, from the user's own behaviour on THIS agent's films — no advice, no Apply (Phase 2/3).
+// "This agent's films" is listedBy(m,c), the exact predicate the deck card / Agents row already count by
+// (CAS-279's invariant) — it deliberately keeps watched/blocked films in scope, which is what a verdict
+// distribution needs.
+const agentFilmSet = c => MOVIES.filter(m=>listedBy(m,c));
+const REVIEW_LOVE = new Set(["wow","liked","enjoyed"]);
+const REVIEW_MISS = new Set(["soso","disliked","notfor"]);
+function reviewVerdictCounts(films){
+  const counts={wow:0,liked:0,enjoyed:0,soso:0,disliked:0,notfor:0};
+  films.forEach(m=>{ const o=opinionOf(m.tmdb_id); if(counts.hasOwnProperty(o)) counts[o]++; });
+  return counts;
+}
+// WATCH_STEPS carries the 5-step watched ramp's own colour; Never isn't part of that scale (it's an exclusion
+// flag, not a watched verdict) so it rides on the same red the OPINIONS/actbtn.notfor state uses everywhere else.
+const REVIEW_STEPS = [...WATCH_STEPS, {key:"notfor", lbl:"Never", cd:"#d0453f"}];
+function reviewBarHTML(counts){
+  const total=Object.values(counts).reduce((a,b)=>a+b,0);
+  if(!total) return `<p class="unone">Nothing rated on this agent yet — the more you rate, notify and list, the sharper this gets.</p>`;
+  const bar=REVIEW_STEPS.map(s=>{
+    const n=counts[s.key]||0; if(!n) return "";
+    return `<i style="width:${n/total*100}%;background:${s.cd}" title="${s.lbl}: ${n}"></i>`;
+  }).join("");
+  const legend=REVIEW_STEPS.map(s=>{
+    const n=counts[s.key]||0; if(!n) return "";
+    return `<span class="revleg"><i style="background:${s.cd}"></i>${s.lbl} <b>${n}</b></span>`;
+  }).join("");
+  return `<div class="revbar">${bar}</div><div class="revlegwrap">${legend}</div>`;
+}
+// What lands vs misses: a flat tag per attribute (genres, score band, budget/scale, age rating, era) per
+// film, tallied separately across the loved set and the not-for-me set, top 4 each by frequency. Reuses the
+// same bands/thresholds the rest of the app already uses (VOTE_REF, BUDGET_BANDS, yearOf) so a tag here can
+// never disagree with what that band means anywhere else in Cascade.
+function reviewScoreTag(m){
+  const r=ratingOf(m); if(r==null) return null;
+  const hit=[...VOTE_REF].reverse().find(b=>r>=b[0]);
+  return hit ? `IMDb ${hit[0]}+` : "IMDb under 6";
+}
+function reviewBudgetTag(m){
+  if(!m.budget) return null;
+  const i=BUDGET_BANDS.findIndex((b,idx)=>idx>0 && budgetOK(m,idx));
+  return i>0 ? `${BUDGET_BANDS[i].label} budget` : null;
+}
+function reviewEraTag(m){
+  const y=parseInt(yearOf(m),10); if(!y) return null;
+  return `${Math.floor(y/10)*10}s`;
+}
+function reviewAttrTags(m){
+  const tags=(m.genres||[]).slice(0,2);
+  const sc=reviewScoreTag(m); if(sc) tags.push(sc);
+  const bd=reviewBudgetTag(m); if(bd) tags.push(bd);
+  if(m.age_rating) tags.push(m.age_rating);
+  const era=reviewEraTag(m); if(era) tags.push(era);
+  return tags;
+}
+function reviewTopTags(films,n=4){
+  const counts={};
+  films.forEach(m=>reviewAttrTags(m).forEach(t=>{ counts[t]=(counts[t]||0)+1; }));
+  return Object.entries(counts).sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0])).slice(0,n);
+}
+function reviewChipsHTML(tags, cls){
+  if(!tags.length) return `<p class="unone">Nothing here yet.</p>`;
+  return `<div class="chips">${tags.map(([t])=>`<span class="chip on ${cls}">${esc(t)}</span>`).join("")}</div>`;
+}
+// Signals: the Notify picks and List membership already on this agent's films — CAS-427 (one Streaming
+// option) and CAS-428 (Lists), read directly rather than duplicating either's own state.
+function reviewSignalsHTML(films){
+  const notifyN=films.filter(m=>(notify[m.tmdb_id]||{}).wins?.stream).length;
+  const notifyLine = notifyN
+    ? `<b>Notify:</b> Streaming picked on ${notifyN} film${notifyN===1?"":"s"}.`
+    : `<b>Notify:</b> Nothing picked yet on this agent's films.`;
+  const tallies={}; let listedFilms=0;
+  films.forEach(m=>{
+    const ls=listsFor(m.tmdb_id);
+    if(ls.length) listedFilms++;
+    ls.forEach(l=>{ (tallies[l.id]||(tallies[l.id]={name:l.name,n:0})).n++; });
+  });
+  const top=Object.values(tallies).sort((a,b)=>b.n-a.n).slice(0,2);
+  const listsLine = listedFilms
+    ? `<b>Lists:</b> ${listedFilms} of this agent's films ${listedFilms===1?"is":"are"} in your lists`
+      + (top.length ? ` — mostly ${top.map(t=>`${esc(t.name)} (${t.n})`).join(" and ")}.` : ".")
+    : `<b>Lists:</b> None of this agent's films are in a list yet.`;
+  return `<p>${notifyLine}</p><p>${listsLine}</p>`;
+}
+let reviewAgentId=null;
+function renderReviewScreen(){
+  const c=cascades.find(x=>x.id===reviewAgentId);
+  if(!c){ closeReviewScreen(); return; }
+  const films=agentFilmSet(c);
+  const counts=reviewVerdictCounts(films);
+  const rated=Object.values(counts).reduce((a,b)=>a+b,0);
+  const loved=films.filter(m=>REVIEW_LOVE.has(opinionOf(m.tmdb_id)));
+  const missed=films.filter(m=>REVIEW_MISS.has(opinionOf(m.tmdb_id)));
+  $("reviewBody").innerHTML=`
+    <div class="ostop"><button class="osback" type="button" onclick="closeReviewScreen()" aria-label="Back">←</button>
+      <h2 class="osh">Review · ${esc(c.name)}</h2></div>
+    <p class="ossub">How this agent is landing for you — from what you've watched, notified and listed.
+      Profiling only for now — the more you rate, notify and list, the sharper this gets.</p>
+    <div class="usec">Your verdicts${rated?` · ${rated} rated`:""}</div>
+    <div class="ucard revcard">${reviewBarHTML(counts)}</div>
+    <div class="usec">What lands vs what misses</div>
+    <div class="ucard revcard revsplit">
+      <div><h3 class="revcolh lands">Lands</h3>${reviewChipsHTML(reviewTopTags(loved),"lands")}</div>
+      <div><h3 class="revcolh misses">Misses</h3>${reviewChipsHTML(reviewTopTags(missed),"misses")}</div>
+    </div>
+    <div class="usec">Signals</div>
+    <div class="ucard revcard revsig">${reviewSignalsHTML(films)}</div>`;
+}
+window.openReviewScreen=(id)=>{
+  const c=cascades.find(x=>x.id===id); if(!c) return;
+  reviewAgentId=id;
+  renderReviewScreen();
+  $("reviewScreen").scrollTop=0;
+  $("reviewScreen").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("agent_review_opened",{id});
+};
+window.closeReviewScreen=()=>{
+  $("reviewScreen").classList.remove("open"); document.body.style.overflow="";
+  reviewAgentId=null;
 };
 
 // ---- CAS-428: Lists screen — create / rename / delete, mirroring the Agents screen's shell but with no
