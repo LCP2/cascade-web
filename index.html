@@ -3646,7 +3646,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 426, "commit": "ed377e4", "builtAt": "2026-08-11T05:58:20Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 427, "commit": "3558e60", "builtAt": "2026-08-11T06:05:43Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -10476,6 +10476,10 @@ const SHARP_STEPS = {
     },
     say: n => {
       const k=prefs.sub.size+prefs.store.size;      // CAS-251: both sections count as "your services"
+      // CAS-451: the top-menu spoke is a global settings screen with no single agent in view, so it quotes
+      // only the service count — a per-agent film tally here would be the same cross-agent mismatch CAS-377
+      // already kept off this screen's headline.
+      if(menuStepOn) return `<b>${k} service${k===1?"":"s"}</b>`;
       if(!k) return `No services named yet · ${flowCnt(n)}`;
       const total=onbCount();
       const mine=MOVIES.filter(m=>watchesFilm(m, onbApply()) && matchesServices(m)).length;
@@ -10496,11 +10500,12 @@ const SHARP_STEPS = {
           <span class="btmain">Only show films on my services</span><span class="btcheck">✓</span></button>
         <p class="osexplain">Your agent keeps watching everything either way — this only changes what
           the list shows you.</p>
-        ${(!menuStepOn && onbFlow.draft) ? `<p class="ossumline" id="onbStepSay">${SHARP_STEPS.services.say(stepCount(SHARP_STEPS.services))}</p>` : ""}`;
-      // CAS-377: the "N of your agent's M films" line only makes sense with ONE agent open (onboarding or a
-      // Briefing draft) — the top-menu's own spoke is a global settings screen with no single agent in view,
-      // so it leaves the line out rather than quoting whichever agent's draft happens to still be sitting in
-      // onbFlow (draft is only cleared by the next flowStart/briefOpen, so it can be stale here).
+        ${(menuStepOn || onbFlow.draft) ? `<p class="ossumline" id="onbStepSay">${SHARP_STEPS.services.say(stepCount(SHARP_STEPS.services))}</p>` : ""}`;
+      // CAS-377/CAS-451: the "N of your agent's M films" clause only makes sense with ONE agent open
+      // (onboarding or a Briefing draft) — the top-menu's own spoke is a global settings screen with no
+      // single agent in view, so say() above drops the film clause there rather than quoting whichever
+      // agent's draft happens to still be sitting in onbFlow (draft is only cleared by the next
+      // flowStart/briefOpen, so it can be stale here). The line itself still prints, just service-count only.
     },
     wire(){
       // Each section draws itself, so the two are the same control twice rather than two that can drift.
