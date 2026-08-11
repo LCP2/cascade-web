@@ -194,6 +194,28 @@
      sat on top and ate every click and tap in the panel — sign-in from the front door was unusable. Every
      other .modal only ever opens over the plain listing, so this is scoped to #authModal, not the class. */
   #authModal.open{z-index:81}
+  /* CAS-437: the public film page. Same phone-width-capped full page as .modal, but its own z-index so it
+     sits over the splash (80) too — a share link has to show the film regardless of what boot put up. */
+  .filmpage{position:fixed;top:0;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;
+    background:var(--bg);z-index:85;display:none;overflow-y:auto;padding:0 16px 60px}
+  .filmpage.open{display:block}
+  .fpclose{position:sticky;top:0;background:var(--bg);display:flex;justify-content:flex-end;
+    padding:14px 0 6px;z-index:2}
+  .fpposter{width:100%;max-width:220px;margin:0 auto 14px;display:block;border-radius:10px;
+    background:var(--panel2)}
+  .fptitle{font-size:21px;font-weight:800;text-align:center;margin:0 0 4px}
+  .fpmeta{font-size:13px;color:var(--dim);text-align:center;margin:0 0 14px}
+  .fpcta{display:block;width:100%;background:var(--accentdeep);color:#fff;border:none;border-radius:11px;
+    padding:14px;font-weight:800;font-size:15.5px;cursor:pointer;margin:20px 0 10px}
+  .fpfoot{font-size:12px;color:var(--faint);text-align:center;margin:0 0 20px}
+  /* .synopsis clamps to 3 lines and .wtw hides by default — both card-list space-savers this standalone
+     page doesn't need; it's the one place the full synopsis and the where-to-watch list are always open. */
+  .filmpage .synopsis{-webkit-line-clamp:unset;display:block;margin-bottom:14px}
+  /* .windows packs its dates as adjacent no-space inline spans, so a run that doesn't fit on one line has
+     nowhere to wrap — the card gets away with it on a narrower row; this page's wider one still can't fit
+     every date, so it scrolls sideways instead of the card's overflow:hidden silently cutting it off. */
+  .filmpage .wtw{display:block;margin-bottom:14px;overflow-x:auto}
+  .filmpage .mrow{margin-bottom:8px}
   .modalhead{position:sticky;top:0;background:var(--bg);display:flex;justify-content:space-between;align-items:center;
     padding:14px 0 12px;border-bottom:1px solid var(--line);margin-bottom:6px;z-index:2}
   .modalhead h3{margin:0;font-size:17px;font-weight:800}
@@ -2713,6 +2735,12 @@
   </div>
 </div>
 
+<!-- CAS-437: the public per-film page a share link lands on — title/year/poster/synopsis/where-to-watch/
+     scores/awards, read straight from the same MOVIES the app already has, plus a "Get Cascade" door into
+     the signup flow. Sits above the splash (z-index 85 > 80) so it shows whatever else the boot decided to
+     put up behind it, and closing it reveals that page rather than a dead end. -->
+<div class="filmpage" id="filmPage" role="dialog" aria-modal="true" aria-label="Film"></div>
+
 <!-- THE SIGNUP FLOW (CAS-188) — one frame for every step of it, from "what's your priority?" through to
      notify settings. The body per step is rendered by renderOnbStep(); progress, summary and counts all
      come from the live engine. Individual steps stay previewable in isolation at ?step=<name>.
@@ -2823,6 +2851,7 @@
 <script>
 const MOVIES = __MOVIES_JSON__;
 const TODAY  = "__TODAY__";
+const DEFAULT_TITLE = document.title;   // CAS-437: restored when the film page closes
 
 const PVOD_MIN = 19.99, RENTAL_MAX = 9.99, OPENING_WEEK_DAYS = 7;
 // CAS-227: how long after opening a film may still be presumed to be ON a screen. Nobody publishes the date a
@@ -4489,9 +4518,10 @@ function shareTextFor(m){
   const where = isEstimated(m) ? "" : (STATUS_LABEL[primaryStatus(m)]||"");
   return `${m.title}${yr?` (${yr})`:""}${where?` — ${where}`:""}`;
 }
-// The film's own public page. jw_link is the one we already hold and already credit; TMDB is the fallback,
-// and it is a real permanent page for the title rather than a link back into an app with no per-film route.
-const shareUrlFor = m => m.jw_link || `https://www.themoviedb.org/movie/${m.tmdb_id}`;
+// CAS-437: the film's own page is now OURS — a Cascade URL, not JustWatch's or TMDB's. A hash route on the
+// same static index.html (GitHub Pages serves one file; no server-side routing to stand up), so the link is
+// real and permanent without a build-time page per title. #/film/<id> is read at boot by openFilmPage().
+const shareUrlFor = m => `${location.origin}${location.pathname}#/film/${m.tmdb_id}`;
 window.shareFilm = async id => {
   const m=MOVIES.find(x=>x.tmdb_id===id); if(!m) return;
   const url=shareUrlFor(m), text=shareTextFor(m);
@@ -4512,6 +4542,76 @@ window.shareFilm = async id => {
   }
   say("Couldn't copy");
 };
+// ---- CAS-437: the public film page a share link opens ---------------------------------------------------
+// What a person who has never opened Cascade is entitled to see: the film, honestly — the same facts the
+// card shows (synopsis, where to watch, scores, awards), read from the same MOVIES the app already loaded.
+// No card controls (Notify/Lists/Watched) — those act on an account this visitor may not have yet; the one
+// action here is the door into getting one.
+function filmPageWhereHTML(m){
+  if(isEstimated(m)) return estimateHTML(m);
+  const offers=dedupOffers(m.offers||[]);
+  if(!offers.length) return "";
+  return `<div class="wtw">${windowsLineHTML(m)}${offers.map(o=>`<div class="wtwrow">
+      <span class="svc"><span class="tt ${o.type}">${TYPE_LABEL[o.type]||o.type}</span>${svcName(o.service)}</span>
+      <span class="off">${o.price!=null?"$"+o.price.toFixed(2):""}${o.fmt?" · "+o.fmt:""}</span></div>`).join("")}</div>`;
+}
+function filmPageHTML(m){
+  const yr=yearOf(m);
+  const cert = m.age_rating ? `<span class="cert ${MATURE.has(m.age_rating)?'mature':''}">${m.age_rating}</span>` : "";
+  const cult = m.language ? langName(m.language) : "";
+  const genres = (m.genres||[]).join(", ");
+  const poster = m.poster ? `<img class="fpposter" src="https://image.tmdb.org/t/p/w342${esc(m.poster)}" alt="">` : "";
+  const syn = m.synopsis ? `<p class="synopsis">${esc(m.synopsis)}</p>` : "";
+  return `
+    <div class="fpclose"><button type="button" class="ebtn" onclick="closeFilmPage()"
+        title="Close" aria-label="Close">✕</button></div>
+    ${poster}
+    <div class="fptitle">${esc(m.title)} ${cert}</div>
+    <div class="fpmeta">${[yr,genres,cult].filter(Boolean).join(" · ")}</div>
+    ${syn}
+    ${filmPageWhereHTML(m)}
+    <div class="mrow r-scores">${scoresRowHTML(m)}</div>
+    <div class="mrow r-awards">${cinemaReleaseChip(m)}${awardChips(m)}</div>
+    <button type="button" class="fpcta" onclick="filmPageCta()">Get Cascade — find more like this</button>
+    <div class="fpfoot">Cascade tracks cinema, rental and streaming for you — sign up to build your own.</div>`;
+}
+// Hash-routed so the same static index.html (there is no per-film build output, GitHub Pages serves the
+// one file) is a real, permanent, bookmarkable page for the film — see shareUrlFor.
+const FILM_ROUTE_RE=/^#\/film\/(\d+)$/;
+const filmRouteId=()=>{ const m=FILM_ROUTE_RE.exec(location.hash); return m ? +m[1] : null; };
+function openFilmPage(id){
+  const m=MOVIES.find(x=>x.tmdb_id===id);
+  const el=$("filmPage");
+  el.innerHTML = m ? filmPageHTML(m)
+    : `<div class="fpclose"><button type="button" class="ebtn" onclick="closeFilmPage()">✕</button></div>
+       <div class="fptitle">Film not found</div>
+       <div class="fpmeta">This title isn't in Cascade's catalogue right now.</div>`;
+  el.classList.add("open"); document.body.style.overflow="hidden";
+  if(m) document.title = `${m.title} — Cascade`;
+  logEvent("film_page_shown",{id, found:!!m});
+}
+window.closeFilmPage=()=>{
+  $("filmPage").classList.remove("open");
+  history.replaceState(null,"",location.pathname+location.search);   // drop #/film/<id> so a refresh doesn't reopen it
+  if(!document.querySelector(".modal.open,.filmpage.open")) document.body.style.overflow="";
+  document.title = DEFAULT_TITLE;
+};
+// The page's one action: straight into signup, same as the splash's own CTA (CAS-188's flowStart), not a
+// second door that still has to be found and tapped.
+window.filmPageCta=()=>{
+  logEvent("film_page_cta");
+  closeFilmPage();
+  $("splash").classList.remove("open");   // mirrors splashGo — don't leave it stacked open underneath
+  flowStart();
+};
+// A hash-only navigation (another film link tapped from an already-open tab, or Back/Forward between two
+// share links) never reloads the page, so the boot-time check below only ever catches the FIRST one. This
+// is what makes every later one work too.
+window.addEventListener("hashchange", ()=>{
+  const id=filmRouteId();
+  if(id!=null) openFilmPage(id);
+  else if($("filmPage").classList.contains("open")) closeFilmPage();
+});
 function trailersHTML(m){
   const t=(m.trailers||[]).slice(0,4);
   const body = t.length
@@ -12561,6 +12661,11 @@ const openedShared = openSharedFromURL();
 // so the screen can be reviewed on its own before Lee wires the sequence.
 if(!openedShared && previewStep && openPreviewStep(previewStep, previewAgent)){/* previewing a single step */}
 else if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
+// CAS-437: a film share link's own entry point. Opens OVER whatever the rest of boot just decided —
+// a recipient arrived to see THIS film, not to resume whoever else's session this browser was mid-boot on —
+// and its own higher z-index (85) means it wins the stack without having to touch any of the above.
+const filmId = filmRouteId();
+if(filmId!=null) openFilmPage(filmId);
 // CAS-287: two of the three arrival banners are gone. "Welcome back, N cascades are still watching" and
 // "Cascade found N films since you last looked" were both greetings thrown over the listing at the exact
 // moment you arrived to read it — and both said something the deck and the list say better, permanently,
