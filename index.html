@@ -3496,7 +3496,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 414, "commit": "d1e8a87", "builtAt": "2026-08-11T03:37:19Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 415, "commit": "45fbd00", "builtAt": "2026-08-11T03:42:36Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -4786,14 +4786,6 @@ const filmOptOn = (id, opt) => {
 // they were — agent-level settings (drawWatchLanes, untouched) — they just never described somewhere to
 // watch, so this ladder starts one rung later, at the first one that does.
 const WATCH_LEVEL_KEYS = ["in_cinema", "premium", "rent", "stream"];
-// The three streaming priority tags. Not a window of their own — AGENT_WINDOWS still has exactly one `stream`
-// entry — this is a personal "how much do I want this" tag layered on top of it, so it lives here rather than
-// in the agent's own settings: an agent has no opinion about how badly you want a film once it streams.
-const STREAM_TIERS = [
-  {key:"must", label:"Streaming — Must Watch"},
-  {key:"b",    label:"Streaming — B-tier"},
-  {key:"c",    label:"Streaming — C-tier"},
-];
 // The rows the Watch panel offers for this film: only the levels this cascade is actually configured to
 // track (CAS-280's honesty rule, carried over), in ladder order, each carrying whether the film has already
 // reached or passed it. Unlike the old Notify list, a reached/passed level is not dropped — it is shown,
@@ -4822,30 +4814,21 @@ function watchIsCurrent(id){
   return watchLevelsFor(id).some(l=>WINDOW_RUNG[l.key]===rung && filmOptOn(id,l));
 }
 // ---- CAS-382: the agent's own Filter control ------------------------------------------------------------
-// The same five priorities the Watch panel above lets you set on ONE film (premium/rent's own levels, plus
-// the three streaming tiers), offered here as a multi-select DISPLAY filter instead — "show me only the
-// films I've marked Standard Rent" rather than "mark this one film Standard Rent". Reusing filmOptOn/
-// streamTier rather than a parallel field means a film's filter membership can never drift from what its own
-// Watch panel actually says about it.
+// The same three levels the Watch panel above lets you set on ONE film, offered here as a multi-select
+// DISPLAY filter instead — "show me only the films I've marked Standard Rent" rather than "mark this one
+// film Standard Rent". Reusing filmOptOn rather than a parallel field means a film's filter membership can
+// never drift from what its own Watch panel actually says about it. CAS-435: aligned to the same set as the
+// revised Notify control (CAS-427) — one Streaming level, no must/b/c sub-tiers.
 const FILTER_TIERS = [
   {key:"premium", label:"Premium",       cd:"var(--purple)"},
   {key:"rent",    label:"Standard Rent", cd:"var(--blue)"},
-  ...STREAM_TIERS.map(t=>({key:t.key, label:t.label, cd:"var(--green)"})),
+  {key:"stream",  label:"Streaming",     cd:"var(--green)"},
 ];
-// Does this film currently carry tier `key`? Premium/Rent read the film's own ticked watch level; the three
-// streaming tiers additionally need Streaming itself ticked AND that tier chosen. CAS-427 removed the per-film
-// tier picker from the Notify panel (streamTier is now only ever set to its "must" default, by toggleFilmOpt),
-// so in practice only Must Watch is reachable here any more — this control (CAS-382) is out of that ticket's
-// scope and untouched, but it inherits the consequence.
+// Does this film currently carry tier `key`? Reads the film's own ticked watch level for that key directly —
+// no sub-tier match for Streaming any more (CAS-435).
 function filmHasWatchTier(id, key){
-  const levels=watchLevelsFor(id);
-  if(key==="premium" || key==="rent"){
-    const l=levels.find(x=>x.key===key);
-    return !!(l && filmOptOn(id,l));
-  }
-  const l=levels.find(x=>x.key==="stream");
-  if(!l || !filmOptOn(id,l)) return false;
-  return (entryFor(id).streamTier||"must")===key;
+  const l=watchLevelsFor(id).find(x=>x.key===key);
+  return !!(l && filmOptOn(id,l));
 }
 // The chip's summary. CAS-427: counted over the options this agent has actually enabled Notify for — a level
 // the agent only Lists (never asked this control about) is not one of the "N of M" the chip can honestly cite,
