@@ -43,6 +43,21 @@ test("count integrity: every reported count is the size of its own matching set"
   }
 });
 
+// ---- 1b. EDIT SCREEN MATCHES THE LISTING (CAS-446) ------------------------------------------------------
+// The Edit-Agent screen's "N films match right now" (onbShownCount, via stepCount()'s mirror + CTA) has to
+// quote the same number as the deck card and the listing (listedCount) — what the agent will actually LIST
+// right now — not the broader watch-ahead figure. A streaming agent diverges when it watches a window ahead
+// of what it lists (e.g. watching Rent+Stream but listing Stream only); a cinema agent never diverges
+// because cinema is the first window in CASCADE order, so nothing sits "ahead" of it to inflate the count.
+test("edit screen matches the listing: onbShownCount equals listedCount, for every lane", () => {
+  for(const { kind, s, label } of CASES){
+    pickInLane(E, kind, s.key);
+    const d = E.onbApply();
+    assert.equal(E.onbShownCount(), E.listedCount(d),
+      `${label}: Edit says ${E.onbShownCount()}, the listing has ${E.listedCount(d)}`);
+  }
+});
+
 // ---- 2. ONE RECIPE, ONE ANSWER (CAS-221) ----------------------------------------------------------------
 // The pick-agent card and the flow are two views of the same agent, so they are two printings of one number.
 // This is the invariant CAS-221 restored; it is here so it cannot rot again.
