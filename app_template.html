@@ -388,9 +388,20 @@
   .trailers{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
   .trailers::-webkit-scrollbar{display:none}
   .trailer{position:relative;flex-shrink:0;width:132px;height:76px;border-radius:9px;border:1px solid var(--line);
-    background:var(--panel2) center/cover no-repeat;display:grid;place-items:center;text-decoration:none}
+    background:var(--panel2) center/cover no-repeat;display:grid;place-items:center;text-decoration:none;
+    padding:0;cursor:pointer;font:inherit}
   .trailer .play{width:30px;height:30px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center;font-size:12px;border:1px solid rgba(255,255,255,.45)}
   .notrailer{font-size:12px;color:var(--faint)}
+  /* CAS-438: the in-app video window — an embedded player up top (16:9, via padding-top so it reflows with
+     card width) and the film's other videos below it as the same thumbnail tile the card trailers use,
+     just wrapping instead of scrolling. Swapping the active one only ever changes vidFrame's src. */
+  .vidwrap{position:relative;width:100%;padding-top:56.25%;background:#000;border-radius:10px;overflow:hidden;margin-bottom:14px}
+  .vidwrap iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+  .vidlist{display:flex;flex-wrap:wrap;gap:8px}
+  .vidthumb{position:relative;width:calc(50% - 4px);height:76px;border-radius:9px;border:1px solid var(--line);
+    background:var(--panel2) center/cover no-repeat;display:grid;place-items:center;padding:0;cursor:pointer;font:inherit}
+  .vidthumb.active{border-color:var(--accent)}
+  .vidthumb .play{width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center;font-size:11px;border:1px solid rgba(255,255,255,.45)}
   /* CAS-284: share, in the opened card. Quiet — it is an offer, not one of the decisions the card is asking
      you to make — and a full-height target rather than a bare glyph. */
   .exshare{margin-top:12px}
@@ -2662,6 +2673,15 @@
   </div>
 </div>
 
+<!-- VIDEO WINDOW modal (CAS-438) — tapping a trailer plays it in here instead of leaving for YouTube.
+     The chosen video plays embedded at the top; the film's other videos are listed below and swap into
+     the same player when tapped. -->
+<div class="modal" id="videoModal">
+  <div class="modalhead"><h3>Videos</h3><button class="donebtn" id="videoModalClose">Done</button></div>
+  <div class="vidwrap"><iframe id="vidFrame" src="" title="Video player" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>
+  <div class="vidlist" id="vidList"></div>
+</div>
+
 </div>
 
 <!-- ALERTS drawer -->
@@ -4615,10 +4635,38 @@ window.addEventListener("hashchange", ()=>{
 function trailersHTML(m){
   const t=(m.trailers||[]).slice(0,4);
   const body = t.length
-    ? `<div class="trailers">`+t.map(k=>`<a class="trailer" href="https://www.youtube.com/watch?v=${k}" target="_blank" rel="noopener" style="background-image:url(https://img.youtube.com/vi/${k}/mqdefault.jpg)"><span class="play">▶</span></a>`).join("")+`</div>`
+    ? `<div class="trailers">`+t.map(k=>`<button type="button" class="trailer" onclick="openVideoModal(${m.tmdb_id},'${k}')"
+        style="background-image:url(https://img.youtube.com/vi/${k}/mqdefault.jpg)" aria-label="Play trailer"><span class="play">▶</span></button>`).join("")+`</div>`
     : `<div class="notrailer">No trailer available yet.</div>`;
   return `<div class="exhead">Trailers</div>${body}`;
 }
+// CAS-438: the in-app video window. Opened from a trailer thumbnail, it plays the tapped video embedded
+// (youtube-nocookie, so no tracking cookie until playback starts) and lists the rest of the film's videos
+// below it — tapping one just swaps vidFrame's src, same window, same modal. videoModalVids holds the
+// open film's video keys so the list can re-render with the new active tile without re-reading MOVIES.
+let videoModalVids=[];
+function videoListHTML(vids, activeKey){
+  return vids.map(k=>`<button type="button" class="vidthumb${k===activeKey?" active":""}" onclick="playVideo('${k}')"
+    style="background-image:url(https://img.youtube.com/vi/${k}/mqdefault.jpg)" aria-label="Play video"><span class="play">▶</span></button>`).join("");
+}
+window.playVideo=key=>{
+  $("vidFrame").src=`https://www.youtube-nocookie.com/embed/${key}?autoplay=1`;
+  $("vidList").innerHTML=videoListHTML(videoModalVids, key);
+};
+window.openVideoModal=(id,key)=>{
+  const m=MOVIES.find(x=>x.tmdb_id===id);
+  const vids=(m&&m.trailers)||[];
+  if(!vids.length) return;
+  videoModalVids=vids;
+  playVideo(vids.includes(key)?key:vids[0]);
+  openModal($("videoModal"));
+  logEvent("video_opened",{id});
+};
+window.closeVideoModal=()=>{
+  closeModal($("videoModal"));
+  $("vidFrame").src="";   // stop playback — an emptied src beats a paused iframe still holding the stream open
+};
+$("videoModalClose").onclick=closeVideoModal;
 // ---- the Pick (the megaphone from CAS-67/72, given its three states in CAS-100) --
 // One button, on the card and on every Found row, carrying two things at once: whether the film is on your
 // Found list, and WHO put it there. It cycles on the spot, wears aria-pressed, and says what a tap will do —
