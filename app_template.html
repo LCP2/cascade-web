@@ -2315,6 +2315,14 @@
   .listnewbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   /* The film list a group opens into — the card's own poster row, kept small. */
   .ulist{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+  /* CAS-443: Your Movies' Watched group, sectioned by verdict — a coloured dot (the verdict's own ramp
+     colour) + label + count, same small language as .revleg's per-verdict legend. */
+  .ymsec{margin-top:16px}
+  .ymsec:first-child{margin-top:0}
+  .ymsech{display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;color:var(--dim);
+    margin:0 2px 8px}
+  .ymsech i{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+  .ymsech b{color:var(--ink)}
   .urowfilm{display:flex;gap:10px;align-items:center;background:var(--panel2);border:1px solid var(--line);
     border-radius:12px;padding:9px 10px}
   .ufposter{width:40px;height:60px;border-radius:7px;background:#0c0f14 center/cover no-repeat;flex:0 0 auto}
@@ -4897,6 +4905,11 @@ const WATCH_STEPS = [
   {key:"soso",     ico:"soso",    lbl:"So-so",       cd:"#8a93a6"},
   {key:"disliked", ico:"dislike", lbl:"Disliked",    cd:"#e08a3c"},
 ];
+// CAS-443: hoisted here (next to WATCH_STEPS, its only dependency) rather than left by the Review panel far
+// below, so the Your Movies Watched-section renderer can share the same ramp + Never/notfor step instead of
+// re-deriving it. Never isn't part of the watched ramp's own colour scale (it's an exclusion flag, not a
+// watched verdict) so it rides on the same red the OPINIONS/actbtn.notfor state uses everywhere else.
+const REVIEW_STEPS = [...WATCH_STEPS, {key:"notfor", lbl:"Never", cd:"#d0453f"}];
 function watchChipHTML(id){
   const cur=opinionOf(id), i=WATCH_STEPS.findIndex(s=>s.key===cur), s=WATCH_STEPS[i];
   // CAS-278: WATCH_STEPS is best-first now, so the raw index runs the wrong way — read straight it would
@@ -10766,13 +10779,15 @@ const YM_GROUPS = [
    sub:"films your agents are watching for you",
    ids:()=>ymIds(()=>[...found].filter(id=>!opinionOf(id)))},
   {key:"watched", icon:"✅", label:"Watched",
-   sub:"liked / so-so / didn't like",
+   sub:"by verdict, best first",
    ids:()=>ymIds(()=>watched)},
   {key:"notfor",  icon:"🚫", label:"Don't want to watch",
    sub:"films you've set aside",
    ids:()=>ymIds(()=>blocked)},
 ];
-const YM_SAID = {liked:"👍 Liked", soso:"😐 So-so", disliked:"👎 Didn't like", notfor:"🚫 Not for me"};
+// CAS-443: was a stale, separately-maintained label set (Liked/So-so/Didn't like/Not for me) that had drifted
+// from the current verdict taxonomy. Derives from REVIEW_STEPS instead, so it can never drift again.
+const YM_SAID = Object.fromEntries(REVIEW_STEPS.map(s=>[s.key, s.lbl]));
 function ymFilmHTML(id){
   const m=ymFilm(id); if(!m) return "";
   const bg=m.poster?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
@@ -10784,6 +10799,19 @@ function ymFilmHTML(id){
       <div class="ufsub">${STATUS_LABEL[primaryStatus(m)]||""}${said?` · ${said}`:""}</div>
     </div></div>`;
 }
+// CAS-443: the Watched group, sectioned by verdict in ramp order best-first (REVIEW_STEPS — Wow through
+// Disliked, then Never/notfor last). A verdict with no films is skipped rather than drawn as an empty header.
+function ymWatchedSectionsHTML(ids){
+  return REVIEW_STEPS.map(s=>{
+    const secIds=ids.filter(id=>opinionOf(id)===s.key);
+    if(!secIds.length) return "";
+    return `<div class="ymsec">
+      <div class="ymsech"><i style="background:${s.cd}"></i>${s.lbl} <b>${secIds.length}</b></div>
+      <div class="ulist">${secIds.slice(0,40).map(ymFilmHTML).join("")}</div>${
+        secIds.length>40 ? `<p class="unone" style="margin-top:9px">…and ${secIds.length-40} more.</p>` : ""}
+    </div>`;
+  }).join("");
+}
 function renderYourMovies(){
   const grp=YM_GROUPS.map(g=>{
     const ids=g.ids(), open=ymOpen===g.key;
@@ -10793,8 +10821,9 @@ function renderYourMovies(){
           <span class="ussub">${ids.length} ${ids.length===1?"film":"films"} · ${g.sub}</span></span>
         <span class="uchev">${open?"⌄":"›"}</span></button>
       ${open ? `<div class="ucardpad">${ids.length
-        ? `<div class="ulist">${ids.slice(0,40).map(ymFilmHTML).join("")}</div>${
-            ids.length>40 ? `<p class="unone" style="margin-top:9px">…and ${ids.length-40} more.</p>` : ""}`
+        ? (g.key==="watched" ? ymWatchedSectionsHTML(ids)
+            : `<div class="ulist">${ids.slice(0,40).map(ymFilmHTML).join("")}</div>${
+                ids.length>40 ? `<p class="unone" style="margin-top:9px">…and ${ids.length-40} more.</p>` : ""}`)
         : `<p class="unone">Nothing here yet.</p>`}</div>` : ""}`;
   }).join("");
   $("yourMoviesBody").innerHTML=`
@@ -10933,9 +10962,6 @@ function reviewVerdictCounts(films){
   films.forEach(m=>{ const o=opinionOf(m.tmdb_id); if(counts.hasOwnProperty(o)) counts[o]++; });
   return counts;
 }
-// WATCH_STEPS carries the 5-step watched ramp's own colour; Never isn't part of that scale (it's an exclusion
-// flag, not a watched verdict) so it rides on the same red the OPINIONS/actbtn.notfor state uses everywhere else.
-const REVIEW_STEPS = [...WATCH_STEPS, {key:"notfor", lbl:"Never", cd:"#d0453f"}];
 function reviewBarHTML(counts){
   const total=Object.values(counts).reduce((a,b)=>a+b,0);
   if(!total) return `<p class="unone">Nothing rated on this agent yet — the more you rate, notify and list, the sharper this gets.</p>`;
