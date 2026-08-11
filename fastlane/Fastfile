@@ -19,6 +19,18 @@ platform :ios do
       build_number: (latest_build + 1).to_s
     )
 
+    # CAS-456: xcodebuild archive tries automatic signing management first, which needs an
+    # interactive Apple ID session that doesn't exist on a GitHub-hosted runner. Force manual
+    # signing with the cert/profile the workflow already imported into the CI keychain.
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      team_id: ENV["APPLE_TEAM_ID"],
+      code_sign_identity: "iPhone Distribution",
+      profile_name: ENV["IOS_PROVISIONING_PROFILE_SPECIFIER"],
+      targets: "App",
+      path: "../ios/App/App.xcodeproj"
+    )
+
     build_app(
       project: "../ios/App/App.xcodeproj",
       scheme: "App",
