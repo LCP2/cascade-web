@@ -287,8 +287,8 @@
      lozenge, so the column now ends where the ticket asks it to. */
   /* CAS-323: 112px, not 124 (~10% down), and the grid itself overhangs .cbody's left padding by that same
      13px (margin-left/width below) so the poster sits flush against the card's left edge — trimming the
-     gutter without touching .cbody's padding, which .expand (credits/trailers/share) still relies on for
-     its own left inset. Both the poster shrink and the reclaimed gutter go to the minmax(0,1fr) text column. */
+     gutter without touching .cbody's own padding. Both the poster shrink and the reclaimed gutter go to
+     the minmax(0,1fr) text column. */
   /* CAS-353: awards moves back under the IMDb line (the text column only), not full width. CAS-276 spread it
      across both columns because a 195px column wrapped three chips to three lines — but CAS-323's narrower
      tombstone already gave that column back to the text side, and the review screenshot showed the full-width
@@ -348,14 +348,21 @@
   .synopsis{grid-area:syn;font-size:13px;color:#c8d0da;line-height:1.38;margin:0;
     display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
   .card.expanded .synopsis{-webkit-line-clamp:unset;display:block}
-  .expand{max-height:0;opacity:0;overflow:hidden;transition:max-height .4s ease,opacity .3s ease}
+  /* CAS-436: .expand now renders as its own band below .cfoot (a sibling of .cbody/.cfoot, not nested in
+     .cbody), so it carries its own horizontal inset matching theirs instead of inheriting .cbody's padding. */
+  .expand{max-height:0;opacity:0;overflow:hidden;padding:0 13px 13px;transition:max-height .4s ease,opacity .3s ease}
   .card.expanded .expand{max-height:560px;opacity:1;margin-top:12px}
   .exhead{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--faint);font-weight:700;margin-bottom:8px}
   .credits{margin-bottom:12px}
-  .credit{font-size:12.5px;color:#c4ccd6;line-height:1.5}
+  /* CAS-436: Awards/Director/Cast are one label->value grid — .clbl is a fixed column, .cval takes the
+     rest, so a long value (cast list, award lines) wraps within its own column with a hanging indent
+     instead of wrapping back under the label. */
+  .credit{display:flex;align-items:flex-start;font-size:12.5px;color:#c4ccd6;line-height:1.5}
   .credit+.credit{margin-top:3px}
-  .credit .clbl{display:inline-block;box-sizing:border-box;min-width:70px;padding-right:8px;font-size:10.5px;
-    text-transform:uppercase;letter-spacing:.4px;color:var(--faint);font-weight:700;vertical-align:baseline}
+  .credit.awardsrow+.credit{margin-top:14px}
+  .credit .clbl{flex:0 0 70px;box-sizing:border-box;padding-right:8px;font-size:10.5px;
+    text-transform:uppercase;letter-spacing:.4px;color:var(--faint);font-weight:700}
+  .credit .cval{flex:1;min-width:0}
   .trailers{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
   .trailers::-webkit-scrollbar{display:none}
   .trailer{position:relative;flex-shrink:0;width:132px;height:76px;border-radius:9px;border:1px solid var(--line);
@@ -614,8 +621,9 @@
   /* CAS-360: a claim about the film's release history (had an AU cinema release), not an accolade — its
      own colour rather than borrowing gold from the awards chips beside it. */
   .m.cinema{border-color:rgba(122,162,255,.4);color:#c3cdf2}
-  .awx{display:none;margin-top:11px;padding-top:10px;border-top:1px solid var(--line);flex-direction:column;gap:5px}
-  .card.expanded .awx{display:flex}
+  /* CAS-436: .awx is now the .cval of the Awards .credit row (see above) — its own show/hide and spacing
+     rules are inherited from .credit/.expand, so it only needs its internal line layout. */
+  .awx{display:flex;flex-direction:column;gap:5px}
   .awx .l{display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:var(--dim)}
   .awx .l b{color:var(--ink);font-weight:700}
   /* Scale badge — CAS-276 moves it INTO the awards row, which is what this comment always claimed it was
@@ -3496,7 +3504,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 415, "commit": "45fbd00", "builtAt": "2026-08-11T03:42:36Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 416, "commit": "2f47901", "builtAt": "2026-08-11T03:50:10Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -3928,25 +3936,28 @@ function cinemaReleaseChip(m){
 }
 // The breakdown, on the opened card. Same numbers, said in full — nothing here that isn't in the
 // film's own award line.
+// CAS-436: returns a labelled `.credit` row (like Director/Cast) rather than a bare block, so Awards joins
+// the same label->value list instead of sitting above it as an unrelated element.
 function awardsBreakdownHTML(m){
   const list=m.oscar_detail;
+  let l;
   if(Array.isArray(list) && list.length){
     const sorted=[...list].sort((a,b)=>(a.result==="Won"?0:1)-(b.result==="Won"?0:1));
-    const l=sorted.map(o=>`<div class="l">${o.result==="Won"?"🏆":"✦"} <span>`+
+    l=sorted.map(o=>`<div class="l">${o.result==="Won"?"🏆":"✦"} <span>`+
       `${o.result==="Won"?"<b>Won</b>":"Nominated"} — <b>${esc(o.category)}</b>`+
       `${o.person?` (${esc(o.person)})`:""}</span></div>`);
-    return `<div class="awx">${l.join("")}</div>`;
+  } else {
+    const a=parseAwards(m.award_text);
+    if(!a) return "";
+    l=[];
+    if(a.oscW) l.push(`<div class="l">🏆 <span><b>${a.oscW}</b> Academy Award${a.oscW>1?"s":""} won</span></div>`);
+    if(a.oscN) l.push(`<div class="l">✦ <span>Nominated for <b>${a.oscN}</b> Academy Award${a.oscN>1?"s":""}</span></div>`);
+    if(a.wins!=null && a.noms!=null)
+      l.push(`<div class="l">🏅 <span><b>${a.wins}</b> win${a.wins>1?"s":""} &amp; <b>${a.noms}</b> nomination${a.noms>1?"s":""} across all bodies</span></div>`);
+    else if(a.wins!=null) l.push(`<div class="l">🏅 <span><b>${a.wins}</b> win${a.wins>1?"s":""} across all bodies</span></div>`);
+    else if(a.noms!=null) l.push(`<div class="l">✦ <span><b>${a.noms}</b> nomination${a.noms>1?"s":""} across all bodies</span></div>`);
   }
-  const a=parseAwards(m.award_text);
-  if(!a) return "";
-  const l=[];
-  if(a.oscW) l.push(`<div class="l">🏆 <span><b>${a.oscW}</b> Academy Award${a.oscW>1?"s":""} won</span></div>`);
-  if(a.oscN) l.push(`<div class="l">✦ <span>Nominated for <b>${a.oscN}</b> Academy Award${a.oscN>1?"s":""}</span></div>`);
-  if(a.wins!=null && a.noms!=null)
-    l.push(`<div class="l">🏅 <span><b>${a.wins}</b> win${a.wins>1?"s":""} &amp; <b>${a.noms}</b> nomination${a.noms>1?"s":""} across all bodies</span></div>`);
-  else if(a.wins!=null) l.push(`<div class="l">🏅 <span><b>${a.wins}</b> win${a.wins>1?"s":""} across all bodies</span></div>`);
-  else if(a.noms!=null) l.push(`<div class="l">✦ <span><b>${a.noms}</b> nomination${a.noms>1?"s":""} across all bodies</span></div>`);
-  return l.length ? `<div class="awx">${l.join("")}</div>` : "";
+  return l.length ? `<div class="credit awardsrow"><span class="clbl">Awards</span><div class="cval awx">${l.join("")}</div></div>` : "";
 }
 
 // A film is "tagged out" when you have said something about it — Liked, Disliked, or Not for me. It is the
@@ -4448,10 +4459,13 @@ function pastOpeningFrame(m, day=TODAY){
   return `It's been in cinemas ${n} day${n===1?"":"s"} and it's had its opening weekend. Nobody publishes the `
        + `date a film comes off the screen, so we won't invent one — but the big-screen window doesn't last.`;
 }
+// CAS-436: Awards, Director and Cast are one label->value list — Awards joins the rows here (instead of
+// being a separate block above them) so all three share the same .clbl column and wrap the same way.
 function creditsHTML(m){
   const rows=[];
-  if(m.director) rows.push(`<div class="credit"><span class="clbl">Director</span>${esc(m.director)}</div>`);
-  if((m.cast||[]).length) rows.push(`<div class="credit"><span class="clbl">Cast</span>${esc(m.cast.join(", "))}</div>`);
+  const aw=awardsBreakdownHTML(m); if(aw) rows.push(aw);
+  if(m.director) rows.push(`<div class="credit"><span class="clbl">Director</span><span class="cval">${esc(m.director)}</span></div>`);
+  if((m.cast||[]).length) rows.push(`<div class="credit"><span class="clbl">Cast</span><span class="cval">${esc(m.cast.join(", "))}</span></div>`);
   return rows.length ? `<div class="credits">${rows.join("")}</div>` : "";
 }
 // ---- CAS-284: share a film -------------------------------------------------------------------------------
@@ -4604,7 +4618,6 @@ function cardHTML(m, markNew=false){
         <div class="mrow r-badge">${badge}</div>
         <div class="mrow r-awards">${cinemaReleaseChip(m)}${awardChips(m)}</div>
       </div>
-      <div class="expand">${awardsBreakdownHTML(m)}${creditsHTML(m)}${trailersHTML(m)}${shareFilmHTML(m)}</div>
     </div>
     ${bandHTML(m, svcLine)}
     <div class="cfoot">
@@ -4624,6 +4637,9 @@ function cardHTML(m, markNew=false){
         ${watchChipHTML(id)}
       </div>
     </div>
+    <!-- CAS-436: the detail section (awards/director/cast/trailers/share) opens BELOW the control row, not
+         above it — it is extra material about the film, not something that has to be seen before you act. -->
+    <div class="expand">${creditsHTML(m)}${trailersHTML(m)}${shareFilmHTML(m)}</div>
   </div>`;
 }
 // ---- The three verdicts (CAS-100) ----------------------------------------------
