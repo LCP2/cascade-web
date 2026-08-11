@@ -443,12 +443,13 @@
   .cmini .clab{position:relative;z-index:1;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cmini .clab.dim{color:var(--dim);font-weight:500}
   .ctl.on .cmini .cic{color:var(--cyan)}
-  /* CAS-374: the Watch/Watched chip is now the toggle for its own panel — this arrow is the only cue for
-     open vs closed, since the separate collapse chevron inside the panel is gone. Down = closed, and it
-     flips to point up (the panel now sits above it, open) rather than getting a second, different glyph. */
+  /* CAS-374/CAS-439: the Watch/Watched chip is now the toggle for its own panel — this arrow is the only cue
+     for open vs closed, since the separate collapse chevron inside the panel is gone. The panel opens ABOVE
+     the button (CAS-304), so the chevron points UP when closed (that's the direction the list will open) and
+     flips to point DOWN once it's open (tap to close, folding back down onto the button). */
   .cmini .ctog{position:relative;z-index:1;flex:none;display:grid;place-items:center;line-height:0;color:#8b93a1}
-  .cmini .ctog svg{width:12px;height:12px;display:block;transition:transform .15s}
-  .ctl.open .cmini .ctog svg{transform:rotate(180deg)}
+  .cmini .ctog svg{width:12px;height:12px;display:block;transition:transform .15s;transform:rotate(180deg)}
+  .ctl.open .cmini .ctog svg{transform:rotate(0deg)}
   .ctl:hover .cmini{border-color:#3a4150}
   .ctl:focus-visible .cmini{outline:2px solid var(--cyan);outline-offset:2px}
   /* CAS-348 (0.8.5 staging review): three equal columns leave too little room on a phone for the icon AND
@@ -469,10 +470,14 @@
     border-radius:12px;padding:4px;box-shadow:0 14px 34px rgba(0,0,0,.7)}
   .cpop.pop-down{bottom:auto;top:calc(100% + 8px)}
   /* CAS-374/CAS-428: every card panel is content-width now — only as wide as its rows need — and
-     edge-aligned under the chip that opens it: .al-l under Notify and Lists (the row's left edge), .al-r
-     under Watched (the right). The old full-row .kpop chrome went with the Agent "move" panel it belonged to. */
+     edge-aligned under the chip that opens it: .al-l under Notify (the row's left edge), .al-r under Watched
+     (the right). The old full-row .kpop chrome went with the Agent "move" panel it belonged to.
+     CAS-439: Lists sits in the MIDDLE of the row, so neither row edge lines up with its button — .al-c gets
+     no left/right of its own; positionPanel() sets pop.style.left in JS, anchored to the Lists button itself
+     (clamped so a content-width panel can't run off the row's right edge on a narrow phone). */
   .cpop.al-l{left:0;width:max-content;max-width:min(280px,calc(100vw - 32px))}
   .cpop.al-r{right:0;width:max-content;max-width:min(280px,calc(100vw - 32px))}
+  .cpop.al-c{width:max-content;max-width:min(280px,calc(100vw - 32px))}
   /* CAS-278: the five answers run TOP TO BOTTOM, best first, so the list is read as a scale. Across a row
      they cannot be: five labels plus a close button on a 360px phone is about 40px of text each, and the
      old four already needed the icon stacked over the label to survive it. Down the column every label is
@@ -5034,10 +5039,11 @@ function listsChipHTML(id){
   // DOM class stays `.ctl.casc` — see the CAS-427 comment above .actions for why this file keeps a control's
   // original class through a relabel rather than chasing every CSS selector each time the name changes.
   return `<button type="button" class="ctl casc" data-kid="${id}" onclick="openListsPanel(${id},this)"
-      aria-haspopup="true" title="${escA(title)}" aria-label="${escA(title)}">
+      aria-haspopup="true" aria-expanded="false" title="${escA(title)}" aria-label="${escA(title)}">
     <span class="cmini"><i class="cfill" style="width:${here.length?100:0}%;background:var(--accent)"></i>
       <span class="cic">${ICON.deck}</span>
-      <span class="clab${here.length?"":" dim"}">${esc(lbl)}</span></span></button>`;
+      <span class="clab${here.length?"":" dim"}">${esc(lbl)}</span>
+      <span class="ctog">${ICON.chev}</span></span></button>`;
 }
 // The panel's rows: one per List (a true multi-select, hence the square .wwb.sq tick — see the CAS-382 CSS
 // comment on that class), plus an always-present "＋ New list" row at the foot.
@@ -5061,11 +5067,12 @@ window.openListsPanel=(id, btn)=>{
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
   const pop=document.createElement("div");
-  // CAS-374-style chrome: content-width, left-aligned under the chip, no in-panel close — the chip is the toggle.
-  pop.className="cpop lpop al-l";
+  // CAS-374-style chrome: content-width, no in-panel close — the chip is the toggle. CAS-439: Lists sits in
+  // the middle of the row, not an edge, so it gets .al-c (JS-anchored to the button) rather than .al-l/.al-r.
+  pop.className="cpop lpop al-c";
   pop.innerHTML=`<div class="nopts">${listsPanelRowsHTML(id)}</div>`;
   btn.closest(".actions").appendChild(pop);
-  positionPanel(pop);   // CAS-304
+  positionPanel(pop, btn);   // CAS-304, CAS-439
   wirePanelSlide(pop, ".nopt[data-lid]", el=>toggleFilmListAndRepaint(id, el.dataset.lid));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
   btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
@@ -5254,9 +5261,17 @@ function wirePanelSlide(pop, itemSel, onPick){
 // CAS-304: the panel opens upward by default (see the .cpop rule); this only flips it down when the row
 // itself doesn't have room above — measured against the sticky header, the same --hdrh the scroll math
 // elsewhere in this file already reads, so the panel never opens hidden under it.
-function positionPanel(pop){
+// CAS-439: `anchorBtn` is only passed for a middle-of-row control (Lists) that can't use a fixed .al-l/.al-r
+// edge — its left edge is pinned to the button's own left edge, clamped so a content-width panel can't run
+// past the row's right edge on a narrow phone.
+function positionPanel(pop, anchorBtn){
   const hdr=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hdrh"))||0;
   if(pop.getBoundingClientRect().top < hdr+8) pop.classList.add("pop-down");
+  if(anchorBtn){
+    const row=pop.parentElement;
+    const max=Math.max(0, row.clientWidth - pop.offsetWidth);
+    pop.style.left=Math.max(0, Math.min(anchorBtn.offsetLeft, max))+"px";
+  }
 }
 // One panel at a time, anchored in the .actions row (which is position:relative for exactly this).
 function closeWatchPanel(){
