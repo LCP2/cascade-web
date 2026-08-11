@@ -3496,7 +3496,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 413, "commit": "58a33c2", "builtAt": "2026-08-11T03:30:34Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 414, "commit": "d1e8a87", "builtAt": "2026-08-11T03:37:19Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -4763,7 +4763,6 @@ function notifyOptionsFor(c, id){
   }));
   return out;
 }
-// The film's answer for one option: its own if it has one, otherwise the agent's.
 // Which of those options covers the window a film has just landed in — the bridge between a status the
 // poll produces and a row on this panel. past_opening is a moment rather than a window, so it is matched by
 // the bell it arms instead of by a status.
@@ -4774,9 +4773,12 @@ function filmOptKeyForWindow(c, w){
   }
   return null;
 }
+// CAS-434: on only if the USER ticked it for this film. `opt.agentOn` governs whether a row is offered at
+// all (watchLevelsFor), not whether it starts ticked — defaulting to it here was pre-ticking every untouched
+// film from the agent's own switch, which is the agent's config leaking into a per-film choice nobody made.
 const filmOptOn = (id, opt) => {
   const w=(notify[id]||{}).wins||{};
-  return w[opt.key]===undefined ? !!opt.agentOn : !!w[opt.key];
+  return !!w[opt.key];
 };
 // ---- CAS-349: the Watch control's own ladder ------------------------------------------------------------
 // Four rungs, not the whole Notify ladder — where a film can actually be WATCHED, not every moment the old
@@ -4794,8 +4796,11 @@ const STREAM_TIERS = [
 ];
 // The rows the Watch panel offers for this film: only the levels this cascade is actually configured to
 // track (CAS-280's honesty rule, carried over), in ladder order, each carrying whether the film has already
-// passed it. Unlike the old Notify list, a passed level is not dropped — it is shown, greyed (CAS-349): the
-// film's whole journey stays visible even where most of it is behind it, only the future stays interactive.
+// reached or passed it. Unlike the old Notify list, a reached/passed level is not dropped — it is shown,
+// greyed (CAS-349): the film's whole journey stays visible even where most of it is behind it, only the
+// future stays interactive. CAS-434: `spent` includes the film's CURRENT rung, not just strictly-past ones —
+// a film already at Rent cannot be told about "reaching" Rent, so that row is exactly as un-offerable as one
+// it has already left (CAS-280's honesty rule again, just one rung wider).
 function watchLevelsFor(id){
   const c=activeCascade();
   const kinds = (c && (c.kind==="cinema"||c.kind==="stream")) ? [c.kind] : Object.keys(AGENT_WINDOWS);
@@ -4806,7 +4811,7 @@ function watchLevelsFor(id){
     if(!WATCH_LEVEL_KEYS.includes(w.key)) return;
     const f=watch[w.key]||{};
     if(c && !f.list && !f.notify) return;             // not a level this cascade is configured to track
-    out.push({key:w.key, label:w.label, cd:w.cd, agentOn:!!f.notify, spent: WINDOW_RUNG[w.key]<rung});
+    out.push({key:w.key, label:w.label, cd:w.cd, agentOn:!!f.notify, spent: WINDOW_RUNG[w.key]<=rung});
   }));
   return out;
 }
