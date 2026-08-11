@@ -1,0 +1,38 @@
+default_platform(:ios)
+
+# CAS-454: manual TestFlight release, run only via the ios-testflight.yml workflow_dispatch.
+# Signing (certificate + provisioning profile) is imported into a temporary CI keychain by the
+# workflow before this runs; this lane only builds, archives and uploads.
+platform :ios do
+  desc "Build the Capacitor app and upload it to TestFlight"
+  lane :beta do
+    api_key = app_store_connect_api_key(
+      key_id: ENV["APP_STORE_CONNECT_API_KEY_ID"],
+      issuer_id: ENV["APP_STORE_CONNECT_API_ISSUER_ID"],
+      key_content: ENV["APP_STORE_CONNECT_API_KEY_CONTENT"],
+      is_key_content_base64: true
+    )
+
+    latest_build = latest_testflight_build_number(api_key: api_key)
+    increment_build_number(
+      xcodeproj: "../ios/App/App.xcodeproj",
+      build_number: (latest_build + 1).to_s
+    )
+
+    build_app(
+      project: "../ios/App/App.xcodeproj",
+      scheme: "App",
+      export_method: "app-store",
+      export_options: {
+        provisioningProfiles: {
+          "au.com.codynamics.cascade" => ENV["IOS_PROVISIONING_PROFILE_SPECIFIER"]
+        }
+      }
+    )
+
+    upload_to_testflight(
+      api_key: api_key,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
