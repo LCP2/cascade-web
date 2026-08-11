@@ -6842,11 +6842,18 @@ function deckBuild(){
 }
 function deckSync(shown){
   const sig=cascSig();
+  const ai=cascades.findIndex(c=>c.id===activeId);
+  // +1 for the All card ahead of them; All itself (and a first load with nothing open) centres on 0.
+  const target=ai>=0 ? ai+1 : activeId===ALL_ID ? 0 : Math.min(deckIdx,deckCount()-1);
   if(sig!==deckSig){
     deckSig=sig; deckBuild();
-    const ai=cascades.findIndex(c=>c.id===activeId);
-    // +1 for the All card ahead of them; All itself (and a first load with nothing open) centres on 0.
-    deckFocus(ai>=0 ? ai+1 : activeId===ALL_ID ? 0 : Math.min(deckIdx,deckCount()-1),false);
+    deckFocus(target,false);
+    deckCentre(deckIdx,false);
+  } else if(target!==deckIdx){
+    // CAS-450: activeId can change without ever touching the deck itself (afterSignIn landing on the
+    // first agent, resetBtn, openNotifyFilm's jump to All) — the card list didn't change so the rebuild
+    // branch above never fires, but the deck still has to end up centred on whichever card is actually open.
+    deckFocus(target,false);
     deckCentre(deckIdx,false);
   } else {
     deckFocus(deckIdx,false);
