@@ -639,9 +639,14 @@
      deliberately recessive dots; the one window that is true right now is the only thing lit. */
   .bandw{background:var(--band);border-top:1px solid var(--line);padding:8px 13px}
   .avail2{display:flex;align-items:center;min-height:30px}
-  .wdot{flex:0 0 auto;width:7px;height:7px;border-radius:50%}
+  /* CAS-433: the timeline's own origin label — the film's real release date, ahead of whatever dots follow. */
+  .reldate{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start;margin-right:9px;line-height:1.2}
+  .reldate .rellbl{font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--faint)}
+  .reldate b{font-size:11px;font-weight:700;color:var(--dim);font-variant-numeric:tabular-nums}
+  /* CAS-433: bigger dots (~7px -> ~10px) — the previous size read as barely-there next to the capsule. */
+  .wdot{flex:0 0 auto;width:10px;height:10px;border-radius:50%}
   .wdot.past{background:var(--dotc,var(--faint));opacity:.7}
-  .wdot.future{background:transparent;border:1.4px solid var(--dotc,var(--faint));opacity:.55}
+  .wdot.future{background:transparent;border:1.6px solid var(--dotc,var(--faint));opacity:.55}
   .wdot.w-cin-upcoming{--dotc:var(--upcoming-ink)} .wdot.w-cin-opening{--dotc:#f0b4b4}
   .wdot.w-cin-cinema{--dotc:#e0b483} .wdot.w-pvod{--dotc:#c3b3f0}
   .wdot.w-rental{--dotc:#9fc4ef} .wdot.w-included_streaming{--dotc:#8fd5b3}
@@ -652,6 +657,10 @@
      whatever room that leaves. Lighter too: no outer glow, a thin border, tight padding. */
   .cap{flex:none;min-width:0;max-width:100%;overflow:hidden;display:flex;align-items:center;gap:6px;
     padding:5px 9px;border-radius:14px;border:1px solid var(--line);background:var(--panel2);color:var(--faint)}
+  /* CAS-433: the whole capsule is the services toggle now (window label + date + service line), not just
+     the saveline fused inside it — so the pointer/focus affordance moves to .cap itself. */
+  .cap.captog{cursor:pointer}
+  .cap.captog:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .capwin{flex:0 0 auto;display:flex;align-items:center;gap:5px;font-size:12px;font-weight:800;white-space:nowrap}
   .capicon{font-size:12px;line-height:1}
   /* CAS-429: the date is secondary to the window label, not co-equal with it — smaller and dimmer. */
@@ -1138,10 +1147,6 @@
   .saveline{margin-top:11px;font-size:11.5px;font-weight:700;line-height:1.45;padding:7px 10px;border-radius:9px;
     background:rgba(72,199,142,.12);border:1px solid rgba(72,199,142,.45);color:#a7eccb;
     display:flex;align-items:center;justify-content:space-between;gap:10px;overflow:hidden}
-  /* CAS-399: when the bar carries the Services affordance, the WHOLE bar is the toggle, not just the
-     chevron control inside it — so it needs its own pointer cursor and focus ring. */
-  .saveline.svctog{cursor:pointer}
-  .saveline.svctog:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .savetxt{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* rent-only: a fact, not a win — the green is reserved for "you already have this" */
   .saveline.plain{background:var(--panel2);border-color:var(--line);color:var(--dim)}
@@ -3108,6 +3113,14 @@ function svcCanon(raw){
   return s || String(raw||"");
 }
 const svcName=s=>SVC_DISPLAY[s]||s;
+// CAS-433: the capsule fuses the window label with the service, so the service name has to be one word to
+// keep the pill from stretching — the full name still shows in the expanded services panel (svcName there,
+// unchanged). Keyed on the CANONICAL spelling (svcCanon) so any billing-variant/spelling the feed sends
+// still lands on the same short word.
+const SVC_SHORT = {"Amazon Prime Video":"Prime","Disney Plus":"Disney","Apple TV":"Apple",
+  "Paramount Plus":"Paramount","HBO Max":"Max","BINGE":"Binge","Stan":"Stan","Netflix":"Netflix",
+  "Google Play Movies":"Google","YouTube":"YouTube","Foxtel Now":"Foxtel","BritBox":"BritBox"};
+const svcShort=s=>SVC_SHORT[svcCanon(s)]||svcName(s);
 
 // ---- Reviewer URL params: ?reset and ?setup ------------------------------------
 // Demo/review affordances, not product surface. This block runs BEFORE any state is read below, so ?reset
@@ -3483,7 +3496,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 412, "commit": "8277d5d", "builtAt": "2026-08-11T03:18:37Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 413, "commit": "58a33c2", "builtAt": "2026-08-11T03:30:34Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -4240,25 +4253,53 @@ function windowDateInfo(m, key, i, cur){
             : `Estimated from its cinema release — Cascade hasn't read a listing for this window yet`;
   return {dateStr, estCls, why};
 }
+// CAS-433: whether the film actually HAD a given window, as far as the data can say — a straight-to-
+// streaming title never had a cinema run, so the cinema slot gets no dot, and stageDate returns null for
+// every window past it too (it has nothing to estimate FROM without a cinema date), so the timeline just
+// starts at the first window the film really has. Only checked for windows already behind the current one
+// — a future window still gets its hollow dot regardless, since it hasn't happened yet either way.
+function hadWindow(m, key, i){
+  return i===0 ? !!m.cinema_date : !!stageDate(m, key);
+}
+// The film's real release date, for the timeline's own origin label — never an estimate: the cinema date
+// if it had one, else the earliest window Cascade actually confirmed (a straight-to-streaming title's own
+// first-seen date).
+function releaseDateOf(m){
+  if(m.cinema_date) return m.cinema_date;
+  const wd=m.window_dates||{};
+  return wd.pvod || wd.rental || wd.included_streaming || null;
+}
 function bandHTML(m, svcLine){
   const cur=curSlot(m);
   const cin=cinemaState(m);
+  const rel=releaseDateOf(m);
+  const relHTML = rel ? `<span class="reldate"><span class="rellbl">Released</span><b>${fmtDay(rel)}</b></span>` : "";
   const segs=WINDOW_SLOTS.map((key,i)=>{
     const line = i>0 ? `<span class="wline${i>cur?" fut":""}"></span>` : "";
     const cls  = i===0 ? "w-cin-"+cin.key : "w-"+key;
-    if(i!==cur) return `${line}<span class="wdot ${cls} ${i<cur?"past":"future"}"></span>`;
+    if(i!==cur){
+      if(i<cur && !hadWindow(m,key,i)) return line;   // never had this window — no dot, the line carries through
+      return `${line}<span class="wdot ${cls} ${i<cur?"past":"future"}"></span>`;
+    }
     const label = i===0 ? CAP_LABEL[cin.key] : CAP_LABEL[key];
     const icon  = WIN_ICON[i===0?cin.key:key]||"";
     const {dateStr,estCls,why}=windowDateInfo(m,key,i,cur);
     const date  = dateStr ? `<span class="capdate ${estCls}"${why?` title="${escA(why)}"`:""}>${dateStr}</span>` : "";
     const div   = svcLine ? `<span class="capdiv"></span>` : "";
-    return `${line}<div class="cap ${cls}"><span class="capwin"><span class="capicon">${icon}</span><b>${label}</b>${date}</span>${div}${svcLine||""}</div>`;
+    // CAS-433: the whole capsule is the services toggle now (window label, date and service line alike) —
+    // not just the saveline fused inside it, which used to carry the tap target on its own.
+    const capTogClass = svcLine ? " captog" : "";
+    const capTogAttrs = svcLine
+      ? ` role="button" tabindex="0" aria-label="Show all services"
+           onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.querySelector('.svcbtn').classList.toggle('open')"`
+      : "";
+    return `${line}<div class="cap ${cls}${capTogClass}"${capTogAttrs}><span class="capwin"><span class="capicon">${icon}</span><b>${label}</b>${date}</span>${div}${svcLine||""}</div>`;
   }).join("");
   // CAS-239: the row is NOT part of the tap-to-open region any more. It sits directly above the Watch
   // status and Notify chips, and a miss on either of those landed on it and opened the card — so the
   // gesture that was supposed to answer a question about the film answered a different one instead. The
   // bottom of the card is where the decisions are; only the body above it opens.
-  return `<div class="bandw"><div class="avail2${isEstimated(m)?" est":""}">${segs}</div></div>`;
+  return `<div class="bandw"><div class="avail2${isEstimated(m)?" est":""}">${relHTML}${segs}</div></div>`;
 }
 // CAS-426: the current window's date now reads inline in the capsule above, so it is the only one this
 // line skips — printed as "now" instead of repeating the same date twice. Everything else the strip used
@@ -4333,24 +4374,17 @@ function savingsHTML(m, canExpand){
   // redesign removes. On a card wearing this bar, the bar itself carries the shortcut instead — per film,
   // not per agent, so it is correct on the mixed All/Home view too.
   // CAS-429: the affordance is a bare chevron now — "Services" was redundant with the capsule it's already
-  // inside of.
+  // inside of. CAS-433: the tap target has grown to the whole capsule (bandHTML wraps it in .captog), so
+  // this div itself carries no toggle wiring any more — just the chevron's resting glyph.
   const svcAff = canExpand ? `<span class="svcbtn">${ICON.chev}</span>` : "";
-  // CAS-399: when the bar carries the Services affordance, the whole bar is the toggle (not just the
-  // chevron control) — a real click/tap/keyboard target, with the chevron's open state still synced via
-  // .svcbtn so the existing card-expand wiring (~line 5325) keeps working unchanged.
-  const svcTogClass = canExpand ? " svctog" : "";
-  const svcTogAttrs = canExpand
-    ? ` role="button" tabindex="0" aria-label="Show all services"
-         onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.querySelector('.svcbtn').classList.toggle('open')"`
-    : "";
   if(subs.length){
     const alt=(rent && rent.price!=null) ? `, or pay <b>$${rent.price.toFixed(2)}</b> to rent` : "";
     if(mine.length){
-      const svc=svcName(mine[0].service);
-      return `<div class="saveline${svcTogClass}"${svcTogAttrs}><span class="savetxt">✓ <b>${esc(svc)}</b>${alt}</span>${svcAff}</div>`;
+      const svc=svcShort(mine[0].service);
+      return `<div class="saveline"><span class="savetxt">✓ <b>${esc(svc)}</b>${alt}</span>${svcAff}</div>`;
     }
-    const svc=svcName(subs[0].service);
-    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt"><b>${esc(svc)}</b>${alt}</span>${svcAff}</div>`;
+    const svc=svcShort(subs[0].service);
+    return `<div class="saveline plain"><span class="savetxt"><b>${esc(svc)}</b>${alt}</span>${svcAff}</div>`;
   }
   // CAS-423: an unpriced rent offer is what windowOf() defaults to "rental" (never pvod) absent a confirmed
   // premium price, so it belongs in this branch too — same bar, just without a figure it doesn't have.
@@ -4361,7 +4395,7 @@ function savingsHTML(m, canExpand){
     const priceTxt = rent.price!=null ? `<b>$${rent.price.toFixed(2)}</b> · ` : "";
     const cheaper=(ux.on && buy && buy.price!=null && rent.price!=null && buy.price>rent.price)
       ? ` — <b>$${(buy.price-rent.price).toFixed(2)}</b> less than buying at $${buy.price.toFixed(2)}` : "";
-    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt">${priceTxt}${esc(svcName(rent.service))}${cheaper}</span>${svcAff}</div>`;
+    return `<div class="saveline plain"><span class="savetxt">${priceTxt}${esc(svcShort(rent.service))}${cheaper}</span>${svcAff}</div>`;
   }
   // CAS-375: Premium status — a purchase, or a rent offer priced at the premium tier (>RENTAL_MAX), with
   // no standard-priced rental and no subscription. This used to fall through to "" (no row, no Services
@@ -4371,7 +4405,7 @@ function savingsHTML(m, canExpand){
   if(premium){
     const verb = premium.type==="buy" ? "Buy" : "Rent";
     const priceTxt = premium.price!=null ? ` for <b>$${premium.price.toFixed(2)}</b>` : "";
-    return `<div class="saveline plain${svcTogClass}"${svcTogAttrs}><span class="savetxt">${verb}${priceTxt} on ${esc(svcName(premium.service))}</span>${svcAff}</div>`;
+    return `<div class="saveline plain"><span class="savetxt">${verb}${priceTxt} on ${esc(svcShort(premium.service))}</span>${svcAff}</div>`;
   }
   return "";   // no priced offer at all — nothing honest to write
 }
