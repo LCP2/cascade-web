@@ -30,7 +30,7 @@ to compare against. Output for the app front-end is written to movies.json.
 """
 
 from __future__ import annotations
-import os, sys, json, time, datetime, subprocess, urllib.parse, urllib.request, urllib.error
+import os, sys, json, time, shutil, datetime, subprocess, urllib.parse, urllib.request, urllib.error
 
 REGION = "AU"                      # the country this instance tracks
 CURRENCY = "AUD"
@@ -84,6 +84,9 @@ TEMPLATE_FILE = os.path.join(os.path.dirname(__file__), "app_template.html")
 APP_FILE      = os.path.join(os.path.dirname(__file__), "index.html")
 VERSION_FILE  = os.path.join(os.path.dirname(__file__), "VERSION")        # hand-bumped SemVer (CAS-124)
 VERSION_JSON  = os.path.join(os.path.dirname(__file__), "version.json")   # machine-readable build stamp
+IOS_WWW_DIR   = os.path.join(os.path.dirname(__file__), "www")            # Capacitor webDir mirror (CAS-453)
+IOS_WWW_ASSETS = ("index.html", "config.js", "favicon.svg", "favicon.png",
+                   "apple-touch-icon.png", "splash-logo.svg")
 
 TMDB_KEY      = os.environ.get("TMDB_API_KEY")
 OMDB_KEY      = os.environ.get("OMDB_API_KEY")
@@ -1159,6 +1162,18 @@ def build_html(records: list[dict] | None = None):
     with open(VERSION_JSON, "w", encoding="utf-8") as f:
         json.dump(info, f, separators=(",", ":")); f.write("\n")
     print(f"stamped v{info['version']} · build {info['build']} · {info['commit']}")
+    _sync_ios_www()
+
+
+def _sync_ios_www():
+    """Mirror index.html + its local static assets into www/ (CAS-453).
+    Capacitor's webDir can't be the repo root itself, so the iOS shell reads from this
+    mobile-only mirror instead; the web app still ships from the repo root unchanged."""
+    os.makedirs(IOS_WWW_DIR, exist_ok=True)
+    for name in IOS_WWW_ASSETS:
+        src = os.path.join(os.path.dirname(__file__), name)
+        if os.path.exists(src):
+            shutil.copyfile(src, os.path.join(IOS_WWW_DIR, name))
 
 
 def _apply_scripted_change(records: list[dict]):
