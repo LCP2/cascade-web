@@ -3261,6 +3261,10 @@ const SVC_SHORT = {"Amazon Prime Video":"Prime","Disney Plus":"Disney","Apple TV
   "Paramount Plus":"Paramount","HBO Max":"Max","BINGE":"Binge","Stan":"Stan","Netflix":"Netflix",
   "Google Play Movies":"Google","YouTube":"YouTube","Foxtel Now":"Foxtel","BritBox":"BritBox"};
 const svcShort=s=>SVC_SHORT[svcCanon(s)]||svcName(s);
+// CAS-448: fold every offer's service name to its canonical spelling ONCE here, right after svcCanon exists —
+// so every later reader of m.offers (Service analysis, the offers bar, My Services, Notify, dedupOffers) sees
+// one name per real service without each having to remember to call svcCanon itself.
+MOVIES.forEach(m=>{ (m.offers||[]).forEach(o=>{ o.service=svcCanon(o.service); }); });
 
 // ---- Reviewer URL params: ?reset and ?setup ------------------------------------
 // Demo/review affordances, not product surface. This block runs BEFORE any state is read below, so ?reset
@@ -3636,7 +3640,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 423, "commit": "9d750ab", "builtAt": "2026-08-11T05:35:44Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 424, "commit": "2a92634", "builtAt": "2026-08-11T05:48:03Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7924,8 +7928,26 @@ $("cDelete").onclick=()=>{
 // a "you'd save $X/mo" figure we can't back up. What we CAN say truthfully is what renting those same
 // films would cost instead — every dollar of that is a price sitting in the offer data (contrast effect,
 // honestly sourced). Films still in cinemas are excluded from the denominator: no service can cover them.
+// CAS-448: not found (that's the WATCH set — CAS-132 keeps that one alive past a poll cycle, not a coverage
+// list) and not the my-services-filtered listing either. This is the union, across every active cascade, of
+// what it would LIST with each window's "only on my services" scope forced off — the full set of films you'd
+// want to watch based on your cascades, so a service you don't have yet can still surface if it would cover
+// a lot of them. Same "results, not stubs" rule as listedCount: a film you've already watched or blocked
+// doesn't need a service recommending it.
+function svcAdviceFilms(){
+  const seen=new Set(), out=[];
+  cascades.forEach(c=>{
+    if(c.paused) return;                    // guest mode (CAS-79): watches nothing, so it advises nothing
+    const scopeOff={...c, myServices:{}};
+    MOVIES.forEach(m=>{
+      if(seen.has(m.tmdb_id) || taggedOut(m) || !listedBy(m, scopeOff)) return;
+      seen.add(m.tmdb_id); out.push(m);
+    });
+  });
+  return out;
+}
 function serviceAdvice(){
-  const want = MOVIES.filter(m=>found.has(m.tmdb_id));   // your Found list — whoever put each film on it
+  const want = svcAdviceFilms();
   const home = want.filter(m=>(m.offers||[]).length);
   const byService = new Map();
   home.forEach(m=>{
@@ -7941,9 +7963,9 @@ function serviceAdvice(){
   });
   const ranked=[...byService.values()].sort((a,b)=> b.films.length-a.films.length || a.svc.localeCompare(b.svc));
   const covered=new Set(ranked.flatMap(e=>e.films));
-  // "No offers" is not the same as "in cinemas". Under auto-membership the Found list carries films that
-  // haven't been RELEASED yet (a Cascade watches them all the way in), and they have no offers either — so
-  // lumping the two together would have told the user that unreleased films were "still in cinemas".
+  // "No offers" is not the same as "in cinemas". want carries films that haven't been RELEASED yet (a
+  // Cascade lists them all the way in), and they have no offers either — so lumping the two together would
+  // have told the user that unreleased films were "still in cinemas".
   const noHome=want.filter(m=>!(m.offers||[]).length);
   const upcoming=noHome.filter(m=>primaryStatus(m)==="upcoming").length;
   return {total:want.length, home:home.length,
@@ -7959,14 +7981,14 @@ function renderSvcAnalysis(){
       which service covers the most of them, and what renting them instead would cost you.</div>`;
   } else {
     const notes=[];
-    if(a.inCinema) notes.push(`${a.inCinema} of the ${a.total} film${a.total===1?"":"s"} on your Found list
+    if(a.inCinema) notes.push(`${a.inCinema} of the ${a.total} film${a.total===1?"":"s"} your Cascades match
       ${a.inCinema===1?"is":"are"} still in cinemas, so no service can cover ${a.inCinema===1?"it":"them"} yet.`);
     if(a.upcoming) notes.push(`${a.upcoming} ${a.upcoming===1?"hasn't":"haven't"} been released yet — your
       Cascades are watching ${a.upcoming===1?"it":"them"} all the way in.`);
     if(a.uncovered) notes.push(`${a.uncovered} ${a.uncovered===1?"is":"are"} rent-or-buy only so far —
       not included on any service.`);
     if(!a.ranked.length){
-      body=`<div class="pnote">Nothing on your Found list is included on a service yet. ${notes.join(" ")}</div>`;
+      body=`<div class="pnote">Nothing your Cascades match is included on a service yet. ${notes.join(" ")}</div>`;
     } else {
       notes.push(`Coverage is counted from the real AU offer data. We don't hold subscription prices, so we
         won't guess at a monthly saving — the rent figure is simply what those films would cost you instead.`);
@@ -7981,7 +8003,7 @@ function renderSvcAnalysis(){
             <span class="advsvc">${i===0?"🥇 ":""}${esc(svcName(e.svc))}</span>
             ${prefs.sub.has(e.svc)?'<span class="advhave">✓ you have it</span>':""}
           </div>
-          <div class="advwhy">Covers <b>${n} of the ${a.home}</b> film${a.home===1?"":"s"} on your Found list that have reached home.</div>
+          <div class="advwhy">Covers <b>${n} of the ${a.home}</b> film${a.home===1?"":"s"} your Cascades match that have reached home.</div>
           <div class="advbar"><span style="width:${pct}%"></span></div>
           ${rent}</div>`;
       }).join("");
