@@ -911,6 +911,26 @@
   .dgrow.mute{border-left-color:#3a4150;color:var(--dim)}
   .dgrow.mute b{color:var(--dim)}
   .dgwhy{display:block;font-size:11px;color:#ffce8f;margin-top:2px}
+  /* CAS-445: the in-app Notifications surface — same per-agent card language as .dgcard above, but each
+     row is now tappable (opens the film's card) and a matched notify-pick gets a green pill so it reads
+     as distinct from the quieter "also changed" rows beneath it. */
+  .ntfcard{background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:10px 12px;margin-bottom:8px}
+  .ntfhead{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:800;margin-bottom:8px}
+  .ntftype{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--dim)}
+  .ntfrow{display:flex;gap:10px;align-items:center;border-radius:9px;padding:7px 9px;margin-bottom:6px;cursor:pointer;
+    border:1px solid transparent}
+  .ntfrow:last-child{margin-bottom:0}
+  .ntfrow:hover{filter:brightness(1.08)}
+  .ntfrow.match{background:rgba(72,199,142,.10);border-color:rgba(72,199,142,.45)}
+  .ntfrow.wasread{opacity:.62}
+  .ntfposter{width:34px;height:50px;border-radius:6px;background:#0c0f14 center/cover no-repeat;flex:0 0 auto}
+  .ntftitle{font-size:12.5px;font-weight:700;color:var(--ink)}
+  .ntfchange{font-size:11.5px;color:var(--dim)}
+  .ntfpill{display:inline-flex;align-items:center;gap:4px;margin-top:4px;font-size:10px;font-weight:700;
+    letter-spacing:.3px;text-transform:uppercase;color:var(--green);background:rgba(72,199,142,.14);
+    border:1px solid rgba(72,199,142,.5);border-radius:999px;padding:2px 8px}
+  .ntfsec{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;color:var(--faint);
+    margin:8px 0 4px}
   .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);z-index:60;
     background:#111722;border:1px solid var(--accent);color:#fff;padding:12px 16px;border-radius:12px;
     font-size:13px;font-weight:600;box-shadow:0 8px 30px rgba(0,0,0,.5);opacity:0;pointer-events:none;
@@ -2738,7 +2758,7 @@
 <!-- ALERTS drawer -->
 <div class="overlay" id="overlay">
   <div class="drawer" id="drawer">
-    <div class="dhead"><h3>🔔 What Cascade found</h3><button class="close" id="closeDrawer">×</button></div>
+    <div class="dhead"><h3>🔔 Notifications</h3><button class="close" id="closeDrawer">×</button></div>
     <!-- CAS-213: the real alerts lead. They are what the daily job actually sent; the day-simulation
          below them is a way to SEE what tomorrow would do, which is a different kind of claim and must
          not be the first thing in a list headed "what Cascade found". -->
@@ -3616,7 +3636,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 421, "commit": "046015d", "builtAt": "2026-08-11T05:07:05Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 422, "commit": "3570b74", "builtAt": "2026-08-11T05:24:54Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -3980,12 +4000,35 @@ function syncFilterUI(){
 }
 $("resetBtn").onclick=()=>{ setActive(ALL_ID); clearFilters(); syncFilterUI(); render(); };
 
-$("bell").onclick=()=>{markRealAlertsRead();$("overlay").classList.add("open");setTimeout(()=>$("drawer").classList.add("open"),10);
+$("bell").onclick=()=>{markRealAlertsRead();markPollSeen();$("overlay").classList.add("open");setTimeout(()=>$("drawer").classList.add("open"),10);
   logEvent("alerts_opened",{unread:alerts.length});
   renderAlerts(); renderDigest();};   // the digest re-reads the poll each time: Cascade prefs may have changed since
 $("closeDrawer").onclick=closeDrawer;
 $("overlay").onclick=e=>{if(e.target.id==="overlay")closeDrawer();};
 function closeDrawer(){$("drawer").classList.remove("open");setTimeout(()=>$("overlay").classList.remove("open"),200);}
+// CAS-445: tapping a film in the Notifications panel opens its card. The film may not be in the currently
+// active Cascade's filtered listing at all (that's the whole point of a cross-agent notifications surface),
+// so this switches to All — the one view guaranteed to hold every film — and searches it down to this title
+// before expanding. Cards stream in in batches (CAS-129), so the card may not exist in the DOM the instant
+// the listing re-renders; poll briefly for it rather than assuming the first paint already has it.
+window.openNotifyFilm=(id)=>{
+  const m=MOVIES.find(x=>x.tmdb_id===id); if(!m) return;
+  closeDrawer();
+  openCascade(ALL_ID);
+  setSearchTerm(m.title);
+  let tries=0;
+  const tryExpand=()=>{
+    const el=document.getElementById("card-"+id);
+    if(el){
+      if(!expandedSet.has(id)) toggleExpand(id);
+      el.scrollIntoView({behavior:"smooth", block:"center"});
+      return;
+    }
+    if(++tries<60) setTimeout(tryExpand, 50);
+  };
+  setTimeout(tryExpand, 60);
+  logEvent("notify_film_opened",{id});
+};
 $("simBtn").onclick=simulateDay;
 
 function money(n){ if(n==null)return "—";
@@ -12611,10 +12654,54 @@ function cascadeDigest(c){
 const evLine = e => `${esc(e.title)} → <b>${STATUS_LABEL[e.window]}</b>`
   + (e.services.length ? ` on ${esc(e.services.join(", "))}` : "")
   + (e.price!=null ? ` · $${e.price.toFixed(2)}` : "");
+// Same shape as evLine, minus the title — CAS-445's notification rows already carry the title on their own
+// line (ntftitle), so repeating it in the change line would be the same fact said twice.
+const changeLine = e => `<b>${STATUS_LABEL[e.window]}</b>`
+  + (e.services.length ? ` on ${esc(e.services.join(", "))}` : "")
+  + (e.price!=null ? ` · $${e.price.toFixed(2)}` : "");
 // Moves on films that answer to NO Cascade — the ones you added by hand. They alert (nothing is there to mute
 // them), so the digest has to own them: an alert in the drawer that no card in the report accounts for is the
 // exact silent contradiction this ticket exists to kill.
 const ownDigest = () => (lastPoll?.events||[]).filter(e=>!e.caught.length && !e.muted.length && e.alerted);
+function notifyPosterHTML(id){
+  const m=MOVIES.find(x=>x.tmdb_id===id);
+  const bg=(m&&m.poster)?`background-image:url(https://image.tmdb.org/t/p/w92${m.poster})`:"";
+  return `<div class="ntfposter" style="${bg}"></div>`;
+}
+// CAS-445: which per-film Notify option (its own English label — "Streaming", "In Cinemas", ...) is the one
+// that made this event a match for this Cascade — the same lookup catchReason() does to decide caught/muted,
+// read again here only to NAME the option for the "you asked" pill.
+function notifyMatchLabel(c, e){
+  const optKey=filmOptKeyForWindow(c, e.window);
+  const opt=optKey && notifyOptionsFor(c).find(o=>o.key===optKey);
+  return opt ? opt.label : (STATUS_LABEL[e.window]||e.window);
+}
+// One agent's card in the Notifications surface: its notify-matches highlighted green up top, its other
+// service/window moves quieter below. An agent with nothing at all this poll draws no card — an empty card
+// nobody asked to see would just be chrome.
+function notifyAgentCardHTML(c){
+  const {caught, muted}=cascadeDigest(c);
+  if(!caught.length && !muted.length) return "";
+  const matchRows=caught.map(e=>`
+    <div class="ntfrow match" onclick="openNotifyFilm(${e.id})">
+      ${notifyPosterHTML(e.id)}
+      <div><div class="ntftitle">${esc(e.title)}</div>
+        <div class="ntfchange">${changeLine(e)}</div>
+        <span class="ntfpill">✓ You asked: ${esc(notifyMatchLabel(c,e))}</span>
+      </div></div>`).join("");
+  const otherRows=muted.length
+    ? `<div class="ntfsec">Also changed (not your notify picks)</div>`
+      + muted.map(({e})=>`
+        <div class="ntfrow" onclick="openNotifyFilm(${e.id})">
+          ${notifyPosterHTML(e.id)}
+          <div><div class="ntftitle">${esc(e.title)}</div><div class="ntfchange">${changeLine(e)}</div></div>
+        </div>`).join("")
+    : "";
+  return `<div class="ntfcard">
+    <div class="ntfhead">${c.icon} ${esc(c.name)} <span class="ntftype">${c.kind==="stream"?"Streaming":"Cinema"}</span></div>
+    ${matchRows}${otherRows}
+  </div>`;
+}
 function renderDigest(){
   const el=$("digest"); if(!el) return;
   if(!cascades.length && !ownDigest().length){
@@ -12627,7 +12714,7 @@ function renderDigest(){
       reports back here: what it found for you, and what it kept quiet about.</div>`;
     return;
   }
-  let html=`<div class="dghead">📣 What Cascade found for you — day ${lastPoll.day}</div>`;
+  let html=`<div class="dghead">Movies that reached a service you asked about · day ${lastPoll.day}</div>`;
   if(!lastPoll.events.length){
     html+=`<div class="dgempty">${found.size
       ? `Nothing moved today — all ${found.size} film${found.size===1?"":"s"} I'm watching stayed put. A quiet
@@ -12635,38 +12722,20 @@ function renderDigest(){
       : "Nothing to watch yet. Set a Cascade to work and it fills this list itself."}</div>`;
     return void (el.innerHTML=html);
   }
-  cascades.forEach(c=>{
-    const {caught, muted}=cascadeDigest(c);
-    html+=`<div class="dgcard">
-      <div class="dgname">${c.icon} ${esc(c.name)}</div>`;
-    if(!caught.length && !muted.length){
-      html+=`<div class="dgnone">Nothing for this one today — still watching.</div></div>`;
-      return;
-    }
-    if(caught.length)
-      html+=`<div class="dgsec ok">✓ Found ${caught.length} for you</div>`
-          + caught.map(e=>`<div class="dgrow">${evLine(e)}</div>`).join("");
-    if(muted.length)
-      html+=`<div class="dgsec mute">🔇 ${muted.length} I didn't bother you with</div>`
-          + muted.map(({e,why})=>{
-              // If another Cascade shouted about the same move, saying "kept quiet" full stop would be a lie —
-              // the alert is sitting in the drawer. Name the radar that told you instead.
-              const other=e.caught.map(cid=>cascades.find(x=>x.id===cid)).filter(Boolean)[0];
-              return `<div class="dgrow mute">${evLine(e)}
-                <span class="dgwhy">${esc(why)}${other?` — though “${esc(other.name)}” told you anyway`:""}</span></div>`;
-            }).join("");
-    html+=`</div>`;
-  });
+  html+=cascades.map(notifyAgentCardHTML).join("");
   // The films you put on the list yourself. No Cascade is watching them, so nothing decided anything about
   // them — they simply tell you every time they move, and that gets its own card rather than no card at all.
   const own=ownDigest();
   if(own.length)
-    html+=`<div class="dgcard">
-      <div class="dgname">🟠 Added by you</div>
-      <div class="dgsec ok">✓ ${own.length} to tell you about</div>`
-      + own.map(e=>`<div class="dgrow">${evLine(e)}</div>`).join("")
-      + `<div class="dgnone">No Cascade of mine found ${own.length===1?"this one":"these"} — you added
-           ${own.length===1?"it":"them"} — so I tell you about every move ${own.length===1?"it makes":"they make"}.</div></div>`;
+    html+=`<div class="ntfcard">
+      <div class="ntfhead">🟠 Added by you</div>
+      ${own.map(e=>`<div class="ntfrow match" onclick="openNotifyFilm(${e.id})">
+        ${notifyPosterHTML(e.id)}
+        <div><div class="ntftitle">${esc(e.title)}</div><div class="ntfchange">${changeLine(e)}</div>
+          <span class="ntfpill">📌 You added this</span></div>
+      </div>`).join("")}</div>`;
+  if(!html.includes("ntfcard"))
+    html+=`<div class="dgempty">Nothing your agents told you about today — see below for what they kept quiet on.</div>`;
   el.innerHTML=html;
 }
 // ---- CAS-185/213: the bell counts REAL alerts ------------------------------------------------------
@@ -12677,8 +12746,18 @@ function renderDigest(){
 // number on the one surface that has to be trustworthy.
 let realAlerts=[];            // [{id, movie_id, moment, title, cascade_name, emailed_at, read_at}]
 const unreadReal = () => realAlerts.filter(a=>!a.read_at).length;
+// CAS-445: the local day-simulation's own "unread" — lastPoll is REPLACED wholesale on every simulateDay(),
+// so there is nothing to dedupe per-event: either today's report has been opened already (lastSeenPollDay
+// caught up to it) or it hasn't. Counts only the notify-matches (caught + own), the same set the
+// Notifications panel highlights green — the quiet "also changed" rows were never alerts and don't page you.
+let lastSeenPollDay=0;
+function unseenMatchCount(){
+  if(!lastPoll || lastPoll.day<=lastSeenPollDay) return 0;
+  return cascades.reduce((n,c)=>n+cascadeDigest(c).caught.length,0) + ownDigest().length;
+}
+function markPollSeen(){ if(lastPoll) lastSeenPollDay=lastPoll.day; updateBadge(); }
 function updateBadge(){
-  const b=$("badge"), n=unreadReal() || alerts.length;
+  const b=$("badge"), n=unreadReal()+unseenMatchCount();
   if(n){ b.style.display="grid"; b.textContent=n; } else b.style.display="none";
 }
 // ---- The alert, in the agent's voice (CAS-69) ----------------------------------
@@ -12731,25 +12810,34 @@ function realAlertsHTML(){
         ? "Nothing yet. Your agents are watching — the moment one of their films reaches a window you asked about, it lands here."
         : "Alerts are kept with your account. Sign in and anything your agents have found for you shows up here."}</div>`;
   }
-  const col={in_cinema:"#f0a336", past_opening:"#f0a336", pvod:"#a486f0",
-             rental:"#5aa9f0", included_streaming:"#48c78e"};
   const n=unreadReal();
-  const rows=realAlerts.map(a=>{
-    const w=REAL_MOMENT_WINDOW[a.moment]||"rental", c=col[w]||"#5aa9f0";
-    const when=a.emailed_at ? new Date(a.emailed_at).toLocaleDateString() : "";
-    // The film's own poster when it is still in the catalogue. When it is not, the row still stands —
-    // "we told you about this" is a fact about the past, and the ledger carries the title itself.
-    const m=MOVIES.find(x=>String(x.tmdb_id)===String(a.movie_id));
-    const bg=(m&&m.poster)?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
-    return `<div class="alert alertrow${a.read_at?" wasread":""}">
-      <div class="alertposter" style="${bg}"></div>
-      <div class="alertmain">
-        <div class="t">${esc(a.title||"A film you're watching")}</div>
-        <div class="d">${esc(REAL_MOMENT_SAID[a.moment]||a.moment)}${when?` · ${when}`:""}</div>
-        <span class="w" style="background:${c}22;border:1px solid ${c}88;color:${c}">🔎 ${esc(a.cascade_name||"your Cascade")}</span>
-      </div></div>`;
-  }).join("");
-  return `<div class="dghead">From your agents${n?` · <b style="color:var(--accenttext)">${n} new</b>`:""}</div>${rows}`;
+  // CAS-445: grouped by the agent that caught each one — match() only ever writes a row for a moment a
+  // Cascade actually asked for, so every real alert IS a notify-match; there is no "also changed" quiet
+  // half for this list (the daily job never records the moves it didn't alert on).
+  const groups=[];
+  realAlerts.forEach(a=>{
+    const name=a.cascade_name||"Your agent";
+    let g=groups.find(x=>x.name===name);
+    if(!g){ g={name, rows:[]}; groups.push(g); }
+    g.rows.push(a);
+  });
+  const cards=groups.map(g=>`<div class="ntfcard">
+    <div class="ntfhead">${esc(g.name)}</div>
+    ${g.rows.map(a=>{
+      const when=a.emailed_at ? new Date(a.emailed_at).toLocaleDateString() : "";
+      // The film's own poster when it is still in the catalogue. When it is not, the row still stands —
+      // "we told you about this" is a fact about the past, and the ledger carries the title itself.
+      const m=MOVIES.find(x=>String(x.tmdb_id)===String(a.movie_id));
+      const bg=(m&&m.poster)?`background-image:url(https://image.tmdb.org/t/p/w92${m.poster})`:"";
+      return `<div class="ntfrow match${a.read_at?" wasread":""}"${m?` onclick="openNotifyFilm(${m.tmdb_id})"`:""}>
+        <div class="ntfposter" style="${bg}"></div>
+        <div><div class="ntftitle">${esc(a.title||"A film you're watching")}</div>
+          <div class="ntfchange">${esc(REAL_MOMENT_SAID[a.moment]||a.moment)}${when?` · ${when}`:""}</div>
+          <span class="ntfpill">✓ You asked</span>
+        </div></div>`;
+    }).join("")}
+  </div>`).join("");
+  return `<div class="dghead">From your agents${n?` · <b style="color:var(--accenttext)">${n} new</b>`:""}</div>${cards}`;
 }
 function renderAlerts(){
   const el=$("alertsList");
