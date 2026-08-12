@@ -119,6 +119,37 @@ test("in cinema: the catalogue holds films that are on a screen right now", () =
     `${m.title} is filed In Cinema on an opening date of ${m.cinema_date}, outside the run`);
 });
 
+// CAS-476: two real, currently-showing wide releases (Toy Story 5, 55 days into its run; The Odyssey, 27
+// days in) were being deleted from every listing. Past CAS-289's old two-week cap, deriveStatus's CAS-318
+// correction filed a still-in-cinema estimate onto "pvod" with zero offers, and showable()'s
+// hasConfirmedOffer requires a real, priced offer before anything estimated may show there — so the film was
+// not moved to a visible next window, it was made permanently unshowable. This proves an estimated,
+// offer-less in-cinema film now survives for a realistic run, not just fourteen days.
+function daysAgo(n){
+  const d = new Date(`${E.TODAY}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+test("in cinema: an estimated wide release with no offers stays showable for a realistic run (CAS-476)", () => {
+  const wideRelease = cinemaDate => ({
+    title: "CAS-476 Test Film", cinema_date: cinemaDate,
+    claimedStatus: ["in_cinema"], availability_confidence: "estimated", offers: [],
+  });
+  for(const days of [27, 55, 74]){
+    const m = wideRelease(daysAgo(days));
+    m.status = E.deriveStatus(m);
+    assert.ok(E.showable(m), `a film ${days} days into its cinema run with no offers must stay showable`);
+    assert.equal(E.primaryStatus(m), "in_cinema",
+      `a film ${days} days into its cinema run was moved off in_cinema to ${E.primaryStatus(m)}`);
+  }
+  // Well past a realistic run the film still moves on — CAS-318's own "next window" behaviour, deliberately
+  // left in force; this run-length raise is not licence to trust an estimate forever.
+  const stale = wideRelease(daysAgo(120));
+  stale.status = E.deriveStatus(stale);
+  assert.equal(E.primaryStatus(stale), "pvod",
+    "a film 120 days past its cinema opening with no offers should still have moved off in_cinema");
+});
+
 test("in cinema: a wide-open cinema agent loses none of them, and is not a wall of Upcoming", () => {
   pickInLane(E, "cinema", "custom");
   const d = E.onbApply();

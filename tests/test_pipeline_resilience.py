@@ -641,20 +641,35 @@ class TheWindowEstimatorCannotLearnFromItsOwnStartDate(unittest.TestCase):
         self.assertEqual(ps.estimate_status({"cinema_date": "2026-12-01"}, today), ("upcoming", "estimated"))
         self.assertEqual(ps.estimate_status({}, today), ("upcoming", "estimated"))
 
-    def test_the_estimated_in_cinema_window_is_capped_at_two_weeks(self):
-        # CAS-289: there is no cinema-END date anywhere, so "in cinemas" is a guess from the opening date —
-        # and the default pvod offset (75 days) let that guess run for months. Past two weeks it must move
-        # to the next estimated window even though the learned ladder hasn't caught up yet.
-        today = datetime.date(2026, 7, 30)
-        opened_13_days_ago = (today - datetime.timedelta(days=13)).isoformat()
-        self.assertEqual(ps.estimate_status({"cinema_date": opened_13_days_ago}, today),
+    def test_the_estimated_in_cinema_window_is_capped_at_a_realistic_run_length(self):
+        # CAS-476: the original two-week cap deleted two real, still-showing wide releases (Toy Story 5, 55
+        # days into its run; The Odyssey, 27 days in) — past the cap, app_template.html's twin correction
+        # filed them onto "pvod" with zero offers, which is unshowable without a real one, so the film
+        # vanished instead of moving to a visible next window. Raised to DEFAULT_OFFSETS["pvod"] (75 days),
+        # the same median cinema-to-pvod gap already trusted for this exact question elsewhere in this module.
+        today = datetime.date(2026, 8, 12)
+        opened_74_days_ago = (today - datetime.timedelta(days=74)).isoformat()
+        self.assertEqual(ps.estimate_status({"cinema_date": opened_74_days_ago}, today),
                          ("in_cinema", "estimated"))
-        opened_14_days_ago = (today - datetime.timedelta(days=14)).isoformat()
-        self.assertEqual(ps.estimate_status({"cinema_date": opened_14_days_ago}, today),
-                         ("pvod", "estimated"), "the estimated in-cinema window ran past its two-week cap")
-        opened_40_days_ago = (today - datetime.timedelta(days=40)).isoformat()
-        self.assertEqual(ps.estimate_status({"cinema_date": opened_40_days_ago}, today),
-                         ("pvod", "estimated"))
+        opened_75_days_ago = (today - datetime.timedelta(days=75)).isoformat()
+        self.assertEqual(ps.estimate_status({"cinema_date": opened_75_days_ago}, today),
+                         ("pvod", "estimated"), "the estimated in-cinema window ran past its realistic-run cap")
+        # The cap must stay an INDEPENDENT ceiling (its documented job) even against a learned pvod offset
+        # that is longer than it — not just a value that happens to match the current default.
+        opened_60_days_ago = (today - datetime.timedelta(days=60)).isoformat()
+        long_offsets = {"pvod": 120, "rental": 150, "included_streaming": 250}
+        self.assertEqual(ps.estimate_status({"cinema_date": opened_60_days_ago}, today, long_offsets),
+                         ("in_cinema", "estimated"))
+        opened_80_days_ago = (today - datetime.timedelta(days=80)).isoformat()
+        self.assertEqual(ps.estimate_status({"cinema_date": opened_80_days_ago}, today, long_offsets),
+                         ("pvod", "estimated"),
+                         "a learned pvod offset longer than the cap must not override the independent ceiling")
+        # The two real titles that prompted CAS-476, expressed as regression cases against today's date.
+        toy_story_5 = (today - datetime.timedelta(days=55)).isoformat()
+        self.assertEqual(ps.estimate_status({"cinema_date": toy_story_5}, today)[0], "in_cinema",
+                         "Toy Story 5 (55 days into its run) must stay in_cinema, not vanish past a too-short cap")
+        the_odyssey = (today - datetime.timedelta(days=27)).isoformat()
+        self.assertEqual(ps.estimate_status({"cinema_date": the_odyssey}, today)[0], "in_cinema")
 
 
 if __name__ == "__main__":
