@@ -5758,7 +5758,14 @@ const settleFoundView = () => { heldOpen.clear(); };
 // follows. An agent notifying on a window it doesn't list must still watch that window (or the alert could
 // never fire), so `status` keeps it and `listStatus` is what decides whether it appears here. An agent with no
 // listStatus — anything built before this screen existed — lists everything it watches, as it always did.
-const listWindowOK = (m,c) => !(c.listStatus||[]).length || c.listStatus.includes(primaryStatus(m));
+// CAS-481: an ESTIMATED "upcoming" is never a genuine future release — the pipeline only ever marks a title
+// estimated once its cinema_date has already passed (a still-ahead date stays "confirmed" from the TMDB date
+// alone, untouched until polling starts), so an estimated film reporting "upcoming" is really an offer-less
+// title whose run is over with nothing else ever found for it in AU, not a film worth anticipating. CAS-170's
+// invariant already holds every other estimated window to "only a cinema run may be estimated" — upcoming
+// gets the same rule here, at the one gate that decides whether a stale estimate reaches a listing.
+const listWindowOK = (m,c) => (!(c.listStatus||[]).length || c.listStatus.includes(primaryStatus(m)))
+  && (primaryStatus(m)!=="upcoming" || !isEstimated(m));
 // CAS-279: a hand-move is the only thing that outranks an agent's criteria about where a film is listed.
 // Moved-out wins outright; pinned-in skips the criteria but still has to clear the agent's own WINDOWS,
 // because those are what the agent lists rather than what it likes — a cinema agent showing a film that is

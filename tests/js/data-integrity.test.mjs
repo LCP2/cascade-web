@@ -105,6 +105,29 @@ test("listing: an estimate only reaches the screen from a cinema run", () => {
   }
 });
 
+// CAS-481: "DE4TH DRIVE" — cinema_release: false, cinema_date over a year past, no offers ever found in AU —
+// stayed stuck at claimedStatus ["upcoming"] with availability_confidence "estimated" (derive_from_providers'
+// offer-less fallback for a title past its run has nowhere else honest to put it). Nothing in the pipeline
+// invented this shape from nothing: it is a title the pipeline never confirmed AND is not still ahead of us,
+// so it is not a real anticipation — the exact thing the invariant above already refuses for every OTHER
+// estimated window. This is the regression test for the gate that closes the gap: listWindowOK must not let
+// an estimated "upcoming" claim into any agent's listing, cinema or streaming.
+test("listing: a stuck-upcoming, estimated title with no cinema run never reaches a listing (CAS-481)", () => {
+  const stuck = {
+    title: "CAS-481 Test Film", cinema_date: daysAgo(400), cinema_release: false,
+    claimedStatus: ["upcoming"], availability_confidence: "estimated", offers: [],
+  };
+  stuck.status = E.deriveStatus(stuck);
+  assert.equal(E.primaryStatus(stuck), "upcoming", "setup: the pipeline's own claim for this shape is upcoming");
+  assert.ok(E.isEstimated(stuck), "setup: this shape is only ever estimated");
+  for(const kind of ["cinema", "stream"]){
+    pickInLane(E, kind, kind === "cinema" ? "cinema" : "custom");
+    const d = E.onbApply();
+    assert.equal(E.listWindowOK(stuck, d), false,
+      `${kind}: an estimated, stuck-upcoming title with no confirmed cinema run must not satisfy an agent's Upcoming window`);
+  }
+});
+
 // ---- 1b. THE IN-CINEMA SECTION ACTUALLY POPULATES (CAS-237) ---------------------------------------------
 // The bug: a cinema agent listed 33 films of which 2 were not Upcoming, because the catalogue held no film
 // in a cinema at all — the window estimator had learned a 1-day cinema-to-streaming offset from an
@@ -777,7 +800,11 @@ test("counts: every count in the wider matrix is still the size of its own set",
         `${label} + ${what}: lists a film it does not follow`);
       assert.ok(listed <= bySet, `${label} + ${what}: lists ${listed} of a watched set of ${bySet}`);
       const upstream = watched.filter(m => !E.listedBy(m, d));
-      for(const m of upstream) assert.ok(!d.listStatus.length || !d.listStatus.includes(E.primaryStatus(m)),
+      for(const m of upstream) assert.ok(!d.listStatus.length || !d.listStatus.includes(E.primaryStatus(m))
+        // CAS-481: the other lawful reason a followed film sits in a listed window and still isn't listed —
+        // an estimated "upcoming" claim the pipeline could never confirm and isn't still ahead of us, which
+        // listWindowOK refuses the same way CAS-170 already refuses every other estimated non-cinema window.
+        || (E.primaryStatus(m) === "upcoming" && E.isEstimated(m)),
         `${label} + ${what}: follows ${m.title}, which is sitting in the listed window ` +
         `${E.primaryStatus(m)} and still is not listed`);
     }
