@@ -21,6 +21,12 @@
      Row-Level Security protects the data). If the file is ever absent this 404s harmlessly and
      the page loads in guest mode (localStorage) instead. See config.example.js for the template. -->
 <script src="config.js"></script>
+<!-- CAS-463: Capacitor's core JS + the push-notifications plugin, vendored (see the files' own header
+     comments — this repo has no bundler, so `Capacitor.Plugins.PushNotifications` needs both loaded as
+     plain globals). Harmless on the web build too: outside the native shell isNativePlatform() is false
+     and registerPush() falls back to the browser Notification API instead of touching this. -->
+<script src="capacitor-core.js"></script>
+<script src="capacitor-push-notifications.js"></script>
 <style>
   :root{
     /* ---- Cascade brand system (CAS-73 / spec 26640386 §1) ----
@@ -3376,7 +3382,11 @@ const expandedSet = new Set();   // which cards are expanded (session only)
 // to email, to leave an in-app alert, or to do neither. `email` is deliberately its own field and not
 // assumed to be the sign-in address — a person can sign in with one and want alerts at another.
 const NOTIFY_PREFS_KEY = "cascade_notifyprefs";
-const notifyPrefsDefault = () => ({inApp:true, emailOn:false, email:""});
+// CAS-463: inApp used to default true because flipping it was a no-op local flag. Now it gates a real OS
+// permission request, so a true default would leave the toggle looking "on" for every first-time visitor
+// without ever having asked — the one thing this ticket exists to prevent. Starts false; only a resolved
+// permission grant (registerPush(), below) may flip it.
+const notifyPrefsDefault = () => ({inApp:false, emailOn:false, email:""});
 let notifyPrefs = notifyPrefsDefault();
 try{ const o=JSON.parse(localStorage.getItem(NOTIFY_PREFS_KEY)||"null");
      if(o && typeof o==="object") notifyPrefs={...notifyPrefsDefault(), ...o}; }catch(e){}
@@ -3649,7 +3659,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 435, "commit": "3d3cc87", "builtAt": "2026-08-11T22:53:55Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 438, "commit": "58692e7", "builtAt": "2026-08-12T03:41:01Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -10605,6 +10615,8 @@ const SHARP_STEPS = {
       return `<p class="ossub">As new movies come along that meet your brief, this agent will ping you. How would you like to be notified?</p>
         <button type="button" class="bigtoggle${on("inApp")}" onclick="flowNotify('inApp',this)">
           <span class="btmain">Allow in-app notifications</span><span class="btcheck">✓</span></button>
+        <p class="ossub" id="onbInAppHint">Tapping this will ask iOS for permission to notify you — you can change your mind any time.</p>
+        <p class="fielderr" id="onbInAppDenied" role="alert" hidden>You said no to notifications — you can turn them on later in iOS Settings → Cascade.</p>
         <button type="button" class="bigtoggle${on("emailOn")}" onclick="flowNotify('emailOn',this)">
           <span class="btmain">Send me alerts by email</span><span class="btcheck">✓</span></button>
         <div class="emailwrap${notifyPrefs.emailOn?" show":""}" id="onbEmailWrap">
@@ -10618,6 +10630,7 @@ const SHARP_STEPS = {
       const el=$("onbEmail");
       if(el) el.oninput=()=>{ notifyPrefs.email=el.value.trim(); saveNotifyPrefs(); notifyGate(); };
       notifyGate();
+      paintInAppDenied();   // CAS-463: fresh entry to the step always starts from the neutral hint
     },
   },
   years: {
@@ -11455,7 +11468,73 @@ function notifyGate(){
     b.title = ok ? "" : "Add the email address your alerts should go to, or switch email alerts off";
   }
 }
+// CAS-463: "Allow in-app notifications" used to just flip a local flag. Now it asks for a real OS-level
+// permission and — on a native grant — captures the device token push delivery (CAS-465) needs. Only a
+// resolved grant may flip notifyPrefs.inApp on; the button itself is the guard against re-prompting on
+// every render, since it is the only caller (wire()/onbRefresh() never call this).
+let inAppDenied=false;
+function paintInAppDenied(){
+  const n=$("onbInAppDenied"), h=$("onbInAppHint");
+  if(n) n.hidden=!inAppDenied;
+  if(h) h.hidden=inAppDenied;
+}
+async function upsertPushToken(token){
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  const owner=(a && a.session && a.session.user) ? a.session.user.id : null;
+  if(!c || !owner || !token) return;
+  try{
+    const { error } = await c.from("push_tokens").upsert(
+      [{ user_id:owner, device_token:token, platform:"ios", app_version:(BUILD_INFO||{}).version || null }],
+      { onConflict:"user_id,device_token" });
+    if(error) console.warn("push_tokens upsert", error);
+  }catch(e){ console.warn("Cascade: push token upsert failed", e); }
+}
+let pushRegistering=null;
+// Native: the real iOS permission sheet, then a device-token upsert so CAS-465 has somewhere to deliver
+// to. Web (no native shell, or the vendored plugin script didn't load): the browser's own Notification
+// permission — nothing is stored server-side yet, there is no web-push backend.
+function registerPush(){
+  if(pushRegistering) return pushRegistering;
+  pushRegistering=(async()=>{
+    try{
+      if(typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform()){
+        const PN=Capacitor.Plugins && Capacitor.Plugins.PushNotifications;
+        if(!PN) return false;
+        const perm=await PN.requestPermissions();
+        if(perm.receive!=="granted") return false;
+        PN.addListener("registration", token => upsertPushToken(token && token.value));
+        await PN.register();
+        return true;
+      }
+      if(typeof Notification==="undefined") return false;
+      if(Notification.permission==="granted") return true;
+      const res=await Notification.requestPermission();
+      return res==="granted";
+    }catch(e){ console.warn("Cascade: push registration failed", e); return false; }
+  })();
+  pushRegistering.finally(()=>{ pushRegistering=null; });
+  return pushRegistering;
+}
 window.flowNotify=(key,el)=>{
+  if(key==="inApp"){
+    if(notifyPrefs.inApp){   // turning off never needs a permission round-trip
+      notifyPrefs.inApp=false; saveNotifyPrefs(); el.classList.toggle("on", false);
+      onbRefresh(); logEvent("flow_notify",{key,on:false});
+      return;
+    }
+    el.disabled=true;
+    registerPush().then(granted=>{
+      el.disabled=false;
+      notifyPrefs.inApp=granted;
+      saveNotifyPrefs();
+      el.classList.toggle("on", granted);
+      inAppDenied=!granted;
+      paintInAppDenied();
+      onbRefresh();
+      logEvent("flow_notify",{key:"inApp", on:granted});
+    });
+    return;
+  }
   notifyPrefs[key]=!notifyPrefs[key];
   saveNotifyPrefs();
   el.classList.toggle("on", notifyPrefs[key]);

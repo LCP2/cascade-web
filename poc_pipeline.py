@@ -86,7 +86,8 @@ VERSION_FILE  = os.path.join(os.path.dirname(__file__), "VERSION")        # hand
 VERSION_JSON  = os.path.join(os.path.dirname(__file__), "version.json")   # machine-readable build stamp
 IOS_WWW_DIR   = os.path.join(os.path.dirname(__file__), "www")            # Capacitor webDir mirror (CAS-453)
 IOS_WWW_ASSETS = ("index.html", "config.js", "favicon.svg", "favicon.png",
-                   "apple-touch-icon.png", "splash-logo.svg")
+                   "apple-touch-icon.png", "splash-logo.svg",
+                   "capacitor-core.js", "capacitor-push-notifications.js")  # CAS-463
 
 TMDB_KEY      = os.environ.get("TMDB_API_KEY")
 OMDB_KEY      = os.environ.get("OMDB_API_KEY")
