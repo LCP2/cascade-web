@@ -47,9 +47,18 @@ def cinema_date(m): return _date(m.get("cinema_date"))
 
 
 def classify_tier(m, today):
+    """CAS-472: `st == {"upcoming"}` alone used to also mean "none", so a title that fell all the
+    way back to upcoming (a real AU-delisting, offer-less catalogue drift, or the CAS-472 bug
+    itself) stayed poll_tier "none" forever afterward — the branch that writes that status is
+    the ONLY thing gated on this tier, so nothing ever polled it again to find out it had moved
+    on. Only a cinema_date genuinely unknown-or-still-ahead may skip polling; once it is known
+    and has passed, the title is always active/slow, never none, regardless of what `status`
+    currently holds."""
     st = set(m.get("status", []))
     c = cinema_date(m)
-    if (c and c > today) or st == {"upcoming"}:
+    if c and c > today:
+        return "none"
+    if c is None and st == {"upcoming"}:
         return "none"
     recent = bool(c and 0 <= (today - c).days <= SIX_MONTHS)
     if (st & ACTIVE_WINDOW) or recent:
