@@ -1,14 +1,14 @@
 # Catalogue sizing — TMDB discover total_results (CAS-354)
 
-Measured 2026-08-11 by `scripts/catalogue_sizing.py`, run in CI (`.github/workflows/daily.yml`) where the TMDB key exists.
+Measured 2026-08-12 by `scripts/catalogue_sizing.py`, run in CI (`.github/workflows/daily.yml`) where the TMDB key exists.
 
-## Current scope (pipeline-identical: with_release_type=2|3, region=AU, 2023-08-12..2026-08-11, sort_by=popularity.desc)
+## Current scope (pipeline-identical: with_release_type=2|3, region=AU, 2023-08-13..2026-08-12, sort_by=popularity.desc)
 
-- total_results: 1869
+- total_results: 1872
 - total_pages: 94
 
 ## Widened scope (everything watchable in AU: watch_region=AU, with_watch_monetization_types=flatrate|free|ads|rent|buy, no release_type restriction)
 
-- total_results: 90796
-- total_pages: 4540
+- total_results: 90811
+- total_pages: 4541
 
