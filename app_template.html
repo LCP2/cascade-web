@@ -5111,14 +5111,18 @@ const filmOptOn = (id, opt) => {
 // they were — agent-level settings (drawWatchLanes, untouched) — they just never described somewhere to
 // watch, so this ladder starts one rung later, at the first one that does.
 const WATCH_LEVEL_KEYS = ["in_cinema", "premium", "rent", "stream"];
-// The rows the Watch panel offers for this film: only the levels this cascade is actually configured to
-// track (CAS-280's honesty rule, carried over), in ladder order, each carrying whether the film has already
-// passed it. Unlike the old Notify list, a passed level is not dropped — it is shown,
-// greyed (CAS-349): the film's whole journey stays visible even where most of it is behind it, only the
-// past stays un-selectable. CAS-473: `spent` is strictly-past rungs only — a film's CURRENT rung is where the
-// Watch panel is a statement of fact ("watch it here") rather than a promise about the future, so unlike the
-// Notify honesty rule (CAS-280's rowSpentFor, which does exclude a film's own arrival) the row for the film's
-// own current window stays selectable. Only rungs the film has already moved past are un-offerable.
+// The rows the Watch panel offers for this film: every level the film is eligible for (in ladder order),
+// each carrying whether the film has already passed it. CAS-477: a level this cascade isn't configured to
+// track is still shown, live and tickable — the film's Watch-it tick is account-wide (filmOptOn), so hiding
+// the row here just because THIS cascade doesn't track it made the tick look reset when swapping cascades.
+// `agentOn` still says whether THIS cascade will actually notify on it — that only gates the "N of M" chip
+// count (filmNotifyState) and the auto-tick cascade, not whether the row appears. Unlike the old Notify
+// list, a passed level is not dropped — it is shown, greyed (CAS-349): the film's whole journey stays
+// visible even where most of it is behind it, only the past stays un-selectable. CAS-473: `spent` is
+// strictly-past rungs only — a film's CURRENT rung is where the Watch panel is a statement of fact ("watch
+// it here") rather than a promise about the future, so unlike the Notify honesty rule (CAS-280's
+// rowSpentFor, which does exclude a film's own arrival) the row for the film's own current window stays
+// selectable. Only rungs the film has already moved past are un-offerable.
 function watchLevelsFor(id){
   const c=activeCascade();
   const kinds = (c && (c.kind==="cinema"||c.kind==="stream")) ? [c.kind] : Object.keys(AGENT_WINDOWS);
@@ -5128,7 +5132,6 @@ function watchLevelsFor(id){
   kinds.forEach(k=>AGENT_WINDOWS[k].forEach(w=>{
     if(!WATCH_LEVEL_KEYS.includes(w.key)) return;
     const f=watch[w.key]||{};
-    if(c && !f.list && !f.notify) return;             // not a level this cascade is configured to track
     out.push({key:w.key, label:w.label, cd:w.cd, agentOn:!!f.notify, spent: WINDOW_RUNG[w.key]<rung});
   }));
   return out;
@@ -5269,11 +5272,13 @@ window.commitNewList=(id, inputEl)=>{
   if(name){ const l=createList(name); if(l) toggleFilmList(id, l.id); }
   repaintListsControl(id);
 };
-// The Notify panel's rows: one per level this agent's own Notify option enables (CAS-427 — a level the agent
-// hasn't opted into isn't offered here at all, not shown greyed), then Never at the foot — always present,
-// per the ticket, so it is never a second control to go and find.
+// The Notify panel's rows: one per level the film is eligible for (CAS-477 — every eligible level is shown,
+// live and tickable, regardless of whether THIS agent's own Notify option is on for it; the tick itself is
+// account-wide, so hiding a row here just because this cascade doesn't track it is what made a real tick
+// look reset when swapping cascades), then Never at the foot — always present, per the ticket, so it is
+// never a second control to go and find.
 function watchPanelRowsHTML(id){
-  const levels=watchLevelsFor(id).filter(l=>l.agentOn);
+  const levels=watchLevelsFor(id);
   const rows=levels.map(l=>{
     const on=filmOptOn(id,l);
     return `<button type="button" class="nopt${on?" on":""}${l.spent?" spent":""}"
