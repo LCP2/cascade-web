@@ -3471,8 +3471,12 @@ function recomputeFound(){
   hits.forEach((ids,id)=>{ entryFor(id).cascadeIds=ids; });
   Object.entries(notify).forEach(([id,e])=>{
     const auto=e.cascadeIds.length>0, mine=e.source==="manual";
-    // An entry that records neither an override nor a current match is just noise — don't keep it.
-    if(!auto && !mine && !e.removed){ delete notify[id]; return; }
+    // CAS-469: a per-film Watch-it tick (e.wins) is its own explicit choice, same standing as a manual pin —
+    // it must outlive the film falling out of every Cascade's auto-match (a status change, a criteria edit),
+    // or the very next render's recompute wipes it out from under the user with no action of theirs to blame.
+    const picked = !!(e.wins && Object.values(e.wins).some(Boolean));
+    // An entry that records neither an override nor a current match nor a watch pick is just noise — don't keep it.
+    if(!auto && !mine && !e.removed && !picked){ delete notify[id]; return; }
     // "I've seen it" / "not for me" outranks EVERY route onto the list, including your own pin. A Cascade's
     // auto set already honours those two tags (matchesCriteria excludes them), so this is what applies them to
     // a hand-added film — otherwise a film you pinned and then ticked as watched would sit in the Found group
