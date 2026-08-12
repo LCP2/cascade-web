@@ -3668,7 +3668,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 446, "commit": "6e5c806", "builtAt": "2026-08-12T04:52:15Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 447, "commit": "10f50da", "builtAt": "2026-08-12T05:16:14Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -4236,9 +4236,10 @@ function byRatingDesc(a,b){
 // ---- The forward availability timeline (CAS-148) -------------------------------
 // The default order inside every section. One key — the cinema date, latest first — read as a timeline you
 // are moving down: the films furthest from their next move sit at the top, the ones about to make it sit at
-// the bottom. So Upcoming leads with the far-future release and ends with the one about to open, and In
-// Cinema leads with the newest arrival and ends with the one about to leave the screen. The sections
-// themselves are already the journey (CASCADE order), so the two together read as one continuous line.
+// the bottom. In Cinema leads with the newest arrival and ends with the one about to leave the screen, and
+// the same read applies to Streaming/Rental/PVOD. The sections themselves are already the journey (CASCADE
+// order), so together they read as one continuous line. Upcoming is the one section that reads the other
+// way round — soonest release first, see byTimelineAsc and CAS-470.
 // A film with no cinema date has no place on a timeline, so it sits at the foot of its section, ordered by
 // rating rather than by nothing at all.
 function byTimeline(a,b){
@@ -4249,8 +4250,9 @@ function byTimeline(a,b){
   return db.localeCompare(da);
 }
 // CAS-394: the cinema lane's default reads the same timeline the other way — oldest cinema date at the
-// top — so a trip-planning read moves from what already opened toward what is still to come, Upcoming's
-// furthest-out title last rather than first (see sortForKey).
+// top — so a trip-planning read moves from what already opened toward what is still to come. CAS-470
+// reuses this same ascending order for the Upcoming section: soonest release at the top, furthest-out
+// title last (see sortForKey) — a deliberate reversal of CAS-177, which had Upcoming reading the other way.
 function byTimelineAsc(a,b){
   const da=a.cinema_date||"", db=b.cinema_date||"";
   if(!da && !db) return byRatingDesc(a,b);
@@ -4280,25 +4282,26 @@ const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
 // included. CAS-107's rating order is still there as an explicit choice: rated first, highest first, unrated
 // last, with byRatingDesc falling back to anticipation for the unrated so a group keeps a meaningful order
 // without pretending it has scores it doesn't have.
-// ---- Upcoming reads furthest-out first, whatever the order (CAS-177) ------------
-// The pre-release section is a countdown you read downwards: the film furthest from opening at the top,
-// the one about to open at the bottom. The default availability order already did that. What did not was
-// every OTHER order — under IMDb / RT / Gross / Popularity the Upcoming group fell back to anticipation,
-// which put Spider-Man (Jul 26, the most anticipated title in the catalogue) above Avengers (Dec 26).
-// The fallback is now the release timeline instead, which is the better fallback by CAS-148's own
-// argument: pre-release, the release date is the one figure an unreleased film definitely has, and a
-// score, a gross or a budget it does not have can only sort noise. The released windows keep their
-// explicit sort exactly as before — this is the pre-release section's rule, not a global reversal.
-// The sorts that ARE meaningful pre-release still win: Title stays alphabetical because the user asked
-// for alphabetical, and Cinema date is this order already.
+// ---- Upcoming reads soonest-release first, whatever the order (CAS-177, reversed by CAS-470) ---
+// The pre-release section used to read as a countdown, furthest-out release at the top (CAS-177). CAS-470
+// reverses that on purpose: Lee wants Upcoming to read forward instead — soonest release at the top,
+// furthest-out title at the bottom — not restoring the pre-CAS-177 behaviour, a new explicit preference.
+// The default availability order does that directly (byTimelineAsc). What CAS-177 fixed still has to hold
+// under the new direction: under IMDb / RT / Gross / Popularity the Upcoming group would otherwise fall
+// back to anticipation, which put Spider-Man (Jul 26, the most anticipated title in the catalogue) above
+// Avengers (Dec 26) — so those still fall back to the release timeline, just ascending now instead of
+// descending. The released windows (In Cinema, Streaming, Rental, PVOD) keep their explicit sort exactly
+// as before — this is the pre-release section's rule, not a global reversal. The sorts that ARE meaningful
+// pre-release still win as their own literal order: Title stays alphabetical, and Cinema date stays
+// "Newest cinema" first (its own UI label, unaffected by this ticket).
 // CAS-430: a cinema agent's In Cinema section is the trip-planning line CAS-394 promised — oldest
 // cinema_date at the top — and that has to hold under every sort key, not just "availability". A
 // Blockbuster-style agent (sort:"popularity") was falling through to sortMoviesBy and losing the
 // oldest-first read entirely.
 const sortForKey = (g,key,cinema) =>
-    (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byTimeline
+    (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byTimelineAsc
   : (cinema && g==="in_cinema") ? byTimelineAsc
-  : key==="availability" ? (cinema ? byTimelineAsc : byTimeline)
+  : key==="availability" ? (cinema||g==="upcoming" ? byTimelineAsc : byTimeline)
   : key==="imdb" ? byRatingDesc
   : ((a,b)=>sortMoviesBy(a,b,key));
 const sortFor = (g,c) => sortForKey(g, filt.sort, c && c.kind==="cinema");
