@@ -5102,11 +5102,12 @@ const filmOptOn = (id, opt) => {
 const WATCH_LEVEL_KEYS = ["in_cinema", "premium", "rent", "stream"];
 // The rows the Watch panel offers for this film: only the levels this cascade is actually configured to
 // track (CAS-280's honesty rule, carried over), in ladder order, each carrying whether the film has already
-// reached or passed it. Unlike the old Notify list, a reached/passed level is not dropped — it is shown,
+// passed it. Unlike the old Notify list, a passed level is not dropped — it is shown,
 // greyed (CAS-349): the film's whole journey stays visible even where most of it is behind it, only the
-// future stays interactive. CAS-434: `spent` includes the film's CURRENT rung, not just strictly-past ones —
-// a film already at Rent cannot be told about "reaching" Rent, so that row is exactly as un-offerable as one
-// it has already left (CAS-280's honesty rule again, just one rung wider).
+// past stays un-selectable. CAS-473: `spent` is strictly-past rungs only — a film's CURRENT rung is where the
+// Watch panel is a statement of fact ("watch it here") rather than a promise about the future, so unlike the
+// Notify honesty rule (CAS-280's rowSpentFor, which does exclude a film's own arrival) the row for the film's
+// own current window stays selectable. Only rungs the film has already moved past are un-offerable.
 function watchLevelsFor(id){
   const c=activeCascade();
   const kinds = (c && (c.kind==="cinema"||c.kind==="stream")) ? [c.kind] : Object.keys(AGENT_WINDOWS);
@@ -5117,7 +5118,7 @@ function watchLevelsFor(id){
     if(!WATCH_LEVEL_KEYS.includes(w.key)) return;
     const f=watch[w.key]||{};
     if(c && !f.list && !f.notify) return;             // not a level this cascade is configured to track
-    out.push({key:w.key, label:w.label, cd:w.cd, agentOn:!!f.notify, spent: WINDOW_RUNG[w.key]<=rung});
+    out.push({key:w.key, label:w.label, cd:w.cd, agentOn:!!f.notify, spent: WINDOW_RUNG[w.key]<rung});
   }));
   return out;
 }
