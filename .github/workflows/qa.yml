@@ -13,6 +13,10 @@
 # regressions. It is now a single job running the fixed critical-path smoke suite
 # (tests/e2e/smoke.spec.mjs), with retries to absorb genuine flake instead of a sharded blast
 # radius. See that file's header for what the five checks cover and why.
+#
+# CAS-462: once the 5 jobs below are green, mark-on-staging tells Jira the shipped tickets
+# reached the "On Staging" checkpoint — that status previously had zero issues ever, because
+# nothing transitioned to it; promote.yml's ci/close_shipped.py jumped tickets straight to Done.
 name: qa
 
 on:
@@ -162,3 +166,26 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+  # CAS-462: Jira checkpoint only — no build artefact depends on this, so it runs after the
+  # other 5 jobs (not in parallel with them) and only on green, via `needs:`.
+  mark-on-staging:
+    needs: [build-check, engine, data, monitor, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Mark shipped tickets On Staging
+        env:
+          JIRA_BASE_URL:  ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL:     ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          RANGE_FROM: ${{ github.event.before }}
+          RANGE_TO:   ${{ github.sha }}
+        run: python ci/mark_on_staging.py
