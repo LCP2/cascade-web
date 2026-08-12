@@ -674,11 +674,6 @@
   /* CAS-360: a claim about the film's release history (had an AU cinema release), not an accolade — its
      own colour rather than borrowing gold from the awards chips beside it. */
   .m.cinema{border-color:rgba(122,162,255,.4);color:#c3cdf2}
-  /* CAS-447: "newly added" — the catalogue's own claim, not an accolade. Reuses the same colours the
-     window timeline already uses for Upcoming (purple) and Stream (green), so the chip reads as "which
-     window this is about" before a word of the label is read. */
-  .m.newlycin{border-color:rgba(var(--upcoming-rgb),.4);color:var(--upcoming-ink)}
-  .m.newlystream{border-color:rgba(72,199,142,.5);color:#a7eccb}
   /* CAS-436: .awx is now the .cval of the Awards .credit row (see above) — its own show/hide and spacing
      rules are inherited from .credit/.expand, so it only needs its internal line layout. */
   .awx{display:flex;flex-direction:column;gap:5px}
@@ -749,6 +744,10 @@
   .cap.w-pvod{color:#d3c2ff;border-color:rgba(164,134,240,.65);background:rgba(164,134,240,.18)}
   .cap.w-rental{color:#bcdcff;border-color:rgba(90,169,240,.7);background:rgba(90,169,240,.18)}
   .cap.w-included_streaming{color:#a7eccb;border-color:rgba(72,199,142,.65);background:rgba(72,199,142,.2)}
+  /* CAS-468: "recent" — supersedes CAS-447's card badge. No new element: the pill's own colour, icon and
+     label are untouched, only a soft gold outline + outer glow is added when the window it's showing was
+     reached (first listing or a later status change) within the last NEW_DAYS days. */
+  .cap.recent{border-color:#ffd54a;box-shadow:0 0 0 1px rgba(255,213,74,.4),0 0 9px 1px rgba(255,213,74,.55)}
   /* ---- Estimated availability (CAS-110) ----
      A window Cascade has NOT confirmed must not be able to pass for one it has. The lit capsule loses its
      fill and glow and goes dashed and grey — the same shape, visibly not the same claim. */
@@ -3527,6 +3526,7 @@ const alerts=[];
 const filt={status:new Set(), year:new Set(), age:new Set(), culture:new Set(), lang:new Set(), genre:new Set(),
   exclude:new Set(),       // genres you never want to see — the ONE criterion that subtracts (CAS-71)
   imdb:0, rt:0, gross:0, search:"", foundOnly:false, hideWatched:false, showHidden:false, awards:false,
+  recent:false,             // CAS-468: only films whose status pill is currently glowing (isRecent)
   sort:"availability",     // CAS-148: the forward availability timeline is the default order (byTimeline)
   includeUnrated:false,    // set by the open Cascade's escape hatch; off by default = unrated titles drop out
   budget:0, includeUnbudgeted:false, tentpole:"any",
@@ -3668,7 +3668,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 445, "commit": "e3b6ee0", "builtAt": "2026-08-12T04:42:31Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 446, "commit": "6e5c806", "builtAt": "2026-08-12T04:52:15Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -3870,7 +3870,7 @@ addChips("excludeChips", ALL_GENRES, filt.exclude, "exc");
 // collapses it and what takes it off your Found list, neither chip could change a single row any more — and a
 // chip that filters nothing while still counting toward "≡ Filters (n)" is a control lying about its own effect.
 // The underlying fields live on: they are how a Cascade's Exclude switches round-trip through the editor.
-[["🏆 Award winners & nominees","awards"]].forEach(([lbl,key])=>{
+[["🏆 Award winners & nominees","awards"],["🕐 Recent","recent"]].forEach(([lbl,key])=>{
   const c=document.createElement("div"); c.className="chip"; c.textContent=lbl; c.dataset.val=key;
   c.onclick=()=>{c.classList.toggle("on"); filt[key]=!filt[key]; render();};
   $("viewChips").appendChild(c);
@@ -4011,7 +4011,7 @@ $("tentpoleSel").onchange=e=>{filt.tentpole=e.target.value;render();};   // opti
 function clearFilters(){
   ["status","year","age","culture","lang","genre","exclude"].forEach(k=>filt[k].clear());
   filt.imdb=0;filt.rt=0;filt.gross=0;filt.foundOnly=false;filt.hideWatched=false;filt.showHidden=false;
-  filt.awards=false;filt.search="";filt.includeUnrated=false;
+  filt.awards=false;filt.recent=false;filt.search="";filt.includeUnrated=false;
   filt.budget=0;filt.includeUnbudgeted=false;filt.tentpole="any";
   filt.watchTiers.clear();
 }
@@ -4191,6 +4191,7 @@ function passes(m){
   if(filt.exclude.size && (m.genres||[]).some(g=>filt.exclude.has(g))) return false;
   if(filt.genre.size && !filt.genre.has((m.genres||[])[0])) return false;
   if(filt.awards && !m.award) return false;
+  if(filt.recent && !isRecent(m)) return false;
   if(!ratingOK(m, filt.imdb, filt.includeUnrated)) return false;
   if(!budgetOK(m, filt.budget)) return false;
   if(filt.tentpole!=="any" && !tentpoleIs(m,filt.tentpole)) return false;
@@ -4487,11 +4488,12 @@ function bandHTML(m, svcLine){
     // CAS-433: the whole capsule is the services toggle now (window label, date and service line alike) —
     // not just the saveline fused inside it, which used to carry the tap target on its own.
     const capTogClass = svcLine ? " captog" : "";
+    const recentCls = isRecent(m) ? " recent" : "";
     const capTogAttrs = svcLine
       ? ` role="button" tabindex="0" aria-label="Show all services"
            onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.querySelector('.svcbtn').classList.toggle('open')"`
       : "";
-    return `${line}<div class="cap ${cls}${capTogClass}"${capTogAttrs}><span class="capwin"><span class="capicon">${icon}</span><b>${label}</b>${date}</span>${div}${svcLine||""}</div>`;
+    return `${line}<div class="cap ${cls}${recentCls}${capTogClass}"${capTogAttrs}><span class="capwin"><span class="capicon">${icon}</span><b>${label}</b>${date}</span>${div}${svcLine||""}</div>`;
   }).join("");
   // CAS-239: the row is NOT part of the tap-to-open region any more. It sits directly above the Watch
   // status and Notify chips, and a miss on either of those landed on it and opened the card — so the
@@ -4902,7 +4904,7 @@ function cardHTML(m, markNew=false){
         <!-- CAS-373: the badge (Landmark/Anticipated/…) moves under the poster, left column; the awards
              chips keep the text column, same row — row-aligned with the badge, column-aligned with IMDb. -->
         <div class="mrow r-badge">${badge}</div>
-        <div class="mrow r-awards">${newlyAddedChip(m)}${cinemaReleaseChip(m)}${awardChips(m)}</div>
+        <div class="mrow r-awards">${cinemaReleaseChip(m)}${awardChips(m)}</div>
       </div>
     </div>
     ${bandHTML(m, svcLine)}
@@ -5651,11 +5653,26 @@ function trackFirstFound(){
 const daysSince = iso => Math.round((Date.parse(REAL_TODAY) - Date.parse(iso)) / 864e5);
 const isNewFound = id => { const d=firstFound[id]; return !!d && daysSince(d) < NEW_DAYS; };
 
+// ---- "Recent" (CAS-468) — supersedes CAS-447's card-level badge -----------------
+// One rule for both a first listing and a later status change: the status pill (the capsule bandHTML draws
+// for the film's CURRENT window) glows gold when that window was reached within NEW_DAYS. opening_week is a
+// live sub-state of in_cinema (primaryStatus, CAS-395) rather than a window window_dates tracks on its own,
+// so both read the in_cinema entry. past_opening_weekend never appears here — it isn't a primaryStatus value.
+const CUR_WINDOW_DATE_KEY = {upcoming:"upcoming", opening_week:"in_cinema", in_cinema:"in_cinema",
+  pvod:"pvod", rental:"rental", included_streaming:"included_streaming"};
+function isRecent(m){
+  const key=CUR_WINDOW_DATE_KEY[primaryStatus(m)];
+  const d=key && m.window_dates && m.window_dates[key];
+  return !!d && daysSince(d) < NEW_DAYS;
+}
+
 // ---- "Newly added" (CAS-447) — a catalogue fact, not an agent one ---------------
 // Distinct from isNewFound above: that is "an agent picked this up lately", per-device and re-triggerable.
 // This is "Cascade itself first saw this title lately", read off window_dates — server-side, shared across
 // devices, and honest (CAS-70's same reasoning). Same NEW_DAYS dial as everything else called "new" (Lee's
 // decision on the ticket): one number, not a second one to learn.
+// CAS-468 replaced this kind's card-level badge with the status pill's gold glow (isRecent, above) — this
+// function now only feeds newlyAddedCount, the per-agent "N new" count, which the ticket left untouched.
 function newlyAddedKind(m){
   const wd = m.window_dates||{};
   // Newly announced: the film is CURRENTLY upcoming, and it entered `upcoming` inside the marker window.
@@ -5666,12 +5683,6 @@ function newlyAddedKind(m){
   if(!m.cinema_date && m.status.includes("included_streaming") && wd.included_streaming
      && daysSince(wd.included_streaming) < NEW_DAYS) return "stream";
   return null;
-}
-const NEWLY_ADDED_LABEL = {cin:"Newly announced", stream:"New to streaming"};
-function newlyAddedChip(m){
-  const k = newlyAddedKind(m); if(!k) return "";
-  const d = k==="cin" ? m.window_dates.upcoming : m.window_dates.included_streaming;
-  return `<span class="m newly${k}" title="Cascade first saw this title here on ${fmtDay(d)}">🆕 ${NEWLY_ADDED_LABEL[k]}</span>`;
 }
 
 // ---- What your answers do (CAS-107) --------------------------------------------
@@ -5898,7 +5909,7 @@ function activeCount(){
   if(filt.imdb)n++; if(filt.rt)n++; if(filt.gross)n++; if(filt.foundOnly)n++;
   // hideWatched / showHidden are deliberately NOT counted (CAS-100): they no longer remove a row from any
   // list, so counting them would claim a filter is doing work that nothing is doing.
-  if(filt.search)n++; if(filt.awards)n++;
+  if(filt.search)n++; if(filt.awards)n++; if(filt.recent)n++;
   if(filt.budget)n++; if(filt.tentpole!=="any")n++;
   return n;
 }
@@ -7274,7 +7285,7 @@ $("saveAsGo").onclick=()=>{
 function filtSnapshot(){
   const s={sets:{}};
   ["status","year","age","culture","lang","genre","exclude"].forEach(k=>{ s.sets[k]=[...filt[k]]; });
-  ["imdb","rt","gross","awards","budget","tentpole","includeUnrated","includeUnbudgeted","foundOnly",
+  ["imdb","rt","gross","awards","recent","budget","tentpole","includeUnrated","includeUnbudgeted","foundOnly",
    "hideWatched","search"].forEach(k=>{ s[k]=filt[k]; });
   return s;
 }
@@ -7298,6 +7309,7 @@ const RELAXERS = [
    clear:()=>{ filt.budget=0; filt.includeUnbudgeted=false; }},
   {key:"tentpole", label:()=>"the tentpole tag",   on:()=>filt.tentpole!=="any", clear:()=>{ filt.tentpole="any"; }},
   {key:"awards",   label:()=>"awards-only",        on:()=>filt.awards,         clear:()=>{ filt.awards=false; }},
+  {key:"recent",   label:()=>"recent-only",        on:()=>filt.recent,         clear:()=>{ filt.recent=false; }},
   {key:"rt",       label:()=>`the critics bar (${filt.rt}%+)`, on:()=>filt.rt>0, clear:()=>{ filt.rt=0; }},
   {key:"gross",    label:()=>"the box-office floor", on:()=>filt.gross>0,      clear:()=>{ filt.gross=0; }},
   {key:"search",   label:()=>`the search “${filt.search}”`, on:()=>!!filt.search, clear:()=>{ filt.search=""; }},
