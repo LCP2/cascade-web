@@ -3664,7 +3664,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 443, "commit": "0a6943c", "builtAt": "2026-08-12T04:25:43Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 444, "commit": "438f713", "builtAt": "2026-08-12T04:34:40Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -13825,6 +13825,29 @@ else if(dedupedN)
       .eq("user_id", owner).is("read_at", null);
     if(error) console.warn("notifications mark-read", error);
   };
+  // CAS-466: tap-to-open + foreground handling. Native only, registered once at boot (not inside
+  // registerPush(), which only runs when the user exercises the in-app toggle) — a tap can launch
+  // the app cold, before any toggle interaction this session, and the plugin still delivers the
+  // queued action to a listener attached now. Both reuse the bell's own paths rather than forking a
+  // second one: openNotifyFilm is exactly what a bell-drawer row's onclick calls, and
+  // loadRealAlerts/markRealAlertsRead are the same select+update the drawer already runs on open.
+  // Badge note: the OS app-icon badge itself has no client-side set/clear call in this plugin version
+  // (@capacitor/push-notifications 8.1.2 exposes no badge API) — it is kept correct at delivery time
+  // by the `badge` the monitor already computes into each push's `aps.badge` (CAS-465/pusher.py). The
+  // in-app bell badge (updateBadge(), above) is what loadRealAlerts()/markRealAlertsRead() keep live.
+  if(typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform()){
+    const PN=Capacitor.Plugins && Capacitor.Plugins.PushNotifications;
+    if(PN){
+      PN.addListener("pushNotificationReceived", () => { loadRealAlerts(); });
+      PN.addListener("pushNotificationActionPerformed", async (action) => {
+        const data=(action && action.notification && action.notification.data) || {};
+        const id=Number(data.movie_id);
+        await loadRealAlerts();
+        if(id) openNotifyFilm(id);
+        await markRealAlertsRead();
+      });
+    }
+  }
   // ---- CAS-211: account-level defaults and services --------------------------------
   // What a NEW agent starts from, and what the user actually pays for. Neither belongs on a
   // cascade row: one is a starting point (every agent has carried its own copy since CAS-182)
