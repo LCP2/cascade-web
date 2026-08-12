@@ -3670,7 +3670,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 451, "commit": "fd00e52", "builtAt": "2026-08-12T10:24:40Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 452, "commit": "55bd4e9", "builtAt": "2026-08-12T10:45:48Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7793,10 +7793,11 @@ function buildQuality(){
       <div class="loz" id="cAgeLoz" role="radiogroup" aria-label="Age rating — up to and including"></div>
       <div class="qcap">Picks everything <b>up to and including</b> the level you choose.</div>
     </div>
-    <div class="qrow">
-      <div class="qhead"><span class="qt">Primary language</span><span class="qcap" style="margin:0" id="cLangCap"></span></div>
-      <div class="chips" id="cLangChips"></div>
-    </div>
+    <!-- CAS-475: Primary language dropped from this editor too — Language is account-level only now
+         (Account > Taste baseline), and this pre-0.8 modal is still the editor for shared links and the
+         empty-deck quick starts (CAS-246), so it needed the same row pulled as the Briefing hub. draft.lang
+         itself is untouched: a shared/templated draft keeps whatever value it arrived with, same as any
+         other agent this ticket leaves alone. -->
     <div class="qrow">
       <div class="qhead"><span class="qt">Audience / origin</span><span class="qcap" style="margin:0" id="cCultCap"></span></div>
       <div class="chips" id="cCultChips"></div>
@@ -7879,7 +7880,6 @@ function syncQuality(){
   }
   $("cGenreCap").textContent=(draft.genre||[]).length?`${draft.genre.length} on`:"Any";
   $("cExclCap").textContent=draft.exclude.length?`${draft.exclude.length} skipped`:"Nothing";
-  $("cLangCap").textContent=(draft.lang||[]).length?draft.lang.map(langName).join(", "):"Any";
   $("cCultCap").textContent=draft.culture.length?draft.culture.join(", "):"Any";
   $("cYearCap").textContent=draft.year.length
     ? (draft.year.length===EARLIER_YEARS.length && !draft.year.includes(CURRENT_YEAR) ? "Earlier years" : draft.year.length+" on")
@@ -7934,7 +7934,6 @@ function openEditor(title){
   buildQuality();
   buildEditorChips("cGenreChips", ALL_GENRES, "genre", null, ()=>"gen");
   buildEditorChips("cExclChips", ALL_GENRES, "exclude", null, ()=>"exc");
-  buildEditorChips("cLangChips", ALL_LANGS, "lang", c=>`${langName(c)} · ${LANG_COUNT[c]}`, ()=>"gen");
   buildEditorChips("cCultChips", ALL_CULTURES, "culture", c=>`${c} · ${CULTURE_COUNT[c]}`, ()=>"gen");
   buildEditorChips("cYearChips", ALL_YEARS, "year", y=>`${y} · ${yearCount(y)}`, ()=>"yr");
   syncQuality(); refreshDraft();
@@ -10333,17 +10332,19 @@ const SHARP_STEPS = {
              one are the same set of screens (CAS-182), so a person who has just been through the flow should
              recognise this list as the same questions in the same sequence — "Set your bar" and "Genres" were
              two different names for screens titled Mission and Style, which made the round trip read as two
-             different products. The two steps the ticket does not name keep their onboarding neighbours: How
-             far back sits after Rating and Streaming services after Language, exactly as the stream lane
-             walks them. -->
+             different products. The step the ticket does not name keeps its onboarding neighbour: How far
+             back sits after Rating, exactly as the stream lane walks it.
+             CAS-475: Language and Streaming services no longer have rows here — both are account-level only
+             now (Account > Taste baseline, Account > My streaming services), so a per-agent door onto either
+             would be a second place to set the same thing. Neither field on the draft is touched by this
+             screen's own Save; see onbApply() and FLOWS.stream for what that means for an agent that was
+             already carrying its own lang/services value. -->
         <div class="edoors">
           ${row("✏️","Agent Name",         onbFlow.name || d.name || "Unnamed", "name")}
           ${row("🎚️","Mission",            hubBarSummary(),                     "selectivity")}
           ${row("🎭","Style",              briefSum("genre"),                   "genres")}
           ${row("🔞","Rating",             briefSum("age"),                     "age")}
           ${stream ? row("🕰️","How far back", yearsLabel(flowYearsBack()), "years") : ""}
-          ${row("💬","Language",           briefSum("lang"),                    "language")}
-          ${stream ? row("📺","Streaming services", briefServicesSum(), "services") : ""}
           ${row("🔔","Notifications",      hubWatchSummary(),                   "watching")}
         </div>
         <!-- CAS-268: Delete only appears for an agent that EXISTS. A brand-new agent reaching this screen
@@ -10762,11 +10763,10 @@ let onbStepKey=null;
 // question with an answer, so it is walked and shown like any other step yet carries no number of its own —
 // flowCounted() is the one place both the exclusion and the total are written down, so the two can never
 // disagree.
-// CAS-199: the streaming lane asks two more questions, so the flow is per-lane and the meter counts the
-// lane you are actually in. "How far back" only means something where the catalogue has depth — a cinema
-// listing is this month's releases and asking someone to date-limit it would be a control with nothing to
-// do — and "My streaming services" is the whole point of a streaming agent: it is what turns "on some
-// service somewhere" into "on one you already pay for".
+// CAS-199: the streaming lane asks one more question than cinema, so the flow is per-lane and the meter
+// counts the lane you are actually in. "How far back" only means something where the catalogue has depth —
+// a cinema listing is this month's releases and asking someone to date-limit it would be a control with
+// nothing to do.
 // CAS-229: `watching` is deliberately NOT in either list. Onboarding makes assumptions about where and when
 // the agent watches (PRIORITY_WATCH, below) rather than asking; the per-window List/Notify controls live only
 // in Agent Settings, reached from the Briefing. The one notification question onboarding does ask is
@@ -10777,12 +10777,18 @@ let onbStepKey=null;
 // first is still in mind, instead of across an unrelated screen. Everything else keeps the order it had; only
 // `age` moved, in both lanes.
 // CAS-338: Language is no longer a first-run step in either lane — onbFlow.draft.lang is seeded ["en"] at
-// pickStarter (assume English) and stays that way unless changed later in Agent Settings / Edit Agent, where
-// the `briefing` hub's own Language door (SHARP_STEPS.language, unchanged) is still reachable.
+// pickStarter (assume English), or carries whatever a chosen starter template bakes in.
+// CAS-475: "My streaming services" is no longer a first-run step either — naming your services and the
+// "only show films on my services" switch are both account-level state already (`prefs`, in
+// localStorage/the synced prefs row), never per-agent, so asking for them mid-creation was a second place to
+// set the same account-wide answer. A person who has never named a service still gets one: onbApply() keeps
+// seeding a new streaming agent's per-window `myServices` scope off whatever `prefs.on` already is (CAS-199),
+// same as it always has — this only removes the prompt, not the seed. Naming services (or turning the
+// switch on) now happens at Account > My streaming services, before or after the agent exists either way.
 const FLOWS = {
   cinema: ["priority","pickagent","selectivity","name","genres","age",
            "keepfinding","notifysettings"],
-  stream: ["priority","pickagent","selectivity","name","genres","age","years","services",
+  stream: ["priority","pickagent","selectivity","name","genres","age","years",
            "keepfinding","notifysettings"],
 };
 const flowList    = () => FLOWS[flowKind] || FLOWS.cinema;
@@ -10927,11 +10933,13 @@ window.briefDelete=()=>{
 };
 function briefClose(){ briefOn=false; flowStop(); }
 
-// CAS-377: the top-menu "My services" row opens the same My-services step onboarding and the Briefing use,
-// bare (title + Done, the toggle, the provider chips) — not the older standalone Preferences modal, which
-// had drifted out of sync (no alphabetised chips, no lead/"more" rows, no Apple TV+ naming) the same way the
-// Briefing's own row once had before CAS-343 fixed it there. There is no hub behind this door, so it is its
-// own spoke flag rather than reusing briefOn.
+// CAS-377: the top-menu "My services" row opens the SHARP_STEPS.services spoke bare (title + Done, the
+// toggle, the provider chips) — not the older standalone Preferences modal, which had drifted out of sync
+// (no alphabetised chips, no lead/"more" rows, no Apple TV+ naming). There is no hub behind this door, so it
+// is its own spoke flag rather than reusing briefOn.
+// CAS-475: this is now the ONLY door onto this step — the Briefing's own "Streaming services" row and the
+// stream lane's first-run step both opened the identical account-level screen, which was a second place to
+// set the one thing this menu item already sets. Account > My streaming services is the same screen too.
 window.openMenuServices=()=>{
   flowStop(); menuStepOn=true;
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
@@ -11502,10 +11510,6 @@ function briefSum(key){
   if(!v.length || v.length===all.length) return allWord+exSuffix;
   if(key==="lang") return v.map(langName).join(", ");
   return (v.length<=3 ? v.join(", ") : `${v.length} of ${all.length}`)+exSuffix;
-}
-function briefServicesSum(){
-  const n=prefs.sub.size+prefs.store.size;
-  return n ? `${n} service${n===1?"":"s"}` : "None picked yet";
 }
 // ---- CAS-253: an email alert needs somewhere to send it ----------------------------------------------
 // Switching "Send me alerts by email" on and walking past the empty field left an agent whose email bell was
