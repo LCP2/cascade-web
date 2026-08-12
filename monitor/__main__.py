@@ -29,7 +29,7 @@ import sys
 
 from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notification_rows,
                render_digest, send_via_resend, suppressed_pairs, excluded_moments,
-               prefs_for, excludes_from_prefs, delivery_plan)
+               prefs_for, excludes_from_prefs, delivery_plan, send_via_apns, push_copy)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
 from .store import InMemoryStore, store_from_env
 
@@ -123,6 +123,10 @@ def main(argv=None) -> int:
     # than a flag. The flags still win where given — that is what makes a fixture run reproducible.
     prefs = _load_json(args.prefs) if args.prefs else _store_call(store, "fetch_notify_prefs", {})
     picks = _load_json(args.picks) if args.picks else _store_call(store, "fetch_picks", [])
+    # CAS-465: who to push to, and the badge count each push should carry (the same number the
+    # in-app bell badge shows), read once up front like prefs/picks above.
+    push_tokens = _store_call(store, "fetch_push_tokens", {})
+    unread_counts = _store_call(store, "fetch_unread_counts", {})
     # A film the user has taken off by hand stays off — their answer outranks their own Cascade, in the
     # email as well as in the app (CAS-100 AC5).
     off = suppressed_pairs(picks)
@@ -151,7 +155,7 @@ def main(argv=None) -> int:
     #            has in-app on, whether or not an email went with it.
     # A user with both switched off gets nothing and no row: turning notifications on later must
     # not be met with silence about the very thing that just happened.
-    sent, written_total, inapp = 0, 0, 0
+    sent, written_total, inapp, pushed_total = 0, 0, 0, 0
     for user_id, hits in by_user.items():
         digest = render_digest(hits)
         pref = prefs_for(prefs, user_id)
@@ -183,6 +187,10 @@ def main(argv=None) -> int:
         # by neither — which means no ledger row either, because the ledger IS the record that we told them.
         mailable = [h for h in hits if h.wants("email")] if plan == "email" else []
         appable = [h for h in hits if h.wants("in_app")] if pref["in_app"] else []
+        # CAS-465: push is not a fourth independent switch — it rides the same "in-app" gate as
+        # `appable` above, and only fires where the user actually has a live device registered.
+        tokens = push_tokens.get(str(user_id)) or []
+        pushable = [h for h in hits if h.wants("push")] if (pref["in_app"] and tokens) else []
         if not mailable and not appable:
             print(f"[monitor] {user_id}: every matching agent has its channels off — nothing sent or written.")
             continue
@@ -200,6 +208,23 @@ def main(argv=None) -> int:
         # One row per hit that WAS delivered, by either channel, and never one for a hit that was not.
         delivered = {id(h): h for h in mailable}
         delivered.update({id(h): h for h in appable})
+        # CAS-465: sent before the ledger insert below (same send-before-ledger ordering as email),
+        # to every registered device, one push per hit. Badge = what the bell badge will read once
+        # this run's in-app rows land — the existing unread count plus what this run is delivering.
+        if pushable:
+            badge = unread_counts.get(str(user_id), 0) + len(delivered)
+            pushed = 0
+            for h in pushable:
+                copy = push_copy(h)
+                payload = {"movie_id": h.transition.movie_id, "moment": h.transition.moment,
+                           "cascade_id": h.cascade_id}
+                for tok in tokens:
+                    if send_via_apns(tok, copy["title"], copy["body"], badge=badge, payload=payload):
+                        pushed += 1
+            if pushed:
+                print(f"[monitor] {user_id}: sent {pushed} push notification(s) across "
+                      f"{len(tokens)} device(s).")
+                pushed_total += pushed
         # CAS-416: the ledger write is best-effort. Delivery already happened above (the email sent,
         # or in-app was chosen), so a DB/ledger hiccup here must be a logged warning, never a crash
         # that aborts the rest of the run — the alternative is silently dropping every later user.
@@ -214,8 +239,8 @@ def main(argv=None) -> int:
         print(f"[monitor] --dry-run: rendered {len(by_user)} digest(s) covering {would} alert(s); "
               "sent NOTHING, wrote NOTHING.")
     else:
-        print(f"[monitor] sent {sent} email digest(s), {inapp} in-app-only; "
-              f"wrote {written_total} notification row(s).")
+        print(f"[monitor] sent {sent} email digest(s), {inapp} in-app-only, {pushed_total} push "
+              f"notification(s); wrote {written_total} notification row(s).")
     return 0
 
 

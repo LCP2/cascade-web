@@ -237,6 +237,11 @@ class PerAgentChannels(unittest.TestCase):
         self.assertTrue(h.wants("in_app"))
         self.assertFalse(h.wants("email"))
 
+    def test_push_is_not_a_fourth_switch_it_rides_in_app(self):
+        # CAS-465: no channelsLive.push key exists — push must track whatever in_app already says.
+        self.assertTrue(self._hit({"channelsLive": {"inApp": True, "email": False}}).wants("push"))
+        self.assertFalse(self._hit({"channelsLive": {"inApp": False, "email": True}}).wants("push"))
+
     def test_the_raw_per_agent_answer_is_never_what_delivery_reads(self):
         # `channels` is the agent's own wish and survives the account turning a channel off and on again.
         # `channelsLive` is that wish with the account's permission already applied, and it is the only one

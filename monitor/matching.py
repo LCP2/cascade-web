@@ -50,11 +50,17 @@ class Hit:
     channels: Optional[dict] = None
 
     def wants(self, channel: str) -> bool:
-        """Does this agent accept delivery on `channel` ("in_app" | "email")?
+        """Does this agent accept delivery on `channel` ("in_app" | "email" | "push")?
 
         The account still decides what is AVAILABLE — this only ever narrows it, and the caller applies the
         account's own answer first. An agent that has never been asked accepts everything the account allows.
+
+        CAS-465: "push" is not a fourth independent switch — from the user's mental model, allowing
+        in-app notifications IS allowing Cascade to notify them, so push rides the same per-agent
+        answer as "in_app" rather than needing its own `channelsLive` key.
         """
+        if channel == "push":
+            channel = "in_app"
         if not self.channels:
             return True
         return bool(self.channels.get(channel, True))

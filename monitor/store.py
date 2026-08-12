@@ -15,6 +15,8 @@ Interface:
   fetch_user_email(user_id) -> str | None
   fetch_notify_prefs() -> {user_id: {in_app, email_on, email_address, excluded_moments}}  # CAS-185
   fetch_picks() -> [{user_id, movie_id, state}]                                           # CAS-185
+  fetch_push_tokens() -> {user_id: [device_token, ...]}                                   # CAS-465
+  fetch_unread_counts() -> {user_id: int}                                                 # CAS-465
 """
 from __future__ import annotations
 
@@ -31,12 +33,14 @@ SERVICE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
 class InMemoryStore:
     """A store backed by plain Python lists — used for dry-run and tests."""
 
-    def __init__(self, cascades=None, notifications=None, emails=None, prefs=None, picks=None):
+    def __init__(self, cascades=None, notifications=None, emails=None, prefs=None, picks=None,
+                 push_tokens=None):
         self._cascades = list(cascades or [])
         self._notifications = list(notifications or [])
         self._emails = dict(emails or {})
         self._prefs = dict(prefs or {})
         self._picks = list(picks or [])
+        self._push_tokens = list(push_tokens or [])
 
     def fetch_active_cascades(self) -> list:
         return [c for c in self._cascades if c.get("active", True)]
@@ -57,6 +61,21 @@ class InMemoryStore:
 
     def fetch_picks(self) -> list:
         return list(self._picks)
+
+    def fetch_push_tokens(self) -> dict:
+        out: dict = {}
+        for r in self._push_tokens:
+            out.setdefault(str(r.get("user_id")), []).append(r.get("device_token"))
+        return out
+
+    def fetch_unread_counts(self) -> dict:
+        out: dict = {}
+        for n in self._notifications:
+            if n.get("read_at"):
+                continue
+            uid = str(n.get("user_id"))
+            out[uid] = out.get(uid, 0) + 1
+        return out
 
 
 class SupabaseStore:
@@ -99,6 +118,25 @@ class SupabaseStore:
         """Every hand-answer on a film, for every user (CAS-100). Only the 'off' rows suppress —
         see matching.suppressed_pairs — but both are fetched so the caller does the deciding."""
         return self._get("/film_picks?select=user_id,movie_id,state")
+
+    def fetch_push_tokens(self) -> dict:
+        """user_id -> the user's live device tokens (CAS-465), read with service_role (bypasses
+        RLS, same convention as fetch_active_cascades)."""
+        rows = self._get("/push_tokens?select=user_id,device_token")
+        out: dict = {}
+        for r in rows:
+            out.setdefault(str(r.get("user_id")), []).append(r.get("device_token"))
+        return out
+
+    def fetch_unread_counts(self) -> dict:
+        """user_id -> count of unread notifications rows — the same number the in-app bell
+        badge shows, so a push's badge field can never disagree with it (CAS-465)."""
+        rows = self._get("/notifications?read_at=is.null&select=user_id")
+        out: dict = {}
+        for r in rows:
+            uid = str(r.get("user_id"))
+            out[uid] = out.get(uid, 0) + 1
+        return out
 
     def fetch_user_email(self, user_id: str):
         """Resolve a user_id to their email via the Auth admin API (service_role only).
