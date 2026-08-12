@@ -8916,6 +8916,24 @@ const onbFlow = {draft:null, name:ONB_DEFAULT_NAME, defaultName:ONB_DEFAULT_NAME
 // an Upcoming film, the moment you want is "it's out"; if it is already on a screen, the only moment left is
 // "the crowds have gone". Nothing is invented — there is no "announced" moment because nobody publishes the
 // date a film is announced, so Upcoming's notify is the release, said honestly.
+// CAS-243: Rent was one window doing two jobs. Premium and standard rent are the same GESTURE — you pay
+// per film — but they are weeks and about twenty dollars apart, and "tell me the day I can rent it" from
+// someone waiting for the $7 price is a different sentence from the same words said by someone who will
+// pay $30 on opening week. They are already separate windows in the data (pvod and rental, split on the
+// real price ceiling), so this splits the control to match rather than inventing a distinction.
+// CAS-474: also the set a Cinema agent's Notify reaches once its own theatrical run has passed — "catch it
+// at home" for a film you missed at the cinema. Defined once and shared into both kinds' arrays below, so
+// there is exactly one Premium/Rent/Streaming definition to drift, not two hand-kept copies.
+const HOME_WINDOWS = [
+  {key:"premium", label:"Premium", cd:"var(--purple)", status:["pvod"],
+   sub:"Out early to buy or rent, around $30.", notifySay:"when it lands early on premium",
+   alerts:{pvod:true}},
+  {key:"rent",   label:"Standard Rent", cd:"var(--blue)",  status:["rental"],
+   sub:"Available to rent, around $7.", notifySay:"when it drops to rent", alerts:{rental:true}},
+  {key:"stream", label:"Streaming", cd:"var(--green)", status:["included_streaming"],
+   sub:"Included on a subscription.", notifySay:"when it lands on streaming",
+   alerts:{included_streaming:true}},
+];
 const AGENT_WINDOWS = {
   cinema: [
     // CAS-242: Upcoming is grey everywhere else in the app, because an unreleased film is deliberately muted
@@ -8939,22 +8957,11 @@ const AGENT_WINDOWS = {
     {key:"in_cinema", label:"In cinema", cd:"var(--amber)", status:["opening_week","in_cinema"],
      sub:"On the big screen right now.", notifySay:"once it's past its opening weekend",
      alerts:{past_opening:true}},
+    // CAS-474: Notify-only — a Cinema agent's catalogue stays cinema-scoped (listWindowOK never sees these
+    // statuses because List is never offered for them below), but its Notify can still reach past the run.
+    ...HOME_WINDOWS.map(w=>({...w, notifyOnly:true})),
   ],
-  // CAS-243: Rent was one window doing two jobs. Premium and standard rent are the same GESTURE — you pay
-  // per film — but they are weeks and about twenty dollars apart, and "tell me the day I can rent it" from
-  // someone waiting for the $7 price is a different sentence from the same words said by someone who will
-  // pay $30 on opening week. They are already separate windows in the data (pvod and rental, split on the
-  // real price ceiling), so this splits the control to match rather than inventing a distinction.
-  stream: [
-    {key:"premium", label:"Premium", cd:"var(--purple)", status:["pvod"],
-     sub:"Out early to buy or rent, around $30.", notifySay:"when it lands early on premium",
-     alerts:{pvod:true}},
-    {key:"rent",   label:"Standard Rent", cd:"var(--blue)",  status:["rental"],
-     sub:"Available to rent, around $7.", notifySay:"when it drops to rent", alerts:{rental:true}},
-    {key:"stream", label:"Streaming", cd:"var(--green)", status:["included_streaming"],
-     sub:"Included on a subscription.", notifySay:"when it lands on streaming",
-     alerts:{included_streaming:true}},
-  ],
+  stream: HOME_WINDOWS,
 };
 // Which set of windows the agent on screen has. Reads the draft's own kind first (an agent opened from the
 // Briefing has one and there may be no flow around it), then the flow's answer — the same order missionKind
@@ -9078,7 +9085,9 @@ function hubWatchSummary(){
 function drawWatchLanes(){
   const box=$("wwLanes"); if(!box) return;
   box.innerHTML = agentWindows().map(w=>{
-    const lst=winOn(w.key,"list"), nt=winOn(w.key,"notify");
+    // CAS-474: a notifyOnly window (Premium/Rent/Streaming, offered to a Cinema agent as "catch it at home")
+    // never gets a List switch — its catalogue stays cinema-scoped, so List can never be true for it.
+    const lst=w.notifyOnly ? false : winOn(w.key,"list"), nt=winOn(w.key,"notify");
     const sw=(which,label,on,hint)=>`<button type="button" class="agwt${on?" on":""}" aria-pressed="${on}"
         title="${escA(hint)}" onclick="wwToggleWin('${w.key}','${which}')"><span class="wwb">✓</span>${label}</button>`;
     // CAS-242: the finer moments appear only once Notify is on, because until then there is no bell for them
@@ -9095,7 +9104,7 @@ function drawWatchLanes(){
       <div class="wwhead"><span class="cd"></span><span class="wwn">${esc(w.label)}</span></div>
       <p class="agwsub">${esc(w.sub)}</p>
       <div class="agwrow">
-        ${sw("list","List", lst, `Include ${w.label.toLowerCase()} films in this agent's list`)}
+        ${w.notifyOnly ? "" : sw("list","List", lst, `Include ${w.label.toLowerCase()} films in this agent's list`)}
         ${sw("notify","Notify option", nt, `Alert me ${w.notifySay}`)}
       </div>${subs}</div>`;
   }).join("");
