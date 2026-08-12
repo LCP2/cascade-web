@@ -2,7 +2,7 @@
 -- Source of truth: Confluence "Cascade Web — Architecture & CC Build Spec" §3.
 -- Apply this in the Supabase SQL editor (see supabase/README.md). Safe to re-run.
 --
--- Eight tables:
+-- Nine tables:
 --   cascades      — one row per saved agent, per user (the user owns their rows via RLS).
 --   user_prefs    — the account-level defaults a NEW agent starts from, plus the services the
 --                   user actually pays for. CAS-211.
@@ -20,6 +20,9 @@
 --                   service_role key (which bypasses RLS) and de-dupes against it so the
 --                   same (cascade, movie, moment) is never delivered twice. The app reads
 --                   its own rows back to fill the 🔔 bell.
+--   push_tokens   — one row per (user, device) APNs token, registered on sign-in/re-registration.
+--                   The monitor (service_role) reads it to know where to push; the user manages
+--                   only their own rows. CAS-464.
 
 -- gen_random_uuid() lives in pgcrypto. It is pre-installed on Supabase, but declaring the
 -- dependency keeps this file self-contained and portable to a plain Postgres.
@@ -249,6 +252,34 @@ create policy notifications_mark_read on public.notifications
 -- The de-dupe check filters by user; the unique() above already indexes
 -- (cascade_id, movie_id, moment).
 create index if not exists notifications_user_id_idx on public.notifications (user_id);
+
+-- ---------------------------------------------------------------------------
+-- push_tokens — one row per (user, device) APNs token (CAS-464)
+-- ---------------------------------------------------------------------------
+-- Registered by CAS-463's sign-in/re-registration flow, read by the monitor (CAS-465) to
+-- know who/where to push. platform is constrained to 'ios' because that is the only app
+-- shell this repo builds today (CAS-453); widen the check when a second platform ships.
+-- unique(user_id, device_token) doubles as the user_id lookup index, same reasoning as
+-- user_films above, so no separate index is added.
+create table if not exists public.push_tokens (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references auth.users(id) on delete cascade,
+  device_token  text not null,
+  platform      text not null default 'ios' check (platform in ('ios')),
+  app_version   text,
+  created_at    timestamptz not null default now(),
+  last_seen_at  timestamptz not null default now(),
+  unique (user_id, device_token)
+);
+
+alter table public.push_tokens enable row level security;
+
+-- A user can read and write only their own tokens (insert/update/delete on sign-in,
+-- sign-out, re-registration). The monitor's service_role key bypasses RLS for delivery
+-- reads, same convention as notifications — no separate policy needed for it.
+drop policy if exists push_tokens_owner on public.push_tokens;
+create policy push_tokens_owner on public.push_tokens
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
 -- keep cascades.updated_at honest on every write
