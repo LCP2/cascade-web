@@ -520,6 +520,10 @@
   /* CAS-374: no inner scroll — every row has to be reachable without a nested scrollbar on an iPhone, so
      the list grows to whatever height its rows need instead of capping and clipping them. */
   .nopts{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
+  /* CAS-478: the Filter panel is the one .cpop whose chip carries no label of its own to say what its rows
+     mean (Premium/Rent/Streaming/Undecided, with no "Filter" text anywhere on the funnel icon) — this names
+     it once, above the rows. */
+  .npthd{padding:2px 10px 4px;font-size:10.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--faint)}
   .nopt{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 10px;border-radius:9px;
     background:rgba(255,255,255,.05);border:1px solid transparent;font-family:inherit;font-size:12px;
     font-weight:600;color:var(--dim);cursor:pointer;line-height:1.2}
@@ -5167,6 +5171,13 @@ function filmNotifyState(id){
   const on=levels.filter(l=>filmOptOn(id,l)).length;
   return {on, total:levels.length, current:watchIsCurrent(id)};
 }
+// CAS-478: the Filter panel's fourth row — not one more tier, but their absence. "Eligible" is the same
+// !spent && agentOn set filmNotifyState already counts over (per CAS-477), so a film is Undecided when it
+// has at least one such level and none of them are ticked.
+function filmIsUndecided(id){
+  const st=filmNotifyState(id);
+  return st.total>0 && st.on===0;
+}
 function notifyChipHTML(id){
   const st=filmNotifyState(id);
   // CAS-427: nothing ticked is just "Notify", not "Muted" — Never is the film's own always-available exit, so
@@ -5781,7 +5792,7 @@ function scopeRows(){
   // CAS-382: no tier ticked = no filter, same "nothing picked = show everything" rule every other chip set
   // in `passes()` follows.
   return filt.watchTiers.size
-    ? searched.filter(m=>[...filt.watchTiers].some(k=>filmHasWatchTier(m.tmdb_id,k)))
+    ? searched.filter(m=>[...filt.watchTiers].some(k=>k==="undecided" ? filmIsUndecided(m.tmdb_id) : filmHasWatchTier(m.tmdb_id,k)))
     : searched;
 }
 // First run: the deck is just the "+ New" card, which asks for a decision without offering a reason. Give them
@@ -7158,13 +7169,22 @@ function closeFilterPanel(){
   deckStrip.querySelectorAll(".dc-filter.open").forEach(b=>{ b.classList.remove("open"); b.setAttribute("aria-expanded","false"); });
 }
 function filterPanelRowsHTML(){
-  return FILTER_TIERS.map(t=>{
+  const rows=FILTER_TIERS.map(t=>{
     const on=filt.watchTiers.has(t.key);
     return `<button type="button" class="nopt${on?" on":""}" style="--wwc:${t.cd}" data-tier="${t.key}"
       aria-pressed="${on}" onclick="toggleFilterTier('${t.key}')"
       title="${escA(on?`${t.label} — tap to clear`:`Show only ${t.label}`)}">
       <span class="wwb sq">✓</span><span class="nol">${esc(t.label)}</span></button>`;
   }).join("");
+  // CAS-478: "Undecided" isn't a tier from FILTER_TIERS — it's the absence of one, so it gets its own row
+  // (filmIsUndecided, not filmHasWatchTier) and a hairline of its own, the same "different kind of row"
+  // separation .nopt.sep already gives Lists' "＋ New list" and the Watch panel's Never.
+  const uOn=filt.watchTiers.has("undecided");
+  const undecided=`<button type="button" class="nopt${uOn?" on":""} sep" style="--wwc:var(--grey)" data-tier="undecided"
+      aria-pressed="${uOn}" onclick="toggleFilterTier('undecided')"
+      title="${escA(uOn?"Undecided — tap to clear":"Show only films with no Watch-it decision yet")}">
+      <span class="wwb sq">✓</span><span class="nol">Undecided</span></button>`;
+  return `<div class="npthd">Watch it</div>${rows}${undecided}`;
 }
 // The deck strip clips vertical overflow on purpose (.deckstrip's overflow-y:hidden — it's what keeps a
 // neighbouring card's coverflow tilt from poking out above/below the rail), so a popup parented inside a
