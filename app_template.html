@@ -674,6 +674,11 @@
   /* CAS-360: a claim about the film's release history (had an AU cinema release), not an accolade — its
      own colour rather than borrowing gold from the awards chips beside it. */
   .m.cinema{border-color:rgba(122,162,255,.4);color:#c3cdf2}
+  /* CAS-447: "newly added" — the catalogue's own claim, not an accolade. Reuses the same colours the
+     window timeline already uses for Upcoming (purple) and Stream (green), so the chip reads as "which
+     window this is about" before a word of the label is read. */
+  .m.newlycin{border-color:rgba(var(--upcoming-rgb),.4);color:var(--upcoming-ink)}
+  .m.newlystream{border-color:rgba(72,199,142,.5);color:#a7eccb}
   /* CAS-436: .awx is now the .cval of the Awards .credit row (see above) — its own show/hide and spacing
      rules are inherited from .credit/.expand, so it only needs its internal line layout. */
   .awx{display:flex;flex-direction:column;gap:5px}
@@ -4893,7 +4898,7 @@ function cardHTML(m, markNew=false){
         <!-- CAS-373: the badge (Landmark/Anticipated/…) moves under the poster, left column; the awards
              chips keep the text column, same row — row-aligned with the badge, column-aligned with IMDb. -->
         <div class="mrow r-badge">${badge}</div>
-        <div class="mrow r-awards">${cinemaReleaseChip(m)}${awardChips(m)}</div>
+        <div class="mrow r-awards">${newlyAddedChip(m)}${cinemaReleaseChip(m)}${awardChips(m)}</div>
       </div>
     </div>
     ${bandHTML(m, svcLine)}
@@ -5641,6 +5646,29 @@ function trackFirstFound(){
 const daysSince = iso => Math.round((Date.parse(REAL_TODAY) - Date.parse(iso)) / 864e5);
 const isNewFound = id => { const d=firstFound[id]; return !!d && daysSince(d) < NEW_DAYS; };
 
+// ---- "Newly added" (CAS-447) — a catalogue fact, not an agent one ---------------
+// Distinct from isNewFound above: that is "an agent picked this up lately", per-device and re-triggerable.
+// This is "Cascade itself first saw this title lately", read off window_dates — server-side, shared across
+// devices, and honest (CAS-70's same reasoning). Same NEW_DAYS dial as everything else called "new" (Lee's
+// decision on the ticket): one number, not a second one to learn.
+function newlyAddedKind(m){
+  const wd = m.window_dates||{};
+  // Newly announced: the film is CURRENTLY upcoming, and it entered `upcoming` inside the marker window.
+  if(m.status.includes("upcoming") && wd.upcoming && daysSince(wd.upcoming) < NEW_DAYS) return "cin";
+  // New to streaming: never had a cinema run, currently streaming, and entered `included_streaming` inside
+  // the marker window — the "never theatrical" clause is what keeps this distinct from a title that simply
+  // reached streaming after a normal cinema run (that one is just an ordinary window move, not a new arrival).
+  if(!m.cinema_date && m.status.includes("included_streaming") && wd.included_streaming
+     && daysSince(wd.included_streaming) < NEW_DAYS) return "stream";
+  return null;
+}
+const NEWLY_ADDED_LABEL = {cin:"Newly announced", stream:"New to streaming"};
+function newlyAddedChip(m){
+  const k = newlyAddedKind(m); if(!k) return "";
+  const d = k==="cin" ? m.window_dates.upcoming : m.window_dates.included_streaming;
+  return `<span class="m newly${k}" title="Cascade first saw this title here on ${fmtDay(d)}">🆕 ${NEWLY_ADDED_LABEL[k]}</span>`;
+}
+
 // ---- What your answers do (CAS-107) --------------------------------------------
 // They decide what is ON the list, and nothing else. Liking, disliking, taking a film off and excluding a
 // genre all act as filters and excludes — visible rules you set and can see the effect of. What they no
@@ -5703,6 +5731,10 @@ const listedBy = (m,c) => !movedOutOf(m.tmdb_id,c)
 // The number describing a cascade counts RESULTS, so it leaves the stubs out — the same rule the section
 // heads and the open card's own count already follow.
 const listedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m)).length;
+// CAS-447: the per-agent "N new" count Lee decided for the deck card / Edit screen — same listedBy gate as
+// listedCount above (a newly-added film that doesn't even list here shouldn't inflate this agent's number),
+// narrowed to the ones newlyAddedKind actually flags.
+const newlyAddedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m) && newlyAddedKind(m)).length;
 function scopeRows(){
   const c=activeCascade();
   // No Cascade open = the All card = the catalogue itself, which is what that card says it is.
@@ -6906,12 +6938,16 @@ function deckSync(shown){
     // watch, and nothing else on the card says which. It is spelled out in BOTH directions — an absent
     // suffix would just be silence, and silence is what made this ambiguous in the first place. A cinema
     // agent has no such fork, so it gets the bare count.
+    // CAS-447: "N new" rides on the end of the same line, after the scope suffix — one more fact about the
+    // same count, not a second line to scan. Only said when it's actually true of at least one film.
+    const nNew=newlyAddedCount(c);
     el.querySelector(".dc-sub").textContent=
       `${n} film${n===1?"":"s"}`
       + (c.kind==="stream"
           ? " · " + (anyScope(c) ? (allScoped(c) ? "my services" : `my services on ${scopeSummary(c)}`)
                                  : "any service")
-          : "");
+          : "")
+      + (nNew ? ` · ${nNew} new` : "");
     el.querySelector('[data-act="save"]').hidden=!(on&&dirty);
   });
   // CAS-371: sort rides with whichever card is open (All included) — moved, not rebuilt, into that card's
@@ -10254,10 +10290,13 @@ const SHARP_STEPS = {
           <span class="di">${icon}</span>
           <span class="dt"><span class="dh">${label}</span><span class="ds">${esc(sum)}</span></span>
           <span class="dc">›</span></button>`;
+      // CAS-447: the same "N new" count the deck card carries, read off the SAME live draft this screen's
+      // own doors edit (onbApply()) — an unsaved agent (no draft yet) simply has nothing to count.
+      const nNew = onbFlow.draft ? newlyAddedCount(onbApply()) : 0;
       // CAS-266: "Edit Agent", plain, and the same words whichever lane the agent is in. The old title named
       // the lane ("Cinema Agent Briefing"), which said what the agent IS on a screen you opened to change it —
       // the screen's job is the verb, and each row below already carries the agent's own settings.
-      return `<p class="ossub">Reconfigure this agent here.</p>
+      return `<p class="ossub">Reconfigure this agent here.${nNew ? ` <b>${nNew}</b> newly added film${nNew===1?"":"s"} in its list right now.` : ""}</p>
         <!-- CAS-267: the rows are named and ordered as onboarding asks them. Editing an agent and building
              one are the same set of screens (CAS-182), so a person who has just been through the flow should
              recognise this list as the same questions in the same sequence — "Set your bar" and "Genres" were
