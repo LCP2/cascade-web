@@ -5129,9 +5129,12 @@ function filmOptKeyForWindow(c, w){
   }
   return null;
 }
-// CAS-434: on only if the USER ticked it for this film. `opt.agentOn` governs whether a row is offered at
-// all (watchLevelsFor), not whether it starts ticked — defaulting to it here was pre-ticking every untouched
-// film from the agent's own switch, which is the agent's config leaking into a per-film choice nobody made.
+// CAS-434: on only if the USER ticked it for this film. `opt.agentOn` (where `opt` comes from
+// notifyOptionsFor, e.g. the digest's catchReason) governs whether the AGENT will speak up about a level, not
+// whether it starts ticked — defaulting to it here was pre-ticking every untouched film from the agent's own
+// switch, which is the agent's config leaking into a per-film choice nobody made. CAS-500: watchLevelsFor's
+// own rows carry no `agentOn` at all any more — the Watch it button is account-wide, so its rows can't read
+// any one agent's config either.
 const filmOptOn = (id, opt) => {
   const w=(notify[id]||{}).wins||{};
   return !!w[opt.key];
@@ -5146,39 +5149,41 @@ const WATCH_LEVEL_KEYS = ["in_cinema", "premium", "rent", "stream"];
 // each carrying whether the film has already passed it. CAS-477: a level this cascade isn't configured to
 // track is still shown, live and tickable — the film's Watch-it tick is account-wide (filmOptOn), so hiding
 // the row here just because THIS cascade doesn't track it made the tick look reset when swapping cascades.
-// `agentOn` still says whether THIS cascade will actually notify on it — that only gates the "N of M" chip
-// count (filmNotifyState) and the auto-tick cascade, not whether the row appears. Unlike the old Notify
-// list, a passed level is not dropped — it is shown, greyed (CAS-349): the film's whole journey stays
-// visible even where most of it is behind it, only the past stays un-selectable. CAS-473: `spent` is
-// strictly-past rungs only — a film's CURRENT rung is where the Watch panel is a statement of fact ("watch
-// it here") rather than a promise about the future, so unlike the Notify honesty rule (CAS-280's
+// Unlike the old Notify list, a passed level is not dropped — it is shown, greyed (CAS-349): the film's whole
+// journey stays visible even where most of it is behind it, only the past stays un-selectable. CAS-473:
+// `spent` is strictly-past rungs only — a film's CURRENT rung is where the Watch panel is a statement of fact
+// ("watch it here") rather than a promise about the future, so unlike the Notify honesty rule (CAS-280's
 // rowSpentFor, which does exclude a film's own arrival) the row for the film's own current window stays
 // selectable. Only rungs the film has already moved past are un-offerable.
+// CAS-500: this used to read the ACTIVE cascade's own kind+watchWindows (`agentOn`), so a stream-kind agent's
+// AGENT_WINDOWS list has no `in_cinema` row at all — the same film's Watch it button showed set in a cinema
+// agent and unset in a stream agent, even though the tick it reads (filmOptOn) was always the same account-
+// wide value. The four rungs are a property of the FILM (WATCH_LEVEL_KEYS + how far it's travelled), never of
+// whichever agent happens to be on screen, so this reads the canonical cinema-kind definitions directly —
+// they carry all four keys (in_cinema plus the HOME_WINDOWS spread) — instead of branching on activeCascade().
 function watchLevelsFor(id){
-  const c=activeCascade();
-  const kinds = (c && (c.kind==="cinema"||c.kind==="stream")) ? [c.kind] : Object.keys(AGENT_WINDOWS);
-  const watch = c ? migrateWatch(c.watchWindows||{}) : {};
   const rung = filmRung(id);
-  const out=[];
-  kinds.forEach(k=>AGENT_WINDOWS[k].forEach(w=>{
-    if(!WATCH_LEVEL_KEYS.includes(w.key)) return;
-    const f=watch[w.key]||{};
-    out.push({key:w.key, label:w.label, cd:w.cd, agentOn:!!f.notify, spent: WINDOW_RUNG[w.key]<rung});
-  }));
-  return out;
+  return WATCH_LEVEL_KEYS.map(key=>{
+    const w=AGENT_WINDOWS.cinema.find(x=>x.key===key);
+    return {key, label:w.label, cd:w.cd, spent: WINDOW_RUNG[key]<rung};
+  });
 }
 // Is the film CURRENTLY sitting in a level you ticked? Not "you ticked something" — "something you ticked is
 // true right now" — which is the one thing the ticket asks the button's green to mean.
 // CAS-494: tests every window the film currently OCCUPIES (m.status), not only its primaryStatus rung — a
 // film can sit in more than one window at once (e.g. still in_cinema while also included_streaming), and the
 // notification engine already fires on any of them, so the control has to agree with whichever one you ticked.
+// CAS-500: reads windows with `c=null`, not activeCascade() — this is the film's own account-wide "current"
+// state, not a claim about any one agent, and filmOptKeyForWindow restricted to one cascade's kind returns
+// null for a window that kind's own AGENT_WINDOWS list doesn't carry (e.g. in_cinema on a stream agent),
+// which silently read as "not current" there. Passing null always searches every kind, so the same window
+// resolves to the same option key everywhere.
 function watchIsCurrent(id){
   const m=MOVIES.find(x=>x.tmdb_id===id);
   if(!m) return false;
-  const c=activeCascade();
   const levels=watchLevelsFor(id);
   return m.status.some(w=>{
-    const key=filmOptKeyForWindow(c, w);
+    const key=filmOptKeyForWindow(null, w);
     const l=key && levels.find(x=>x.key===key);
     return !!(l && filmOptOn(id,l));
   });
@@ -5200,16 +5205,20 @@ function filmHasWatchTier(id, key){
   const l=watchLevelsFor(id).find(x=>x.key===key);
   return !!(l && filmOptOn(id,l));
 }
-// The chip's summary. CAS-427: counted over the options this agent has actually enabled Notify for — a level
-// the agent only Lists (never asked this control about) is not one of the "N of M" the chip can honestly cite,
-// and a passed level carries no future promise either, so both are excluded the same way.
+// The chip's summary — counted over every level the film hasn't already passed, full stop. CAS-500: this used
+// to filter to `l.agentOn` (CAS-427), i.e. only the levels THIS agent's own Notify option had switched on, so
+// the same film's "N of M" read differently card to card depending which agent it was viewed from — the exact
+// bug this ticket reports. The button is a per-film, account-wide control (CAS-484's film_watch is already
+// agent-independent on the storage side; matching.py's match_film_watches reads it with no cascade filter at
+// all), so its own summary can't vary by agent either. An agent's own Notify toggle still matters — it's what
+// lets THAT agent's bell/digest speak up about a level — but that's the agent's configuration, not this count.
 function filmNotifyState(id){
-  const levels=watchLevelsFor(id).filter(l=>!l.spent && l.agentOn);
+  const levels=watchLevelsFor(id).filter(l=>!l.spent);
   const on=levels.filter(l=>filmOptOn(id,l)).length;
   return {on, total:levels.length, current:watchIsCurrent(id)};
 }
 // CAS-478: the Filter panel's fourth row — not one more tier, but their absence. "Eligible" is the same
-// !spent && agentOn set filmNotifyState already counts over (per CAS-477), so a film is Undecided when it
+// !spent set filmNotifyState already counts over (per CAS-477/CAS-500), so a film is Undecided when it
 // has at least one such level and none of them are ticked.
 function filmIsUndecided(id){
   const st=filmNotifyState(id);
