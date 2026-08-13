@@ -2,9 +2,13 @@
 
 Run:  python -m unittest monitor.tests.test_emailer
 """
+import io
 import unittest
+import urllib.error
+from unittest import mock
 
 from monitor import render_digest, moment_phrase, digest_subject
+from monitor.emailer import USER_AGENT, send_via_resend
 from monitor.matching import Hit
 from monitor.transitions import Transition
 
@@ -114,6 +118,34 @@ class SectioningTests(unittest.TestCase):
         d1 = render_digest(self.hits, site_url="https://example.test/app/")
         d2 = render_digest(self.hits, site_url="https://example.test/app/")
         self.assertEqual(d1, d2)
+
+
+class SendViaResendTests(unittest.TestCase):
+    def test_request_carries_a_real_user_agent(self):
+        resp = mock.MagicMock()
+        resp.read.return_value = b'{"id": "abc"}'
+        resp.__enter__.return_value = resp
+        with mock.patch("urllib.request.urlopen", return_value=resp) as urlopen:
+            send_via_resend("to@example.test", "Subj", "<p>hi</p>", "hi", api_key="k")
+        req = urlopen.call_args[0][0]
+        self.assertEqual(req.get_header("User-agent"), USER_AGENT)
+        self.assertNotIn("python-urllib", req.get_header("User-agent").lower())
+
+    def test_http_error_reports_status_content_type_body_and_from_no_key(self):
+        err = urllib.error.HTTPError(
+            url="https://api.resend.com/emails", code=403, msg="Forbidden",
+            hdrs={"Content-Type": "text/html"}, fp=io.BytesIO(b"<html>blocked</html>"),
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            with self.assertRaises(RuntimeError) as ctx:
+                send_via_resend("to@example.test", "Subj", "<p>hi</p>", "hi",
+                                 api_key="super-secret-key", from_addr="Cascade <a@b.test>")
+        message = str(ctx.exception)
+        self.assertIn("403", message)
+        self.assertIn("text/html", message)
+        self.assertIn("blocked", message)
+        self.assertIn("a@b.test", message)
+        self.assertNotIn("super-secret-key", message)
 
 
 if __name__ == "__main__":

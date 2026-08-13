@@ -16,7 +16,10 @@ from __future__ import annotations
 import html as _html
 import json
 import os
+import urllib.error
 import urllib.request
+
+USER_AGENT = "cascade-monitor/1.0 (+https://cascademovies.com)"
 
 RESEND_API_KEY_ENV = "RESEND_API_KEY"
 RESEND_ENDPOINT = "https://api.resend.com/emails"
@@ -211,10 +214,26 @@ def send_via_resend(to_addr, subject, html, text, api_key=None, from_addr=None, 
     }).encode("utf-8")
     req = urllib.request.Request(
         RESEND_ENDPOINT, data=payload, method="POST",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+        },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read().decode("utf-8")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as err:
+        # CAS-495: the bare HTTPError swallowed everything Resend told us — surface status,
+        # content-type, and a truncated body so the cause is legible from the run log alone.
+        # Never the API key: only the from-address, which is not secret.
+        content_type = err.headers.get("Content-Type", "") if err.headers else ""
+        detail = err.read().decode("utf-8", "replace") if err.fp else ""
+        raise RuntimeError(
+            f"Resend send failed: HTTP {err.code}, content-type={content_type!r}, "
+            f"from={from_addr!r}, body={detail[:500]!r}"
+        ) from err
     try:
         return json.loads(body)
     except json.JSONDecodeError:
