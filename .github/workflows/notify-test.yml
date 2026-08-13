@@ -1,0 +1,91 @@
+name: Notification test harness (CAS-486)
+
+# workflow_dispatch ONLY — never a schedule/push/pull_request trigger, and this file must never be
+# folded into daily.yml. The whole point of a separate file is that an "intense test cycle" against
+# the real notification pipeline (real Supabase + real Resend + real APNs) can run on demand,
+# repeatably, without ever touching the real catalogue: it synthesises a yesterday/today pair from
+# the maintained CAS-486 fixture (tests/fixtures/notify-films.json) instead of committing anything.
+# Created under Lee's scoped CI-file exception on CAS-486 (2026-08-13) — see that ticket's comments
+# before widening this file's scope. Never modify daily.yml/qa.yml/ios-testflight.yml to add this
+# trigger instead.
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Which moment to fire"
+        required: true
+        type: choice
+        options:
+          - announced
+          - hits_cinema
+          - hits_pvod
+          - hits_rent
+          - hits_stream
+      target_user:
+        description: "Supabase auth user_id (uuid) to deliver to. Required — an empty or unrecognised value aborts the run rather than delivering broadly."
+        required: true
+      cleanup:
+        description: "Delete any existing ledger rows for the fixture films first, so the same scenario can be run again immediately."
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read   # read-only — this workflow never commits or pushes anything
+
+jobs:
+  notify-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the fixture yesterday/today pair, clean up prior ledger rows
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          RUN_DATE=$(date -u +%F)
+          echo "RUN_DATE=$RUN_DATE" >> "$GITHUB_ENV"
+          CLEANUP_FLAG="--cleanup"
+          if [ "${{ inputs.cleanup }}" = "false" ]; then CLEANUP_FLAG="--no-cleanup"; fi
+          python -m monitor.notify_test \
+            --scenario "${{ inputs.scenario }}" \
+            --target-user "${{ inputs.target_user }}" \
+            --date "$RUN_DATE" \
+            --out-dir "$RUNNER_TEMP/notify-test" \
+            "$CLEANUP_FLAG"
+
+      - name: Run the real monitor against the synthesised pair (real Supabase + Resend + APNs)
+        # No --cascades/--notifications/--emails fixtures here — this deliberately uses the real
+        # Supabase store (via SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY) so email, the in-app ledger and
+        # push all fire for real, exactly as they would from daily.yml. --target-user (CAS-486) is
+        # what keeps that scoped to one account instead of every real user.
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+          CASCADE_SITE_URL: ${{ secrets.SITE_URL }}
+          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}
+          APNS_TEAM_ID: ${{ secrets.APNS_TEAM_ID }}
+          APNS_AUTH_KEY: ${{ secrets.APNS_AUTH_KEY }}
+          APNS_BUNDLE_ID: ${{ secrets.APNS_BUNDLE_ID }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "Supabase secrets absent — this harness needs the real pipeline to prove anything. Aborting."
+            exit 1
+          fi
+          python -m monitor \
+            --today "$RUNNER_TEMP/notify-test/today.json" \
+            --yesterday "$RUNNER_TEMP/notify-test/yesterday.json" \
+            --date "$RUN_DATE" \
+            --target-user "${{ inputs.target_user }}"
