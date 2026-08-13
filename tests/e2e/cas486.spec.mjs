@@ -1,5 +1,5 @@
 // CAS-486: the notify-test harness's fixture films are visible in the running app ONLY behind an
-// explicit `?fixtures=1` URL flag AND a signed-in match on FIXTURES_TEST_EMAIL — a leaked
+// explicit `?fixtures=1` URL flag AND a signed-in match on FIXTURES_TEST_EMAILS (CAS-489) — a leaked
 // `?fixtures=1` URL, or the flag with no matching account, must show nothing. This suite stays
 // guest-mode/network-free (helpers.mjs) so it cannot exercise a real Supabase sign-in; what it CAN
 // verify without one is exactly the gate itself (both halves, independently) and the merge/render
@@ -49,7 +49,7 @@ test("CAS-486: ?fixtures=1 AND the test account together merge the 5 fixture fil
   await page.evaluate((email) => {
     window.CascadeAuth = window.CascadeAuth || {};
     window.CascadeAuth.user = { email };
-  }, await page.evaluate(() => window.CascadeFixtures.FIXTURES_TEST_EMAIL));
+  }, await page.evaluate(() => window.CascadeFixtures.FIXTURES_TEST_EMAILS[0]));
 
   const before = await page.evaluate(() => MOVIES.length);
   await page.evaluate(() => window.CascadeFixtures.maybeLoadFixtures());
@@ -71,7 +71,7 @@ test("CAS-486: a merged fixture film renders the TEST badge on its card and film
   await page.evaluate((email) => {
     window.CascadeAuth = window.CascadeAuth || {};
     window.CascadeAuth.user = { email };
-  }, await page.evaluate(() => window.CascadeFixtures.FIXTURES_TEST_EMAIL));
+  }, await page.evaluate(() => window.CascadeFixtures.FIXTURES_TEST_EMAILS[0]));
   await page.evaluate(() => window.CascadeFixtures.maybeLoadFixtures());
 
   const html = await page.evaluate((id) => {
@@ -97,7 +97,7 @@ test("CAS-486: a fetch failure degrades to no fixture films, not an error", asyn
   await page.evaluate((email) => {
     window.CascadeAuth = window.CascadeAuth || {};
     window.CascadeAuth.user = { email };
-  }, await page.evaluate(() => window.CascadeFixtures.FIXTURES_TEST_EMAIL));
+  }, await page.evaluate(() => window.CascadeFixtures.FIXTURES_TEST_EMAILS[0]));
 
   const before = await page.evaluate(() => MOVIES.length);
   await page.evaluate(() => window.CascadeFixtures.maybeLoadFixtures());

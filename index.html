@@ -3700,7 +3700,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 467, "commit": "e1ccfac", "builtAt": "2026-08-13T03:13:18Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 468, "commit": "6809542", "builtAt": "2026-08-13T03:36:02Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5763,15 +5763,15 @@ async function pollCatalogue(){
   } finally { cataloguePolling = false; }
 }
 
-// ---- CAS-486: notify-test harness fixture merge (?fixtures=1) -------------------------------
+// ---- CAS-486/489: notify-test harness fixture merge (?fixtures=1) ---------------------------
 // Opt-in and explicit only: a normal visitor, and any real signed-in account, must never see a
 // fixture film by accident even if a `?fixtures=1` URL leaks — both the query flag AND a match on
-// FIXTURES_TEST_EMAIL are required. Fetched from a path that is obviously not the production
+// FIXTURES_TEST_EMAILS are required. Fetched from a path that is obviously not the production
 // catalogue (movies.json); a fetch failure degrades to "no fixture films", never to an error
 // state. This is the app's only OTHER runtime data dependency (CAS-488 is the first, for the real
 // catalogue) and it is quarantined to this one flagged path — the unflagged production build still
 // boots with zero runtime fetches beyond CAS-488's own.
-const FIXTURES_TEST_EMAIL = "lee@codynamics.com.au";
+const FIXTURES_TEST_EMAILS = ["lee+c1@codynamics.com.au", "lee@codynamics.com.au"];
 function fixturesRequested(){
   try{ return new URLSearchParams(location.search).get("fixtures")==="1"; }
   catch(e){ return false; }
@@ -5780,7 +5780,7 @@ async function maybeLoadFixtures(){
   if(!fixturesRequested()) return;
   const auth = window.CascadeAuth;
   const email = auth && auth.user && auth.user.email;
-  if(email !== FIXTURES_TEST_EMAIL) return;             // wrong/no account — show nothing, ever
+  if(!FIXTURES_TEST_EMAILS.includes(email)) return;     // wrong/no account — show nothing, ever
   let res;
   try{ res = await fetch("tests/fixtures/notify-films.json", {cache:"no-cache"}); }
   catch(e){ return; }                                    // offline/blocked — no fixture films, not an error
@@ -5808,7 +5808,7 @@ async function maybeLoadFixtures(){
 // real email off window.CascadeAuth. Attaching the listener here, ahead of that module running,
 // means it is always in place before the dispatch fires.
 window.addEventListener("cascade-auth-change", () => { maybeLoadFixtures(); });
-window.CascadeFixtures = { maybeLoadFixtures, fixturesRequested, FIXTURES_TEST_EMAIL };
+window.CascadeFixtures = { maybeLoadFixtures, fixturesRequested, FIXTURES_TEST_EMAILS };
 
 // ---- "Newly added" (CAS-447) — a catalogue fact, not an agent one ---------------
 // Distinct from isNewFound above: that is "an agent picked this up lately", per-device and re-triggerable.
