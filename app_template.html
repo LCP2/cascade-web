@@ -2982,10 +2982,19 @@
 </div>
 
 <script>
-// CAS-488: both baked in at build time, but no longer immutable — a live tab swaps the catalogue and its
-// build date in underneath itself (see pollCatalogue, near REAL_TODAY below), so both must stay reassignable.
+// CAS-488: baked in at build time, but no longer immutable — a live tab swaps the catalogue in underneath
+// itself (see pollCatalogue below), so it must stay reassignable.
 let MOVIES = __MOVIES_JSON__;
-let TODAY  = "__TODAY__";
+// CAS-503: BUILD_DATE is the catalogue's own build stamp — shown only in the "Updated" label and used to
+// notice a fresh catalogue on poll. TODAY is what the rest of the app means by "today": the device's LOCAL
+// calendar date, evaluated fresh on load and re-evaluated on every reconcile tick (CAS-487's heartbeat/
+// focus triggers via pollCatalogue), never frozen at build. window_dates/cinema_date are plain AU release-
+// calendar dates, so this reads the browser's local date fields rather than toISOString()'s UTC one —
+// Sydney is UTC+10/+11, so for hours every AU morning a UTC "today" is still yesterday there.
+let BUILD_DATE = "__TODAY__";
+const localToday = () => { const d=new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
+let TODAY = localToday();
 const DEFAULT_TITLE = document.title;   // CAS-437: restored when the film page closes
 // CAS-486: the exact marker the notify-test harness's fixture films carry in their `director`
 // field (tests/fixtures/notify-films.json) — reused here so the card/film-page badge and the
@@ -3143,8 +3152,12 @@ const inCinemaRun = m => !!m.cinema_date && m.cinema_date<=TODAY && m.cinema_dat
 // CAS-289: the estimated-only counterpart, capped at CINEMA_ESTIMATE_RUN_DAYS rather than CINEMA_RUN_DAYS.
 const inCinemaRunEstimated = m => !!m.cinema_date && m.cinema_date<=TODAY && m.cinema_date>=addDays(TODAY,-CINEMA_ESTIMATE_RUN_DAYS);
 const cinemaRungFor = m => m.cinema_date >= addDays(TODAY,-OPENING_WEEK_DAYS) ? "opening_week" : "in_cinema";
-// The window the pipeline worked out, kept safe before deriveStatus() overwrites m.status below.
-MOVIES.forEach(m=>{ m.claimedStatus=(m.status||[]).slice(); });
+// The window the pipeline worked out, kept safe before deriveStatus() overwrites m.status below. Reused by
+// pollCatalogue() (CAS-503) every time a fresh catalogue swap needs the same two-step treatment. Skips a
+// ?fixtures=1 film (CAS-486/491): those carry a hand-authored status/window_dates with no claimedStatus of
+// their own, and are never meant to run through the pipeline-sharpening deriveStatus() applies below.
+function captureClaimedStatus(){ MOVIES.forEach(m=>{ if(!m._fixture) m.claimedStatus=(m.status||[]).slice(); }); }
+captureClaimedStatus();
 function deriveStatus(m){
   // CAS-155: the pipeline's own `status` is the AUTHORITY on which window a film is in. This function may
   // sharpen it from priced offers (that is how the poll sim, and a real Watchmode read, move a film along the
@@ -3246,7 +3259,10 @@ function primaryStatus(m){
   }
   return last;
 }
-MOVIES.forEach(m=>m.status=deriveStatus(m));
+// CAS-503: also rerun by pollCatalogue() whenever the device's date moves on or a fresh catalogue lands, so
+// a film's window is never stuck at whatever it was on the page's first paint. Same fixture skip as above.
+function rederiveStatuses(){ MOVIES.forEach(m=>{ if(!m._fixture) m.status=deriveStatus(m); }); }
+rederiveStatuses();
 
 // The state, derived from the film's REAL opening date and nothing else. A film the sim has pushed into
 // cinemas early (_simReleased) has an opening date in the future, so it is honestly not past anything yet.
@@ -3694,7 +3710,10 @@ function removeList(id){
 
 // CAS-269: "Live AU data · " is gone from the freshness line for the same reason the chip is: it is a
 // constant. What is left is the one part of this line that moves.
-$("updated").textContent = "Updated " + fmtDate(TODAY);
+// CAS-503: this reads BUILD_DATE (the catalogue's own build stamp), not TODAY — the label answers "when was
+// this catalogue built", which is a different question from "what does the app treat as today" now that the
+// latter tracks the device's live clock.
+$("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 
 // ================= Build stamp (CAS-124 / CAS-324) =================
 // version / build / commit / builtAt are baked at build time (from the committed VERSION file + git).
@@ -5722,7 +5741,6 @@ function mlRowHTML(m, groupKey){
 // It is NOT the film's release date and it is NOT a guess: it's the day Cascade actually picked it up for you.
 // An entry is dropped when the film leaves the list, so a film that is later found again is honestly new again.
 const NEW_DAYS = 7;                                     // what "this week" means. One dial, in one place.
-let REAL_TODAY = new Date().toISOString().slice(0,10);   // when YOU are looking, not the catalogue's build date
 const FIRST_KEY = "cascade_first_found";
 function loadFirstFound(){
   try{ const o=JSON.parse(localStorage.getItem(FIRST_KEY)||"{}");
@@ -5732,13 +5750,15 @@ const firstFound = loadFirstFound();
 let firstSaved=null;
 function trackFirstFound(){
   Object.keys(firstFound).forEach(id=>{ if(!found.has(+id)) delete firstFound[id]; });
-  found.forEach(id=>{ if(!firstFound[id]) firstFound[id]=REAL_TODAY; });
+  // CAS-503: used to stamp REAL_TODAY here — now that TODAY itself is always the device's live local date
+  // (never the catalogue's build date), it IS "when YOU are looking", so the separate variable is gone.
+  found.forEach(id=>{ if(!firstFound[id]) firstFound[id]=TODAY; });
   const s=JSON.stringify(firstFound);
   if(s===firstSaved) return;                            // runs on every render — only real changes write
   firstSaved=s;
   try{ localStorage.setItem(FIRST_KEY, s); }catch(e){}
 }
-const daysSince = iso => Math.round((Date.parse(REAL_TODAY) - Date.parse(iso)) / 864e5);
+const daysSince = iso => Math.round((Date.parse(TODAY) - Date.parse(iso)) / 864e5);
 const isNewFound = id => { const d=firstFound[id]; return !!d && daysSince(d) < NEW_DAYS; };
 
 // ---- "Recent" (CAS-468) — supersedes CAS-447's card-level badge -----------------
@@ -5754,8 +5774,8 @@ function isRecent(m){
   return !!d && daysSince(d) < NEW_DAYS;
 }
 
-// ---- CAS-488: runtime catalogue refresh -----------------------------------------------------
-// MOVIES/TODAY above ship baked at build time so first paint needs no network — but a tab left open for
+// ---- CAS-488/503: runtime catalogue refresh + live clock ---------------------------------------
+// MOVIES/BUILD_DATE above ship baked at build time so first paint needs no network — but a tab left open for
 // hours (or days) would otherwise never see a film added, a status change, or a glow recompute. movies.json
 // is the exact payload the build reads, already served next to index.html (same origin, no new publishing
 // step). {cache:"no-cache"} forces a real conditional request every poll instead of trusting the browser's
@@ -5772,32 +5792,51 @@ let catalogueEtag = null, cataloguePolling = false;
 const catalogueUIBusy = () => document.body.style.overflow==="hidden"
   || $("drawer").classList.contains("open")
   || !!document.querySelector(".cpop");
+// CAS-503: the device's date can move on (a tab left open across midnight, or simply a catalogue build that
+// lagged the clock) with no catalogue change at all — that must not depend on a successful network fetch,
+// so it is checked first and unconditionally, every time pollCatalogue runs. Returns whether anything
+// actually needs re-rendering, so pollCatalogue can fold it into the same repaint as a catalogue swap.
+function advanceClock(){
+  const now = localToday();
+  if(now === TODAY) return false;
+  TODAY = now;
+  rederiveStatuses();
+  return true;
+}
 async function pollCatalogue(){
   if(cataloguePolling) return;
   cataloguePolling = true;
   try{
+    let dirty = advanceClock();
     let res;
     try{ res = await fetch("movies.json", {cache:"no-cache"}); }
-    catch(e){ return; }                        // offline or blocked — the baked/last-known catalogue keeps serving
-    if(!res.ok) return;
-    const etag = res.headers.get("etag");
-    if(etag && etag===catalogueEtag) return;    // unchanged — skip parsing an ~11MB body for nothing
-    let payload;
-    try{ payload = await res.json(); }catch(e){ return; }
-    if(!Array.isArray(payload.movies)) return;
-    catalogueEtag = etag;
-    MOVIES = payload.movies;
-    // TODAY tracks the catalogue's own build date; the header's "Updated <date>" label reads it directly
-    // and isn't part of render()'s rebuild, so it's kept honest here — unconditionally, since a one-line
-    // text write can never disturb an open modal/drawer/popup the way a full listing rebuild could.
-    if(payload.generated){ TODAY = payload.generated; $("updated").textContent = "Updated " + fmtDate(TODAY); }
-    REAL_TODAY = new Date().toISOString().slice(0,10);  // REAL_TODAY tracks the clock, independently of the data
-    // CAS-490: MOVIES was just replaced wholesale, so any ?fixtures=1 merge (CAS-486) is gone — re-apply it
-    // here rather than only on cascade-auth-change, so a fixture film survives a catalogue refresh instead
-    // of silently vanishing the next time the tab regains focus. No-ops instantly unless the gate is met.
-    await maybeLoadFixtures();
-    recomputeFound();                                   // data is live now regardless of whether we paint it
-    if(!catalogueUIBusy()) render();
+    catch(e){ res = null; }                     // offline or blocked — the baked/last-known catalogue keeps serving
+    if(res && res.ok){
+      const etag = res.headers.get("etag");
+      if(!etag || etag!==catalogueEtag){         // unchanged etag — skip parsing an ~11MB body for nothing
+        let payload = null;
+        try{ payload = await res.json(); }catch(e){}
+        if(payload && Array.isArray(payload.movies)){
+          catalogueEtag = etag;
+          MOVIES = payload.movies;
+          // BUILD_DATE tracks the catalogue's own build stamp; the header's "Updated <date>" label reads it
+          // directly and isn't part of render()'s rebuild, so it's kept honest here — unconditionally, since
+          // a one-line text write can never disturb an open modal/drawer/popup the way a full rebuild could.
+          if(payload.generated){ BUILD_DATE = payload.generated; $("updated").textContent = "Updated " + fmtDate(BUILD_DATE); }
+          captureClaimedStatus();
+          // CAS-490: MOVIES was just replaced wholesale, so any ?fixtures=1 merge (CAS-486) is gone — re-apply
+          // it here rather than only on cascade-auth-change, so a fixture film survives a catalogue refresh
+          // instead of silently vanishing the next time the tab regains focus. No-ops unless the gate is met.
+          await maybeLoadFixtures();
+          rederiveStatuses();
+          dirty = true;
+        }
+      }
+    }
+    if(dirty){
+      recomputeFound();                                 // data is live now regardless of whether we paint it
+      if(!catalogueUIBusy()) render();
+    }
   } finally { cataloguePolling = false; }
 }
 
@@ -6364,8 +6403,8 @@ function posForYears(y){
 }
 const yearsLabel = y => !y ? "Any" : (y===1 ? "Last 1 year" : `Last ${y} years`);
 const yearsShort = y => !y ? "Any" : String(y);
-// The rolling cutoff, as a real date. TODAY is the catalogue's own build date, so this moves with the data
-// rather than with whatever clock the page happens to be opened on.
+// The rolling cutoff, as a real date. CAS-503: TODAY is now the device's own live local date, so this moves
+// with the clock the page is actually open on, not with whenever the catalogue was last built.
 function yearsCutoff(y){
   if(!y) return null;
   const d=new Date(TODAY+"T00:00:00Z"); d.setUTCFullYear(d.getUTCFullYear()-y);
@@ -14205,7 +14244,10 @@ else if(dedupedN)
                                 // focus/visibilitychange event.
                                 reconcileOnReturn,
                                 // CAS-488: the catalogue-refresh seam and its busy-check, exposed the same way.
-                                pollCatalogue, catalogueUIBusy };
+                                pollCatalogue, catalogueUIBusy,
+                                // CAS-503: the live-clock seam, so a date boundary can be exercised without
+                                // waiting on a real one.
+                                advanceClock, localToday };
 })();
 </script>
 
