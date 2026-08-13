@@ -19,6 +19,7 @@ Interface:
   fetch_unread_counts() -> {user_id: int}                                                 # CAS-465
   fetch_film_watches() -> [{user_id, movie_id, windows}]                                  # CAS-484
   fetch_watch_notification_keys() -> set[(user_id, movie_id, moment)]  # de-dupe, null-cascade rows
+  delete_notifications_for_movie_ids(ids) -> int          # CAS-486: fixture-range-only, for notify-test
 """
 from __future__ import annotations
 
@@ -30,6 +31,25 @@ import urllib.request
 
 SUPABASE_URL_ENV = "SUPABASE_URL"
 SERVICE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
+
+# CAS-486: the reserved tmdb_id range for the notify-test harness's fixture films (see
+# tests/fixtures/notify-films.json). Hard-coded here, not read from any workflow input, so
+# delete_notifications_for_movie_ids below can never be widened to touch a real movie_id no
+# matter what a caller passes it.
+FIXTURE_ID_MIN = 999000001
+FIXTURE_ID_MAX = 999000999
+
+
+def _fixture_ids_only(movie_ids) -> list:
+    out = []
+    for i in movie_ids:
+        try:
+            n = int(i)
+        except (TypeError, ValueError):
+            continue
+        if FIXTURE_ID_MIN <= n <= FIXTURE_ID_MAX:
+            out.append(str(n))
+    return out
 
 
 class InMemoryStore:
@@ -86,6 +106,19 @@ class InMemoryStore:
     def fetch_watch_notification_keys(self) -> set:
         return {(str(n.get("user_id")), str(n.get("movie_id")), n.get("moment"))
                 for n in self._notifications if n.get("cascade_id") is None}
+
+    def delete_notifications_for_movie_ids(self, movie_ids) -> int:
+        """CAS-486: repeatability for the notify-test harness — a fixture scenario must be able
+        to run again immediately, which means the previous run's ledger rows for those SAME
+        fixture films need to be gone first. `movie_ids` is re-filtered to the reserved fixture
+        range here, independently of whatever the caller already checked, so this can never
+        delete a real notification even if a future caller forgets its own check."""
+        ids = set(_fixture_ids_only(movie_ids))
+        if not ids:
+            return 0
+        before = len(self._notifications)
+        self._notifications = [n for n in self._notifications if str(n.get("movie_id")) not in ids]
+        return before - len(self._notifications)
 
 
 class SupabaseStore:
@@ -188,6 +221,28 @@ class SupabaseStore:
         )
         with urllib.request.urlopen(req, timeout=self._timeout):
             return len(rows)
+
+    def delete_notifications_for_movie_ids(self, movie_ids) -> int:
+        """CAS-486: DELETE ledger rows for the notify-test harness's fixture films only. `movie_ids`
+        is re-filtered to the reserved fixture range (FIXTURE_ID_MIN..FIXTURE_ID_MAX) here, not
+        trusted from the caller — the filtered ids are baked into the PostgREST filter itself, never
+        a raw workflow input, so a malformed/hostile value passed in can only ever shrink the set to
+        nothing, never widen it to a real movie_id."""
+        ids = _fixture_ids_only(movie_ids)
+        if not ids:
+            return 0
+        quoted = ",".join(ids)
+        req = urllib.request.Request(
+            self._base + f"/notifications?movie_id=in.({quoted})",
+            headers=self._headers({"Prefer": "return=representation"}),
+            method="DELETE",
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            body = resp.read().decode("utf-8")
+        try:
+            return len(json.loads(body))
+        except (json.JSONDecodeError, TypeError):
+            return 0
 
 
 def store_from_env(env=None):

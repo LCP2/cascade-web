@@ -68,6 +68,11 @@ def _parse_args(argv):
                         "from notify_prefs.excluded_moments; this flag adds to that.")
     p.add_argument("--print-html", action="store_true",
                    help="With --dry-run, print the full digest HTML (default: subject + text preview).")
+    p.add_argument("--target-user", metavar="USER_ID",
+                   help="CAS-486 test-harness safety valve: restrict matching to exactly this "
+                        "user_id — every other user's cascades and per-film watches are dropped "
+                        "before matching, so a scoped test run can never spray real users. Unused "
+                        "by the daily job.")
     return p.parse_args(argv)
 
 
@@ -123,6 +128,14 @@ def main(argv=None) -> int:
             return 0
 
     cascades = store.fetch_active_cascades()
+    # CAS-486: the test-harness safety valve. Filtering here, before ANYTHING is matched, is what
+    # makes "spray real users" structurally impossible rather than merely unlikely — by_user below
+    # can only ever contain keys that survived this filter.
+    if args.target_user:
+        before = len(cascades)
+        cascades = [c for c in cascades if str(c.get("user_id")) == args.target_user]
+        print(f"[monitor] --target-user {args.target_user}: kept {len(cascades)}/{before} cascade(s), "
+              "every other user's excluded.")
     already = store.fetch_notification_keys()
     # CAS-185: both of these are stored per account now, so the default source is the store rather
     # than a flag. The flags still win where given — that is what makes a fixture run reproducible.
@@ -149,6 +162,8 @@ def main(argv=None) -> int:
     # pairs the Cascade path already caught this run, which is what keeps a film covered by BOTH an
     # agent bell and a per-film tick to exactly one notification (AC3).
     watches = _load_json(args.watches) if args.watches else _store_call(store, "fetch_film_watches", [])
+    if args.target_user:
+        watches = [w for w in watches if str(w.get("user_id")) == args.target_user]
     watch_already = _store_call(store, "fetch_watch_notification_keys", set())
     cascade_seen = {(str(uid), h.transition.movie_id, h.transition.moment)
                     for uid, hits in by_user.items() for h in hits}
@@ -156,6 +171,12 @@ def main(argv=None) -> int:
                                     cascade_hits=cascade_seen, excluded=muted)
     for user_id, hits in watch_hits.items():
         by_user.setdefault(user_id, []).extend(hits)
+
+    # CAS-486: belt-and-braces — cascades and watches are already filtered above, so by_user should
+    # only ever hold the target user's key, but a test harness that emails/pushes real people on a
+    # bug elsewhere is the one failure mode worth double-guarding against.
+    if args.target_user:
+        by_user = {u: hits for u, hits in by_user.items() if str(u) == args.target_user}
 
     print(f"[monitor] matching against {len(cascades)} active cascade(s) from {source}; "
           f"{len(already)} already-sent ledger entries; {len(off)} personal override(s) suppressing; "

@@ -365,6 +365,11 @@
   .cert{flex:none;display:inline-block;font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:5px;
     border:1px solid #5b6472;color:#d6dce6;background:#232a35;vertical-align:middle;letter-spacing:.3px;white-space:nowrap}
   .cert.mature{border-color:#c0563f;color:#ffb9a6;background:rgba(192,86,63,.16)}
+  /* CAS-486: the notify-test harness's fixture films (?fixtures=1) stay visually unmistakable
+     wherever they render — deliberately loud (unlike .cert) so it can never read as real data. */
+  .fixturebadge{flex:none;display:inline-block;font-size:10px;font-weight:800;padding:1px 6px;
+    border-radius:5px;border:1px solid #e0a63f;color:#3a2a06;background:#ffcf5c;vertical-align:middle;
+    letter-spacing:.4px;white-space:nowrap}
   /* CAS-179: no date on the top line any more — the film's dates are all in the availability strip,
      where they belong to a window each. This line is what the film IS: its genres and its language. */
   /* CAS-276: the Style line rides UP against the title. It is the title's qualifier — "Nosferatu, a horror
@@ -2980,6 +2985,10 @@
 let MOVIES = __MOVIES_JSON__;
 let TODAY  = "__TODAY__";
 const DEFAULT_TITLE = document.title;   // CAS-437: restored when the film page closes
+// CAS-486: the exact marker the notify-test harness's fixture films carry in their `director`
+// field (tests/fixtures/notify-films.json) — reused here so the card/film-page badge and the
+// credit row agree on the same wording.
+const FIXTURE_MARKER = "TEST FIXTURE — not a real title";
 
 const PVOD_MIN = 19.99, RENTAL_MAX = 9.99, OPENING_WEEK_DAYS = 7;
 // CAS-227: how long after opening a film may still be presumed to be ON a screen. Nobody publishes the date a
@@ -4744,6 +4753,9 @@ function filmPageWhereHTML(m){
 function filmPageHTML(m){
   const yr=yearOf(m);
   const cert = m.age_rating ? `<span class="cert ${MATURE.has(m.age_rating)?'mature':''}">${m.age_rating}</span>` : "";
+  // CAS-486: a fixture film from the notify-test harness's ?fixtures=1 merge stays visually marked
+  // wherever it renders — this badge, plus the "TEST FIXTURE" director credit below.
+  const fixtureBadge = m._fixture ? `<span class="fixturebadge" title="${escA(FIXTURE_MARKER)}">TEST FIXTURE</span>` : "";
   const cult = m.language ? langName(m.language) : "";
   const genres = (m.genres||[]).join(", ");
   const poster = m.poster ? `<img class="fpposter" src="https://image.tmdb.org/t/p/w342${esc(m.poster)}" alt="">` : "";
@@ -4752,7 +4764,7 @@ function filmPageHTML(m){
     <div class="fpclose"><button type="button" class="ebtn" onclick="closeFilmPage()"
         title="Close" aria-label="Close">✕</button></div>
     ${poster}
-    <div class="fptitle">${esc(m.title)} ${cert}</div>
+    <div class="fptitle">${esc(m.title)} ${cert}${fixtureBadge}</div>
     <div class="fpmeta">${[yr,genres,cult].filter(Boolean).join(" · ")}</div>
     ${syn}
     ${filmPageWhereHTML(m)}
@@ -4892,6 +4904,9 @@ function cardHTML(m, markNew=false){
       <span class="off">${o.price!=null?"$"+o.price.toFixed(2):""}${o.fmt?" · "+o.fmt:""}</span></div>`).join("")}${jwLink?`<div class="wtwrow jwrow">${jwLink}</div>`:""}</div>` : "";
   const syn = m.synopsis ? `<p class="synopsis">${esc(m.synopsis)}</p>` : "";
   const cert = m.age_rating ? `<span class="cert ${MATURE.has(m.age_rating)?'mature':''}">${m.age_rating}</span>` : "";
+  // CAS-486: a fixture film from the notify-test harness's ?fixtures=1 merge stays visually marked
+  // wherever it renders — this badge, plus the "TEST FIXTURE" director credit in About & credits.
+  const fixtureBadge = m._fixture ? `<span class="fixturebadge" title="${escA(FIXTURE_MARKER)}">TEST</span>` : "";
   // CAS-135: the chip reads the film's LANGUAGE (e.g. "English"), now that selection is language-based —
   // not the old genre-ish "Western" culture bucket.
   const cult = m.language ? ` · <span class="culttag">${langName(m.language)}</span>` : "";
@@ -4922,7 +4937,7 @@ function cardHTML(m, markNew=false){
         </div>
         <!-- CAS-373: the title text gets its own span so it (not the badge) is what truncates — the rating
              badge is flex:none and always shows, collapsed or expanded. -->
-        <div class="title"><span class="titletext">${m.title}</span>${cert}</div>
+        <div class="title"><span class="titletext">${m.title}</span>${cert}${fixtureBadge}</div>
         <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
@@ -5747,6 +5762,53 @@ async function pollCatalogue(){
     if(!catalogueUIBusy()) render();
   } finally { cataloguePolling = false; }
 }
+
+// ---- CAS-486: notify-test harness fixture merge (?fixtures=1) -------------------------------
+// Opt-in and explicit only: a normal visitor, and any real signed-in account, must never see a
+// fixture film by accident even if a `?fixtures=1` URL leaks — both the query flag AND a match on
+// FIXTURES_TEST_EMAIL are required. Fetched from a path that is obviously not the production
+// catalogue (movies.json); a fetch failure degrades to "no fixture films", never to an error
+// state. This is the app's only OTHER runtime data dependency (CAS-488 is the first, for the real
+// catalogue) and it is quarantined to this one flagged path — the unflagged production build still
+// boots with zero runtime fetches beyond CAS-488's own.
+const FIXTURES_TEST_EMAIL = "lee@codynamics.com.au";
+function fixturesRequested(){
+  try{ return new URLSearchParams(location.search).get("fixtures")==="1"; }
+  catch(e){ return false; }
+}
+async function maybeLoadFixtures(){
+  if(!fixturesRequested()) return;
+  const auth = window.CascadeAuth;
+  const email = auth && auth.user && auth.user.email;
+  if(email !== FIXTURES_TEST_EMAIL) return;             // wrong/no account — show nothing, ever
+  let res;
+  try{ res = await fetch("tests/fixtures/notify-films.json", {cache:"no-cache"}); }
+  catch(e){ return; }                                    // offline/blocked — no fixture films, not an error
+  if(!res.ok) return;
+  let payload;
+  try{ payload = await res.json(); }catch(e){ return; }
+  const films = Array.isArray(payload.films) ? payload.films : [];
+  if(!films.length) return;
+  const existing = new Set(MOVIES.map(m=>m.tmdb_id));
+  const asMovies = films.filter(f=>!existing.has(f.tmdb_id)).map(f=>({
+    tmdb_id: f.tmdb_id, title: f.title, director: f.director, genres: f.genres||[],
+    age_rating: f.age_rating||"M", imdb_rating: f.imdb_rating==null ? null : f.imdb_rating, poster: null,
+    synopsis: f.synopsis||FIXTURE_MARKER, cinema_date: null,
+    status: f.today_status||[], offers: f.today_offers||[],
+    window_dates: Object.fromEntries((f.today_status||[]).map(s=>[s, TODAY])),
+    _fixture: true,
+  }));
+  if(!asMovies.length) return;
+  MOVIES = MOVIES.concat(asMovies);
+  recomputeFound();
+  if(!catalogueUIBusy()) render();
+}
+// The auth module (near the bottom of this script) dispatches this event once the signed-in/guest
+// state is known, whether or not an account is configured — the one moment this module can read a
+// real email off window.CascadeAuth. Attaching the listener here, ahead of that module running,
+// means it is always in place before the dispatch fires.
+window.addEventListener("cascade-auth-change", () => { maybeLoadFixtures(); });
+window.CascadeFixtures = { maybeLoadFixtures, fixturesRequested, FIXTURES_TEST_EMAIL };
 
 // ---- "Newly added" (CAS-447) — a catalogue fact, not an agent one ---------------
 // Distinct from isNewFound above: that is "an agent picked this up lately", per-device and re-triggerable.

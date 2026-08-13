@@ -16,6 +16,42 @@ from monitor.store import InMemoryStore
 FIXTURES = "monitor/fixtures"
 
 
+class TargetUserSafetyValve(unittest.TestCase):
+    """CAS-486: --target-user must scope a run to exactly one user, so the notify-test harness can
+    never spray real users. monitor/fixtures has two: user-A (Drama rentals fires on tmdb_id 5001,
+    pvod->rental) and user-B (unrelated cascades)."""
+
+    def test_only_the_target_user_is_matched(self):
+        argv = [
+            "--today", f"{FIXTURES}/today.json", "--yesterday", f"{FIXTURES}/yesterday.json",
+            "--date", "2026-07-16", "--dry-run",
+            "--cascades", f"{FIXTURES}/cascades.json",
+            "--notifications", f"{FIXTURES}/notifications.json",
+            "--target-user", "user-A",
+        ]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = main(argv)
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("user user-A", out)
+        self.assertNotIn("user user-B", out)
+
+    def test_an_unmatched_target_user_delivers_to_no_one(self):
+        argv = [
+            "--today", f"{FIXTURES}/today.json", "--yesterday", f"{FIXTURES}/yesterday.json",
+            "--date", "2026-07-16", "--dry-run",
+            "--cascades", f"{FIXTURES}/cascades.json",
+            "--notifications", f"{FIXTURES}/notifications.json",
+            "--target-user", "some-user-not-in-fixtures",
+        ]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = main(argv)
+        self.assertEqual(rc, 0)
+        self.assertIn("no new alerts for anyone", buf.getvalue())
+
+
 class LedgerWriteResilience(unittest.TestCase):
     def test_a_ledger_write_failure_is_a_warning_not_a_crash(self):
         argv = [
