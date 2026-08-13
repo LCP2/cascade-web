@@ -1149,14 +1149,22 @@ def build_html(records: list[dict] | None = None):
     """Inject the latest movies + date into app_template.html -> index.html.
     Keeps the app a single double-clickable file (no server, no CORS).
     Also stamps the release/build version (CAS-124) into the app and /version.json."""
+    catalogue_date = datetime.date.today().isoformat()
     if records is None:  # --build-html on its own: rebuild from the last movies.json
-        records = json.load(open(OUTPUT_FILE))["movies"]
+        catalogue = json.load(open(OUTPUT_FILE))
+        records = catalogue["movies"]
+        catalogue_date = catalogue.get("generated", catalogue_date)
     if not os.path.exists(TEMPLATE_FILE):
         print("! app_template.html not found — cannot build index.html"); return
     info = build_version_info()
     html = open(TEMPLATE_FILE, encoding="utf-8").read()
     html = html.replace("__MOVIES_JSON__", json.dumps(records))
-    html = html.replace("__TODAY__", datetime.date.today().isoformat())
+    # CAS-503 follow-up: __TODAY__ only feeds the baked BUILD_DATE stamp now (the app's live
+    # "today" is computed at runtime). Stamp it from the catalogue's own `generated` date, not
+    # the build machine's wall clock — the wall clock varies with whoever/wherever rebuilds
+    # (e.g. CI's UTC runner vs a contributor's local timezone), which produced a spurious
+    # single-day drift that qa.yml's build-check flagged as a real diff.
+    html = html.replace("__TODAY__", catalogue_date)
     html = html.replace("__BUILD_INFO__", json.dumps(info))
     open(APP_FILE, "w", encoding="utf-8").write(html)
     # Machine-readable stamp served at /version.json (same origin as the app).
