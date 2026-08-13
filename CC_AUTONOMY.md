@@ -22,6 +22,20 @@ stop. Never commit secrets.
 > `jira_release.py`; neither is used on this project. A release is the per-release label `v<X.Y.Z>` carried
 > by every ticket in it, and it is already on the ticket when you pick it up. Leave it alone.
 
+> **CAS-482 — diagnose before retrying a requeued ticket.** `qa.yml`'s `on-failure` job (CAS-482) auto-
+> requeues a ticket to `Ready for Dev` + `needs-cc-web` when its push made QA go red, and posts a Jira
+> comment naming the failed job(s), the first failing line, and a link to the run — read that comment
+> first. Before touching code on any ticket you pick up this way, check whether the failure is actually
+> caused by **this ticket's own diff**: `git show <the ticket's commit> -- <the failing area>` against the
+> failing job's detail in the comment. Two outcomes:
+> - **This ticket's diff caused it** — normal work: fix it, verify, push again.
+> - **It didn't** (e.g. a data-driven catalogue invariant tripped by an unrelated `daily.yml` refresh, the
+>   CAS-481 shape) — do not blindly re-push a ticket that changes nothing about the failure. Check whether
+>   an existing ticket already tracks the real cause (search `project = CAS AND text ~ "<the failing
+>   test/assertion>"`) before filing a new one. Comment on the requeued ticket explaining your diff isn't
+>   the cause, link the tracking ticket if one already exists (file one if not), and move it back to
+>   `Ready for Dev` un-changed rather than re-pushing.
+
 ## Do the work
 - Implement to the **acceptance criteria and nothing beyond**. Honour the out-of-scope list.
 - Read `CLAUDE.md`, the Confluence **Cascade Web — Architecture & CC Build Spec**, and **UX Psychology —
