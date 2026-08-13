@@ -107,6 +107,53 @@ test("CAS-491: no account-state change was needed — cascades and picked servic
   expect(after).toEqual(before);
 });
 
+/** CAS-491 was reopened: the services-scope exemption above (shipped at 2bbbbc4) was necessary but not
+ * sufficient — every fixture was still missing the fields a real agent's own matching reads (language,
+ * year, culture), so `found` never contained one even once its card could render on the agent-independent
+ * All listing. Adds one broad, ordinarily-shaped Cascade — standing in for "the account's existing agent"
+ * per the restated acceptance criteria — and confirms the fixtures are matched by it, not just displayed. */
+async function addBroadStreamingCascade(page){
+  return page.evaluate(() => {
+    const c = { id: cascadeNewId(), name: "Streaming", kind: "stream", status: [], genre: [], age: [], lang: [] };
+    normCascade(c);
+    c.order = cascades.length;
+    cascades.push(c);
+    recomputeFound();
+    return c.id;
+  });
+}
+
+test("CAS-491: found.has() is true for every fixture film, matched by a real (non-fixture-aware) agent", async ({ page }) => {
+  await gotoAsGatedTester(page);
+  await setDefaultGatedPrefs(page);
+  await addBroadStreamingCascade(page);
+
+  const hits = await page.evaluate((ids) => ids.map(id => found.has(id)), FIXTURE_IDS);
+  for(const [i, id] of FIXTURE_IDS.entries()) expect(hits[i], `found.has(${id})`).toBe(true);
+});
+
+test("CAS-491: a matched fixture's card carries the TEST FIXTURE badge and a usable Watch it control", async ({ page }) => {
+  await gotoAsGatedTester(page);
+  await setDefaultGatedPrefs(page);
+  await addBroadStreamingCascade(page);
+
+  const html = await page.evaluate((id) => cardHTML(MOVIES.find(m => m.tmdb_id === id)), STREAM_FIXTURE_ID);
+  expect(html).toContain("fixturebadge");
+
+  await page.evaluate((id) => window.toggleFilmOpt(id, "stream"), STREAM_FIXTURE_ID);
+  const wins = await page.evaluate((id) => notify[id].wins.stream, STREAM_FIXTURE_ID);
+  expect(wins).toBe(true);
+});
+
+test("CAS-491: no account state beyond the one representative agent was needed to reach every fixture", async ({ page }) => {
+  await gotoAsGatedTester(page);
+  await setDefaultGatedPrefs(page);
+  await addBroadStreamingCascade(page);
+
+  const sub = await page.evaluate(() => [...prefs.sub].sort());
+  expect(sub).toEqual(["Amazon Prime Video", "Disney Plus", "HBO Max", "Netflix"]);
+});
+
 test("CAS-491: the services-scope exemption is fixture-only — a real film still obeys the scope", async ({ page }) => {
   await gotoAsGatedTester(page);
   await setDefaultGatedPrefs(page);

@@ -5782,6 +5782,11 @@ async function pollCatalogue(){
 // catalogue) and it is quarantined to this one flagged path — the unflagged production build still
 // boots with zero runtime fetches beyond CAS-488's own.
 const FIXTURES_TEST_EMAILS = ["lee+c1@codynamics.com.au", "lee@codynamics.com.au"];
+// CAS-491: a real cinema_date per scenario, offset from TODAY so each fixture sits in a plausible
+// point of a normal AU release journey instead of carrying no date at all (which left it unreachable
+// by any year/recency-scoped agent). Purely a display/matching realism concern — window_dates (which
+// status the fixture is actually IN today) is unaffected and still keyed to TODAY above.
+const FIXTURE_CINEMA_OFFSET = {announced:21, hits_cinema:0, hits_pvod:-35, hits_rent:-60, hits_stream:-75};
 function fixturesRequested(){
   try{ return new URLSearchParams(location.search).get("fixtures")==="1"; }
   catch(e){ return false; }
@@ -5803,7 +5808,12 @@ async function maybeLoadFixtures(){
   const asMovies = films.filter(f=>!existing.has(f.tmdb_id)).map(f=>({
     tmdb_id: f.tmdb_id, title: f.title, director: f.director, genres: f.genres||[],
     age_rating: f.age_rating||"M", imdb_rating: f.imdb_rating==null ? null : f.imdb_rating, poster: null,
-    synopsis: f.synopsis||FIXTURE_MARKER, cinema_date: null,
+    // CAS-491: realistic catalogue metadata so a real agent's matching (language/year/culture gates in
+    // matchesCriteria and passesTasteBase) can actually pick a fixture up — a fixture is meant to look
+    // like an ordinary film to the matcher, differing only in its reserved id and the _fixture flag.
+    language: f.language||"en", culture: f.culture||"Western", year: f.year||TODAY.slice(0,4),
+    popularity: f.popularity==null ? 0 : f.popularity,
+    synopsis: f.synopsis||FIXTURE_MARKER, cinema_date: addDays(TODAY, FIXTURE_CINEMA_OFFSET[f.scenario]||0),
     status: f.today_status||[], offers: f.today_offers||[],
     window_dates: Object.fromEntries((f.today_status||[]).map(s=>[s, TODAY])),
     _fixture: true,
