@@ -41,6 +41,11 @@ APNS_BUNDLE_ID_ENV = "APNS_BUNDLE_ID"
 
 APNS_HOST = "api.push.apple.com"
 
+# CAS-483: the four-secrets-unset no-op used to return False with no output at all, which is
+# exactly how a missing daily.yml env-block hid for three tickets' worth of work. Warn once per
+# run (not once per push) so a real config gap is visible without spamming the log per device.
+_warned_missing_config = False
+
 # Reuses the exact phrasing app_template.html's REAL_MOMENT_SAID already puts on the bell for
 # the same event, so push copy can never drift from what the in-app alert says (CAS-465 build
 # step 2). Ported by hand rather than shared at build time — this dict and the JS one must be
@@ -204,11 +209,20 @@ def send_via_apns(device_token: str, title: str, body: str, badge: int = None,
     """POST one alert push to APNs. Returns True on a 2xx response, False otherwise — including
     when APNS_* is unset (no-op, mirrors emailer.py with no RESEND_API_KEY) or the request
     itself fails. Never raises: a bad push must not take the rest of the run down with it."""
+    global _warned_missing_config
     key_id = os.environ.get(APNS_KEY_ID_ENV)
     team_id = os.environ.get(APNS_TEAM_ID_ENV)
     auth_key_b64 = os.environ.get(APNS_AUTH_KEY_ENV)
     bundle_id = os.environ.get(APNS_BUNDLE_ID_ENV)
     if not (key_id and team_id and auth_key_b64 and bundle_id):
+        if not _warned_missing_config:
+            missing = [name for name, val in (
+                (APNS_KEY_ID_ENV, key_id), (APNS_TEAM_ID_ENV, team_id),
+                (APNS_AUTH_KEY_ENV, auth_key_b64), (APNS_BUNDLE_ID_ENV, bundle_id),
+            ) if not val]
+            print(f"[monitor] push not configured — {', '.join(missing)} unset; "
+                  "no push notifications will be sent this run.")
+            _warned_missing_config = True
         return False
 
     aps = {"alert": {"title": title, "body": body}}
@@ -238,6 +252,14 @@ def send_via_apns(device_token: str, title: str, body: str, badge: int = None,
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return 200 <= resp.status < 300
-    except Exception:   # noqa: BLE001 - network/HTTP failures degrade to "not delivered"
+            if 200 <= resp.status < 300:
+                return True
+            print(f"[monitor] APNs push rejected for a registered device: HTTP {resp.status}.")
+            return False
+    except urllib.error.HTTPError as err:
+        reason = err.read().decode("utf-8", "replace") if err.fp else ""
+        print(f"[monitor] APNs push rejected for a registered device: HTTP {err.code} {reason}".rstrip())
+        return False
+    except Exception as err:   # noqa: BLE001 - network failures degrade to "not delivered"
+        print(f"[monitor] APNs push failed for a registered device: {err}.")
         return False
