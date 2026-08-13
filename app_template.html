@@ -5758,6 +5758,10 @@ async function pollCatalogue(){
     // text write can never disturb an open modal/drawer/popup the way a full listing rebuild could.
     if(payload.generated){ TODAY = payload.generated; $("updated").textContent = "Updated " + fmtDate(TODAY); }
     REAL_TODAY = new Date().toISOString().slice(0,10);  // REAL_TODAY tracks the clock, independently of the data
+    // CAS-490: MOVIES was just replaced wholesale, so any ?fixtures=1 merge (CAS-486) is gone — re-apply it
+    // here rather than only on cascade-auth-change, so a fixture film survives a catalogue refresh instead
+    // of silently vanishing the next time the tab regains focus. No-ops instantly unless the gate is met.
+    await maybeLoadFixtures();
     recomputeFound();                                   // data is live now regardless of whether we paint it
     if(!catalogueUIBusy()) render();
   } finally { cataloguePolling = false; }

@@ -3700,7 +3700,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 468, "commit": "6809542", "builtAt": "2026-08-13T03:36:02Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 469, "commit": "10bc0ee", "builtAt": "2026-08-13T05:03:05Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5758,6 +5758,10 @@ async function pollCatalogue(){
     // text write can never disturb an open modal/drawer/popup the way a full listing rebuild could.
     if(payload.generated){ TODAY = payload.generated; $("updated").textContent = "Updated " + fmtDate(TODAY); }
     REAL_TODAY = new Date().toISOString().slice(0,10);  // REAL_TODAY tracks the clock, independently of the data
+    // CAS-490: MOVIES was just replaced wholesale, so any ?fixtures=1 merge (CAS-486) is gone — re-apply it
+    // here rather than only on cascade-auth-change, so a fixture film survives a catalogue refresh instead
+    // of silently vanishing the next time the tab regains focus. No-ops instantly unless the gate is met.
+    await maybeLoadFixtures();
     recomputeFound();                                   // data is live now regardless of whether we paint it
     if(!catalogueUIBusy()) render();
   } finally { cataloguePolling = false; }
