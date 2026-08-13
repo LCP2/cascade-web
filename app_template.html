@@ -5169,9 +5169,19 @@ function watchLevelsFor(id){
 }
 // Is the film CURRENTLY sitting in a level you ticked? Not "you ticked something" — "something you ticked is
 // true right now" — which is the one thing the ticket asks the button's green to mean.
+// CAS-494: tests every window the film currently OCCUPIES (m.status), not only its primaryStatus rung — a
+// film can sit in more than one window at once (e.g. still in_cinema while also included_streaming), and the
+// notification engine already fires on any of them, so the control has to agree with whichever one you ticked.
 function watchIsCurrent(id){
-  const rung=filmRung(id);
-  return watchLevelsFor(id).some(l=>WINDOW_RUNG[l.key]===rung && filmOptOn(id,l));
+  const m=MOVIES.find(x=>x.tmdb_id===id);
+  if(!m) return false;
+  const c=activeCascade();
+  const levels=watchLevelsFor(id);
+  return m.status.some(w=>{
+    const key=filmOptKeyForWindow(c, w);
+    const l=key && levels.find(x=>x.key===key);
+    return !!(l && filmOptOn(id,l));
+  });
 }
 // ---- CAS-382: the agent's own Filter control ------------------------------------------------------------
 // The same three levels the Watch panel above lets you set on ONE film, offered here as a multi-select

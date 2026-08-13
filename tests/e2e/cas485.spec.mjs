@@ -1,6 +1,11 @@
 // CAS-485: the Watch-it control now carries CAS-468's gold "recent" glow when the film's CURRENT window is
 // one you've ticked on that control — reusing watchIsCurrent (CAS-349's st.current), no recency gate, and
 // the same .cap.recent border/box-shadow values rather than a second visual language.
+// CAS-494: watchIsCurrent originally tested the tick against only the film's SINGLE primaryStatus rung, so a
+// film sitting in more than one window at once (e.g. still in_cinema while also included_streaming) never
+// glowed for a tick on any window but its primary one. The tests at the bottom of this file cover that case
+// with the CAS-486 multi-window fixture (TEST 5, tmdb_id 999000005) — the "reading, not simulating a full UI
+// flow" approach cas486/490/491 already use for this account-gated harness.
 import { test, expect } from "@playwright/test";
 import {
   toShortlist, shortlistCards, pickCard, finishFlow, toListing, settleListing, ctaLocator,
@@ -87,4 +92,91 @@ test("CAS-485: ticking a window that is NOT the film's current window does not g
 
   const stillDark = page.locator(`.ctl.notify[data-nid="${id}"]`);
   await expect(stillDark).not.toHaveClass(/recent/);
+});
+
+// ---- CAS-494: a film sitting in MORE THAN ONE window at once ----------------------------------------------
+// TEST 5 (tmdb_id 999000005) carries all five windows simultaneously — unrealistic, but it is exactly what
+// exposed the primaryStatus-only bug, so the fixture is reused rather than replaced (per the ticket's own note).
+const STREAM_FIXTURE_ID = 999000005; // "TEST 5 — Streaming": upcoming, in_cinema, pvod, rental, included_streaming
+const CINEMA_ONLY_FIXTURE_ID = 999000002; // "TEST 2 — In cinemas": upcoming, in_cinema only
+
+async function gotoAsFixtureTester(page){
+  await page.route("**/config.js", route => route.fulfill({ status: 404, body: "" }));
+  await page.goto("/index.html?fixtures=1");
+  await page.evaluate(() => { try{ localStorage.clear(); }catch(e){} });
+  await page.goto("/index.html?fixtures=1");
+  await page.waitForFunction(() => typeof flowStart === "function" && Array.isArray(MOVIES));
+  await page.evaluate((email) => {
+    window.CascadeAuth = window.CascadeAuth || {};
+    window.CascadeAuth.user = { email };
+  }, "lee+c1@codynamics.com.au");
+  await page.evaluate(() => window.CascadeFixtures.maybeLoadFixtures());
+}
+
+// Similar to CAS-491's addBroadStreamingCascade, but a CINEMA-kind agent — the only kind whose own window
+// list carries all four Watch levels (in_cinema plus premium/rent/stream, folded in notify-only per CAS-474)
+// without duplication. Without an active cascade, watchLevelsFor(id) has no kind to read and falls back to
+// BOTH kinds' window lists, which duplicates premium/rent/stream (they're in both) — a pre-existing quirk of
+// that no-agent fallback, out of CAS-494's scope, but one that would make toggleFilmOpt's own tick/untick
+// cascade (CAS-349) misfire in these tests if left unset.
+async function addCinemaCascade(page){
+  return page.evaluate(() => {
+    const c = { id: cascadeNewId(), name: "Cinema", kind: "cinema", status: [], genre: [], age: [], lang: [] };
+    normCascade(c);
+    c.order = cascades.length;
+    cascades.push(c);
+    recomputeFound();
+    setActive(c.id);
+    return c.id;
+  });
+}
+
+test("CAS-494: a film on Streaming AND still in cinema glows when Streaming is ticked", async ({ page }) => {
+  await gotoAsFixtureTester(page);
+  await addCinemaCascade(page);
+
+  await page.evaluate((id) => window.toggleFilmOpt(id, "stream"), STREAM_FIXTURE_ID);
+
+  const st = await page.evaluate((id) => filmNotifyState(id), STREAM_FIXTURE_ID);
+  expect(st.current).toBe(true);
+});
+
+test("CAS-494: the same multi-window film ALSO glows when In cinema is ticked, not only its primary window", async ({ page }) => {
+  await gotoAsFixtureTester(page);
+  await addCinemaCascade(page);
+
+  // primaryStatus() for TEST 5 resolves to "in_cinema" (cinema outranks a simultaneous home window per
+  // CAS-395), so this row was already the one the old rung-only check happened to pass — kept as a control.
+  await page.evaluate((id) => window.toggleFilmOpt(id, "in_cinema"), STREAM_FIXTURE_ID);
+
+  const st = await page.evaluate((id) => filmNotifyState(id), STREAM_FIXTURE_ID);
+  expect(st.current).toBe(true);
+});
+
+test("CAS-494: a tick matching none of the film's current windows still does not glow", async ({ page }) => {
+  await gotoAsFixtureTester(page);
+  await addCinemaCascade(page);
+
+  // TEST 2 is only ever in_cinema (plus the un-tickable upcoming rung) — Streaming is neither current nor
+  // spent for it, so ticking it must not glow the control.
+  await page.evaluate((id) => window.toggleFilmOpt(id, "stream"), CINEMA_ONLY_FIXTURE_ID);
+
+  const st = await page.evaluate((id) => filmNotifyState(id), CINEMA_ONLY_FIXTURE_ID);
+  expect(st.current).toBe(false);
+});
+
+test("CAS-494: ticking an already-true window glows immediately, un-ticking removes it immediately", async ({ page }) => {
+  await gotoAsFixtureTester(page);
+  await addCinemaCascade(page);
+
+  const before = await page.evaluate((id) => filmNotifyState(id).current, STREAM_FIXTURE_ID);
+  expect(before).toBe(false);
+
+  await page.evaluate((id) => window.toggleFilmOpt(id, "stream"), STREAM_FIXTURE_ID);
+  const afterTick = await page.evaluate((id) => filmNotifyState(id).current, STREAM_FIXTURE_ID);
+  expect(afterTick).toBe(true);
+
+  await page.evaluate((id) => window.toggleFilmOpt(id, "stream"), STREAM_FIXTURE_ID);
+  const afterUntick = await page.evaluate((id) => filmNotifyState(id).current, STREAM_FIXTURE_ID);
+  expect(afterUntick).toBe(false);
 });
