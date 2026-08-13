@@ -305,5 +305,69 @@ class AFailedPollDoesNotFreezeAPhantomTierEither(unittest.TestCase):
         self.assertNotIn("pending_downgrade", day1[0])
 
 
+class UpcomingLatchNeverTrapsAReleasedTitle(unittest.TestCase):
+    """CAS-472: poll_scheduler.classify_tier used to also read `status == {"upcoming"}` alone as
+    "none" (never polled again), with no check that the title had actually not opened yet. Once a
+    title regressed all the way to upcoming for ANY reason — a real AU delisting past its cinema
+    run, or this bug feeding itself — it got permanently stuck: poll_tier "none" is the only thing
+    poc_pipeline.build_live_catalogue's `tier == "none"` branch checks before blindly re-stamping
+    status=["upcoming"]/availability_confidence="confirmed" every run, with no provider poll to ever
+    learn otherwise. 789 live titles were found latched exactly this way (e.g. "Perfect Marble",
+    tmdb_id 1680044 — window_dates carried in_cinema/included_streaming stamps from real earlier
+    runs, but status stayed frozen at upcoming indefinitely)."""
+
+    def test_classify_tier_is_never_none_once_the_cinema_date_has_passed(self):
+        long_ago = (datetime.date(2026, 8, 12) - datetime.timedelta(days=600)).isoformat()
+        m = {"status": ["upcoming"], "cinema_date": long_ago}
+        self.assertNotEqual(pp.ps.classify_tier(m, datetime.date(2026, 8, 12)), "none")
+
+    def test_classify_tier_still_skips_a_title_that_has_not_opened_yet(self):
+        not_yet = (datetime.date(2026, 8, 12) + datetime.timedelta(days=10)).isoformat()
+        m = {"status": ["upcoming"], "cinema_date": not_yet}
+        self.assertEqual(pp.ps.classify_tier(m, datetime.date(2026, 8, 12)), "none")
+
+    def test_classify_tier_still_skips_a_title_with_no_cinema_date_known_at_all(self):
+        m = {"status": ["upcoming"], "cinema_date": None}
+        self.assertEqual(pp.ps.classify_tier(m, datetime.date(2026, 8, 12)), "none")
+
+
+class ALatchedUpcomingTitleSelfCorrectsOnTheNextRun(unittest.TestCase):
+    """The end-to-end version of the fix above, exercised through the real write path
+    (poc_pipeline.build_live_catalogue): a title shaped exactly like the live "Perfect Marble"
+    record must get a real provider poll instead of being silently re-stamped upcoming again."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        state_dir = self._tmp.name
+        streaming_prov = {"flatrate": [{"service": "Netflix"}], "rent": [], "buy": [],
+                           "ads": [], "free": [], "jw_link": None}
+        patches = [
+            mock.patch.object(pp, "STATE_DIR", state_dir),
+            mock.patch.object(pp, "SNAPSHOT_FILE", os.path.join(state_dir, "last_snapshot.json")),
+            mock.patch.object(pp, "ALERTS_FILE", os.path.join(state_dir, "alerts.json")),
+            mock.patch.object(pp, "ingest_tmdb", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
+            mock.patch.object(pp, "TMDB_PACING", 0),
+            mock.patch.object(pp, "enrich_omdb", lambda m: m),
+            mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
+            mock.patch.object(pp, "tmdb_providers", lambda tid: streaming_prov),
+        ]
+        for p in patches:
+            p.start(); self.addCleanup(p.stop)
+
+    def test_a_released_title_latched_at_upcoming_gets_polled_and_advances(self):
+        long_ago = (datetime.date(2026, 8, 12) - datetime.timedelta(days=600)).isoformat()
+        base = [_title(1, status=["upcoming"], cinema_date=long_ago,
+                        availability_confidence="confirmed", offers=[])]
+
+        day1, _ = pp.build_live_catalogue(datetime.date(2026, 8, 12), base, {}, ondemand_ids=[])
+
+        self.assertEqual(day1[0]["poll_tier"], "slow")                # no longer latched at "none"
+        self.assertEqual(day1[0]["status"], ["included_streaming"])   # the real offer, found and committed
+        self.assertTrue(day1[0]["offers"])
+
+
 if __name__ == "__main__":
     unittest.main()

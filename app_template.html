@@ -21,6 +21,12 @@
      Row-Level Security protects the data). If the file is ever absent this 404s harmlessly and
      the page loads in guest mode (localStorage) instead. See config.example.js for the template. -->
 <script src="config.js"></script>
+<!-- CAS-463: Capacitor's core JS + the push-notifications plugin, vendored (see the files' own header
+     comments — this repo has no bundler, so `Capacitor.Plugins.PushNotifications` needs both loaded as
+     plain globals). Harmless on the web build too: outside the native shell isNativePlatform() is false
+     and registerPush() falls back to the browser Notification API instead of touching this. -->
+<script src="capacitor-core.js"></script>
+<script src="capacitor-push-notifications.js"></script>
 <style>
   :root{
     /* ---- Cascade brand system (CAS-73 / spec 26640386 §1) ----
@@ -359,6 +365,11 @@
   .cert{flex:none;display:inline-block;font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:5px;
     border:1px solid #5b6472;color:#d6dce6;background:#232a35;vertical-align:middle;letter-spacing:.3px;white-space:nowrap}
   .cert.mature{border-color:#c0563f;color:#ffb9a6;background:rgba(192,86,63,.16)}
+  /* CAS-486: the notify-test harness's fixture films (?fixtures=1) stay visually unmistakable
+     wherever they render — deliberately loud (unlike .cert) so it can never read as real data. */
+  .fixturebadge{flex:none;display:inline-block;font-size:10px;font-weight:800;padding:1px 6px;
+    border-radius:5px;border:1px solid #e0a63f;color:#3a2a06;background:#ffcf5c;vertical-align:middle;
+    letter-spacing:.4px;white-space:nowrap}
   /* CAS-179: no date on the top line any more — the film's dates are all in the availability strip,
      where they belong to a window each. This line is what the film IS: its genres and its language. */
   /* CAS-276: the Style line rides UP against the title. It is the title's qualifier — "Nosferatu, a horror
@@ -452,6 +463,10 @@
   .cmini .clab{position:relative;z-index:1;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cmini .clab.dim{color:var(--dim);font-weight:500}
   .ctl.on .cmini .cic{color:var(--cyan)}
+  /* CAS-485: Watch-it's own gold glow, reusing .cap.recent's (CAS-468) exact values rather than inventing a
+     second visual language — on when the film's current window is one you ticked here (st.current in
+     notifyChipHTML), no recency gate (unlike isRecent, which the availability capsule keeps). */
+  .ctl.notify.recent .cmini{border-color:#ffd54a;box-shadow:0 0 0 1px rgba(255,213,74,.4),0 0 9px 1px rgba(255,213,74,.55)}
   /* CAS-374/CAS-439: the Watch/Watched chip is now the toggle for its own panel — this arrow is the only cue
      for open vs closed, since the separate collapse chevron inside the panel is gone. The panel opens ABOVE
      the button (CAS-304), so the chevron points UP when closed (that's the direction the list will open) and
@@ -514,6 +529,10 @@
   /* CAS-374: no inner scroll — every row has to be reachable without a nested scrollbar on an iPhone, so
      the list grows to whatever height its rows need instead of capping and clipping them. */
   .nopts{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
+  /* CAS-478: the Filter panel is the one .cpop whose chip carries no label of its own to say what its rows
+     mean (Premium/Rent/Streaming/Undecided, with no "Filter" text anywhere on the funnel icon) — this names
+     it once, above the rows. */
+  .npthd{padding:2px 10px 4px;font-size:10.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--faint)}
   .nopt{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 10px;border-radius:9px;
     background:rgba(255,255,255,.05);border:1px solid transparent;font-family:inherit;font-size:12px;
     font-weight:600;color:var(--dim);cursor:pointer;line-height:1.2}
@@ -738,6 +757,10 @@
   .cap.w-pvod{color:#d3c2ff;border-color:rgba(164,134,240,.65);background:rgba(164,134,240,.18)}
   .cap.w-rental{color:#bcdcff;border-color:rgba(90,169,240,.7);background:rgba(90,169,240,.18)}
   .cap.w-included_streaming{color:#a7eccb;border-color:rgba(72,199,142,.65);background:rgba(72,199,142,.2)}
+  /* CAS-468: "recent" — supersedes CAS-447's card badge. No new element: the pill's own colour, icon and
+     label are untouched, only a soft gold outline + outer glow is added when the window it's showing was
+     reached (first listing or a later status change) within the last NEW_DAYS days. */
+  .cap.recent{border-color:#ffd54a;box-shadow:0 0 0 1px rgba(255,213,74,.4),0 0 9px 1px rgba(255,213,74,.55)}
   /* ---- Estimated availability (CAS-110) ----
      A window Cascade has NOT confirmed must not be able to pass for one it has. The lit capsule loses its
      fill and glow and goes dashed and grey — the same shape, visibly not the same claim. */
@@ -2957,9 +2980,15 @@
 </div>
 
 <script>
-const MOVIES = __MOVIES_JSON__;
-const TODAY  = "__TODAY__";
+// CAS-488: both baked in at build time, but no longer immutable — a live tab swaps the catalogue and its
+// build date in underneath itself (see pollCatalogue, near REAL_TODAY below), so both must stay reassignable.
+let MOVIES = __MOVIES_JSON__;
+let TODAY  = "__TODAY__";
 const DEFAULT_TITLE = document.title;   // CAS-437: restored when the film page closes
+// CAS-486: the exact marker the notify-test harness's fixture films carry in their `director`
+// field (tests/fixtures/notify-films.json) — reused here so the card/film-page badge and the
+// credit row agree on the same wording.
+const FIXTURE_MARKER = "TEST FIXTURE — not a real title";
 
 const PVOD_MIN = 19.99, RENTAL_MAX = 9.99, OPENING_WEEK_DAYS = 7;
 // CAS-227: how long after opening a film may still be presumed to be ON a screen. Nobody publishes the date a
@@ -2969,9 +2998,20 @@ const PVOD_MIN = 19.99, RENTAL_MAX = 9.99, OPENING_WEEK_DAYS = 7;
 const CINEMA_RUN_DAYS = 90;
 // CAS-289: CINEMA_RUN_DAYS is backed by a real read on the CONFIRMED path (we polled and there genuinely was
 // no digital listing) — the ESTIMATED path has no such read, only a guess from the opening date, so it may
-// not borrow the same 90-day bound. Past two weeks "likely still in cinemas" stops being honest; the film
-// moves to its next estimated window instead. poll_scheduler.CINEMA_ESTIMATE_CAP_DAYS is this constant's twin.
-const CINEMA_ESTIMATE_RUN_DAYS = 14;
+// not borrow the same 90-day bound.
+// CAS-476: CAS-289's original two-week cap assumed a film would soon reach a digital listing either way, but
+// two real, currently-showing wide releases (Toy Story 5, 55 days into its run; The Odyssey, 27 days in)
+// proved that wrong for a tentpole. Worse, past the cap the film did not move to a visible "next window" the
+// way the comment above promised — CAS-318's correction below files it as `pvod` with zero offers, and
+// `hasConfirmedOffer` requires a real, priced offer before anything estimated may show there, so the film was
+// not re-filed, it was deleted from every listing with no recovery path until a real digital offer eventually
+// turns up. The fix is a longer, still-honest cap rather than a "next window" that turns out to be invisible:
+// reuse poll_scheduler.DEFAULT_OFFSETS["pvod"] (75 days), the same median cinema-to-pvod gap the estimator
+// itself already trusts elsewhere for the identical question — how long a with-no-offer film is plausibly
+// still on a screen. That covers both real titles with margin, and keeps the estimated path meaningfully
+// stricter than the 90-day confirmed one, as CAS-289 intended. poll_scheduler.CINEMA_ESTIMATE_CAP_DAYS is
+// this constant's twin — keep them in sync.
+const CINEMA_ESTIMATE_RUN_DAYS = 75;
 // ---- "Past opening weekend" — the fourth alert moment (CAS-68) ------------------------------------------
 // "About to leave the cinema" has no data behind it: nobody publishes the date a film comes off the screen, so
 // any countdown to it would be a fabricated timer. What IS computable from a real opening date is the moment a
@@ -3048,7 +3088,9 @@ const LISTING_ORDER = ["opening_week","in_cinema","pvod","rental","included_stre
 //
 // The default order everywhere else is unchanged and still ends with Upcoming, which is the right answer for
 // a streaming agent: there, an unreleased film really is the least actionable thing on the page.
-const CINEMA_LISTING_ORDER = ["opening_week","in_cinema","pvod","rental","included_streaming","upcoming"];
+// CAS-471: In Cinema itself leads — it shipped after Opening week here, which never matched CAS-394's own
+// stated intent above (nor CAS-394's own commit message).
+const CINEMA_LISTING_ORDER = ["in_cinema","opening_week","pvod","rental","included_streaming","upcoming"];
 const orderFor = c => (c && c.kind==="cinema") ? CINEMA_LISTING_ORDER : LISTING_ORDER;
 const STATUS_LABEL = {
   opening_week:"In Cinema · Opening week", in_cinema:"In Cinema",
@@ -3122,9 +3164,9 @@ function deriveStatus(m){
   // cannot name. It is not an invented window (CAS-155) — it is the film's own date read against an
   // estimate that rests on nothing, which is exactly the ground CAS-227 already stands on.
   if(isEstimated(m) && claimed.length){
-    // CAS-289: this correction must use the 14-day estimated bound, not the 90-day confirmed one — otherwise
-    // it would put a film back on a screen for up to 90 days on nothing but an opening date, which is the
-    // exact over-claim this ticket exists to stop.
+    // CAS-289: this correction must use the shorter CINEMA_ESTIMATE_RUN_DAYS bound, not the 90-day confirmed
+    // one — otherwise it would put a film back on a screen for up to 90 days on nothing but an opening date,
+    // which is the exact over-claim this ticket exists to stop.
     if(!(m.offers||[]).length && !claimed.some(w=>["upcoming","opening_week","in_cinema"].includes(w))
        && inCinemaRunEstimated(m)) return [cinemaRungFor(m)];
     // CAS-318: the flip side of that correction. CAS-289 always meant the cap to move a stale claim forward
@@ -3376,7 +3418,11 @@ const expandedSet = new Set();   // which cards are expanded (session only)
 // to email, to leave an in-app alert, or to do neither. `email` is deliberately its own field and not
 // assumed to be the sign-in address — a person can sign in with one and want alerts at another.
 const NOTIFY_PREFS_KEY = "cascade_notifyprefs";
-const notifyPrefsDefault = () => ({inApp:true, emailOn:false, email:""});
+// CAS-463: inApp used to default true because flipping it was a no-op local flag. Now it gates a real OS
+// permission request, so a true default would leave the toggle looking "on" for every first-time visitor
+// without ever having asked — the one thing this ticket exists to prevent. Starts false; only a resolved
+// permission grant (registerPush(), below) may flip it.
+const notifyPrefsDefault = () => ({inApp:false, emailOn:false, email:""});
 let notifyPrefs = notifyPrefsDefault();
 try{ const o=JSON.parse(localStorage.getItem(NOTIFY_PREFS_KEY)||"null");
      if(o && typeof o==="object") notifyPrefs={...notifyPrefsDefault(), ...o}; }catch(e){}
@@ -3456,8 +3502,12 @@ function recomputeFound(){
   hits.forEach((ids,id)=>{ entryFor(id).cascadeIds=ids; });
   Object.entries(notify).forEach(([id,e])=>{
     const auto=e.cascadeIds.length>0, mine=e.source==="manual";
-    // An entry that records neither an override nor a current match is just noise — don't keep it.
-    if(!auto && !mine && !e.removed){ delete notify[id]; return; }
+    // CAS-469: a per-film Watch-it tick (e.wins) is its own explicit choice, same standing as a manual pin —
+    // it must outlive the film falling out of every Cascade's auto-match (a status change, a criteria edit),
+    // or the very next render's recompute wipes it out from under the user with no action of theirs to blame.
+    const picked = !!(e.wins && Object.values(e.wins).some(Boolean));
+    // An entry that records neither an override nor a current match nor a watch pick is just noise — don't keep it.
+    if(!auto && !mine && !e.removed && !picked){ delete notify[id]; return; }
     // "I've seen it" / "not for me" outranks EVERY route onto the list, including your own pin. A Cascade's
     // auto set already honours those two tags (matchesCriteria excludes them), so this is what applies them to
     // a hand-added film — otherwise a film you pinned and then ticked as watched would sit in the Found group
@@ -3508,6 +3558,7 @@ const alerts=[];
 const filt={status:new Set(), year:new Set(), age:new Set(), culture:new Set(), lang:new Set(), genre:new Set(),
   exclude:new Set(),       // genres you never want to see — the ONE criterion that subtracts (CAS-71)
   imdb:0, rt:0, gross:0, search:"", foundOnly:false, hideWatched:false, showHidden:false, awards:false,
+  recent:false,             // CAS-468: only films whose status pill is currently glowing (isRecent)
   sort:"availability",     // CAS-148: the forward availability timeline is the default order (byTimeline)
   includeUnrated:false,    // set by the open Cascade's escape hatch; off by default = unrated titles drop out
   budget:0, includeUnbudgeted:false, tentpole:"any",
@@ -3797,6 +3848,12 @@ function myService(o){
   return false;
 }
 function matchesServices(m, w){
+  // CAS-491: a fixture film (?fixtures=1) is test data, not a real offer — the my-services scope exists to
+  // judge what YOU can watch, and that question has no honest answer for a title nobody actually streams.
+  // Scoping it anyway made the harness's own films the one thing it couldn't reach without the tester
+  // changing their real services, which defeats the harness. Isolation from genuine agent matching (CAS-486)
+  // is untouched — this only lifts the SERVICES filter, never the taste/criteria one.
+  if(m._fixture) return true;
   const o=m.offers||[];
   if(!o.length) return true;                 // in cinema / upcoming — always visible
   // CAS-342: scoped to a specific window, "on your services" has to mean an offer that actually BELONGS to
@@ -3851,7 +3908,7 @@ addChips("excludeChips", ALL_GENRES, filt.exclude, "exc");
 // collapses it and what takes it off your Found list, neither chip could change a single row any more — and a
 // chip that filters nothing while still counting toward "≡ Filters (n)" is a control lying about its own effect.
 // The underlying fields live on: they are how a Cascade's Exclude switches round-trip through the editor.
-[["🏆 Award winners & nominees","awards"]].forEach(([lbl,key])=>{
+[["🏆 Award winners & nominees","awards"],["🕐 Recent","recent"]].forEach(([lbl,key])=>{
   const c=document.createElement("div"); c.className="chip"; c.textContent=lbl; c.dataset.val=key;
   c.onclick=()=>{c.classList.toggle("on"); filt[key]=!filt[key]; render();};
   $("viewChips").appendChild(c);
@@ -3992,7 +4049,7 @@ $("tentpoleSel").onchange=e=>{filt.tentpole=e.target.value;render();};   // opti
 function clearFilters(){
   ["status","year","age","culture","lang","genre","exclude"].forEach(k=>filt[k].clear());
   filt.imdb=0;filt.rt=0;filt.gross=0;filt.foundOnly=false;filt.hideWatched=false;filt.showHidden=false;
-  filt.awards=false;filt.search="";filt.includeUnrated=false;
+  filt.awards=false;filt.recent=false;filt.search="";filt.includeUnrated=false;
   filt.budget=0;filt.includeUnbudgeted=false;filt.tentpole="any";
   filt.watchTiers.clear();
 }
@@ -4172,6 +4229,7 @@ function passes(m){
   if(filt.exclude.size && (m.genres||[]).some(g=>filt.exclude.has(g))) return false;
   if(filt.genre.size && !filt.genre.has((m.genres||[])[0])) return false;
   if(filt.awards && !m.award) return false;
+  if(filt.recent && !isRecent(m)) return false;
   if(!ratingOK(m, filt.imdb, filt.includeUnrated)) return false;
   if(!budgetOK(m, filt.budget)) return false;
   if(filt.tentpole!=="any" && !tentpoleIs(m,filt.tentpole)) return false;
@@ -4216,9 +4274,10 @@ function byRatingDesc(a,b){
 // ---- The forward availability timeline (CAS-148) -------------------------------
 // The default order inside every section. One key — the cinema date, latest first — read as a timeline you
 // are moving down: the films furthest from their next move sit at the top, the ones about to make it sit at
-// the bottom. So Upcoming leads with the far-future release and ends with the one about to open, and In
-// Cinema leads with the newest arrival and ends with the one about to leave the screen. The sections
-// themselves are already the journey (CASCADE order), so the two together read as one continuous line.
+// the bottom. In Cinema leads with the newest arrival and ends with the one about to leave the screen, and
+// the same read applies to Streaming/Rental/PVOD. The sections themselves are already the journey (CASCADE
+// order), so together they read as one continuous line. Upcoming is the one section that reads the other
+// way round — soonest release first, see byTimelineAsc and CAS-470.
 // A film with no cinema date has no place on a timeline, so it sits at the foot of its section, ordered by
 // rating rather than by nothing at all.
 function byTimeline(a,b){
@@ -4229,8 +4288,9 @@ function byTimeline(a,b){
   return db.localeCompare(da);
 }
 // CAS-394: the cinema lane's default reads the same timeline the other way — oldest cinema date at the
-// top — so a trip-planning read moves from what already opened toward what is still to come, Upcoming's
-// furthest-out title last rather than first (see sortForKey).
+// top — so a trip-planning read moves from what already opened toward what is still to come. CAS-470
+// reuses this same ascending order for the Upcoming section: soonest release at the top, furthest-out
+// title last (see sortForKey) — a deliberate reversal of CAS-177, which had Upcoming reading the other way.
 function byTimelineAsc(a,b){
   const da=a.cinema_date||"", db=b.cinema_date||"";
   if(!da && !db) return byRatingDesc(a,b);
@@ -4260,25 +4320,26 @@ const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
 // included. CAS-107's rating order is still there as an explicit choice: rated first, highest first, unrated
 // last, with byRatingDesc falling back to anticipation for the unrated so a group keeps a meaningful order
 // without pretending it has scores it doesn't have.
-// ---- Upcoming reads furthest-out first, whatever the order (CAS-177) ------------
-// The pre-release section is a countdown you read downwards: the film furthest from opening at the top,
-// the one about to open at the bottom. The default availability order already did that. What did not was
-// every OTHER order — under IMDb / RT / Gross / Popularity the Upcoming group fell back to anticipation,
-// which put Spider-Man (Jul 26, the most anticipated title in the catalogue) above Avengers (Dec 26).
-// The fallback is now the release timeline instead, which is the better fallback by CAS-148's own
-// argument: pre-release, the release date is the one figure an unreleased film definitely has, and a
-// score, a gross or a budget it does not have can only sort noise. The released windows keep their
-// explicit sort exactly as before — this is the pre-release section's rule, not a global reversal.
-// The sorts that ARE meaningful pre-release still win: Title stays alphabetical because the user asked
-// for alphabetical, and Cinema date is this order already.
+// ---- Upcoming reads soonest-release first, whatever the order (CAS-177, reversed by CAS-470) ---
+// The pre-release section used to read as a countdown, furthest-out release at the top (CAS-177). CAS-470
+// reverses that on purpose: Lee wants Upcoming to read forward instead — soonest release at the top,
+// furthest-out title at the bottom — not restoring the pre-CAS-177 behaviour, a new explicit preference.
+// The default availability order does that directly (byTimelineAsc). What CAS-177 fixed still has to hold
+// under the new direction: under IMDb / RT / Gross / Popularity the Upcoming group would otherwise fall
+// back to anticipation, which put Spider-Man (Jul 26, the most anticipated title in the catalogue) above
+// Avengers (Dec 26) — so those still fall back to the release timeline, just ascending now instead of
+// descending. The released windows (In Cinema, Streaming, Rental, PVOD) keep their explicit sort exactly
+// as before — this is the pre-release section's rule, not a global reversal. The sorts that ARE meaningful
+// pre-release still win as their own literal order: Title stays alphabetical, and Cinema date stays
+// "Newest cinema" first (its own UI label, unaffected by this ticket).
 // CAS-430: a cinema agent's In Cinema section is the trip-planning line CAS-394 promised — oldest
 // cinema_date at the top — and that has to hold under every sort key, not just "availability". A
 // Blockbuster-style agent (sort:"popularity") was falling through to sortMoviesBy and losing the
 // oldest-first read entirely.
 const sortForKey = (g,key,cinema) =>
-    (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byTimeline
+    (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byTimelineAsc
   : (cinema && g==="in_cinema") ? byTimelineAsc
-  : key==="availability" ? (cinema ? byTimelineAsc : byTimeline)
+  : key==="availability" ? (cinema||g==="upcoming" ? byTimelineAsc : byTimeline)
   : key==="imdb" ? byRatingDesc
   : ((a,b)=>sortMoviesBy(a,b,key));
 const sortFor = (g,c) => sortForKey(g, filt.sort, c && c.kind==="cinema");
@@ -4452,7 +4513,7 @@ function bandHTML(m, svcLine){
   const cur=curSlot(m);
   const cin=cinemaState(m);
   const rel=releaseDateOf(m);
-  const relHTML = rel ? `<span class="reldate"><span class="rellbl">Released</span><b>${fmtDay(rel)}</b></span>` : "";
+  const relHTML = rel ? `<span class="reldate"><span class="rellbl">${rel>=TODAY?"Releasing":"Released"}</span><b>${fmtDay(rel)}</b></span>` : "";
   const segs=WINDOW_SLOTS.map((key,i)=>{
     const line = i>0 ? `<span class="wline${i>cur?" fut":""}"></span>` : "";
     const cls  = i===0 ? "w-cin-"+cin.key : "w-"+key;
@@ -4468,11 +4529,12 @@ function bandHTML(m, svcLine){
     // CAS-433: the whole capsule is the services toggle now (window label, date and service line alike) —
     // not just the saveline fused inside it, which used to carry the tap target on its own.
     const capTogClass = svcLine ? " captog" : "";
+    const recentCls = isRecent(m) ? " recent" : "";
     const capTogAttrs = svcLine
       ? ` role="button" tabindex="0" aria-label="Show all services"
            onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.querySelector('.svcbtn').classList.toggle('open')"`
       : "";
-    return `${line}<div class="cap ${cls}${capTogClass}"${capTogAttrs}><span class="capwin"><span class="capicon">${icon}</span><b>${label}</b>${date}</span>${div}${svcLine||""}</div>`;
+    return `${line}<div class="cap ${cls}${recentCls}${capTogClass}"${capTogAttrs}><span class="capwin"><span class="capicon">${icon}</span><b>${label}</b>${date}</span>${div}${svcLine||""}</div>`;
   }).join("");
   // CAS-239: the row is NOT part of the tap-to-open region any more. It sits directly above the Watch
   // status and Notify chips, and a miss on either of those landed on it and opened the card — so the
@@ -4697,6 +4759,9 @@ function filmPageWhereHTML(m){
 function filmPageHTML(m){
   const yr=yearOf(m);
   const cert = m.age_rating ? `<span class="cert ${MATURE.has(m.age_rating)?'mature':''}">${m.age_rating}</span>` : "";
+  // CAS-486: a fixture film from the notify-test harness's ?fixtures=1 merge stays visually marked
+  // wherever it renders — this badge, plus the "TEST FIXTURE" director credit below.
+  const fixtureBadge = m._fixture ? `<span class="fixturebadge" title="${escA(FIXTURE_MARKER)}">TEST FIXTURE</span>` : "";
   const cult = m.language ? langName(m.language) : "";
   const genres = (m.genres||[]).join(", ");
   const poster = m.poster ? `<img class="fpposter" src="https://image.tmdb.org/t/p/w342${esc(m.poster)}" alt="">` : "";
@@ -4705,7 +4770,7 @@ function filmPageHTML(m){
     <div class="fpclose"><button type="button" class="ebtn" onclick="closeFilmPage()"
         title="Close" aria-label="Close">✕</button></div>
     ${poster}
-    <div class="fptitle">${esc(m.title)} ${cert}</div>
+    <div class="fptitle">${esc(m.title)} ${cert}${fixtureBadge}</div>
     <div class="fpmeta">${[yr,genres,cult].filter(Boolean).join(" · ")}</div>
     ${syn}
     ${filmPageWhereHTML(m)}
@@ -4828,7 +4893,7 @@ function cardHTML(m, markNew=false){
   const id=m.tmdb_id;
   // CAS-110: an estimated title shows no offers and no prices — see savingsHTML.
   let offers=isEstimated(m) ? [] : dedupOffers(m.offers);
-  if(prefsActive()) offers=offers.filter(myService);
+  if(prefsActive() && !m._fixture) offers=offers.filter(myService);   // CAS-491: see matchesServices
   // CAS-285: the per-title provider credit is gone from the card. The attribution is REQUIRED but it is not
   // information about the film, and repeating it under every "where to watch" list on a 2,000-card listing
   // is the same sentence a thousand times. It is stated once, in About & credits, which is where TMDB's own
@@ -4845,6 +4910,9 @@ function cardHTML(m, markNew=false){
       <span class="off">${o.price!=null?"$"+o.price.toFixed(2):""}${o.fmt?" · "+o.fmt:""}</span></div>`).join("")}${jwLink?`<div class="wtwrow jwrow">${jwLink}</div>`:""}</div>` : "";
   const syn = m.synopsis ? `<p class="synopsis">${esc(m.synopsis)}</p>` : "";
   const cert = m.age_rating ? `<span class="cert ${MATURE.has(m.age_rating)?'mature':''}">${m.age_rating}</span>` : "";
+  // CAS-486: a fixture film from the notify-test harness's ?fixtures=1 merge stays visually marked
+  // wherever it renders — this badge, plus the "TEST FIXTURE" director credit in About & credits.
+  const fixtureBadge = m._fixture ? `<span class="fixturebadge" title="${escA(FIXTURE_MARKER)}">TEST</span>` : "";
   // CAS-135: the chip reads the film's LANGUAGE (e.g. "English"), now that selection is language-based —
   // not the old genre-ish "Western" culture bucket.
   const cult = m.language ? ` · <span class="culttag">${langName(m.language)}</span>` : "";
@@ -4875,7 +4943,7 @@ function cardHTML(m, markNew=false){
         </div>
         <!-- CAS-373: the title text gets its own span so it (not the badge) is what truncates — the rating
              badge is flex:none and always shows, collapsed or expanded. -->
-        <div class="title"><span class="titletext">${m.title}</span>${cert}</div>
+        <div class="title"><span class="titletext">${m.title}</span>${cert}${fixtureBadge}</div>
         <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
@@ -5074,13 +5142,18 @@ const filmOptOn = (id, opt) => {
 // they were — agent-level settings (drawWatchLanes, untouched) — they just never described somewhere to
 // watch, so this ladder starts one rung later, at the first one that does.
 const WATCH_LEVEL_KEYS = ["in_cinema", "premium", "rent", "stream"];
-// The rows the Watch panel offers for this film: only the levels this cascade is actually configured to
-// track (CAS-280's honesty rule, carried over), in ladder order, each carrying whether the film has already
-// reached or passed it. Unlike the old Notify list, a reached/passed level is not dropped — it is shown,
-// greyed (CAS-349): the film's whole journey stays visible even where most of it is behind it, only the
-// future stays interactive. CAS-434: `spent` includes the film's CURRENT rung, not just strictly-past ones —
-// a film already at Rent cannot be told about "reaching" Rent, so that row is exactly as un-offerable as one
-// it has already left (CAS-280's honesty rule again, just one rung wider).
+// The rows the Watch panel offers for this film: every level the film is eligible for (in ladder order),
+// each carrying whether the film has already passed it. CAS-477: a level this cascade isn't configured to
+// track is still shown, live and tickable — the film's Watch-it tick is account-wide (filmOptOn), so hiding
+// the row here just because THIS cascade doesn't track it made the tick look reset when swapping cascades.
+// `agentOn` still says whether THIS cascade will actually notify on it — that only gates the "N of M" chip
+// count (filmNotifyState) and the auto-tick cascade, not whether the row appears. Unlike the old Notify
+// list, a passed level is not dropped — it is shown, greyed (CAS-349): the film's whole journey stays
+// visible even where most of it is behind it, only the past stays un-selectable. CAS-473: `spent` is
+// strictly-past rungs only — a film's CURRENT rung is where the Watch panel is a statement of fact ("watch
+// it here") rather than a promise about the future, so unlike the Notify honesty rule (CAS-280's
+// rowSpentFor, which does exclude a film's own arrival) the row for the film's own current window stays
+// selectable. Only rungs the film has already moved past are un-offerable.
 function watchLevelsFor(id){
   const c=activeCascade();
   const kinds = (c && (c.kind==="cinema"||c.kind==="stream")) ? [c.kind] : Object.keys(AGENT_WINDOWS);
@@ -5090,16 +5163,25 @@ function watchLevelsFor(id){
   kinds.forEach(k=>AGENT_WINDOWS[k].forEach(w=>{
     if(!WATCH_LEVEL_KEYS.includes(w.key)) return;
     const f=watch[w.key]||{};
-    if(c && !f.list && !f.notify) return;             // not a level this cascade is configured to track
-    out.push({key:w.key, label:w.label, cd:w.cd, agentOn:!!f.notify, spent: WINDOW_RUNG[w.key]<=rung});
+    out.push({key:w.key, label:w.label, cd:w.cd, agentOn:!!f.notify, spent: WINDOW_RUNG[w.key]<rung});
   }));
   return out;
 }
 // Is the film CURRENTLY sitting in a level you ticked? Not "you ticked something" — "something you ticked is
 // true right now" — which is the one thing the ticket asks the button's green to mean.
+// CAS-494: tests every window the film currently OCCUPIES (m.status), not only its primaryStatus rung — a
+// film can sit in more than one window at once (e.g. still in_cinema while also included_streaming), and the
+// notification engine already fires on any of them, so the control has to agree with whichever one you ticked.
 function watchIsCurrent(id){
-  const rung=filmRung(id);
-  return watchLevelsFor(id).some(l=>WINDOW_RUNG[l.key]===rung && filmOptOn(id,l));
+  const m=MOVIES.find(x=>x.tmdb_id===id);
+  if(!m) return false;
+  const c=activeCascade();
+  const levels=watchLevelsFor(id);
+  return m.status.some(w=>{
+    const key=filmOptKeyForWindow(c, w);
+    const l=key && levels.find(x=>x.key===key);
+    return !!(l && filmOptOn(id,l));
+  });
 }
 // ---- CAS-382: the agent's own Filter control ------------------------------------------------------------
 // The same three levels the Watch panel above lets you set on ONE film, offered here as a multi-select
@@ -5126,18 +5208,26 @@ function filmNotifyState(id){
   const on=levels.filter(l=>filmOptOn(id,l)).length;
   return {on, total:levels.length, current:watchIsCurrent(id)};
 }
+// CAS-478: the Filter panel's fourth row — not one more tier, but their absence. "Eligible" is the same
+// !spent && agentOn set filmNotifyState already counts over (per CAS-477), so a film is Undecided when it
+// has at least one such level and none of them are ticked.
+function filmIsUndecided(id){
+  const st=filmNotifyState(id);
+  return st.total>0 && st.on===0;
+}
 function notifyChipHTML(id){
   const st=filmNotifyState(id);
   // CAS-427: nothing ticked is just "Notify", not "Muted" — Never is the film's own always-available exit, so
   // zero-on is a resting state rather than a silence that needs naming.
-  const lbl = st.on && st.on<st.total ? `Notify · ${st.on}` : "Notify";
+  // CAS-467: relabelled "Notify" -> "Watch it" for display only; the underlying notify* names/state are untouched.
+  const lbl = st.on && st.on<st.total ? `Watch it · ${st.on}` : "Watch it";
   const title = st.total===0 ? "This agent isn't tracking a level for this film yet. Tap to pick where you want to watch it, or say Never."
               : st.on===0 ? "Nothing about this film will reach you yet. Tap to choose what does."
               : `You'll be told when this film reaches ${st.on} of ${st.total} levels you've picked. Tap to change.`;
   // CAS-349: green (not the generic gold "on") is the film's OWN colour for "you can watch this right now"
   // everywhere else on the card (the availability bar, the window lozenges) — reusing it here says the same
   // thing the same way, rather than borrowing the on-state colour every other control uses for "a choice was made".
-  return `<button type="button" class="ctl notify${st.current?" on":""}" data-nid="${id}"
+  return `<button type="button" class="ctl notify${st.current?" on recent":""}" data-nid="${id}"
       onclick="openNotifyPanel(${id},this)" aria-haspopup="true" aria-expanded="false" aria-pressed="${st.current}"
       title="${escA(title)}" aria-label="${escA(title)}">
     <span class="cmini"><i class="cfill" style="width:${st.total?100*st.on/st.total:0}%;background:var(--green)"></i>
@@ -5230,11 +5320,13 @@ window.commitNewList=(id, inputEl)=>{
   if(name){ const l=createList(name); if(l) toggleFilmList(id, l.id); }
   repaintListsControl(id);
 };
-// The Notify panel's rows: one per level this agent's own Notify option enables (CAS-427 — a level the agent
-// hasn't opted into isn't offered here at all, not shown greyed), then Never at the foot — always present,
-// per the ticket, so it is never a second control to go and find.
+// The Notify panel's rows: one per level the film is eligible for (CAS-477 — every eligible level is shown,
+// live and tickable, regardless of whether THIS agent's own Notify option is on for it; the tick itself is
+// account-wide, so hiding a row here just because this cascade doesn't track it is what made a real tick
+// look reset when swapping cascades), then Never at the foot — always present, per the ticket, so it is
+// never a second control to go and find.
 function watchPanelRowsHTML(id){
-  const levels=watchLevelsFor(id).filter(l=>l.agentOn);
+  const levels=watchLevelsFor(id);
   const rows=levels.map(l=>{
     const on=filmOptOn(id,l);
     return `<button type="button" class="nopt${on?" on":""}${l.spent?" spent":""}"
@@ -5612,7 +5704,7 @@ function mlRowHTML(m, groupKey){
 // It is NOT the film's release date and it is NOT a guess: it's the day Cascade actually picked it up for you.
 // An entry is dropped when the film leaves the list, so a film that is later found again is honestly new again.
 const NEW_DAYS = 7;                                     // what "this week" means. One dial, in one place.
-const REAL_TODAY = new Date().toISOString().slice(0,10);   // when YOU are looking, not the catalogue's build date
+let REAL_TODAY = new Date().toISOString().slice(0,10);   // when YOU are looking, not the catalogue's build date
 const FIRST_KEY = "cascade_first_found";
 function loadFirstFound(){
   try{ const o=JSON.parse(localStorage.getItem(FIRST_KEY)||"{}");
@@ -5630,6 +5722,142 @@ function trackFirstFound(){
 }
 const daysSince = iso => Math.round((Date.parse(REAL_TODAY) - Date.parse(iso)) / 864e5);
 const isNewFound = id => { const d=firstFound[id]; return !!d && daysSince(d) < NEW_DAYS; };
+
+// ---- "Recent" (CAS-468) — supersedes CAS-447's card-level badge -----------------
+// One rule for both a first listing and a later status change: the status pill (the capsule bandHTML draws
+// for the film's CURRENT window) glows gold when that window was reached within NEW_DAYS. opening_week is a
+// live sub-state of in_cinema (primaryStatus, CAS-395) rather than a window window_dates tracks on its own,
+// so both read the in_cinema entry. past_opening_weekend never appears here — it isn't a primaryStatus value.
+const CUR_WINDOW_DATE_KEY = {upcoming:"upcoming", opening_week:"in_cinema", in_cinema:"in_cinema",
+  pvod:"pvod", rental:"rental", included_streaming:"included_streaming"};
+function isRecent(m){
+  const key=CUR_WINDOW_DATE_KEY[primaryStatus(m)];
+  const d=key && m.window_dates && m.window_dates[key];
+  return !!d && daysSince(d) < NEW_DAYS;
+}
+
+// ---- CAS-488: runtime catalogue refresh -----------------------------------------------------
+// MOVIES/TODAY above ship baked at build time so first paint needs no network — but a tab left open for
+// hours (or days) would otherwise never see a film added, a status change, or a glow recompute. movies.json
+// is the exact payload the build reads, already served next to index.html (same origin, no new publishing
+// step). {cache:"no-cache"} forces a real conditional request every poll instead of trusting the browser's
+// own freshness window — GitHub Pages already answers those with a 304 when nothing changed, so an
+// unchanged poll costs a round trip of headers, not the ~11MB body (verified against the live URL).
+let catalogueEtag = null, cataloguePolling = false;
+// Applied only when nothing is mid-interaction. Every modal/full-screen panel/onboarding step/filmpage sets
+// document.body.style.overflow="hidden" while open (openModal and its siblings all share that convention);
+// the bell drawer doesn't, so it's checked separately; and a per-card Watch/Notify/Lists popup or the
+// deck's own filter panel (.cpop) lives INSIDE the very DOM render() rebuilds. Landing a full listing
+// rebuild under any of those would close it, or worse, corrupt it mid-tap. Deferring costs nothing — the
+// data below still updates immediately regardless, so the very next quiet poll (or the next return to the
+// tab) paints it in; the tab is never more than one heartbeat stale, and never needs a hand refresh.
+const catalogueUIBusy = () => document.body.style.overflow==="hidden"
+  || $("drawer").classList.contains("open")
+  || !!document.querySelector(".cpop");
+async function pollCatalogue(){
+  if(cataloguePolling) return;
+  cataloguePolling = true;
+  try{
+    let res;
+    try{ res = await fetch("movies.json", {cache:"no-cache"}); }
+    catch(e){ return; }                        // offline or blocked — the baked/last-known catalogue keeps serving
+    if(!res.ok) return;
+    const etag = res.headers.get("etag");
+    if(etag && etag===catalogueEtag) return;    // unchanged — skip parsing an ~11MB body for nothing
+    let payload;
+    try{ payload = await res.json(); }catch(e){ return; }
+    if(!Array.isArray(payload.movies)) return;
+    catalogueEtag = etag;
+    MOVIES = payload.movies;
+    // TODAY tracks the catalogue's own build date; the header's "Updated <date>" label reads it directly
+    // and isn't part of render()'s rebuild, so it's kept honest here — unconditionally, since a one-line
+    // text write can never disturb an open modal/drawer/popup the way a full listing rebuild could.
+    if(payload.generated){ TODAY = payload.generated; $("updated").textContent = "Updated " + fmtDate(TODAY); }
+    REAL_TODAY = new Date().toISOString().slice(0,10);  // REAL_TODAY tracks the clock, independently of the data
+    // CAS-490: MOVIES was just replaced wholesale, so any ?fixtures=1 merge (CAS-486) is gone — re-apply it
+    // here rather than only on cascade-auth-change, so a fixture film survives a catalogue refresh instead
+    // of silently vanishing the next time the tab regains focus. No-ops instantly unless the gate is met.
+    await maybeLoadFixtures();
+    recomputeFound();                                   // data is live now regardless of whether we paint it
+    if(!catalogueUIBusy()) render();
+  } finally { cataloguePolling = false; }
+}
+
+// ---- CAS-486/489: notify-test harness fixture merge (?fixtures=1) ---------------------------
+// Opt-in and explicit only: a normal visitor, and any real signed-in account, must never see a
+// fixture film by accident even if a `?fixtures=1` URL leaks — both the query flag AND a match on
+// FIXTURES_TEST_EMAILS are required. Fetched from a path that is obviously not the production
+// catalogue (movies.json); a fetch failure degrades to "no fixture films", never to an error
+// state. This is the app's only OTHER runtime data dependency (CAS-488 is the first, for the real
+// catalogue) and it is quarantined to this one flagged path — the unflagged production build still
+// boots with zero runtime fetches beyond CAS-488's own.
+const FIXTURES_TEST_EMAILS = ["lee+c1@codynamics.com.au", "lee@codynamics.com.au"];
+// CAS-491: a real cinema_date per scenario, offset from TODAY so each fixture sits in a plausible
+// point of a normal AU release journey instead of carrying no date at all (which left it unreachable
+// by any year/recency-scoped agent). Purely a display/matching realism concern — window_dates (which
+// status the fixture is actually IN today) is unaffected and still keyed to TODAY above.
+const FIXTURE_CINEMA_OFFSET = {announced:21, hits_cinema:0, hits_pvod:-35, hits_rent:-60, hits_stream:-75};
+function fixturesRequested(){
+  try{ return new URLSearchParams(location.search).get("fixtures")==="1"; }
+  catch(e){ return false; }
+}
+async function maybeLoadFixtures(){
+  if(!fixturesRequested()) return;
+  const auth = window.CascadeAuth;
+  const email = auth && auth.user && auth.user.email;
+  if(!FIXTURES_TEST_EMAILS.includes(email)) return;     // wrong/no account — show nothing, ever
+  let res;
+  try{ res = await fetch("tests/fixtures/notify-films.json", {cache:"no-cache"}); }
+  catch(e){ return; }                                    // offline/blocked — no fixture films, not an error
+  if(!res.ok) return;
+  let payload;
+  try{ payload = await res.json(); }catch(e){ return; }
+  const films = Array.isArray(payload.films) ? payload.films : [];
+  if(!films.length) return;
+  const existing = new Set(MOVIES.map(m=>m.tmdb_id));
+  const asMovies = films.filter(f=>!existing.has(f.tmdb_id)).map(f=>({
+    tmdb_id: f.tmdb_id, title: f.title, director: f.director, genres: f.genres||[],
+    age_rating: f.age_rating||"M", imdb_rating: f.imdb_rating==null ? null : f.imdb_rating, poster: null,
+    // CAS-491: realistic catalogue metadata so a real agent's matching (language/year/culture gates in
+    // matchesCriteria and passesTasteBase) can actually pick a fixture up — a fixture is meant to look
+    // like an ordinary film to the matcher, differing only in its reserved id and the _fixture flag.
+    language: f.language||"en", culture: f.culture||"Western", year: f.year||TODAY.slice(0,4),
+    popularity: f.popularity==null ? 0 : f.popularity,
+    synopsis: f.synopsis||FIXTURE_MARKER, cinema_date: addDays(TODAY, FIXTURE_CINEMA_OFFSET[f.scenario]||0),
+    status: f.today_status||[], offers: f.today_offers||[],
+    window_dates: Object.fromEntries((f.today_status||[]).map(s=>[s, TODAY])),
+    _fixture: true,
+  }));
+  if(!asMovies.length) return;
+  MOVIES = MOVIES.concat(asMovies);
+  recomputeFound();
+  if(!catalogueUIBusy()) render();
+}
+// The auth module (near the bottom of this script) dispatches this event once the signed-in/guest
+// state is known, whether or not an account is configured — the one moment this module can read a
+// real email off window.CascadeAuth. Attaching the listener here, ahead of that module running,
+// means it is always in place before the dispatch fires.
+window.addEventListener("cascade-auth-change", () => { maybeLoadFixtures(); });
+window.CascadeFixtures = { maybeLoadFixtures, fixturesRequested, FIXTURES_TEST_EMAILS };
+
+// ---- "Newly added" (CAS-447) — a catalogue fact, not an agent one ---------------
+// Distinct from isNewFound above: that is "an agent picked this up lately", per-device and re-triggerable.
+// This is "Cascade itself first saw this title lately", read off window_dates — server-side, shared across
+// devices, and honest (CAS-70's same reasoning). Same NEW_DAYS dial as everything else called "new" (Lee's
+// decision on the ticket): one number, not a second one to learn.
+// CAS-468 replaced this kind's card-level badge with the status pill's gold glow (isRecent, above) — this
+// function now only feeds newlyAddedCount, the per-agent "N new" count, which the ticket left untouched.
+function newlyAddedKind(m){
+  const wd = m.window_dates||{};
+  // Newly announced: the film is CURRENTLY upcoming, and it entered `upcoming` inside the marker window.
+  if(m.status.includes("upcoming") && wd.upcoming && daysSince(wd.upcoming) < NEW_DAYS) return "cin";
+  // New to streaming: never had a cinema run, currently streaming, and entered `included_streaming` inside
+  // the marker window — the "never theatrical" clause is what keeps this distinct from a title that simply
+  // reached streaming after a normal cinema run (that one is just an ordinary window move, not a new arrival).
+  if(!m.cinema_date && m.status.includes("included_streaming") && wd.included_streaming
+     && daysSince(wd.included_streaming) < NEW_DAYS) return "stream";
+  return null;
+}
 
 // ---- What your answers do (CAS-107) --------------------------------------------
 // They decide what is ON the list, and nothing else. Liking, disliking, taking a film off and excluding a
@@ -5671,7 +5899,14 @@ const settleFoundView = () => { heldOpen.clear(); };
 // follows. An agent notifying on a window it doesn't list must still watch that window (or the alert could
 // never fire), so `status` keeps it and `listStatus` is what decides whether it appears here. An agent with no
 // listStatus — anything built before this screen existed — lists everything it watches, as it always did.
-const listWindowOK = (m,c) => !(c.listStatus||[]).length || c.listStatus.includes(primaryStatus(m));
+// CAS-481: an ESTIMATED "upcoming" is never a genuine future release — the pipeline only ever marks a title
+// estimated once its cinema_date has already passed (a still-ahead date stays "confirmed" from the TMDB date
+// alone, untouched until polling starts), so an estimated film reporting "upcoming" is really an offer-less
+// title whose run is over with nothing else ever found for it in AU, not a film worth anticipating. CAS-170's
+// invariant already holds every other estimated window to "only a cinema run may be estimated" — upcoming
+// gets the same rule here, at the one gate that decides whether a stale estimate reaches a listing.
+const listWindowOK = (m,c) => (!(c.listStatus||[]).length || c.listStatus.includes(primaryStatus(m)))
+  && (primaryStatus(m)!=="upcoming" || !isEstimated(m));
 // CAS-279: a hand-move is the only thing that outranks an agent's criteria about where a film is listed.
 // Moved-out wins outright; pinned-in skips the criteria but still has to clear the agent's own WINDOWS,
 // because those are what the agent lists rather than what it likes — a cinema agent showing a film that is
@@ -5693,6 +5928,10 @@ const listedBy = (m,c) => !movedOutOf(m.tmdb_id,c)
 // The number describing a cascade counts RESULTS, so it leaves the stubs out — the same rule the section
 // heads and the open card's own count already follow.
 const listedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m)).length;
+// CAS-447: the per-agent "N new" count Lee decided for the deck card / Edit screen — same listedBy gate as
+// listedCount above (a newly-added film that doesn't even list here shouldn't inflate this agent's number),
+// narrowed to the ones newlyAddedKind actually flags.
+const newlyAddedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m) && newlyAddedKind(m)).length;
 function scopeRows(){
   const c=activeCascade();
   // No Cascade open = the All card = the catalogue itself, which is what that card says it is.
@@ -5701,7 +5940,7 @@ function scopeRows(){
   // CAS-382: no tier ticked = no filter, same "nothing picked = show everything" rule every other chip set
   // in `passes()` follows.
   return filt.watchTiers.size
-    ? searched.filter(m=>[...filt.watchTiers].some(k=>filmHasWatchTier(m.tmdb_id,k)))
+    ? searched.filter(m=>[...filt.watchTiers].some(k=>k==="undecided" ? filmIsUndecided(m.tmdb_id) : filmHasWatchTier(m.tmdb_id,k)))
     : searched;
 }
 // First run: the deck is just the "+ New" card, which asks for a decision without offering a reason. Give them
@@ -5851,7 +6090,7 @@ function activeCount(){
   if(filt.imdb)n++; if(filt.rt)n++; if(filt.gross)n++; if(filt.foundOnly)n++;
   // hideWatched / showHidden are deliberately NOT counted (CAS-100): they no longer remove a row from any
   // list, so counting them would claim a filter is doing work that nothing is doing.
-  if(filt.search)n++; if(filt.awards)n++;
+  if(filt.search)n++; if(filt.awards)n++; if(filt.recent)n++;
   if(filt.budget)n++; if(filt.tentpole!=="any")n++;
   return n;
 }
@@ -6896,12 +7135,16 @@ function deckSync(shown){
     // watch, and nothing else on the card says which. It is spelled out in BOTH directions — an absent
     // suffix would just be silence, and silence is what made this ambiguous in the first place. A cinema
     // agent has no such fork, so it gets the bare count.
+    // CAS-447: "N new" rides on the end of the same line, after the scope suffix — one more fact about the
+    // same count, not a second line to scan. Only said when it's actually true of at least one film.
+    const nNew=newlyAddedCount(c);
     el.querySelector(".dc-sub").textContent=
       `${n} film${n===1?"":"s"}`
       + (c.kind==="stream"
           ? " · " + (anyScope(c) ? (allScoped(c) ? "my services" : `my services on ${scopeSummary(c)}`)
                                  : "any service")
-          : "");
+          : "")
+      + (nNew ? ` · ${nNew} new` : "");
     el.querySelector('[data-act="save"]').hidden=!(on&&dirty);
   });
   // CAS-371: sort rides with whichever card is open (All included) — moved, not rebuilt, into that card's
@@ -7074,13 +7317,22 @@ function closeFilterPanel(){
   deckStrip.querySelectorAll(".dc-filter.open").forEach(b=>{ b.classList.remove("open"); b.setAttribute("aria-expanded","false"); });
 }
 function filterPanelRowsHTML(){
-  return FILTER_TIERS.map(t=>{
+  const rows=FILTER_TIERS.map(t=>{
     const on=filt.watchTiers.has(t.key);
     return `<button type="button" class="nopt${on?" on":""}" style="--wwc:${t.cd}" data-tier="${t.key}"
       aria-pressed="${on}" onclick="toggleFilterTier('${t.key}')"
       title="${escA(on?`${t.label} — tap to clear`:`Show only ${t.label}`)}">
       <span class="wwb sq">✓</span><span class="nol">${esc(t.label)}</span></button>`;
   }).join("");
+  // CAS-478: "Undecided" isn't a tier from FILTER_TIERS — it's the absence of one, so it gets its own row
+  // (filmIsUndecided, not filmHasWatchTier) and a hairline of its own, the same "different kind of row"
+  // separation .nopt.sep already gives Lists' "＋ New list" and the Watch panel's Never.
+  const uOn=filt.watchTiers.has("undecided");
+  const undecided=`<button type="button" class="nopt${uOn?" on":""} sep" style="--wwc:var(--grey)" data-tier="undecided"
+      aria-pressed="${uOn}" onclick="toggleFilterTier('undecided')"
+      title="${escA(uOn?"Undecided — tap to clear":"Show only films with no Watch-it decision yet")}">
+      <span class="wwb sq">✓</span><span class="nol">Undecided</span></button>`;
+  return `<div class="npthd">Watch it</div>${rows}${undecided}`;
 }
 // The deck strip clips vertical overflow on purpose (.deckstrip's overflow-y:hidden — it's what keeps a
 // neighbouring card's coverflow tilt from poking out above/below the rail), so a popup parented inside a
@@ -7223,7 +7475,7 @@ $("saveAsGo").onclick=()=>{
 function filtSnapshot(){
   const s={sets:{}};
   ["status","year","age","culture","lang","genre","exclude"].forEach(k=>{ s.sets[k]=[...filt[k]]; });
-  ["imdb","rt","gross","awards","budget","tentpole","includeUnrated","includeUnbudgeted","foundOnly",
+  ["imdb","rt","gross","awards","recent","budget","tentpole","includeUnrated","includeUnbudgeted","foundOnly",
    "hideWatched","search"].forEach(k=>{ s[k]=filt[k]; });
   return s;
 }
@@ -7247,6 +7499,7 @@ const RELAXERS = [
    clear:()=>{ filt.budget=0; filt.includeUnbudgeted=false; }},
   {key:"tentpole", label:()=>"the tentpole tag",   on:()=>filt.tentpole!=="any", clear:()=>{ filt.tentpole="any"; }},
   {key:"awards",   label:()=>"awards-only",        on:()=>filt.awards,         clear:()=>{ filt.awards=false; }},
+  {key:"recent",   label:()=>"recent-only",        on:()=>filt.recent,         clear:()=>{ filt.recent=false; }},
   {key:"rt",       label:()=>`the critics bar (${filt.rt}%+)`, on:()=>filt.rt>0, clear:()=>{ filt.rt=0; }},
   {key:"gross",    label:()=>"the box-office floor", on:()=>filt.gross>0,      clear:()=>{ filt.gross=0; }},
   {key:"search",   label:()=>`the search “${filt.search}”`, on:()=>!!filt.search, clear:()=>{ filt.search=""; }},
@@ -7724,10 +7977,11 @@ function buildQuality(){
       <div class="loz" id="cAgeLoz" role="radiogroup" aria-label="Age rating — up to and including"></div>
       <div class="qcap">Picks everything <b>up to and including</b> the level you choose.</div>
     </div>
-    <div class="qrow">
-      <div class="qhead"><span class="qt">Primary language</span><span class="qcap" style="margin:0" id="cLangCap"></span></div>
-      <div class="chips" id="cLangChips"></div>
-    </div>
+    <!-- CAS-475: Primary language dropped from this editor too — Language is account-level only now
+         (Account > Taste baseline), and this pre-0.8 modal is still the editor for shared links and the
+         empty-deck quick starts (CAS-246), so it needed the same row pulled as the Briefing hub. draft.lang
+         itself is untouched: a shared/templated draft keeps whatever value it arrived with, same as any
+         other agent this ticket leaves alone. -->
     <div class="qrow">
       <div class="qhead"><span class="qt">Audience / origin</span><span class="qcap" style="margin:0" id="cCultCap"></span></div>
       <div class="chips" id="cCultChips"></div>
@@ -7810,7 +8064,6 @@ function syncQuality(){
   }
   $("cGenreCap").textContent=(draft.genre||[]).length?`${draft.genre.length} on`:"Any";
   $("cExclCap").textContent=draft.exclude.length?`${draft.exclude.length} skipped`:"Nothing";
-  $("cLangCap").textContent=(draft.lang||[]).length?draft.lang.map(langName).join(", "):"Any";
   $("cCultCap").textContent=draft.culture.length?draft.culture.join(", "):"Any";
   $("cYearCap").textContent=draft.year.length
     ? (draft.year.length===EARLIER_YEARS.length && !draft.year.includes(CURRENT_YEAR) ? "Earlier years" : draft.year.length+" on")
@@ -7865,7 +8118,6 @@ function openEditor(title){
   buildQuality();
   buildEditorChips("cGenreChips", ALL_GENRES, "genre", null, ()=>"gen");
   buildEditorChips("cExclChips", ALL_GENRES, "exclude", null, ()=>"exc");
-  buildEditorChips("cLangChips", ALL_LANGS, "lang", c=>`${langName(c)} · ${LANG_COUNT[c]}`, ()=>"gen");
   buildEditorChips("cCultChips", ALL_CULTURES, "culture", c=>`${c} · ${CULTURE_COUNT[c]}`, ()=>"gen");
   buildEditorChips("cYearChips", ALL_YEARS, "year", y=>`${y} · ${yearCount(y)}`, ()=>"yr");
   syncQuality(); refreshDraft();
@@ -8847,6 +9099,24 @@ const onbFlow = {draft:null, name:ONB_DEFAULT_NAME, defaultName:ONB_DEFAULT_NAME
 // an Upcoming film, the moment you want is "it's out"; if it is already on a screen, the only moment left is
 // "the crowds have gone". Nothing is invented — there is no "announced" moment because nobody publishes the
 // date a film is announced, so Upcoming's notify is the release, said honestly.
+// CAS-243: Rent was one window doing two jobs. Premium and standard rent are the same GESTURE — you pay
+// per film — but they are weeks and about twenty dollars apart, and "tell me the day I can rent it" from
+// someone waiting for the $7 price is a different sentence from the same words said by someone who will
+// pay $30 on opening week. They are already separate windows in the data (pvod and rental, split on the
+// real price ceiling), so this splits the control to match rather than inventing a distinction.
+// CAS-474: also the set a Cinema agent's Notify reaches once its own theatrical run has passed — "catch it
+// at home" for a film you missed at the cinema. Defined once and shared into both kinds' arrays below, so
+// there is exactly one Premium/Rent/Streaming definition to drift, not two hand-kept copies.
+const HOME_WINDOWS = [
+  {key:"premium", label:"Premium", cd:"var(--purple)", status:["pvod"],
+   sub:"Out early to buy or rent, around $30.", notifySay:"when it lands early on premium",
+   alerts:{pvod:true}},
+  {key:"rent",   label:"Standard Rent", cd:"var(--blue)",  status:["rental"],
+   sub:"Available to rent, around $7.", notifySay:"when it drops to rent", alerts:{rental:true}},
+  {key:"stream", label:"Streaming", cd:"var(--green)", status:["included_streaming"],
+   sub:"Included on a subscription.", notifySay:"when it lands on streaming",
+   alerts:{included_streaming:true}},
+];
 const AGENT_WINDOWS = {
   cinema: [
     // CAS-242: Upcoming is grey everywhere else in the app, because an unreleased film is deliberately muted
@@ -8870,22 +9140,11 @@ const AGENT_WINDOWS = {
     {key:"in_cinema", label:"In cinema", cd:"var(--amber)", status:["opening_week","in_cinema"],
      sub:"On the big screen right now.", notifySay:"once it's past its opening weekend",
      alerts:{past_opening:true}},
+    // CAS-474: Notify-only — a Cinema agent's catalogue stays cinema-scoped (listWindowOK never sees these
+    // statuses because List is never offered for them below), but its Notify can still reach past the run.
+    ...HOME_WINDOWS.map(w=>({...w, notifyOnly:true})),
   ],
-  // CAS-243: Rent was one window doing two jobs. Premium and standard rent are the same GESTURE — you pay
-  // per film — but they are weeks and about twenty dollars apart, and "tell me the day I can rent it" from
-  // someone waiting for the $7 price is a different sentence from the same words said by someone who will
-  // pay $30 on opening week. They are already separate windows in the data (pvod and rental, split on the
-  // real price ceiling), so this splits the control to match rather than inventing a distinction.
-  stream: [
-    {key:"premium", label:"Premium", cd:"var(--purple)", status:["pvod"],
-     sub:"Out early to buy or rent, around $30.", notifySay:"when it lands early on premium",
-     alerts:{pvod:true}},
-    {key:"rent",   label:"Standard Rent", cd:"var(--blue)",  status:["rental"],
-     sub:"Available to rent, around $7.", notifySay:"when it drops to rent", alerts:{rental:true}},
-    {key:"stream", label:"Streaming", cd:"var(--green)", status:["included_streaming"],
-     sub:"Included on a subscription.", notifySay:"when it lands on streaming",
-     alerts:{included_streaming:true}},
-  ],
+  stream: HOME_WINDOWS,
 };
 // Which set of windows the agent on screen has. Reads the draft's own kind first (an agent opened from the
 // Briefing has one and there may be no flow around it), then the flow's answer — the same order missionKind
@@ -9009,7 +9268,9 @@ function hubWatchSummary(){
 function drawWatchLanes(){
   const box=$("wwLanes"); if(!box) return;
   box.innerHTML = agentWindows().map(w=>{
-    const lst=winOn(w.key,"list"), nt=winOn(w.key,"notify");
+    // CAS-474: a notifyOnly window (Premium/Rent/Streaming, offered to a Cinema agent as "catch it at home")
+    // never gets a List switch — its catalogue stays cinema-scoped, so List can never be true for it.
+    const lst=w.notifyOnly ? false : winOn(w.key,"list"), nt=winOn(w.key,"notify");
     const sw=(which,label,on,hint)=>`<button type="button" class="agwt${on?" on":""}" aria-pressed="${on}"
         title="${escA(hint)}" onclick="wwToggleWin('${w.key}','${which}')"><span class="wwb">✓</span>${label}</button>`;
     // CAS-242: the finer moments appear only once Notify is on, because until then there is no bell for them
@@ -9026,7 +9287,7 @@ function drawWatchLanes(){
       <div class="wwhead"><span class="cd"></span><span class="wwn">${esc(w.label)}</span></div>
       <p class="agwsub">${esc(w.sub)}</p>
       <div class="agwrow">
-        ${sw("list","List", lst, `Include ${w.label.toLowerCase()} films in this agent's list`)}
+        ${w.notifyOnly ? "" : sw("list","List", lst, `Include ${w.label.toLowerCase()} films in this agent's list`)}
         ${sw("notify","Notify option", nt, `Alert me ${w.notifySay}`)}
       </div>${subs}</div>`;
   }).join("");
@@ -10244,25 +10505,30 @@ const SHARP_STEPS = {
           <span class="di">${icon}</span>
           <span class="dt"><span class="dh">${label}</span><span class="ds">${esc(sum)}</span></span>
           <span class="dc">›</span></button>`;
+      // CAS-447: the same "N new" count the deck card carries, read off the SAME live draft this screen's
+      // own doors edit (onbApply()) — an unsaved agent (no draft yet) simply has nothing to count.
+      const nNew = onbFlow.draft ? newlyAddedCount(onbApply()) : 0;
       // CAS-266: "Edit Agent", plain, and the same words whichever lane the agent is in. The old title named
       // the lane ("Cinema Agent Briefing"), which said what the agent IS on a screen you opened to change it —
       // the screen's job is the verb, and each row below already carries the agent's own settings.
-      return `<p class="ossub">Reconfigure this agent here.</p>
+      return `<p class="ossub">Reconfigure this agent here.${nNew ? ` <b>${nNew}</b> newly added film${nNew===1?"":"s"} in its list right now.` : ""}</p>
         <!-- CAS-267: the rows are named and ordered as onboarding asks them. Editing an agent and building
              one are the same set of screens (CAS-182), so a person who has just been through the flow should
              recognise this list as the same questions in the same sequence — "Set your bar" and "Genres" were
              two different names for screens titled Mission and Style, which made the round trip read as two
-             different products. The two steps the ticket does not name keep their onboarding neighbours: How
-             far back sits after Rating and Streaming services after Language, exactly as the stream lane
-             walks them. -->
+             different products. The step the ticket does not name keeps its onboarding neighbour: How far
+             back sits after Rating, exactly as the stream lane walks it.
+             CAS-475: Language and Streaming services no longer have rows here — both are account-level only
+             now (Account > Taste baseline, Account > My streaming services), so a per-agent door onto either
+             would be a second place to set the same thing. Neither field on the draft is touched by this
+             screen's own Save; see onbApply() and FLOWS.stream for what that means for an agent that was
+             already carrying its own lang/services value. -->
         <div class="edoors">
           ${row("✏️","Agent Name",         onbFlow.name || d.name || "Unnamed", "name")}
           ${row("🎚️","Mission",            hubBarSummary(),                     "selectivity")}
           ${row("🎭","Style",              briefSum("genre"),                   "genres")}
           ${row("🔞","Rating",             briefSum("age"),                     "age")}
           ${stream ? row("🕰️","How far back", yearsLabel(flowYearsBack()), "years") : ""}
-          ${row("💬","Language",           briefSum("lang"),                    "language")}
-          ${stream ? row("📺","Streaming services", briefServicesSum(), "services") : ""}
           ${row("🔔","Notifications",      hubWatchSummary(),                   "watching")}
         </div>
         <!-- CAS-268: Delete only appears for an agent that EXISTS. A brand-new agent reaching this screen
@@ -10562,6 +10828,10 @@ const SHARP_STEPS = {
         tog.classList.toggle("on", prefs.on);
         updatePrefSwitch(); updatePrefBtn();
         onbRefresh();
+        // CAS-480: this spoke sits over the listing, not inside a draft that only commits on Done (unlike
+        // the rest of SHARP_STEPS) — without this the switch visibly flips but the list behind it is stale
+        // until some unrelated action re-renders, same bug $("prefSwitch").onclick already avoids below.
+        render();
       };
     },
   },
@@ -10605,6 +10875,8 @@ const SHARP_STEPS = {
       return `<p class="ossub">As new movies come along that meet your brief, this agent will ping you. How would you like to be notified?</p>
         <button type="button" class="bigtoggle${on("inApp")}" onclick="flowNotify('inApp',this)">
           <span class="btmain">Allow in-app notifications</span><span class="btcheck">✓</span></button>
+        <p class="ossub" id="onbInAppHint">Tapping this will ask iOS for permission to notify you — you can change your mind any time.</p>
+        <p class="fielderr" id="onbInAppDenied" role="alert" hidden>You said no to notifications — you can turn them on later in iOS Settings → Cascade.</p>
         <button type="button" class="bigtoggle${on("emailOn")}" onclick="flowNotify('emailOn',this)">
           <span class="btmain">Send me alerts by email</span><span class="btcheck">✓</span></button>
         <div class="emailwrap${notifyPrefs.emailOn?" show":""}" id="onbEmailWrap">
@@ -10618,6 +10890,7 @@ const SHARP_STEPS = {
       const el=$("onbEmail");
       if(el) el.oninput=()=>{ notifyPrefs.email=el.value.trim(); saveNotifyPrefs(); notifyGate(); };
       notifyGate();
+      paintInAppDenied();   // CAS-463: fresh entry to the step always starts from the neutral hint
     },
   },
   years: {
@@ -10678,11 +10951,10 @@ let onbStepKey=null;
 // question with an answer, so it is walked and shown like any other step yet carries no number of its own —
 // flowCounted() is the one place both the exclusion and the total are written down, so the two can never
 // disagree.
-// CAS-199: the streaming lane asks two more questions, so the flow is per-lane and the meter counts the
-// lane you are actually in. "How far back" only means something where the catalogue has depth — a cinema
-// listing is this month's releases and asking someone to date-limit it would be a control with nothing to
-// do — and "My streaming services" is the whole point of a streaming agent: it is what turns "on some
-// service somewhere" into "on one you already pay for".
+// CAS-199: the streaming lane asks one more question than cinema, so the flow is per-lane and the meter
+// counts the lane you are actually in. "How far back" only means something where the catalogue has depth —
+// a cinema listing is this month's releases and asking someone to date-limit it would be a control with
+// nothing to do.
 // CAS-229: `watching` is deliberately NOT in either list. Onboarding makes assumptions about where and when
 // the agent watches (PRIORITY_WATCH, below) rather than asking; the per-window List/Notify controls live only
 // in Agent Settings, reached from the Briefing. The one notification question onboarding does ask is
@@ -10693,12 +10965,18 @@ let onbStepKey=null;
 // first is still in mind, instead of across an unrelated screen. Everything else keeps the order it had; only
 // `age` moved, in both lanes.
 // CAS-338: Language is no longer a first-run step in either lane — onbFlow.draft.lang is seeded ["en"] at
-// pickStarter (assume English) and stays that way unless changed later in Agent Settings / Edit Agent, where
-// the `briefing` hub's own Language door (SHARP_STEPS.language, unchanged) is still reachable.
+// pickStarter (assume English), or carries whatever a chosen starter template bakes in.
+// CAS-475: "My streaming services" is no longer a first-run step either — naming your services and the
+// "only show films on my services" switch are both account-level state already (`prefs`, in
+// localStorage/the synced prefs row), never per-agent, so asking for them mid-creation was a second place to
+// set the same account-wide answer. A person who has never named a service still gets one: onbApply() keeps
+// seeding a new streaming agent's per-window `myServices` scope off whatever `prefs.on` already is (CAS-199),
+// same as it always has — this only removes the prompt, not the seed. Naming services (or turning the
+// switch on) now happens at Account > My streaming services, before or after the agent exists either way.
 const FLOWS = {
   cinema: ["priority","pickagent","selectivity","name","genres","age",
            "keepfinding","notifysettings"],
-  stream: ["priority","pickagent","selectivity","name","genres","age","years","services",
+  stream: ["priority","pickagent","selectivity","name","genres","age","years",
            "keepfinding","notifysettings"],
 };
 const flowList    = () => FLOWS[flowKind] || FLOWS.cinema;
@@ -10843,11 +11121,13 @@ window.briefDelete=()=>{
 };
 function briefClose(){ briefOn=false; flowStop(); }
 
-// CAS-377: the top-menu "My services" row opens the same My-services step onboarding and the Briefing use,
-// bare (title + Done, the toggle, the provider chips) — not the older standalone Preferences modal, which
-// had drifted out of sync (no alphabetised chips, no lead/"more" rows, no Apple TV+ naming) the same way the
-// Briefing's own row once had before CAS-343 fixed it there. There is no hub behind this door, so it is its
-// own spoke flag rather than reusing briefOn.
+// CAS-377: the top-menu "My services" row opens the SHARP_STEPS.services spoke bare (title + Done, the
+// toggle, the provider chips) — not the older standalone Preferences modal, which had drifted out of sync
+// (no alphabetised chips, no lead/"more" rows, no Apple TV+ naming). There is no hub behind this door, so it
+// is its own spoke flag rather than reusing briefOn.
+// CAS-475: this is now the ONLY door onto this step — the Briefing's own "Streaming services" row and the
+// stream lane's first-run step both opened the identical account-level screen, which was a second place to
+// set the one thing this menu item already sets. Account > My streaming services is the same screen too.
 window.openMenuServices=()=>{
   flowStop(); menuStepOn=true;
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
@@ -11419,10 +11699,6 @@ function briefSum(key){
   if(key==="lang") return v.map(langName).join(", ");
   return (v.length<=3 ? v.join(", ") : `${v.length} of ${all.length}`)+exSuffix;
 }
-function briefServicesSum(){
-  const n=prefs.sub.size+prefs.store.size;
-  return n ? `${n} service${n===1?"":"s"}` : "None picked yet";
-}
 // ---- CAS-253: an email alert needs somewhere to send it ----------------------------------------------
 // Switching "Send me alerts by email" on and walking past the empty field left an agent whose email bell was
 // armed and undeliverable — the monitor's delivery_plan calls that state "wait" and quietly retries it
@@ -11455,7 +11731,73 @@ function notifyGate(){
     b.title = ok ? "" : "Add the email address your alerts should go to, or switch email alerts off";
   }
 }
+// CAS-463: "Allow in-app notifications" used to just flip a local flag. Now it asks for a real OS-level
+// permission and — on a native grant — captures the device token push delivery (CAS-465) needs. Only a
+// resolved grant may flip notifyPrefs.inApp on; the button itself is the guard against re-prompting on
+// every render, since it is the only caller (wire()/onbRefresh() never call this).
+let inAppDenied=false;
+function paintInAppDenied(){
+  const n=$("onbInAppDenied"), h=$("onbInAppHint");
+  if(n) n.hidden=!inAppDenied;
+  if(h) h.hidden=inAppDenied;
+}
+async function upsertPushToken(token){
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  const owner=(a && a.session && a.session.user) ? a.session.user.id : null;
+  if(!c || !owner || !token) return;
+  try{
+    const { error } = await c.from("push_tokens").upsert(
+      [{ user_id:owner, device_token:token, platform:"ios", app_version:(BUILD_INFO||{}).version || null }],
+      { onConflict:"user_id,device_token" });
+    if(error) console.warn("push_tokens upsert", error);
+  }catch(e){ console.warn("Cascade: push token upsert failed", e); }
+}
+let pushRegistering=null;
+// Native: the real iOS permission sheet, then a device-token upsert so CAS-465 has somewhere to deliver
+// to. Web (no native shell, or the vendored plugin script didn't load): the browser's own Notification
+// permission — nothing is stored server-side yet, there is no web-push backend.
+function registerPush(){
+  if(pushRegistering) return pushRegistering;
+  pushRegistering=(async()=>{
+    try{
+      if(typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform()){
+        const PN=Capacitor.Plugins && Capacitor.Plugins.PushNotifications;
+        if(!PN) return false;
+        const perm=await PN.requestPermissions();
+        if(perm.receive!=="granted") return false;
+        PN.addListener("registration", token => upsertPushToken(token && token.value));
+        await PN.register();
+        return true;
+      }
+      if(typeof Notification==="undefined") return false;
+      if(Notification.permission==="granted") return true;
+      const res=await Notification.requestPermission();
+      return res==="granted";
+    }catch(e){ console.warn("Cascade: push registration failed", e); return false; }
+  })();
+  pushRegistering.finally(()=>{ pushRegistering=null; });
+  return pushRegistering;
+}
 window.flowNotify=(key,el)=>{
+  if(key==="inApp"){
+    if(notifyPrefs.inApp){   // turning off never needs a permission round-trip
+      notifyPrefs.inApp=false; saveNotifyPrefs(); el.classList.toggle("on", false);
+      onbRefresh(); logEvent("flow_notify",{key,on:false});
+      return;
+    }
+    el.disabled=true;
+    registerPush().then(granted=>{
+      el.disabled=false;
+      notifyPrefs.inApp=granted;
+      saveNotifyPrefs();
+      el.classList.toggle("on", granted);
+      inAppDenied=!granted;
+      paintInAppDenied();
+      onbRefresh();
+      logEvent("flow_notify",{key:"inApp", on:granted});
+    });
+    return;
+  }
   notifyPrefs[key]=!notifyPrefs[key];
   saveNotifyPrefs();
   el.classList.toggle("on", notifyPrefs[key]);
@@ -13481,18 +13823,18 @@ else if(dedupedN)
     if(acct() && acct().status==="signed-in" && owner){
       if(owner !== currentUser){
         currentUser = owner;
-        loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount();
+        loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount(); loadFilmWatches();
       }
     } else if(currentUser !== null){
       // Signed out → back to the on-device set, and the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestLists(); realAlerts=[]; updateBadge();
-      cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null;
+      cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
     }
   });
   // If a session was already restored before this listener attached, adopt it now.
   if(accountActive()){
     currentUser = uid();
-    loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount();
+    loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount(); loadFilmWatches();
   }
   // CAS-408: two devices only converge without a live subscription if SOMETHING re-pulls the account
   // — sign-in alone left a device that never signs out again permanently stuck on whatever it saw at
@@ -13500,15 +13842,32 @@ else if(dedupedN)
   // device is in flight or queued, so a reconcile pull can never land on top of an edit that hasn't
   // reached the account yet and read as if it had been undone.
   function reconcileOnReturn(){
+    // CAS-488: guest-safe, unlike every account-sync call below — a signed-out tab still deserves a live
+    // catalogue, so this runs unconditionally rather than behind the accountActive() gate.
+    pollCatalogue();
     if(!accountActive()) return;
     if(!syncing && !syncTimer) reconcileCascades();
     if(!filmSyncing && !filmTimer) reconcileFilms();
     if(!listsSyncing && !listsTimer){ reconcileLists(); reconcileListMembership(); }
+    if(!watchSyncing && !watchTimer) reconcileFilmWatches();
+    // CAS-487: the bell has no push channel on web, so nothing else ever refreshes it —
+    // without this, an open tab's badge/drawer are frozen at whatever they were on load.
+    loadRealAlerts();
   }
   window.addEventListener("focus", reconcileOnReturn);
   document.addEventListener("visibilitychange", () => {
     if(document.visibilityState==="visible") reconcileOnReturn();
   });
+  // CAS-487: a tab can stay focused and visible for hours without ever firing focus/visibilitychange
+  // again, so the bell also needs a heartbeat independent of returning to the tab. Reuses
+  // reconcileOnReturn — same accountActive() guard, same in-flight-sync guards — rather than a second,
+  // narrower poll path.
+  const RECONCILE_POLL_MS = 3*60*1000;
+  const reconcilePollHandle = setInterval(() => { if(document.visibilityState==="visible") reconcileOnReturn(); }, RECONCILE_POLL_MS);
+  // Browsers return a plain number from setInterval with no unref(); Node's test harness (which evaluates
+  // this same script against a stand-in DOM) returns a Timeout object whose unref() stops a live interval
+  // from holding the process open forever. Guarded so the browser path is untouched.
+  if(reconcilePollHandle && typeof reconcilePollHandle.unref === "function") reconcilePollHandle.unref();
 
   // ==========================================================================
   // CAS-183: watch status per account (`user_films`)
@@ -13680,6 +14039,91 @@ else if(dedupedN)
     notifyPrefs.email   = row.email_address || "";
     saveNotifyPrefs();
   }
+
+  // ==========================================================================
+  // CAS-484: per-film "Watch it" ticks (notify[id].wins) -> film_watch, a real, agent-independent
+  // notification source. Same debounced-upsert + private-baseline-diff shape as user_films above —
+  // and unlike film_picks, this DOES need a load-back (a tick made on the phone must show on the
+  // web), so it also mirrors user_films' load/reconcile pair rather than film_picks' one-way push.
+  // Only the four Watch-panel rungs (WATCH_LEVEL_KEYS) are ever synced — the Watch control has
+  // carried no sub-tiers since CAS-435, so `wins` never holds anything else.
+  // ==========================================================================
+  function watchRows(){
+    const owner=uid(), out=[];
+    for(const id in notify){
+      const e=notify[id]||{};
+      const windows=WATCH_LEVEL_KEYS.filter(k=>(e.wins||{})[k]);
+      if(windows.length) out.push({user_id:owner, movie_id:String(id), windows});
+    }
+    return out;
+  }
+  // Replaces exactly the four known rungs on each affected film's `wins` — every other field on
+  // the notify entry (source, cascadeIds, pinnedTo, muted, streamTier…) is untouched, and a film
+  // with no row in `rows` is left alone rather than cleared, so a tick this device hasn't pushed
+  // yet is never wiped out from under it.
+  function applyWatchRows(rows){
+    (rows||[]).forEach(r=>{
+      const id=Number(r.movie_id); if(!isFinite(id)) return;
+      const e=entryFor(id);
+      e.wins=e.wins||{};
+      WATCH_LEVEL_KEYS.forEach(k=>{ e.wins[k]=(r.windows||[]).includes(k); });
+    });
+    recomputeFound();
+    if(typeof render==="function") render();
+  }
+  let watchTimer=null, watchSyncing=false, watchAgain=false;
+  let watchBaseline=null;   // CAS-408: same private-baseline diff as filmBaseline above
+  function scheduleWatchSync(){ clearTimeout(watchTimer); watchTimer=setTimeout(runWatchSync, 500); }
+  async function runWatchSync(){
+    if(!accountActive()) return;
+    if(watchSyncing){ watchAgain=true; return; }
+    watchSyncing=true;
+    try{ await syncWatchesToAccount(); }
+    catch(err){ console.warn("Cascade: watch sync failed", err); }
+    finally{ watchSyncing=false; if(watchAgain){ watchAgain=false; scheduleWatchSync(); } }
+  }
+  async function syncWatchesToAccount(){
+    const c=client(), owner=uid(); if(!c||!owner) return;
+    const rows=watchRows();
+    if(rows.length){
+      const { error } = await c.from("film_watch").upsert(rows, { onConflict:"user_id,movie_id" });
+      if(error){ console.warn("film_watch upsert", error); return; }
+    }
+    // CAS-408: delete only ids THIS device's watch ticks dropped out of its own baseline (every
+    // window on that film untouched) — never every id the account has that this device hasn't
+    // loaded yet.
+    const ids=new Set(rows.map(r=>r.movie_id));
+    if(watchBaseline){
+      const gone=[...watchBaseline].filter(id=>!ids.has(id));
+      if(gone.length){
+        const { error } = await c.from("film_watch").delete().eq("user_id", owner).in("movie_id", gone);
+        if(error){ console.warn("film_watch delete", error); return; }
+      }
+    }
+    watchBaseline=ids;
+  }
+  async function loadFilmWatches(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("film_watch").select("movie_id,windows");
+    if(error){ console.warn("film_watch load", error); return; }
+    const remote=data||[];
+    applyWatchRows(remote);
+    watchBaseline=new Set(remote.map(r=>String(r.movie_id)));
+  }
+  // CAS-408-style background convergence, mirroring reconcileFilms — remote is the union of every
+  // device's ticks, so it can just be re-applied; a not-yet-pushed local tick survives because it
+  // is unioned back in as `localOnly` before applying.
+  async function reconcileFilmWatches(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("film_watch").select("movie_id,windows");
+    if(error){ console.warn("film_watch reconcile", error); return; }
+    const remote=data||[];
+    const remoteIds=new Set(remote.map(r=>String(r.movie_id)));
+    const localOnly=watchRows().filter(r=>!remoteIds.has(String(r.movie_id)));
+    applyWatchRows([...remote, ...localOnly]);
+    watchBaseline=remoteIds;
+  }
+
   // The bell's real contents. Newest first, and capped: a list nobody can reach the bottom of is
   // not a list, it is a wall.
   async function loadRealAlerts(){
@@ -13706,6 +14150,29 @@ else if(dedupedN)
       .eq("user_id", owner).is("read_at", null);
     if(error) console.warn("notifications mark-read", error);
   };
+  // CAS-466: tap-to-open + foreground handling. Native only, registered once at boot (not inside
+  // registerPush(), which only runs when the user exercises the in-app toggle) — a tap can launch
+  // the app cold, before any toggle interaction this session, and the plugin still delivers the
+  // queued action to a listener attached now. Both reuse the bell's own paths rather than forking a
+  // second one: openNotifyFilm is exactly what a bell-drawer row's onclick calls, and
+  // loadRealAlerts/markRealAlertsRead are the same select+update the drawer already runs on open.
+  // Badge note: the OS app-icon badge itself has no client-side set/clear call in this plugin version
+  // (@capacitor/push-notifications 8.1.2 exposes no badge API) — it is kept correct at delivery time
+  // by the `badge` the monitor already computes into each push's `aps.badge` (CAS-465/pusher.py). The
+  // in-app bell badge (updateBadge(), above) is what loadRealAlerts()/markRealAlertsRead() keep live.
+  if(typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform()){
+    const PN=Capacitor.Plugins && Capacitor.Plugins.PushNotifications;
+    if(PN){
+      PN.addListener("pushNotificationReceived", () => { loadRealAlerts(); });
+      PN.addListener("pushNotificationActionPerformed", async (action) => {
+        const data=(action && action.notification && action.notification.data) || {};
+        const id=Number(data.movie_id);
+        await loadRealAlerts();
+        if(id) openNotifyFilm(id);
+        await markRealAlertsRead();
+      });
+    }
+  }
   // ---- CAS-211: account-level defaults and services --------------------------------
   // What a NEW agent starts from, and what the user actually pays for. Neither belongs on a
   // cascade row: one is a starting point (every agent has carried its own copy since CAS-182)
@@ -13745,7 +14212,10 @@ else if(dedupedN)
   saveTasteBase = function(){ saveTasteBaseLocal(); if(accountActive()) scheduleUserPrefsSync(); };
 
   const saveNotifyLocal = saveNotify;
-  saveNotify = function(){ saveNotifyLocal(); if(accountActive()) scheduleNotifySync(); };
+  // CAS-484: `wins` lives on the same notify entries film_picks does, so the one save chokepoint
+  // now feeds both syncs — the personal-override upload (film_picks) and the real per-film alert
+  // arming (film_watch).
+  saveNotify = function(){ saveNotifyLocal(); if(accountActive()){ scheduleNotifySync(); scheduleWatchSync(); } };
   const saveNotifyPrefsLocal = saveNotifyPrefs;
   saveNotifyPrefs = function(){ saveNotifyPrefsLocal(); if(accountActive()) scheduleNotifySync(); };
   const savePrefsLocal = savePrefs;
@@ -13770,7 +14240,16 @@ else if(dedupedN)
                                 reconcileCascades, reconcileFilms,
                                 // CAS-428: Lists' own load/sync/reconcile seam, same shape as the above.
                                 loadListsAccount, syncListsNow: runListsSync, listToRow, rowToList, listFilmRows,
-                                reconcileLists, reconcileListMembership };
+                                reconcileLists, reconcileListMembership,
+                                // CAS-484: the per-film Watch-it tick's own load/sync/reconcile seam.
+                                loadFilmWatches, syncWatchesNow: runWatchSync, watchRows, applyWatchRows,
+                                reconcileFilmWatches,
+                                // CAS-487: the return-to-tab entry point itself, so the bell's own refresh
+                                // can be exercised the same way — without waiting on a real
+                                // focus/visibilitychange event.
+                                reconcileOnReturn,
+                                // CAS-488: the catalogue-refresh seam and its busy-check, exposed the same way.
+                                pollCatalogue, catalogueUIBusy };
 })();
 </script>
 

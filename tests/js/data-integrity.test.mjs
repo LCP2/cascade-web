@@ -105,6 +105,29 @@ test("listing: an estimate only reaches the screen from a cinema run", () => {
   }
 });
 
+// CAS-481: "DE4TH DRIVE" — cinema_release: false, cinema_date over a year past, no offers ever found in AU —
+// stayed stuck at claimedStatus ["upcoming"] with availability_confidence "estimated" (derive_from_providers'
+// offer-less fallback for a title past its run has nowhere else honest to put it). Nothing in the pipeline
+// invented this shape from nothing: it is a title the pipeline never confirmed AND is not still ahead of us,
+// so it is not a real anticipation — the exact thing the invariant above already refuses for every OTHER
+// estimated window. This is the regression test for the gate that closes the gap: listWindowOK must not let
+// an estimated "upcoming" claim into any agent's listing, cinema or streaming.
+test("listing: a stuck-upcoming, estimated title with no cinema run never reaches a listing (CAS-481)", () => {
+  const stuck = {
+    title: "CAS-481 Test Film", cinema_date: daysAgo(400), cinema_release: false,
+    claimedStatus: ["upcoming"], availability_confidence: "estimated", offers: [],
+  };
+  stuck.status = E.deriveStatus(stuck);
+  assert.equal(E.primaryStatus(stuck), "upcoming", "setup: the pipeline's own claim for this shape is upcoming");
+  assert.ok(E.isEstimated(stuck), "setup: this shape is only ever estimated");
+  for(const kind of ["cinema", "stream"]){
+    pickInLane(E, kind, kind === "cinema" ? "cinema" : "custom");
+    const d = E.onbApply();
+    assert.equal(E.listWindowOK(stuck, d), false,
+      `${kind}: an estimated, stuck-upcoming title with no confirmed cinema run must not satisfy an agent's Upcoming window`);
+  }
+});
+
 // ---- 1b. THE IN-CINEMA SECTION ACTUALLY POPULATES (CAS-237) ---------------------------------------------
 // The bug: a cinema agent listed 33 films of which 2 were not Upcoming, because the catalogue held no film
 // in a cinema at all — the window estimator had learned a 1-day cinema-to-streaming offset from an
@@ -117,6 +140,37 @@ test("in cinema: the catalogue holds films that are on a screen right now", () =
     "not one film in the whole catalogue is in a cinema window — the window estimator has collapsed (CAS-237)");
   for(const m of onScreen) assert.ok(E.inCinemaRun(m),
     `${m.title} is filed In Cinema on an opening date of ${m.cinema_date}, outside the run`);
+});
+
+// CAS-476: two real, currently-showing wide releases (Toy Story 5, 55 days into its run; The Odyssey, 27
+// days in) were being deleted from every listing. Past CAS-289's old two-week cap, deriveStatus's CAS-318
+// correction filed a still-in-cinema estimate onto "pvod" with zero offers, and showable()'s
+// hasConfirmedOffer requires a real, priced offer before anything estimated may show there — so the film was
+// not moved to a visible next window, it was made permanently unshowable. This proves an estimated,
+// offer-less in-cinema film now survives for a realistic run, not just fourteen days.
+function daysAgo(n){
+  const d = new Date(`${E.TODAY}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+test("in cinema: an estimated wide release with no offers stays showable for a realistic run (CAS-476)", () => {
+  const wideRelease = cinemaDate => ({
+    title: "CAS-476 Test Film", cinema_date: cinemaDate,
+    claimedStatus: ["in_cinema"], availability_confidence: "estimated", offers: [],
+  });
+  for(const days of [27, 55, 74]){
+    const m = wideRelease(daysAgo(days));
+    m.status = E.deriveStatus(m);
+    assert.ok(E.showable(m), `a film ${days} days into its cinema run with no offers must stay showable`);
+    assert.equal(E.primaryStatus(m), "in_cinema",
+      `a film ${days} days into its cinema run was moved off in_cinema to ${E.primaryStatus(m)}`);
+  }
+  // Well past a realistic run the film still moves on — CAS-318's own "next window" behaviour, deliberately
+  // left in force; this run-length raise is not licence to trust an estimate forever.
+  const stale = wideRelease(daysAgo(120));
+  stale.status = E.deriveStatus(stale);
+  assert.equal(E.primaryStatus(stale), "pvod",
+    "a film 120 days past its cinema opening with no offers should still have moved off in_cinema");
 });
 
 test("in cinema: a wide-open cinema agent loses none of them, and is not a wall of Upcoming", () => {
@@ -746,7 +800,11 @@ test("counts: every count in the wider matrix is still the size of its own set",
         `${label} + ${what}: lists a film it does not follow`);
       assert.ok(listed <= bySet, `${label} + ${what}: lists ${listed} of a watched set of ${bySet}`);
       const upstream = watched.filter(m => !E.listedBy(m, d));
-      for(const m of upstream) assert.ok(!d.listStatus.length || !d.listStatus.includes(E.primaryStatus(m)),
+      for(const m of upstream) assert.ok(!d.listStatus.length || !d.listStatus.includes(E.primaryStatus(m))
+        // CAS-481: the other lawful reason a followed film sits in a listed window and still isn't listed —
+        // an estimated "upcoming" claim the pipeline could never confirm and isn't still ahead of us, which
+        // listWindowOK refuses the same way CAS-170 already refuses every other estimated non-cinema window.
+        || (E.primaryStatus(m) === "upcoming" && E.isEstimated(m)),
         `${label} + ${what}: follows ${m.title}, which is sitting in the listed window ` +
         `${E.primaryStatus(m)} and still is not listed`);
     }

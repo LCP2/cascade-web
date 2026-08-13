@@ -16,6 +16,91 @@ from monitor.store import InMemoryStore
 FIXTURES = "monitor/fixtures"
 
 
+class TargetUserSafetyValve(unittest.TestCase):
+    """CAS-486: --target-user must scope a run to exactly one user, so the notify-test harness can
+    never spray real users. monitor/fixtures has two: user-A (Drama rentals fires on tmdb_id 5001,
+    pvod->rental) and user-B (unrelated cascades)."""
+
+    def test_only_the_target_user_is_matched(self):
+        argv = [
+            "--today", f"{FIXTURES}/today.json", "--yesterday", f"{FIXTURES}/yesterday.json",
+            "--date", "2026-07-16", "--dry-run",
+            "--cascades", f"{FIXTURES}/cascades.json",
+            "--notifications", f"{FIXTURES}/notifications.json",
+            "--target-user", "user-A",
+        ]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = main(argv)
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("user user-A", out)
+        self.assertNotIn("user user-B", out)
+
+    def test_an_unmatched_target_user_delivers_to_no_one(self):
+        argv = [
+            "--today", f"{FIXTURES}/today.json", "--yesterday", f"{FIXTURES}/yesterday.json",
+            "--date", "2026-07-16", "--dry-run",
+            "--cascades", f"{FIXTURES}/cascades.json",
+            "--notifications", f"{FIXTURES}/notifications.json",
+            "--target-user", "some-user-not-in-fixtures",
+        ]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = main(argv)
+        self.assertEqual(rc, 0)
+        self.assertIn("no new alerts for anyone", buf.getvalue())
+
+
+class ChannelIndependence(unittest.TestCase):
+    """CAS-493: a failed email send must not suppress the in-app (or push) delivery for the same
+    user — only the email channel retries next run. user-A in the fixtures has both channels on
+    and a real hits_rent match, so it exercises the mixed-outcome path end to end."""
+
+    def _run(self):
+        argv = [
+            "--today", f"{FIXTURES}/today.json", "--yesterday", f"{FIXTURES}/yesterday.json",
+            "--date", "2026-07-16",
+            "--cascades", f"{FIXTURES}/cascades.json",
+            "--notifications", f"{FIXTURES}/notifications.json",
+            "--emails", f"{FIXTURES}/emails.json",
+            "--prefs", f"{FIXTURES}/prefs.json",
+        ]
+        buf = io.StringIO()
+        with mock.patch("monitor.__main__.send_via_resend",
+                         side_effect=RuntimeError("403 Forbidden")):
+            with redirect_stdout(buf):
+                rc = main(argv)
+        return rc, buf.getvalue()
+
+    def test_email_failure_still_delivers_in_app_and_writes_its_ledger_row(self):
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertIn("email channel — failed", out)
+        self.assertIn("in-app channel — delivered", out)
+        # AC2: the summary must report the in-app count truthfully, not zero.
+        self.assertRegex(out, r"sent 0 email digest\(s\), [1-9]\d* in-app-only")
+        self.assertRegex(out, r"wrote [1-9]\d* notification row\(s\)")
+
+    def test_email_success_is_unaffected(self):
+        argv = [
+            "--today", f"{FIXTURES}/today.json", "--yesterday", f"{FIXTURES}/yesterday.json",
+            "--date", "2026-07-16",
+            "--cascades", f"{FIXTURES}/cascades.json",
+            "--notifications", f"{FIXTURES}/notifications.json",
+            "--emails", f"{FIXTURES}/emails.json",
+            "--prefs", f"{FIXTURES}/prefs.json",
+        ]
+        buf = io.StringIO()
+        with mock.patch("monitor.__main__.send_via_resend", return_value={"id": "test"}):
+            with redirect_stdout(buf):
+                rc = main(argv)
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("email channel — sent", out)
+        self.assertRegex(out, r"sent [1-9]\d* email digest\(s\)")
+
+
 class LedgerWriteResilience(unittest.TestCase):
     def test_a_ledger_write_failure_is_a_warning_not_a_crash(self):
         argv = [

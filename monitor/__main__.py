@@ -29,7 +29,8 @@ import sys
 
 from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notification_rows,
                render_digest, send_via_resend, suppressed_pairs, excluded_moments,
-               prefs_for, excludes_from_prefs, delivery_plan)
+               prefs_for, excludes_from_prefs, delivery_plan, send_via_apns, push_copy,
+               match_film_watches)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
 from .store import InMemoryStore, store_from_env
 
@@ -57,6 +58,9 @@ def _parse_args(argv):
     p.add_argument("--prefs", metavar="PATH",
                    help="Delivery preferences JSON: {user_id: {in_app, email_on, email_address, "
                         "excluded_moments}} (CAS-185). Overrides the `notify_prefs` table.")
+    p.add_argument("--watches", metavar="PATH",
+                   help="Per-film Watch-it ticks JSON: [{user_id, movie_id, windows}] (CAS-484). "
+                        "Overrides the `film_watch` table, which is the default source.")
     p.add_argument("--excluded", metavar="PATH",
                    help="Global alert-type excludes JSON: {user_id: [moment, ...]} (or a list of "
                         "{user_id, excluded_moments}). A muted TYPE never fires for that user, "
@@ -64,6 +68,11 @@ def _parse_args(argv):
                         "from notify_prefs.excluded_moments; this flag adds to that.")
     p.add_argument("--print-html", action="store_true",
                    help="With --dry-run, print the full digest HTML (default: subject + text preview).")
+    p.add_argument("--target-user", metavar="USER_ID",
+                   help="CAS-486 test-harness safety valve: restrict matching to exactly this "
+                        "user_id — every other user's cascades and per-film watches are dropped "
+                        "before matching, so a scoped test run can never spray real users. Unused "
+                        "by the daily job.")
     return p.parse_args(argv)
 
 
@@ -107,7 +116,8 @@ def main(argv=None) -> int:
                               notifications=_load_json(args.notifications) if args.notifications else [],
                               emails=_load_json(args.emails) if args.emails else {},
                               prefs=_load_json(args.prefs) if args.prefs else {},
-                              picks=_load_json(args.picks) if args.picks else [])
+                              picks=_load_json(args.picks) if args.picks else [],
+                              watches=_load_json(args.watches) if args.watches else [])
         source = "fixtures"
     else:
         store = store_from_env()
@@ -118,11 +128,23 @@ def main(argv=None) -> int:
             return 0
 
     cascades = store.fetch_active_cascades()
+    # CAS-486: the test-harness safety valve. Filtering here, before ANYTHING is matched, is what
+    # makes "spray real users" structurally impossible rather than merely unlikely — by_user below
+    # can only ever contain keys that survived this filter.
+    if args.target_user:
+        before = len(cascades)
+        cascades = [c for c in cascades if str(c.get("user_id")) == args.target_user]
+        print(f"[monitor] --target-user {args.target_user}: kept {len(cascades)}/{before} cascade(s), "
+              "every other user's excluded.")
     already = store.fetch_notification_keys()
     # CAS-185: both of these are stored per account now, so the default source is the store rather
     # than a flag. The flags still win where given — that is what makes a fixture run reproducible.
     prefs = _load_json(args.prefs) if args.prefs else _store_call(store, "fetch_notify_prefs", {})
     picks = _load_json(args.picks) if args.picks else _store_call(store, "fetch_picks", [])
+    # CAS-465: who to push to, and the badge count each push should carry (the same number the
+    # in-app bell badge shows), read once up front like prefs/picks above.
+    push_tokens = _store_call(store, "fetch_push_tokens", {})
+    unread_counts = _store_call(store, "fetch_unread_counts", {})
     # A film the user has taken off by hand stays off — their answer outranks their own Cascade, in the
     # email as well as in the app (CAS-100 AC5).
     off = suppressed_pairs(picks)
@@ -135,10 +157,32 @@ def main(argv=None) -> int:
     by_user = match(cascades, transitions, already=already, catalogue=today_movies, suppressed=off,
                     excluded=muted)
 
+    # CAS-484: a second, agent-independent source — a per-film Watch-it tick fires whether or not
+    # any Cascade's own bell is on. Run after match() so `cascade_seen` can carry the film/moment
+    # pairs the Cascade path already caught this run, which is what keeps a film covered by BOTH an
+    # agent bell and a per-film tick to exactly one notification (AC3).
+    watches = _load_json(args.watches) if args.watches else _store_call(store, "fetch_film_watches", [])
+    if args.target_user:
+        watches = [w for w in watches if str(w.get("user_id")) == args.target_user]
+    watch_already = _store_call(store, "fetch_watch_notification_keys", set())
+    cascade_seen = {(str(uid), h.transition.movie_id, h.transition.moment)
+                    for uid, hits in by_user.items() for h in hits}
+    watch_hits = match_film_watches(watches, transitions, already=watch_already,
+                                    cascade_hits=cascade_seen, excluded=muted)
+    for user_id, hits in watch_hits.items():
+        by_user.setdefault(user_id, []).extend(hits)
+
+    # CAS-486: belt-and-braces — cascades and watches are already filtered above, so by_user should
+    # only ever hold the target user's key, but a test harness that emails/pushes real people on a
+    # bug elsewhere is the one failure mode worth double-guarding against.
+    if args.target_user:
+        by_user = {u: hits for u, hits in by_user.items() if str(u) == args.target_user}
+
     print(f"[monitor] matching against {len(cascades)} active cascade(s) from {source}; "
           f"{len(already)} already-sent ledger entries; {len(off)} personal override(s) suppressing; "
           f"{sum(len(v) for v in muted.values())} global alert-type exclude(s) across "
-          f"{len(muted)} user(s).")
+          f"{len(muted)} user(s); {len(watches)} per-film watch row(s) yielding "
+          f"{sum(len(v) for v in watch_hits.values())} extra hit(s).")
     if not by_user:
         print("[monitor] no new alerts for anyone — no email will be sent.")
         return 0
@@ -151,7 +195,7 @@ def main(argv=None) -> int:
     #            has in-app on, whether or not an email went with it.
     # A user with both switched off gets nothing and no row: turning notifications on later must
     # not be met with silence about the very thing that just happened.
-    sent, written_total, inapp = 0, 0, 0
+    sent, written_total, inapp, pushed_total = 0, 0, 0, 0
     for user_id, hits in by_user.items():
         digest = render_digest(hits)
         pref = prefs_for(prefs, user_id)
@@ -183,23 +227,55 @@ def main(argv=None) -> int:
         # by neither — which means no ledger row either, because the ledger IS the record that we told them.
         mailable = [h for h in hits if h.wants("email")] if plan == "email" else []
         appable = [h for h in hits if h.wants("in_app")] if pref["in_app"] else []
+        # CAS-465: push is not a fourth independent switch — it rides the same "in-app" gate as
+        # `appable` above, and only fires where the user actually has a live device registered.
+        tokens = push_tokens.get(str(user_id)) or []
+        pushable = [h for h in hits if h.wants("push")] if (pref["in_app"] and tokens) else []
         if not mailable and not appable:
             print(f"[monitor] {user_id}: every matching agent has its channels off — nothing sent or written.")
             continue
 
+        # CAS-493: channels are independent — a failed send on one must not stop the others, so a
+        # failure here is a logged outcome for THIS channel only, never a `continue` that skips the
+        # in-app/push delivery and the ledger write still owed to this user.
+        email_ok = False
         if mailable:
             digest = render_digest(mailable)      # the email says only what the email is delivering
             try:
                 send_via_resend(email, digest["subject"], digest["html"], digest["text"])
+                email_ok = True
+                sent += 1
+                print(f"[monitor] {user_id}: email channel — sent ({len(mailable)} alert(s)).")
             except Exception as err:  # noqa: BLE001 — never let one bad send abort the run
-                print(f"[monitor] send failed for {user_id}: {err} — ledger not written, will retry.")
-                continue
-            sent += 1
-        if appable and not mailable:
-            inapp += 1
-        # One row per hit that WAS delivered, by either channel, and never one for a hit that was not.
-        delivered = {id(h): h for h in mailable}
+                print(f"[monitor] {user_id}: email channel — failed: {err} — ledger not written for "
+                      "it, will retry; in-app/push are unaffected.")
+        if appable:
+            print(f"[monitor] {user_id}: in-app channel — delivered ({len(appable)} alert(s)).")
+            if not email_ok:
+                inapp += 1
+        # One row per hit that WAS delivered, by either channel, and never one for a hit whose only
+        # offered channel(s) all failed — that's what keeps a failed channel retried next run.
+        delivered = {}
+        if email_ok:
+            delivered.update({id(h): h for h in mailable})
         delivered.update({id(h): h for h in appable})
+        # CAS-465: sent before the ledger insert below (same send-before-ledger ordering as email),
+        # to every registered device, one push per hit. Badge = what the bell badge will read once
+        # this run's in-app rows land — the existing unread count plus what this run is delivering.
+        if pushable:
+            badge = unread_counts.get(str(user_id), 0) + len(delivered)
+            pushed = 0
+            for h in pushable:
+                copy = push_copy(h)
+                payload = {"movie_id": h.transition.movie_id, "moment": h.transition.moment,
+                           "cascade_id": h.cascade_id}
+                for tok in tokens:
+                    if send_via_apns(tok, copy["title"], copy["body"], badge=badge, payload=payload):
+                        pushed += 1
+            if pushed:
+                print(f"[monitor] {user_id}: sent {pushed} push notification(s) across "
+                      f"{len(tokens)} device(s).")
+                pushed_total += pushed
         # CAS-416: the ledger write is best-effort. Delivery already happened above (the email sent,
         # or in-app was chosen), so a DB/ledger hiccup here must be a logged warning, never a crash
         # that aborts the rest of the run — the alternative is silently dropping every later user.
@@ -214,8 +290,8 @@ def main(argv=None) -> int:
         print(f"[monitor] --dry-run: rendered {len(by_user)} digest(s) covering {would} alert(s); "
               "sent NOTHING, wrote NOTHING.")
     else:
-        print(f"[monitor] sent {sent} email digest(s), {inapp} in-app-only; "
-              f"wrote {written_total} notification row(s).")
+        print(f"[monitor] sent {sent} email digest(s), {inapp} in-app-only, {pushed_total} push "
+              f"notification(s); wrote {written_total} notification row(s).")
     return 0
 
 

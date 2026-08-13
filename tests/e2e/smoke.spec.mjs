@@ -69,24 +69,28 @@ test("'Only show films on my services' changes the listing count", async ({ page
   // Every window a streaming agent lists (Premium/Rent/Streaming) is service-scoped, so switching the
   // filter on with no services named must drop the count — this exercises the real mechanism the switch
   // controls, not just its own visible state.
+  // CAS-480: CAS-475 moved this switch out of the per-agent editor into one account-level spoke (top menu
+  // -> My services), which only ever writes the global prefs.on. An open agent's OWN service scope is
+  // fixed at the moment it was last saved (CAS-199) and does not follow prefs.on afterwards, so flipping
+  // the switch while that agent's own listing is on screen has no visible effect — only the All view (no
+  // single agent's own scope in play) actually reads prefs.on, so the test moves there first.
   await toShortlist(page, "stream");
   const cards = await shortlistCards(page);
   await pickCard(page, cards[0].name);
   await finishFlow(page);
   await toListing(page);
+
+  await page.locator(".dcard.all").click();
   const before = await settleListing(page);
   expect(before).toBeGreaterThan(0);
 
-  await page.evaluate(() => window.editCascade());
-  await expect(page.locator(".osh", { hasText: /Edit Agent/ })).toBeVisible();
-  await page.locator(".osdoor", { hasText: "Streaming services" }).click();
-  expect(await page.evaluate(() => onbStepKey)).toBe("services");
+  await page.locator("#navMenuBtn").click();
+  await page.locator("#navMenu .navitem", { hasText: "My services" }).click();
+  await expect(page.locator(".osh", { hasText: "My services" })).toBeVisible();
 
   await page.locator("#onbSvcOnly").click();
   await expect(page.locator("#onbSvcOnly")).toHaveClass(/on/);
-  await ctaLocator(page).click();   // Done, back to the Edit Agent hub
-  await expect(page.locator(".osh", { hasText: /Edit Agent/ })).toBeVisible();
-  await page.locator(".osfoot .oscta", { hasText: "Save agent" }).click();
+  await ctaLocator(page).click();   // Done, back to the listing
   await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
 
   const after = await settleListing(page);

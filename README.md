@@ -12,9 +12,12 @@ to **live AU data** the moment you add three free API keys.
   Chrome/Edge/Firefox/Safari). Filters, Cascades, and a "Simulate next daily poll"
   button that walks every film on your Found list one step along the release ladder
   (cinema → premium ~$30 → rent ~$7 → streaming) and fires the alerts each film's
-  Cascade asked for. Self-contained; data is embedded so it
-  needs no server. (Note: it will look empty in a sanitised inline *preview* that
-  strips JavaScript — that's the preview, not the file. A normal browser runs it.)
+  Cascade asked for. Data is embedded so it opens and works with no server at all;
+  when it IS served over http(s), it also polls `movies.json` at runtime (CAS-488)
+  so a tab left open stays live, falling back to the embedded copy the moment that
+  fetch is slow, blocked or offline. (Note: it will look empty in a sanitised inline
+  *preview* that strips JavaScript — that's the preview, not the file. A normal
+  browser runs it.)
 - `poc_pipeline.py` — the real backend loop: ingest → enrich → poll → derive → diff →
   alert, and it **regenerates index.html** with the latest data on every run.
 - `app_template.html` — the app with `__MOVIES_JSON__` / `__TODAY__` placeholders; the

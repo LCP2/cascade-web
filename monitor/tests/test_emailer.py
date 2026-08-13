@@ -2,19 +2,24 @@
 
 Run:  python -m unittest monitor.tests.test_emailer
 """
+import io
 import unittest
+import urllib.error
+from unittest import mock
 
 from monitor import render_digest, moment_phrase, digest_subject
+from monitor.emailer import USER_AGENT, send_via_resend
 from monitor.matching import Hit
 from monitor.transitions import Transition
 
 
-def _hit(title, moment, cascade, services=None, price=None, prior_window=None):
-    t = Transition(movie_id="1", title=title, moment=moment,
+def _hit(title, moment, cascade, services=None, price=None, prior_window=None,
+         movie_id="1", cascade_id="c1"):
+    t = Transition(movie_id=movie_id, title=title, moment=moment,
                    services=services or [], price=price, movie={})
     if prior_window is not None:
         t.prior_window = prior_window
-    return Hit(user_id="user-A", cascade_id="c1", cascade_name=cascade, transition=t)
+    return Hit(user_id="user-A", cascade_id=cascade_id, cascade_name=cascade, transition=t)
 
 
 class PhraseTests(unittest.TestCase):
@@ -62,7 +67,7 @@ class RenderTests(unittest.TestCase):
         for part in (d["html"], d["text"]):
             self.assertIn("Rent Riser", part)
             self.assertIn("Stream Arrival", part)
-            self.assertIn("Drama rentals", part)      # which Cascade caught it — now the section header
+            self.assertIn("Drama rentals", part)      # which Cascade caught it — named on the film itself
             self.assertIn("Comedy on Stan", part)
         self.assertIn("$6.99", d["html"])             # real price, real service
         self.assertIn("Now on Stan", d["html"])
@@ -80,17 +85,22 @@ class RenderTests(unittest.TestCase):
 
 
 class SectioningTests(unittest.TestCase):
+    """CAS-496: section headings were replaced by a per-film agent-name line (see AgentNamingTests)
+    — these check what survives that change."""
+
     def setUp(self):
         self.hits = [
-            _hit("Warfare", "hits_cinema", "Cinema date night", prior_window="upcoming"),
-            _hit("The Long Walk", "past_opening_weekend", "Cinema date night"),
-            _hit("Sinners", "hits_stream", "Everyday favourites", services=["Netflix"], prior_window="rental"),
+            _hit("Warfare", "hits_cinema", "Cinema date night", prior_window="upcoming", movie_id="w"),
+            _hit("The Long Walk", "past_opening_weekend", "Cinema date night", movie_id="tlw"),
+            _hit("Sinners", "hits_stream", "Everyday favourites", services=["Netflix"],
+                 prior_window="rental", movie_id="s"),
         ]
 
-    def test_sections_are_grouped_by_agent_alphabetically(self):
+    def test_films_appear_in_hit_order(self):
         d = render_digest(self.hits, site_url="https://example.test/app/")
         for part in (d["html"], d["text"]):
-            self.assertLess(part.index("Cinema date night"), part.index("Everyday favourites"))
+            self.assertLess(part.index("Warfare"), part.index("The Long Walk"))
+            self.assertLess(part.index("The Long Walk"), part.index("Sinners"))
 
     def test_no_per_line_found_by_tag(self):
         d = render_digest(self.hits, site_url="https://example.test/app/")
@@ -114,6 +124,83 @@ class SectioningTests(unittest.TestCase):
         d1 = render_digest(self.hits, site_url="https://example.test/app/")
         d2 = render_digest(self.hits, site_url="https://example.test/app/")
         self.assertEqual(d1, d2)
+
+
+class AgentNamingTests(unittest.TestCase):
+    """CAS-496: each film names the agent(s) that caught it, on the film itself."""
+
+    def test_one_agent_named_on_its_film(self):
+        d = render_digest([_hit("Warfare", "hits_cinema", "Cinema date night")],
+                           site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            self.assertIn("Warfare", part)
+            self.assertIn("Cinema date night", part)
+
+    def test_two_agents_on_the_same_film_show_it_once_naming_both(self):
+        hits = [
+            _hit("Sinners", "hits_stream", "Everyday favourites", services=["Netflix"]),
+            _hit("Sinners", "hits_stream", "Weekend picks", services=["Netflix"]),
+        ]
+        d = render_digest(hits, site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            self.assertEqual(part.count("Sinners"), 1)
+            self.assertIn("Everyday favourites", part)
+            self.assertIn("Weekend picks", part)
+
+    def test_watch_it_hit_reads_your_picks(self):
+        hit = _hit("Warfare", "hits_cinema", "Your picks", cascade_id=None)
+        d = render_digest([hit], site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            self.assertIn("Your picks", part)
+
+    def test_agent_and_watch_it_on_the_same_film_show_it_once_naming_both(self):
+        hits = [
+            _hit("Warfare", "hits_cinema", "Cinema date night"),
+            _hit("Warfare", "hits_cinema", "Your picks", cascade_id=None),
+        ]
+        d = render_digest(hits, site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            self.assertEqual(part.count("Warfare"), 1)
+            self.assertIn("Cinema date night", part)
+            self.assertIn("Your picks", part)
+
+    def test_different_moments_for_the_same_film_stay_separate(self):
+        # Two real, distinct events for the same film — never collapsed into one line.
+        hits = [
+            _hit("Warfare", "hits_cinema", "Cinema date night"),
+            _hit("Warfare", "hits_stream", "Everyday favourites", services=["Netflix"]),
+        ]
+        d = render_digest(hits, site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            self.assertEqual(part.count("Warfare"), 2)
+
+
+class SendViaResendTests(unittest.TestCase):
+    def test_request_carries_a_real_user_agent(self):
+        resp = mock.MagicMock()
+        resp.read.return_value = b'{"id": "abc"}'
+        resp.__enter__.return_value = resp
+        with mock.patch("urllib.request.urlopen", return_value=resp) as urlopen:
+            send_via_resend("to@example.test", "Subj", "<p>hi</p>", "hi", api_key="k")
+        req = urlopen.call_args[0][0]
+        self.assertEqual(req.get_header("User-agent"), USER_AGENT)
+        self.assertNotIn("python-urllib", req.get_header("User-agent").lower())
+
+    def test_http_error_reports_status_content_type_body_and_from_no_key(self):
+        err = urllib.error.HTTPError(
+            url="https://api.resend.com/emails", code=403, msg="Forbidden",
+            hdrs={"Content-Type": "text/html"}, fp=io.BytesIO(b"<html>blocked</html>"),
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            with self.assertRaises(RuntimeError) as ctx:
+                send_via_resend("to@example.test", "Subj", "<p>hi</p>", "hi",
+                                 api_key="super-secret-key", from_addr="Cascade <a@b.test>")
+        message = str(ctx.exception)
+        self.assertIn("403", message)
+        self.assertIn("text/html", message)
+        self.assertIn("blocked", message)
+        self.assertIn("a@b.test", message)
+        self.assertNotIn("super-secret-key", message)
 
 
 if __name__ == "__main__":

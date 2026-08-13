@@ -15,6 +15,11 @@ Interface:
   fetch_user_email(user_id) -> str | None
   fetch_notify_prefs() -> {user_id: {in_app, email_on, email_address, excluded_moments}}  # CAS-185
   fetch_picks() -> [{user_id, movie_id, state}]                                           # CAS-185
+  fetch_push_tokens() -> {user_id: [device_token, ...]}                                   # CAS-465
+  fetch_unread_counts() -> {user_id: int}                                                 # CAS-465
+  fetch_film_watches() -> [{user_id, movie_id, windows}]                                  # CAS-484
+  fetch_watch_notification_keys() -> set[(user_id, movie_id, moment)]  # de-dupe, null-cascade rows
+  delete_notifications_for_movie_ids(ids) -> int          # CAS-486: fixture-range-only, for notify-test
 """
 from __future__ import annotations
 
@@ -27,16 +32,38 @@ import urllib.request
 SUPABASE_URL_ENV = "SUPABASE_URL"
 SERVICE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
 
+# CAS-486: the reserved tmdb_id range for the notify-test harness's fixture films (see
+# tests/fixtures/notify-films.json). Hard-coded here, not read from any workflow input, so
+# delete_notifications_for_movie_ids below can never be widened to touch a real movie_id no
+# matter what a caller passes it.
+FIXTURE_ID_MIN = 999000001
+FIXTURE_ID_MAX = 999000999
+
+
+def _fixture_ids_only(movie_ids) -> list:
+    out = []
+    for i in movie_ids:
+        try:
+            n = int(i)
+        except (TypeError, ValueError):
+            continue
+        if FIXTURE_ID_MIN <= n <= FIXTURE_ID_MAX:
+            out.append(str(n))
+    return out
+
 
 class InMemoryStore:
     """A store backed by plain Python lists — used for dry-run and tests."""
 
-    def __init__(self, cascades=None, notifications=None, emails=None, prefs=None, picks=None):
+    def __init__(self, cascades=None, notifications=None, emails=None, prefs=None, picks=None,
+                 push_tokens=None, watches=None):
         self._cascades = list(cascades or [])
         self._notifications = list(notifications or [])
         self._emails = dict(emails or {})
         self._prefs = dict(prefs or {})
         self._picks = list(picks or [])
+        self._push_tokens = list(push_tokens or [])
+        self._watches = list(watches or [])
 
     def fetch_active_cascades(self) -> list:
         return [c for c in self._cascades if c.get("active", True)]
@@ -57,6 +84,41 @@ class InMemoryStore:
 
     def fetch_picks(self) -> list:
         return list(self._picks)
+
+    def fetch_push_tokens(self) -> dict:
+        out: dict = {}
+        for r in self._push_tokens:
+            out.setdefault(str(r.get("user_id")), []).append(r.get("device_token"))
+        return out
+
+    def fetch_unread_counts(self) -> dict:
+        out: dict = {}
+        for n in self._notifications:
+            if n.get("read_at"):
+                continue
+            uid = str(n.get("user_id"))
+            out[uid] = out.get(uid, 0) + 1
+        return out
+
+    def fetch_film_watches(self) -> list:
+        return list(self._watches)
+
+    def fetch_watch_notification_keys(self) -> set:
+        return {(str(n.get("user_id")), str(n.get("movie_id")), n.get("moment"))
+                for n in self._notifications if n.get("cascade_id") is None}
+
+    def delete_notifications_for_movie_ids(self, movie_ids) -> int:
+        """CAS-486: repeatability for the notify-test harness — a fixture scenario must be able
+        to run again immediately, which means the previous run's ledger rows for those SAME
+        fixture films need to be gone first. `movie_ids` is re-filtered to the reserved fixture
+        range here, independently of whatever the caller already checked, so this can never
+        delete a real notification even if a future caller forgets its own check."""
+        ids = set(_fixture_ids_only(movie_ids))
+        if not ids:
+            return 0
+        before = len(self._notifications)
+        self._notifications = [n for n in self._notifications if str(n.get("movie_id")) not in ids]
+        return before - len(self._notifications)
 
 
 class SupabaseStore:
@@ -100,6 +162,37 @@ class SupabaseStore:
         see matching.suppressed_pairs — but both are fetched so the caller does the deciding."""
         return self._get("/film_picks?select=user_id,movie_id,state")
 
+    def fetch_push_tokens(self) -> dict:
+        """user_id -> the user's live device tokens (CAS-465), read with service_role (bypasses
+        RLS, same convention as fetch_active_cascades)."""
+        rows = self._get("/push_tokens?select=user_id,device_token")
+        out: dict = {}
+        for r in rows:
+            out.setdefault(str(r.get("user_id")), []).append(r.get("device_token"))
+        return out
+
+    def fetch_unread_counts(self) -> dict:
+        """user_id -> count of unread notifications rows — the same number the in-app bell
+        badge shows, so a push's badge field can never disagree with it (CAS-465)."""
+        rows = self._get("/notifications?read_at=is.null&select=user_id")
+        out: dict = {}
+        for r in rows:
+            uid = str(r.get("user_id"))
+            out[uid] = out.get(uid, 0) + 1
+        return out
+
+    def fetch_film_watches(self) -> list:
+        """Every user's per-film Watch-it ticks (CAS-484): {user_id, movie_id, windows}."""
+        return self._get("/film_watch?select=user_id,movie_id,windows")
+
+    def fetch_watch_notification_keys(self) -> set:
+        """(user_id, movie_id, moment) already delivered via the per-film-watch path — the rows in
+        `notifications` with no owning cascade. Kept apart from fetch_notification_keys() because
+        a null cascade_id does not, by itself, de-dupe across users the way a real one does (see
+        matching.match_film_watches)."""
+        rows = self._get("/notifications?cascade_id=is.null&select=user_id,movie_id,moment")
+        return {(str(r.get("user_id")), str(r.get("movie_id")), r.get("moment")) for r in rows}
+
     def fetch_user_email(self, user_id: str):
         """Resolve a user_id to their email via the Auth admin API (service_role only).
         Returns None if it can't be found."""
@@ -128,6 +221,28 @@ class SupabaseStore:
         )
         with urllib.request.urlopen(req, timeout=self._timeout):
             return len(rows)
+
+    def delete_notifications_for_movie_ids(self, movie_ids) -> int:
+        """CAS-486: DELETE ledger rows for the notify-test harness's fixture films only. `movie_ids`
+        is re-filtered to the reserved fixture range (FIXTURE_ID_MIN..FIXTURE_ID_MAX) here, not
+        trusted from the caller — the filtered ids are baked into the PostgREST filter itself, never
+        a raw workflow input, so a malformed/hostile value passed in can only ever shrink the set to
+        nothing, never widen it to a real movie_id."""
+        ids = _fixture_ids_only(movie_ids)
+        if not ids:
+            return 0
+        quoted = ",".join(ids)
+        req = urllib.request.Request(
+            self._base + f"/notifications?movie_id=in.({quoted})",
+            headers=self._headers({"Prefer": "return=representation"}),
+            method="DELETE",
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            body = resp.read().decode("utf-8")
+        try:
+            return len(json.loads(body))
+        except (json.JSONDecodeError, TypeError):
+            return 0
 
 
 def store_from_env(env=None):

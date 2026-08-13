@@ -17,6 +17,12 @@
 # CAS-462: once the 5 jobs below are green, mark-on-staging tells Jira the shipped tickets
 # reached the "On Staging" checkpoint — that status previously had zero issues ever, because
 # nothing transitioned to it; promote.yml's ci/close_shipped.py jumped tickets straight to Done.
+#
+# CAS-482: the symmetric failure path. Each of the 5 jobs below now tees its test output to a
+# log file and, on failure, greps the first recognisable failure line into a small artifact.
+# on-failure (bottom of this file) collects those artifacts once any job goes red, and calls
+# ci/mark_qa_failed.py to comment on the ticket, requeue it to Ready for Dev, and re-add
+# needs-cc-web — closing the loop mark-on-staging only closed for the success case.
 name: qa
 
 on:
@@ -61,7 +67,22 @@ jobs:
               exit 1
             fi
             echo "index.html differs only by its build stamp / daily date, which is expected."
-          fi
+          fi 2>&1 | tee build-check.log
+
+      - name: Capture failure detail
+        if: failure()
+        run: |
+          mkdir -p qa-failures
+          (grep -m1 -E '::error::|FAILED|Error:' build-check.log || tail -5 build-check.log) \
+            > qa-failures/build-check.txt
+
+      - name: Upload failure detail
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-failure-build-check
+          path: qa-failures/build-check.txt
+          retention-days: 7
 
   # Reads the freshly built index.html (its own build, not build-check's — see header note).
   engine:
@@ -79,7 +100,22 @@ jobs:
       - run: python poc_pipeline.py --build-html
 
       - name: Engine invariants + data integrity
-        run: npm run test:engine
+        run: npm run test:engine 2>&1 | tee engine.log
+
+      - name: Capture failure detail
+        if: failure()
+        run: |
+          mkdir -p qa-failures
+          (grep -m1 -E 'not ok|AssertionError|Error:' engine.log || tail -5 engine.log) \
+            > qa-failures/engine.txt
+
+      - name: Upload failure detail
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-failure-engine
+          path: qa-failures/engine.txt
+          retention-days: 7
 
   # movies.json is a committed catalogue file, not a build output, so this needs no build step.
   #
@@ -101,11 +137,26 @@ jobs:
 
       - name: Pipeline invariants
         run: |
-          python -m unittest discover -s tests -p "test_monotonic_status.py"
-          python -m unittest discover -s tests -p "test_pipeline_resilience.py"
+          python -m unittest discover -s tests -p "test_monotonic_status.py" 2>&1 | tee data.log
+          python -m unittest discover -s tests -p "test_pipeline_resilience.py" 2>&1 | tee -a data.log
 
       - name: Catalogue data quality (blocking app-breakers; rest report-only)
-        run: python -m tests.run_data_quality
+        run: python -m tests.run_data_quality 2>&1 | tee -a data.log
+
+      - name: Capture failure detail
+        if: failure()
+        run: |
+          mkdir -p qa-failures
+          (grep -m1 -E 'FAIL:|ERROR:|AssertionError' data.log || tail -5 data.log) \
+            > qa-failures/data.txt
+
+      - name: Upload failure detail
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-failure-data
+          path: qa-failures/data.txt
+          retention-days: 7
 
   # Also reads movies.json straight from the checkout — no build step needed here either.
   monitor:
@@ -119,8 +170,23 @@ jobs:
 
       - name: Monitor
         run: |
-          python -m unittest discover -s monitor/tests
-          python -m monitor --dry-run
+          python -m unittest discover -s monitor/tests 2>&1 | tee monitor.log
+          python -m monitor --dry-run 2>&1 | tee -a monitor.log
+
+      - name: Capture failure detail
+        if: failure()
+        run: |
+          mkdir -p qa-failures
+          (grep -m1 -E 'FAIL:|ERROR:|AssertionError' monitor.log || tail -5 monitor.log) \
+            > qa-failures/monitor.txt
+
+      - name: Upload failure detail
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-failure-monitor
+          path: qa-failures/monitor.txt
+          retention-days: 7
 
   e2e:
     runs-on: ubuntu-latest
@@ -157,7 +223,7 @@ jobs:
         run: npx playwright install-deps chromium
 
       - name: End to end (smoke gate)
-        run: npx playwright test tests/e2e/smoke.spec.mjs
+        run: npx playwright test tests/e2e/smoke.spec.mjs 2>&1 | tee e2e.log
 
       - name: Keep the report when it goes red
         if: failure()
@@ -165,6 +231,21 @@ jobs:
         with:
           name: playwright-report
           path: playwright-report/
+          retention-days: 7
+
+      - name: Capture failure detail
+        if: failure()
+        run: |
+          mkdir -p qa-failures
+          (grep -m1 -E '✘|[0-9]+\) .+ › ' e2e.log || tail -5 e2e.log) \
+            > qa-failures/e2e.txt
+
+      - name: Upload failure detail
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-failure-e2e
+          path: qa-failures/e2e.txt
           retention-days: 7
 
   # CAS-462: Jira checkpoint only — no build artefact depends on this, so it runs after the
@@ -189,3 +270,68 @@ jobs:
           RANGE_FROM: ${{ github.event.before }}
           RANGE_TO:   ${{ github.sha }}
         run: python ci/mark_on_staging.py
+
+  # CAS-482: the failure-path mirror of mark-on-staging above. `if: failure()` on a job whose
+  # `needs` list is the same 5 QA jobs runs exactly when at least one of them went red — GitHub's
+  # default failure propagation. Each QA job already uploaded a qa-failure-<job> artifact with its
+  # first failing line (see the "Capture failure detail" steps above) if it failed.
+  on-failure:
+    needs: [build-check, engine, data, monitor, e2e]
+    if: failure()
+    # download-artifact's `pattern` option lists this run's artifacts via the Actions API, which
+    # needs actions:read — the top-level `permissions:` block above restricts every other scope to
+    # none, so this job (only) needs its own grant.
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download failure detail artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: qa-failure-*
+          path: qa-failures
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Determine failed job(s) + first failure detail
+        env:
+          BUILD_CHECK: ${{ needs.build-check.result }}
+          ENGINE:      ${{ needs.engine.result }}
+          DATA:        ${{ needs.data.result }}
+          MONITOR:     ${{ needs.monitor.result }}
+          E2E:         ${{ needs.e2e.result }}
+        run: |
+          FAILED=""
+          DETAIL=""
+          for pair in "build-check:$BUILD_CHECK" "engine:$ENGINE" "data:$DATA" "monitor:$MONITOR" "e2e:$E2E"; do
+            name="${pair%%:*}"; result="${pair##*:}"
+            if [ "$result" = "failure" ]; then
+              FAILED="${FAILED:+$FAILED, }$name"
+              if [ -z "$DETAIL" ] && [ -f "qa-failures/${name}.txt" ]; then
+                DETAIL=$(head -1 "qa-failures/${name}.txt")
+              fi
+            fi
+          done
+          echo "FAILED_JOBS=${FAILED:-(unknown)}" >> "$GITHUB_ENV"
+          echo "FAILURE_DETAIL=${DETAIL:-(no failure detail captured)}" >> "$GITHUB_ENV"
+
+      - name: Report failure + requeue the ticket
+        env:
+          JIRA_BASE_URL:  ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL:     ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          RANGE_FROM: ${{ github.event.before }}
+          RANGE_TO:   ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FAILED_JOBS: ${{ env.FAILED_JOBS }}
+          FAILURE_DETAIL: ${{ env.FAILURE_DETAIL }}
+        run: python ci/mark_qa_failed.py

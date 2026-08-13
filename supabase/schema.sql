@@ -2,7 +2,7 @@
 -- Source of truth: Confluence "Cascade Web — Architecture & CC Build Spec" §3.
 -- Apply this in the Supabase SQL editor (see supabase/README.md). Safe to re-run.
 --
--- Eight tables:
+-- Ten tables:
 --   cascades      — one row per saved agent, per user (the user owns their rows via RLS).
 --   user_prefs    — the account-level defaults a NEW agent starts from, plus the services the
 --                   user actually pays for. CAS-211.
@@ -12,6 +12,9 @@
 --                   have muted everywhere. CAS-185.
 --   film_picks    — one row per (user, film) the user has hand-added or hand-removed from
 --                   their Found list. An "off" here outranks their own Cascade. CAS-185.
+--   film_watch    — one row per (user, film) carrying the set of windows the user's per-film
+--                   "Watch it" control has ticked. A real, independent notification source —
+--                   the daily job fires on it whether or not any agent's own bell is on. CAS-484.
 --   lists         — one row per user-curated collection (name only). Manual, not criteria-driven
 --                   — the opposite of a cascade. CAS-428.
 --   list_films    — one row per (user, film, list): a film can sit in several lists at once, so
@@ -20,6 +23,9 @@
 --                   service_role key (which bypasses RLS) and de-dupes against it so the
 --                   same (cascade, movie, moment) is never delivered twice. The app reads
 --                   its own rows back to fill the 🔔 bell.
+--   push_tokens   — one row per (user, device) APNs token, registered on sign-in/re-registration.
+--                   The monitor (service_role) reads it to know where to push; the user manages
+--                   only their own rows. CAS-464.
 
 -- gen_random_uuid() lives in pgcrypto. It is pre-installed on Supabase, but declaring the
 -- dependency keeps this file self-contained and portable to a plain Postgres.
@@ -166,6 +172,32 @@ create policy film_picks_owner on public.film_picks
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
+-- film_watch — real per-film "Watch it" alerts (CAS-484)
+-- ---------------------------------------------------------------------------
+-- One row per (user, film): the set of windows (in_cinema | premium | rent | stream) the user has
+-- explicitly ticked on that film's Watch-it control. Its own table, not a column on film_picks —
+-- that table's `state` is a CHECK'd 'mine'/'off' with a different meaning ("hide this film from
+-- Found"), where this is "tell me when this film reaches X", an independent choice (CAS-434's
+-- honesty guardrail: only an explicit tick ever lands a row here, never the agent's own config).
+-- The monitor's match_film_watches() (matching.py) reads this as a SECOND, agent-independent
+-- source of hits alongside a Cascade's own alert_moments — it fires whether or not any agent's
+-- bell for that window is on. A row with an empty `windows` array is deleted rather than kept
+-- (mirrors film_picks/user_films: "no ticks" is the absence of a row, not a row saying so).
+create table if not exists public.film_watch (
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  movie_id   text not null,
+  windows    text[] not null default '{}',
+  updated_at timestamptz not null default now(),
+  primary key (user_id, movie_id)
+);
+
+alter table public.film_watch enable row level security;
+
+drop policy if exists film_watch_owner on public.film_watch;
+create policy film_watch_owner on public.film_watch
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ---------------------------------------------------------------------------
 -- lists — a user's own hand-picked collections (CAS-428)
 -- ---------------------------------------------------------------------------
 -- Same small-row-per-item shape as cascades, but deliberately not jsonb: a list is just a name,
@@ -251,6 +283,34 @@ create policy notifications_mark_read on public.notifications
 create index if not exists notifications_user_id_idx on public.notifications (user_id);
 
 -- ---------------------------------------------------------------------------
+-- push_tokens — one row per (user, device) APNs token (CAS-464)
+-- ---------------------------------------------------------------------------
+-- Registered by CAS-463's sign-in/re-registration flow, read by the monitor (CAS-465) to
+-- know who/where to push. platform is constrained to 'ios' because that is the only app
+-- shell this repo builds today (CAS-453); widen the check when a second platform ships.
+-- unique(user_id, device_token) doubles as the user_id lookup index, same reasoning as
+-- user_films above, so no separate index is added.
+create table if not exists public.push_tokens (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references auth.users(id) on delete cascade,
+  device_token  text not null,
+  platform      text not null default 'ios' check (platform in ('ios')),
+  app_version   text,
+  created_at    timestamptz not null default now(),
+  last_seen_at  timestamptz not null default now(),
+  unique (user_id, device_token)
+);
+
+alter table public.push_tokens enable row level security;
+
+-- A user can read and write only their own tokens (insert/update/delete on sign-in,
+-- sign-out, re-registration). The monitor's service_role key bypasses RLS for delivery
+-- reads, same convention as notifications — no separate policy needed for it.
+drop policy if exists push_tokens_owner on public.push_tokens;
+create policy push_tokens_owner on public.push_tokens
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ---------------------------------------------------------------------------
 -- keep cascades.updated_at honest on every write
 -- ---------------------------------------------------------------------------
 create or replace function public.set_updated_at()
@@ -281,6 +341,11 @@ create trigger notify_prefs_set_updated_at
 drop trigger if exists film_picks_set_updated_at on public.film_picks;
 create trigger film_picks_set_updated_at
   before update on public.film_picks
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists film_watch_set_updated_at on public.film_watch;
+create trigger film_watch_set_updated_at
+  before update on public.film_watch
   for each row execute function public.set_updated_at();
 
 drop trigger if exists user_prefs_set_updated_at on public.user_prefs;

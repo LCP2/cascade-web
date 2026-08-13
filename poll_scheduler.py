@@ -36,7 +36,14 @@ OFFSET_FLOORS = {"pvod": 21, "rental": 45, "included_streaming": 75}
 # still hold a film in the estimated in_cinema window for 21+ days, which is longer than "likely still in
 # cinemas" should ever claim without a real offer to back it up. This is a second, independent ceiling on
 # the SAME window, not a replacement for the floor above.
-CINEMA_ESTIMATE_CAP_DAYS = 14
+# CAS-476: the original 14-day cap was too short for a real wide release — Toy Story 5 and The Odyssey were
+# both still genuinely in cinemas past it (55 and 27 days respectively) with zero offers to confirm against,
+# and app_template.html's twin of this constant then filed them onto "pvod" anyway, which is unshowable
+# without a real offer — so the film vanished rather than moving to a visible next window. Raised to match
+# DEFAULT_OFFSETS["pvod"] (75 days), the same median cinema-to-pvod gap already trusted for this exact
+# question elsewhere in this module, which comfortably covers both real titles and keeps this ceiling
+# stricter than the eventual pvod/rental/streaming ladder it feeds into.
+CINEMA_ESTIMATE_CAP_DAYS = 75
 
 
 def _date(s):
@@ -47,9 +54,18 @@ def cinema_date(m): return _date(m.get("cinema_date"))
 
 
 def classify_tier(m, today):
+    """CAS-472: `st == {"upcoming"}` alone used to also mean "none", so a title that fell all the
+    way back to upcoming (a real AU-delisting, offer-less catalogue drift, or the CAS-472 bug
+    itself) stayed poll_tier "none" forever afterward — the branch that writes that status is
+    the ONLY thing gated on this tier, so nothing ever polled it again to find out it had moved
+    on. Only a cinema_date genuinely unknown-or-still-ahead may skip polling; once it is known
+    and has passed, the title is always active/slow, never none, regardless of what `status`
+    currently holds."""
     st = set(m.get("status", []))
     c = cinema_date(m)
-    if (c and c > today) or st == {"upcoming"}:
+    if c and c > today:
+        return "none"
+    if c is None and st == {"upcoming"}:
         return "none"
     recent = bool(c and 0 <= (today - c).days <= SIX_MONTHS)
     if (st & ACTIVE_WINDOW) or recent:
