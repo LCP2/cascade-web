@@ -235,18 +235,29 @@ def main(argv=None) -> int:
             print(f"[monitor] {user_id}: every matching agent has its channels off — nothing sent or written.")
             continue
 
+        # CAS-493: channels are independent — a failed send on one must not stop the others, so a
+        # failure here is a logged outcome for THIS channel only, never a `continue` that skips the
+        # in-app/push delivery and the ledger write still owed to this user.
+        email_ok = False
         if mailable:
             digest = render_digest(mailable)      # the email says only what the email is delivering
             try:
                 send_via_resend(email, digest["subject"], digest["html"], digest["text"])
+                email_ok = True
+                sent += 1
+                print(f"[monitor] {user_id}: email channel — sent ({len(mailable)} alert(s)).")
             except Exception as err:  # noqa: BLE001 — never let one bad send abort the run
-                print(f"[monitor] send failed for {user_id}: {err} — ledger not written, will retry.")
-                continue
-            sent += 1
-        if appable and not mailable:
-            inapp += 1
-        # One row per hit that WAS delivered, by either channel, and never one for a hit that was not.
-        delivered = {id(h): h for h in mailable}
+                print(f"[monitor] {user_id}: email channel — failed: {err} — ledger not written for "
+                      "it, will retry; in-app/push are unaffected.")
+        if appable:
+            print(f"[monitor] {user_id}: in-app channel — delivered ({len(appable)} alert(s)).")
+            if not email_ok:
+                inapp += 1
+        # One row per hit that WAS delivered, by either channel, and never one for a hit whose only
+        # offered channel(s) all failed — that's what keeps a failed channel retried next run.
+        delivered = {}
+        if email_ok:
+            delivered.update({id(h): h for h in mailable})
         delivered.update({id(h): h for h in appable})
         # CAS-465: sent before the ledger insert below (same send-before-ledger ordering as email),
         # to every registered device, one push per hit. Badge = what the bell badge will read once
