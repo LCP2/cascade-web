@@ -3700,7 +3700,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 469, "commit": "10bc0ee", "builtAt": "2026-08-13T05:03:05Z"};
+const BUILD_INFO = {"version": "0.8.5", "major": 0, "minor": 8, "patch": 5, "build": 470, "commit": "d69e17b", "builtAt": "2026-08-13T05:21:25Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -3848,6 +3848,12 @@ function myService(o){
   return false;
 }
 function matchesServices(m, w){
+  // CAS-491: a fixture film (?fixtures=1) is test data, not a real offer — the my-services scope exists to
+  // judge what YOU can watch, and that question has no honest answer for a title nobody actually streams.
+  // Scoping it anyway made the harness's own films the one thing it couldn't reach without the tester
+  // changing their real services, which defeats the harness. Isolation from genuine agent matching (CAS-486)
+  // is untouched — this only lifts the SERVICES filter, never the taste/criteria one.
+  if(m._fixture) return true;
   const o=m.offers||[];
   if(!o.length) return true;                 // in cinema / upcoming — always visible
   // CAS-342: scoped to a specific window, "on your services" has to mean an offer that actually BELONGS to
@@ -4887,7 +4893,7 @@ function cardHTML(m, markNew=false){
   const id=m.tmdb_id;
   // CAS-110: an estimated title shows no offers and no prices — see savingsHTML.
   let offers=isEstimated(m) ? [] : dedupOffers(m.offers);
-  if(prefsActive()) offers=offers.filter(myService);
+  if(prefsActive() && !m._fixture) offers=offers.filter(myService);   // CAS-491: see matchesServices
   // CAS-285: the per-title provider credit is gone from the card. The attribution is REQUIRED but it is not
   // information about the film, and repeating it under every "where to watch" list on a 2,000-card listing
   // is the same sentence a thousand times. It is stated once, in About & credits, which is where TMDB's own
