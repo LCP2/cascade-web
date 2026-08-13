@@ -2971,8 +2971,10 @@
 </div>
 
 <script>
-const MOVIES = __MOVIES_JSON__;
-const TODAY  = "__TODAY__";
+// CAS-488: both baked in at build time, but no longer immutable — a live tab swaps the catalogue and its
+// build date in underneath itself (see pollCatalogue, near REAL_TODAY below), so both must stay reassignable.
+let MOVIES = __MOVIES_JSON__;
+let TODAY  = "__TODAY__";
 const DEFAULT_TITLE = document.title;   // CAS-437: restored when the film page closes
 
 const PVOD_MIN = 19.99, RENTAL_MAX = 9.99, OPENING_WEEK_DAYS = 7;
@@ -5667,7 +5669,7 @@ function mlRowHTML(m, groupKey){
 // It is NOT the film's release date and it is NOT a guess: it's the day Cascade actually picked it up for you.
 // An entry is dropped when the film leaves the list, so a film that is later found again is honestly new again.
 const NEW_DAYS = 7;                                     // what "this week" means. One dial, in one place.
-const REAL_TODAY = new Date().toISOString().slice(0,10);   // when YOU are looking, not the catalogue's build date
+let REAL_TODAY = new Date().toISOString().slice(0,10);   // when YOU are looking, not the catalogue's build date
 const FIRST_KEY = "cascade_first_found";
 function loadFirstFound(){
   try{ const o=JSON.parse(localStorage.getItem(FIRST_KEY)||"{}");
@@ -5697,6 +5699,49 @@ function isRecent(m){
   const key=CUR_WINDOW_DATE_KEY[primaryStatus(m)];
   const d=key && m.window_dates && m.window_dates[key];
   return !!d && daysSince(d) < NEW_DAYS;
+}
+
+// ---- CAS-488: runtime catalogue refresh -----------------------------------------------------
+// MOVIES/TODAY above ship baked at build time so first paint needs no network — but a tab left open for
+// hours (or days) would otherwise never see a film added, a status change, or a glow recompute. movies.json
+// is the exact payload the build reads, already served next to index.html (same origin, no new publishing
+// step). {cache:"no-cache"} forces a real conditional request every poll instead of trusting the browser's
+// own freshness window — GitHub Pages already answers those with a 304 when nothing changed, so an
+// unchanged poll costs a round trip of headers, not the ~11MB body (verified against the live URL).
+let catalogueEtag = null, cataloguePolling = false;
+// Applied only when nothing is mid-interaction. Every modal/full-screen panel/onboarding step/filmpage sets
+// document.body.style.overflow="hidden" while open (openModal and its siblings all share that convention);
+// the bell drawer doesn't, so it's checked separately; and a per-card Watch/Notify/Lists popup or the
+// deck's own filter panel (.cpop) lives INSIDE the very DOM render() rebuilds. Landing a full listing
+// rebuild under any of those would close it, or worse, corrupt it mid-tap. Deferring costs nothing — the
+// data below still updates immediately regardless, so the very next quiet poll (or the next return to the
+// tab) paints it in; the tab is never more than one heartbeat stale, and never needs a hand refresh.
+const catalogueUIBusy = () => document.body.style.overflow==="hidden"
+  || $("drawer").classList.contains("open")
+  || !!document.querySelector(".cpop");
+async function pollCatalogue(){
+  if(cataloguePolling) return;
+  cataloguePolling = true;
+  try{
+    let res;
+    try{ res = await fetch("movies.json", {cache:"no-cache"}); }
+    catch(e){ return; }                        // offline or blocked — the baked/last-known catalogue keeps serving
+    if(!res.ok) return;
+    const etag = res.headers.get("etag");
+    if(etag && etag===catalogueEtag) return;    // unchanged — skip parsing an ~11MB body for nothing
+    let payload;
+    try{ payload = await res.json(); }catch(e){ return; }
+    if(!Array.isArray(payload.movies)) return;
+    catalogueEtag = etag;
+    MOVIES = payload.movies;
+    // TODAY tracks the catalogue's own build date; the header's "Updated <date>" label reads it directly
+    // and isn't part of render()'s rebuild, so it's kept honest here — unconditionally, since a one-line
+    // text write can never disturb an open modal/drawer/popup the way a full listing rebuild could.
+    if(payload.generated){ TODAY = payload.generated; $("updated").textContent = "Updated " + fmtDate(TODAY); }
+    REAL_TODAY = new Date().toISOString().slice(0,10);  // REAL_TODAY tracks the clock, independently of the data
+    recomputeFound();                                   // data is live now regardless of whether we paint it
+    if(!catalogueUIBusy()) render();
+  } finally { cataloguePolling = false; }
 }
 
 // ---- "Newly added" (CAS-447) — a catalogue fact, not an agent one ---------------
@@ -13701,6 +13746,9 @@ else if(dedupedN)
   // device is in flight or queued, so a reconcile pull can never land on top of an edit that hasn't
   // reached the account yet and read as if it had been undone.
   function reconcileOnReturn(){
+    // CAS-488: guest-safe, unlike every account-sync call below — a signed-out tab still deserves a live
+    // catalogue, so this runs unconditionally rather than behind the accountActive() gate.
+    pollCatalogue();
     if(!accountActive()) return;
     if(!syncing && !syncTimer) reconcileCascades();
     if(!filmSyncing && !filmTimer) reconcileFilms();
@@ -14103,7 +14151,9 @@ else if(dedupedN)
                                 // CAS-487: the return-to-tab entry point itself, so the bell's own refresh
                                 // can be exercised the same way — without waiting on a real
                                 // focus/visibilitychange event.
-                                reconcileOnReturn };
+                                reconcileOnReturn,
+                                // CAS-488: the catalogue-refresh seam and its busy-check, exposed the same way.
+                                pollCatalogue, catalogueUIBusy };
 })();
 </script>
 
