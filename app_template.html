@@ -13682,18 +13682,18 @@ else if(dedupedN)
     if(acct() && acct().status==="signed-in" && owner){
       if(owner !== currentUser){
         currentUser = owner;
-        loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount();
+        loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount(); loadFilmWatches();
       }
     } else if(currentUser !== null){
       // Signed out → back to the on-device set, and the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestLists(); realAlerts=[]; updateBadge();
-      cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null;
+      cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
     }
   });
   // If a session was already restored before this listener attached, adopt it now.
   if(accountActive()){
     currentUser = uid();
-    loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount();
+    loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount(); loadFilmWatches();
   }
   // CAS-408: two devices only converge without a live subscription if SOMETHING re-pulls the account
   // — sign-in alone left a device that never signs out again permanently stuck on whatever it saw at
@@ -13705,6 +13705,7 @@ else if(dedupedN)
     if(!syncing && !syncTimer) reconcileCascades();
     if(!filmSyncing && !filmTimer) reconcileFilms();
     if(!listsSyncing && !listsTimer){ reconcileLists(); reconcileListMembership(); }
+    if(!watchSyncing && !watchTimer) reconcileFilmWatches();
   }
   window.addEventListener("focus", reconcileOnReturn);
   document.addEventListener("visibilitychange", () => {
@@ -13881,6 +13882,91 @@ else if(dedupedN)
     notifyPrefs.email   = row.email_address || "";
     saveNotifyPrefs();
   }
+
+  // ==========================================================================
+  // CAS-484: per-film "Watch it" ticks (notify[id].wins) -> film_watch, a real, agent-independent
+  // notification source. Same debounced-upsert + private-baseline-diff shape as user_films above —
+  // and unlike film_picks, this DOES need a load-back (a tick made on the phone must show on the
+  // web), so it also mirrors user_films' load/reconcile pair rather than film_picks' one-way push.
+  // Only the four Watch-panel rungs (WATCH_LEVEL_KEYS) are ever synced — the Watch control has
+  // carried no sub-tiers since CAS-435, so `wins` never holds anything else.
+  // ==========================================================================
+  function watchRows(){
+    const owner=uid(), out=[];
+    for(const id in notify){
+      const e=notify[id]||{};
+      const windows=WATCH_LEVEL_KEYS.filter(k=>(e.wins||{})[k]);
+      if(windows.length) out.push({user_id:owner, movie_id:String(id), windows});
+    }
+    return out;
+  }
+  // Replaces exactly the four known rungs on each affected film's `wins` — every other field on
+  // the notify entry (source, cascadeIds, pinnedTo, muted, streamTier…) is untouched, and a film
+  // with no row in `rows` is left alone rather than cleared, so a tick this device hasn't pushed
+  // yet is never wiped out from under it.
+  function applyWatchRows(rows){
+    (rows||[]).forEach(r=>{
+      const id=Number(r.movie_id); if(!isFinite(id)) return;
+      const e=entryFor(id);
+      e.wins=e.wins||{};
+      WATCH_LEVEL_KEYS.forEach(k=>{ e.wins[k]=(r.windows||[]).includes(k); });
+    });
+    recomputeFound();
+    if(typeof render==="function") render();
+  }
+  let watchTimer=null, watchSyncing=false, watchAgain=false;
+  let watchBaseline=null;   // CAS-408: same private-baseline diff as filmBaseline above
+  function scheduleWatchSync(){ clearTimeout(watchTimer); watchTimer=setTimeout(runWatchSync, 500); }
+  async function runWatchSync(){
+    if(!accountActive()) return;
+    if(watchSyncing){ watchAgain=true; return; }
+    watchSyncing=true;
+    try{ await syncWatchesToAccount(); }
+    catch(err){ console.warn("Cascade: watch sync failed", err); }
+    finally{ watchSyncing=false; if(watchAgain){ watchAgain=false; scheduleWatchSync(); } }
+  }
+  async function syncWatchesToAccount(){
+    const c=client(), owner=uid(); if(!c||!owner) return;
+    const rows=watchRows();
+    if(rows.length){
+      const { error } = await c.from("film_watch").upsert(rows, { onConflict:"user_id,movie_id" });
+      if(error){ console.warn("film_watch upsert", error); return; }
+    }
+    // CAS-408: delete only ids THIS device's watch ticks dropped out of its own baseline (every
+    // window on that film untouched) — never every id the account has that this device hasn't
+    // loaded yet.
+    const ids=new Set(rows.map(r=>r.movie_id));
+    if(watchBaseline){
+      const gone=[...watchBaseline].filter(id=>!ids.has(id));
+      if(gone.length){
+        const { error } = await c.from("film_watch").delete().eq("user_id", owner).in("movie_id", gone);
+        if(error){ console.warn("film_watch delete", error); return; }
+      }
+    }
+    watchBaseline=ids;
+  }
+  async function loadFilmWatches(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("film_watch").select("movie_id,windows");
+    if(error){ console.warn("film_watch load", error); return; }
+    const remote=data||[];
+    applyWatchRows(remote);
+    watchBaseline=new Set(remote.map(r=>String(r.movie_id)));
+  }
+  // CAS-408-style background convergence, mirroring reconcileFilms — remote is the union of every
+  // device's ticks, so it can just be re-applied; a not-yet-pushed local tick survives because it
+  // is unioned back in as `localOnly` before applying.
+  async function reconcileFilmWatches(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("film_watch").select("movie_id,windows");
+    if(error){ console.warn("film_watch reconcile", error); return; }
+    const remote=data||[];
+    const remoteIds=new Set(remote.map(r=>String(r.movie_id)));
+    const localOnly=watchRows().filter(r=>!remoteIds.has(String(r.movie_id)));
+    applyWatchRows([...remote, ...localOnly]);
+    watchBaseline=remoteIds;
+  }
+
   // The bell's real contents. Newest first, and capped: a list nobody can reach the bottom of is
   // not a list, it is a wall.
   async function loadRealAlerts(){
@@ -13969,7 +14055,10 @@ else if(dedupedN)
   saveTasteBase = function(){ saveTasteBaseLocal(); if(accountActive()) scheduleUserPrefsSync(); };
 
   const saveNotifyLocal = saveNotify;
-  saveNotify = function(){ saveNotifyLocal(); if(accountActive()) scheduleNotifySync(); };
+  // CAS-484: `wins` lives on the same notify entries film_picks does, so the one save chokepoint
+  // now feeds both syncs — the personal-override upload (film_picks) and the real per-film alert
+  // arming (film_watch).
+  saveNotify = function(){ saveNotifyLocal(); if(accountActive()){ scheduleNotifySync(); scheduleWatchSync(); } };
   const saveNotifyPrefsLocal = saveNotifyPrefs;
   saveNotifyPrefs = function(){ saveNotifyPrefsLocal(); if(accountActive()) scheduleNotifySync(); };
   const savePrefsLocal = savePrefs;
@@ -13994,7 +14083,10 @@ else if(dedupedN)
                                 reconcileCascades, reconcileFilms,
                                 // CAS-428: Lists' own load/sync/reconcile seam, same shape as the above.
                                 loadListsAccount, syncListsNow: runListsSync, listToRow, rowToList, listFilmRows,
-                                reconcileLists, reconcileListMembership };
+                                reconcileLists, reconcileListMembership,
+                                // CAS-484: the per-film Watch-it tick's own load/sync/reconcile seam.
+                                loadFilmWatches, syncWatchesNow: runWatchSync, watchRows, applyWatchRows,
+                                reconcileFilmWatches };
 })();
 </script>
 

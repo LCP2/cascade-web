@@ -8,7 +8,7 @@ import os
 import unittest
 
 from monitor import (compute_transitions, match, matches_criteria, service_ok,
-                     notification_rows, suppressed_pairs, excluded_moments)
+                     notification_rows, suppressed_pairs, excluded_moments, match_film_watches)
 from monitor.matching import Hit, agent_channels
 from monitor.catalogue import load_catalogue_file
 from monitor.store import InMemoryStore
@@ -266,6 +266,91 @@ class PerAgentChannels(unittest.TestCase):
         self.assertEqual(len(hits), 1)
         self.assertFalse(hits[0].wants("email"))
         self.assertTrue(hits[0].wants("in_app"))
+
+
+class FilmWatchTests(unittest.TestCase):
+    """CAS-484: a per-film Watch-it tick is a second, agent-independent hit source — it owes
+    nothing to any Cascade's criteria or bell, and the two sources must still de-dupe to exactly
+    one notification when they both catch the same (user, movie, moment)."""
+
+    def _transitions(self, moment="hits_stream"):
+        status = {"hits_rent": "rental", "hits_stream": "included_streaming",
+                  "hits_pvod": "pvod", "hits_cinema": "in_cinema"}[moment]
+        prev = [{"tmdb_id": 1, "title": "A", "status": ["in_cinema"] if moment != "hits_cinema" else [],
+                 "cinema_date": "2026-01-01", "offers": []}]
+        today = [{"tmdb_id": 1, "title": "A", "status": [status], "cinema_date": "2026-01-01",
+                  "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}]}]
+        return compute_transitions(prev, today, RUN_DATE)
+
+    def _cascade(self, moment="hits_stream"):
+        return [{"id": "c1", "user_id": "u1", "name": "Streaming agent", "active": True,
+                 "alert_moments": [moment], "criteria": {}}]
+
+    # ---- the four scenarios the ticket's AC calls out by name ----
+    def test_per_film_tick_alone_fires(self):
+        ts = self._transitions("hits_stream")
+        watches = [{"user_id": "u1", "movie_id": "1", "windows": ["stream"]}]
+        hits = match_film_watches(watches, ts)
+        self.assertEqual(len(hits.get("u1", [])), 1)
+        h = hits["u1"][0]
+        self.assertIsNone(h.cascade_id)
+        self.assertEqual(h.cascade_name, "Your picks")
+        self.assertEqual(h.transition.moment, "hits_stream")
+        self.assertTrue(h.wants("email") and h.wants("in_app") and h.wants("push"))
+
+    def test_agent_bell_alone_fires(self):
+        ts = self._transitions("hits_stream")
+        by_user = match(self._cascade(), ts)
+        self.assertEqual(len(by_user.get("u1", [])), 1)
+        cascade_seen = {("u1", h.transition.movie_id, h.transition.moment) for h in by_user["u1"]}
+        # No film_watch row at all -> the per-film path contributes nothing.
+        self.assertEqual(match_film_watches([], ts, cascade_hits=cascade_seen), {})
+
+    def test_both_together_fire_once(self):
+        ts = self._transitions("hits_stream")
+        by_user = match(self._cascade(), ts)
+        cascade_seen = {("u1", h.transition.movie_id, h.transition.moment) for h in by_user["u1"]}
+        watches = [{"user_id": "u1", "movie_id": "1", "windows": ["stream"]}]
+        watch_hits = match_film_watches(watches, ts, cascade_hits=cascade_seen)
+        self.assertEqual(watch_hits, {})   # already caught by the agent bell this run -> no 2nd hit
+        total = sum(len(v) for v in by_user.values()) + sum(len(v) for v in watch_hits.values())
+        self.assertEqual(total, 1)
+
+    def test_neither_fires_nothing(self):
+        ts = self._transitions("hits_stream")
+        self.assertEqual(match([], ts), {})
+        self.assertEqual(match_film_watches([], ts), {})
+
+    # ---- supporting behaviour ----
+    def test_ignores_a_moment_the_film_did_not_reach(self):
+        ts = self._transitions("hits_rent")               # film reached rental, not streaming
+        watches = [{"user_id": "u1", "movie_id": "1", "windows": ["stream"]}]
+        self.assertEqual(match_film_watches(watches, ts), {})
+
+    def test_unknown_window_key_is_ignored(self):
+        ts = self._transitions("hits_stream")
+        watches = [{"user_id": "u1", "movie_id": "1", "windows": ["not_a_real_window"]}]
+        self.assertEqual(match_film_watches(watches, ts), {})
+
+    def test_second_run_is_silent(self):
+        ts = self._transitions("hits_stream")
+        watches = [{"user_id": "u1", "movie_id": "1", "windows": ["stream"]}]
+        first = match_film_watches(watches, ts)
+        already = {(h.user_id, h.transition.movie_id, h.transition.moment)
+                   for hits in first.values() for h in hits}
+        self.assertEqual(match_film_watches(watches, ts, already=already), {})
+
+    def test_global_exclude_mutes_a_per_film_tick_too(self):
+        ts = self._transitions("hits_stream")
+        watches = [{"user_id": "u1", "movie_id": "1", "windows": ["stream"]}]
+        self.assertEqual(match_film_watches(watches, ts, excluded={"u1": ["hits_stream"]}), {})
+
+    def test_two_users_ticking_the_same_film_both_fire(self):
+        ts = self._transitions("hits_stream")
+        watches = [{"user_id": "u1", "movie_id": "1", "windows": ["stream"]},
+                   {"user_id": "u2", "movie_id": "1", "windows": ["stream"]}]
+        hits = match_film_watches(watches, ts)
+        self.assertEqual(set(hits), {"u1", "u2"})
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@ Interface:
   fetch_picks() -> [{user_id, movie_id, state}]                                           # CAS-185
   fetch_push_tokens() -> {user_id: [device_token, ...]}                                   # CAS-465
   fetch_unread_counts() -> {user_id: int}                                                 # CAS-465
+  fetch_film_watches() -> [{user_id, movie_id, windows}]                                  # CAS-484
+  fetch_watch_notification_keys() -> set[(user_id, movie_id, moment)]  # de-dupe, null-cascade rows
 """
 from __future__ import annotations
 
@@ -34,13 +36,14 @@ class InMemoryStore:
     """A store backed by plain Python lists — used for dry-run and tests."""
 
     def __init__(self, cascades=None, notifications=None, emails=None, prefs=None, picks=None,
-                 push_tokens=None):
+                 push_tokens=None, watches=None):
         self._cascades = list(cascades or [])
         self._notifications = list(notifications or [])
         self._emails = dict(emails or {})
         self._prefs = dict(prefs or {})
         self._picks = list(picks or [])
         self._push_tokens = list(push_tokens or [])
+        self._watches = list(watches or [])
 
     def fetch_active_cascades(self) -> list:
         return [c for c in self._cascades if c.get("active", True)]
@@ -76,6 +79,13 @@ class InMemoryStore:
             uid = str(n.get("user_id"))
             out[uid] = out.get(uid, 0) + 1
         return out
+
+    def fetch_film_watches(self) -> list:
+        return list(self._watches)
+
+    def fetch_watch_notification_keys(self) -> set:
+        return {(str(n.get("user_id")), str(n.get("movie_id")), n.get("moment"))
+                for n in self._notifications if n.get("cascade_id") is None}
 
 
 class SupabaseStore:
@@ -137,6 +147,18 @@ class SupabaseStore:
             uid = str(r.get("user_id"))
             out[uid] = out.get(uid, 0) + 1
         return out
+
+    def fetch_film_watches(self) -> list:
+        """Every user's per-film Watch-it ticks (CAS-484): {user_id, movie_id, windows}."""
+        return self._get("/film_watch?select=user_id,movie_id,windows")
+
+    def fetch_watch_notification_keys(self) -> set:
+        """(user_id, movie_id, moment) already delivered via the per-film-watch path — the rows in
+        `notifications` with no owning cascade. Kept apart from fetch_notification_keys() because
+        a null cascade_id does not, by itself, de-dupe across users the way a real one does (see
+        matching.match_film_watches)."""
+        rows = self._get("/notifications?cascade_id=is.null&select=user_id,movie_id,moment")
+        return {(str(r.get("user_id")), str(r.get("movie_id")), r.get("moment")) for r in rows}
 
     def fetch_user_email(self, user_id: str):
         """Resolve a user_id to their email via the Auth admin API (service_role only).

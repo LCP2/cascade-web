@@ -364,3 +364,59 @@ def notification_rows(by_user: dict) -> list:
         for h in hits:
             rows.append(h.notification_row())
     return rows
+
+
+# --------------------------------------------------------------------------- #
+# per-film "Watch it" ticks (CAS-484) — a second, agent-independent source
+# --------------------------------------------------------------------------- #
+# window key (as ticked on the film's Watch-it control, app_template.html's WATCH_LEVEL_KEYS) ->
+# the moment it arms. Mirrors the app's own rung labels one to one.
+WINDOW_TO_MOMENT = {
+    "in_cinema": "hits_cinema",
+    "premium": "hits_pvod",
+    "rent": "hits_rent",
+    "stream": "hits_stream",
+}
+
+
+def match_film_watches(watches, transitions, already=None, cascade_hits=None, excluded=None) -> dict:
+    """Return {user_id: [Hit, ...]} for per-film Watch-it ticks (CAS-484) — hits that owe nothing
+    to any Cascade's own criteria or bell. A tick arms an alert for THAT film reaching THAT window
+    full stop, so unlike ``match()`` there is no taste/criteria/service test here at all.
+
+    watches    : rows {user_id, movie_id, windows: [window_key, ...]} (the `film_watch` table).
+    already    : {(user_id, movie_id, moment)} already delivered via THIS path — read separately
+                 from match()'s cascade-keyed `already` because these ledger rows carry a null
+                 cascade_id, which the (cascade_id, movie_id, moment) unique constraint alone does
+                 not de-dupe across users (see store.fetch_watch_notification_keys).
+    cascade_hits : {(user_id, movie_id, moment)} already produced by match() THIS run. A film
+                 covered by both an agent's bell and a per-film tick must fire once, not twice
+                 (CAS-484 AC3) — call match() first and pass its keys here.
+    excluded   : the same {user_id: {moment, ...}} global mute match() takes — a muted alert TYPE
+                 outranks a per-film tick exactly as it outranks a Cascade.
+    """
+    seen = set(already or ())
+    covered = set(cascade_hits or ())
+    muted = excluded_moments(excluded)
+    by_movie: dict = {}
+    for t in transitions:
+        by_movie.setdefault(str(t.movie_id), []).append(t)
+
+    by_user: dict = {}
+    for w in watches or ():
+        user_id = str(w.get("user_id"))
+        movie_id = str(w.get("movie_id"))
+        moments = {WINDOW_TO_MOMENT[k] for k in (w.get("windows") or ()) if k in WINDOW_TO_MOMENT}
+        moments -= muted.get(user_id, set())
+        if not moments:
+            continue
+        for t in by_movie.get(movie_id, ()):
+            if t.moment not in moments:
+                continue
+            key = (user_id, movie_id, t.moment)
+            if key in seen or key in covered:
+                continue
+            seen.add(key)
+            by_user.setdefault(user_id, []).append(
+                Hit(user_id=user_id, cascade_id=None, cascade_name="Your picks", transition=t))
+    return by_user

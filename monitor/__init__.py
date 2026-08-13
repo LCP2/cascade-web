@@ -44,6 +44,8 @@ from .matching import (  # noqa: E402
     excludes_from_prefs,
     delivery_plan,
     PREFS_DEFAULT,
+    match_film_watches,
+    WINDOW_TO_MOMENT,
 )
 from .store import InMemoryStore, SupabaseStore, store_from_env  # noqa: E402
 from .emailer import (  # noqa: E402
@@ -61,7 +63,7 @@ __all__ = [
     "Transition", "compute_transitions", "DEFAULT_WEEKEND_N", "MOMENTS",
     "Hit", "match", "matches_criteria", "service_ok", "scale_tiers", "notification_rows",
     "suppressed_pairs", "excluded_moments", "prefs_for", "excludes_from_prefs", "delivery_plan",
-    "PREFS_DEFAULT",
+    "PREFS_DEFAULT", "match_film_watches", "WINDOW_TO_MOMENT",
     "InMemoryStore", "SupabaseStore", "store_from_env",
     "render_digest", "moment_phrase", "digest_subject", "send_via_resend",
     "send_via_apns", "push_copy",
