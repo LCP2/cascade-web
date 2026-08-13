@@ -121,12 +121,32 @@ def _header_line(transition) -> str:
     return f"{phrase} · {move}" if move else phrase
 
 
-def _group_by_agent(hits):
-    """hits grouped into one bucket per cascade_name, ordered alphabetically for determinism."""
-    groups = {}
+def _join_names(names) -> str:
+    """'A' | 'A & B' | 'A, B & C' — an honest list of everyone who caught it, nothing invented."""
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " & " + names[-1]
+
+
+def _film_entries(hits):
+    """hits collapsed to one entry per (movie, moment), each carrying every distinct name that
+    caught it — a personal Watch it tick already arrives as cascade_name "Your picks" (CAS-484),
+    so no separate agent/Watch-it branch is needed here. A film caught by more than one agent (or
+    an agent and the user's own Watch it tick) is shown once, naming everyone, in the order the
+    hits first arrived."""
+    order = []
+    by_key = {}
     for h in hits:
-        groups.setdefault(h.cascade_name, []).append(h)
-    return sorted(groups.items(), key=lambda kv: kv[0])
+        t = h.transition
+        key = (t.movie_id, t.moment)
+        entry = by_key.get(key)
+        if entry is None:
+            entry = {"transition": t, "names": []}
+            by_key[key] = entry
+            order.append(key)
+        if h.cascade_name not in entry["names"]:
+            entry["names"].append(h.cascade_name)
+    return [by_key[k] for k in order]
 
 
 def render_digest(hits, site_url: str = None) -> dict:
@@ -135,41 +155,35 @@ def render_digest(hits, site_url: str = None) -> dict:
     hits: list of monitor.matching.Hit (all for the same user)."""
     site_url = site_url or os.environ.get(SITE_URL_ENV) or DEFAULT_SITE_URL
     subject = digest_subject(hits)
-    groups = _group_by_agent(hits)
+    entries = _film_entries(hits)
 
     # ---- plain-text part ----
     text_lines = ["Cascade has been watching. Here's what changed:", ""]
-    for name, group in groups:
-        text_lines.append(name)
-        for h in group:
-            t = h.transition
-            text_lines.append(f"  • {t.title} — {_header_line(t)}")
-        text_lines.append("")
-    text_lines += [f"Open Cascade: {site_url}",
+    for entry in entries:
+        t = entry["transition"]
+        names = _join_names(entry["names"])
+        text_lines.append(f"• {t.title} — {names}")
+        text_lines.append(f"  {_header_line(t)}")
+    text_lines += ["", f"Open Cascade: {site_url}",
                    "You're getting this because Cascade is watching films for you."]
     text = "\n".join(text_lines)
 
     # ---- HTML part (inline styles; email-client safe) ----
     esc = _html.escape
     items = []
-    for name, group in groups:
+    for entry in entries:
+        t = entry["transition"]
+        names = _join_names(entry["names"])
+        note = _MOMENT_NOTE.get(t.moment, "")
         items.append(
-            '<tr><td style="padding:18px 0 8px;">'
-            f'<div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#7C5CFF;'
-            f'text-transform:uppercase;">{esc(name)}</div>'
-            '<div style="border-top:1px solid #e6e8ee;margin-top:6px;"></div>'
-            '</td></tr>'
+            '<tr><td style="padding:14px 0;border-bottom:1px solid #e6e8ee;">'
+            f'<div style="font-size:16px;font-weight:600;color:#141A2A;">{esc(t.title)}</div>'
+            f'<div style="font-size:12px;font-weight:700;letter-spacing:0.5px;color:#7C5CFF;'
+            f'text-transform:uppercase;margin-top:2px;">{esc(names)}</div>'
+            f'<div style="font-size:14px;color:#4C7DFF;font-weight:600;margin-top:2px;">{esc(_header_line(t))}</div>'
+            + (f'<div style="font-size:13px;color:#6b7280;margin-top:2px;">{esc(note)}</div>' if note else "")
+            + '</td></tr>'
         )
-        for h in group:
-            t = h.transition
-            note = _MOMENT_NOTE.get(t.moment, "")
-            items.append(
-                '<tr><td style="padding:14px 0;border-bottom:1px solid #e6e8ee;">'
-                f'<div style="font-size:16px;font-weight:600;color:#141A2A;">{esc(t.title)}</div>'
-                f'<div style="font-size:14px;color:#4C7DFF;font-weight:600;margin-top:2px;">{esc(_header_line(t))}</div>'
-                + (f'<div style="font-size:13px;color:#6b7280;margin-top:2px;">{esc(note)}</div>' if note else "")
-                + '</td></tr>'
-            )
     html_doc = (
         '<!doctype html><html><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
