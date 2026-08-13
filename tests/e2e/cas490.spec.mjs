@@ -6,7 +6,7 @@
 import { test, expect } from "@playwright/test";
 import { freshApp } from "./helpers.mjs";
 
-const FIXTURE_ID = 999000005; // "TEST FIXTURE — Notify Hits Stream"
+const FIXTURE_ID = 999000005; // "TEST 5 — Streaming"
 
 async function gotoWithFixturesFlag(page){
   await page.route("**/config.js", route => route.fulfill({ status: 404, body: "" }));

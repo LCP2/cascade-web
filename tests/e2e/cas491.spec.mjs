@@ -12,7 +12,7 @@
 import { test, expect } from "@playwright/test";
 
 const FIXTURE_IDS = [999000001, 999000002, 999000003, 999000004, 999000005];
-const STREAM_FIXTURE_ID = 999000005; // "TEST FIXTURE — Notify Hits Stream", offers: [{service: "Stan", type: "sub"}]
+const STREAM_FIXTURE_ID = 999000005; // "TEST 5 — Streaming", offers: [{service: "Stan", type: "sub"}]
 
 async function gotoAsGatedTester(page){
   await page.route("**/config.js", route => route.fulfill({ status: 404, body: "" }));
