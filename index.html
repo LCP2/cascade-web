@@ -3702,7 +3702,7 @@ $("updated").textContent = "Updated " + fmtDate(TODAY);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 481, "commit": "6c87f8a", "builtAt": "2026-08-13T22:16:33Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 482, "commit": "5978123", "builtAt": "2026-08-13T22:52:49Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5238,12 +5238,19 @@ function notifyChipHTML(id){
   // CAS-349: green (not the generic gold "on") is the film's OWN colour for "you can watch this right now"
   // everywhere else on the card (the availability bar, the window lozenges) — reusing it here says the same
   // thing the same way, rather than borrowing the on-state colour every other control uses for "a choice was made".
+  // CAS-500 (Lee's revised diagnosis): green/set and gold-glow are two DIFFERENT questions and must not share
+  // one predicate. Green ("I've asked to be told") is true whenever any level is ticked at all — st.on>0 —
+  // whether or not that level has arrived yet. Glow ("what I asked for is true right now") stays exactly
+  // st.current, unchanged. Conflating them onto st.current alone (the pre-fix code) meant a film with only a
+  // future level ticked read as fully unset, indistinguishable from a film with no ticks at all — the "Streaming
+  // ticked, button still plain" repro. aria-pressed follows the same split: it reports whether a request exists
+  // (st.on), not whether it has been satisfied (st.current).
   return `<button type="button" class="ctl notify${st.current?" on recent":""}" data-nid="${id}"
-      onclick="openNotifyPanel(${id},this)" aria-haspopup="true" aria-expanded="false" aria-pressed="${st.current}"
+      onclick="openNotifyPanel(${id},this)" aria-haspopup="true" aria-expanded="false" aria-pressed="${!!st.on}"
       title="${escA(title)}" aria-label="${escA(title)}">
     <span class="cmini"><i class="cfill" style="width:${st.total?100*st.on/st.total:0}%;background:var(--green)"></i>
       <span class="cic">${st.current ? ICON.watched : ICON.bell}</span>
-      <span class="clab${st.current?"":" dim"}">${lbl}</span>
+      <span class="clab${st.on?"":" dim"}">${lbl}</span>
       <span class="ctog">${ICON.chev}</span></span></button>`;
 }
 // ---- CAS-428: the Lists control (replaces the CAS-279 Agent/"move" control) -----------------------------
