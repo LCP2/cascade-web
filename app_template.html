@@ -2612,8 +2612,10 @@
 
     <div class="zone">
       <div class="zhead">Where &amp; when</div>
-      <div class="zsub">Which windows this Cascade watches for you — and which ones are worth a 📣 when one of
-        the films it found lands there.</div>
+      <!-- CAS-502: was "...and which ones are worth a 📣 when one of the films it found lands there" — the
+           per-window bell that sentence promised is gone (it never notified anyone once alert_moments stopped
+           being read for delivery). Only a film's own Watch it tick notifies now. -->
+      <div class="zsub">Which windows this Cascade watches for you.</div>
       <div class="spine" id="cSpine"></div>
     </div>
 
@@ -6872,8 +6874,12 @@ const alertMuted = k => prefs.alertsOff.has(k);
 // not muted globally. Every promise the app makes — the deck's "alerts on…" line, the agent's
 // voice, the editor's own paint, and the alert_moments we hand the monitor — reads off this, so
 // they cannot drift apart and start promising an email that will never arrive.
+// CAS-502: an agent's own bell never rings any more — Watch it on the film itself is the only thing
+// that notifies now — so this is unconditionally false. `c.alerts`/alert_moments are left as they
+// are (nothing destroyed, easy to reverse); this is the one place that stops promising delivery
+// from them.
 function alertLive(c,k){
-  return !!(c.alerts||ALERT_DEFAULTS)[k] && reachableRows(c).has(k) && !alertMuted(k);
+  return false;
 }
 const liveAlerts = c => Object.keys(ALERT_SHORT).filter(k=>alertLive(c,k));
 function alertSummary(c){
@@ -7718,39 +7724,23 @@ function buildSpine(){
     el.className="arow r-"+r.key;
     // The window lozenge is the SAME component the movie cards use (.pill.<status>) — same colour, same
     // shape — so the row and the card teach each other rather than being two vocabularies.
+    // CAS-502: the per-row 📣 bell (and the cinema row's "past opening weekend" extra alert) is gone —
+    // an agent's own bell never notified anyone once the backend stopped reading alert_moments, so it
+    // was a dead switch (AC4). `draft.alerts`/alert_moments keep being computed under the hood
+    // (autoSelectAlerts) so nothing about the stored data changes — only the (now-fake) control is gone.
     el.innerHTML=`<div class="arow-main">
         <button class="atog" role="switch"><span class="adot"></span>
           <span class="alab"><span class="pill ${r.pill}">${r.title}</span><small>${r.sub}</small></span></button>
-        <button class="abell" role="switch"><span>📣</span><span class="bl">${r.alertName}</span></button>
       </div>
-      <div class="awhy" id="why-${r.key}" hidden></div>
-      ${(r.home || r.extraAlert) ? `<div class="aopts" id="opt-${r.key}"><div><div class="inner" style="padding-top:6px">
-        ${r.home ? `<div class="switch mini" id="mine-${r.key}" role="switch">
+      ${r.home ? `<div class="aopts" id="opt-${r.key}"><div><div class="inner" style="padding-top:6px">
+        <div class="switch mini" id="mine-${r.key}" role="switch">
           <span>Only what I can watch <small style="color:var(--faint)">(my services)</small></span>
-          <span class="knob"></span></div>` : ""}
-        ${r.extraAlert ? `<div class="switch mini" id="moment-${r.extraAlert.key}" role="switch">
-          <span>${r.extraAlert.label} <small style="color:var(--faint)">— ${r.extraAlert.sub}</small></span>
-          <span class="knob"></span></div>` : ""}</div></div></div>` : ""}`;
+          <span class="knob"></span></div></div></div></div>` : ""}`;
     // Changing the scope changes which bells can ever ring, so re-run the auto-select right here
     // rather than leaving the user to notice for themselves (CAS-103 AC2).
     el.querySelector(".atog").onclick=()=>{ setRow(r, rowState(r)==="off"); autoSelectAlerts(); syncSpine(); refreshDraft(); };
-    el.querySelector(".abell").onclick=()=>{
-      if(bellBlocked(r.alert)) return;               // disabled anyway; never silently flip hidden state
-      draft.alerts[r.alert]=!draft.alerts[r.alert];
-      draft.alertsTouched[r.alert]=true;             // an explicit choice the auto-select must not overwrite
-      syncSpine();
-    };
     const mine=r.home ? el.querySelector("#mine-"+r.key) : null;
     if(mine) mine.onclick=()=>{ draft.myServices[r.key]=!draft.myServices[r.key]; syncSpine(); refreshDraft(); };
-    if(r.extraAlert){
-      const mo=el.querySelector("#moment-"+r.extraAlert.key);
-      mo.onclick=()=>{
-        if(bellBlocked(r.extraAlert.key)) return;
-        draft.alerts[r.extraAlert.key]=!draft.alerts[r.extraAlert.key];
-        draft.alertsTouched[r.extraAlert.key]=true;
-        syncSpine();
-      };
-    }
     spine.appendChild(el);
   });
   // With the "All windows" row gone, an empty status set has no control of its own — so say what it means
@@ -7762,20 +7752,7 @@ function buildSpine(){
   warn.id="cMineWarn";
   spine.appendChild(warn);
 }
-// ---- Alert reachability, auto-select, and the reason a bell is off (CAS-103 AC2/AC3) -----------
-// Why this bell can't ring for the Cascade being edited — "" when it can. Two reasons, kept apart
-// because the fix is different: widen the scope, versus un-mute the type in Preferences.
-function bellBlocked(key){
-  if(alertMuted(key)) return "muted";
-  if(!reachableRows(draft).has(key)) return "unreachable";
-  return "";
-}
-const BLOCK_WHY = {
-  muted: name => `<b>${name}</b> is switched off for every Cascade in Preferences — un-mute it there
-    and this comes back to whatever you set it to.`,
-  unreachable: name => `This Cascade stops watching a film before it reaches <b>${name}</b>, so this
-    alert could never fire. Widen the windows above to turn it on.`,
-};
+// ---- Alert auto-select (CAS-103 AC2/AC3) -------------------------------------------------------
 // Auto-select the alerts still AHEAD of this Cascade's scope, and force off the ones behind it.
 // Two rules keep it honest rather than merely convenient:
 //   · an unreachable bell is switched OFF in the data, not just greyed — leaving it true would let
@@ -7801,24 +7778,6 @@ function syncSpine(){
     // A half-filled row says which windows it actually holds — the label must not overstate the radar.
     const part = st==="part" ? r.windows.filter(w=>draft.status.includes(w)).map(w=>STATUS_LABEL[w]).join(" + ") : "";
     el.querySelector(".alab small").textContent = part ? `Currently: ${part} only — tap for the whole window` : r.sub;
-    bellPaint(el, r);
-    // The second moment on the cinema row (CAS-68). It's a bell, not a window: it never narrows what the
-    // Cascade finds, it only decides whether you're told when a film it already watches has had its weekend.
-    if(r.extraAlert){
-      $("opt-"+r.key).classList.toggle("open", st!=="off" || allOn());
-      // Same honesty rule as the four main bells: if it can't fire, it doesn't read as on, and it
-      // says which of the two reasons applies (CAS-103 AC3).
-      const ek=r.extraAlert.key, mo=$("moment-"+ek), ewhy=bellBlocked(ek);
-      const on=!!draft.alerts[ek] && !ewhy;
-      mo.classList.toggle("on", on);
-      mo.classList.toggle("blocked", !!ewhy);
-      mo.setAttribute("aria-checked", String(on));
-      mo.setAttribute("aria-disabled", String(!!ewhy));
-      mo.querySelector("small").textContent = ewhy
-        ? (ewhy==="muted" ? "— muted for every Cascade in Preferences"
-                          : "— this Cascade stops watching before the big screen, so it can't fire")
-        : "— "+r.extraAlert.sub;
-    }
     if(!r.home) return;
     // Each home window owns its own scope now, and it only appears while that window is being watched.
     // An empty status set IS "watching every window" (see the note below), so the scopes have to be
@@ -7920,25 +7879,6 @@ function syncScale(){
   $("cTentDesc").innerHTML = t==="any"
     ? `<b>Any.</b> No size filter.`
     : `<b>${TENTPOLE_STOPS.find(x=>x.key===t).label} — ${n} title${n===1?"":"s"}.</b> ${TENT_DESC[t]}`;
-}
-function bellPaint(row, r){
-  const key=r.alert, name=r.alertName, b=row.querySelector(".abell");
-  const why=bellBlocked(key);
-  // A blocked bell reads OFF whatever the stored flag says — AC3: a button that can't fire is never
-  // presented as active. The flag itself is left alone so un-muting restores the user's own setting.
-  const on=!!draft.alerts[key] && !why;
-  b.classList.toggle("on", on);
-  b.disabled = !!why;
-  b.setAttribute("aria-checked", String(on));
-  b.setAttribute("aria-disabled", String(!!why));
-  b.setAttribute("aria-label", why
-    ? `${name} alert — unavailable: ${why==="muted" ? "muted for every Cascade in Preferences"
-                                                    : "outside this Cascade's windows"}`
-    : `Alert me the moment a film ${ALERT_MOMENT[key]}`);
-  // State can't be carried by colour alone (WCAG 1.4.1), so the off state says so in words too.
-  b.querySelector(".bl").textContent = on ? name : `${name} · off`;
-  const w=row.querySelector(".awhy");
-  if(w){ w.hidden=!why; w.innerHTML = why ? BLOCK_WHY[why](name) : ""; }
 }
 function syncMineWarn(){
   const w=$("cMineWarn"); if(!w) return;

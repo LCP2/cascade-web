@@ -27,6 +27,7 @@ class TargetUserSafetyValve(unittest.TestCase):
             "--date", "2026-07-16", "--dry-run",
             "--cascades", f"{FIXTURES}/cascades.json",
             "--notifications", f"{FIXTURES}/notifications.json",
+            "--watches", f"{FIXTURES}/watches.json",
             "--target-user", "user-A",
         ]
         buf = io.StringIO()
@@ -43,6 +44,7 @@ class TargetUserSafetyValve(unittest.TestCase):
             "--date", "2026-07-16", "--dry-run",
             "--cascades", f"{FIXTURES}/cascades.json",
             "--notifications", f"{FIXTURES}/notifications.json",
+            "--watches", f"{FIXTURES}/watches.json",
             "--target-user", "some-user-not-in-fixtures",
         ]
         buf = io.StringIO()
@@ -65,6 +67,7 @@ class ChannelIndependence(unittest.TestCase):
             "--notifications", f"{FIXTURES}/notifications.json",
             "--emails", f"{FIXTURES}/emails.json",
             "--prefs", f"{FIXTURES}/prefs.json",
+            "--watches", f"{FIXTURES}/watches.json",
         ]
         buf = io.StringIO()
         with mock.patch("monitor.__main__.send_via_resend",
@@ -90,6 +93,7 @@ class ChannelIndependence(unittest.TestCase):
             "--notifications", f"{FIXTURES}/notifications.json",
             "--emails", f"{FIXTURES}/emails.json",
             "--prefs", f"{FIXTURES}/prefs.json",
+            "--watches", f"{FIXTURES}/watches.json",
         ]
         buf = io.StringIO()
         with mock.patch("monitor.__main__.send_via_resend", return_value={"id": "test"}):
@@ -110,6 +114,7 @@ class LedgerWriteResilience(unittest.TestCase):
             "--notifications", f"{FIXTURES}/notifications.json",
             "--emails", f"{FIXTURES}/emails.json",
             "--prefs", f"{FIXTURES}/prefs.json",
+            "--watches", f"{FIXTURES}/watches.json",
         ]
         buf = io.StringIO()
         with mock.patch.object(InMemoryStore, "insert_notifications",
