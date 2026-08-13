@@ -13706,11 +13706,24 @@ else if(dedupedN)
     if(!filmSyncing && !filmTimer) reconcileFilms();
     if(!listsSyncing && !listsTimer){ reconcileLists(); reconcileListMembership(); }
     if(!watchSyncing && !watchTimer) reconcileFilmWatches();
+    // CAS-487: the bell has no push channel on web, so nothing else ever refreshes it —
+    // without this, an open tab's badge/drawer are frozen at whatever they were on load.
+    loadRealAlerts();
   }
   window.addEventListener("focus", reconcileOnReturn);
   document.addEventListener("visibilitychange", () => {
     if(document.visibilityState==="visible") reconcileOnReturn();
   });
+  // CAS-487: a tab can stay focused and visible for hours without ever firing focus/visibilitychange
+  // again, so the bell also needs a heartbeat independent of returning to the tab. Reuses
+  // reconcileOnReturn — same accountActive() guard, same in-flight-sync guards — rather than a second,
+  // narrower poll path.
+  const RECONCILE_POLL_MS = 3*60*1000;
+  const reconcilePollHandle = setInterval(() => { if(document.visibilityState==="visible") reconcileOnReturn(); }, RECONCILE_POLL_MS);
+  // Browsers return a plain number from setInterval with no unref(); Node's test harness (which evaluates
+  // this same script against a stand-in DOM) returns a Timeout object whose unref() stops a live interval
+  // from holding the process open forever. Guarded so the browser path is untouched.
+  if(reconcilePollHandle && typeof reconcilePollHandle.unref === "function") reconcilePollHandle.unref();
 
   // ==========================================================================
   // CAS-183: watch status per account (`user_films`)
@@ -14086,7 +14099,11 @@ else if(dedupedN)
                                 reconcileLists, reconcileListMembership,
                                 // CAS-484: the per-film Watch-it tick's own load/sync/reconcile seam.
                                 loadFilmWatches, syncWatchesNow: runWatchSync, watchRows, applyWatchRows,
-                                reconcileFilmWatches };
+                                reconcileFilmWatches,
+                                // CAS-487: the return-to-tab entry point itself, so the bell's own refresh
+                                // can be exercised the same way — without waiting on a real
+                                // focus/visibilitychange event.
+                                reconcileOnReturn };
 })();
 </script>
 
