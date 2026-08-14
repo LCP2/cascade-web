@@ -12,7 +12,7 @@ import {
 async function openNotifications(page){
   await page.evaluate(() => window.editCascade());
   await expect(page.locator(".osh", { hasText: /Edit Agent/ })).toBeVisible();
-  await page.locator(".osdoor", { hasText: "Notifications" }).click();
+  await page.locator(".osdoor", { hasText: "Where & when you'll watch" }).click();
   await expect(page.locator("#wwLanes .wwlane").first()).toBeVisible();
 }
 
@@ -36,13 +36,13 @@ test("CAS-474: a Cinema agent's Notify screen adds Premium/Standard Rent/Streami
   for(const label of ["Upcoming", "In cinema"]){
     const lane = lanes.filter({ has: page.locator(".wwn", { hasText: label }) });
     await expect(lane.locator(".agwt", { hasText: "List" })).toHaveCount(1);
-    await expect(lane.locator(".agwt", { hasText: "Notify option" })).toHaveCount(1);
+    await expect(lane.locator(".agwt", { hasText: "Follow" })).toHaveCount(1);
   }
   // The three new home-availability windows carry Notify only — no List switch at all.
   for(const label of ["Premium", "Standard Rent", "Streaming"]){
     const lane = lanes.filter({ has: page.locator(".wwn", { hasText: label }) });
     await expect(lane.locator(".agwt", { hasText: "List" })).toHaveCount(0);
-    await expect(lane.locator(".agwt", { hasText: "Notify option" })).toHaveCount(1);
+    await expect(lane.locator(".agwt", { hasText: "Follow" })).toHaveCount(1);
   }
 });
 
@@ -51,7 +51,7 @@ test("CAS-474: ticking Notify on Premium for a Cinema agent arms the bell but le
   await openNotifications(page);
 
   const premiumLane = page.locator("#wwLanes .wwlane").filter({ has: page.locator(".wwn", { hasText: "Premium" }) });
-  const notifyBtn = premiumLane.locator(".agwt", { hasText: "Notify option" });
+  const notifyBtn = premiumLane.locator(".agwt", { hasText: "Follow" });
   await notifyBtn.click();
   await expect(notifyBtn).toHaveClass(/on/);
 
@@ -68,7 +68,7 @@ test("CAS-474: ticking Notify on Premium for a Cinema agent arms the bell but le
   // Re-opening the editor shows the bell held, so the tick actually persisted.
   await openNotifications(page);
   await expect(page.locator("#wwLanes .wwlane").filter({ has: page.locator(".wwn", { hasText: "Premium" }) })
-    .locator(".agwt", { hasText: "Notify option" })).toHaveClass(/on/);
+    .locator(".agwt", { hasText: "Follow" })).toHaveClass(/on/);
 });
 
 test("CAS-474: Streaming agents are unaffected — still Premium/Standard Rent/Streaming with both switches", async ({ page }) => {
@@ -85,6 +85,6 @@ test("CAS-474: Streaming agents are unaffected — still Premium/Standard Rent/S
   for(const label of labels){
     const lane = page.locator("#wwLanes .wwlane").filter({ has: page.locator(".wwn", { hasText: label }) });
     await expect(lane.locator(".agwt", { hasText: "List" })).toHaveCount(1);
-    await expect(lane.locator(".agwt", { hasText: "Notify option" })).toHaveCount(1);
+    await expect(lane.locator(".agwt", { hasText: "Follow" })).toHaveCount(1);
   }
 });

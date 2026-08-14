@@ -9255,11 +9255,11 @@ function hubWatchSummary(){
   const wins=agentWindows();
   const listed=wins.filter(w=>winOn(w.key,"list")), noted=wins.filter(w=>winOn(w.key,"notify"));
   if(!listed.length && !noted.length){
-    return onbDone.watch ? "Nothing listed or alerted" : "Any window — not set yet";
+    return onbDone.watch ? "Nothing listed or followed" : "Any window — not set yet";
   }
   const bits=[];
   bits.push(listed.length ? `Lists ${listed.map(w=>w.label).join(" + ")}` : "Lists nothing");
-  bits.push(noted.length ? `alerts on ${noted.map(w=>w.label).join(" + ")}` : "no alerts");
+  bits.push(noted.length ? `also follows ${noted.map(w=>w.label).join(" + ")}` : "follows nothing extra");
   return esc(bits.join(" · "));
 }
 // CAS-228: one card per window this agent's type has, both switches on the face of it. They are drawn side by
@@ -9277,7 +9277,7 @@ function drawWatchLanes(){
     // to choose between. They are a nested list rather than a third switch on the row: they are not a
     // separate job the agent does, they are which moments the one bell rings on.
     const subs = (nt && w.subs && w.subs.length) ? `<div class="agwsubs">
-      <p class="agwsublead">Tell me ${esc(w.notifySay)}, and also:</p>
+      <p class="agwsublead">Follow it ${esc(w.notifySay)}, and also:</p>
       ${w.subs.map(s=>`<button type="button" class="agwsubt${subOn(w.key,s.key)?" on":""}"
           aria-pressed="${subOn(w.key,s.key)}" onclick="wwToggleSub('${w.key}','${s.key}')">
           <span class="wwb">✓</span><span class="agwsubx"><b>${esc(s.label)}</b>
@@ -9288,7 +9288,7 @@ function drawWatchLanes(){
       <p class="agwsub">${esc(w.sub)}</p>
       <div class="agwrow">
         ${w.notifyOnly ? "" : sw("list","List", lst, `Include ${w.label.toLowerCase()} films in this agent's list`)}
-        ${sw("notify","Notify option", nt, `Alert me ${w.notifySay}`)}
+        ${sw("notify","Follow", nt, `Follow it ${w.notifySay}`)}
       </div>${subs}</div>`;
   }).join("");
 }
@@ -10484,11 +10484,12 @@ const SHARP_STEPS = {
       // screen that did both at once and is no longer true of this one.
       const stream = agentWindowKind()==="stream";
       return `<p class="ossub">Two separate choices per window: <b>List</b> puts those films in this agent's list, and
-          <b>Notify</b> tells you when one arrives. Neither implies the other.</p>
+          <b>Follow</b> keeps the window counted in what this agent tracks — its found &amp; new totals — even if
+          you don't list it. Neither implies the other.</p>
         <div id="wwLanes"></div>
         <div class="usec wwsec">Notify me by</div>
         <div id="wwChannels"></div>
-        ${stream ? `<p class="wwfoot"><span>ℹ️</span><span>To complete these alerts we'll need to know your current rental and streaming services — we'll ask for this later.</span></p>` : ""}`;
+        ${stream ? `<p class="wwfoot"><span>ℹ️</span><span>To follow these windows fully we'll need to know your current rental and streaming services — we'll ask for this later.</span></p>` : ""}`;
     },
     wire(){ drawWatchLanes(); drawNotifyBy(); },
   },
@@ -10529,7 +10530,7 @@ const SHARP_STEPS = {
           ${row("🎭","Style",              briefSum("genre"),                   "genres")}
           ${row("🔞","Rating",             briefSum("age"),                     "age")}
           ${stream ? row("🕰️","How far back", yearsLabel(flowYearsBack()), "years") : ""}
-          ${row("🔔","Notifications",      hubWatchSummary(),                   "watching")}
+          ${row("📺","Where & when you'll watch", hubWatchSummary(),            "watching")}
         </div>
         <!-- CAS-268: Delete only appears for an agent that EXISTS. A brand-new agent reaching this screen
              from New Cascade (CAS-246) has never been saved, so there is nothing to delete — offering the

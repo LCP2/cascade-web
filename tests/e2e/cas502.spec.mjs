@@ -7,11 +7,12 @@
 //   1. The Cascade Builder modal's availability spine (buildSpine/.abell 📣 bells) — a PURE alert switch
 //      with no other job. It notified nobody once the backend stopped reading alert_moments, so it is
 //      removed outright here (not just disabled — a disabled dead switch is exactly what AC4 rules out).
-//   2. The Edit Agent > Notifications screen's "Notify option" toggle (drawWatchLanes/#wwLanes) — this one
-//      is NOT a pure alert switch: turning it on is also what keeps a "notify-only" window (e.g. Rent for a
-//      Cinema agent) in the agent's WATCH scope, which still drives real, non-alert behaviour (found/new
+//   2. The Edit Agent > Where & when you'll watch screen's "Notify option" toggle (drawWatchLanes/#wwLanes) —
+//      this one is NOT a pure alert switch: turning it on is also what keeps a "notify-only" window (e.g. Rent
+//      for a Cinema agent) in the agent's WATCH scope, which still drives real, non-alert behaviour (found/new
 //      counts). Removing it would risk silently narrowing what an agent tracks, so it is deliberately left
-//      alone — flagged in the CAS-502 ticket comment as a scoping decision, not an oversight.
+//      alone — flagged in the CAS-502 ticket comment as a scoping decision, not an oversight. CAS-505 later
+//      relabelled it "Follow" so its own copy stopped promising an alert it can't deliver.
 // alertLive() is the one function every "will this ever notify" promise in the app reads off (cards, the
 // agent's own voice, the editor's paint) — it now always returns false, so this suite checks it directly
 // rather than re-testing every caller.
