@@ -2322,6 +2322,11 @@
   .agcount{flex:0 0 auto;text-align:right;padding-left:4px}
   .agcount b{display:block;font-size:18px;font-weight:800;color:var(--ink);line-height:1.1}
   .agcount span{font-size:10px;color:var(--dim)}
+  /* CAS-501: the row itself opens the agent (delegated click in wireAgentsDrag), so it gets a pressed state
+     like any other tappable surface — Edit sits outside that tap zone, its own ca-btn, sized to sit clear
+     of the count on narrow (iPhone) widths rather than crowd it. */
+  .agrow:active{background:var(--panel2)}
+  .ag-edit{flex:0 0 auto;padding:6px 12px}
   /* CAS-441: same quiet-indicator language as the deck's .dc-learn, sized for the row. The Agents screen
      has no coverflow focus state to gate on, so it is interactive from the moment it paints. */
   .ag-learn{display:inline-flex;align-items:center;gap:5px;margin-top:6px;padding:4px 9px;border-radius:999px;
@@ -3721,7 +3726,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 484, "commit": "73c298f", "builtAt": "2026-08-13T23:41:33Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 485, "commit": "3836161", "builtAt": "2026-08-14T00:09:42Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -11292,6 +11297,8 @@ function renderAgentsScreen(){
           ${ICON.learn}<b>Learning</b><span> · tap to review</span></button>
       </span>
       <span class="agcount"><b>${shown}</b><span>film${shown===1?"":"s"}</span></span>
+      <button type="button" class="ag-edit ca-btn" onclick="editAgentRow('${escA(c.id)}')"
+          aria-label="Edit ${escA(c.name)}" title="Edit ${escA(c.name)}">Edit</button>
     </div>`;
   }).join("");
   $("agentsBody").innerHTML=`
@@ -11316,6 +11323,11 @@ window.closeAgentsScreen=()=>{
   $("agentsScreen").classList.remove("open"); document.body.style.overflow="";
   $("agentsBtn").classList.remove("active"); $("agentsBtn").setAttribute("aria-expanded","false");
 };
+// CAS-501: the row's own central area (icon/name/summary/count) opens the agent, exactly like selecting its
+// deck card does. Delegated at the list in wireAgentsDrag(), and the grip/Learning-chip/Edit button opt out
+// of it — a drag or a press on any of those must never be read as a row tap.
+function openAgentRow(id){ closeAgentsScreen(); openCascade(id); }
+window.editAgentRow=id=>{ closeAgentsScreen(); briefOpen(id); };
 
 // ---- CAS-441: Review this agent (Phase 1 of the CAS-440 Learning Agents spike) ---------------------------
 // Profiling only, from the user's own behaviour on THIS agent's films — no advice, no Apply (Phase 2/3).
@@ -11597,6 +11609,11 @@ function wireAgentsDrag(){
   };
   list.addEventListener("pointerup", endDrag);
   list.addEventListener("pointercancel", endDrag);
+  list.addEventListener("click", e=>{
+    if(e.target.closest(".aggrip,.ag-learn,.ag-edit")) return;
+    const row=e.target.closest(".agrow"); if(!row) return;
+    openAgentRow(row.dataset.id);
+  });
 }
 
 // ================= CAS-206 / CAS-210: Account =======================================================
