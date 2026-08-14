@@ -1,9 +1,10 @@
-// CAS-488: index.html ships MOVIES/TODAY baked at build time so first paint needs no network, but a tab
+// CAS-488: index.html ships MOVIES/BUILD_DATE baked at build time so first paint needs no network, but a tab
 // left open never used to see a new film, a status change, or a recalculated glow. pollCatalogue() now
 // fetches movies.json (same origin, already served next to index.html) on the same focus/visibilitychange/
-// heartbeat triggers CAS-487 wired up for the bell, swaps MOVIES/TODAY/REAL_TODAY in, and repaints — unless
+// heartbeat triggers CAS-487 wired up for the bell, swaps MOVIES/BUILD_DATE in, and repaints — unless
 // something is mid-interaction (an open modal/drawer/popup), in which case the data still updates but the
-// repaint is deferred rather than yanking the UI out from under the user.
+// repaint is deferred rather than yanking the UI out from under the user. CAS-503: TODAY is a separate,
+// always-live concept now — see cas503.spec.mjs.
 //
 // The suite stays guest-mode/network-free (helpers.mjs) and never talks to the real movies.json — every
 // test here drives pollCatalogue() against a mocked response via page.route, so it is deterministic and
@@ -39,7 +40,10 @@ test("CAS-488: a blocked/failed movies.json poll leaves the baked catalogue and 
   expect(pageErrors).toEqual([]);
 });
 
-test("CAS-488: a changed catalogue replaces MOVIES/TODAY/REAL_TODAY and repaints when nothing is open", async ({ page }) => {
+// CAS-503: TODAY no longer tracks the catalogue's own build stamp — it is always the device's live local
+// date (advanceClock(), checked unconditionally at the top of every pollCatalogue() run). What a fresh
+// catalogue now moves is BUILD_DATE, the "Updated <date>" label's own source.
+test("CAS-503: a changed catalogue replaces MOVIES/BUILD_DATE and repaints when nothing is open, but TODAY stays the device's own date", async ({ page }) => {
   await freshApp(page);
   const { id, title, payloadStr } = await buildChangedPayload(page, "2099-01-01");
 
@@ -50,14 +54,14 @@ test("CAS-488: a changed catalogue replaces MOVIES/TODAY/REAL_TODAY and repaints
 
   const result = await page.evaluate((id) => ({
     title: MOVIES.find(m => m.tmdb_id === id)?.title,
+    buildDate: BUILD_DATE,
     today: TODAY,
-    realToday: REAL_TODAY,
     updatedLabel: document.getElementById("updated").textContent,
   }), id);
 
   expect(result.title).toBe(title);
-  expect(result.today).toBe("2099-01-01");
-  expect(result.realToday).toBe(new Date().toISOString().slice(0, 10));
+  expect(result.buildDate).toBe("2099-01-01");
+  expect(result.today).toBe(await page.evaluate(() => window.CascadePersistence.localToday()));
   expect(result.updatedLabel).toContain("Updated");
 });
 

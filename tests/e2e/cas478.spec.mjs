@@ -9,13 +9,13 @@ import { toShortlist, shortlistCards, pickCard, finishFlow, toListing, settleLis
 async function openNotificationsScreen(page){
   await page.evaluate(() => window.editCascade());
   await expect(page.locator(".osh", { hasText: /Edit Agent/ })).toBeVisible();
-  await page.locator(".osdoor", { hasText: "Notifications" }).click();
+  await page.locator(".osdoor", { hasText: "Where & when you'll watch" }).click();
   await expect(page.locator("#wwLanes .wwlane").first()).toBeVisible();
 }
 
 async function setLaneSwitch(page, label, which, desiredOn){
   const lane = page.locator(".wwlane", { has: page.locator(".wwn", { hasText: label }) });
-  const btn = lane.locator(".agwt", { hasText: which === "notify" ? "Notify option" : "List" });
+  const btn = lane.locator(".agwt", { hasText: which === "notify" ? "Follow" : "List" });
   const isOn = (await btn.getAttribute("aria-pressed")) === "true";
   if(isOn !== desiredOn) await btn.click();
   await expect(btn).toHaveAttribute("aria-pressed", String(desiredOn));

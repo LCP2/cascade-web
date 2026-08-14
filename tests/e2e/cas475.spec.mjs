@@ -22,13 +22,13 @@ async function openEditAgent(page){
 test("CAS-475: a Cinema agent's Edit Agent hub has no Language row", async ({ page }) => {
   await toListingWithAgent(page, "cinema");
   const rowLabels = await openEditAgent(page);
-  await expect(rowLabels).toHaveText(["Agent Name", "Mission", "Style", "Rating", "Notifications"]);
+  await expect(rowLabels).toHaveText(["Agent Name", "Mission", "Style", "Rating", "Where & when you'll watch"]);
 });
 
 test("CAS-475: a Streaming agent's Edit Agent hub has no Language row and no Streaming services row", async ({ page }) => {
   await toListingWithAgent(page, "stream");
   const rowLabels = await openEditAgent(page);
-  await expect(rowLabels).toHaveText(["Agent Name", "Mission", "Style", "Rating", "How far back", "Notifications"]);
+  await expect(rowLabels).toHaveText(["Agent Name", "Mission", "Style", "Rating", "How far back", "Where & when you'll watch"]);
 });
 
 test("CAS-475: Account settings is still the one place Language and My streaming services are configured", async ({ page }) => {

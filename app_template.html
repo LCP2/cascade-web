@@ -2322,6 +2322,11 @@
   .agcount{flex:0 0 auto;text-align:right;padding-left:4px}
   .agcount b{display:block;font-size:18px;font-weight:800;color:var(--ink);line-height:1.1}
   .agcount span{font-size:10px;color:var(--dim)}
+  /* CAS-501: the row itself opens the agent (delegated click in wireAgentsDrag), so it gets a pressed state
+     like any other tappable surface — Edit sits outside that tap zone, its own ca-btn, sized to sit clear
+     of the count on narrow (iPhone) widths rather than crowd it. */
+  .agrow:active{background:var(--panel2)}
+  .ag-edit{flex:0 0 auto;padding:6px 12px}
   /* CAS-441: same quiet-indicator language as the deck's .dc-learn, sized for the row. The Agents screen
      has no coverflow focus state to gate on, so it is interactive from the moment it paints. */
   .ag-learn{display:inline-flex;align-items:center;gap:5px;margin-top:6px;padding:4px 9px;border-radius:999px;
@@ -2612,8 +2617,10 @@
 
     <div class="zone">
       <div class="zhead">Where &amp; when</div>
-      <div class="zsub">Which windows this Cascade watches for you — and which ones are worth a 📣 when one of
-        the films it found lands there.</div>
+      <!-- CAS-502: was "...and which ones are worth a 📣 when one of the films it found lands there" — the
+           per-window bell that sentence promised is gone (it never notified anyone once alert_moments stopped
+           being read for delivery). Only a film's own Watch it tick notifies now. -->
+      <div class="zsub">Which windows this Cascade watches for you.</div>
       <div class="spine" id="cSpine"></div>
     </div>
 
@@ -2980,10 +2987,19 @@
 </div>
 
 <script>
-// CAS-488: both baked in at build time, but no longer immutable — a live tab swaps the catalogue and its
-// build date in underneath itself (see pollCatalogue, near REAL_TODAY below), so both must stay reassignable.
+// CAS-488: baked in at build time, but no longer immutable — a live tab swaps the catalogue in underneath
+// itself (see pollCatalogue below), so it must stay reassignable.
 let MOVIES = __MOVIES_JSON__;
-let TODAY  = "__TODAY__";
+// CAS-503: BUILD_DATE is the catalogue's own build stamp — shown only in the "Updated" label and used to
+// notice a fresh catalogue on poll. TODAY is what the rest of the app means by "today": the device's LOCAL
+// calendar date, evaluated fresh on load and re-evaluated on every reconcile tick (CAS-487's heartbeat/
+// focus triggers via pollCatalogue), never frozen at build. window_dates/cinema_date are plain AU release-
+// calendar dates, so this reads the browser's local date fields rather than toISOString()'s UTC one —
+// Sydney is UTC+10/+11, so for hours every AU morning a UTC "today" is still yesterday there.
+let BUILD_DATE = "__TODAY__";
+const localToday = () => { const d=new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
+let TODAY = localToday();
 const DEFAULT_TITLE = document.title;   // CAS-437: restored when the film page closes
 // CAS-486: the exact marker the notify-test harness's fixture films carry in their `director`
 // field (tests/fixtures/notify-films.json) — reused here so the card/film-page badge and the
@@ -3141,8 +3157,12 @@ const inCinemaRun = m => !!m.cinema_date && m.cinema_date<=TODAY && m.cinema_dat
 // CAS-289: the estimated-only counterpart, capped at CINEMA_ESTIMATE_RUN_DAYS rather than CINEMA_RUN_DAYS.
 const inCinemaRunEstimated = m => !!m.cinema_date && m.cinema_date<=TODAY && m.cinema_date>=addDays(TODAY,-CINEMA_ESTIMATE_RUN_DAYS);
 const cinemaRungFor = m => m.cinema_date >= addDays(TODAY,-OPENING_WEEK_DAYS) ? "opening_week" : "in_cinema";
-// The window the pipeline worked out, kept safe before deriveStatus() overwrites m.status below.
-MOVIES.forEach(m=>{ m.claimedStatus=(m.status||[]).slice(); });
+// The window the pipeline worked out, kept safe before deriveStatus() overwrites m.status below. Reused by
+// pollCatalogue() (CAS-503) every time a fresh catalogue swap needs the same two-step treatment. Skips a
+// ?fixtures=1 film (CAS-486/491): those carry a hand-authored status/window_dates with no claimedStatus of
+// their own, and are never meant to run through the pipeline-sharpening deriveStatus() applies below.
+function captureClaimedStatus(){ MOVIES.forEach(m=>{ if(!m._fixture) m.claimedStatus=(m.status||[]).slice(); }); }
+captureClaimedStatus();
 function deriveStatus(m){
   // CAS-155: the pipeline's own `status` is the AUTHORITY on which window a film is in. This function may
   // sharpen it from priced offers (that is how the poll sim, and a real Watchmode read, move a film along the
@@ -3244,7 +3264,10 @@ function primaryStatus(m){
   }
   return last;
 }
-MOVIES.forEach(m=>m.status=deriveStatus(m));
+// CAS-503: also rerun by pollCatalogue() whenever the device's date moves on or a fresh catalogue lands, so
+// a film's window is never stuck at whatever it was on the page's first paint. Same fixture skip as above.
+function rederiveStatuses(){ MOVIES.forEach(m=>{ if(!m._fixture) m.status=deriveStatus(m); }); }
+rederiveStatuses();
 
 // The state, derived from the film's REAL opening date and nothing else. A film the sim has pushed into
 // cinemas early (_simReleased) has an opening date in the future, so it is honestly not past anything yet.
@@ -3692,7 +3715,10 @@ function removeList(id){
 
 // CAS-269: "Live AU data · " is gone from the freshness line for the same reason the chip is: it is a
 // constant. What is left is the one part of this line that moves.
-$("updated").textContent = "Updated " + fmtDate(TODAY);
+// CAS-503: this reads BUILD_DATE (the catalogue's own build stamp), not TODAY — the label answers "when was
+// this catalogue built", which is a different question from "what does the app treat as today" now that the
+// latter tracks the device's live clock.
+$("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 
 // ================= Build stamp (CAS-124 / CAS-324) =================
 // version / build / commit / builtAt are baked at build time (from the committed VERSION file + git).
@@ -5129,9 +5155,12 @@ function filmOptKeyForWindow(c, w){
   }
   return null;
 }
-// CAS-434: on only if the USER ticked it for this film. `opt.agentOn` governs whether a row is offered at
-// all (watchLevelsFor), not whether it starts ticked — defaulting to it here was pre-ticking every untouched
-// film from the agent's own switch, which is the agent's config leaking into a per-film choice nobody made.
+// CAS-434: on only if the USER ticked it for this film. `opt.agentOn` (where `opt` comes from
+// notifyOptionsFor, e.g. the digest's catchReason) governs whether the AGENT will speak up about a level, not
+// whether it starts ticked — defaulting to it here was pre-ticking every untouched film from the agent's own
+// switch, which is the agent's config leaking into a per-film choice nobody made. CAS-500: watchLevelsFor's
+// own rows carry no `agentOn` at all any more — the Watch it button is account-wide, so its rows can't read
+// any one agent's config either.
 const filmOptOn = (id, opt) => {
   const w=(notify[id]||{}).wins||{};
   return !!w[opt.key];
@@ -5146,39 +5175,41 @@ const WATCH_LEVEL_KEYS = ["in_cinema", "premium", "rent", "stream"];
 // each carrying whether the film has already passed it. CAS-477: a level this cascade isn't configured to
 // track is still shown, live and tickable — the film's Watch-it tick is account-wide (filmOptOn), so hiding
 // the row here just because THIS cascade doesn't track it made the tick look reset when swapping cascades.
-// `agentOn` still says whether THIS cascade will actually notify on it — that only gates the "N of M" chip
-// count (filmNotifyState) and the auto-tick cascade, not whether the row appears. Unlike the old Notify
-// list, a passed level is not dropped — it is shown, greyed (CAS-349): the film's whole journey stays
-// visible even where most of it is behind it, only the past stays un-selectable. CAS-473: `spent` is
-// strictly-past rungs only — a film's CURRENT rung is where the Watch panel is a statement of fact ("watch
-// it here") rather than a promise about the future, so unlike the Notify honesty rule (CAS-280's
+// Unlike the old Notify list, a passed level is not dropped — it is shown, greyed (CAS-349): the film's whole
+// journey stays visible even where most of it is behind it, only the past stays un-selectable. CAS-473:
+// `spent` is strictly-past rungs only — a film's CURRENT rung is where the Watch panel is a statement of fact
+// ("watch it here") rather than a promise about the future, so unlike the Notify honesty rule (CAS-280's
 // rowSpentFor, which does exclude a film's own arrival) the row for the film's own current window stays
 // selectable. Only rungs the film has already moved past are un-offerable.
+// CAS-500: this used to read the ACTIVE cascade's own kind+watchWindows (`agentOn`), so a stream-kind agent's
+// AGENT_WINDOWS list has no `in_cinema` row at all — the same film's Watch it button showed set in a cinema
+// agent and unset in a stream agent, even though the tick it reads (filmOptOn) was always the same account-
+// wide value. The four rungs are a property of the FILM (WATCH_LEVEL_KEYS + how far it's travelled), never of
+// whichever agent happens to be on screen, so this reads the canonical cinema-kind definitions directly —
+// they carry all four keys (in_cinema plus the HOME_WINDOWS spread) — instead of branching on activeCascade().
 function watchLevelsFor(id){
-  const c=activeCascade();
-  const kinds = (c && (c.kind==="cinema"||c.kind==="stream")) ? [c.kind] : Object.keys(AGENT_WINDOWS);
-  const watch = c ? migrateWatch(c.watchWindows||{}) : {};
   const rung = filmRung(id);
-  const out=[];
-  kinds.forEach(k=>AGENT_WINDOWS[k].forEach(w=>{
-    if(!WATCH_LEVEL_KEYS.includes(w.key)) return;
-    const f=watch[w.key]||{};
-    out.push({key:w.key, label:w.label, cd:w.cd, agentOn:!!f.notify, spent: WINDOW_RUNG[w.key]<rung});
-  }));
-  return out;
+  return WATCH_LEVEL_KEYS.map(key=>{
+    const w=AGENT_WINDOWS.cinema.find(x=>x.key===key);
+    return {key, label:w.label, cd:w.cd, spent: WINDOW_RUNG[key]<rung};
+  });
 }
 // Is the film CURRENTLY sitting in a level you ticked? Not "you ticked something" — "something you ticked is
 // true right now" — which is the one thing the ticket asks the button's green to mean.
 // CAS-494: tests every window the film currently OCCUPIES (m.status), not only its primaryStatus rung — a
 // film can sit in more than one window at once (e.g. still in_cinema while also included_streaming), and the
 // notification engine already fires on any of them, so the control has to agree with whichever one you ticked.
+// CAS-500: reads windows with `c=null`, not activeCascade() — this is the film's own account-wide "current"
+// state, not a claim about any one agent, and filmOptKeyForWindow restricted to one cascade's kind returns
+// null for a window that kind's own AGENT_WINDOWS list doesn't carry (e.g. in_cinema on a stream agent),
+// which silently read as "not current" there. Passing null always searches every kind, so the same window
+// resolves to the same option key everywhere.
 function watchIsCurrent(id){
   const m=MOVIES.find(x=>x.tmdb_id===id);
   if(!m) return false;
-  const c=activeCascade();
   const levels=watchLevelsFor(id);
   return m.status.some(w=>{
-    const key=filmOptKeyForWindow(c, w);
+    const key=filmOptKeyForWindow(null, w);
     const l=key && levels.find(x=>x.key===key);
     return !!(l && filmOptOn(id,l));
   });
@@ -5200,16 +5231,20 @@ function filmHasWatchTier(id, key){
   const l=watchLevelsFor(id).find(x=>x.key===key);
   return !!(l && filmOptOn(id,l));
 }
-// The chip's summary. CAS-427: counted over the options this agent has actually enabled Notify for — a level
-// the agent only Lists (never asked this control about) is not one of the "N of M" the chip can honestly cite,
-// and a passed level carries no future promise either, so both are excluded the same way.
+// The chip's summary — counted over every level the film hasn't already passed, full stop. CAS-500: this used
+// to filter to `l.agentOn` (CAS-427), i.e. only the levels THIS agent's own Notify option had switched on, so
+// the same film's "N of M" read differently card to card depending which agent it was viewed from — the exact
+// bug this ticket reports. The button is a per-film, account-wide control (CAS-484's film_watch is already
+// agent-independent on the storage side; matching.py's match_film_watches reads it with no cascade filter at
+// all), so its own summary can't vary by agent either. An agent's own Notify toggle still matters — it's what
+// lets THAT agent's bell/digest speak up about a level — but that's the agent's configuration, not this count.
 function filmNotifyState(id){
-  const levels=watchLevelsFor(id).filter(l=>!l.spent && l.agentOn);
+  const levels=watchLevelsFor(id).filter(l=>!l.spent);
   const on=levels.filter(l=>filmOptOn(id,l)).length;
   return {on, total:levels.length, current:watchIsCurrent(id)};
 }
 // CAS-478: the Filter panel's fourth row — not one more tier, but their absence. "Eligible" is the same
-// !spent && agentOn set filmNotifyState already counts over (per CAS-477), so a film is Undecided when it
+// !spent set filmNotifyState already counts over (per CAS-477/CAS-500), so a film is Undecided when it
 // has at least one such level and none of them are ticked.
 function filmIsUndecided(id){
   const st=filmNotifyState(id);
@@ -5227,12 +5262,19 @@ function notifyChipHTML(id){
   // CAS-349: green (not the generic gold "on") is the film's OWN colour for "you can watch this right now"
   // everywhere else on the card (the availability bar, the window lozenges) — reusing it here says the same
   // thing the same way, rather than borrowing the on-state colour every other control uses for "a choice was made".
+  // CAS-500 (Lee's revised diagnosis): green/set and gold-glow are two DIFFERENT questions and must not share
+  // one predicate. Green ("I've asked to be told") is true whenever any level is ticked at all — st.on>0 —
+  // whether or not that level has arrived yet. Glow ("what I asked for is true right now") stays exactly
+  // st.current, unchanged. Conflating them onto st.current alone (the pre-fix code) meant a film with only a
+  // future level ticked read as fully unset, indistinguishable from a film with no ticks at all — the "Streaming
+  // ticked, button still plain" repro. aria-pressed follows the same split: it reports whether a request exists
+  // (st.on), not whether it has been satisfied (st.current).
   return `<button type="button" class="ctl notify${st.current?" on recent":""}" data-nid="${id}"
-      onclick="openNotifyPanel(${id},this)" aria-haspopup="true" aria-expanded="false" aria-pressed="${st.current}"
+      onclick="openNotifyPanel(${id},this)" aria-haspopup="true" aria-expanded="false" aria-pressed="${!!st.on}"
       title="${escA(title)}" aria-label="${escA(title)}">
     <span class="cmini"><i class="cfill" style="width:${st.total?100*st.on/st.total:0}%;background:var(--green)"></i>
       <span class="cic">${st.current ? ICON.watched : ICON.bell}</span>
-      <span class="clab${st.current?"":" dim"}">${lbl}</span>
+      <span class="clab${st.on?"":" dim"}">${lbl}</span>
       <span class="ctog">${ICON.chev}</span></span></button>`;
 }
 // ---- CAS-428: the Lists control (replaces the CAS-279 Agent/"move" control) -----------------------------
@@ -5704,7 +5746,6 @@ function mlRowHTML(m, groupKey){
 // It is NOT the film's release date and it is NOT a guess: it's the day Cascade actually picked it up for you.
 // An entry is dropped when the film leaves the list, so a film that is later found again is honestly new again.
 const NEW_DAYS = 7;                                     // what "this week" means. One dial, in one place.
-let REAL_TODAY = new Date().toISOString().slice(0,10);   // when YOU are looking, not the catalogue's build date
 const FIRST_KEY = "cascade_first_found";
 function loadFirstFound(){
   try{ const o=JSON.parse(localStorage.getItem(FIRST_KEY)||"{}");
@@ -5714,13 +5755,15 @@ const firstFound = loadFirstFound();
 let firstSaved=null;
 function trackFirstFound(){
   Object.keys(firstFound).forEach(id=>{ if(!found.has(+id)) delete firstFound[id]; });
-  found.forEach(id=>{ if(!firstFound[id]) firstFound[id]=REAL_TODAY; });
+  // CAS-503: used to stamp REAL_TODAY here — now that TODAY itself is always the device's live local date
+  // (never the catalogue's build date), it IS "when YOU are looking", so the separate variable is gone.
+  found.forEach(id=>{ if(!firstFound[id]) firstFound[id]=TODAY; });
   const s=JSON.stringify(firstFound);
   if(s===firstSaved) return;                            // runs on every render — only real changes write
   firstSaved=s;
   try{ localStorage.setItem(FIRST_KEY, s); }catch(e){}
 }
-const daysSince = iso => Math.round((Date.parse(REAL_TODAY) - Date.parse(iso)) / 864e5);
+const daysSince = iso => Math.round((Date.parse(TODAY) - Date.parse(iso)) / 864e5);
 const isNewFound = id => { const d=firstFound[id]; return !!d && daysSince(d) < NEW_DAYS; };
 
 // ---- "Recent" (CAS-468) — supersedes CAS-447's card-level badge -----------------
@@ -5736,8 +5779,8 @@ function isRecent(m){
   return !!d && daysSince(d) < NEW_DAYS;
 }
 
-// ---- CAS-488: runtime catalogue refresh -----------------------------------------------------
-// MOVIES/TODAY above ship baked at build time so first paint needs no network — but a tab left open for
+// ---- CAS-488/503: runtime catalogue refresh + live clock ---------------------------------------
+// MOVIES/BUILD_DATE above ship baked at build time so first paint needs no network — but a tab left open for
 // hours (or days) would otherwise never see a film added, a status change, or a glow recompute. movies.json
 // is the exact payload the build reads, already served next to index.html (same origin, no new publishing
 // step). {cache:"no-cache"} forces a real conditional request every poll instead of trusting the browser's
@@ -5754,32 +5797,51 @@ let catalogueEtag = null, cataloguePolling = false;
 const catalogueUIBusy = () => document.body.style.overflow==="hidden"
   || $("drawer").classList.contains("open")
   || !!document.querySelector(".cpop");
+// CAS-503: the device's date can move on (a tab left open across midnight, or simply a catalogue build that
+// lagged the clock) with no catalogue change at all — that must not depend on a successful network fetch,
+// so it is checked first and unconditionally, every time pollCatalogue runs. Returns whether anything
+// actually needs re-rendering, so pollCatalogue can fold it into the same repaint as a catalogue swap.
+function advanceClock(){
+  const now = localToday();
+  if(now === TODAY) return false;
+  TODAY = now;
+  rederiveStatuses();
+  return true;
+}
 async function pollCatalogue(){
   if(cataloguePolling) return;
   cataloguePolling = true;
   try{
+    let dirty = advanceClock();
     let res;
     try{ res = await fetch("movies.json", {cache:"no-cache"}); }
-    catch(e){ return; }                        // offline or blocked — the baked/last-known catalogue keeps serving
-    if(!res.ok) return;
-    const etag = res.headers.get("etag");
-    if(etag && etag===catalogueEtag) return;    // unchanged — skip parsing an ~11MB body for nothing
-    let payload;
-    try{ payload = await res.json(); }catch(e){ return; }
-    if(!Array.isArray(payload.movies)) return;
-    catalogueEtag = etag;
-    MOVIES = payload.movies;
-    // TODAY tracks the catalogue's own build date; the header's "Updated <date>" label reads it directly
-    // and isn't part of render()'s rebuild, so it's kept honest here — unconditionally, since a one-line
-    // text write can never disturb an open modal/drawer/popup the way a full listing rebuild could.
-    if(payload.generated){ TODAY = payload.generated; $("updated").textContent = "Updated " + fmtDate(TODAY); }
-    REAL_TODAY = new Date().toISOString().slice(0,10);  // REAL_TODAY tracks the clock, independently of the data
-    // CAS-490: MOVIES was just replaced wholesale, so any ?fixtures=1 merge (CAS-486) is gone — re-apply it
-    // here rather than only on cascade-auth-change, so a fixture film survives a catalogue refresh instead
-    // of silently vanishing the next time the tab regains focus. No-ops instantly unless the gate is met.
-    await maybeLoadFixtures();
-    recomputeFound();                                   // data is live now regardless of whether we paint it
-    if(!catalogueUIBusy()) render();
+    catch(e){ res = null; }                     // offline or blocked — the baked/last-known catalogue keeps serving
+    if(res && res.ok){
+      const etag = res.headers.get("etag");
+      if(!etag || etag!==catalogueEtag){         // unchanged etag — skip parsing an ~11MB body for nothing
+        let payload = null;
+        try{ payload = await res.json(); }catch(e){}
+        if(payload && Array.isArray(payload.movies)){
+          catalogueEtag = etag;
+          MOVIES = payload.movies;
+          // BUILD_DATE tracks the catalogue's own build stamp; the header's "Updated <date>" label reads it
+          // directly and isn't part of render()'s rebuild, so it's kept honest here — unconditionally, since
+          // a one-line text write can never disturb an open modal/drawer/popup the way a full rebuild could.
+          if(payload.generated){ BUILD_DATE = payload.generated; $("updated").textContent = "Updated " + fmtDate(BUILD_DATE); }
+          captureClaimedStatus();
+          // CAS-490: MOVIES was just replaced wholesale, so any ?fixtures=1 merge (CAS-486) is gone — re-apply
+          // it here rather than only on cascade-auth-change, so a fixture film survives a catalogue refresh
+          // instead of silently vanishing the next time the tab regains focus. No-ops unless the gate is met.
+          await maybeLoadFixtures();
+          rederiveStatuses();
+          dirty = true;
+        }
+      }
+    }
+    if(dirty){
+      recomputeFound();                                 // data is live now regardless of whether we paint it
+      if(!catalogueUIBusy()) render();
+    }
   } finally { cataloguePolling = false; }
 }
 
@@ -6346,8 +6408,8 @@ function posForYears(y){
 }
 const yearsLabel = y => !y ? "Any" : (y===1 ? "Last 1 year" : `Last ${y} years`);
 const yearsShort = y => !y ? "Any" : String(y);
-// The rolling cutoff, as a real date. TODAY is the catalogue's own build date, so this moves with the data
-// rather than with whatever clock the page happens to be opened on.
+// The rolling cutoff, as a real date. CAS-503: TODAY is now the device's own live local date, so this moves
+// with the clock the page is actually open on, not with whenever the catalogue was last built.
 function yearsCutoff(y){
   if(!y) return null;
   const d=new Date(TODAY+"T00:00:00Z"); d.setUTCFullYear(d.getUTCFullYear()-y);
@@ -6863,8 +6925,12 @@ const alertMuted = k => prefs.alertsOff.has(k);
 // not muted globally. Every promise the app makes — the deck's "alerts on…" line, the agent's
 // voice, the editor's own paint, and the alert_moments we hand the monitor — reads off this, so
 // they cannot drift apart and start promising an email that will never arrive.
+// CAS-502: an agent's own bell never rings any more — Watch it on the film itself is the only thing
+// that notifies now — so this is unconditionally false. `c.alerts`/alert_moments are left as they
+// are (nothing destroyed, easy to reverse); this is the one place that stops promising delivery
+// from them.
 function alertLive(c,k){
-  return !!(c.alerts||ALERT_DEFAULTS)[k] && reachableRows(c).has(k) && !alertMuted(k);
+  return false;
 }
 const liveAlerts = c => Object.keys(ALERT_SHORT).filter(k=>alertLive(c,k));
 function alertSummary(c){
@@ -7709,39 +7775,23 @@ function buildSpine(){
     el.className="arow r-"+r.key;
     // The window lozenge is the SAME component the movie cards use (.pill.<status>) — same colour, same
     // shape — so the row and the card teach each other rather than being two vocabularies.
+    // CAS-502: the per-row 📣 bell (and the cinema row's "past opening weekend" extra alert) is gone —
+    // an agent's own bell never notified anyone once the backend stopped reading alert_moments, so it
+    // was a dead switch (AC4). `draft.alerts`/alert_moments keep being computed under the hood
+    // (autoSelectAlerts) so nothing about the stored data changes — only the (now-fake) control is gone.
     el.innerHTML=`<div class="arow-main">
         <button class="atog" role="switch"><span class="adot"></span>
           <span class="alab"><span class="pill ${r.pill}">${r.title}</span><small>${r.sub}</small></span></button>
-        <button class="abell" role="switch"><span>📣</span><span class="bl">${r.alertName}</span></button>
       </div>
-      <div class="awhy" id="why-${r.key}" hidden></div>
-      ${(r.home || r.extraAlert) ? `<div class="aopts" id="opt-${r.key}"><div><div class="inner" style="padding-top:6px">
-        ${r.home ? `<div class="switch mini" id="mine-${r.key}" role="switch">
+      ${r.home ? `<div class="aopts" id="opt-${r.key}"><div><div class="inner" style="padding-top:6px">
+        <div class="switch mini" id="mine-${r.key}" role="switch">
           <span>Only what I can watch <small style="color:var(--faint)">(my services)</small></span>
-          <span class="knob"></span></div>` : ""}
-        ${r.extraAlert ? `<div class="switch mini" id="moment-${r.extraAlert.key}" role="switch">
-          <span>${r.extraAlert.label} <small style="color:var(--faint)">— ${r.extraAlert.sub}</small></span>
-          <span class="knob"></span></div>` : ""}</div></div></div>` : ""}`;
+          <span class="knob"></span></div></div></div></div>` : ""}`;
     // Changing the scope changes which bells can ever ring, so re-run the auto-select right here
     // rather than leaving the user to notice for themselves (CAS-103 AC2).
     el.querySelector(".atog").onclick=()=>{ setRow(r, rowState(r)==="off"); autoSelectAlerts(); syncSpine(); refreshDraft(); };
-    el.querySelector(".abell").onclick=()=>{
-      if(bellBlocked(r.alert)) return;               // disabled anyway; never silently flip hidden state
-      draft.alerts[r.alert]=!draft.alerts[r.alert];
-      draft.alertsTouched[r.alert]=true;             // an explicit choice the auto-select must not overwrite
-      syncSpine();
-    };
     const mine=r.home ? el.querySelector("#mine-"+r.key) : null;
     if(mine) mine.onclick=()=>{ draft.myServices[r.key]=!draft.myServices[r.key]; syncSpine(); refreshDraft(); };
-    if(r.extraAlert){
-      const mo=el.querySelector("#moment-"+r.extraAlert.key);
-      mo.onclick=()=>{
-        if(bellBlocked(r.extraAlert.key)) return;
-        draft.alerts[r.extraAlert.key]=!draft.alerts[r.extraAlert.key];
-        draft.alertsTouched[r.extraAlert.key]=true;
-        syncSpine();
-      };
-    }
     spine.appendChild(el);
   });
   // With the "All windows" row gone, an empty status set has no control of its own — so say what it means
@@ -7753,20 +7803,7 @@ function buildSpine(){
   warn.id="cMineWarn";
   spine.appendChild(warn);
 }
-// ---- Alert reachability, auto-select, and the reason a bell is off (CAS-103 AC2/AC3) -----------
-// Why this bell can't ring for the Cascade being edited — "" when it can. Two reasons, kept apart
-// because the fix is different: widen the scope, versus un-mute the type in Preferences.
-function bellBlocked(key){
-  if(alertMuted(key)) return "muted";
-  if(!reachableRows(draft).has(key)) return "unreachable";
-  return "";
-}
-const BLOCK_WHY = {
-  muted: name => `<b>${name}</b> is switched off for every Cascade in Preferences — un-mute it there
-    and this comes back to whatever you set it to.`,
-  unreachable: name => `This Cascade stops watching a film before it reaches <b>${name}</b>, so this
-    alert could never fire. Widen the windows above to turn it on.`,
-};
+// ---- Alert auto-select (CAS-103 AC2/AC3) -------------------------------------------------------
 // Auto-select the alerts still AHEAD of this Cascade's scope, and force off the ones behind it.
 // Two rules keep it honest rather than merely convenient:
 //   · an unreachable bell is switched OFF in the data, not just greyed — leaving it true would let
@@ -7792,24 +7829,6 @@ function syncSpine(){
     // A half-filled row says which windows it actually holds — the label must not overstate the radar.
     const part = st==="part" ? r.windows.filter(w=>draft.status.includes(w)).map(w=>STATUS_LABEL[w]).join(" + ") : "";
     el.querySelector(".alab small").textContent = part ? `Currently: ${part} only — tap for the whole window` : r.sub;
-    bellPaint(el, r);
-    // The second moment on the cinema row (CAS-68). It's a bell, not a window: it never narrows what the
-    // Cascade finds, it only decides whether you're told when a film it already watches has had its weekend.
-    if(r.extraAlert){
-      $("opt-"+r.key).classList.toggle("open", st!=="off" || allOn());
-      // Same honesty rule as the four main bells: if it can't fire, it doesn't read as on, and it
-      // says which of the two reasons applies (CAS-103 AC3).
-      const ek=r.extraAlert.key, mo=$("moment-"+ek), ewhy=bellBlocked(ek);
-      const on=!!draft.alerts[ek] && !ewhy;
-      mo.classList.toggle("on", on);
-      mo.classList.toggle("blocked", !!ewhy);
-      mo.setAttribute("aria-checked", String(on));
-      mo.setAttribute("aria-disabled", String(!!ewhy));
-      mo.querySelector("small").textContent = ewhy
-        ? (ewhy==="muted" ? "— muted for every Cascade in Preferences"
-                          : "— this Cascade stops watching before the big screen, so it can't fire")
-        : "— "+r.extraAlert.sub;
-    }
     if(!r.home) return;
     // Each home window owns its own scope now, and it only appears while that window is being watched.
     // An empty status set IS "watching every window" (see the note below), so the scopes have to be
@@ -7911,25 +7930,6 @@ function syncScale(){
   $("cTentDesc").innerHTML = t==="any"
     ? `<b>Any.</b> No size filter.`
     : `<b>${TENTPOLE_STOPS.find(x=>x.key===t).label} — ${n} title${n===1?"":"s"}.</b> ${TENT_DESC[t]}`;
-}
-function bellPaint(row, r){
-  const key=r.alert, name=r.alertName, b=row.querySelector(".abell");
-  const why=bellBlocked(key);
-  // A blocked bell reads OFF whatever the stored flag says — AC3: a button that can't fire is never
-  // presented as active. The flag itself is left alone so un-muting restores the user's own setting.
-  const on=!!draft.alerts[key] && !why;
-  b.classList.toggle("on", on);
-  b.disabled = !!why;
-  b.setAttribute("aria-checked", String(on));
-  b.setAttribute("aria-disabled", String(!!why));
-  b.setAttribute("aria-label", why
-    ? `${name} alert — unavailable: ${why==="muted" ? "muted for every Cascade in Preferences"
-                                                    : "outside this Cascade's windows"}`
-    : `Alert me the moment a film ${ALERT_MOMENT[key]}`);
-  // State can't be carried by colour alone (WCAG 1.4.1), so the off state says so in words too.
-  b.querySelector(".bl").textContent = on ? name : `${name} · off`;
-  const w=row.querySelector(".awhy");
-  if(w){ w.hidden=!why; w.innerHTML = why ? BLOCK_WHY[why](name) : ""; }
 }
 function syncMineWarn(){
   const w=$("cMineWarn"); if(!w) return;
@@ -9255,11 +9255,11 @@ function hubWatchSummary(){
   const wins=agentWindows();
   const listed=wins.filter(w=>winOn(w.key,"list")), noted=wins.filter(w=>winOn(w.key,"notify"));
   if(!listed.length && !noted.length){
-    return onbDone.watch ? "Nothing listed or alerted" : "Any window — not set yet";
+    return onbDone.watch ? "Nothing listed or followed" : "Any window — not set yet";
   }
   const bits=[];
   bits.push(listed.length ? `Lists ${listed.map(w=>w.label).join(" + ")}` : "Lists nothing");
-  bits.push(noted.length ? `alerts on ${noted.map(w=>w.label).join(" + ")}` : "no alerts");
+  bits.push(noted.length ? `also follows ${noted.map(w=>w.label).join(" + ")}` : "follows nothing extra");
   return esc(bits.join(" · "));
 }
 // CAS-228: one card per window this agent's type has, both switches on the face of it. They are drawn side by
@@ -9277,7 +9277,7 @@ function drawWatchLanes(){
     // to choose between. They are a nested list rather than a third switch on the row: they are not a
     // separate job the agent does, they are which moments the one bell rings on.
     const subs = (nt && w.subs && w.subs.length) ? `<div class="agwsubs">
-      <p class="agwsublead">Tell me ${esc(w.notifySay)}, and also:</p>
+      <p class="agwsublead">Follow it ${esc(w.notifySay)}, and also:</p>
       ${w.subs.map(s=>`<button type="button" class="agwsubt${subOn(w.key,s.key)?" on":""}"
           aria-pressed="${subOn(w.key,s.key)}" onclick="wwToggleSub('${w.key}','${s.key}')">
           <span class="wwb">✓</span><span class="agwsubx"><b>${esc(s.label)}</b>
@@ -9288,7 +9288,7 @@ function drawWatchLanes(){
       <p class="agwsub">${esc(w.sub)}</p>
       <div class="agwrow">
         ${w.notifyOnly ? "" : sw("list","List", lst, `Include ${w.label.toLowerCase()} films in this agent's list`)}
-        ${sw("notify","Notify option", nt, `Alert me ${w.notifySay}`)}
+        ${sw("notify","Follow", nt, `Follow it ${w.notifySay}`)}
       </div>${subs}</div>`;
   }).join("");
 }
@@ -10484,11 +10484,12 @@ const SHARP_STEPS = {
       // screen that did both at once and is no longer true of this one.
       const stream = agentWindowKind()==="stream";
       return `<p class="ossub">Two separate choices per window: <b>List</b> puts those films in this agent's list, and
-          <b>Notify</b> tells you when one arrives. Neither implies the other.</p>
+          <b>Follow</b> keeps the window counted in what this agent tracks — its found &amp; new totals — even if
+          you don't list it. Neither implies the other.</p>
         <div id="wwLanes"></div>
         <div class="usec wwsec">Notify me by</div>
         <div id="wwChannels"></div>
-        ${stream ? `<p class="wwfoot"><span>ℹ️</span><span>To complete these alerts we'll need to know your current rental and streaming services — we'll ask for this later.</span></p>` : ""}`;
+        ${stream ? `<p class="wwfoot"><span>ℹ️</span><span>To follow these windows fully we'll need to know your current rental and streaming services — we'll ask for this later.</span></p>` : ""}`;
     },
     wire(){ drawWatchLanes(); drawNotifyBy(); },
   },
@@ -10529,7 +10530,7 @@ const SHARP_STEPS = {
           ${row("🎭","Style",              briefSum("genre"),                   "genres")}
           ${row("🔞","Rating",             briefSum("age"),                     "age")}
           ${stream ? row("🕰️","How far back", yearsLabel(flowYearsBack()), "years") : ""}
-          ${row("🔔","Notifications",      hubWatchSummary(),                   "watching")}
+          ${row("📺","Where & when you'll watch", hubWatchSummary(),            "watching")}
         </div>
         <!-- CAS-268: Delete only appears for an agent that EXISTS. A brand-new agent reaching this screen
              from New Cascade (CAS-246) has never been saved, so there is nothing to delete — offering the
@@ -11297,6 +11298,8 @@ function renderAgentsScreen(){
           ${ICON.learn}<b>Learning</b><span> · tap to review</span></button>
       </span>
       <span class="agcount"><b>${shown}</b><span>film${shown===1?"":"s"}</span></span>
+      <button type="button" class="ag-edit ca-btn" onclick="editAgentRow('${escA(c.id)}')"
+          aria-label="Edit ${escA(c.name)}" title="Edit ${escA(c.name)}">Edit</button>
     </div>`;
   }).join("");
   $("agentsBody").innerHTML=`
@@ -11321,6 +11324,11 @@ window.closeAgentsScreen=()=>{
   $("agentsScreen").classList.remove("open"); document.body.style.overflow="";
   $("agentsBtn").classList.remove("active"); $("agentsBtn").setAttribute("aria-expanded","false");
 };
+// CAS-501: the row's own central area (icon/name/summary/count) opens the agent, exactly like selecting its
+// deck card does. Delegated at the list in wireAgentsDrag(), and the grip/Learning-chip/Edit button opt out
+// of it — a drag or a press on any of those must never be read as a row tap.
+function openAgentRow(id){ closeAgentsScreen(); openCascade(id); }
+window.editAgentRow=id=>{ closeAgentsScreen(); briefOpen(id); };
 
 // ---- CAS-441: Review this agent (Phase 1 of the CAS-440 Learning Agents spike) ---------------------------
 // Profiling only, from the user's own behaviour on THIS agent's films — no advice, no Apply (Phase 2/3).
@@ -11602,6 +11610,11 @@ function wireAgentsDrag(){
   };
   list.addEventListener("pointerup", endDrag);
   list.addEventListener("pointercancel", endDrag);
+  list.addEventListener("click", e=>{
+    if(e.target.closest(".aggrip,.ag-learn,.ag-edit")) return;
+    const row=e.target.closest(".agrow"); if(!row) return;
+    openAgentRow(row.dataset.id);
+  });
 }
 
 // ================= CAS-206 / CAS-210: Account =======================================================
@@ -14249,7 +14262,10 @@ else if(dedupedN)
                                 // focus/visibilitychange event.
                                 reconcileOnReturn,
                                 // CAS-488: the catalogue-refresh seam and its busy-check, exposed the same way.
-                                pollCatalogue, catalogueUIBusy };
+                                pollCatalogue, catalogueUIBusy,
+                                // CAS-503: the live-clock seam, so a date boundary can be exercised without
+                                // waiting on a real one.
+                                advanceClock, localToday };
 })();
 </script>
 

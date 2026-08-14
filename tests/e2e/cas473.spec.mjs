@@ -14,11 +14,11 @@ import {
 async function enableAllNotify(page){
   await page.evaluate(() => window.editCascade());
   await expect(page.locator(".osh", { hasText: /Edit Agent/ })).toBeVisible();
-  await page.locator(".osdoor", { hasText: "Notifications" }).click();
+  await page.locator(".osdoor", { hasText: "Where & when you'll watch" }).click();
   await expect(page.locator("#wwLanes .wwlane").first()).toBeVisible();
   for(const label of ["Premium", "Standard Rent", "Streaming"]){
     const lane = page.locator(".wwlane", { has: page.locator(".wwn", { hasText: label }) });
-    const notifyBtn = lane.locator(".agwt", { hasText: "Notify option" });
+    const notifyBtn = lane.locator(".agwt", { hasText: "Follow" });
     await notifyBtn.click();
     await expect(notifyBtn).toHaveClass(/on/);
   }

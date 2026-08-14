@@ -13,9 +13,10 @@ Default catalogue: today = movies.json, yesterday = git show HEAD~1:movies.json.
 Default Cascade source: Supabase via the service_role key.
 
 Stages:
-  1. diff today vs yesterday  -> transitions                                   (CAS-84)
-  2. match to active Cascades, de-dupe against `notifications`, group per user (CAS-85)
-  3. render ONE consolidated digest per user and email it via Resend           (CAS-86)
+  1. diff today vs yesterday  -> transitions                                       (CAS-84)
+  2. match per-film Watch-it ticks, de-dupe against `notifications`, group per user
+     (CAS-85; agent-level Cascade matching no longer feeds delivery — CAS-502)
+  3. render ONE consolidated digest per user and email it via Resend               (CAS-86)
      --dry-run: print the digest HTML, send nothing, write nothing.
      off --dry-run: send the email, then write that user's notifications rows (send-before-ledger,
      so a failed send is retried next run rather than silently marked done).
@@ -27,8 +28,8 @@ import datetime as _dt
 import json
 import sys
 
-from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notification_rows,
-               render_digest, send_via_resend, suppressed_pairs, excluded_moments,
+from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, notification_rows,
+               render_digest, send_via_resend, excluded_moments,
                prefs_for, excludes_from_prefs, delivery_plan, send_via_apns, push_copy,
                match_film_watches)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
@@ -127,62 +128,39 @@ def main(argv=None) -> int:
                   "skipping match/email (diff only).")
             return 0
 
-    cascades = store.fetch_active_cascades()
-    # CAS-486: the test-harness safety valve. Filtering here, before ANYTHING is matched, is what
-    # makes "spray real users" structurally impossible rather than merely unlikely — by_user below
-    # can only ever contain keys that survived this filter.
-    if args.target_user:
-        before = len(cascades)
-        cascades = [c for c in cascades if str(c.get("user_id")) == args.target_user]
-        print(f"[monitor] --target-user {args.target_user}: kept {len(cascades)}/{before} cascade(s), "
-              "every other user's excluded.")
-    already = store.fetch_notification_keys()
     # CAS-185: both of these are stored per account now, so the default source is the store rather
     # than a flag. The flags still win where given — that is what makes a fixture run reproducible.
     prefs = _load_json(args.prefs) if args.prefs else _store_call(store, "fetch_notify_prefs", {})
-    picks = _load_json(args.picks) if args.picks else _store_call(store, "fetch_picks", [])
     # CAS-465: who to push to, and the badge count each push should carry (the same number the
-    # in-app bell badge shows), read once up front like prefs/picks above.
+    # in-app bell badge shows), read once up front like prefs above.
     push_tokens = _store_call(store, "fetch_push_tokens", {})
     unread_counts = _store_call(store, "fetch_unread_counts", {})
-    # A film the user has taken off by hand stays off — their answer outranks their own Cascade, in the
-    # email as well as in the app (CAS-100 AC5).
-    off = suppressed_pairs(picks)
     # An alert TYPE the user muted everywhere outranks their Cascades (CAS-103 AC4). Two sources, one
     # meaning: the stored preference, plus anything the flag adds.
     muted = excludes_from_prefs(prefs)
     if args.excluded:
         for u, ms in excluded_moments(_load_json(args.excluded)).items():
             muted.setdefault(u, set()).update(ms)
-    by_user = match(cascades, transitions, already=already, catalogue=today_movies, suppressed=off,
-                    excluded=muted)
 
-    # CAS-484: a second, agent-independent source — a per-film Watch-it tick fires whether or not
-    # any Cascade's own bell is on. Run after match() so `cascade_seen` can carry the film/moment
-    # pairs the Cascade path already caught this run, which is what keeps a film covered by BOTH an
-    # agent bell and a per-film tick to exactly one notification (AC3).
+    # CAS-502: a per-film "Watch it" tick (CAS-484) is now the ONLY delivery source — an agent's own
+    # alert_moments/criteria bell no longer generates a notification, whatever its Cascade says.
+    # match() and the `alert_moments` column are left untouched (nothing destroyed, easy to reverse);
+    # this simply stops calling match() here, in the delivery path.
     watches = _load_json(args.watches) if args.watches else _store_call(store, "fetch_film_watches", [])
     if args.target_user:
         watches = [w for w in watches if str(w.get("user_id")) == args.target_user]
     watch_already = _store_call(store, "fetch_watch_notification_keys", set())
-    cascade_seen = {(str(uid), h.transition.movie_id, h.transition.moment)
-                    for uid, hits in by_user.items() for h in hits}
-    watch_hits = match_film_watches(watches, transitions, already=watch_already,
-                                    cascade_hits=cascade_seen, excluded=muted)
-    for user_id, hits in watch_hits.items():
-        by_user.setdefault(user_id, []).extend(hits)
+    by_user = match_film_watches(watches, transitions, already=watch_already, excluded=muted)
 
-    # CAS-486: belt-and-braces — cascades and watches are already filtered above, so by_user should
-    # only ever hold the target user's key, but a test harness that emails/pushes real people on a
-    # bug elsewhere is the one failure mode worth double-guarding against.
+    # CAS-486: belt-and-braces — watches are already filtered above, so by_user should only ever hold
+    # the target user's key, but a test harness that emails/pushes real people on a bug elsewhere is
+    # the one failure mode worth double-guarding against.
     if args.target_user:
         by_user = {u: hits for u, hits in by_user.items() if str(u) == args.target_user}
 
-    print(f"[monitor] matching against {len(cascades)} active cascade(s) from {source}; "
-          f"{len(already)} already-sent ledger entries; {len(off)} personal override(s) suppressing; "
+    print(f"[monitor] matching {len(watches)} per-film Watch-it row(s) from {source}; "
           f"{sum(len(v) for v in muted.values())} global alert-type exclude(s) across "
-          f"{len(muted)} user(s); {len(watches)} per-film watch row(s) yielding "
-          f"{sum(len(v) for v in watch_hits.values())} extra hit(s).")
+          f"{len(muted)} user(s); {sum(len(v) for v in by_user.values())} new alert(s).")
     if not by_user:
         print("[monitor] no new alerts for anyone — no email will be sent.")
         return 0
