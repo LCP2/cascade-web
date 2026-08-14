@@ -14,8 +14,9 @@ Default Cascade source: Supabase via the service_role key.
 
 Stages:
   1. diff today vs yesterday  -> transitions                                       (CAS-84)
-  2. match per-film Watch-it ticks, de-dupe against `notifications`, group per user
-     (CAS-85; agent-level Cascade matching no longer feeds delivery — CAS-502)
+  2. match the `announced` moment to active Cascades' taste (agent-level, CAS-506) and every other
+     moment to per-film Watch-it ticks (CAS-484), de-dupe against `notifications`, group per user
+     (CAS-85; CAS-502 stopped ALL cascade-level delivery, CAS-506 restores it for `announced` only)
   3. render ONE consolidated digest per user and email it via Resend               (CAS-86)
      --dry-run: print the digest HTML, send nothing, write nothing.
      off --dry-run: send the email, then write that user's notifications rows (send-before-ledger,
@@ -28,7 +29,7 @@ import datetime as _dt
 import json
 import sys
 
-from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, notification_rows,
+from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notification_rows,
                render_digest, send_via_resend, excluded_moments,
                prefs_for, excludes_from_prefs, delivery_plan, send_via_apns, push_copy,
                match_film_watches)
@@ -128,6 +129,16 @@ def main(argv=None) -> int:
                   "skipping match/email (diff only).")
             return 0
 
+    # CAS-506: active cascades are back, but scoped to feed ONLY the `announced` moment below — see
+    # the comment further down for why.
+    cascades = store.fetch_active_cascades()
+    if args.target_user:
+        before = len(cascades)
+        cascades = [c for c in cascades if str(c.get("user_id")) == args.target_user]
+        print(f"[monitor] --target-user {args.target_user}: kept {len(cascades)}/{before} cascade(s), "
+              "every other user's excluded.")
+    already = store.fetch_notification_keys()
+
     # CAS-185: both of these are stored per account now, so the default source is the store rather
     # than a flag. The flags still win where given — that is what makes a fixture run reproducible.
     prefs = _load_json(args.prefs) if args.prefs else _store_call(store, "fetch_notify_prefs", {})
@@ -142,23 +153,40 @@ def main(argv=None) -> int:
         for u, ms in excluded_moments(_load_json(args.excluded)).items():
             muted.setdefault(u, set()).update(ms)
 
-    # CAS-502: a per-film "Watch it" tick (CAS-484) is now the ONLY delivery source — an agent's own
-    # alert_moments/criteria bell no longer generates a notification, whatever its Cascade says.
-    # match() and the `alert_moments` column are left untouched (nothing destroyed, easy to reverse);
-    # this simply stops calling match() here, in the delivery path.
+    # CAS-506: restore agent-level delivery for `announced` ONLY — a film new to Cascade that
+    # matches an active agent's taste notifies with no Watch it tick required. Every other moment
+    # (hits_cinema/hits_pvod/hits_rent/hits_stream) stays Watch-it-only exactly as CAS-502 built it.
+    # Feeding match() only the `announced` transitions (rather than all of them) is what keeps a
+    # cascade whose stored `alert_moments` still names a window moment from resurrecting the noise
+    # CAS-502 removed — match() itself, and the `alert_moments` column, are otherwise unchanged.
+    announced_transitions = [t for t in transitions if t.moment == "announced"]
+    agent_hits = match(cascades, announced_transitions, already=already, catalogue=today_movies,
+                       excluded=muted)
+
+    # CAS-484: a per-film "Watch it" tick is the sole source for every OTHER moment. Run after the
+    # agent match so `agent_seen` can carry the (user, movie, moment) pairs `announced` already
+    # caught this run — belt-and-braces de-dupe (WINDOW_TO_MOMENT never maps to `announced`, so the
+    # two paths cannot really collide, but a film covered twice must still resolve to one alert).
     watches = _load_json(args.watches) if args.watches else _store_call(store, "fetch_film_watches", [])
     if args.target_user:
         watches = [w for w in watches if str(w.get("user_id")) == args.target_user]
     watch_already = _store_call(store, "fetch_watch_notification_keys", set())
-    by_user = match_film_watches(watches, transitions, already=watch_already, excluded=muted)
+    agent_seen = {(str(uid), h.transition.movie_id, h.transition.moment)
+                  for uid, hits in agent_hits.items() for h in hits}
+    watch_hits = match_film_watches(watches, transitions, already=watch_already,
+                                    cascade_hits=agent_seen, excluded=muted)
+    by_user: dict = {u: list(hits) for u, hits in agent_hits.items()}
+    for user_id, hits in watch_hits.items():
+        by_user.setdefault(user_id, []).extend(hits)
 
-    # CAS-486: belt-and-braces — watches are already filtered above, so by_user should only ever hold
-    # the target user's key, but a test harness that emails/pushes real people on a bug elsewhere is
-    # the one failure mode worth double-guarding against.
+    # CAS-486: belt-and-braces — cascades and watches are already filtered above, so by_user should
+    # only ever hold the target user's key, but a test harness that emails/pushes real people on a
+    # bug elsewhere is the one failure mode worth double-guarding against.
     if args.target_user:
         by_user = {u: hits for u, hits in by_user.items() if str(u) == args.target_user}
 
-    print(f"[monitor] matching {len(watches)} per-film Watch-it row(s) from {source}; "
+    print(f"[monitor] matching against {len(cascades)} active cascade(s) from {source} (announced "
+          f"moment only) and {len(watches)} per-film Watch-it row(s); "
           f"{sum(len(v) for v in muted.values())} global alert-type exclude(s) across "
           f"{len(muted)} user(s); {sum(len(v) for v in by_user.values())} new alert(s).")
     if not by_user:

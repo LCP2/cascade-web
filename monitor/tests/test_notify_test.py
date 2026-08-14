@@ -104,11 +104,11 @@ class BuildCatalogues(unittest.TestCase):
 
 
 class DeliverySourceProof(unittest.TestCase):
-    """CAS-502 AC3: proves the new rule end to end through the real `python -m monitor` pipeline,
-    fed by the harness's own catalogue builder — not a synthetic shortcut. An agent whose own
-    alert_moments/criteria would, under the OLD rule, have caught this exact film+moment must now
-    stay silent; a per-film Watch-it tick on the same film+window is the only thing that still
-    delivers."""
+    """CAS-502 AC3 (still true post-CAS-506, AC2/AC3): proves the rule end to end through the real
+    `python -m monitor` pipeline, fed by the harness's own catalogue builder — not a synthetic
+    shortcut. A WINDOW moment (hits_stream here) an agent's own alert_moments/criteria would
+    otherwise have caught must stay silent with no Watch it tick; a per-film Watch-it tick on the
+    same film+window is the only thing that delivers it."""
 
     TARGET_USER = "5ef56b23-cdec-5c0a-af6d-3bea00000001"
     DATE = "2026-08-13"
@@ -156,6 +156,58 @@ class DeliverySourceProof(unittest.TestCase):
         self.assertNotIn("no new alerts for anyone", out)
         self.assertIn("digest preview", out)
         self.assertIn(self.target["title"], out)
+
+
+class AnnouncedDeliveryProof(unittest.TestCase):
+    """CAS-506 AC1/AC4: the `announced` moment is agent-level again — a film new to Cascade that
+    matches an active agent's taste notifies with no Watch it tick set (AC1), and a Watch-it tick
+    present on the same film does not turn that one notification into two (AC4)."""
+
+    TARGET_USER = "5ef56b23-cdec-5c0a-af6d-3bea00000002"
+    DATE = "2026-08-13"
+
+    def setUp(self):
+        films = load_fixture_films(DEFAULT_FIXTURES)
+        self.yesterday, self.today = build_catalogues(films, "announced", self.DATE)
+        self.target = next(f for f in films if f["scenario"] == "announced")
+        # Matches the fixture film's own genre (Drama) so the agent's taste criteria really fires,
+        # not just its alert_moments membership.
+        self.cascades = [{"id": "cascade-fixture", "user_id": self.TARGET_USER, "name": "Drama radar",
+                           "active": True, "alert_moments": ["announced"], "criteria": {"genre": ["Drama"]}}]
+
+    def _run(self, watches):
+        with tempfile.TemporaryDirectory() as d:
+            paths = {}
+            for name, doc in (("yesterday", {"movies": self.yesterday}), ("today", {"movies": self.today}),
+                               ("cascades", self.cascades), ("notifications", []), ("watches", watches)):
+                paths[name] = os.path.join(d, f"{name}.json")
+                with open(paths[name], "w", encoding="utf-8") as fh:
+                    json.dump(doc, fh)
+            argv = ["--today", paths["today"], "--yesterday", paths["yesterday"], "--date", self.DATE,
+                    "--dry-run", "--cascades", paths["cascades"], "--notifications", paths["notifications"],
+                    "--watches", paths["watches"], "--target-user", self.TARGET_USER]
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = main(argv)
+            return rc, buf.getvalue()
+
+    def test_a_newly_announced_film_delivers_with_no_watch_it_tick(self):
+        rc, out = self._run(watches=[])
+        self.assertEqual(rc, 0)
+        self.assertIn("1 new alert(s)", out)
+        self.assertNotIn("no new alerts for anyone", out)
+        self.assertIn("digest preview", out)
+        self.assertIn(self.target["title"], out)
+
+    def test_a_watch_it_tick_on_the_same_film_still_yields_exactly_one_notification(self):
+        # Ticked for a window the film hasn't reached yet — present on the film, but not what fires
+        # this run. Only `announced` transitions, so this must still resolve to exactly one alert.
+        watches = [{"user_id": self.TARGET_USER, "movie_id": str(self.target["tmdb_id"]),
+                    "windows": ["in_cinema"]}]
+        rc, out = self._run(watches)
+        self.assertEqual(rc, 0)
+        self.assertIn("1 new alert(s)", out)
+        self.assertNotIn("no new alerts for anyone", out)
 
 
 class CleanupScope(unittest.TestCase):
