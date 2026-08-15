@@ -3779,7 +3779,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 496, "commit": "268f19a", "builtAt": "2026-08-15T04:18:16Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 497, "commit": "6e20e62", "builtAt": "2026-08-15T04:49:38Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -13681,6 +13681,14 @@ else if(dedupedN)
     // (nobody has ever reordered) leaves the account's own row order alone.
     remote.sort((a,b)=>(a.order??1e9)-(b.order??1e9));
     replaceCascades(remote);
+    // CAS-516: saveCascades() is rewired below (once accountActive()) to sync to the account instead of
+    // localStorage, so a signed-in device's local cache is otherwise never written and a cold start (the
+    // webview reloaded after being backgrounded) has nothing to paint until this network round trip
+    // returns — a 20+ second blank screen on a slow reconnect. Mirror the authoritative list into the
+    // guest cache directly (bypassing the rewired saveCascades, so this never schedules a duplicate
+    // account sync) purely so the NEXT cold start has something instant to show while this same fetch
+    // revalidates in the background.
+    saveCascadesLocal();
     if(justOnboarded) scheduleSync();
     offerMerge();
     if(typeof afterSignIn==="function") afterSignIn();
@@ -13714,6 +13722,10 @@ else if(dedupedN)
     // CAS-424: converge on whichever device last reordered — only once anyone actually has, so a background
     // reconcile never reshuffles an account nobody has touched the Agents screen on.
     if(cascades.some(x=>typeof x.order==="number")) cascades.sort((a,b)=>(a.order??1e9)-(b.order??1e9));
+    // CAS-516: keep the cold-start cache (see loadAccount's own note) fresh across ordinary background
+    // reconciles too, not just the first load — otherwise it drifts back out of date the longer a session
+    // runs and a later cold start shows stale cards instead of the last-known-good state.
+    saveCascadesLocal();
     if(typeof render==="function") render();
   }
   // What this device is carrying that the account has not got. Filled by the three loaders as they run,
