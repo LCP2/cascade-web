@@ -1005,6 +1005,14 @@
     position:sticky;top:var(--hdrh,0px);z-index:20;background:var(--bg);
     transform:translateZ(0);-webkit-transform:translateZ(0);
     transition:padding .18s ease}
+  /* CAS-526: the eased transitions below (this rule, .deckstrip, .dcard, .dc-in) keep resizing the bar's box
+     for a full 180ms after syncCascCollapse()'s single post-toggle reflow, and WebKit's sticky-loses-its-pin
+     bug re-trips on every resize while a scroll gesture is still in flight, not just the first — a real
+     finger-drag is very likely still in flight that long after the threshold crossing. syncCascCollapse()
+     adds this class before a scroll-driven toggle so the box jumps to its final size in one frame instead,
+     and removes it again next frame; the deliberate expandCascBar() scroll (CAS-513) is programmatic, not a
+     live gesture, so it's left out of this and keeps the ease. */
+  .cascbar.no-transition,.cascbar.no-transition *{transition:none!important}
   /* CAS-508: the collapsed row. Narrower cards, name only — .dc-top/.dc-icon/.dc-sub/.dc-learn/.dc-acts
      render unconditionally now (CAS-421 stopped gating them on is-centre to avoid a reflow on centring), so
      hiding them here is a plain display:none, no specificity war with a longer selector. */
@@ -3823,7 +3831,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 510, "commit": "c9f8700", "builtAt": "2026-08-15T23:12:32Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 511, "commit": "213d386", "builtAt": "2026-08-15T23:17:55Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7462,6 +7470,9 @@ function syncHeaderHeight(){
 // sitting in normal flow just above it: when THAT has scrolled up past the header, the bar has reached its
 // stop.
 let collapseRaf=0;
+// CAS-526: set by expandCascBar() right before its own programmatic scroll, so syncCascCollapse() can tell
+// that toggle apart from a live scroll gesture and leave its ease alone (see the .no-transition CSS comment).
+let cascExpandProgrammatic=false;
 function syncCascCollapse(){
   const bar=$("cascbar"), anc=$("cascAnchor"); if(!bar||!anc||!phoneHeader) return;
   // CAS-511: focusing the search input can itself scroll the page (mobile browsers bring a focused field
@@ -7478,12 +7489,18 @@ function syncCascCollapse(){
   // bar), so without the scrollY>0 guard the bar would read as collapsed before the page had been touched.
   const now = window.scrollY>0 && (was ? top<=stop+6 : top<=stop);
   if(now===was) return;
+  // CAS-526: skip the eased CSS transition on a live scroll-driven toggle (see the .no-transition rule's
+  // comment) — but not on the deliberate expandCascBar() scroll, which wants to keep animating (CAS-513).
+  const skipTransition=!cascExpandProgrammatic;
+  cascExpandProgrammatic=false;
+  if(skipTransition) bar.classList.add("no-transition");
   bar.classList.toggle("collapsed", now);
   // CAS-519: this toggle changes the bar's own box size (padding/--dcw/hidden children) mid-scroll, which is
   // exactly what trips WebKit's sticky-loses-its-pin-after-a-resize-during-scroll bug. Reading offsetHeight
   // forces a synchronous reflow right here so the browser re-evaluates the sticky offset against the new box
   // immediately, instead of leaving it stuck (no pun intended) with the pre-toggle geometry.
   void bar.offsetHeight;
+  if(skipTransition) requestAnimationFrame(()=>bar.classList.remove("no-transition"));
   // Collapsing changes the card WIDTH, which moves the snap points out from under the current scroll offset
   // — same reason the rail flip re-centres (CAS-102).
   deckCentre(deckIdx,false); deckPaint();
@@ -7500,6 +7517,9 @@ function expandCascBar(){
   // scroll itself hid the fact they were even happening. A smooth scroll lets the threshold in
   // syncCascCollapse() cross mid-glide, same as a real manual scroll-to-top does, so expand now animates the
   // same way collapse already did.
+  // CAS-526: flagged so syncCascCollapse() knows this toggle is this deliberate programmatic scroll, not a
+  // live gesture, and leaves the ease in place instead of jumping in one frame.
+  cascExpandProgrammatic=true;
   window.scrollTo({top:0, behavior: deckMotion.matches ? "auto" : "smooth"});
 }
 // An observer as well as the scroll listener, and not as belt-and-braces: the marker can cross the line
