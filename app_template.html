@@ -7370,6 +7370,13 @@ function syncHeaderHeight(){
 let collapseRaf=0;
 function syncCascCollapse(){
   const bar=$("cascbar"), anc=$("cascAnchor"); if(!bar||!anc||!phoneHeader) return;
+  // CAS-511: focusing the search input can itself scroll the page (mobile browsers bring a focused field
+  // above the keyboard), which this function reads as a genuine scroll past the collapse line — collapsing
+  // then hides .cascsearch (see the .cascbar.collapsed rule above) and evicts the very input the user just
+  // tapped into. While that input holds focus, the bar holds still so the search interaction can't be
+  // interrupted; a real scroll after the input blurs re-syncs normally.
+  const searchInp=$("cascSearchInput");
+  if(searchInp && document.activeElement===searchInp) return;
   const was=bar.classList.contains("collapsed");
   // 6px of hysteresis so a scroll that comes to rest exactly on the line can't flutter between the two.
   const top=anc.getBoundingClientRect().top, stop=phoneHeader.offsetHeight;
