@@ -23,11 +23,20 @@
 # on-failure (bottom of this file) collects those artifacts once any job goes red, and calls
 # ci/mark_qa_failed.py to comment on the ticket, requeue it to Ready for Dev, and re-add
 # needs-cc-web — closing the loop mark-on-staging only closed for the success case.
+#
+# CAS-523: `daily.yml` pushes its refresh commit using the default GITHUB_TOKEN, and GitHub
+# Actions deliberately does not fire other workflows' `push` triggers for GITHUB_TOKEN-authored
+# commits (anti-recursion protection). That silently skipped this workflow (and so promote.yml's
+# gate) for every daily-refresh-only push, leaving main stale until an unrelated ticket push
+# happened to carry the refresh commit along. `workflow_dispatch` lets daily.yml explicitly
+# trigger this workflow via the API (`gh workflow run qa.yml --ref staging`) at the end of its
+# run, which is not subject to that suppression.
 name: qa
 
 on:
   push:
     branches: [staging]
+  workflow_dispatch:
 
 permissions:
   contents: read

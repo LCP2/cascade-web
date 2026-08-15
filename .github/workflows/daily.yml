@@ -25,6 +25,7 @@ on:
 
 permissions:
   contents: write                # allow the job to commit the refreshed files
+  actions: write                 # CAS-523: allow dispatching qa.yml at the end of this run
 
 concurrency:                     # never let two daily runs overlap
   group: daily-refresh
@@ -111,3 +112,13 @@ jobs:
             echo "Supabase/Resend secrets absent — running --dry-run (no writes, no email)."
             python -m monitor --dry-run $BASELINE_ARGS
           fi
+
+      - name: Dispatch qa.yml (CAS-523)
+        # The commits above were pushed with the default GITHUB_TOKEN, so GitHub's anti-recursion
+        # protection silently suppresses qa.yml's `push` trigger for them — meaning promote.yml's
+        # gate would never fire for a daily-refresh-only push. An explicit API dispatch is not
+        # subject to that suppression, so this keeps main from drifting behind a staging refresh
+        # that has no other ticket push to piggyback on.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run qa.yml --ref staging
