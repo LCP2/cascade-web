@@ -1096,6 +1096,14 @@
   .dcard.is-centre.is-active .dc-acts,.dcard.new.is-centre .dc-acts{pointer-events:auto}
   .dcard.new .dc-in{border-style:dashed;border-color:#4c4270}
   .dcard.new .dc-icon,.dcard.new .dc-name{color:var(--accenttext)}
+  /* CAS-520: the loading placeholder that stands in for "New Agent" while a returning signed-in device is
+     still waiting on its first account fetch — same slot, so no deck index math changes, just a different
+     message until cascadesReady resolves. */
+  .dcard.loading .dc-in{border-style:dashed;justify-content:center;align-items:center;text-align:center;gap:8px}
+  .dcard.loading .dc-name{color:var(--dim);font-weight:600}
+  .dcard.loading .dc-spin{width:16px;height:16px;border-radius:50%;
+    border:2px solid rgba(255,255,255,.2);border-top-color:var(--dim);animation:btnspin .8s linear infinite}
+  @media (prefers-reduced-motion:reduce){ .dcard.loading .dc-spin{animation-duration:2.4s} }
   /* The built-in All card: home base. Reads as belonging to the deck but not as one of YOUR agents — it
      has no actions row, so it sits shorter than the rest and needs its own bottom padding. */
   .dcard.all .dc-in{border-color:#3a4a63;padding-bottom:14px}
@@ -3809,7 +3817,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 500, "commit": "9761861", "builtAt": "2026-08-15T05:59:43Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 501, "commit": "c06ab4a", "builtAt": "2026-08-15T06:13:06Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7228,15 +7236,28 @@ function deckBuild(){
         ${filterBtn(c.name)}
       </div>
     </div></div>`).join("")
-  + `<div class="dcard new" role="group" aria-label="New Agent" tabindex="-1"><div class="dc-in">
+  // CAS-520: a returning signed-in device that hasn't heard back from its account fetch yet (cascadesReady
+  // false, CAS-517) has no agents to map above — that used to leave the deck reading as "All, then New
+  // Agent", which looks exactly like an account with nothing else in it rather than one still loading. This
+  // card takes that same last slot and says so honestly; deckSync's signature (above) swaps it back out for
+  // the real "New Agent" card the moment cascadesReady flips, whether that resolves to real agents or none.
+  + (cascades.length || cascadesReady
+    ? `<div class="dcard new" role="group" aria-label="New Agent" tabindex="-1"><div class="dc-in">
       <div class="dc-icon">＋</div>
       <div class="dc-name">New Agent</div>
       <div class="dc-sub">Set one going and Cascade does the watching for you.</div>
       <div class="dc-acts"><button class="ca-btn new" data-act="new">Create</button></div>
-    </div></div>`;
+    </div></div>`
+    : `<div class="dcard loading" role="group" aria-label="Loading your agents" tabindex="-1"><div class="dc-in">
+      <span class="dc-spin" aria-hidden="true"></span>
+      <div class="dc-name">Loading your agents…</div>
+    </div></div>`);
 }
 function deckSync(shown){
-  const sig=cascSig();
+  // CAS-520: cascSig() alone can't tell a genuinely-empty account from one still waiting on its first
+  // account fetch — both are `cascades.length===0`. Folding cascadesReady into the signature means the
+  // loading→New-Agent swap below still triggers a rebuild even when that fetch resolves to nothing.
+  const sig=cascSig()+"|"+cascadesReady;
   const ai=cascades.findIndex(c=>c.id===activeId);
   // +1 for the All card ahead of them; All itself (and a first load with nothing open) centres on 0.
   const target=ai>=0 ? ai+1 : activeId===ALL_ID ? 0 : Math.min(deckIdx,deckCount()-1);
@@ -7324,7 +7345,9 @@ deckStrip.addEventListener("keydown",e=>{
   if(e.key==="Enter"||e.key===" "){
     e.preventDefault();
     const c=deckAt(deckIdx);
-    if(deckIsNew(deckIdx)) newCascade();
+    // CAS-520: that same last slot is the loading placeholder (not "New Agent") while cascadesReady is
+    // still false — Enter/Space there has nothing to create yet.
+    if(deckIsNew(deckIdx)){ if(cascades.length || cascadesReady) newCascade(); }
     else if(c && c.id===activeId) editCascade();   // already centred + open → Enter edits it
     else deckSelect(deckIdx);                      // All has nothing to edit, so it always just selects
     return;
