@@ -3674,6 +3674,13 @@ function cascadeNewId(){
     const r=Math.random()*16|0, v=ch==="x"?r:(r&0x3|0x8); return v.toString(16); });
 }
 const cascades = loadCascades();
+// CAS-517: an empty `cascades` array is ambiguous on a signed-in device — it's either a genuinely empty
+// account or the account fetch just hasn't returned yet (CAS-516's local mirror only exists after a
+// PRIOR session cached it). "cascade_had_account" records whether THIS device was signed in as of its
+// last session, so a returning member's device starts out knowing it owes an account fetch before
+// `cascades.length` can be trusted; a guest device (the common case) is authoritative immediately.
+let cascadesReady = true;
+try{ cascadesReady = localStorage.getItem("cascade_had_account") !== "1"; }catch(e){}
 // ---- The built-in "All" Cascade (CAS-101) --------------------------------------
 // Home base, and the deck's first card. It is NOT a saved Cascade: it never enters `cascades`, so it is
 // never persisted, edited, deleted, synced or alerted on. It IS the no-Cascade-open state — which the app
@@ -6063,6 +6070,10 @@ function scopeRows(){
 // before they commit to anything (goal-gradient, and nothing to sign up for).
 function cascadeStartHTML(){
   if(cascades.length) return "";
+  // CAS-517: a returning signed-in device that hasn't heard back from the account fetch yet reads
+  // `cascades` as empty too, same as a genuinely new account — cascadesReady is what tells them apart,
+  // so this stays silent (rather than nagging a returning member to start over) until it's true.
+  if(!cascadesReady) return "";
   return `<div class="cascstart">
     <div class="csh">Put your first Cascade to work</div>
     <div class="csp">Cascade does the watching for you — set one going and it finds the films while you get on
@@ -13607,6 +13618,7 @@ else if(dedupedN)
     cascades.length = 0;
     list.forEach(c => cascades.push(c));
     if(activeId!==ALL_ID && !cascades.some(c=>c.id===activeId)) setActive(ALL_ID);
+    cascadesReady = true;   // CAS-517: this IS the account fetch (or the guest fallback) resolving
     if(typeof render==="function") render();
   }
   function loadGuest(){ replaceCascades(loadCascades()); }
@@ -13659,7 +13671,7 @@ else if(dedupedN)
   async function loadAccount(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("cascades").select("*");   // RLS: only mine
-    if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); return; }
+    if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); cascadesReady=true; return; }
     cascadeBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
     let remote = (data||[]).map(rowToCascade);
     const localOnes = cascades.slice();
@@ -13962,17 +13974,22 @@ else if(dedupedN)
     if(acct() && acct().status==="signed-in" && owner){
       if(owner !== currentUser){
         currentUser = owner;
+        // CAS-517: this device now knows it's an account device, so its NEXT cold start starts out
+        // waiting on loadAccount() before trusting an empty `cascades` as the real answer.
+        try{ localStorage.setItem("cascade_had_account","1"); }catch(e){}
         loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount(); loadFilmWatches();
       }
     } else if(currentUser !== null){
       // Signed out → back to the on-device set, and the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestLists(); realAlerts=[]; updateBadge();
       cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
+      try{ localStorage.setItem("cascade_had_account","0"); }catch(e){}
     }
   });
   // If a session was already restored before this listener attached, adopt it now.
   if(accountActive()){
     currentUser = uid();
+    try{ localStorage.setItem("cascade_had_account","1"); }catch(e){}
     loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount(); loadFilmWatches();
   }
   // CAS-408: two devices only converge without a live subscription if SOMETHING re-pulls the account
