@@ -24,9 +24,12 @@
 <!-- CAS-463: Capacitor's core JS + the push-notifications plugin, vendored (see the files' own header
      comments — this repo has no bundler, so `Capacitor.Plugins.PushNotifications` needs both loaded as
      plain globals). Harmless on the web build too: outside the native shell isNativePlatform() is false
-     and registerPush() falls back to the browser Notification API instead of touching this. -->
+     and registerPush() falls back to the browser Notification API instead of touching this.
+     CAS-524: capacitor-app.js vendored the same way — needed for Capacitor.Plugins.App's appUrlOpen
+     (universal-link tap) listener. -->
 <script src="capacitor-core.js"></script>
 <script src="capacitor-push-notifications.js"></script>
+<script src="capacitor-app.js"></script>
 <style>
   :root{
     /* ---- Cascade brand system (CAS-73 / spec 26640386 §1) ----
@@ -14416,6 +14419,20 @@ else if(dedupedN)
         await loadRealAlerts();
         if(id) openNotifyFilm(id);
         await markRealAlertsRead();
+      });
+    }
+    // CAS-524: universal-link tap (from a notification email) delivers the full tapped URL here —
+    // reuse the existing #/film/<id> hash route (shareUrlFor/filmRouteId) rather than forking a
+    // second "open a film" path. AASA only matches the URL's path, never its fragment, so this
+    // listener is what actually turns the link into the film page once iOS has already decided to
+    // open the app.
+    const AppPlugin=Capacitor.Plugins && Capacitor.Plugins.App;
+    if(AppPlugin){
+      AppPlugin.addListener("appUrlOpen", (data) => {
+        try{
+          const url=new URL((data && data.url) || "");
+          if(FILM_ROUTE_RE.test(url.hash)) location.hash=url.hash;
+        }catch(e){ console.warn("Cascade: appUrlOpen parse failed", e); }
       });
     }
   }

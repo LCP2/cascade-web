@@ -164,6 +164,7 @@ def render_digest(hits, site_url: str = None) -> dict:
         names = _join_names(entry["names"])
         text_lines.append(f"• {t.title} — {names}")
         text_lines.append(f"  {_header_line(t)}")
+        text_lines.append(f"  {site_url}#/film/{t.movie_id}")
     text_lines += ["", f"Open Cascade: {site_url}",
                    "You're getting this because Cascade is watching films for you."]
     text = "\n".join(text_lines)
@@ -175,14 +176,19 @@ def render_digest(hits, site_url: str = None) -> dict:
         t = entry["transition"]
         names = _join_names(entry["names"])
         note = _MOMENT_NOTE.get(t.moment, "")
+        # CAS-524: same #/film/<id> hash route shareUrlFor() builds in the app itself, so the link
+        # is the real, permanent film page — tapping it on a device with the app installed is what
+        # the universal-link/AASA setup turns into an in-app open instead of a browser tab.
+        film_url = f"{site_url}#/film/{t.movie_id}"
         items.append(
             '<tr><td style="padding:14px 0;border-bottom:1px solid #e6e8ee;">'
+            f'<a href="{esc(film_url)}" style="text-decoration:none;color:inherit;display:block;">'
             f'<div style="font-size:16px;font-weight:600;color:#141A2A;">{esc(t.title)}</div>'
             f'<div style="font-size:12px;font-weight:700;letter-spacing:0.5px;color:#7C5CFF;'
             f'text-transform:uppercase;margin-top:2px;">{esc(names)}</div>'
             f'<div style="font-size:14px;color:#4C7DFF;font-weight:600;margin-top:2px;">{esc(_header_line(t))}</div>'
             + (f'<div style="font-size:13px;color:#6b7280;margin-top:2px;">{esc(note)}</div>' if note else "")
-            + '</td></tr>'
+            + '</a></td></tr>'
         )
     html_doc = (
         '<!doctype html><html><head><meta charset="utf-8">'
