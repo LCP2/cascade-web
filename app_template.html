@@ -991,8 +991,16 @@
      complaint — "I have to scroll all the way back up to swap"), so the collapsed row drops icon, sub-line,
      Learning chip, actions, search, sort and jump down to name-only pills, and stays swipeable. Every other
      control is one scroll away, same as it always was before CAS-172. */
+  /* CAS-519 (Lee, real-device iOS, 2026-08-15): the bar stuck fine while its own box size was constant, but
+     once collapsed it started scrolling away instead of staying pinned. WebKit has a known bug where a
+     position:sticky element that changes size (padding/--dcw/hidden children, exactly what .collapsed does)
+     WHILE the scroll that crosses its sticky threshold is still in flight loses its stuck position for the
+     rest of that gesture. Promoting the bar to its own compositing layer works around it; syncCascCollapse()
+     below also forces a synchronous reflow right after the class toggle so WebKit re-evaluates the sticky
+     offset against the new box size immediately rather than on some later, unrelated layout pass. */
   .cascbar{--dcw:206px;--dgap:12px;padding:11px 0 2px;
     position:sticky;top:var(--hdrh,0px);z-index:20;background:var(--bg);
+    transform:translateZ(0);-webkit-transform:translateZ(0);
     transition:padding .18s ease}
   /* CAS-508: the collapsed row. Narrower cards, name only — .dc-top/.dc-icon/.dc-sub/.dc-learn/.dc-acts
      render unconditionally now (CAS-421 stopped gating them on is-centre to avoid a reflow on centring), so
@@ -7419,6 +7427,11 @@ function syncCascCollapse(){
   const now = window.scrollY>0 && (was ? top<=stop+6 : top<=stop);
   if(now===was) return;
   bar.classList.toggle("collapsed", now);
+  // CAS-519: this toggle changes the bar's own box size (padding/--dcw/hidden children) mid-scroll, which is
+  // exactly what trips WebKit's sticky-loses-its-pin-after-a-resize-during-scroll bug. Reading offsetHeight
+  // forces a synchronous reflow right here so the browser re-evaluates the sticky offset against the new box
+  // immediately, instead of leaving it stuck (no pun intended) with the pre-toggle geometry.
+  void bar.offsetHeight;
   // Collapsing changes the card WIDTH, which moves the snap points out from under the current scroll offset
   // — same reason the rail flip re-centres (CAS-102).
   deckCentre(deckIdx,false); deckPaint();
