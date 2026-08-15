@@ -3776,7 +3776,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 493, "commit": "732619b", "builtAt": "2026-08-15T03:39:43Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 494, "commit": "afa31e7", "builtAt": "2026-08-15T04:02:01Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7343,7 +7343,12 @@ deckStrip.addEventListener("click",e=>{
   if(deckDragged) return;                            // that click was the end of a drag
   const i=deckCards().indexOf(card);
   deckUsed(deckDragged?"drag":"tap");
+  // CAS-512: tapping the agent ALREADY open expands the collapsed box back to full view. Tapping a
+  // different card still just switches to it and stays collapsed — same as swiping to it (CAS-508) — so
+  // switching agents and expanding stay two different gestures, not one.
+  const wasActive=card.classList.contains("is-active");
   deckGo(i,true);
+  if(wasActive) expandCascBar();
 });
 let deckResizeT=null;
 addEventListener("resize",()=>{ clearTimeout(deckResizeT); deckResizeT=setTimeout(()=>{ deckCentre(deckIdx,false); deckPaint(); },140); });
@@ -7391,6 +7396,13 @@ function syncCascCollapse(){
 }
 addEventListener("scroll",()=>{ if(collapseRaf) return;
   collapseRaf=requestAnimationFrame(()=>{ collapseRaf=0; syncCascCollapse(); }); },{passive:true});
+// CAS-512: scroll position is the single source of truth for collapsed/expanded (see syncCascCollapse
+// above), so expanding by any trigger other than a manual scroll just means getting scrollY back to 0 —
+// the scroll listener then flips the class itself, same as it always has for a manual scroll-to-top.
+function expandCascBar(){
+  const bar=$("cascbar"); if(!bar || !bar.classList.contains("collapsed")) return;
+  window.scrollTo({top:0});
+}
 // An observer as well as the scroll listener, and not as belt-and-braces: the marker can cross the line
 // WITHOUT a scroll — a banner above it can disappear the moment some setup step completes, and the whole
 // page moves up under a stationary finger. A scroll listener never hears about that; this does.
