@@ -75,6 +75,7 @@ function makeContext(){
     IntersectionObserver: class { observe(){} unobserve(){} disconnect(){} },
     ResizeObserver: class { observe(){} unobserve(){} disconnect(){} },
     Image: class { set src(v){} },
+    performance,
     addEventListener(){}, removeEventListener(){}, dispatchEvent(){ return true; },
     fetch: () => Promise.reject(new Error("the engine must not need the network")),
     alert(){}, scrollTo(){}, scrollBy(){}, open(){ return null; },
