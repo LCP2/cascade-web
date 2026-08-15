@@ -7432,12 +7432,18 @@ syncHeaderHeight(); armCascObserver();
 // it was describing a list that wasn't on screen. This box is now the only search there is.
 const searchById={};
 let searchLogged=false;
+let searchRenderTimer=null;
+// CAS-514: render() re-filters and rebuilds the whole listing, which on a full catalogue is heavy enough to
+// block the keystroke that triggered it — the typed character can't paint until that work finishes. The
+// input's own value is already updated by the browser before oninput fires, so only the filtering/render
+// needs debouncing; echoing what was typed stays instant either way.
 function setSearchTerm(raw){
   filt.search=raw.trim().toLowerCase();
   if(raw) searchById[activeId]=raw; else delete searchById[activeId];
   const inp=$("cascSearchInput"); if(inp && inp.value!==raw) inp.value=raw;
   if(!searchLogged && filt.search){ searchLogged=true; logEvent("search_used"); }   // that they searched, not what for
-  render();
+  clearTimeout(searchRenderTimer);
+  searchRenderTimer=setTimeout(render, 150);
 }
 function paintSearchBtns(){
   const open=!$("cascSearch").hidden;
