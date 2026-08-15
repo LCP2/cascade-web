@@ -3779,7 +3779,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 495, "commit": "5dc1171", "builtAt": "2026-08-15T04:11:49Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 496, "commit": "268f19a", "builtAt": "2026-08-15T04:18:16Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7432,12 +7432,18 @@ syncHeaderHeight(); armCascObserver();
 // it was describing a list that wasn't on screen. This box is now the only search there is.
 const searchById={};
 let searchLogged=false;
+let searchRenderTimer=null;
+// CAS-514: render() re-filters and rebuilds the whole listing, which on a full catalogue is heavy enough to
+// block the keystroke that triggered it — the typed character can't paint until that work finishes. The
+// input's own value is already updated by the browser before oninput fires, so only the filtering/render
+// needs debouncing; echoing what was typed stays instant either way.
 function setSearchTerm(raw){
   filt.search=raw.trim().toLowerCase();
   if(raw) searchById[activeId]=raw; else delete searchById[activeId];
   const inp=$("cascSearchInput"); if(inp && inp.value!==raw) inp.value=raw;
   if(!searchLogged && filt.search){ searchLogged=true; logEvent("search_used"); }   // that they searched, not what for
-  render();
+  clearTimeout(searchRenderTimer);
+  searchRenderTimer=setTimeout(render, 150);
 }
 function paintSearchBtns(){
   const open=!$("cascSearch").hidden;
