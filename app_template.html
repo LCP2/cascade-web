@@ -3588,6 +3588,8 @@ const movedOutOf = (id,c) => ((notify[id]||{}).notIn||[]).includes(c.id);
 // The live membership: auto ∪ your adds − your removes. Rebuilt by recomputeFound(), read everywhere else.
 const found = new Set();
 function recomputeFound(){
+  const _t460recompute = performance.now();
+  console.log('[CAS-460] recomputeFound start', _t460recompute);
   const hits=new Map();                             // film id -> the Cascades that chose it, THIS run
   cascades.forEach(c=>{
     if(c.paused) return;                            // guest mode (CAS-79): a paused agent watches nothing, so
@@ -3625,6 +3627,7 @@ function recomputeFound(){
   });
   saveNotify();
   trackFirstFound();   // the day each film was found is stamped here, the moment it lands (CAS-70 freshness)
+  console.log('[CAS-460] recomputeFound end', performance.now(), 'elapsed_ms', (performance.now()-_t460recompute).toFixed(1));
 }
 // What the megaphone's colour is claiming, in one word.
 const foundSource = id => {
@@ -5911,8 +5914,11 @@ async function pollCatalogue(){
   try{
     let dirty = advanceClock();
     let res;
+    const _t460fetch = performance.now();
+    console.log('[CAS-460] pollCatalogue fetch start', _t460fetch);
     try{ res = await fetch(CATALOGUE_URL, {cache:"no-cache"}); }
     catch(e){ res = null; }                     // offline or blocked — the baked/last-known catalogue keeps serving
+    console.log('[CAS-460] pollCatalogue fetch end', performance.now(), 'elapsed_ms', (performance.now()-_t460fetch).toFixed(1), 'ok', !!(res && res.ok));
     if(res && res.ok){
       const etag = res.headers.get("etag");
       if(!etag || etag!==catalogueEtag){         // unchanged etag — skip parsing an ~11MB body for nothing
@@ -14039,6 +14045,19 @@ else if(dedupedN)
   };
 
   // ---- react to auth state --------------------------------------------------
+  // CAS-460: additive-only timing around the account-data fan-out, so a real-device console can show
+  // how long the six independent Supabase round trips take relative to boot/sign-in.
+  function fireAccountFanout(label){
+    const _t460fanout = performance.now();
+    console.log('[CAS-460] account fan-out start (' + label + ')', _t460fanout);
+    Promise.allSettled([
+      loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadUserPrefs(), loadRealAlerts(), loadListsAccount()
+    ]).then(()=>{
+      const t1 = performance.now();
+      console.log('[CAS-460] account fan-out end (' + label + ')', t1, 'elapsed_ms', (t1-_t460fanout).toFixed(1));
+    });
+    loadFilmWatches();
+  }
   let currentUser = null;
   window.addEventListener("cascade-auth-change", () => {
     const owner = uid();
@@ -14048,7 +14067,7 @@ else if(dedupedN)
         // CAS-517: this device now knows it's an account device, so its NEXT cold start starts out
         // waiting on loadAccount() before trusting an empty `cascades` as the real answer.
         try{ localStorage.setItem("cascade_had_account","1"); }catch(e){}
-        loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount(); loadFilmWatches();
+        fireAccountFanout('auth-change');
       }
     } else if(currentUser !== null){
       // Signed out → back to the on-device set, and the bell stops showing another account's news.
@@ -14061,7 +14080,7 @@ else if(dedupedN)
   if(accountActive()){
     currentUser = uid();
     try{ localStorage.setItem("cascade_had_account","1"); }catch(e){}
-    loadAccount(); loadAccountFilms(); loadNotifyPrefs(); loadUserPrefs(); loadRealAlerts(); loadListsAccount(); loadFilmWatches();
+    fireAccountFanout('boot-restore');
   }
   // CAS-408: two devices only converge without a live subscription if SOMETHING re-pulls the account
   // — sign-in alone left a device that never signs out again permanently stuck on whatever it saw at
@@ -14583,6 +14602,9 @@ else if(dedupedN)
     // fall back to creating the account when no account exists yet. Either path lands the same
     // signed-in session, which onAuthStateChange below picks up and reflects into the UI.
     api.continueWithEmail = async email => {
+      // CAS-460: additive-only timing — logs how long the sign-in/sign-up/OTP round trip actually takes.
+      const _t460signIn = performance.now();
+      console.log('[CAS-460] sign-in start', _t460signIn);
       try {
         const password = await derivePassword(email);
         const signIn = await supa.auth.signInWithPassword({ email, password });
@@ -14600,14 +14622,26 @@ else if(dedupedN)
         }
         return { ok: false, error: signUp.error.message };
       } catch(err){ return { ok: false, error: (err && err.message) || String(err) }; }
+      finally {
+        const _t460signInEnd = performance.now();
+        console.log('[CAS-460] sign-in end', _t460signInEnd, 'elapsed_ms', (_t460signInEnd-_t460signIn).toFixed(1));
+      }
     };
 
     // Reflect the current session (survives reloads), then keep the UI in step with every auth event.
+    // CAS-460: additive-only timing — this is the boot-time restore path a returning signed-in user
+    // hits on cold launch (no explicit sign-in button press), so it's timed the same as continueWithEmail.
+    const _t460session = performance.now();
+    console.log('[CAS-460] session restore start', _t460session);
     try {
       const { data: { session } } = await supa.auth.getSession();
       api.session = session || null;
       session ? setSignedIn(session.user) : setSignedOut();
     } catch(err){ console.warn(err); setSignedOut(); }
+    finally {
+      const _t460sessionEnd = performance.now();
+      console.log('[CAS-460] session restore end', _t460sessionEnd, 'elapsed_ms', (_t460sessionEnd-_t460session).toFixed(1));
+    }
     announce();
 
     supa.auth.onAuthStateChange((event, session) => {
