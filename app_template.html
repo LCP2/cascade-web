@@ -1025,16 +1025,17 @@
   .deck::after{right:0;background:linear-gradient(270deg,var(--bg),rgba(10,14,26,0))}
   .deckstrip{position:relative;display:flex;gap:var(--dgap);align-items:stretch;overflow-x:auto;overflow-y:hidden;
     scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch;perspective:900px;
-    padding:12px calc(50% - var(--dcw)/2) 16px;outline:none}
+    padding:12px calc(50% - var(--dcw)/2) 16px;outline:none;transition:padding .18s ease}
   .deckstrip::-webkit-scrollbar{display:none}
   .deckstrip.dragging{scroll-snap-type:none;cursor:grabbing}
   /* The card is the snap box and stays UNtransformed — scroll-snap measures the transformed border box,
      so putting the coverflow transform on .dcard itself would fight the snap. It goes on .dc-in instead. */
   .dcard{position:relative;flex:0 0 var(--dcw);width:var(--dcw);min-height:118px;scroll-snap-align:center;
-    display:flex;cursor:pointer}
+    display:flex;cursor:pointer;transition:flex-basis .18s ease}
   .dc-in{flex:1;min-width:0;display:flex;flex-direction:column;text-align:left;
     background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:11px 12px;color:var(--dim);
-    transform-origin:50% 50%;box-shadow:0 8px 22px rgba(0,0,0,.4);will-change:transform}
+    transform-origin:50% 50%;box-shadow:0 8px 22px rgba(0,0,0,.4);will-change:transform;
+    transition:padding .18s ease}
   .dcard:focus-visible{outline:none}
   .dcard:focus-visible .dc-in{outline:2px solid var(--accent);outline-offset:2px}
   .dcard.is-centre .dc-in{background:linear-gradient(135deg,rgba(124,92,255,.16),rgba(72,199,142,.08));
@@ -1065,7 +1066,8 @@
   /* CAS-382: same on-state treatment as search's own lit 🔍 — one lit-control convention for the row. */
   .dc-filter.on{border-color:var(--accent);color:#cfc2ff;background:rgba(124,92,255,.18)}
   .dc-filter svg{width:14px;height:14px;display:block}
-  .dc-name{font-size:13.5px;font-weight:800;margin-top:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dc-name{font-size:13.5px;font-weight:800;margin-top:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    transition:font-size .18s ease,margin-top .18s ease}
   .dcard.is-centre.is-active .dc-name{color:#cfc2ff}
   /* CAS-421: sub/acts used to be display:none until a card became is-centre.is-active, so the moment a
      swipe settled the card popped taller — a reflow on top of the coverflow's own blur→sharp motion. They
@@ -1133,8 +1135,9 @@
   .cascbar.rail .dcard.all .dc-in{padding-bottom:8px}
   /* Reduced motion: no coverflow transform — a plain horizontal snap-scroll (the JS clears the inline styles too) */
   @media (prefers-reduced-motion:reduce){
-    .deckstrip{scroll-behavior:auto}
-    .dc-in{transform:none!important;filter:none!important;opacity:1!important}
+    .deckstrip{scroll-behavior:auto;transition:none}
+    .dc-in{transform:none!important;filter:none!important;opacity:1!important;transition:none}
+    .cascbar,.dcard,.dc-name{transition:none}
   }
   /* ---- Cascade editor — Zone A: availability spine ---- */
   .zone{margin-top:18px}
@@ -7401,7 +7404,12 @@ addEventListener("scroll",()=>{ if(collapseRaf) return;
 // the scroll listener then flips the class itself, same as it always has for a manual scroll-to-top.
 function expandCascBar(){
   const bar=$("cascbar"); if(!bar || !bar.classList.contains("collapsed")) return;
-  window.scrollTo({top:0});
+  // CAS-513: an instant jump to top used to fire the collapsed->expanded class flip in one frame, which is
+  // what made the CSS transitions above (padding/width/font-size) look like a snap instead of an ease — the
+  // scroll itself hid the fact they were even happening. A smooth scroll lets the threshold in
+  // syncCascCollapse() cross mid-glide, same as a real manual scroll-to-top does, so expand now animates the
+  // same way collapse already did.
+  window.scrollTo({top:0, behavior: deckMotion.matches ? "auto" : "smooth"});
 }
 // An observer as well as the scroll listener, and not as belt-and-braces: the marker can cross the line
 // WITHOUT a scroll — a banner above it can disappear the moment some setup step completes, and the whole
