@@ -5878,6 +5878,12 @@ function isRecent(m){
 // own freshness window — GitHub Pages already answers those with a 304 when nothing changed, so an
 // unchanged poll costs a round trip of headers, not the ~11MB body (verified against the live URL).
 let catalogueEtag = null, cataloguePolling = false;
+// CAS-527: the installed iOS app has no server.url (capacitor.config.json), so its WebView runs from a
+// locally bundled www/ with no live network origin — a relative fetch resolves against that empty bundle
+// and silently no-ops forever. Native builds must hit the real production host instead; the web build keeps
+// its same-origin relative fetch (no CORS, unaffected by whatever domain it's served from).
+const CATALOGUE_URL = (typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform())
+  ? "https://cascademovies.com/movies.json" : "movies.json";
 // Applied only when nothing is mid-interaction. Every modal/full-screen panel/onboarding step/filmpage sets
 // document.body.style.overflow="hidden" while open (openModal and its siblings all share that convention);
 // the bell drawer doesn't, so it's checked separately; and a per-card Watch/Notify/Lists popup or the
@@ -5905,7 +5911,7 @@ async function pollCatalogue(){
   try{
     let dirty = advanceClock();
     let res;
-    try{ res = await fetch("movies.json", {cache:"no-cache"}); }
+    try{ res = await fetch(CATALOGUE_URL, {cache:"no-cache"}); }
     catch(e){ res = null; }                     // offline or blocked — the baked/last-known catalogue keeps serving
     if(res && res.ok){
       const etag = res.headers.get("etag");
