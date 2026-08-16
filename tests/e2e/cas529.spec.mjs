@@ -51,12 +51,20 @@ async function pickNever(page, id){
 
 function openYourMovies(page){ return page.evaluate(() => window.openYourMovies()); }
 
+// CAS-535: the services/cascades/rewatch controls moved behind the compact card's own Edit button — every
+// test below that reads or taps them needs the panel open first.
+async function openYmEdit(page){
+  await page.locator(".ymcedit").click();
+  await expect(page.locator(".ympanel")).toBeVisible();
+}
+
 test("CAS-529: opens on the feed with its default filters — Streaming only, every cascade ticked, rewatch off", async ({ page }) => {
   await toStreamListing(page);
   await openYourMovies(page);
 
   await expect(page.locator("#yourMovies.open")).toBeVisible();
-  await expect(page.locator(".ympanel")).toBeVisible();
+  await expect(page.locator(".ympanel")).toHaveCount(0);   // CAS-535: collapsed behind Edit by default
+  await openYmEdit(page);
 
   const streamChip = page.locator(".ymchip", { hasText: "Streaming" });
   await expect(streamChip).toHaveClass(/on/);
@@ -78,6 +86,7 @@ test("CAS-529: match rule needs the film's OWN Watch it tick on a ticked service
 
   await openYourMovies(page);
   await expect(page.locator(`#ymCards #card-${id}`)).toBeVisible();
+  await openYmEdit(page);
 
   // Untick Streaming (the film's only Watch-it level) and tick Cinema instead — a service being ticked on
   // the FILTER is not enough if the film itself never said Cinema.
@@ -98,6 +107,7 @@ test("CAS-529: match rule needs at least one TICKED cascade to list the film, ev
 
   await openYourMovies(page);
   await expect(page.locator(`#ymCards #card-${id}`)).toBeVisible();
+  await openYmEdit(page);
 
   await page.locator(".ymcasctgl").click();   // the only cascade — untick it
   await expect(page.locator(".ymcasctgl")).not.toHaveClass(/on/);
@@ -118,6 +128,7 @@ test("CAS-529: rewatch toggle — a Watched film is excluded by default and reap
   await openYourMovies(page);
   await expect(page.locator(`#ymCards #card-${id}`)).toHaveCount(0);
   await expect(page.locator(".ymresultbar")).toHaveText(/0 films/);
+  await openYmEdit(page);
 
   await page.locator(".ymrewatchrow .tgl").click();
   await expect(page.locator(".ymrewatchrow .tgl")).toHaveClass(/on/);
@@ -132,6 +143,7 @@ test("CAS-529: a film marked Never stays excluded even with rewatch on", async (
   await pickNever(page, id);
 
   await openYourMovies(page);
+  await openYmEdit(page);
   await page.locator(".ymrewatchrow .tgl").click();
   await expect(page.locator(`#ymCards #card-${id}`)).toHaveCount(0);
 });
