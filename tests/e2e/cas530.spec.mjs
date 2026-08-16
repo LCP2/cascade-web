@@ -43,12 +43,12 @@ test("CAS-530: Agents and Your Movies render as wider labelled chips, each with 
 
   const agents = page.locator("#agentsBtn");
   await expect(agents).toHaveClass(/modechip/);
-  await expect(agents.locator(".mclabel")).toHaveText("Agents");
+  await expect(agents.locator(".mclabel-full")).toHaveText("Agents");
   await expect(agents.locator("svg")).toHaveCount(1);
 
   const movies = page.locator("#moviesBtn");
   await expect(movies).toHaveClass(/modechip/);
-  await expect(movies.locator(".mclabel")).toHaveText("Your Movies");
+  await expect(movies.locator(".mclabel-full")).toHaveText("Your Movies");
   await expect(movies.locator("svg")).toHaveCount(1);
 });
 
