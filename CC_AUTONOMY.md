@@ -41,10 +41,19 @@ stop. Never commit secrets.
 - Read `CLAUDE.md`, the Confluence **Cascade Web — Architecture & CC Build Spec**, and **UX Psychology —
   Principles & Cascade Applications** before any craft or design decision. Truthful copy only: never a
   fabricated count, urgency, timer or capability.
-- Front-end work goes in `app_template.html`, then `python poc_pipeline.py --build-html` regenerates
-  `index.html`. Commit both. Backend/monitor work goes in `/monitor/` or `/supabase/schema.sql`; schema
-  changes that must be applied to a live project are a **Lee step** — describe them in the ticket, never
-  run SQL against a live project.
+- Front-end work goes in `app_template.html`. Backend/monitor work goes in `/monitor/` or
+  `/supabase/schema.sql`; schema changes that must be applied to a live project are a **Lee step** —
+  describe them in the ticket, never run SQL against a live project.
+- **Run `npm run build` (`python poc_pipeline.py --build-html`) before every commit to `staging`,
+  regardless of ticket type** — including e2e-only or backend/monitor-only tickets that never touch
+  `app_template.html`. It regenerates `index.html` **and** stamps `version.json`'s `build`/`commit` fields
+  from the current git `HEAD`; skip it on a given commit and both files silently carry the *previous*
+  commit's stamp forward; nothing in `qa.yml` catches this, since its `build-check` job explicitly
+  excludes `BUILD_INFO` drift from its staleness check (by design — see that job's comment). Commit
+  `index.html` and `version.json` together with the rest of the ticket's diff every time, even when
+  `index.html`'s only change is its stamp. (CAS-537: a test-only commit skipped this step, and the footer's
+  build stamp under-reported every ship for several tickets until a later front-end ticket happened to
+  rebuild.)
 - Follow the repo convention of one Playwright spec per ticket: `tests/e2e/cas<NNN>.spec.mjs`.
 - **Verify fast in-session; CI is the gate.** The full `npm run qa` now runs in CI on every push to
   `staging` (`.github/workflows/qa.yml`, CAS-236). Do **not** run the whole suite in-session — it exceeds
