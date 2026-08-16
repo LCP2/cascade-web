@@ -162,11 +162,18 @@
   .hdr-actions{display:flex;gap:8px}
   /* CAS-183 added a fourth header icon (Your Movies), which at 360px pushed the row past the edge — the
      brand block on the left is ~168px. CAS-530 dropped the bell (moved into the Menu) and widened the
-     remaining two into labelled chips, so the same narrow-phone squeeze gets a step of its own below. */
-  @media (max-width:400px){
+     remaining two into labelled chips, so the same narrow-phone squeeze gets a step of its own below.
+     CAS-533: CAS-530's widened chips never actually fit at real iPhone widths (~375-430px) — both .brandrow
+     children are flex:0 0 auto (neither is willing to shrink), so once their combined natural width passed
+     the header's content box the nav row simply overlapped the CASCADE wordmark instead of negotiating
+     space. Dropping the chip labels below this breakpoint (icon-only, same treatment as .iconbtn) reclaims
+     the ~130px CAS-530's labels added, which is what the desktop-width preview that built the design never
+     had to give back. */
+  @media (max-width:460px){
     .hdr-actions{gap:6px}
     .hdr-actions .iconbtn{width:36px;height:36px;font-size:17px;border-radius:11px}
-    .modechip{padding:7px 10px;font-size:12px;gap:5px}
+    .modechip{padding:11px;gap:0}
+    .modechip .mclabel{display:none}
   }
   /* CAS-530: Agents/Your Movies as wide labelled pills, not bare icon squares — a chip says in words which
      mode you're in rather than making you decode a glyph. Sized taller than .iconbtn's 40px square so the
@@ -196,7 +203,10 @@
      and right-aligned to it (right:0 against the wrap, which is exactly as wide as the icon), so it never
      spans past the icon that opened it. */
   .navmenu-wrap{position:relative}
-  .navmenu{position:absolute;top:calc(100% + 8px);right:0;z-index:60;display:none;flex-direction:column;
+  /* CAS-533: z-index 95, not 60 — the header (and its Menu button) now stays reachable while Agents/Your
+     Movies is open (see #agentsScreen, #yourMovies above), and those sit at z-index:84, higher than this
+     dropdown used to need to be. */
+  .navmenu{position:absolute;top:calc(100% + 8px);right:0;z-index:95;display:none;flex-direction:column;
     min-width:180px;background:var(--panel);border:1px solid var(--line);border-radius:12px;
     box-shadow:0 12px 28px rgba(0,0,0,.4);overflow:hidden}
   .navmenu.open{display:flex}
@@ -2365,6 +2375,13 @@
     transform:translateX(-50%);z-index:84;display:none;flex-direction:column;overflow-y:auto;
     background:radial-gradient(120% 45% at 50% 0%,#141b30 0%,var(--bg) 42%,#080b14 100%)}
   .uscreen.open{display:flex}
+  /* CAS-533: Agents/Your Movies are the two .uscreen destinations a header mode chip opens (CAS-530 gave
+     each an "active" rose/gradient fill for exactly this), so unlike every other .uscreen (Account, Lists,
+     About, Review, Service analysis — one-off Menu destinations with no chip to light up) these two sit
+     BELOW the header instead of covering it at true top:0 — otherwise the chip's active fill paints on the
+     same frame the screen covers it, and a person can never actually see it. --hdrh is the header's own
+     live-measured height (see syncHeaderHeight()), the same var .cascbar already sticks under. */
+  #agentsScreen, #yourMovies{top:var(--hdrh,0px)}
   /* CAS-509: same env(safe-area-inset-top) clearance as the header — .uscreen (Your Movies, Agents,
      Review, Account, Service analysis, Lists, About) is fixed from the viewport's true top:0, so its
      .ostop back button was sitting under the notch/status bar with none of the header's allowance. */
@@ -11772,6 +11789,9 @@ function renderYourMovies(){
 }
 window.ymToggle=key=>{ ymOpen = ymOpen===key ? null : key; renderYourMovies(); };
 window.openYourMovies=()=>{
+  // CAS-533: the header (and its Agents chip) stays visible and reachable now that Your Movies sits below
+  // it rather than covering it — closing Agents first keeps only one of the two ever "open" at once.
+  if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
   ymOpen=null; renderYourMovies();
   $("yourMovies").scrollTop=0;
   $("yourMovies").classList.add("open"); document.body.style.overflow="hidden";
@@ -11884,6 +11904,9 @@ function renderAgentsScreen(){
   wireAgentsDrag();
 }
 window.openAgentsScreen=()=>{
+  // CAS-533: same mutual exclusion as openYourMovies() — the header's other mode chip is reachable now
+  // that this screen sits below the header rather than covering it.
+  if($("yourMovies").classList.contains("open")) closeYourMovies();
   renderAgentsScreen();
   $("agentsScreen").scrollTop=0;
   $("agentsScreen").classList.add("open"); document.body.style.overflow="hidden";
