@@ -123,7 +123,9 @@ test("CAS-509: the rest of the sweep — Your Movies and the notifications drawe
   await expect(page.locator("#yourMovies")).toHaveClass(/open/);
   const ymPad0 = await padTop(page.locator("#yourMovies .uwrap"));
 
-  await page.locator(".ostop .osback").first().click();     // back out, same shell every other .uscreen reuses
+  // CAS-539 dropped Your Movies' own back arrow — closing now goes through the header's Agents chip,
+  // the established CAS-534 convention for leaving Your Movies.
+  await page.locator("#agentsBtn").click();
   await expect(page.locator("#yourMovies")).not.toHaveClass(/open/);
 
   await page.locator("#bell").click();

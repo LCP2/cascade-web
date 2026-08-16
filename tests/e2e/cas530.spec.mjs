@@ -63,7 +63,9 @@ test("CAS-530: Your Movies chip lights up rose while its screen is open, and cle
   await expect(movies).toHaveClass(/ym/);   // the rose treatment is scoped to .modechip.ym.active
   await expect(movies).toHaveAttribute("aria-expanded", "true");
 
-  await page.locator("#yourMovies .osback").click();
+  // CAS-539 removed the screen's own back arrow — closing now goes through the header's Agents chip,
+  // the established CAS-534 convention for leaving Your Movies.
+  await page.locator("#agentsBtn").click();
   await expect(page.locator("#yourMovies.open")).toHaveCount(0);
   await expect(movies).not.toHaveClass(/active/);
   await expect(movies).toHaveAttribute("aria-expanded", "false");
