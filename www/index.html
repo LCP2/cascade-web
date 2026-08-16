@@ -2536,6 +2536,26 @@
   .ymresultbar b{color:var(--ink);font-weight:800}
   .ymresultbar span{color:var(--dim);font-size:12.5px}
   .ymcards{display:flex;flex-direction:column;gap:14px}
+  /* ---- CAS-535: the compact "Watch List" card — same rose accent as .ympanel (now only shown behind Edit),
+       shaped like the deck's own small Agent card: icon chip, title, film count, action-icon row. */
+  .ymcard{background:var(--panel);border:1px solid rgba(255,47,135,.32);border-radius:16px;
+    padding:14px 15px;margin-top:16px}
+  .ymctop{display:flex;align-items:flex-start;gap:12px}
+  .ymcicon{flex:0 0 auto;width:40px;height:40px;border-radius:11px;display:grid;place-items:center;
+    background:rgba(255,47,135,.16);color:var(--rose-ink)}
+  .ymcmain{flex:1;min-width:0}
+  .ymctitle{font-family:var(--font-display);font-weight:700;font-size:11px;letter-spacing:.05em;
+    text-transform:uppercase;color:var(--rose-ink)}
+  .ymccount{font-size:19px;font-weight:800;color:var(--ink);line-height:1.2;margin-top:1px}
+  .ymcsub{font-size:12px;color:var(--dim);margin-top:4px;line-height:1.4}
+  .ymcacts{position:relative;display:flex;align-items:center;gap:8px;margin-top:13px;flex-wrap:wrap}
+  .ymcedit{border-radius:999px;padding:7px 16px;font-weight:700;border:1px solid var(--rose);
+    color:var(--rose-ink);background:transparent}
+  .ymcedit.on,.ymcedit:hover{background:var(--rose-grad);border-color:var(--rose);color:#fff}
+  .ymcacts .ca-btn.x{border-radius:999px}
+  .ymcsearch{display:flex;align-items:center;gap:6px;margin-top:11px}
+  .ymcsearch .search{flex:1;padding:9px 12px;font-size:15px}
+  .ymcsearch .searchclear{position:static;transform:none;flex:0 0 auto}
   /* ---- CAS-531: the Agent Briefing's rows, redesigned ----
      Mission and Style are the primary visual elements now — big tinted doors carrying every selection, not
      a one-line summary — so a glance at the page says what the agent actually does. Rating and How far back
@@ -3964,7 +3984,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 519, "commit": "dc225a0", "builtAt": "2026-08-16T09:11:23Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 520, "commit": "097fe98", "builtAt": "2026-08-16T09:26:32Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -11670,6 +11690,14 @@ let ymSvcOn = new Set(["stream"]);   // ticked service filters — default Strea
 let ymCascOff = new Set();           // cascade ids explicitly UNticked — default empty, i.e. every cascade
 let ymRewatch = false;               // include already-Watched films — default off
 const ymCascTicked = c => !ymCascOff.has(c.id);
+// CAS-535: the three controls above are now collapsed behind the compact card's Edit button by default —
+// these are its own state, plus the new Search/Filter/Sort icon row's state.
+let ymEditOpen = false;
+let ymSearchOpen = false;
+let ymSearchTerm = "";
+let ymWatchTiers = new Set();   // Filter icon — reuses FILTER_TIERS/filmHasWatchTier (CAS-382's own predicate),
+                                 // scoped to this feed rather than the deck's per-cascade filt.watchTiers.
+let ymSort = null;              // Sort icon — null keeps the feed's own "best match" order; else a sortMoviesBy key.
 // Never (blocked) stays excluded outright — that bucket is a permanent no, not something this feed
 // reconsiders. Watched only rejoins when the rewatch toggle is on, so a Wow can be picked again without
 // every watched film flooding back by default.
@@ -11678,12 +11706,17 @@ function ymFeedMatches(m){
   if(blocked.has(id)) return false;
   if(!ymRewatch && watched.has(id)) return false;
   if(!YM_SVC.some(s=>ymSvcOn.has(s.key) && filmOptOn(id,{key:s.wk}))) return false;
+  if(ymSearchTerm && !m.title.toLowerCase().includes(ymSearchTerm)) return false;
+  if(ymWatchTiers.size && ![...ymWatchTiers].some(k=>k==="undecided" ? filmIsUndecided(id) : filmHasWatchTier(id,k))) return false;
   return cascades.some(c=>ymCascTicked(c) && listedBy(m,c));
 }
 // "Best match" is a real property of the film, not an invented score (buildspec honesty rule): most of the
-// ticked services it's itself set to Watch it on, then its IMDb rating as the tiebreak.
+// ticked services it's itself set to Watch it on, then its IMDb rating as the tiebreak. The Sort icon can
+// swap this default for one of the same explicit orders the deck's own sort offers (sortMoviesBy, CAS-419).
 function ymFeedList(){
-  return MOVIES.filter(ymFeedMatches).sort((a,b)=>{
+  const list = MOVIES.filter(ymFeedMatches);
+  if(ymSort) return list.sort((a,b)=>sortMoviesBy(a,b,ymSort));
+  return list.sort((a,b)=>{
     const score=m=>YM_SVC.filter(s=>ymSvcOn.has(s.key) && filmOptOn(m.tmdb_id,{key:s.wk})).length;
     return score(b)-score(a) || (b.imdb_rating||0)-(a.imdb_rating||0);
   });
@@ -11692,6 +11725,89 @@ window.ymSvcToggle=key=>{ ymSvcOn.has(key)?ymSvcOn.delete(key):ymSvcOn.add(key);
 window.ymSvcSetAll=on=>{ ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]); renderYourMovies(); };
 window.ymCascToggle=id=>{ ymCascOff.has(id)?ymCascOff.delete(id):ymCascOff.add(id); renderYourMovies(); };
 window.ymRewatchToggle=()=>{ ymRewatch=!ymRewatch; renderYourMovies(); };
+window.ymEditToggle=()=>{ ymEditOpen=!ymEditOpen; renderYourMovies(); };
+// ---- CAS-535: the compact card's own Search/Filter/Sort — the same icons/behaviour the deck's agent card
+// already uses for a film list (search reveals a live text box, filter is a multi-select watch-priority
+// popover, sort is a real native <select> stretched over an icon button), scoped to this feed's own state.
+let ymSearchRenderTimer=null;
+window.setYmSearchTerm=raw=>{
+  ymSearchTerm=raw.trim().toLowerCase();
+  clearTimeout(ymSearchRenderTimer);
+  ymSearchRenderTimer=setTimeout(ymRefreshFeed, 150);
+};
+window.ymSearchToggle=()=>{
+  ymSearchOpen=!ymSearchOpen;
+  if(!ymSearchOpen) ymSearchTerm="";
+  renderYourMovies();
+  if(ymSearchOpen){ const inp=$("ymSearchInput"); if(inp) inp.focus(); }
+};
+function ymFilterRowsHTML(){
+  const rows=FILTER_TIERS.map(t=>{
+    const on=ymWatchTiers.has(t.key);
+    return `<button type="button" class="nopt${on?" on":""}" style="--wwc:${t.cd}" data-tier="${t.key}"
+      aria-pressed="${on}" onclick="ymToggleFilterTier('${t.key}')"
+      title="${escA(on?`${t.label} — tap to clear`:`Show only ${t.label}`)}">
+      <span class="wwb sq">✓</span><span class="nol">${esc(t.label)}</span></button>`;
+  }).join("");
+  const uOn=ymWatchTiers.has("undecided");
+  const undecided=`<button type="button" class="nopt${uOn?" on":""} sep" style="--wwc:var(--grey)" data-tier="undecided"
+      aria-pressed="${uOn}" onclick="ymToggleFilterTier('undecided')"
+      title="${escA(uOn?"Undecided — tap to clear":"Show only films with no Watch-it decision yet")}">
+      <span class="wwb sq">✓</span><span class="nol">Undecided</span></button>`;
+  return `<div class="npthd">Watch it</div>${rows}${undecided}`;
+}
+function closeYmFilterPanel(){
+  document.querySelectorAll(".cpop.ymfpop").forEach(n=>n.remove());
+  const btn=$("ymFilterBtn");
+  if(btn){ btn.classList.remove("open"); btn.setAttribute("aria-expanded","false"); }
+}
+window.onYmFilterIcon=()=>{
+  const btn=$("ymFilterBtn"); if(!btn) return;
+  const already=btn.classList.contains("open");
+  closeYmFilterPanel();
+  if(already) return;   // second tap closes it
+  const pop=document.createElement("div");
+  pop.className="cpop ymfpop al-r pop-down";
+  pop.innerHTML=`<div class="nopts">${ymFilterRowsHTML()}</div>`;
+  btn.parentElement.appendChild(pop);
+  wirePanelSlide(pop, ".nopt[data-tier]", el=>ymToggleFilterTier(el.dataset.tier));
+  btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
+};
+window.ymToggleFilterTier=key=>{
+  ymWatchTiers.has(key) ? ymWatchTiers.delete(key) : ymWatchTiers.add(key);
+  const pop=document.querySelector(".cpop.ymfpop");
+  if(pop) pop.querySelector(".nopts").innerHTML=ymFilterRowsHTML();
+  ymRefreshFeed();
+};
+document.addEventListener("click", e=>{
+  if(!document.querySelector(".cpop.ymfpop")) return;
+  if(e.target.closest(".cpop.ymfpop") || e.target.closest("#ymFilterBtn")) return;
+  closeYmFilterPanel();
+}, true);
+window.ymSortChange=v=>{ ymSort = v||null; ymRefreshFeed(); };
+const YM_SORT_OPTS=[
+  {v:"",label:"Best match"},
+  {v:"availability",label:"Availability"},
+  {v:"imdb",label:"IMDb rating"},
+  {v:"rt",label:"RT critic"},
+  {v:"gross",label:"Box office"},
+  {v:"popularity",label:"Most anticipated"},
+  {v:"cinema",label:"Newest cinema"},
+  {v:"title",label:"Title A–Z"},
+];
+// A per-keystroke search/filter change only needs the feed's own count/result-line/cards refreshed — not the
+// whole screen (renderYourMovies would tear down and rebuild the search input mid-type, stealing its focus).
+function ymRefreshFeed(){
+  const feed=ymFeedList();
+  const count=$("ymCardCount"); if(count) count.textContent=`${feed.length} film${feed.length===1?"":"s"}`;
+  const bar=$("ymResultBar"); if(bar) bar.innerHTML=ymResultLineHTML(feed);
+  const cardsEl=$("ymCards");
+  if(cardsEl){
+    cardsEl.innerHTML=feed.length?"":`<p class="unone">No films match — loosen a filter above.</p>`;
+    if(feed.length) ymFillCards(cardsEl, feed);
+  }
+  ymAvoidCardIdCollisions();
+}
 // Component reuse (CAS-529's own spec): chips + Select all/Clear all read exactly like the Style step
 // (CAS-397's .chips/.chip/.tbq pattern); each cascade row reuses the Agents screen's .agrow shell
 // (icon/name/summary, CAS-424) with a check-toggle standing in for that row's Edit button.
@@ -11729,6 +11845,60 @@ function ymPanelHTML(matchCount){
       <button type="button" class="tgl${ymRewatch?" on":""}" role="switch" aria-checked="${ymRewatch}"
         onclick="ymRewatchToggle()"></button>
     </div>
+  </div>`;
+}
+// CAS-535: the compact "Watch List" summary/control card, replacing the always-expanded panel above as the
+// screen's first thing — same shell (icon chip, title, film count, action-icon row) the deck's own small
+// Agent card uses. Its plain-language line states the same three things ymPanelHTML lets you edit, so the
+// two never say something different about the live filter state.
+function ymSummaryLine(){
+  const svcOn=YM_SVC.filter(s=>ymSvcOn.has(s.key));
+  const svcPart = svcOn.length===YM_SVC.length ? "All services"
+    : svcOn.length ? svcOn.map(s=>s.label).join(" + ")
+    : "No services selected";
+  const cascOn=cascades.filter(ymCascTicked).length;
+  const cascPart = `${cascOn} of ${cascades.length} cascade${cascades.length===1?"":"s"}`;
+  const rewatchPart = ymRewatch ? "incl. watched" : "not incl. watched";
+  return [svcPart, cascPart, rewatchPart].join(" · ");
+}
+function ymCardHTML(matchCount){
+  const searchRow = ymSearchOpen ? `<div class="ymcsearch">
+      <input id="ymSearchInput" class="search" type="text" inputmode="search" placeholder="Search your watch list"
+             autocomplete="off" aria-label="Search your watch list" value="${escA(ymSearchTerm)}"
+             oninput="setYmSearchTerm(this.value)">
+      <button class="searchclear show" type="button" aria-label="Close search" onclick="ymSearchToggle()">×</button>
+    </div>` : "";
+  const sortOpts = YM_SORT_OPTS.map(o=>
+    `<option value="${o.v}"${(ymSort||"")===o.v?" selected":""}>${o.label}</option>`).join("");
+  return `<div class="ymcard">
+    <div class="ymctop">
+      <span class="ymcicon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+             stroke-linejoin="round" width="20" height="20" focusable="false">
+          <path d="M6.5 4.2h11a1 1 0 0 1 1 1v14.6l-6.5-3.9-6.5 3.9V5.2a1 1 0 0 1 1-1z"/>
+          <path d="M10.3 9.4v5.2l4.1-2.6z" fill="currentColor" stroke="none"/>
+        </svg>
+      </span>
+      <div class="ymcmain">
+        <div class="ymctitle">Watch List</div>
+        <div class="ymccount" id="ymCardCount">${matchCount} film${matchCount===1?"":"s"}</div>
+        <div class="ymcsub">${esc(ymSummaryLine())}</div>
+      </div>
+    </div>
+    <div class="ymcacts">
+      <button type="button" class="ca-btn ymcedit${ymEditOpen?" on":""}" aria-pressed="${ymEditOpen}"
+        onclick="ymEditToggle()">Edit</button>
+      <button type="button" class="ca-btn x" aria-label="Search your watch list" title="Search this list"
+        onclick="ymSearchToggle()">🔍</button>
+      <button type="button" class="ca-btn x" id="ymFilterBtn" aria-haspopup="true" aria-expanded="false"
+        aria-label="Filter your watch list by watch priority" title="Filter by watch priority"
+        onclick="onYmFilterIcon()">${ICON.filter}</button>
+      <div class="sortctl ca-btn x" id="ymSortCtl" title="Order">
+        <select aria-label="Order this list" onchange="ymSortChange(this.value)">${sortOpts}</select>
+        <span class="sortic" aria-hidden="true">⇅</span>
+      </div>
+    </div>
+    ${searchRow}
   </div>`;
 }
 function ymResultLineHTML(films){
@@ -11786,8 +11956,9 @@ function renderYourMovies(){
     <div class="ostop"><button class="osback" type="button" onclick="closeYourMovies()" aria-label="Back">←</button></div>
     <h2 class="osh">Your Movies</h2>
     <p class="ossub">Find something to watch, right now — filtered to where you can actually watch it.</p>
-    ${ymPanelHTML(feed.length)}
-    <div class="ymresultbar">${ymResultLineHTML(feed)}</div>
+    ${ymCardHTML(feed.length)}
+    ${ymEditOpen ? ymPanelHTML(feed.length) : ""}
+    <div class="ymresultbar" id="ymResultBar">${ymResultLineHTML(feed)}</div>
     <div class="ymcards" id="ymCards">${feed.length?"":`<p class="unone">No films match — loosen a filter above.</p>`}</div>
     <div class="usec">Movie selections</div>
     <div class="ucard">${grp}</div>`;
@@ -11808,6 +11979,7 @@ window.openYourMovies=()=>{
   logEvent("yourmovies_opened",{tracked:[...found].filter(id=>!opinionOf(id)).length, watched:watched.size, notfor:blocked.size});
 };
 window.closeYourMovies=()=>{
+  closeYmFilterPanel();   // CAS-535: a popover left open under a now-hidden screen would still eat the next tap
   $("yourMovies").classList.remove("open"); document.body.style.overflow="";
   $("moviesBtn").classList.remove("active"); $("moviesBtn").setAttribute("aria-expanded","false");
   // CAS-534: Agents is the only other mode, so closing Your Movies always means the deck+movie-list home is
