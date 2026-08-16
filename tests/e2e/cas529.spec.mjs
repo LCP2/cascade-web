@@ -58,6 +58,32 @@ async function openYmEdit(page){
   await expect(page.locator(".ympanel")).toBeVisible();
 }
 
+// CAS-536: the service filter now requires the film to actually be AT the ticked window (m.status), not
+// merely to have ticked it — a tick can be set ahead of time on a future rung (CAS-473) or cascade onto
+// every rung below the one just tapped (CAS-349), neither of which means "available via this service now".
+// Tests below that need a film to positively match a service filter have to tick + filter on the film's
+// REAL current window rather than a hardcoded one.
+const SVC_LABEL = {in_cinema:"Cinema", premium:"Buy", rent:"Rent", stream:"Streaming"};
+async function currentSvcKey(page, id){
+  return page.evaluate((id) => {
+    const m = MOVIES.find(x => x.tmdb_id === id);
+    if(!m) return null;
+    for(const w of m.status){
+      const key = filmOptKeyForWindow(null, w);
+      if(WATCH_LEVEL_KEYS.includes(key)) return key;
+    }
+    return null;
+  }, id);
+}
+/** Ticks every YM service chip OFF except `label` — the Edit panel must already be open. */
+async function selectOnlyService(page, label){
+  for(const l of ["Cinema","Streaming","Rent","Buy"]){
+    const chip = page.locator(".ymchip", { hasText: l });
+    const isOn = /(^| )on( |$)/.test(await chip.getAttribute("class") || "");
+    if((l===label) !== isOn) await chip.click();
+  }
+}
+
 test("CAS-529: opens on the feed with its default filters — Streaming only, every cascade ticked, rewatch off", async ({ page }) => {
   await toStreamListing(page);
   await openYourMovies(page);
@@ -82,32 +108,39 @@ test("CAS-529: opens on the feed with its default filters — Streaming only, ev
 test("CAS-529: match rule needs the film's OWN Watch it tick on a ticked service, not just any ticked service", async ({ page }) => {
   await toStreamListing(page);
   const id = await firstCardId(page);
-  await tickWatchIt(page, id, "stream");   // this film says "Streaming" — nothing else
+  const svc = await currentSvcKey(page, id);
+  test.skip(svc === null, "picked card isn't at any Watch-ladder window right now");
+  const label = SVC_LABEL[svc];
+  await tickWatchIt(page, id, svc);   // this film says its own CURRENT window — nothing else
 
   await openYourMovies(page);
-  await expect(page.locator(`#ymCards #card-${id}`)).toBeVisible();
   await openYmEdit(page);
+  await selectOnlyService(page, label);
+  await expect(page.locator(`#ymCards #card-${id}`)).toBeVisible();
 
-  // Untick Streaming (the film's only Watch-it level) and tick Cinema instead — a service being ticked on
-  // the FILTER is not enough if the film itself never said Cinema.
-  await page.locator(".ymchip", { hasText: "Streaming" }).click();
-  await page.locator(".ymchip", { hasText: "Cinema" }).click();
+  // Switch the FILTER to a different service — a service being ticked on the filter is not enough if the
+  // film itself never said that one.
+  const otherLabel = label === "Cinema" ? "Streaming" : "Cinema";
+  await selectOnlyService(page, otherLabel);
   await expect(page.locator(`#ymCards #card-${id}`)).toHaveCount(0);
   await expect(page.locator(".unone", { hasText: "No films match" })).toBeVisible();
 
-  // Re-ticking Streaming brings it straight back.
-  await page.locator(".ymchip", { hasText: "Streaming" }).click();
+  // Switching back brings it straight back.
+  await selectOnlyService(page, label);
   await expect(page.locator(`#ymCards #card-${id}`)).toBeVisible();
 });
 
 test("CAS-529: match rule needs at least one TICKED cascade to list the film, even with the service ticked", async ({ page }) => {
   await toStreamListing(page);
   const id = await firstCardId(page);
-  await tickWatchIt(page, id, "stream");
+  const svc = await currentSvcKey(page, id);
+  test.skip(svc === null, "picked card isn't at any Watch-ladder window right now");
+  await tickWatchIt(page, id, svc);
 
   await openYourMovies(page);
-  await expect(page.locator(`#ymCards #card-${id}`)).toBeVisible();
   await openYmEdit(page);
+  await selectOnlyService(page, SVC_LABEL[svc]);
+  await expect(page.locator(`#ymCards #card-${id}`)).toBeVisible();
 
   await page.locator(".ymcasctgl").click();   // the only cascade — untick it
   await expect(page.locator(".ymcasctgl")).not.toHaveClass(/on/);
@@ -122,13 +155,16 @@ test("CAS-529: match rule needs at least one TICKED cascade to list the film, ev
 test("CAS-529: rewatch toggle — a Watched film is excluded by default and reappears (with the incl. wording) once it's on", async ({ page }) => {
   await toStreamListing(page);
   const id = await firstCardId(page);
-  await tickWatchIt(page, id, "stream");
+  const svc = await currentSvcKey(page, id);
+  test.skip(svc === null, "picked card isn't at any Watch-ladder window right now");
+  await tickWatchIt(page, id, svc);
   await pickVerdict(page, id, "wow");   // folds the card to a stub on the listing behind — expected
 
   await openYourMovies(page);
   await expect(page.locator(`#ymCards #card-${id}`)).toHaveCount(0);
   await expect(page.locator(".ymresultbar")).toHaveText(/0 films/);
   await openYmEdit(page);
+  await selectOnlyService(page, SVC_LABEL[svc]);
 
   await page.locator(".ymrewatchrow .tgl").click();
   await expect(page.locator(".ymrewatchrow .tgl")).toHaveClass(/on/);
@@ -151,9 +187,13 @@ test("CAS-529: a film marked Never stays excluded even with rewatch on", async (
 test("CAS-529: the reused card component's own Watch it control works live from inside the feed", async ({ page }) => {
   await toStreamListing(page);
   const id = await firstCardId(page);
-  await tickWatchIt(page, id, "stream");
+  const svc = await currentSvcKey(page, id);
+  test.skip(svc === null, "picked card isn't at any Watch-ladder window right now");
+  await tickWatchIt(page, id, svc);
 
   await openYourMovies(page);
+  await openYmEdit(page);
+  await selectOnlyService(page, SVC_LABEL[svc]);
   const chip = page.locator(`#ymCards #card-${id} .ctl.notify`);
   // The "on"/glow class tracks whether the ticked level is CURRENT (filmNotifyState's st.current), not
   // merely ticked — aria-pressed is the one that reflects "a level is ticked at all" (st.on), so that's

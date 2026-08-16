@@ -3984,7 +3984,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 520, "commit": "097fe98", "builtAt": "2026-08-16T09:26:32Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 521, "commit": "0cef03a", "builtAt": "2026-08-16T09:55:54Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -11680,6 +11680,17 @@ function ymWatchedSectionsHTML(ids){
 // sits in at least one TICKED cascade (listedBy — the exact predicate the deck/Agents-row count already
 // use, CAS-279's invariant) AND its own Watch it ticks (filmOptOn) cover at least one TICKED service.
 // The four service keys are WATCH_LEVEL_KEYS (CAS-349's Watch ladder) under the names this screen uses.
+// CAS-536: a tick alone isn't enough — filmOptOn only answers "did you ever say you wanted this", not "can
+// you actually watch it via this service right now", which is what "Where you can watch it" (present tense)
+// claims to show. A tick can be set ahead of time on a future rung the film hasn't reached yet (CAS-473
+// explicitly allows pre-selecting "In Cinema" on a still-Upcoming film), and ticking one rung auto-ticks
+// every enabled rung FROM there DOWN to Streaming (CAS-349's cascade, so notifications don't stop early) —
+// so Cinema was showing Upcoming films the ticked-ahead-of-time way, and Streaming was showing Cinema/Rent
+// films that had only cascaded onto it. filmCurrentlyAt gates on the film's real m.status too.
+function filmCurrentlyAt(id, key){
+  const m=MOVIES.find(x=>x.tmdb_id===id);
+  return !!m && m.status.some(w=>filmOptKeyForWindow(null,w)===key);
+}
 const YM_SVC = [
   {key:"cinema", label:"Cinema",    wk:"in_cinema"},
   {key:"stream", label:"Streaming", wk:"stream"},
@@ -11705,7 +11716,7 @@ function ymFeedMatches(m){
   const id=m.tmdb_id;
   if(blocked.has(id)) return false;
   if(!ymRewatch && watched.has(id)) return false;
-  if(!YM_SVC.some(s=>ymSvcOn.has(s.key) && filmOptOn(id,{key:s.wk}))) return false;
+  if(!YM_SVC.some(s=>ymSvcOn.has(s.key) && filmCurrentlyAt(id,s.wk) && filmOptOn(id,{key:s.wk}))) return false;
   if(ymSearchTerm && !m.title.toLowerCase().includes(ymSearchTerm)) return false;
   if(ymWatchTiers.size && ![...ymWatchTiers].some(k=>k==="undecided" ? filmIsUndecided(id) : filmHasWatchTier(id,k))) return false;
   return cascades.some(c=>ymCascTicked(c) && listedBy(m,c));
