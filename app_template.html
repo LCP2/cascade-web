@@ -2547,7 +2547,19 @@
   /* ---- CAS-535: the compact "Watch List" card — same rose accent as .ympanel (now only shown behind Edit),
        shaped like the deck's own small Agent card: icon chip, title, film count, action-icon row. */
   .ymcard{background:var(--panel);border:1px solid rgba(255,47,135,.32);border-radius:16px;
-    padding:14px 15px;margin-top:16px}
+    padding:14px 15px;margin-top:16px;
+    /* CAS-540: sticky within #yourMovies's own scroll container (see syncYmCollapse()'s comment for why
+       that's this card's scrollport, not window/the page, unlike #cascbar). */
+    position:sticky;top:0;z-index:5;transition:padding .18s ease}
+  .ymcard.no-transition,.ymcard.no-transition *{transition:none!important}
+  /* CAS-540: the collapsed pill — icon/title/count stay, the sub-line and action row (Edit/Search/Filter/
+     Sort) go, mirroring .cascbar.collapsed's own "keep the name, drop everything else" shape. */
+  .ymcard.collapsed{padding:8px 15px;box-shadow:0 6px 16px -8px rgba(0,0,0,.7);cursor:pointer}
+  .ymcard.collapsed .ymctop{align-items:center}
+  .ymcard.collapsed .ymcicon{width:28px;height:28px;border-radius:9px}
+  .ymcard.collapsed .ymctitle{font-size:10px}
+  .ymcard.collapsed .ymccount{font-size:14px;margin-top:0}
+  .ymcard.collapsed .ymcsub,.ymcard.collapsed .ymcacts,.ymcard.collapsed .ymcsearch{display:none}
   .ymctop{display:flex;align-items:flex-start;gap:12px}
   .ymcicon{flex:0 0 auto;width:40px;height:40px;border-radius:11px;display:grid;place-items:center;
     background:rgba(255,47,135,.16);color:var(--rose-ink)}
@@ -11734,6 +11746,53 @@ document.addEventListener("keydown", e=>{
   if(e.key==="Escape" && ymEditOpen) closeYmEditPanel();
 });
 addEventListener("scroll", ()=>{ if(ymEditOpen) closeYmEditPanel(); }, {passive:true});
+// ---- CAS-540: the Watch List card collapses to a pill under scroll, mirroring #cascbar's own mechanism
+// (own anchor element, scroll-triggered collapsed-state toggle, no-transition-on-live-scroll handling —
+// CAS-512/519/526) rather than a separate one-off. One real difference: #cascbar sticks under the page's
+// own window scroll, but Your Movies (#yourMovies) is a .uscreen with its own overflow-y:auto — the screen,
+// not window, is what actually scrolls while it's open — so the anchor/scroll listener/observer below are
+// all scoped to that element instead.
+let ymCollapsed=false;
+let ymCollapseRaf=0;
+let ymExpandProgrammatic=false;
+function syncYmCollapse(){
+  const card=$("ymcard"), anc=$("ymAnchor"), scroller=$("yourMovies");
+  if(!card||!anc||!scroller) return;
+  const was=ymCollapsed;
+  // .ymcard sticks at top:0 of #yourMovies's own scrollport (the header sits above #yourMovies entirely, so
+  // unlike #cascbar there's no extra header-height offset to account for) — comparing the anchor's viewport
+  // position to the scroller's own gives the stuck line regardless of where #yourMovies itself sits on screen.
+  const top=anc.getBoundingClientRect().top, stop=scroller.getBoundingClientRect().top;
+  const now = scroller.scrollTop>0 && (was ? top<=stop+6 : top<=stop);
+  if(now===was) return;
+  ymCollapsed=now;
+  const skipTransition=!ymExpandProgrammatic;
+  ymExpandProgrammatic=false;
+  if(skipTransition) card.classList.add("no-transition");
+  card.classList.toggle("collapsed", now);
+  void card.offsetHeight;
+  if(skipTransition) requestAnimationFrame(()=>card.classList.remove("no-transition"));
+}
+$("yourMovies").addEventListener("scroll",()=>{ if(ymCollapseRaf) return;
+  ymCollapseRaf=requestAnimationFrame(()=>{ ymCollapseRaf=0; syncYmCollapse(); }); },{passive:true});
+// Tapping the already-collapsed pill expands it back, the same "tap what's already open/active" gesture
+// expandCascBar() answers for the deck (CAS-512) — there's no second card to switch to here, so any tap on
+// the collapsed pill means "show me the rest of it" unambiguously.
+function expandYmCard(){
+  const card=$("ymcard"), scroller=$("yourMovies");
+  if(!card||!scroller||!card.classList.contains("collapsed")) return;
+  ymExpandProgrammatic=true;
+  scroller.scrollTo({top:0, behavior: deckMotion.matches ? "auto" : "smooth"});
+}
+$("yourMoviesBody").addEventListener("click", e=>{ if(e.target.closest(".ymcard.collapsed")) expandYmCard(); });
+let ymIO=null;
+function armYmObserver(){
+  if(ymIO){ ymIO.disconnect(); ymIO=null; }
+  const scroller=$("yourMovies"), anc=$("ymAnchor");
+  if(!scroller||!anc||!("IntersectionObserver" in window)) return;
+  ymIO=new IntersectionObserver(()=>syncYmCollapse(), {root:scroller, threshold:[0,1]});
+  ymIO.observe(anc);
+}
 // ---- CAS-535: the compact card's own Search/Filter/Sort — the same icons/behaviour the deck's agent card
 // already uses for a film list (search reveals a live text box, filter is a multi-select watch-priority
 // popover, sort is a real native <select> stretched over an icon button), scoped to this feed's own state.
@@ -11878,7 +11937,7 @@ function ymCardHTML(matchCount){
     </div>` : "";
   const sortOpts = YM_SORT_OPTS.map(o=>
     `<option value="${o.v}"${(ymSort||"")===o.v?" selected":""}>${o.label}</option>`).join("");
-  return `<div class="ymcard">
+  return `<div class="ymcard${ymCollapsed?" collapsed":""}" id="ymcard">
     <div class="ymctop">
       <span class="ymcicon" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
@@ -11961,6 +12020,7 @@ function renderYourMovies(){
   }).join("");
   const feed=ymFeedList();
   $("yourMoviesBody").innerHTML=`
+    <div id="ymAnchor" aria-hidden="true" style="height:1px"></div>
     ${ymCardHTML(feed.length)}
     ${ymEditOpen ? ymPanelHTML(feed.length) : ""}
     <div class="ymresultbar" id="ymResultBar">${ymResultLineHTML(feed)}</div>
@@ -11969,6 +12029,7 @@ function renderYourMovies(){
     <div class="ucard">${grp}</div>`;
   if(feed.length) ymFillCards($("ymCards"), feed);
   ymAvoidCardIdCollisions();
+  armYmObserver();   // CAS-540: #ymAnchor above is a fresh node every render, so the observer needs re-arming
 }
 window.ymToggle=key=>{ ymOpen = ymOpen===key ? null : key; renderYourMovies(); };
 window.openYourMovies=()=>{
@@ -11976,7 +12037,7 @@ window.openYourMovies=()=>{
   // dialog, but Manage Agents (opened from the menu) is still a full-screen overlay — close it first so only
   // one "screen" ever covers the home content at once.
   if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
-  ymOpen=null; renderYourMovies();
+  ymOpen=null; ymCollapsed=false; renderYourMovies();   // CAS-540: reopening always starts expanded
   $("yourMovies").scrollTop=0;
   $("yourMovies").classList.add("open"); document.body.style.overflow="hidden";
   $("moviesBtn").classList.add("active"); $("moviesBtn").setAttribute("aria-expanded","true");
