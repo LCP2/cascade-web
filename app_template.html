@@ -4,9 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Cascade — it does the watching for you</title>
-<!-- CAS-449: tab / bookmark / PWA icon, the same brandmark used at 26px in the header (proven
-     legible small) — SVG primary, PNG fallback for browsers that don't support SVG favicons,
-     apple-touch-icon for iOS home-screen / bookmarks. -->
+<!-- CAS-449: tab / bookmark / PWA icon, the "Cascading Frames" brandmark (CAS-518), proven legible
+     at small sizes — SVG primary, PNG fallback for browsers that don't support SVG favicons,
+     apple-touch-icon for iOS home-screen / bookmarks. CAS-538 dropped this mark from the in-app
+     header, but it stays here as the tab/home-screen icon. -->
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -134,9 +135,9 @@
   .brandrow .updated{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .hdr-actions{flex:0 0 auto}
   .brandlockup{display:inline-flex;align-items:center;gap:8px;vertical-align:middle}
-  .brandmark{width:26px;height:26px;display:block;flex:none}
-  /* Uppercase CASCADE wordmark in Poppins — the mark carries the signature gradient,
-     the wordmark stays solid --ink so it clears AA at this size. */
+  /* Uppercase CASCADE wordmark in Poppins. CAS-538 dropped the gradient brandmark icon that used
+     to sit beside it to free width for the mode-chip labels at iPhone widths — the text wordmark
+     alone now carries the identity. */
   .brand{font-size:18px;font-weight:700;letter-spacing:1.6px;color:var(--ink);text-transform:uppercase}
   .updated{font-size:10.5px;color:var(--faint);margin-top:3px}
   /* Build stamp (CAS-124) — small, muted release/build provenance at the foot of the app.
@@ -166,15 +167,10 @@
      CAS-533: CAS-530's widened chips never actually fit at real iPhone widths (~375-430px) — both .brandrow
      children are flex:0 0 auto (neither is willing to shrink), so once their combined natural width passed
      the header's content box the nav row simply overlapped the CASCADE wordmark instead of negotiating
-     space. Dropping the chip labels below this breakpoint (icon-only, same treatment as .iconbtn) reclaims
-     the ~130px CAS-530's labels added, which is what the desktop-width preview that built the design never
-     had to give back. */
-  @media (max-width:460px){
-    .hdr-actions{gap:6px}
-    .hdr-actions .iconbtn{width:36px;height:36px;font-size:17px;border-radius:11px}
-    .modechip{padding:11px;gap:0}
-    .modechip .mclabel{display:none}
-  }
+     space. CAS-533 reclaimed the room by hiding the chip labels below this breakpoint (icon-only).
+     CAS-538: dropping the brandmark icon (see .brand's comment) freed enough width to bring labels back at
+     this breakpoint after all, using shorter strings ("Find"/"Watch") in place of "Agents"/"Your Movies" —
+     .mclabel-full/.mclabel-short swap which string is visible instead of hiding the label outright. */
   /* CAS-530: Agents/Your Movies as wide labelled pills, not bare icon squares — a chip says in words which
      mode you're in rather than making you decode a glyph. Sized taller than .iconbtn's 40px square so the
      label has room; Agents keeps the existing brand-gradient "active" treatment (var(--grad), unchanged from
@@ -185,6 +181,18 @@
   .modechip svg{flex:none}
   .modechip.active{background:var(--grad);border-color:transparent;color:#fff}
   .modechip.ym.active{background:var(--rose-grad);border-color:var(--rose);color:#fff}
+  /* CAS-538: two label strings per chip, one shown at a time — .mclabel-short only appears below the
+     460px breakpoint above, where "Find"/"Watch" fit but "Agents"/"Your Movies" don't. */
+  .mclabel-short{display:none}
+  /* This has to come AFTER the unconditional .modechip rule above — same selector, same specificity, so
+     whichever is later in the stylesheet wins regardless of the media query. */
+  @media (max-width:460px){
+    .hdr-actions{gap:6px}
+    .hdr-actions .iconbtn{width:36px;height:36px;font-size:17px;border-radius:11px}
+    .modechip{padding:11px 9px;gap:4px}
+    .modechip .mclabel-full{display:none}
+    .modechip .mclabel-short{display:inline}
+  }
   /* CAS-269: the rule that hid the 📍 AU pill below 420px went with the pill itself. The header now has
      one thing on the left that can give way — the freshness line — and it ellipsises rather than pushing
      the icons off the edge. */
@@ -2662,34 +2670,6 @@
     <div class="brandrow">
       <div>
         <span class="brandlockup">
-          <!-- CAS-518 "Cascading Frames" mark: three film frames (sprocket dots down the left
-               edge) fanned diagonally, faint and small trailing up to solid and large at the
-               front with a play triangle inside it — verbatim from favicon.svg, proven legible
-               at this 26px size (see CAS-518 ticket verification). -->
-          <svg class="brandmark" viewBox="0 0 100 100" role="img" aria-label="Cascade">
-            <defs>
-              <linearGradient id="cbg" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0" stop-color="#170f2b"/><stop offset="1" stop-color="#391a5c"/>
-              </linearGradient>
-              <linearGradient id="cfg" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0" stop-color="#5ee7ff"/><stop offset="1" stop-color="#7c5cff"/>
-              </linearGradient>
-            </defs>
-            <rect x="4" y="4" width="92" height="92" rx="22" fill="url(#cbg)"/>
-            <rect x="14" y="10" width="38" height="30" rx="6" fill="#c9d3ea" fill-opacity="0.14" stroke="#c9d3ea" stroke-opacity="0.4" stroke-width="1.6"/>
-            <circle cx="19.5" cy="17" r="1.5" fill="#c9d3ea" fill-opacity="0.55"/>
-            <circle cx="19.5" cy="25" r="1.5" fill="#c9d3ea" fill-opacity="0.55"/>
-            <circle cx="19.5" cy="33" r="1.5" fill="#c9d3ea" fill-opacity="0.55"/>
-            <rect x="23" y="21" width="42" height="32" rx="7" fill="#c9d3ea" fill-opacity="0.2" stroke="#c9d3ea" stroke-opacity="0.5" stroke-width="1.8"/>
-            <circle cx="28.5" cy="28" r="1.8" fill="#c9d3ea" fill-opacity="0.6"/>
-            <circle cx="28.5" cy="37" r="1.8" fill="#c9d3ea" fill-opacity="0.6"/>
-            <circle cx="28.5" cy="46" r="1.8" fill="#c9d3ea" fill-opacity="0.6"/>
-            <rect x="33" y="35" width="54" height="42" rx="9" fill="url(#cfg)"/>
-            <circle cx="40" cy="46" r="2.4" fill="#1b1033" fill-opacity="0.55"/>
-            <circle cx="40" cy="56" r="2.4" fill="#1b1033" fill-opacity="0.55"/>
-            <circle cx="40" cy="66" r="2.4" fill="#1b1033" fill-opacity="0.55"/>
-            <path d="M60 47 L60 67 L80 57 Z" fill="#ffffff"/>
-          </svg>
           <span class="brand">Cascade</span>
         </span>
         <!-- CAS-269: the 📍 AU chip is gone. Everything in this build is AU — the pipeline is AU-only —
@@ -2711,7 +2691,8 @@
             <circle cx="12" cy="12" r="8.5" stroke-dasharray="4 3.2"/>
             <path d="M10.3 8.7v6.6l5.2-3.3z" fill="currentColor" stroke="none"/>
           </svg>
-          <span class="mclabel">Agents</span>
+          <span class="mclabel mclabel-full">Agents</span>
+          <span class="mclabel mclabel-short">Find</span>
         </div>
         <!-- Your Movies (CAS-183, resized/reiconed CAS-530): everything you've said about a film, and how
              your services cover it — a bookmark glyph (ribbon with a play-triangle notch), rose-filled
@@ -2723,7 +2704,8 @@
             <path d="M6.5 4.2h11a1 1 0 0 1 1 1v14.6l-6.5-3.9-6.5 3.9V5.2a1 1 0 0 1 1-1z"/>
             <path d="M10.3 9.4v5.2l4.1-2.6z" fill="currentColor" stroke="none"/>
           </svg>
-          <span class="mclabel">Your Movies</span>
+          <span class="mclabel mclabel-full">Your Movies</span>
+          <span class="mclabel mclabel-short">Watch</span>
         </div>
         <!-- Top menu (CAS-345, +Notifications CAS-530, +Manage Agents CAS-534): the account/about surfaces —
              Account, My services, Service analysis, Lists, About — that used to be scattered across separate
