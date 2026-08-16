@@ -161,13 +161,23 @@
   .appcredit .acslot img,.appcredit .acslot svg{height:14px;width:auto;display:block}
   .hdr-actions{display:flex;gap:8px}
   /* CAS-183 added a fourth header icon (Your Movies), which at 360px pushed the row past the edge — the
-     brand block on the left is ~168px and four 40px targets plus their gaps are 184. Both come in a step
-     on a narrow phone rather than the row wrapping or the icons scrolling: a header control you have to
-     find by scrolling is a header control nobody uses. 36+6 lands the four at 162. */
+     brand block on the left is ~168px. CAS-530 dropped the bell (moved into the Menu) and widened the
+     remaining two into labelled chips, so the same narrow-phone squeeze gets a step of its own below. */
   @media (max-width:400px){
     .hdr-actions{gap:6px}
     .hdr-actions .iconbtn{width:36px;height:36px;font-size:17px;border-radius:11px}
+    .modechip{padding:7px 10px;font-size:12px;gap:5px}
   }
+  /* CAS-530: Agents/Your Movies as wide labelled pills, not bare icon squares — a chip says in words which
+     mode you're in rather than making you decode a glyph. Sized taller than .iconbtn's 40px square so the
+     label has room; Agents keeps the existing brand-gradient "active" treatment (var(--grad), unchanged from
+     CAS-424), Your Movies gets its own rose fill (CAS-529's accent) since it owns that colour now. */
+  .modechip{cursor:pointer;display:flex;align-items:center;gap:6px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--dim);border-radius:20px;padding:9px 14px;
+    font-size:13px;font-weight:700;white-space:nowrap}
+  .modechip svg{flex:none}
+  .modechip.active{background:var(--grad);border-color:transparent;color:#fff}
+  .modechip.ym.active{background:var(--rose-grad);border-color:var(--rose);color:#fff}
   /* CAS-269: the rule that hid the 📍 AU pill below 420px went with the pill itself. The header now has
      one thing on the left that can give way — the freshness line — and it ellipsises rather than pushing
      the icons off the edge. */
@@ -190,11 +200,15 @@
     min-width:180px;background:var(--panel);border:1px solid var(--line);border-radius:12px;
     box-shadow:0 12px 28px rgba(0,0,0,.4);overflow:hidden}
   .navmenu.open{display:flex}
-  .navitem{display:block;width:100%;text-align:left;background:transparent;border:0;
-    border-bottom:1px solid var(--line);color:var(--ink);font-size:14px;font-weight:600;
-    padding:12px 14px;cursor:pointer}
+  .navitem{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;
+    text-align:left;background:transparent;border:0;border-bottom:1px solid var(--line);color:var(--ink);
+    font-size:14px;font-weight:600;padding:12px 14px;cursor:pointer}
   .navitem:last-child{border-bottom:0}
   .navitem:hover,.navitem:focus-visible{background:var(--panel2)}
+  /* CAS-530: the unread count that used to live on the header bell, now on its Menu entry instead — same
+     rt/white treatment as the bell's .iconbtn .badge, just laid out inline rather than corner-pinned. */
+  .navbadge{flex:none;background:var(--rt);color:#fff;font-size:11px;font-weight:800;min-width:18px;
+    height:18px;border-radius:10px;display:grid;place-items:center;padding:0 5px}
   .search{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
     border-radius:10px;padding:11px 40px 11px 12px;font-size:16px}
   .search::placeholder{color:var(--faint)}
@@ -261,8 +275,8 @@
      can't SEE that you've Tabbed to is not keyboard-operable in any way that matters. */
   .chip:focus-visible,.qpill:focus-visible,.hatch:focus-visible,.ebtn:focus-visible,.cschip:focus-visible,
   .mlbtn:focus-visible,.ca-btn:focus-visible,.tpl:focus-visible,.actbtn:focus-visible,
-  .iconbtn:focus-visible,.donebtn:focus-visible,.applybtn:focus-visible,.dangerbtn:focus-visible,
-  .secbtn:focus-visible{
+  .iconbtn:focus-visible,.modechip:focus-visible,.donebtn:focus-visible,.applybtn:focus-visible,
+  .dangerbtn:focus-visible,.secbtn:focus-visible{
     outline:2px solid var(--accent);outline-offset:2px}
   .chips{display:flex;flex-wrap:wrap;gap:7px}
   .chip{font-size:12px;padding:6px 11px;border-radius:20px;border:1px solid var(--line);
@@ -2612,28 +2626,42 @@
         <div class="updated" id="updated"></div>
       </div>
       <div class="hdr-actions">
-        <!-- Agents (CAS-424): every agent, one row each, reorderable — the leftmost header icon (mockup
-             CAS-424.png), a stacked-rows glyph lit with the brand gradient while the screen is open. -->
-        <div class="iconbtn" id="agentsBtn" title="Agents" role="button" tabindex="0" aria-haspopup="dialog"
+        <!-- Agents (CAS-424, resized/reiconed CAS-530): every agent, one row each, reorderable — a wider
+             labelled chip (not a bare icon square) so it's unambiguous which mode you're in, lit with the
+             brand gradient while the screen is open. The radar mark (broken ring + play triangle) is the same
+             glyph CAS-529's Your Movies concept work explored, repurposed here for Agents per Lee's call. -->
+        <div class="modechip" id="agentsBtn" title="Agents" role="button" tabindex="0" aria-haspopup="dialog"
              aria-expanded="false" aria-label="Agents" onclick="openAgentsScreen()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-               stroke-linejoin="round" aria-hidden="true" focusable="false" width="19" height="19">
-            <path d="M4 7h16"/><path d="M4 12h10"/><path d="M4 17h16"/>
+               stroke-linejoin="round" aria-hidden="true" focusable="false" width="18" height="18">
+            <circle cx="12" cy="12" r="8.5" stroke-dasharray="4 3.2"/>
+            <path d="M10.3 8.7v6.6l5.2-3.3z" fill="currentColor" stroke="none"/>
           </svg>
+          <span class="mclabel">Agents</span>
         </div>
-        <!-- Your Movies (CAS-183): everything you've said about a film, and how your services cover it. -->
-        <div class="iconbtn" id="moviesBtn" title="Your Movies" role="button" tabindex="0"
-             aria-label="Your Movies" onclick="openYourMovies()">🎞️</div>
-        <div class="iconbtn" id="bell">🔔<div class="badge" id="badge" style="display:none">0</div></div>
-        <!-- Top menu (CAS-345): the account/about surfaces — Account, My services, Service analysis, About —
-             that used to be scattered across separate header icons (and, for About, buried in the My streaming
-             services modal) now live in one anchored dropdown. Account (CAS-206) and Service analysis
-             (CAS-344, which called this menu its permanent entry point) had their own icons here; both are
-             folded in, so the header goes back to the three-icon count CAS-183 set out. -->
+        <!-- Your Movies (CAS-183, resized/reiconed CAS-530): everything you've said about a film, and how
+             your services cover it — a bookmark glyph (ribbon with a play-triangle notch), rose-filled
+             (CAS-529's accent) while its screen is open. -->
+        <div class="modechip ym" id="moviesBtn" title="Your Movies" role="button" tabindex="0"
+             aria-haspopup="dialog" aria-expanded="false" aria-label="Your Movies" onclick="openYourMovies()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true" focusable="false" width="18" height="18">
+            <path d="M6.5 4.2h11a1 1 0 0 1 1 1v14.6l-6.5-3.9-6.5 3.9V5.2a1 1 0 0 1 1-1z"/>
+            <path d="M10.3 9.4v5.2l4.1-2.6z" fill="currentColor" stroke="none"/>
+          </svg>
+          <span class="mclabel">Your Movies</span>
+        </div>
+        <!-- Top menu (CAS-345, +Notifications CAS-530): the account/about surfaces — Account, My services,
+             Service analysis, Lists, About — that used to be scattered across separate header icons now live
+             in one anchored dropdown. Notifications joins as its top entry (CAS-530): the bell icon is gone
+             from the bar entirely, freeing the row for Agents/Your Movies' wider labelled chips. -->
         <div class="navmenu-wrap">
           <div class="iconbtn" id="navMenuBtn" title="Menu" role="button" tabindex="0" aria-haspopup="true"
                aria-expanded="false" aria-controls="navMenu" aria-label="Menu" onclick="toggleNavMenu(event)">☰</div>
           <div class="navmenu" id="navMenu" role="menu" aria-label="Menu">
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('notifications')">
+              <span>🔔 Notifications</span><span class="navbadge" id="badge" style="display:none">0</span>
+            </button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('account')">Account</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('services')">My services</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('svcAnalysis')">Service analysis</button>
@@ -4131,7 +4159,7 @@ ALERT_TYPES.forEach(t=>{
 // One delegated pass makes them all reachable (Tab) and operable (Enter/Space), including the ones the
 // editor builds after this runs.
 function armSwitches(root){
-  (root||document).querySelectorAll(".switch, .iconbtn, .svctog").forEach(s=>{
+  (root||document).querySelectorAll(".switch, .iconbtn, .modechip, .svctog").forEach(s=>{
     if(s.dataset.kb) return;
     s.dataset.kb="1";
     if(!s.hasAttribute("tabindex")) s.tabIndex=0;
@@ -4240,7 +4268,9 @@ function syncFilterUI(){
 }
 $("resetBtn").onclick=()=>{ setActive(ALL_ID); clearFilters(); syncFilterUI(); render(); };
 
-$("bell").onclick=()=>{markRealAlertsRead();markPollSeen();$("overlay").classList.add("open");setTimeout(()=>$("drawer").classList.add("open"),10);
+// CAS-530: was the header bell's own onclick — the bell is gone from the bar, so Notifications' Menu entry
+// (navMenuGo('notifications')) calls this instead.
+window.openNotifications=()=>{markRealAlertsRead();markPollSeen();$("overlay").classList.add("open");setTimeout(()=>$("drawer").classList.add("open"),10);
   logEvent("alerts_opened",{unread:alerts.length});
   renderAlerts(); renderDigest();};   // the digest re-reads the poll each time: Cascade prefs may have changed since
 $("closeDrawer").onclick=closeDrawer;
@@ -8594,7 +8624,8 @@ window.closeNavMenu=()=>{
 window.navMenuGo=key=>{
   closeNavMenu();
   logEvent("nav_menu_item",{item:key});
-  if(key==="account") openAccount();
+  if(key==="notifications") openNotifications();
+  else if(key==="account") openAccount();
   else if(key==="services") openMenuServices();
   else if(key==="svcAnalysis") openSvcAnalysis();
   else if(key==="lists") openListsScreen();
@@ -11599,10 +11630,12 @@ window.openYourMovies=()=>{
   ymOpen=null; renderYourMovies();
   $("yourMovies").scrollTop=0;
   $("yourMovies").classList.add("open"); document.body.style.overflow="hidden";
+  $("moviesBtn").classList.add("active"); $("moviesBtn").setAttribute("aria-expanded","true");
   logEvent("yourmovies_opened",{tracked:[...found].filter(id=>!opinionOf(id)).length, watched:watched.size, notfor:blocked.size});
 };
 window.closeYourMovies=()=>{
   $("yourMovies").classList.remove("open"); document.body.style.overflow="";
+  $("moviesBtn").classList.remove("active"); $("moviesBtn").setAttribute("aria-expanded","false");
   document.querySelectorAll("[data-ym-restore-id]").forEach(el=>{
     el.id=el.dataset.ymRestoreId; delete el.dataset.ymRestoreId;
   });
