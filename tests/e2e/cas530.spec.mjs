@@ -69,13 +69,13 @@ test("CAS-530: Your Movies chip lights up rose while its screen is open, and cle
   await expect(movies).toHaveAttribute("aria-expanded", "false");
 });
 
-test("CAS-530: Agents chip keeps its existing brand-gradient active state, just resized", async ({ page }) => {
+// CAS-534 retargeted the Agents chip from "opens the Agents management screen" to "shows the deck+movie-list
+// home view" — it keeps its brand-gradient fill (still not the rose ".ym" treatment), just lit by default
+// instead of on click. See cas534.spec.mjs for the chip's current behaviour.
+test("CAS-534: Agents chip keeps its brand-gradient active state, lit by default for the home view", async ({ page }) => {
   await toStreamListing(page);
   const agents = page.locator("#agentsBtn");
 
-  await expect(agents).not.toHaveClass(/active/);
-  await agents.click();
-  await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
   await expect(agents).toHaveClass(/active/);
   await expect(agents).not.toHaveClass(/ym/);   // Agents never gets Your Movies' rose treatment
 });

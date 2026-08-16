@@ -2375,12 +2375,14 @@
     transform:translateX(-50%);z-index:84;display:none;flex-direction:column;overflow-y:auto;
     background:radial-gradient(120% 45% at 50% 0%,#141b30 0%,var(--bg) 42%,#080b14 100%)}
   .uscreen.open{display:flex}
-  /* CAS-533: Agents/Your Movies are the two .uscreen destinations a header mode chip opens (CAS-530 gave
-     each an "active" rose/gradient fill for exactly this), so unlike every other .uscreen (Account, Lists,
-     About, Review, Service analysis — one-off Menu destinations with no chip to light up) these two sit
-     BELOW the header instead of covering it at true top:0 — otherwise the chip's active fill paints on the
-     same frame the screen covers it, and a person can never actually see it. --hdrh is the header's own
-     live-measured height (see syncHeaderHeight()), the same var .cascbar already sticks under. */
+  /* CAS-533 (Agents management retargeted CAS-534): Your Movies is a .uscreen a header mode chip opens
+     directly (CAS-530 gave it an "active" rose fill for exactly this); Agents (the management/reorder
+     screen, now reached from the menu) shares the same treatment so it doesn't cover the always-lit Agents
+     chip underneath. Unlike every other .uscreen (Account, Lists, About, Review, Service analysis — one-off
+     Menu destinations with no chip to light up) these two sit BELOW the header instead of covering it at
+     true top:0 — otherwise the chip's active fill paints on the same frame the screen covers it, and a
+     person can never actually see it. --hdrh is the header's own live-measured height (see
+     syncHeaderHeight()), the same var .cascbar already sticks under. */
   #agentsScreen, #yourMovies{top:var(--hdrh,0px)}
   /* CAS-509: same env(safe-area-inset-top) clearance as the header — .uscreen (Your Movies, Agents,
      Review, Account, Service analysis, Lists, About) is fixed from the viewport's true top:0, so its
@@ -2677,12 +2679,13 @@
         <div class="updated" id="updated"></div>
       </div>
       <div class="hdr-actions">
-        <!-- Agents (CAS-424, resized/reiconed CAS-530): every agent, one row each, reorderable — a wider
-             labelled chip (not a bare icon square) so it's unambiguous which mode you're in, lit with the
-             brand gradient while the screen is open. The radar mark (broken ring + play triangle) is the same
-             glyph CAS-529's Your Movies concept work explored, repurposed here for Agents per Lee's call. -->
-        <div class="modechip" id="agentsBtn" title="Agents" role="button" tabindex="0" aria-haspopup="dialog"
-             aria-expanded="false" aria-label="Agents" onclick="openAgentsScreen()">
+        <!-- Agents (CAS-424/CAS-530, corrected CAS-534): a mode switch for the content area below the header,
+             not a dialog launcher — selected by default (lit with the brand gradient) since the deck+movie-list
+             home view is what it shows. The Agents management/reorder screen moved to the top-right menu's
+             "Manage Agents" entry (still openAgentsScreen()). The radar mark (broken ring + play triangle) is
+             the same glyph CAS-529's Your Movies concept work explored, repurposed here for Agents per Lee's call. -->
+        <div class="modechip active" id="agentsBtn" title="Agents" role="button" tabindex="0"
+             aria-pressed="true" aria-label="Agents" onclick="showAgentsHome()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
                stroke-linejoin="round" aria-hidden="true" focusable="false" width="18" height="18">
             <circle cx="12" cy="12" r="8.5" stroke-dasharray="4 3.2"/>
@@ -2702,10 +2705,12 @@
           </svg>
           <span class="mclabel">Your Movies</span>
         </div>
-        <!-- Top menu (CAS-345, +Notifications CAS-530): the account/about surfaces — Account, My services,
-             Service analysis, Lists, About — that used to be scattered across separate header icons now live
-             in one anchored dropdown. Notifications joins as its top entry (CAS-530): the bell icon is gone
-             from the bar entirely, freeing the row for Agents/Your Movies' wider labelled chips. -->
+        <!-- Top menu (CAS-345, +Notifications CAS-530, +Manage Agents CAS-534): the account/about surfaces —
+             Account, My services, Service analysis, Lists, About — that used to be scattered across separate
+             header icons now live in one anchored dropdown. Notifications joins as its top entry (CAS-530):
+             the bell icon is gone from the bar entirely, freeing the row for Agents/Your Movies' wider
+             labelled chips. Manage Agents (CAS-534) joins next: the Agents management/reorder screen moved
+             here since the header's Agents chip now means the deck+movie-list home view instead. -->
         <div class="navmenu-wrap">
           <div class="iconbtn" id="navMenuBtn" title="Menu" role="button" tabindex="0" aria-haspopup="true"
                aria-expanded="false" aria-controls="navMenu" aria-label="Menu" onclick="toggleNavMenu(event)">☰</div>
@@ -2713,6 +2718,7 @@
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('notifications')">
               <span>🔔 Notifications</span><span class="navbadge" id="badge" style="display:none">0</span>
             </button>
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('agents')">Manage Agents</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('account')">Account</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('services')">My services</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('svcAnalysis')">Service analysis</button>
@@ -8744,6 +8750,7 @@ window.navMenuGo=key=>{
   closeNavMenu();
   logEvent("nav_menu_item",{item:key});
   if(key==="notifications") openNotifications();
+  else if(key==="agents") openAgentsScreen();
   else if(key==="account") openAccount();
   else if(key==="services") openMenuServices();
   else if(key==="svcAnalysis") openSvcAnalysis();
@@ -11789,18 +11796,23 @@ function renderYourMovies(){
 }
 window.ymToggle=key=>{ ymOpen = ymOpen===key ? null : key; renderYourMovies(); };
 window.openYourMovies=()=>{
-  // CAS-533: the header (and its Agents chip) stays visible and reachable now that Your Movies sits below
-  // it rather than covering it — closing Agents first keeps only one of the two ever "open" at once.
+  // CAS-534: the header's other mode chip (Agents) now targets the always-present home view rather than a
+  // dialog, but Manage Agents (opened from the menu) is still a full-screen overlay — close it first so only
+  // one "screen" ever covers the home content at once.
   if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
   ymOpen=null; renderYourMovies();
   $("yourMovies").scrollTop=0;
   $("yourMovies").classList.add("open"); document.body.style.overflow="hidden";
   $("moviesBtn").classList.add("active"); $("moviesBtn").setAttribute("aria-expanded","true");
+  $("agentsBtn").classList.remove("active"); $("agentsBtn").setAttribute("aria-pressed","false");
   logEvent("yourmovies_opened",{tracked:[...found].filter(id=>!opinionOf(id)).length, watched:watched.size, notfor:blocked.size});
 };
 window.closeYourMovies=()=>{
   $("yourMovies").classList.remove("open"); document.body.style.overflow="";
   $("moviesBtn").classList.remove("active"); $("moviesBtn").setAttribute("aria-expanded","false");
+  // CAS-534: Agents is the only other mode, so closing Your Movies always means the deck+movie-list home is
+  // showing again — light its chip back up.
+  $("agentsBtn").classList.add("active"); $("agentsBtn").setAttribute("aria-pressed","true");
   document.querySelectorAll("[data-ym-restore-id]").forEach(el=>{
     el.id=el.dataset.ymRestoreId; delete el.dataset.ymRestoreId;
   });
@@ -11904,18 +11916,24 @@ function renderAgentsScreen(){
   wireAgentsDrag();
 }
 window.openAgentsScreen=()=>{
-  // CAS-533: same mutual exclusion as openYourMovies() — the header's other mode chip is reachable now
-  // that this screen sits below the header rather than covering it.
+  // CAS-534: reached from the top-right menu's "Manage Agents" now, not the header's Agents chip — that chip
+  // is the deck+movie-list home view's mode switch and stays lit throughout (this screen is a layer on top of
+  // home, not a different mode). Still mutually exclusive with Your Movies, same as CAS-533.
   if($("yourMovies").classList.contains("open")) closeYourMovies();
   renderAgentsScreen();
   $("agentsScreen").scrollTop=0;
   $("agentsScreen").classList.add("open"); document.body.style.overflow="hidden";
-  $("agentsBtn").classList.add("active"); $("agentsBtn").setAttribute("aria-expanded","true");
   logEvent("agents_screen_opened",{count:cascades.length});
 };
 window.closeAgentsScreen=()=>{
   $("agentsScreen").classList.remove("open"); document.body.style.overflow="";
-  $("agentsBtn").classList.remove("active"); $("agentsBtn").setAttribute("aria-expanded","false");
+};
+// CAS-534: the header's Agents chip — closes whichever screen currently covers the deck+movie-list home view
+// (Your Movies, or Manage Agents if reached via the menu) to reveal it. Selected (lit) by default and
+// whenever Your Movies is closed, since home is the app's other mode besides Your Movies.
+window.showAgentsHome=()=>{
+  if($("yourMovies").classList.contains("open")) closeYourMovies();
+  if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
 };
 // CAS-501: the row's own central area (icon/name/summary/count) opens the agent, exactly like selecting its
 // deck card does. Delegated at the list in wireAgentsDrag(), and the grip/Learning-chip/Edit button opt out
