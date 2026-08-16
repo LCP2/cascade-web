@@ -2699,6 +2699,7 @@
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('account')">Account</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('services')">My services</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('svcAnalysis')">Service analysis</button>
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('preferences')">Preferences</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('lists')">Lists</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('about')">About</button>
           </div>
@@ -3124,6 +3125,14 @@
      menu (CAS-345), its permanent entry point. -->
 <div class="uscreen" id="svcAnalysis" role="dialog" aria-modal="true" aria-label="Service analysis">
   <div class="uwrap" id="svcAnalysisBody"></div>
+</div>
+
+<!-- PREFERENCES (CAS-532) — the two settings that apply to every agent, no per-agent override: Language
+     and Where & when you'll watch. Retires the old Taste Baseline concept (Genre/How far back/Age rating
+     dropped entirely; new agents use fixed system defaults). Body rendered by renderPreferences(). Reached
+     from the top menu. -->
+<div class="uscreen" id="preferencesScreen" role="dialog" aria-modal="true" aria-label="Preferences">
+  <div class="uwrap" id="preferencesBody"></div>
 </div>
 
 <!-- LISTS (CAS-428) — manage the user's own manual collections: create, rename, delete. A different screen
@@ -3932,7 +3941,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 515, "commit": "2a1d871", "builtAt": "2026-08-16T07:10:41Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 516, "commit": "edbf21a", "builtAt": "2026-08-16T08:06:10Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8626,6 +8635,65 @@ window.openSvcAnalysis=()=>{
 };
 window.closeSvcAnalysis=()=>{ $("svcAnalysis").classList.remove("open"); document.body.style.overflow=""; };
 
+// ================= PREFERENCES (CAS-532) =================
+// The two settings that apply to every agent, no per-agent override: Language and Where & when you'll
+// watch. Both write straight to their own global state (tasteBase.langs, watchPrefs) the moment a chip or
+// switch is tapped, same as the account screens they replace — there is no Save button here either.
+// Genre, How far back and Age rating are deliberately absent: retired everywhere (CAS-532 #3), so a new
+// agent runs the fixed system defaults instead (all genres, last 20 years, M and up).
+function prefLangChipsHTML(){
+  const on=tbLangSet();
+  return LANG_OPTS.map(code=>`<button type="button" class="chip${on.has(code)?" on":""}"
+      aria-pressed="${on.has(code)}" onclick="prefToggleLang('${code}')">${esc(langName(code))}</button>`).join("");
+}
+window.prefToggleLang=code=>{
+  const on=tbLangSet();
+  on.has(code) ? on.delete(code) : on.add(code);
+  tasteBase.langs = tbStore(on, LANG_OPTS);
+  saveTasteBase();
+  renderPreferences();
+};
+window.prefLangSetAll=all=>{
+  tasteBase.langs = all ? [] : null;
+  saveTasteBase();
+  renderPreferences();
+};
+function renderPreferences(){
+  prefsWatchMode=true;   // retargets winFlags/agentWindows/wwToggleWin/wwChanged at watchPrefs
+  $("preferencesBody").innerHTML=`
+    <div class="ostop"><button class="osback" type="button" onclick="closePreferences()" aria-label="Back">←</button>
+      <h2 class="osh">Preferences</h2></div>
+    <p class="ossub">Applies to every agent — no per-agent override.</p>
+
+    <div class="usec">Language</div>
+    <p class="ucap">Films in these languages are included across all agents.</p>
+    <div class="chips">${prefLangChipsHTML()}</div>
+    <div class="tbq tbqmin">
+      <button type="button" class="q" onclick="prefLangSetAll(true)">Select all</button>
+      <button type="button" class="q" onclick="prefLangSetAll(false)">Clear</button>
+    </div>
+
+    <div class="usec">Where &amp; when you'll watch</div>
+    <p class="ucap">Track puts matching films into every agent's results. Alert notifies you even if you
+      haven't chosen to track that window. Neither implies the other.</p>
+    <div id="wwLanes"></div>
+
+    <p class="ucap" style="margin-top:14px">Genre, How far back and Age rating are no longer set here or
+      per agent. New cascades now start from fixed system defaults: all genres, last 20 years, M and up —
+      nothing to configure.</p>`;
+  drawWatchLanes();
+}
+window.openPreferences=()=>{
+  renderPreferences();
+  $("preferencesScreen").scrollTop=0;
+  $("preferencesScreen").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("preferences_opened",{});
+};
+window.closePreferences=()=>{
+  prefsWatchMode=false;
+  $("preferencesScreen").classList.remove("open"); document.body.style.overflow="";
+};
+
 // ================= Top menu (CAS-345) =================
 // One anchored dropdown for the account/about surfaces that used to be separate header icons (Account,
 // Service analysis) or buried inside My streaming services (About). Dismiss on an outside tap or on
@@ -8662,6 +8730,7 @@ window.navMenuGo=key=>{
   else if(key==="account") openAccount();
   else if(key==="services") openMenuServices();
   else if(key==="svcAnalysis") openSvcAnalysis();
+  else if(key==="preferences") openPreferences();
   else if(key==="lists") openListsScreen();
   else if(key==="about") openAbout();
 };
@@ -8958,26 +9027,29 @@ STARTERS.forEach(s=>normCascade(s.crit, {template:true}));   // CAS-261: a stand
 // the card's stayed catalogue-wide, and the same agent read 153 on the card and 28 on Mission. The card now
 // seeds the same windows pickStarter will, from the same two sources in the same order (a saved answer for
 // this agent, else the priority answer's default), so there is one measurement and the card is quoting it.
+// CAS-532: every new agent, whichever starter or lane, is seeded from the one global Where & when answer —
+// there is no more per-starter/per-kind default to branch on (PRIORITY_WATCH is unused as of this ticket).
 function starterWatch(s, kind){
-  return loadWatch(s.key) || JSON.parse(JSON.stringify(PRIORITY_WATCH[kind || flowKind] || {}));
+  return JSON.parse(JSON.stringify(watchPrefs));
 }
 function starterPreview(s, kind){
   const d=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
-  // The taste-baseline defaults, verbatim — except age, which stays the preset's OWN cap (CAS-307: Family
-  // Movies' rating ladder is part of its standard, not something the card should quote as wide open).
-  // CAS-425: for a preset that leaves age open, the card has to quote the same name-based default pickStarter
-  // is about to build (CAS-144) — G/PG off unless the offered name says Family, never AGE_LEVELS wide open.
+  // CAS-532: fixed system defaults, verbatim — all genres, last 20 years, M and up — except age, which
+  // stays the preset's OWN cap (CAS-307: Family Movies' rating ladder is part of its standard, not
+  // something the card should quote as wide open). There is no more Genre/How-far-back/Age UI anywhere to
+  // diverge these from the default, so the card and the agent pickStarter is about to build can only ever
+  // agree.
   d.genre=[]; d.year=[]; d.lang=["en"];
-  d.age=(s.crit.age&&s.crit.age.length) ? s.crit.age
-    : (/family/i.test(s.name) ? AGE_LEVELS.filter(a=>!MATURE.has(a)) : AGE_LEVELS.filter(a=>!GENTLE.has(a)));
+  d.age=(s.crit.age&&s.crit.age.length) ? s.crit.age : AGE_LEVELS.filter(a=>!GENTLE.has(a));
   d.selCrowd=s.crit.selCrowd||0; d.selScale=s.crit.selScale||0;
   d.selCritScore=s.crit.selCritScore||0; d.selAwards=s.crit.selAwards||0;
   d.selBuzz=s.crit.selBuzz||0; d.selOr=false;
-  d.status=watchToStatuses(starterWatch(s, kind));
   d.kind = kind || flowKind;
-  // CAS-340: pickStarter opens a streaming agent on 10 years back, not Any — the card has to quote the same
-  // window it is about to build, or the CAS-144 invariant breaks the moment the default stopped being wide open.
-  d.yearsBack = d.kind==="stream" ? 10 : 0;
+  // CAS-532: kind-scoped, same as pickStarter/onbApply will apply — see watchForKind.
+  d.status=watchToStatuses(watchForKind(starterWatch(s, kind), d.kind));
+  // CAS-532: last 20 years, fixed, for every new agent — cinema releases are inherently recent so the
+  // cutoff is a no-op there, but the default is one number now, not a per-kind branch.
+  d.yearsBack = 20;
   laneCrit(d, d.kind);                 // CAS-248: the card counts what the agent will actually apply
   return normCascade(d);
 }
@@ -9038,17 +9110,16 @@ window.pickStarter=key=>{
   // are the same measurement. genre/age fall back to those defaults but defer to the preset's own crit when
   // it sets one (CAS-307), so a preset's Style/Rating standard survives into the draft instead of always
   // being reset to wide open — draftFromTemplate already copied s.crit.exclude in above, untouched here.
-  // CAS-425: when a preset leaves age open, the DEFAULT itself still depends on the offered name — a
-  // Family agent starts with the mature end (MA15+/R18+) off, everything else starts with G/PG off, so
-  // general discovery is not padded with kids' titles by default. Keyed off dfltName, case-insensitive, once
-  // at creation — never re-derived from a later rename.
+  // CAS-532: fixed system defaults — all genres, last 20 years, M and up — with no UI left anywhere to
+  // change them. A preset's own crit still wins where it sets one (CAS-307: Family Movies' age cap), same
+  // as it always has; only the OPEN default (G/PG off) is fixed now instead of depending on the offered
+  // name — the name-based family branch is retired because it only ever fired for the one starter that
+  // already carries its own explicit crit.age.
   onbFlow.draft.genre = s.crit.genre||[];
-  onbFlow.draft.age = (s.crit.age && s.crit.age.length) ? s.crit.age
-    : (/family/i.test(dfltName) ? AGE_LEVELS.filter(a=>!MATURE.has(a)) : AGE_LEVELS.filter(a=>!GENTLE.has(a)));
+  onbFlow.draft.age = (s.crit.age && s.crit.age.length) ? s.crit.age : AGE_LEVELS.filter(a=>!GENTLE.has(a));
   onbFlow.draft.lang = ["en"];
-  // CAS-340: a streaming agent opens on 10 years back, not Any — cinema never shows this control, so it
-  // keeps the open default (CAS-116).
-  onbFlow.draft.yearsBack = flowKind==="stream" ? 10 : 0;
+  // CAS-532: last 20 years, fixed, for every new agent regardless of lane.
+  onbFlow.draft.yearsBack = 20;
   onbFlow.draft.yearStop = 0;        // legacy fallback field, kept for an older build reading it
   // CAS-144: the dials OPEN ON THE AGENT'S OWN STANDARD, not fully open. The card you just tapped quoted a
   // number ("14 films match now"); landing on a hub that says 442 because its dials were reset would make one
@@ -9069,9 +9140,9 @@ window.pickStarter=key=>{
   // stopped being true the moment it did: the flow counted cinema-only while the card counted everything.
   // starterPreview() reads these same two sources now, so the agreement is restored by both sides sharing
   // the seed rather than by neither having one.
-  // CAS-188/182: the priority answer is the starting point for WHERE this agent watches, so choosing
-  // "the cinema" really does put the agent in cinemas. A previous answer for this same agent still wins.
-  onbFlow.watch = loadWatch(s.key) || JSON.parse(JSON.stringify(PRIORITY_WATCH[flowKind]||{}));
+  // CAS-532: Where & when is the global Preferences answer now, the same one every other agent uses —
+  // there is no more per-agent seed to choose between.
+  onbFlow.watch = starterWatch(s, flowKind);
   // The #4 selectivity dials own the crowd/critics/scale bars from here on, defaulting fully open, so zero the
   // pick's own IMDb bar — otherwise its preset would mask the People's-vote dial. Same supersede rule the
   // genres/age steps already follow: the sharpening screen is the single source for the axis it owns.
@@ -9487,11 +9558,17 @@ const agentWindowKind = () => {
   const k=(onbFlow.draft||{}).kind;
   return (k==="cinema"||k==="stream") ? k : (flowKind==="stream" ? "stream" : "cinema");
 };
-const agentWindows = kind => AGENT_WINDOWS[kind || agentWindowKind()] || AGENT_WINDOWS.cinema;
+// CAS-532: in prefsWatchMode this is the Preferences screen's flat 5-window list — every window carries
+// both switches, none is notify-only, because there is no more per-agent-kind (cinema vs stream) split
+// left to restrict one of them. AGENT_WINDOWS.cinema already lists all five (CAS-474 spread Premium/Rent/
+// Streaming across from HOME_WINDOWS), so it is the one array both modes read from.
+const agentWindows = kind => prefsWatchMode
+  ? AGENT_WINDOWS.cinema.map(w => w.notifyOnly ? {...w, notifyOnly:false} : w)
+  : (AGENT_WINDOWS[kind || agentWindowKind()] || AGENT_WINDOWS.cinema);
 const agentWindow  = (key, kind) => agentWindows(kind).find(w=>w.key===key);
 // Sets don't survive JSON.stringify and this state rides to localStorage on the committed agent, so a window's
 // pair of switches is held as a plain object throughout: {list:bool, notify:bool}.
-const winFlags = key => (onbFlow.watch && onbFlow.watch[key]) || {};
+const winFlags = key => activeWatch()[key] || {};
 const winOn    = (key, which) => !!winFlags(key)[which];
 const winAny   = key => winOn(key,"list") || winOn(key,"notify");
 // CAS-242: a window's Notify can carry finer moments. They live under the window's own flags so the whole
@@ -9545,6 +9622,20 @@ function watchFromStatus(status, listStatus){
   }));
   return w;
 }
+// CAS-532: watchPrefs is ONE shared answer across both lanes, but a cinema agent's catalogue still stays
+// cinema-scoped and a streaming agent's still stays home-scoped (CAS-474) — that restriction used to be
+// enforced for free because a cinema agent's own screen never rendered a List switch for a notifyOnly
+// window, so `list` could never become true for one. The Preferences screen shows Track on every window
+// for every lane, so the restriction has to be re-applied here instead, per the cascade's OWN kind, or a
+// cinema agent would start listing home-window films the moment Streaming's Track switch is on globally.
+function watchForKind(watch, kind){
+  const w=migrateWatch(watch), out={};
+  (AGENT_WINDOWS[kind]||AGENT_WINDOWS.cinema).forEach(win=>{
+    const f=w[win.key]; if(!f) return;
+    out[win.key] = win.notifyOnly ? {list:false, notify:!!f.notify, ...(f.subs?{subs:f.subs}:{})} : {...f};
+  });
+  return out;
+}
 // …and the way back out. Two different questions, so two different functions.
 // The agent's WATCH scope is every window it has a job in — listing or notifying. It cannot be list-only:
 // a window you want alerts from is a window the agent has to be following, or the alert could never fire.
@@ -9567,8 +9658,9 @@ function listToStatuses(watch){
   }));
   return [...out];
 }
-function watchStatuses(){ return watchToStatuses(onbFlow.watch); }
-function listStatuses(){  return listToStatuses(onbFlow.watch); }
+// CAS-532: both read onbFlow.draft's own kind now, not the whole shared object — see watchForKind above.
+function watchStatuses(){ return watchToStatuses(watchForKind(onbFlow.watch, (onbFlow.draft||{}).kind)); }
+function listStatuses(){  return listToStatuses(watchForKind(onbFlow.watch, (onbFlow.draft||{}).kind)); }
 // Persisted per agent, so backing out to the shortlist and returning keeps your answer — but picking a
 // DIFFERENT agent gets that agent's own seed rather than the last one's leftovers.
 const WATCH_KEY="cascade_watchwins";
@@ -9582,20 +9674,40 @@ function loadWatch(agentKey){
   }catch(e){}
   return null;
 }
-// Plain-English, read off the same state the screen edits — so the Briefing row can never advertise something
-// the screen behind it doesn't say. CAS-228: it has two things to report now, not one, and it says both:
-// what gets listed and what gets alerted are separate answers and the summary must not merge them.
-function hubWatchSummary(){
-  const wins=agentWindows();
-  const listed=wins.filter(w=>winOn(w.key,"list")), noted=wins.filter(w=>winOn(w.key,"notify"));
-  if(!listed.length && !noted.length){
-    return onbDone.watch ? "Nothing listed or followed" : "Any window — not set yet";
-  }
-  const bits=[];
-  bits.push(listed.length ? `Lists ${listed.map(w=>w.label).join(" + ")}` : "Lists nothing");
-  bits.push(noted.length ? `also follows ${noted.map(w=>w.label).join(" + ")}` : "follows nothing extra");
-  return esc(bits.join(" · "));
+// ---- CAS-532: Where & when you'll watch, promoted to a global Preferences setting ------------------
+// One answer for every agent, the same way tasteBase.langs already is — not a per-agent seed a new agent
+// copies and can then drift from. `prefsWatchMode` retargets the SAME lane-card machinery (winFlags,
+// agentWindows, drawWatchLanes, wwToggleWin/Sub, wwChanged) at this global object instead of onbFlow.watch,
+// rather than forking a second copy of it, so the Preferences screen and the (now-orphaned) per-agent screen
+// can never teach two different lessons about what a switch does.
+const WATCH_PREFS_KEY="cascade_watch_prefs";
+const watchPrefsDefaults = () => ({
+  upcoming:{list:true, notify:false}, in_cinema:{list:true, notify:false},
+  rent:{list:true, notify:false},     stream:{list:true, notify:false},
+  // premium starts fully off, same as it always has (CAS-243) — the one window nobody should be opted
+  // into by default.
+});
+let watchPrefs = watchPrefsDefaults();
+try{
+  const raw=JSON.parse(localStorage.getItem(WATCH_PREFS_KEY)||"null");
+  if(raw && typeof raw==="object") watchPrefs={...watchPrefsDefaults(), ...migrateWatch(raw)};
+}catch(e){}
+function saveWatchPrefs(){ try{ localStorage.setItem(WATCH_PREFS_KEY, JSON.stringify(watchPrefs)); }catch(e){} }
+let prefsWatchMode=false;   // true only while the Preferences "Where & when" section is on screen
+const activeWatch = () => prefsWatchMode ? watchPrefs : (onbFlow.watch || {});
+// The single source of truth propagates to every EXISTING agent immediately, not just new ones — an agent's
+// own `status`/`listStatus`/`watchWindows` are a cached derivation of watchPrefs now, never an independent
+// answer, so this is the one place that writes them. Runs once at boot (belt-and-suspenders for a cascade
+// saved before this ticket) and again every time the Preferences screen changes a switch.
+function syncWatchPrefsToCascades(){
+  cascades.forEach(c=>{
+    const w=watchForKind(watchPrefs, c.kind);   // CAS-532: kind-scoped, same restriction every other reader applies
+    c.status=watchToStatuses(w); c.listStatus=listToStatuses(w); c.watchWindows=w;
+  });
+  saveCascades();
 }
+syncWatchPrefsToCascades();   // once at boot, so a cascade saved before CAS-532 opens already in lockstep
+// CAS-532: hubWatchSummary retired with the hub's "watch" door — there is no remaining caller.
 // CAS-228: one card per window this agent's type has, both switches on the face of it. They are drawn side by
 // side rather than one revealing the other, because every combination is a real state a person might want —
 // including list-without-alerts, which the old nested design could not express at all.
@@ -9605,6 +9717,7 @@ function drawWatchLanes(){
     // CAS-474: a notifyOnly window (Premium/Rent/Streaming, offered to a Cinema agent as "catch it at home")
     // never gets a List switch — its catalogue stays cinema-scoped, so List can never be true for it.
     const lst=w.notifyOnly ? false : winOn(w.key,"list"), nt=winOn(w.key,"notify");
+    // CAS-532: List/Follow renamed Track/Alert — global now, so the hint no longer says "this agent".
     const sw=(which,label,on,hint)=>`<button type="button" class="agwt${on?" on":""}" aria-pressed="${on}"
         title="${escA(hint)}" onclick="wwToggleWin('${w.key}','${which}')"><span class="wwb">✓</span>${label}</button>`;
     // CAS-242: the finer moments appear only once Notify is on, because until then there is no bell for them
@@ -9621,8 +9734,8 @@ function drawWatchLanes(){
       <div class="wwhead"><span class="cd"></span><span class="wwn">${esc(w.label)}</span></div>
       <p class="agwsub">${esc(w.sub)}</p>
       <div class="agwrow">
-        ${w.notifyOnly ? "" : sw("list","List", lst, `Include ${w.label.toLowerCase()} films in this agent's list`)}
-        ${sw("notify","Follow", nt, `Follow it ${w.notifySay}`)}
+        ${w.notifyOnly ? "" : sw("list","Track", lst, `Include ${w.label.toLowerCase()} films in every agent's results`)}
+        ${sw("notify","Alert", nt, `Notify you ${w.notifySay}, even if you haven't chosen to track it`)}
       </div>${subs}</div>`;
   }).join("");
 }
@@ -9639,8 +9752,11 @@ window.wwToggleWin=(key,which)=>{
     (agentWindow(key)||{}).subs?.forEach(s=>{ cur.subs[s.key]=true; });
   }
   if(!Object.keys(cur.subs).length) delete cur.subs;
-  onbFlow.watch=onbFlow.watch||{};
-  if(cur.list || cur.notify) onbFlow.watch[key]=cur; else delete onbFlow.watch[key];
+  // CAS-532: writes into watchPrefs while the Preferences screen has it open, onbFlow.watch otherwise —
+  // activeWatch() picks the same store winOn/winFlags already read, so a toggle can never write one object
+  // while the switch's own lit state reads another.
+  const store = prefsWatchMode ? watchPrefs : (onbFlow.watch = onbFlow.watch||{});
+  if(cur.list || cur.notify) store[key]=cur; else delete store[key];
   wwChanged(key);
 };
 // One moment, one switch. Turning every sub-moment off does NOT turn the bell off: "tell me when it reaches
@@ -9648,8 +9764,8 @@ window.wwToggleWin=(key,which)=>{
 window.wwToggleSub=(key,sub)=>{
   const cur={list:winOn(key,"list"), notify:winOn(key,"notify"), subs:{...winSubs(key)}};
   cur.subs[sub]=!cur.subs[sub];
-  onbFlow.watch=onbFlow.watch||{};
-  onbFlow.watch[key]=cur;
+  const store = prefsWatchMode ? watchPrefs : (onbFlow.watch = onbFlow.watch||{});
+  store[key]=cur;
   wwChanged(key);
 };
 // ---- CAS-244: Notify me by --------------------------------------------------------------------------
@@ -9707,6 +9823,13 @@ window.wwToggleChannel=key=>{
   drawNotifyBy();
 };
 function wwChanged(key){
+  if(prefsWatchMode){
+    saveWatchPrefs();
+    syncWatchPrefsToCascades();   // CAS-532: every agent's status/listStatus moves with it, immediately
+    logEvent("watch_prefs_changed",{window:key, list:winOn(key,"list"), notify:winOn(key,"notify")});
+    drawWatchLanes();
+    return;
+  }
   saveWatch();
   logEvent("watch_windows_changed",{window:key, list:winOn(key,"list"), notify:winOn(key,"notify")});
   drawWatchLanes();   // the window's own lit state and its two switches
@@ -9805,7 +9928,7 @@ function onbApply(){
   // said List. One field could only ever answer one of those two questions.
   d.status = watchStatuses();
   d.listStatus = listStatuses();
-  d.watchWindows = JSON.parse(JSON.stringify(onbFlow.watch||{}));
+  d.watchWindows = watchForKind(onbFlow.watch, d.kind);   // CAS-532: the kind-scoped view, not the raw global one
   // CAS-244: the agent's own channel answer rides with it. Only the RESOLVED value is written — a channel
   // the account has switched off is false here rather than absent, so the monitor never has to know about
   // the account to read this, and the front end keeps the raw answer in `channels` so turning the account
@@ -9956,17 +10079,15 @@ const baseYearsBack = () => (typeof tasteBase.yearsBack==="number")
   ? tasteBase.yearsBack : yearsFromLegacy(tasteBase.year||0);
 // Applied by matchesCriteria to every agent. Each dimension is skipped when it is at its open default, so
 // a fully permissive baseline is exactly a no-op and nothing that already matched stops matching.
+// CAS-532: genre/how-far-back/age retired from this predicate — Taste Baseline no longer offers any UI for
+// them, every new agent is seeded with the fixed system defaults instead (all genres, last 20 years, M and
+// up), and there is no live control left that could diverge tasteBase.genres/year/ageLo/ageHi from their
+// permissive defaults. Only Language survives here: it is still the one account-level, no-per-agent-override
+// axis, now set from Preferences instead of the old Taste Baseline accordion.
 function passesTasteBase(m){
-  // CAS-165: cleared means cleared. A row holding `null` admits nothing, and the count says 0 rather than
-  // quietly reverting to the whole catalogue behind a screen of switched-off chips.
-  const g=tasteBase.genres, l=tasteBase.langs;
-  if(tbNone(g)) return false;
-  if(g.length && !(m.genres||[]).some(x=>g.includes(x))) return false;
-  const yb=baseYearsBack(); if(yb && !releasedSince(m, yearsCutoff(yb))) return false;
+  const l=tasteBase.langs;
   if(tbNone(l)) return false;
   if(l.length && !l.includes(m.language)) return false;
-  const ages=baseAges();
-  if(ages.length<AGE_LEVELS.length && !ages.includes(m.age_rating)) return false;
   return true;
 }
 // CAS-159: how big that world actually is, right now. It runs the very predicate matchesCriteria applies to
@@ -10702,8 +10823,9 @@ const SHARP_STEPS = {
   // end of it — so there is deliberately no "keep it broad" escape any more (buildspec §7).
   selective: {
     title: "Get selective",
-    // CAS-160: three doors, so the two 15-point steps become three 10s — same 50→80 span, same 100 at the end.
-    progress(){ return 50 + (onbDone.bar?10:0) + (onbDone.taste?10:0) + (onbDone.watch?10:0); },
+    // CAS-532: one door left (the bar) since taste/watch moved to Preferences — same 50→80 span as before,
+    // just one 30-point door instead of three 10s.
+    progress(){ return 50 + (onbDone.bar?30:0); },
     noAgent: true,
     hub: true,          // the frame hides its footer: this screen builds its own CTA, and has no skip
     topCount: false,    // CAS-164: it opens ON the count — osbignum below IS the mirror
@@ -10711,28 +10833,25 @@ const SHARP_STEPS = {
       const a=hubAgent(), f=onbFunnel(), n=f.now;
       const done=onbDone, keys=HUB_DOOR_KEYS;
       const c=keys.filter(k=>done[k]).length, all=c===keys.length;
-      // CAS-160: the locked channel badge that used to sit here is gone with the model it belonged to. It
-      // said "this is the one thing you cannot change"; the third door below is now exactly that thing,
-      // changed. Leaving the badge would have made the screen argue with itself.
+      // CAS-532: Taste baseline and Where & when retired as doors here — both are Preferences settings now,
+      // set once for every agent rather than confirmed per agent on the way in. The bar is the one door left.
       const framing = a
-        ? `<p class="ossub"><b>${esc(a.name)}</b> ${esc(a.frame)} Set the three below to lock it in.</p>`
-        : `<p class="ossub">Set the three below to lock in what your agent brings you.</p>`;
+        ? `<p class="ossub"><b>${esc(a.name)}</b> ${esc(a.frame)} Set the bar below to lock it in.</p>`
+        : `<p class="ossub">Set the bar below to lock in what your agent brings you.</p>`;
       // CAS-175: the big number in the context of the pool it came out of, so the two screens read as one
       // funnel — your world, then what this agent's bar leaves of it — instead of two unrelated counts.
       const funnel = n < f.base
-        ? `<div class="osfunnel">out of <b>${f.base}</b> in your taste baseline · of ${f.all}</div>`
-        : `<div class="osfunnel">your whole taste baseline · of ${f.all} — no bar set yet</div>`;
+        ? `<div class="osfunnel">out of <b>${f.base}</b> in your world · of ${f.all}</div>`
+        : `<div class="osfunnel">your whole world · of ${f.all} — no bar set yet</div>`;
       return `<div class="osbignum">${n}</div>
         <div class="osbigl">film${n===1?"":"s"} found for you right now</div>
         ${funnel}
         ${framing}
         ${hubDoorHTML("🎚️","The bar",hubBarSummary(),"bar")}
-        ${hubDoorHTML("🧬","Your taste baseline",hubTasteSummary(),"taste")}
-        ${hubDoorHTML("📺","Where & when you'll watch",hubWatchSummary(),"watch")}
         ${all
           ? `<div class="osfinish">✓ You're all set</div>
              <button class="oscta" type="button" onclick="onbHubFinish()">Show me my ${n} film${n===1?"":"s"} →</button>`
-          : `<div class="oshint"><b>${c} of ${keys.length}</b> confirmed · set all three to see your films</div>`}`;
+          : `<div class="oshint"><b>${c} of ${keys.length}</b> confirmed · set the bar to see your films</div>`}`;
     },
     wire(){ onbDonePulse=null; },   // the pulse is a one-time thing: it has now played
   },
@@ -10835,7 +10954,7 @@ const SHARP_STEPS = {
     title: "Edit Agent",
     hub: true, noAgent: true,
     body(){
-      const d=onbFlow.draft||{}, stream = d.kind==="stream";
+      const d=onbFlow.draft||{};
       // CAS-447: the same "N new" count the deck card carries, read off the SAME live draft this screen's
       // own doors edit (onbApply()) — an unsaved agent (no draft yet) simply has nothing to count.
       const nNew = onbFlow.draft ? newlyAddedCount(onbApply()) : 0;
@@ -10854,22 +10973,12 @@ const SHARP_STEPS = {
             ? mission.lines.map(l=>`<span class="eamline">${esc(l)}</span>`).join("")
             : `<span class="eamline">No bar set — everything qualifies</span>`}</span>
           <span class="dc">›</span></button>
-        <button type="button" class="eacard sty" onclick="briefGo('genres')">
-          <span class="eachd"><span class="di">🎭</span><span class="dh">Style</span></span>
-          ${styleChipsHTML()}
-          <span class="dc">›</span></button>
-        <!-- CAS-267: How far back sits after Rating, exactly as the stream lane walks it — the one row this
-             ticket doesn't name keeps its onboarding neighbour. CAS-475: Language and Streaming services stay
-             off this screen entirely (Account > Taste baseline, Account > My streaming services). -->
-        <div class="easec">
-          <button type="button" class="easub" onclick="briefGo('age')">
-            <span class="eash">Rating</span><span class="easv">${esc(ratingFullText())}</span></button>
-          ${stream ? `<button type="button" class="easub" onclick="briefGo('years')">
-            <span class="eash">How far back</span><span class="easv">${esc(yearsLabel(flowYearsBack()))}</span></button>` : ""}
-        </div>
+        <!-- CAS-532: Style, Rating and How far back are gone from this page — no UI anywhere sets them any
+             more, per-agent or otherwise. Every agent runs the fixed system defaults (all genres, last 20
+             years, M and up) baked in at creation. -->
         <!-- CAS-531 #4: "Where & when you'll watch" is gone from this page — it's a system-wide Preferences
              setting now (CAS-532), one place for every agent instead of a per-agent door. -->
-        <p class="eaptr"><span class="ic">↗</span><span>Where &amp; when you'll watch now lives in Preferences — applies to every agent</span></p>
+        <p class="eaptr"><span class="ic">↗</span><span>Where &amp; when you'll watch now lives in Preferences — applies to every agent. So does Language.</span></p>
         <!-- CAS-268: Delete only appears for an agent that EXISTS. A brand-new agent reaching this screen
              from New Cascade (CAS-246) has never been saved, so there is nothing to delete — offering the
              button there would either do nothing or claim to have removed something that was never on the
@@ -11312,11 +11421,11 @@ let onbStepKey=null;
 // seeding a new streaming agent's per-window `myServices` scope off whatever `prefs.on` already is (CAS-199),
 // same as it always has — this only removes the prompt, not the seed. Naming services (or turning the
 // switch on) now happens at Account > My streaming services, before or after the agent exists either way.
+// CAS-532: "genres"/"age"/"years" are gone from both lanes — Style, Rating and How far back no longer have
+// any UI, first-run or otherwise (see pickStarter for the fixed system defaults that replace them).
 const FLOWS = {
-  cinema: ["priority","pickagent","selectivity","name","genres","age",
-           "keepfinding","notifysettings"],
-  stream: ["priority","pickagent","selectivity","name","genres","age","years",
-           "keepfinding","notifysettings"],
+  cinema: ["priority","pickagent","selectivity","name","keepfinding","notifysettings"],
+  stream: ["priority","pickagent","selectivity","name","keepfinding","notifysettings"],
 };
 const flowList    = () => FLOWS[flowKind] || FLOWS.cinema;
 // CAS-339: keepfinding is walked (it's still in FLOWS, still gets a Back/Continue) but is not one of the
@@ -11413,12 +11522,10 @@ function briefOpen(id){
   onbFlow.buzzStop    = c.selBuzz    || 0;
   onbFlow.selOr       = !!c.selOr;
   onbFlow.barTouched  = true; onbFlow.barAutoRelaxed=null;   // a saved bar is already the user's decision
-  // watchWindows carries the per-window List/Notify switches that `status` cannot express, so it wins where it
-  // exists; an agent saved before CAS-160 is read back off its status. CAS-228: migrateWatch converts a
-  // CAS-160-era watchWindows on the way in, so an existing agent opens on what it was actually doing rather
-  // than on a blank screen, and watchFromStatus reads listStatus too where the agent has one.
-  const w=migrateWatch(c.watchWindows||{});
-  onbFlow.watch = Object.keys(w).length ? w : watchFromStatus(c.status, c.listStatus);
+  // CAS-532: Where & when is no longer per-agent — every edit session (even one that never touches this
+  // axis) has to read and, on Save, re-write the SAME global answer every other agent carries, or a save
+  // would freeze this one agent's status back onto whatever it happened to open with.
+  onbFlow.watch = JSON.parse(JSON.stringify(watchPrefs));
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("briefing_opened",{id});
   gotoStep("briefing","none");
@@ -12084,10 +12191,12 @@ function wireAgentsDrag(){
 // Three real sections and one honest one. Every row here either DOES something or says out loud that it
 // does not yet — a settings screen listing controls that quietly do nothing is the worst kind of screen,
 // because it looks like the place you already went and fixed it.
-//   Agent defaults        -> the account-level taste baseline, which is what a new agent starts from.
 //   Default notifications -> the same notify screen the flow uses, so there is one of it.
 //   Membership            -> who you are signed in as, what the plan is, and the way in and out.
 //   Help & feedback       -> not built. Marked, not dressed up.
+// CAS-532: the old "Agent defaults" section (Taste baseline, My streaming services) is gone from here —
+// Taste baseline is retired (Language moved to the new top-level Preferences page, Genre/How far back/Age
+// rating dropped entirely) and "My streaming services" was a duplicate of the top-level "My Services" item.
 const acctRow = (icon, label, sub, action, chev=true) => {
   const tag = action ? "button" : "div";
   return `<${tag} class="urow${action?"":" nodiv"}" ${action?`type="button" onclick="${action}"`:""}>
@@ -12103,23 +12212,12 @@ function accountWho(){
 }
 function renderAccount(){
   const who=accountWho();
-  const svc=prefs.sub.size+prefs.store.size;
   const notif=[notifyPrefs.inApp?"In-app":null, notifyPrefs.emailOn?"Email":null].filter(Boolean).join(" · ")
             || "Nothing switched on";
   $("accountBody").innerHTML=`
     <div class="ostop menutop"><button class="osback" type="button" onclick="closeAccount()" aria-label="Back">←</button></div>
     <h2 class="osh">Account</h2>
-    <p class="ossub">Your defaults, how you're told, and your membership.</p>
-
-    <div class="usec">Agent defaults</div>
-    <p class="ucap">What a new agent starts from. Changing these never touches an agent you've already made
-      — each one carries its own copy (open it from Edit).</p>
-    <div class="ucard">
-      ${acctRow("🧬","Taste baseline", esc([tbSumGenres(), tbSumYear(), tbSumLangs(), tbSumAge()].join(" · ")),
-                "openAccountStep('taste')")}
-      ${acctRow("📺","My streaming services", svc?`${svc} service${svc===1?"":"s"}${prefs.on?" · only showing these":""}`
-                                                 :"None picked yet", "openAccountServices()")}
-    </div>
+    <p class="ossub">How you're told, and your membership.</p>
 
     <div class="usec">Default notifications</div>
     <div class="ucard">
@@ -12158,7 +12256,6 @@ window.openAccountStep=key=>{
   acctResume=true; closeAccount();
   openOnbStep(key);
 };
-window.openAccountServices=()=>{ acctResume=true; closeAccount(); openPrefs(); };
 window.openAccountAuth=()=>{ acctResume=true; closeAccount(); openModal($("authModal")); };
 function accountResume(){ if(!acctResume) return; acctResume=false; openAccount(); }
 // One row per setting, each read off the DRAFT so the row and the screen behind it cannot disagree.
@@ -12516,7 +12613,8 @@ window.onbStepContinue=()=>{
 // baseline" is the four taste screens walked in turn (CAS-146 collapses those into a single accordion page,
 // at which point this list becomes one entry and nothing else here has to change).
 // CAS-160 adds the third: "where & when you'll watch" is one screen, like the bar.
-const HUB_DOORS = { bar:["selectivity"], taste:["taste"], watch:["watching"] };
+// CAS-532: taste/watch retired as doors — both are Preferences settings now, not per-agent confirmations.
+const HUB_DOORS = { bar:["selectivity"] };
 const HUB_DOOR_KEYS = Object.keys(HUB_DOORS);
 const freshDone = () => { const d={}; HUB_DOOR_KEYS.forEach(k=>d[k]=false); return d; };
 let onbDone = freshDone();
@@ -12576,35 +12674,8 @@ function missionDetail(){
   if(!headline && lines.length) headline=lines.shift();
   return {headline, lines};
 }
-// How many Style chips lead before the rest fold behind "+N more" — same lead width SVC_LEAD uses for
-// services, so a Briefing card and a services list truncate at the same point for the same reason (a
-// two-row grid on a 390px phone).
-const STYLE_LEAD = 8;
-// The Style card's chips, in the SAME order the picker screen offers them (commonest first) — a read-only
-// echo of a selection, not a resort of it.
-function styleChipsHTML(){
-  const v=(onbFlow.draft||{}).genre, ex=genreExcludeSuffix();
-  if(v===null) return `<span class="eaempty">No genres selected</span>`;
-  if(!v.length || v.length===ONB_GENRES.length) return `<span class="eaempty">All genres${esc(ex)}</span>`;
-  const ordered=ONB_GENRES.filter(g=>v.includes(g));
-  const shown=ordered.slice(0,STYLE_LEAD), rest=ordered.length-shown.length;
-  let html=`<span class="chips">`+shown.map(g=>`<span class="chip on gen">${esc(g)}</span>`).join("");
-  if(rest>0) html+=`<span class="chip svcmore">+${rest} more</span>`;
-  html+=`</span>`;
-  if(ex) html+=`<span class="eaempty">${esc(ex.trim())}</span>`;
-  return html;
-}
-// The Rating card's real selections, sorted onto the G→R ladder rather than left in whatever order they
-// were toggled — "G, PG, M, MA 15+, R 18+" reads as the ladder it is.
-function ratingFullText(){
-  const v=(onbFlow.draft||{}).age;
-  if(v===null) return "No ratings";
-  if(!v.length || v.length===AGE_LEVELS.length) return "All ratings";
-  return AGE_LEVELS.filter(a=>v.includes(a)).join(", ");
-}
-function hubTasteSummary(){
-  return esc([tbSumGenres(), tbSumYear(), tbSumLangs(), tbSumAge()].join(" · "));
-}
+// CAS-532: styleChipsHTML/ratingFullText/hubTasteSummary retired with the Briefing's Style/Rating rows and
+// the hub's "taste" door — there is no remaining caller (Style and Rating no longer have any UI).
 window.onbOpenDoor=key=>{
   const steps=HUB_DOORS[key]; if(!steps) return;
   logEvent("onbhub_door",{key, wired:flowOn});
