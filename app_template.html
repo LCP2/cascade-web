@@ -11719,6 +11719,21 @@ window.ymSvcSetAll=on=>{ ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]); renderYour
 window.ymCascToggle=id=>{ ymCascOff.has(id)?ymCascOff.delete(id):ymCascOff.add(id); renderYourMovies(); };
 window.ymRewatchToggle=()=>{ ymRewatch=!ymRewatch; renderYourMovies(); };
 window.ymEditToggle=()=>{ ymEditOpen=!ymEditOpen; renderYourMovies(); };
+// CAS-541: the Edit panel used to be dismissible only by re-tapping "Edit" itself — every other popover in
+// the app (the deck's own Watch it filter, closeFilterPanel above) also closes on an outside tap, Escape, or
+// scroll, so this matches that convention rather than staying a one-off. Scroll-close matters even more once
+// CAS-540 lets the Watch List card collapse to a pill under scroll: without it, the Edit button moves/shrinks
+// while the panel stays open, the exact "detached panel" bug CAS-528 already fixed once for the deck.
+function closeYmEditPanel(){ if(ymEditOpen){ ymEditOpen=false; renderYourMovies(); } }
+document.addEventListener("click", e=>{
+  if(!ymEditOpen) return;
+  if(e.target.closest(".ympanel") || e.target.closest(".ymcedit")) return;
+  closeYmEditPanel();
+}, true);
+document.addEventListener("keydown", e=>{
+  if(e.key==="Escape" && ymEditOpen) closeYmEditPanel();
+});
+addEventListener("scroll", ()=>{ if(ymEditOpen) closeYmEditPanel(); }, {passive:true});
 // ---- CAS-535: the compact card's own Search/Filter/Sort — the same icons/behaviour the deck's agent card
 // already uses for a film list (search reveals a live text box, filter is a multi-select watch-priority
 // popover, sort is a real native <select> stretched over an icon button), scoped to this feed's own state.
