@@ -46,33 +46,37 @@ test("CAS-533: Your Movies chip's rose fill is actually visible — the header s
   expect(screenBox.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height - 1);
 });
 
-test("CAS-533: Agents chip's gradient fill is actually visible — the header stays on screen while its screen is open", async ({ page }) => {
+// CAS-534 moved the Agents management/reorder screen off the header chip and into the top-right menu's
+// "Manage Agents" entry — the chip's own gradient-fill-stays-visible behaviour is now covered against Your
+// Movies below, and the management screen's own header-visibility is covered in cas534.spec.mjs.
+test("CAS-534: Manage Agents (menu) gradient... — the header stays on screen while the management screen is open", async ({ page }) => {
   await toStreamListing(page);
-  const agents = page.locator("#agentsBtn");
 
-  await agents.click();
+  await page.locator("#navMenuBtn").click();
+  await page.locator("#navMenu .navitem", { hasText: "Manage Agents" }).click();
   await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
   await expect(page.locator("header")).toBeVisible();
-  await expect(agents).toHaveClass(/active/);
 
   const headerBox = await page.locator("header").boundingBox();
   const screenBox = await page.locator("#agentsScreen").boundingBox();
   expect(screenBox.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height - 1);
 });
 
-test("CAS-533: tapping the other header chip switches screens instead of leaving both open", async ({ page }) => {
+test("CAS-534: opening Your Movies while Manage Agents is open switches screens instead of leaving both open", async ({ page }) => {
   await toStreamListing(page);
 
-  await page.locator("#agentsBtn").click();
+  await page.locator("#navMenuBtn").click();
+  await page.locator("#navMenu .navitem", { hasText: "Manage Agents" }).click();
   await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
 
   await page.locator("#moviesBtn").click();
   await expect(page.locator("#yourMovies.open")).toBeVisible();
   await expect(page.locator("#agentsScreen")).not.toHaveClass(/open/);
-  await expect(page.locator("#agentsBtn")).not.toHaveClass(/active/);
 
+  // The Agents chip closes Your Movies and returns to the deck+movie-list home view.
   await page.locator("#agentsBtn").click();
-  await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
   await expect(page.locator("#yourMovies")).not.toHaveClass(/open/);
+  await expect(page.locator("#agentsScreen")).not.toHaveClass(/open/);
   await expect(page.locator("#moviesBtn")).not.toHaveClass(/active/);
+  await expect(page.locator("#agentsBtn")).toHaveClass(/active/);
 });
