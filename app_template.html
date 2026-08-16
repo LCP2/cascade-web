@@ -2517,14 +2517,48 @@
   .ymresultbar b{color:var(--ink);font-weight:800}
   .ymresultbar span{color:var(--dim);font-size:12.5px}
   .ymcards{display:flex;flex-direction:column;gap:14px}
-  /* ---- CAS-182 / CAS-208: the Agent Briefing's rows ----
-     The hub's osdoor, tightened: eight rows have to be readable as one page without scrolling past the
-     Save button, so the padding comes in and the gap closes. Same component, same states — only denser. */
-  .edoors{display:flex;flex-direction:column;gap:8px}
-  .edoors .osdoor{padding:9px 12px;margin:0}
-  .edoors .osdoor .di{width:34px;height:34px;font-size:18px}
-  .edoors .osdoor .dh{font-size:15px}
-  .edoors .osdoor .ds{font-size:12px}
+  /* ---- CAS-531: the Agent Briefing's rows, redesigned ----
+     Mission and Style are the primary visual elements now — big tinted doors carrying every selection, not
+     a one-line summary — so a glance at the page says what the agent actually does. Rating and How far back
+     stay reachable but drop to a flat two-up row underneath: real settings, just not the ones worth a full
+     card. The name row is gone from this list entirely — CAS-531 #1 moves it into the page header instead. */
+  .ostop .osh.eahn{font-size:24px;font-weight:800;flex:0 1 auto}
+  .eapenc{flex:0 0 auto;width:28px;height:28px;border-radius:9px;background:var(--panel);
+    border:1px solid var(--line);color:var(--dim);font-size:13px;display:grid;place-items:center;cursor:pointer}
+  .eapenc:hover{border-color:var(--accent);color:var(--ink)}
+  .eapenc:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .eacard{display:block;width:100%;text-align:left;cursor:pointer;position:relative;border-radius:16px;
+    padding:16px 15px;margin-bottom:10px;color:var(--ink);transition:border-color .16s}
+  .eacard.msn{background:linear-gradient(160deg,rgba(124,92,255,.16),rgba(124,92,255,.04));
+    border:1px solid rgba(124,92,255,.4)}
+  .eacard.msn:hover{border-color:var(--accent)}
+  .eacard.sty{background:linear-gradient(160deg,rgba(34,211,238,.14),rgba(34,211,238,.04));
+    border:1px solid rgba(34,211,238,.38)}
+  .eacard.sty:hover{border-color:var(--cyan)}
+  .eacard .dc{position:absolute;top:16px;right:15px;color:var(--faint);font-size:16px}
+  .eachd{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+  .eachd .di{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;font-size:16px;
+    flex:0 0 auto;background:var(--panel);border:1px solid var(--line)}
+  .eachd .dh{font-family:var(--font-display);font-size:11px;font-weight:700;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--dim)}
+  .eamhead{display:block;font-family:var(--font-display);font-size:19px;font-weight:800;margin:0 0 6px}
+  .eamlines{display:flex;flex-direction:column;gap:2px}
+  .eamline{display:block;font-size:13.5px;color:var(--dim);line-height:1.5}
+  .eaempty{display:block;font-size:13.5px;color:var(--dim)}
+  .easec{display:flex;gap:8px;margin-bottom:14px}
+  .easub{flex:1;min-width:0;text-align:left;cursor:pointer;background:var(--panel2);border:1px solid var(--line);
+    border-radius:12px;padding:10px 12px;color:var(--ink)}
+  .easub:hover{border-color:#3a4150}
+  .easub:focus-visible,.eacard:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .eash{display:block;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--faint);margin-bottom:4px}
+  .easv{display:block;font-size:13px;font-weight:700;color:var(--ink);line-height:1.35}
+  /* The pointer to Preferences (CAS-532) that replaces the removed Where & when row — dashed, not solid, so
+     it reads as a note rather than another door. */
+  .eaptr{display:flex;align-items:flex-start;gap:8px;background:rgba(255,107,107,.06);
+    border:1px dashed rgba(255,107,107,.32);border-radius:12px;padding:11px 12px;margin:0 0 14px;
+    color:var(--faint);font-size:12px;line-height:1.5}
+  .eaptr .ic{flex:0 0 auto}
   /* ---- CAS-195: the ratings segmented control ----
      ONE gradient is painted across the whole bar, and each segment either lets it through or masks its own
      slice with the panel colour. That is what makes a run of chosen ratings read as a single continuous
@@ -10802,36 +10836,40 @@ const SHARP_STEPS = {
     hub: true, noAgent: true,
     body(){
       const d=onbFlow.draft||{}, stream = d.kind==="stream";
-      const row=(icon,label,sum,step)=>`<button type="button" class="osdoor" onclick="briefGo('${step}')">
-          <span class="di">${icon}</span>
-          <span class="dt"><span class="dh">${label}</span><span class="ds">${esc(sum)}</span></span>
-          <span class="dc">›</span></button>`;
       // CAS-447: the same "N new" count the deck card carries, read off the SAME live draft this screen's
       // own doors edit (onbApply()) — an unsaved agent (no draft yet) simply has nothing to count.
       const nNew = onbFlow.draft ? newlyAddedCount(onbApply()) : 0;
-      // CAS-266: "Edit Agent", plain, and the same words whichever lane the agent is in. The old title named
-      // the lane ("Cinema Agent Briefing"), which said what the agent IS on a screen you opened to change it —
-      // the screen's job is the verb, and each row below already carries the agent's own settings.
+      const mission = missionDetail();
+      // CAS-531: Mission and Style are promoted to the primary visual elements — big tinted doors carrying
+      // every selection the agent's bar/style actually holds, not the old one-line "11 of 19" summary — so
+      // the two things that most decide what an agent finds are the two things this page leads with. Rating
+      // and How far back stay reachable underneath, just smaller and flatter: real settings, lower stakes.
+      // The name row is gone — CAS-531 #1 moved it into the page header (see renderOnbStep's key==="briefing"
+      // branch), so a rename opens the identical "name" spoke this row used to.
       return `<p class="ossub">Reconfigure this agent here.${nNew ? ` <b>${nNew}</b> newly added film${nNew===1?"":"s"} in its list right now.` : ""}</p>
-        <!-- CAS-267: the rows are named and ordered as onboarding asks them. Editing an agent and building
-             one are the same set of screens (CAS-182), so a person who has just been through the flow should
-             recognise this list as the same questions in the same sequence — "Set your bar" and "Genres" were
-             two different names for screens titled Mission and Style, which made the round trip read as two
-             different products. The step the ticket does not name keeps its onboarding neighbour: How far
-             back sits after Rating, exactly as the stream lane walks it.
-             CAS-475: Language and Streaming services no longer have rows here — both are account-level only
-             now (Account > Taste baseline, Account > My streaming services), so a per-agent door onto either
-             would be a second place to set the same thing. Neither field on the draft is touched by this
-             screen's own Save; see onbApply() and FLOWS.stream for what that means for an agent that was
-             already carrying its own lang/services value. -->
-        <div class="edoors">
-          ${row("✏️","Agent Name",         onbFlow.name || d.name || "Unnamed", "name")}
-          ${row("🎚️","Mission",            hubBarSummary(),                     "selectivity")}
-          ${row("🎭","Style",              briefSum("genre"),                   "genres")}
-          ${row("🔞","Rating",             briefSum("age"),                     "age")}
-          ${stream ? row("🕰️","How far back", yearsLabel(flowYearsBack()), "years") : ""}
-          ${row("📺","Where & when you'll watch", hubWatchSummary(),            "watching")}
+        <button type="button" class="eacard msn" onclick="briefGo('selectivity')">
+          <span class="eachd"><span class="di">🎯</span><span class="dh">Mission</span></span>
+          ${mission.headline ? `<span class="eamhead">${esc(mission.headline)}</span>` : ""}
+          <span class="eamlines">${mission.lines.length
+            ? mission.lines.map(l=>`<span class="eamline">${esc(l)}</span>`).join("")
+            : `<span class="eamline">No bar set — everything qualifies</span>`}</span>
+          <span class="dc">›</span></button>
+        <button type="button" class="eacard sty" onclick="briefGo('genres')">
+          <span class="eachd"><span class="di">🎭</span><span class="dh">Style</span></span>
+          ${styleChipsHTML()}
+          <span class="dc">›</span></button>
+        <!-- CAS-267: How far back sits after Rating, exactly as the stream lane walks it — the one row this
+             ticket doesn't name keeps its onboarding neighbour. CAS-475: Language and Streaming services stay
+             off this screen entirely (Account > Taste baseline, Account > My streaming services). -->
+        <div class="easec">
+          <button type="button" class="easub" onclick="briefGo('age')">
+            <span class="eash">Rating</span><span class="easv">${esc(ratingFullText())}</span></button>
+          ${stream ? `<button type="button" class="easub" onclick="briefGo('years')">
+            <span class="eash">How far back</span><span class="easv">${esc(yearsLabel(flowYearsBack()))}</span></button>` : ""}
         </div>
+        <!-- CAS-531 #4: "Where & when you'll watch" is gone from this page — it's a system-wide Preferences
+             setting now (CAS-532), one place for every agent instead of a per-agent door. -->
+        <p class="eaptr"><span class="ic">↗</span><span>Where &amp; when you'll watch now lives in Preferences — applies to every agent</span></p>
         <!-- CAS-268: Delete only appears for an agent that EXISTS. A brand-new agent reaching this screen
              from New Cascade (CAS-246) has never been saved, so there is nothing to delete — offering the
              button there would either do nothing or claim to have removed something that was never on the
@@ -12315,7 +12353,10 @@ function renderOnbStep(key){
   $("onbStepInner").innerHTML = `
     ${chromed ? "" : `<div class="ostop">
       ${menuStepOn ? "" : `<button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>`}
-      ${step.title ? `<h2 class="osh${step.titleClass ? " "+step.titleClass : ""}">${escA(step.title)}</h2>` : ""}
+      ${key==="briefing"
+        ? `<h2 class="osh eahn">${escA(onbFlow.name || (onbFlow.draft||{}).name || "Unnamed")}</h2>
+           <button class="eapenc" type="button" onclick="briefGo('name')" aria-label="Rename agent">✏️</button>`
+        : step.title ? `<h2 class="osh${step.titleClass ? " "+step.titleClass : ""}">${escA(step.title)}</h2>` : ""}
       ${(last&&!spoke)?`<span class="oslast">LAST ONE</span>`:""}
     </div>
     ${(prog==null||spoke) ? "" : `<div class="osprog"><i style="width:${prog}%"></i></div>`}`}
@@ -12510,6 +12551,56 @@ function hubBarSummary(){
   if(uses.includes("scale") && onbFlow.scaleVal)  parts.push(scaleReadout(onbFlow.scaleVal));
   if(uses.includes("buzz")  && onbFlow.buzzStop)  parts.push(BUZZ_STOPS[onbFlow.buzzStop].label+" buzz");
   return parts.length ? esc(parts.join(" · ")) : "No bar set — everything qualifies";
+}
+// CAS-531: the Briefing's Mission card wants every active dial spelled out as its own line, not folded into
+// one dotted sentence — same source state and the same dial order hubBarSummary reads, just not joined. The
+// first dial with a band name (People's vote, then Budget & scale) becomes the card's bold headline; every
+// active dial — including whichever one supplied the headline — still gets its own full-sentence line below,
+// so "Liked" up top doesn't leave "People's vote 6.7+" unsaid.
+function missionDetail(){
+  const uses = MISSION_DIALS_USED[missionKind()] || MISSION_DIALS_USED.cinema;
+  const lines=[]; let headline="";
+  if(uses.includes("vote") && onbFlow.voteVal>=VOTE_OFF){
+    headline = voteBand(onbFlow.voteVal) || headline;
+    lines.push(`People's vote ${onbFlow.voteVal.toFixed(1)}+`);
+  }
+  if(uses.includes("crit")){
+    if(onbFlow.critScore) lines.push(`Critic score ${Math.round(onbFlow.critScore)}+`);
+    if(onbFlow.awardStop) lines.push(AWARD_STOPS[onbFlow.awardStop].label);
+  }
+  if(uses.includes("scale") && onbFlow.scaleVal){
+    if(!headline) headline = scaleBand(onbFlow.scaleVal)+" release";
+    lines.push(`Budget ${money(onbFlow.scaleVal)} or more`);
+  }
+  if(uses.includes("buzz") && onbFlow.buzzStop) lines.push(`${BUZZ_STOPS[onbFlow.buzzStop].label} buzz required`);
+  if(!headline && lines.length) headline=lines.shift();
+  return {headline, lines};
+}
+// How many Style chips lead before the rest fold behind "+N more" — same lead width SVC_LEAD uses for
+// services, so a Briefing card and a services list truncate at the same point for the same reason (a
+// two-row grid on a 390px phone).
+const STYLE_LEAD = 8;
+// The Style card's chips, in the SAME order the picker screen offers them (commonest first) — a read-only
+// echo of a selection, not a resort of it.
+function styleChipsHTML(){
+  const v=(onbFlow.draft||{}).genre, ex=genreExcludeSuffix();
+  if(v===null) return `<span class="eaempty">No genres selected</span>`;
+  if(!v.length || v.length===ONB_GENRES.length) return `<span class="eaempty">All genres${esc(ex)}</span>`;
+  const ordered=ONB_GENRES.filter(g=>v.includes(g));
+  const shown=ordered.slice(0,STYLE_LEAD), rest=ordered.length-shown.length;
+  let html=`<span class="chips">`+shown.map(g=>`<span class="chip on gen">${esc(g)}</span>`).join("");
+  if(rest>0) html+=`<span class="chip svcmore">+${rest} more</span>`;
+  html+=`</span>`;
+  if(ex) html+=`<span class="eaempty">${esc(ex.trim())}</span>`;
+  return html;
+}
+// The Rating card's real selections, sorted onto the G→R ladder rather than left in whatever order they
+// were toggled — "G, PG, M, MA 15+, R 18+" reads as the ladder it is.
+function ratingFullText(){
+  const v=(onbFlow.draft||{}).age;
+  if(v===null) return "No ratings";
+  if(!v.length || v.length===AGE_LEVELS.length) return "All ratings";
+  return AGE_LEVELS.filter(a=>v.includes(a)).join(", ");
 }
 function hubTasteSummary(){
   return esc([tbSumGenres(), tbSumYear(), tbSumLangs(), tbSumAge()].join(" · "));
