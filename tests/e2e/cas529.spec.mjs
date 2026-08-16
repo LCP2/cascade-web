@@ -1,7 +1,9 @@
 // CAS-529: "Your Movies" — a live, filterable "what can I watch now" feed replaces the old static screen
 // as the primary view. Match rule (Lee's own words): a film qualifies if it sits in at least one TICKED
 // cascade AND its own Watch it ticks cover at least one TICKED service. Default: Streaming only, every
-// cascade ticked, rewatch off. The old three-bucket "Movie selections" list stays put, unchanged, below it.
+// cascade ticked, rewatch off.
+// CAS-546: the old three-bucket "Movie selections" list that used to sit below this feed is gone — the
+// test that pinned it in place ("stays put, unchanged, below it") is removed along with the feature.
 import { test, expect } from "@playwright/test";
 import { toShortlist, shortlistCards, pickCard, finishFlow, toListing, settleListing } from "./helpers.mjs";
 
@@ -202,16 +204,4 @@ test("CAS-529: the reused card component's own Watch it control works live from 
   await expect(chip).toContainText("Watch it");
   await expect(page.locator(`#ymCards #card-${id} .ctl.watch`)).toBeVisible();
   await expect(page.locator(`#ymCards #card-${id} .ctl.casc`)).toBeVisible();   // Lists control, present too
-});
-
-test("CAS-529: the old three-bucket Movie selections list stays put, unchanged, below the new feed", async ({ page }) => {
-  await toStreamListing(page);
-  await openYourMovies(page);
-
-  const sec = page.locator(".usec", { hasText: "Movie selections" });
-  await expect(sec).toBeVisible();
-  const groupLabels = await page.locator(".ucard .urow .ut").allTextContents();
-  expect(groupLabels.some(t => /Unwatched/.test(t))).toBe(true);
-  expect(groupLabels.some(t => /Watched/.test(t))).toBe(true);
-  expect(groupLabels.some(t => /Don't want to watch/.test(t))).toBe(true);
 });

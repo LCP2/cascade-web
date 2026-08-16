@@ -2494,27 +2494,10 @@
     font-size:13px;font-weight:700;cursor:pointer;text-align:center}
   .listnewbtn:hover{color:var(--ink);border-color:#3a4150}
   .listnewbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  /* The film list a group opens into — the card's own poster row, kept small. */
-  .ulist{display:flex;flex-direction:column;gap:8px;margin-top:4px}
-  /* CAS-443: Your Movies' Watched group, sectioned by verdict — a coloured dot (the verdict's own ramp
-     colour) + label + count, same small language as .revleg's per-verdict legend. */
-  .ymsec{margin-top:16px}
-  .ymsec:first-child{margin-top:0}
-  .ymsech{display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;color:var(--dim);
-    margin:0 2px 8px}
-  .ymsech i{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
-  .ymsech b{color:var(--ink)}
-  .urowfilm{display:flex;gap:10px;align-items:center;background:var(--panel2);border:1px solid var(--line);
-    border-radius:12px;padding:9px 10px}
-  .ufposter{width:40px;height:60px;border-radius:7px;background:#0c0f14 center/cover no-repeat;flex:0 0 auto}
-  .ufmain{flex:1;min-width:0}
-  .uftitle{font-size:13px;font-weight:700;line-height:1.3}
-  .ufsub{font-size:11px;color:var(--dim);margin-top:3px;line-height:1.4}
-  /* ---- CAS-529: "Your Movies" filterable feed — the rose-accented panel above the unchanged Movie
-       selections buckets. Chips/Select-all-Clear-all reuse the Style step's language (.chips/.chip,
-       CAS-397); the cascade rows reuse the Agents row shell (.agrow) with a check-toggle in place of Edit;
-       the rewatch switch reuses .tgl (the invite flow's own toggle). Only the rose fill/border and this
-       block's layout are new. */
+  /* ---- CAS-529: "Your Movies" filterable feed — the rose-accented panel above the live results.
+       Chips/Select-all-Clear-all reuse the Style step's language (.chips/.chip, CAS-397); the cascade rows
+       reuse the Agents row shell (.agrow) with a check-toggle in place of Edit; the rewatch switch reuses
+       .tgl (the invite flow's own toggle). Only the rose fill/border and this block's layout are new. */
   .ympanel{background:var(--panel);border:1px solid rgba(255,47,135,.32);border-radius:16px;
     padding:16px 15px;margin-top:16px}
   .ymphead{font-family:var(--font-display);font-weight:700;font-size:11px;letter-spacing:.05em;
@@ -11627,54 +11610,12 @@ window.openMenuServices=()=>{
 
 // ================= CAS-183 / CAS-209: Your Movies ====================================================
 // Everything you have told the app about a film, read back off the very sets the cards write — so this
-// screen cannot disagree with the card you tapped. Three groups, in the order the ticket names them:
-// what your agents are still tracking for you, what you have watched, and what you have set aside.
+// screen cannot disagree with the card you tapped.
 // CAS-378: the streaming-analysis section that used to sit under these groups was a duplicate of the
 // menu's Service analysis (CAS-344) — removed, that page is the single source of truth.
-let ymOpen=null;                       // which group is expanded, or null
-const ymFilm = id => MOVIES.find(m=>m.tmdb_id===id);
-// Every group counts only what it can actually SHOW. An answer you gave to a film that has since left the
-// catalogue is still yours and is still stored, but a group headed "3 films" that lists two is a screen
-// arguing with itself — and the number is the thing people read.
-const ymIds = fn => [...fn()].filter(id=>ymFilm(id));
-const YM_GROUPS = [
-  {key:"tracked", icon:"🎬", label:"Unwatched · being tracked",
-   sub:"films your agents are watching for you",
-   ids:()=>ymIds(()=>[...found].filter(id=>!opinionOf(id)))},
-  {key:"watched", icon:"✅", label:"Watched",
-   sub:"by verdict, best first",
-   ids:()=>ymIds(()=>watched)},
-  {key:"notfor",  icon:"🚫", label:"Don't want to watch",
-   sub:"films you've set aside",
-   ids:()=>ymIds(()=>blocked)},
-];
-// CAS-443: was a stale, separately-maintained label set (Liked/So-so/Didn't like/Not for me) that had drifted
-// from the current verdict taxonomy. Derives from REVIEW_STEPS instead, so it can never drift again.
-const YM_SAID = Object.fromEntries(REVIEW_STEPS.map(s=>[s.key, s.lbl]));
-function ymFilmHTML(id){
-  const m=ymFilm(id); if(!m) return "";
-  const bg=m.poster?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
-  const said=YM_SAID[opinionOf(id)];
-  return `<div class="urowfilm">
-    <div class="ufposter" style="${bg}"></div>
-    <div class="ufmain">
-      <div class="uftitle">${esc(m.title)}</div>
-      <div class="ufsub">${STATUS_LABEL[primaryStatus(m)]||""}${said?` · ${said}`:""}</div>
-    </div></div>`;
-}
-// CAS-443: the Watched group, sectioned by verdict in ramp order best-first (REVIEW_STEPS — Wow through
-// Disliked, then Never/notfor last). A verdict with no films is skipped rather than drawn as an empty header.
-function ymWatchedSectionsHTML(ids){
-  return REVIEW_STEPS.map(s=>{
-    const secIds=ids.filter(id=>opinionOf(id)===s.key);
-    if(!secIds.length) return "";
-    return `<div class="ymsec">
-      <div class="ymsech"><i style="background:${s.cd}"></i>${s.lbl} <b>${secIds.length}</b></div>
-      <div class="ulist">${secIds.slice(0,40).map(ymFilmHTML).join("")}</div>${
-        secIds.length>40 ? `<p class="unone" style="margin-top:9px">…and ${secIds.length-40} more.</p>` : ""}
-    </div>`;
-  }).join("");
-}
+// CAS-546: the three-bucket "Movie selections" list (Unwatched/Watched/Don't-want, with per-verdict
+// sub-sections) that used to sit below the feed is gone — it had no other entry point, so removal drops
+// the feature entirely rather than leaving it reachable elsewhere.
 // ---- CAS-529: the filterable "what can I watch now" feed — the screen's new PRIMARY view -----------------
 // Service filter × cascade filter × rewatch toggle, live. Match rule is Lee's own: a film qualifies if it
 // sits in at least one TICKED cascade (listedBy — the exact predicate the deck/Agents-row count already
@@ -12011,39 +11952,23 @@ function ymAvoidCardIdCollisions(){
   });
 }
 function renderYourMovies(){
-  const grp=YM_GROUPS.map(g=>{
-    const ids=g.ids(), open=ymOpen===g.key;
-    return `<button class="urow" type="button" onclick="ymToggle('${g.key}')" aria-expanded="${open}">
-        <span class="uic">${g.icon}</span>
-        <span class="utxt"><span class="ut">${g.label}</span>
-          <span class="ussub">${ids.length} ${ids.length===1?"film":"films"} · ${g.sub}</span></span>
-        <span class="uchev">${open?"⌄":"›"}</span></button>
-      ${open ? `<div class="ucardpad">${ids.length
-        ? (g.key==="watched" ? ymWatchedSectionsHTML(ids)
-            : `<div class="ulist">${ids.slice(0,40).map(ymFilmHTML).join("")}</div>${
-                ids.length>40 ? `<p class="unone" style="margin-top:9px">…and ${ids.length-40} more.</p>` : ""}`)
-        : `<p class="unone">Nothing here yet.</p>`}</div>` : ""}`;
-  }).join("");
   const feed=ymFeedList();
   $("yourMoviesBody").innerHTML=`
     <div id="ymAnchor" aria-hidden="true" style="height:1px"></div>
     ${ymCardHTML(feed.length)}
     ${ymEditOpen ? ymPanelHTML(feed.length) : ""}
     <div class="ymresultbar" id="ymResultBar">${ymResultLineHTML(feed)}</div>
-    <div class="ymcards" id="ymCards">${feed.length?"":`<p class="unone">No films match — loosen a filter above.</p>`}</div>
-    <div class="usec">Movie selections</div>
-    <div class="ucard">${grp}</div>`;
+    <div class="ymcards" id="ymCards">${feed.length?"":`<p class="unone">No films match — loosen a filter above.</p>`}</div>`;
   if(feed.length) ymFillCards($("ymCards"), feed);
   ymAvoidCardIdCollisions();
   armYmObserver();   // CAS-540: #ymAnchor above is a fresh node every render, so the observer needs re-arming
 }
-window.ymToggle=key=>{ ymOpen = ymOpen===key ? null : key; renderYourMovies(); };
 window.openYourMovies=()=>{
   // CAS-534: the header's other mode chip (Agents) now targets the always-present home view rather than a
   // dialog, but Manage Agents (opened from the menu) is still a full-screen overlay — close it first so only
   // one "screen" ever covers the home content at once.
   if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
-  ymOpen=null; ymCollapsed=false; renderYourMovies();   // CAS-540: reopening always starts expanded
+  ymCollapsed=false; renderYourMovies();   // CAS-540: reopening always starts expanded
   $("yourMovies").scrollTop=0;
   $("yourMovies").classList.add("open"); document.body.style.overflow="hidden";
   $("moviesBtn").classList.add("active"); $("moviesBtn").setAttribute("aria-expanded","true");

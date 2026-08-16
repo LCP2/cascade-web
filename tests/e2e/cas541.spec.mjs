@@ -28,7 +28,7 @@ test("CAS-541: an outside tap closes the open Edit panel", async ({ page }) => {
   await openYourMovies(page);
   await openEditPanel(page);
 
-  await page.locator(".usec").click();   // "Movie selections" heading, well outside the panel/Edit button
+  await page.locator("#ymResultBar").click();   // well outside the panel/Edit button
 
   await expect(page.locator(".ympanel")).toHaveCount(0);
   await expect(page.locator(".ymcard .ymcedit")).not.toHaveClass(/on/);
