@@ -119,7 +119,9 @@
      screen edges and read as two faint vertical artifacts on every page; on desktop it drew a box around
      content that needs no box, since .phone and body share --bg and the rule was the only thing
      distinguishing them. Removing it costs nothing and is the only way the lines are gone at every width. */
-  .phone{max-width:480px;margin:0 auto;min-height:100vh;background:var(--bg);
+  /* CAS-554: 100vh overshoots the visible area in Safari (URL bar/toolbar) but is exactly the app's fullscreen
+     viewport — 100dvh tracks whichever is actually visible, with the vh line kept as the pre-dvh fallback. */
+  .phone{max-width:480px;margin:0 auto;min-height:100vh;min-height:100dvh;background:var(--bg);
     position:relative;padding-bottom:40px}
   /* CAS-459: on iOS the WKWebView renders edge-to-edge under the notch/status-bar, so the sticky
      header's own padding has to clear it — viewport-fit=cover above is what makes env() resolve
@@ -240,8 +242,12 @@
   .btn.active{border-color:var(--accent);color:#fff;background:rgba(124,92,255,.15)}
   select{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:8px 10px;font-size:13px}
   /* full-screen modals (filters, preferences) */
+  /* CAS-554 device-parity-ignore: R2 — top:0 carries no padding of its own by design: .modalhead (always the
+     first child, see its own comment below) is sticky at this same top:0 and owns the env(safe-area-inset-top)
+     clearance. Padding it here too would double it. Bottom padding is real (scroll clearance) so gets its own
+     env(safe-area-inset-bottom) top-up below. */
   .modal{position:fixed;top:0;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;
-    background:var(--bg);z-index:50;display:none;overflow-y:auto;padding:0 16px 60px}
+    background:var(--bg);z-index:50;display:none;overflow-y:auto;padding:0 16px calc(60px + env(safe-area-inset-bottom,0px))}
   .modal.open{display:block}
   /* CAS-317: found verifying the email+password flow — the account modal is the one .modal that CAS-186
      deliberately opens WHILE the splash (z-index 80) is still showing behind it, so backing out lands you
@@ -251,8 +257,11 @@
   #authModal.open{z-index:81}
   /* CAS-437: the public film page. Same phone-width-capped full page as .modal, but its own z-index so it
      sits over the splash (80) too — a share link has to show the film regardless of what boot put up. */
+  /* CAS-554 device-parity-ignore: R2 — same reasoning as .modal above: top:0 carries no padding of its own
+     because .fpclose (always the first child) is sticky at this same top:0 and already owns the
+     env(safe-area-inset-top) clearance; padding it here too would double it. */
   .filmpage{position:fixed;top:0;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;
-    background:var(--bg);z-index:85;display:none;overflow-y:auto;padding:0 16px 60px}
+    background:var(--bg);z-index:85;display:none;overflow-y:auto;padding:0 16px calc(60px + env(safe-area-inset-bottom,0px))}
   .filmpage.open{display:block}
   /* CAS-509: same env(safe-area-inset-top) clearance as the header — the film page is sticky from the
      viewport's true top:0, so its close control needs the same notch allowance. */
@@ -1353,8 +1362,10 @@
   /* builder editor */
   .namein{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
     border-radius:10px;padding:11px 12px;font-size:16px;font-weight:600}
+  /* CAS-554: .cascfoot sticks to .modal's true bottom:0 (the screen's own edge), so its own bottom padding
+     needs the home-indicator clearance directly — nothing else in .modal owns it. */
   .cascfoot{position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--line);
-    padding:12px 0 10px;margin-top:18px;display:flex;gap:8px;align-items:center;z-index:2}
+    padding:12px 0 calc(10px + env(safe-area-inset-bottom,0px));margin-top:18px;display:flex;gap:8px;align-items:center;z-index:2}
   /* CAS-558: .modal is position:fixed sized to the LAYOUT viewport, which iOS Safari does not shrink for
      the software keyboard — only the visual viewport does. A .cascfoot sticky to that fixed container's
      bottom therefore sticks below the visible area, and Safari's scroll-into-view for the focused field
@@ -1441,7 +1452,7 @@
      leaves the art visible only in two thin bands; from the top the wall reads as a wall and the copy
      still lands above the fold on a 360x640 phone. */
   .splashinner{position:relative;z-index:2;width:100%;max-width:400px;margin:0 auto;
-    padding:3vh 0 8px;animation:splashIn .5s ease both}
+    padding:3vh 0 8px;padding:3dvh 0 8px;animation:splashIn .5s ease both}
   /* ---- the poster wall (CAS-200) ----
      A perspective grid of real posters, blurred and dimmed, with a dark radial fade over it. Three
      separate jobs, three separate layers: the wall never touches the text's contrast (that is the fade's
@@ -1601,7 +1612,7 @@
   .wiz{position:fixed;inset:0;z-index:80;display:none;align-items:flex-end;justify-content:center;
     background:rgba(6,8,12,.86);backdrop-filter:blur(4px)}
   .wiz.open{display:flex}
-  .wizcard{width:100%;max-width:480px;max-height:96vh;background:var(--panel);border:1px solid var(--line);
+  .wizcard{width:100%;max-width:480px;max-height:96vh;max-height:96dvh;background:var(--panel);border:1px solid var(--line);
     border-radius:20px 20px 0 0;padding:14px 18px 22px;display:flex;flex-direction:column;overflow:hidden}
   .wiztop{display:flex;align-items:center;gap:10px;margin-bottom:15px;flex:none}
   .wizback{background:var(--panel2);border:1px solid var(--line);color:var(--ink);width:34px;height:34px;
@@ -2094,7 +2105,9 @@
   .rvhero{text-align:center;margin-bottom:18px}
   /* CAS-123: the count + copy + single CTA are pinned to the top; the poster grid scrolls under them, so the
      user can act without scrolling past posters. A gradient fade lets posters peek through as they pass under. */
-  .rvtop{position:sticky;top:0;z-index:3;text-align:center;padding:6px 0 16px;
+  /* CAS-554: .reveal is fixed;inset:0 from the viewport's true top — unlike #yourMovies (which sits below
+     the header) nothing else clears the notch here, so .rvtop's own sticky top:0 needs it directly. */
+  .rvtop{position:sticky;top:0;z-index:3;text-align:center;padding:calc(6px + env(safe-area-inset-top,0px)) 0 16px;
     background:linear-gradient(var(--bg) 82%, rgba(10,14,26,0))}
   .rvcount{font-family:var(--font-display);font-size:64px;font-weight:700;line-height:1;
     background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -2145,7 +2158,7 @@
   .invite{position:fixed;inset:0;z-index:86;display:none;align-items:flex-end;justify-content:center;
     background:rgba(6,8,12,.86);backdrop-filter:blur(4px)}
   .invite.open{display:flex}
-  .invcard{width:100%;max-width:480px;max-height:96vh;overflow-y:auto;background:var(--panel);
+  .invcard{width:100%;max-width:480px;max-height:96vh;max-height:96dvh;overflow-y:auto;background:var(--panel);
     border:1px solid var(--line);border-radius:20px 20px 0 0;padding:22px 18px}
   .invh{font-family:var(--font-display);font-size:22px;font-weight:700;letter-spacing:-.2px;line-height:1.25;margin:0 0 8px}
   .invp{font-size:13.5px;color:#c4ccd6;line-height:1.55;margin:0 0 16px}
@@ -2192,7 +2205,7 @@
   .onb{position:fixed;inset:0;z-index:70;background:rgba(6,8,12,.82);backdrop-filter:blur(3px);
     display:none;align-items:flex-end;justify-content:center}
   .onb.open{display:flex}
-  .onbcard{width:100%;max-width:480px;max-height:94vh;overflow-y:auto;background:var(--panel);
+  .onbcard{width:100%;max-width:480px;max-height:94vh;max-height:94dvh;overflow-y:auto;background:var(--panel);
     border:1px solid var(--line);border-radius:20px 20px 0 0;padding:18px 16px 22px}
   .onbstep{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:700}
   .onbh{font-size:20px;font-weight:800;letter-spacing:-.3px;line-height:1.25;margin:6px 0 7px}
@@ -2312,7 +2325,9 @@
     transform:translateX(-50%);box-shadow:0 0 0 100vmax var(--bg)}
   /* The progress header. FIXED, not part of the sliding pane: the meter is a statement about the flow,
      not about the screen, so it must hold still while the screens move under it — a progress bar that
-     slides away with the step it measures reads as decoration. */
+     slides away with the step it measures reads as decoration.
+     CAS-554 device-parity-ignore: R2 — .stephdr carries no padding of its own; .steprow (its always-present
+     child, see its own comment below) already owns the env(safe-area-inset-top) clearance. */
   .stephdr{position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:var(--flow-w);
     z-index:90;background:var(--bg)}
   /* CAS-509: same env(safe-area-inset-top) clearance as the header — .stephdr is fixed from the
@@ -2561,7 +2576,10 @@
   .ymcard{background:var(--panel);border:1px solid rgba(255,47,135,.32);border-radius:16px;
     padding:14px 15px;margin-top:16px;
     /* CAS-540: sticky within #yourMovies's own scroll container (see syncYmCollapse()'s comment for why
-       that's this card's scrollport, not window/the page, unlike #cascbar). */
+       that's this card's scrollport, not window/the page, unlike #cascbar).
+       CAS-554 device-parity-ignore: R2 — #yourMovies itself sits at top:var(--hdrh,0px), below the header,
+       not the viewport's true top:0 (see #agentsScreen,#yourMovies above), so this scrollport never reaches
+       the notch and .ymcard's own top:0 needs no safe-area padding. */
     position:sticky;top:0;z-index:5;transition:padding .18s ease;
     /* CAS-543: CAS-540's comment says this mirrors #cascbar's mechanism (own anchor, scroll-driven toggle,
        no-transition-on-live-scroll — all present in syncYmCollapse()), but it never copied .cascbar's own
@@ -4046,7 +4064,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 538, "commit": "a21e86e", "builtAt": "2026-08-17T10:48:29Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 539, "commit": "78fae14", "builtAt": "2026-08-17T11:02:42Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
