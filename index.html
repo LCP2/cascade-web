@@ -48,18 +48,31 @@
        WCAG-AA margin on every panel (dim now ~8.3:1, faint ~7:1 on --panel; both comfortably over 4.5:1).
        --faint was #6b7280 (3.26:1, failing) → #8b95a5 → now #9ba5b5. --dim #9aa4b2 → #aab4c4. */
     --ink:#e8ecf2; --dim:#aab4c4; --faint:#9ba5b5;
-    --open:#ff6b6b; --amber:#f0a336; --purple:#a486f0; --blue:#5aa9f0; --green:#48c78e; --grey:#6b7280;
+    --open:#ff6b6b; --amber:#f0a336; --purple:#a486f0; --blue:#5FBFB3; --green:#48c78e; --grey:#6b7280;
+    /* CAS-556: --blue was #5aa9f0, the same colour to the eye as the new agent-lane light shade
+       (--lane-str, #93B8FF below) — and a streaming agent's list carries a Rent pill on nearly every
+       card, so the collision would just relocate. Retuned to a cool slate-teal that stays clearly apart
+       from both --lane-str and --green (Stream). --blue still means Rent and nothing else. */
+    /* CAS-556: cinema/streaming agent IDENTITY moves off the availability palette (--amber/--green,
+       which mean IN CINEMA / STREAM on a film card) and onto its own family — shades of the Agents chip's
+       own blue (--grad's centre stop, #4C7DFF). --lane-cin is deep, --lane-str is light; both are named
+       tokens so no use site hard-codes them. See the CAS-203 comment on .dcard.agent-cin for the full
+       rationale reversal. */
+    --lane-cin:#1E45C9; --lane-str:#93B8FF;
     /* CAS-258/CAS-286: Upcoming gets a colour of its own. It had been --grey, which in every other part
        of this UI means "off / nothing here" — the wrong thing to say about the films a person is most
-       looking forward to. #7C5CFF is the value named on CAS-286. Note it is the brand --violet exactly,
-       and it sits next door to --purple (#a486f0), which is Purchase; the two are told apart by position
-       in the strip rather than by hue. Flagged on CAS-286 — change the value here and it moves everywhere. */
-    --upcoming:#7C5CFF;
+       looking forward to. CAS-556 retuned the value off #7C5CFF, which was byte-identical to the brand
+       --violet (a brand tweak silently moved a window colour) — #7A3FD4 keeps the violet identity while
+       decoupling the value, and opens a little more distance from --purple (#a486f0), which is Purchase;
+       the two are still told apart by position in the strip as much as by hue. Change the value here and
+       it moves everywhere. */
+    --upcoming:#7A3FD4;
     /* CAS-286: the readable-on-dark partner for it. Every other window colour has one baked into its rules
        as a literal; naming this one means the Upcoming lozenges cannot drift apart from each other, and the
-       promise directly above — change the value and it moves everywhere — is finally true. */
-    --upcoming-ink:#cfc3ff;
-    --upcoming-rgb:124,92,255;
+       promise directly above — change the value and it moves everywhere — is finally true.
+       CAS-556: re-derived from the retuned --upcoming (same ~264° hue, lifted to ~88% lightness). */
+    --upcoming-ink:#dac2ff;
+    --upcoming-rgb:122,63,212;
     --imdb:#f5c518; --rt:#fa6c3c; --meta:#66cc33; --accent:#7c5cff;
     /* CAS-529: "Your Movies"' own accent — rose/magenta, distinct from Cinema's --amber and Streaming's
        --green, so the filterable feed reads as its own place in the app rather than borrowing either
@@ -171,8 +184,11 @@
      the header's content box the nav row simply overlapped the CASCADE wordmark instead of negotiating
      space. CAS-533 reclaimed the room by hiding the chip labels below this breakpoint (icon-only).
      CAS-538: dropping the brandmark icon (see .brand's comment) freed enough width to bring labels back at
-     this breakpoint after all, using shorter strings ("Find"/"Watch") in place of "Agents"/"Your Movies" —
-     .mclabel-full/.mclabel-short swap which string is visible instead of hiding the label outright. */
+     this breakpoint after all — .mclabel-full/.mclabel-short swap which string is visible instead of hiding
+     the label outright. CAS-538 used shorter verb strings ("Find"/"Watch") here; CAS-556 replaced those with
+     the same concept nouns the full label uses ("Agents"/"Your Movies" — both measured to fit at 360px),
+     since the chip is called Agents and abandoning that noun for a verb below the breakpoint said something
+     different from the icon next to it. */
   /* CAS-530: Agents/Your Movies as wide labelled pills, not bare icon squares — a chip says in words which
      mode you're in rather than making you decode a glyph. Sized taller than .iconbtn's 40px square so the
      label has room; Agents keeps the existing brand-gradient "active" treatment (var(--grad), unchanged from
@@ -1120,20 +1136,26 @@
   .dcard:focus-visible .dc-in{outline:2px solid var(--accent);outline-offset:2px}
   .dcard.is-centre .dc-in{background:linear-gradient(135deg,rgba(124,92,255,.16),rgba(72,199,142,.08));
     border-color:var(--accent);color:var(--ink)}
-  /* ---- CAS-203: an agent card denotes its type by colour ----
+  /* ---- CAS-203/CAS-556: an agent card denotes its type by colour ----
      The left edge carries it at rest, so you can read the deck's makeup at a glance without centring a
      card; the border and tint join in once the card IS the open one, which is when "what kind of agent am
-     I looking at" is a question about the list underneath. Amber is the cinema's colour and green the
-     service's, the same two the availability system has used since CAS-68 — a colour must not mean one
-     thing on a film card and another on the deck. `--dcc` is set per lane, so one rule set serves both. */
-  .dcard.agent-cin{--dcc:var(--amber)}
-  .dcard.agent-str{--dcc:var(--green)}
+     I looking at" is a question about the list underneath.
+     CAS-203 originally borrowed --amber/--green from the availability palette, reasoning "a colour must
+     not mean one thing on a film card and another on the deck". That held for the VALUE but not the KIND
+     of claim: on a film, amber is a STATE (this is in cinemas now); on an agent card, amber was standing
+     in for an IDENTITY (this agent watches cinema) — the eye reads them as one statement, and stacked in
+     the header it produced three unrelated colour languages in ~120px. CAS-556 gives lane identity its
+     own family instead — shades of the Agents chip's own blue (--lane-cin deep, --lane-str light) — so
+     --amber/--green go back to meaning availability, and only that, everywhere. `--dcc` is still set per
+     lane, so one rule set serves both. */
+  .dcard.agent-cin{--dcc:var(--lane-cin)}
+  .dcard.agent-str{--dcc:var(--lane-str)}
   .dcard.agent-cin .dc-in,.dcard.agent-str .dc-in{border-left:3px solid var(--dcc)}
   .dcard.agent-cin.is-centre .dc-in,.dcard.agent-str.is-centre .dc-in{border-color:var(--dcc)}
-  .dcard.agent-cin.is-centre .dc-in{background:linear-gradient(135deg,rgba(240,163,54,.18),rgba(240,163,54,.05))}
-  .dcard.agent-str.is-centre .dc-in{background:linear-gradient(135deg,rgba(72,199,142,.18),rgba(72,199,142,.05))}
-  .dcard.agent-cin.is-centre.is-active .dc-name{color:#ffce8f}
-  .dcard.agent-str.is-centre.is-active .dc-name{color:#a7eccb}
+  .dcard.agent-cin.is-centre .dc-in{background:linear-gradient(135deg,rgba(30,69,201,.18),rgba(30,69,201,.05))}
+  .dcard.agent-str.is-centre .dc-in{background:linear-gradient(135deg,rgba(147,184,255,.18),rgba(147,184,255,.05))}
+  .dcard.agent-cin.is-centre.is-active .dc-name{color:#a6b8f2}
+  .dcard.agent-str.is-centre.is-active .dc-name{color:var(--lane-str)}
   .dc-icon{font-size:18px;line-height:1}
   /* CAS-371: the icon sits inline with a "CINEMA AGENT" / "STREAMING AGENT" label — the type label carries
      the exact type styling the old #cascLbl heading used, so removing that heading loses no information. */
@@ -1570,12 +1592,14 @@
   .slh{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.2px;color:var(--ink);margin:4px 0 6px}
   .slp{font-size:13.5px;color:var(--dim);line-height:1.5;margin:0 0 20px}
   .scards{display:grid;gap:11px}
-  /* CAS-190: full-width, compact, and wearing the colour of the lane the person just chose — the amber
-     of a cinema or the green of a service. The card is a row you tap, not a tile you study: icon, name,
-     one line of description, what it catches, chevron. --agc is set on the list, so one rule set serves
-     both lanes and the cards can never disagree with the answer that produced them. */
-  .scards{--agc:var(--amber)}
-  .scards.str{--agc:var(--green)}
+  /* CAS-190: full-width, compact, and wearing the colour of the lane the person just chose. The card is
+     a row you tap, not a tile you study: icon, name, one line of description, what it catches, chevron.
+     --agc is set on the list, so one rule set serves both lanes and the cards can never disagree with
+     the answer that produced them. CAS-556: this is agent IDENTITY (which kind of agent the person is
+     about to create), the same claim as the deck's --dcc, so it reads off the same --lane-cin/--lane-str
+     tokens rather than the availability palette. */
+  .scards{--agc:var(--lane-cin)}
+  .scards.str{--agc:var(--lane-str)}
   .scard{display:flex;align-items:center;gap:13px;text-align:left;cursor:pointer;width:100%;
     background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--agc);
     border-radius:15px;padding:13px 14px;color:var(--ink);
@@ -2387,17 +2411,19 @@
   .priobtn:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 10px 24px rgba(0,0,0,.35)}
   .priobtn:active{transform:scale(.99)}
   .priobtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  .priobtn.cin{border-left:5px solid var(--amber)}
-  .priobtn.str{border-left:5px solid var(--green)}
+  /* CAS-556: cinema/streaming here is agent identity, same claim as the deck's --dcc — reads off
+     --lane-cin/--lane-str, not the availability palette. */
+  .priobtn.cin{border-left:5px solid var(--lane-cin)}
+  .priobtn.str{border-left:5px solid var(--lane-str)}
   .prioictile{display:flex;align-items:center;justify-content:center;flex:0 0 auto;
     width:56px;height:56px;border-radius:16px}
-  .priobtn.cin .prioictile{background:rgba(240,163,54,.15)}
-  .priobtn.str .prioictile{background:rgba(72,199,142,.15)}
+  .priobtn.cin .prioictile{background:rgba(30,69,201,.15)}
+  .priobtn.str .prioictile{background:rgba(147,184,255,.15)}
   .prioic{font-size:30px;line-height:1}
   .priotx{font-size:17.5px;font-weight:600;line-height:1.35;flex:1 1 auto}
   .priochev{font-size:20px;line-height:1;flex:0 0 auto}
-  .priobtn.cin .priochev{color:var(--amber)}
-  .priobtn.str .priochev{color:var(--green)}
+  .priobtn.cin .priochev{color:#a6b8f2}
+  .priobtn.str .priochev{color:var(--lane-str)}
   .priostmt{margin:22px 2px 0;font-size:13.5px;color:var(--dim);line-height:1.5;text-align:center}
   /* Select-all / clear-all is a SECONDARY row at the bottom of the picker, not a pair of buttons competing
      with the chips above them: compact, underlined, low-contrast — there when you want it, never the first
@@ -2464,8 +2490,8 @@
   .agrow{position:relative;display:flex;align-items:center;gap:10px;background:var(--panel);
     border:1px solid var(--line);border-left:3px solid var(--dcc,var(--accent));border-radius:14px;
     padding:10px 12px;touch-action:pan-y}
-  .agrow.agent-cin{--dcc:var(--amber)}
-  .agrow.agent-str{--dcc:var(--green)}
+  .agrow.agent-cin{--dcc:var(--lane-cin)}
+  .agrow.agent-str{--dcc:var(--lane-str)}
   .agrow.dragging{box-shadow:0 16px 32px rgba(0,0,0,.5);z-index:5;background:var(--panel2)}
   .aggrip{flex:0 0 auto;width:28px;height:44px;display:grid;place-items:center;color:var(--dim);
     cursor:grab;touch-action:none;font-size:16px;border-radius:8px}
@@ -2474,10 +2500,15 @@
   .agrow.dragging .aggrip{cursor:grabbing}
   .agicon{flex:0 0 auto;width:38px;height:38px;border-radius:10px;display:grid;place-items:center;
     font-size:18px;background:rgba(255,255,255,.06)}
-  .agrow.agent-cin .agicon{background:rgba(240,163,54,.16)}
-  .agrow.agent-str .agicon{background:rgba(72,199,142,.16)}
+  .agrow.agent-cin .agicon{background:rgba(30,69,201,.16)}
+  .agrow.agent-str .agicon{background:rgba(147,184,255,.16)}
   .agmain{flex:1;min-width:0;display:flex;flex-direction:column}
-  .agtype{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;color:var(--dcc,var(--accent))}
+  /* CAS-556: this label used to read the raw lane colour (var(--dcc)) as TEXT. --lane-cin is a deep
+     navy tuned to sit as a 3px edge/tint, not as small uppercase text — at that size it fails WCAG AA
+     against --panel. The deck's own type label (.dc-type) already carries this in --faint rather than
+     --dcc for the same reason; matching that convention here keeps the two surfaces consistent and
+     keeps the label legible for both lanes. Identity still reads from the border + icon tint. */
+  .agtype{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;color:var(--faint)}
   .agname{font-size:15px;font-weight:800;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .agsum{font-size:11.5px;color:var(--dim);margin-top:3px;line-height:1.4;display:-webkit-box;
     -webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -2743,7 +2774,7 @@
             <path d="M10.3 8.7v6.6l5.2-3.3z" fill="currentColor" stroke="none"/>
           </svg>
           <span class="mclabel mclabel-full">Agents</span>
-          <span class="mclabel mclabel-short">Find</span>
+          <span class="mclabel mclabel-short">Agents</span>
         </div>
         <!-- Your Movies (CAS-183, resized/reiconed CAS-530): everything you've said about a film, and how
              your services cover it — a bookmark glyph (ribbon with a play-triangle notch), rose-filled
@@ -2756,7 +2787,7 @@
             <path d="M10.3 9.4v5.2l4.1-2.6z" fill="currentColor" stroke="none"/>
           </svg>
           <span class="mclabel mclabel-full">Your Movies</span>
-          <span class="mclabel mclabel-short">Watch</span>
+          <span class="mclabel mclabel-short">Your Movies</span>
         </div>
         <!-- Top menu (CAS-345, +Notifications CAS-530, +Manage Agents CAS-534, reordered CAS-551): the
              account/about surfaces — Agent Preferences, My services, Service analysis, Lists, Account,
@@ -4064,7 +4095,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 540, "commit": "230d356", "builtAt": "2026-08-17T11:09:14Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 541, "commit": "5a3fd82", "builtAt": "2026-08-17T11:40:53Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6126,7 +6157,7 @@ const wouldWatch = m => cascades.filter(c=>watchesFilm(m, {...c, excludeWatched:
 // 8-digit hex the code was always assuming. Worth knowing that this fixes all six windows, not just this
 // ticket's one.
 const WIN_COLOUR = {opening_week:"#ff6b6b", in_cinema:"#f0a336", pvod:"#a486f0",
-                    rental:"#5aa9f0", included_streaming:"#48c78e", upcoming:"#7C5CFF"};
+                    rental:"#5FBFB3", included_streaming:"#48c78e", upcoming:"#7A3FD4"};
 function mlOffersHTML(m){
   const w=primaryStatus(m);
   const offers=isEstimated(m) ? [] : dedupOffers(m.offers);
@@ -14302,7 +14333,7 @@ function renderAlerts(){
     return;
   }
   const col={opening_week:"#ff6b6b",in_cinema:"#f0a336",past_opening:"#f0a336",pvod:"#a486f0",
-             rental:"#5aa9f0",included_streaming:"#48c78e"};
+             rental:"#5FBFB3",included_streaming:"#48c78e"};
   // Services aren't asked for up front any more (CAS-71), so until they're set we do NOT pretend to know which
   // streaming alerts matter to you. We show them all — hiding them would be worse — and say why, once, at the
   // top, with the way to fix it. That's the honest version of "sharper alerts once you tell me".
