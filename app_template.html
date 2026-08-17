@@ -888,6 +888,21 @@
   .drawer{position:absolute;top:0;right:0;height:100%;width:88%;max-width:400px;background:var(--panel);
     border-left:1px solid var(--line);transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column}
   .drawer.open{transform:translateX(0)}
+  /* CAS-553: diagnostics panel — a centered box inside the shared .overlay backdrop, not a full-bleed
+     .modal, specifically so there is a visible backdrop to outside-tap on (AC6), same mechanism as the
+     alerts drawer just above. The five-tap gesture lives on the About screen's build line, so this always
+     opens with a .uscreen (z-index:84, e.g. #aboutScreen) still open underneath it — #diagOverlay needs its
+     own z-index above that (.memb/.invite establish 86 as the convention for a panel layered over an open
+     .uscreen) or the screen behind intercepts every tap meant for the panel/backdrop. */
+  #diagOverlay{z-index:87}
+  .diagpanel{position:fixed;top:5%;bottom:5%;left:50%;transform:translateX(-50%);width:92%;max-width:460px;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;z-index:88;
+    display:flex;flex-direction:column;overflow:hidden}
+  .diagbody{overflow-y:auto;padding:4px 16px 16px;font-size:12px}
+  .diagkv{display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--line);align-items:baseline}
+  .diagkv:last-child{border-bottom:none}
+  .diagk{color:var(--faint);flex:0 0 auto;min-width:96px}
+  .diagv{color:var(--ink);min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
   /* CAS-509: the drawer is a full-height panel starting at the true top:0 of the viewport (inside
      .overlay), same as the header — same env(safe-area-inset-top) clearance so its title/close never
      sit under the notch. */
@@ -3184,6 +3199,20 @@
   <div class="uwrap" id="aboutBody"></div>
 </div>
 
+<!-- ON-DEVICE DIAGNOSTICS (CAS-553) — opened by 5 taps on the About screen's build line (#aboutBuild),
+     or ?diag on the web build. No Safari Web Inspector can reach the installed app's WKWebView from
+     Windows, so this is the app's own console: build/identity provenance, live viewport/safe-area
+     geometry, and the diagLog tail installed at the very top of this script. Dismissed by an outside
+     tap on the dimmed backdrop or Escape, same convention as the alerts drawer/overlay and CAS-541's
+     Edit panel. No visible entry point anywhere else — this div is unreachable without the gesture. -->
+<div class="overlay" id="diagOverlay">
+  <div class="diagpanel" id="diagPanel" role="dialog" aria-modal="true" aria-label="Diagnostics">
+    <div class="dhead"><h3>🩺 Diagnostics</h3><button class="close" id="diagClose" type="button" aria-label="Close">×</button></div>
+    <div class="diagbody" id="diagBody"></div>
+    <div class="cascfoot"><button class="applybtn" id="diagCopy" type="button">Copy report</button></div>
+  </div>
+</div>
+
 <div class="stepnav" id="stepNav" hidden>
   <button class="oscta" id="flowCta" type="button" onclick="onbStepContinue()">Continue</button>
 </div>
@@ -3227,6 +3256,34 @@
 </div>
 
 <script>
+// ================= CAS-553: diagnostics console/error tee =================
+// Installed here, as the very first thing this script does, before anything else runs — a boot-time
+// error is exactly the class of failure the on-device diagnostics panel (below, near the build stamp)
+// exists to catch, and a hook that installs any later would miss it. Tees console output rather than
+// replacing it: normal console behaviour must never change because of this. The buffer is a plain
+// capped array, cheap enough to leave running in every build, since it only pays off if it's always on.
+const DIAG_LOG_MAX = 50;
+let diagLog = [];
+function diagRecord(kind, parts){
+  const msg = parts.map(p=>{
+    if(typeof p === "string") return p;
+    try{ return JSON.stringify(p); }catch(e){ return String(p); }
+  }).join(" ");
+  diagLog.push({ t: Date.now(), kind, msg });
+  if(diagLog.length > DIAG_LOG_MAX) diagLog.shift();
+}
+["warn","error"].forEach(level=>{
+  const orig = console[level] ? console[level].bind(console) : function(){};
+  console[level] = function(...args){ diagRecord(level, args); orig(...args); };
+});
+window.onerror = function(message, source, lineno, colno){
+  diagRecord("onerror", [message + " (" + (source||"?") + ":" + (lineno||"?") + ":" + (colno||"?") + ")"]);
+  return false;   // don't suppress the browser's own error reporting, only tee it
+};
+window.addEventListener("unhandledrejection", e=>{
+  diagRecord("unhandledrejection", [String((e.reason && e.reason.message) || e.reason)]);
+});
+
 // CAS-488: baked in at build time, but no longer immutable — a live tab swaps the catalogue in underneath
 // itself (see pollCatalogue below), so it must stay reassignable.
 let MOVIES = __MOVIES_JSON__;
@@ -4004,7 +4061,113 @@ function stampAboutBuild(){
   const b = BUILD_INFO || {};
   about.textContent = buildCore() + " · env: " + RUNTIME_ENV
                     + (b.builtAt ? " · built " + b.builtAt : "");
+  // CAS-553: five taps in quick succession (within ~2s) on this line opens the on-device diagnostics
+  // panel. Deliberately un-findable, same convention as the usage log's five-tap-on-"Updated" gesture
+  // below — and re-attached here every call since #aboutBuild is recreated fresh by renderAbout() each
+  // time the About screen opens.
+  let diagTaps = 0, diagTapT = null;
+  about.onclick = () => {
+    clearTimeout(diagTapT);
+    diagTapT = setTimeout(() => { diagTaps = 0; }, 2000);
+    if(++diagTaps >= 5){ diagTaps = 0; openDiagPanel(); }
+  };
 }
+// ================= On-device diagnostics panel (CAS-553) =================
+// Gives the installed iOS app its own console. Lee develops on Windows, so Safari Web Inspector can
+// never attach to the app's WKWebView — every app-only bug has been diagnosed by eye. And because
+// capacitor.config.json has no server.url, the app runs a frozen www/ snapshot, so "wrong in the app"
+// and "the app is a few commits stale" have looked identical from outside. This answers both: identity
+// (BUILD_INFO/origin/UA) for staleness, live viewport/safe-area geometry for the app-only layout bugs,
+// and the diagLog tail (installed at the very top of this script) for anything thrown, including at boot.
+function diagSafeAreaInsets(){
+  // env(safe-area-inset-*) can't be read directly from JS — read it back off a probe element's computed
+  // padding instead.
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;left:-9999px;top:-9999px;pointer-events:none;" +
+    "padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)";
+  document.body.appendChild(probe);
+  const cs = getComputedStyle(probe);
+  const out = { top:cs.paddingTop, right:cs.paddingRight, bottom:cs.paddingBottom, left:cs.paddingLeft };
+  probe.remove();
+  return out;
+}
+function diagReport(){
+  const b = BUILD_INFO || {}, vv = window.visualViewport, sa = diagSafeAreaInsets();
+  const cap = !!window.Capacitor;
+  return {
+    identity: [
+      ["Version", "v" + (b.version || "0.0.0")],
+      ["Build", b.build != null ? String(b.build) : "?"],
+      ["Commit", b.commit || "unknown"],
+      ["Built at", b.builtAt || "unknown"],
+      ["Protocol", location.protocol],
+      ["Origin", location.origin],
+      ["Capacitor bridge", cap ? "yes (" + ((window.Capacitor.getPlatform && window.Capacitor.getPlatform()) || "?") + ")" : "no"],
+      ["User agent", navigator.userAgent]
+    ],
+    geometry: [
+      ["innerWidth × innerHeight", window.innerWidth + " × " + window.innerHeight],
+      ["visualViewport w × h", vv ? (vv.width + " × " + vv.height) : "unavailable"],
+      ["visualViewport offsetTop", vv ? String(vv.offsetTop) : "unavailable"],
+      ["documentElement clientHeight", String(document.documentElement.clientHeight)],
+      ["safe-area-inset T/R/B/L", sa.top + " / " + sa.right + " / " + sa.bottom + " / " + sa.left],
+      ["devicePixelRatio", String(window.devicePixelRatio)],
+      ["orientation", (screen.orientation && screen.orientation.type) || "unavailable"]
+    ],
+    log: [...diagLog].reverse()
+  };
+}
+function diagReportText(){
+  const r = diagReport(), lines = ["=== Cascade diagnostics ===", ""];
+  lines.push("-- Identity --"); r.identity.forEach(([k,v]) => lines.push(k + ": " + v));
+  lines.push(""); lines.push("-- Geometry --"); r.geometry.forEach(([k,v]) => lines.push(k + ": " + v));
+  lines.push(""); lines.push("-- Log tail (" + r.log.length + ") --");
+  if(!r.log.length) lines.push("(empty)");
+  else r.log.forEach(e => lines.push("[" + new Date(e.t).toISOString() + "] " + e.kind + ": " + e.msg));
+  return lines.join("\n");
+}
+function renderDiagPanel(){
+  const r = diagReport();
+  const kv = rows => rows.map(([k,v]) => `<div class="diagkv"><span class="diagk">${esc(k)}</span><span class="diagv">${esc(v)}</span></div>`).join("");
+  $("diagBody").innerHTML = `
+    <div class="flabel">Identity</div>${kv(r.identity)}
+    <div class="flabel">Geometry</div>${kv(r.geometry)}
+    <div class="flabel">Log tail (${r.log.length})</div>
+    <div class="logrows">${r.log.length ? r.log.map(e => `<div class="logrow">
+      <span class="logt">${fmtT(e.t)}</span><span class="logty">${esc(e.kind)}</span>
+      <span class="logd">${esc(e.msg)}</span></div>`).join("") : `<div class="mlempty">Nothing logged yet.</div>`}</div>`;
+}
+function openDiagPanel(){ renderDiagPanel(); $("diagOverlay").classList.add("open"); logEvent("diag_opened",{}); }
+function closeDiagPanel(){ $("diagOverlay").classList.remove("open"); }
+$("diagOverlay").onclick = e => { if(e.target.id === "diagOverlay") closeDiagPanel(); };
+$("diagClose").onclick = closeDiagPanel;
+document.addEventListener("keydown", e => { if(e.key === "Escape" && $("diagOverlay").classList.contains("open")) closeDiagPanel(); });
+$("diagCopy").onclick = () => {
+  const text = diagReportText();
+  const ok = () => toast("Diagnostics report copied");
+  const fallback = () => {
+    // the async Clipboard API is not reliably available under a non-https custom scheme
+    // (capacitor://localhost), and silently failing here would defeat the feature.
+    let copied = false;
+    try{
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.cssText = "position:fixed;opacity:0";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      copied = document.execCommand("copy");
+      ta.remove();
+    }catch(e){ copied = false; }
+    copied ? ok() : toast("Couldn't copy — it's in the console");
+    console.log(text);
+  };
+  if(navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(ok, fallback);
+  else fallback();
+};
+// `?diag` is a convenience on the web build only — the installed app has no address bar to carry it,
+// which is exactly why the five-tap gesture above is the primary and required path. It sets a
+// sessionStorage flag rather than a one-shot open, so the panel keeps reopening across in-app
+// navigation/reloads within the same tab session.
+if(new URLSearchParams(location.search).has("diag")) sessionStorage.setItem("cascade_diag", "1");
+if(sessionStorage.getItem("cascade_diag") === "1") setTimeout(openDiagPanel, 300);
 
 // ================= Usage log (local only) =================
 // The question this exists to answer: does anyone FIND "My Cascades", and which templates resonate?

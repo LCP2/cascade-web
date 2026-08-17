@@ -95,6 +95,7 @@ No incognito window, no DevTools — append one of these to the URL:
 | `?setup` (or `?onboard`) | Replays the first-run onboarding. Your Cascades, services and tags are left **untouched** — this shows you the first run again, it doesn't pretend you're a new user. |
 | `?reset` | Clears **all** local Cascade state (Cascades, service prefs, the Found list and its overrides, watched/not-interested tags, the onboarded flag, the usage log) and boots a genuine clean first run. |
 | `?log` | Opens the local usage log. |
+| `?diag` | Opens the on-device diagnostics panel (build stamp, viewport/safe-area geometry, console/error tail). Same panel five taps on the About screen's build line opens — the only path on the installed app, which has no address bar. |
 
 Both `?setup` and `?reset` remove themselves from the address bar once they've run
 (`history.replaceState`), so a plain refresh won't fire them again — and neither one
