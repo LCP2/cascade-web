@@ -3024,14 +3024,11 @@
 <div class="modal" id="authModal">
   <div class="modalhead"><h3>Your account</h3><button class="donebtn" id="authDone">Done</button></div>
 
-  <!-- No config.js → guest only. Honest about what's missing and why the app still works. -->
+  <!-- No config.js (CAS-559: replaced the guest-mode explanation — there is no signed-out usage any
+       more, so this state is only ever a misconfiguration, not a supported mode). The real reason goes
+       to console.warn, not to the user. -->
   <div id="authGuest" style="display:none">
-    <div class="pnote">You're using Cascade as a <b>guest</b>. Your Cascades are saved in this browser
-      only (via localStorage) — they won't follow you to another device.</div>
-    <div class="flabel">Connect your account</div>
-    <div class="pnote">To sign in and sync across devices, this site needs a <code>config.js</code> with your
-      Supabase project URL and anon key. Until it's added, guest mode is the whole app — nothing here is
-      broken, it just stays on this device. See <code>config.example.js</code> in the repo for the one-line setup.</div>
+    <div class="pnote">Cascade can't reach its account service right now. Please try again shortly.</div>
   </div>
 
   <!-- config present, signed out → email-only, no password (CAS-387: password switched off in Supabase;
@@ -3040,12 +3037,8 @@
        only as a last-resort fallback inside continueWithEmail() for an account whose derived password no
        longer signs it in — not as the primary flow, so made-up test emails are unaffected in the common case. -->
   <div id="authSignedOut" style="display:none">
-    <div class="pnote">Enter your email to sign in, or create a new account — any email works, including
-      a made-up one, so you can try Cascade without a real inbox. Your Cascades then sync to your account
-      across devices.</div>
-    <!-- CAS-186: what a guest actually stands to lose, counted rather than asserted. Filled in by
-         paintGuestStake() and hidden entirely when there is nothing on this device to save. -->
-    <div class="pnote" id="authGuestStake" style="display:none"></div>
+    <div class="pnote">Enter your email to sign in, or create your account. Your Cascades then sync
+      across your devices.</div>
     <div class="flabel">Email</div>
     <input id="authEmail" class="namein" type="email" inputmode="email" autocomplete="email"
            placeholder="you@example.com">
@@ -4095,7 +4088,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 541, "commit": "5a3fd82", "builtAt": "2026-08-17T11:40:53Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 542, "commit": "c2fea7b", "builtAt": "2026-08-17T11:50:51Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -9135,27 +9128,14 @@ $("splashCta").onclick=splashGo;
 // not a fork you can fall down.
 $("splashLogin").onclick=()=>{
   logEvent("splash_login");
-  paintGuestStake();
   openModal($("authModal"));
 };
 // CAS-215: this button is never hidden. CAS-186 gated it on window.CascadeAuth.enabled so a build with
 // no account config wouldn't offer a door onto a wall — but production tripped that guard, and a splash
 // with only "Sign up" strands every returning user. The honest half is not "say nothing": #authGuest
-// already spells out, in the panel this button opens, that the build has no account store and that guest
-// mode is the whole app. So the door always shows, and what's behind it tells the truth either way.
-// What a guest is being asked to hand over, counted off what is actually on this device. Nothing to
-// save is not a reason to say nothing — it is a reason to say nothing about saving.
-function paintGuestStake(){
-  const el=$("authGuestStake"); if(!el) return;
-  const n=cascades.length, f=watched.size+blocked.size;
-  if(!n && !f){ el.style.display="none"; return; }
-  const bits=[];
-  if(n) bits.push(`<b>${n}</b> Cascade${n===1?"":"s"}`);
-  if(f) bits.push(`<b>${f}</b> film${f===1?"":"s"} you've marked`);
-  el.style.display="";
-  el.innerHTML=`You have ${bits.join(" and ")} saved in this browser. Signing in offers to carry
-    ${n+f===1?"it":"them"} up to your account so ${n+f===1?"it follows":"they follow"} you to another device.`;
-}
+// (CAS-559: now a plain "can't reach its account service" message) still tells the truth about why the
+// door doesn't work rather than hiding it. So the door always shows, and what's behind it tells the
+// truth either way.
 
 // ---- Agent select (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
 // The mock's ten first-agent cards. Each carries real criteria, so its green "N films match now" is the
@@ -15476,7 +15456,11 @@ else if(dedupedN)
     showPanel('authGuest');
   };
 
-  if(!configured){ setGuest(); announce(); return; }   // guest: never touch the network
+  if(!configured){
+    // CAS-559: the real reason goes to the console, not to the #authGuest panel a user sees.
+    console.warn('Cascade: no account config (config.js missing or SUPABASE_URL/SUPABASE_ANON_KEY still placeholders) — staying in guest mode.');
+    setGuest(); announce(); return;
+  }   // guest: never touch the network
 
   (async () => {
     const msg = gid('authMsg');
