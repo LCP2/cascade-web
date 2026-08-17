@@ -9,10 +9,21 @@
 # that repo has no commits (0 refs), so there was nothing to copy from. This follows the standard
 # Apple/GitHub-documented certificate-import pattern + Fastlane's App Store Connect API key flow
 # instead. See the ticket comment for the exact secret names this expects.
+#
+# CAS-555: optional `web_url` dispatch input points the built app's WebView at a live https URL
+# instead of the bundled www/, so an app-only UI bug can be checked in ~minutes instead of a full
+# TestFlight round trip. QA instrument only — a server.url build must never go to App Store review,
+# and it does not exercise the capacitor://localhost origin (see the job summary for what it can't
+# reproduce). Leave the input blank for a normal, unmodified bundled build.
 name: ios-testflight
 
 on:
   workflow_dispatch:
+    inputs:
+      web_url:
+        description: "Run the app live against this https URL instead of the bundled www/. Leave blank for a normal bundled build."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -30,9 +41,45 @@ jobs:
           cache: npm
 
       - name: Install web deps, build www/, sync the iOS project
+        env:
+          WEB_URL: ${{ inputs.web_url }}
         run: |
+          set -euo pipefail
           npm ci
           npm run build
+
+          if [ -n "$WEB_URL" ]; then
+            case "$WEB_URL" in
+              https://*) ;;
+              *)
+                echo "::error::web_url must be an https:// URL — iOS App Transport Security blocks a cleartext origin and the app would ship as a white screen. Got: $WEB_URL"
+                exit 1
+                ;;
+            esac
+
+            node -e '
+              const fs = require("fs");
+              const config = JSON.parse(fs.readFileSync("capacitor.config.json", "utf8"));
+              config.appName = "Cascade Live";
+              config.server = { url: process.env.WEB_URL, cleartext: false };
+              fs.writeFileSync("capacitor.config.json", JSON.stringify(config, null, 2) + "\n");
+            '
+
+            {
+              echo "### iOS TestFlight build mode: LIVE URL"
+              echo ""
+              echo "Loads \`$WEB_URL\` in the WebView instead of the bundled \`www/\`."
+              echo ""
+              echo "**QA instrument only — never submit this build to App Store review.** It does not exercise the \`capacitor://localhost\` origin, so it will not reproduce origin-scoped bugs (CORS, localStorage partitioning)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### iOS TestFlight build mode: bundled"
+              echo ""
+              echo "Runs the \`www/\` copy baked in at build time (unchanged from every prior run)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
           npx cap sync ios
 
       - uses: ruby/setup-ruby@v1
