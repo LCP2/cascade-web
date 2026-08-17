@@ -120,6 +120,12 @@ create table if not exists public.user_prefs (
   updated_at     timestamptz not null default now()
 );
 
+-- CAS-561: Where & when you'll watch (Track/Alert per window) was a second CAS-532 "one answer for
+-- every agent" setting that, like `taste`, had stayed localStorage-only — added here rather than a new
+-- table since it is the same shape (one small object the front-end owns whole), the same owner, and the
+-- same debounced upsert path already carries `taste`.
+alter table public.user_prefs add column if not exists watch_windows jsonb not null default '{}'::jsonb;
+
 alter table public.user_prefs enable row level security;
 
 drop policy if exists user_prefs_owner on public.user_prefs;
