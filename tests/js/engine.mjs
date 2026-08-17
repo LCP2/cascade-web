@@ -47,6 +47,7 @@ function makeContext(){
     set(){ return true; },
   });
   const store = new Map();
+  const sessionStore = new Map();
   const ctx = {
     document: doc,
     localStorage: {
@@ -56,6 +57,16 @@ function makeContext(){
       clear: () => store.clear(),
       get length(){ return store.size; },
       key: i => [...store.keys()][i] ?? null,
+    },
+    // CAS-553: the diagnostics panel's `?diag` handling reads/writes sessionStorage at the top level of
+    // the engine script (same reasoning as `performance` below, CAS-460) — not browser-only, in reach here.
+    sessionStorage: {
+      getItem: k => (sessionStore.has(k) ? sessionStore.get(k) : null),
+      setItem: (k, v) => { sessionStore.set(k, String(v)); },
+      removeItem: k => { sessionStore.delete(k); },
+      clear: () => sessionStore.clear(),
+      get length(){ return sessionStore.size; },
+      key: i => [...sessionStore.keys()][i] ?? null,
     },
     // Quiet: the engine logs its own analytics line on load, and a test run is not the place for it.
     console: { log(){}, warn(){}, error(){}, info(){}, debug(){} },
