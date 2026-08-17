@@ -77,7 +77,10 @@ test("monotonicity: narrowing any single axis never increases the count", () => 
   const narrower = [
     ["genre",     d => ({ ...d, genre: ["Drama"] })],
     ["age",       d => ({ ...d, age: [E.AGE_LEVELS[0]] })],
-    ["lang",      d => ({ ...d, lang: ["en"] })],
+    // CAS-560 retired the per-agent lang field (c.lang) — matchesCriteria no longer reads it, so a "lang"
+    // case here would sit passing forever without testing anything (the failure mode this comment already
+    // warns against). Language narrowing is exercised on tasteBase.langs instead — see the taste-baseline
+    // test below.
     ["vote bar",  d => ({ ...d, selCrowd: Math.max(d.selCrowd || 0, 7.5) })],
     // CAS-249 split the one 0-4 critics ladder into a continuous SCORE floor and a counted awards rung.
     // Both narrow, and both are poked, because a dead assertion on a field nothing reads any more would sit
@@ -106,26 +109,47 @@ test("monotonicity: narrowing any single axis never increases the count", () => 
 });
 
 // ---- 4. FACET COUNTS ARE WITHIN THE SET (CAS-224) -------------------------------------------------------
-// A per-genre or per-language number is a slice of the agent's own films, so no slice can be bigger than the
-// whole. Before CAS-224 the chips quoted the whole catalogue (Drama · 752 on a page whose total was 28), which
-// is precisely this invariant broken by a factor of 27.
-test("facet counts: no genre or language slice is larger than the set it slices", () => {
+// A per-genre number is a slice of the agent's own films, so no slice can be bigger than the whole. Before
+// CAS-224 the chips quoted the whole catalogue (Drama · 752 on a page whose total was 28), which is precisely
+// this invariant broken by a factor of 27. This used to check a per-language facet too (langCountsNow()), but
+// CAS-560 retired the per-agent language axis that facet counted — there is no longer an agent-level "lang"
+// slice for a count to be a slice of.
+test("facet counts: no genre slice is larger than the set it slices", () => {
   for(const { kind, s, label } of CASES){
     pickInLane(E, kind, s.key);
     // The facet counts open their own axis, so the ceiling is the total with that axis open — not the total
     // with it applied. Comparing against the narrowed total would be comparing two different populations.
     const openGenre = E.watchCount(E.normCascade({ ...E.onbApply(), genre: [] }));
-    const openLang  = E.watchCount(E.normCascade({ ...E.onbApply(), lang: [] }));
     for(const [g, n] of Object.entries(E.genreCountsNow())){
       assert.ok(n <= openGenre, `${label}: genre ${g} counts ${n} of ${openGenre}`);
       assert.ok(n >= 0 && Number.isInteger(n), `${label}: genre ${g} counts ${n}`);
     }
-    const langs = Object.entries(E.langCountsNow());
-    for(const [l, n] of langs) assert.ok(n <= openLang, `${label}: language ${l} counts ${n} of ${openLang}`);
-    // Language is single-valued per film, so its slices PARTITION the set and must sum to exactly the total.
-    // Genres overlap, so no such assertion is available there (see CAS-224 for why (a) was chosen over (b)).
-    const sum = langs.reduce((a, [, n]) => a + n, 0);
-    assert.equal(sum, openLang, `${label}: language counts sum to ${sum}, set is ${openLang}`);
+  }
+});
+
+// ---- 4b. LANGUAGE IS TASTE-BASELINE ONLY NOW (CAS-560) --------------------------------------------------
+// CAS-560 retired the per-agent language field — c.lang is forced to [] for every agent (normCascade) and
+// matchesCriteria no longer reads it. tasteBase.langs (Preferences) is the only language filter left, so this
+// is where the narrowing-never-widens property (CAS-114/monotonicity, above) has to hold for language now.
+test("language narrowing lives on tasteBase now, and still only ever narrows", () => {
+  const savedLangs = E.tasteBase.langs;
+  try{
+    for(const { kind, s, label } of CASES){
+      pickInLane(E, kind, s.key);
+      const d = E.onbApply();
+      E.tasteBase.langs = [];             // open: no language filter
+      const open = E.watchCount(d);
+      E.tasteBase.langs = ["en"];         // narrower: English only
+      const narrowed = E.watchCount(d);
+      assert.ok(narrowed <= open, `${label}: narrowing tasteBase.langs took the count UP, ${open} → ${narrowed}`);
+      // c.lang itself must carry no weight any more — an agent explicitly set to ["en"] must count identically
+      // to the same agent left at [], since Preferences is the only language gate now.
+      E.tasteBase.langs = [];
+      const withStrayLang = E.watchCount(E.normCascade({ ...d, lang: ["en"] }));
+      assert.equal(withStrayLang, open, `${label}: a stray c.lang still changed the count — matchesCriteria is reading it`);
+    }
+  } finally {
+    E.tasteBase.langs = savedLangs;
   }
 });
 
