@@ -1,9 +1,9 @@
-// CAS-560: the per-agent language filter is retired. matchesCriteria no longer reads c.lang (Preferences'
-// tasteBase.langs is the only language gate left), no new agent is seeded with a non-empty lang, and an
-// existing agent's stray ["en"] is migrated to [] on load. Covered at the matching-logic level by
-// tests/js/invariants.test.mjs ("language narrowing lives on tasteBase now…") — this spec covers what a
-// person can actually click: building a new agent, reloading a device with a pre-CAS-560 agent already
-// saved, and the Preferences language chip picker.
+// CAS-560: the per-agent language filter is retired. matchesCriteria no longer reads c.lang (the Languages
+// screen's tasteBase.langs is the only language gate left — CAS-562 later split it out of the combined
+// Preferences page), no new agent is seeded with a non-empty lang, and an existing agent's stray ["en"] is
+// migrated to [] on load. Covered at the matching-logic level by tests/js/invariants.test.mjs ("language
+// narrowing lives on tasteBase now…") — this spec covers what a person can actually click: building a new
+// agent, reloading a device with a pre-CAS-560 agent already saved, and the Languages chip picker.
 import { test, expect } from "@playwright/test";
 import { freshApp, toShortlist, shortlistCards, pickCard, finishFlow, toListing } from "./helpers.mjs";
 
@@ -44,7 +44,7 @@ test("CAS-560: an agent saved before this ticket is migrated to lang:[] on load,
     .toEqual([]);
 });
 
-test("CAS-560: Preferences — ticking all 12 language chips individually stores [], same as the Select all button", async ({ page }) => {
+test("CAS-560/CAS-562: Languages — ticking every language chip individually stores [], same as the Select all button", async ({ page }) => {
   await toShortlist(page, "cinema");
   const cards = await shortlistCards(page);
   await pickCard(page, cards[0].name);
@@ -52,10 +52,15 @@ test("CAS-560: Preferences — ticking all 12 language chips individually stores
   await toListing(page);
 
   await page.locator("#navMenuBtn").click();
-  await page.locator("#navMenu .navitem", { hasText: "Preferences" }).click();
-  await expect(page.locator("#preferencesScreen")).toHaveClass(/open/);
+  await page.locator("#navMenu .navitem", { hasText: "Languages" }).click();
+  await expect(page.locator("#languagesScreen")).toHaveClass(/open/);
 
-  const chips = page.locator("#preferencesScreen .chip");
+  // CAS-562: the long tail sits behind a "More languages" expander — unfold it so every catalogue language
+  // is in the DOM, not just the ones with real weight. .chip.gen (real language chips) excludes .chipmore.
+  const more = page.locator("#languagesScreen .chipmore");
+  if(await more.count()) await more.click();
+
+  const chips = page.locator("#languagesScreen .chip.gen");
   const n = await chips.count();
   expect(n).toBeGreaterThanOrEqual(12);
   for(let i = 0; i < n; i++){
