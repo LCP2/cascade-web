@@ -1354,7 +1354,15 @@
   .namein{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
     border-radius:10px;padding:11px 12px;font-size:16px;font-weight:600}
   .cascfoot{position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--line);
-    padding:12px 0 10px;margin-top:18px;display:flex;gap:8px;align-items:center}
+    padding:12px 0 10px;margin-top:18px;display:flex;gap:8px;align-items:center;z-index:2}
+  /* CAS-558: .modal is position:fixed sized to the LAYOUT viewport, which iOS Safari does not shrink for
+     the software keyboard — only the visual viewport does. A .cascfoot sticky to that fixed container's
+     bottom therefore sticks below the visible area, and Safari's scroll-into-view for the focused field
+     lands it right behind the footer. Un-stick the footer for as long as a text field in the sheet holds
+     focus (toggled by the focusin/focusout delegate near armSwitches()) so it can never overlap the field
+     the keyboard pushed into view. Chosen over resizing .modal to the visual viewport: this is the smaller,
+     more surgical change and doesn't touch every other layout that assumes .modal's current sizing. */
+  .modal.kbfocus .cascfoot,.diagpanel.kbfocus .cascfoot{position:static}
   .applybtn{flex:1;background:var(--accentdeep);color:#fff;border:none;border-radius:11px;padding:13px;
     font-size:14.5px;font-weight:800;cursor:pointer}
   .applybtn:disabled{background:var(--panel2);color:var(--faint);cursor:not-allowed}
@@ -2992,10 +3000,12 @@
     <div class="flabel">Email</div>
     <input id="authEmail" class="namein" type="email" inputmode="email" autocomplete="email"
            placeholder="you@example.com">
+    <!-- CAS-558: moved above .cascfoot (was after) so a validation message renders next to the field
+         it's about, not below the sticky Continue button. -->
+    <div id="authMsg" class="pnote" style="margin-top:10px"></div>
     <div class="cascfoot" style="margin-top:12px">
       <button class="applybtn" id="authContinue">Continue</button>
     </div>
-    <div id="authMsg" class="pnote" style="margin-top:10px"></div>
   </div>
 
   <!-- signed in → who, and sign out -->
@@ -4416,6 +4426,22 @@ function armSwitches(root){
 }
 armSwitches();
 new MutationObserver(()=>armSwitches()).observe(document.body, {childList:true, subtree:true});
+
+// CAS-558: un-stick .cascfoot (see the .kbfocus rule above) while a text field inside its sheet is
+// focused, so the sticky footer can never come to rest over what the keyboard pushed into view.
+// Checked against every screen that uses .cascfoot: #builder's editPane (#cName) and #saveAs
+// (#saveAsName) get the same fix as the reported #authModal/#authEmail case, since they carry a text
+// field the same way. #authModal's signed-in panel, #logModal and the diagnostics panel's .cascfoot
+// carry no text input, so the keyboard never opens there and this delegate never fires for them.
+const CASCFOOT_KB_SEL = 'input:not([type=checkbox]):not([type=radio]):not([type=range]), textarea';
+document.addEventListener("focusin", e => {
+  if(!e.target.matches?.(CASCFOOT_KB_SEL)) return;
+  e.target.closest(".modal, .diagpanel")?.classList.add("kbfocus");
+});
+document.addEventListener("focusout", e => {
+  if(!e.target.matches?.(CASCFOOT_KB_SEL)) return;
+  e.target.closest(".modal, .diagpanel")?.classList.remove("kbfocus");
+});
 
 function openModal(el){ el.classList.add("open"); document.body.style.overflow="hidden"; }
 // Modals stack now — the provenance sheet opens on top of the Found list. So the scroll lock is released only
