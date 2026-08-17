@@ -335,6 +335,11 @@
   /* the one criterion that SUBTRACTS (CAS-71) — so it must not wear the same colour as the ones that add */
   .chip.on.exc{background:rgba(192,86,63,.22);border-color:#c0563f;color:#ffb9a6}
   .chip.on.svc{background:rgba(72,199,142,.2);border-color:var(--green);color:#a7eccb}
+  /* CAS-562: the per-language title count riding inside a Languages chip, and the "More languages" expander
+     chip beside it — a plain unselected .chip is already a legible affordance, so chipmore adds nothing but
+     a dashed border to read as "reveals more" rather than "a language". */
+  .chipn{opacity:.7;font-weight:500;margin-left:1px}
+  .chip.chipmore{border-style:dashed}
   .slider{display:flex;align-items:center;gap:10px}
   .slider input{flex:1;accent-color:var(--accent)}
   .slider .val{font-size:13px;font-weight:700;min-width:44px;text-align:right}
@@ -2789,15 +2794,17 @@
           <span class="mclabel mclabel-full">Your Movies</span>
           <span class="mclabel mclabel-short">Your Movies</span>
         </div>
-        <!-- Top menu (CAS-345, +Notifications CAS-530, +Manage Agents CAS-534, reordered CAS-551): the
-             account/about surfaces — Agent Preferences, My services, Service analysis, Lists, Account,
-             About — that used to be scattered across separate header icons now live in one anchored
-             dropdown. Notifications joins as its top entry (CAS-530): the bell icon is gone from the bar
-             entirely, freeing the row for Agents/Your Movies' wider labelled chips. Manage Agents
-             (CAS-534) joins next: the Agents management/reorder screen moved here since the header's
-             Agents chip now means the deck+movie-list home view instead. Agent Preferences (CAS-551,
-             renamed from Preferences) sits right under Manage Agents since it holds the settings that
-             apply to every agent; Account drops to second-last since it's reached for rarely. -->
+        <!-- Top menu (CAS-345, +Notifications CAS-530, +Manage Agents CAS-534, reordered CAS-551, Agent
+             Preferences split CAS-562): the account/about surfaces — Languages, Where & when you'll watch,
+             My services, Service analysis, Lists, Account, About — that used to be scattered across
+             separate header icons now live in one anchored dropdown. Notifications joins as its top entry
+             (CAS-530): the bell icon is gone from the bar entirely, freeing the row for Agents/Your Movies'
+             wider labelled chips. Manage Agents (CAS-534) joins next: the Agents management/reorder screen
+             moved here since the header's Agents chip now means the deck+movie-list home view instead.
+             CAS-551 shipped first and seated a single "Agent Preferences" row (renamed from Preferences)
+             right under Manage Agents; CAS-562 lands second and splits that one row into Languages + Where
+             & when you'll watch in the same slot — see the CAS-562 fix comment for how the two reconcile.
+             Account drops to second-last since it's reached for rarely. -->
         <div class="navmenu-wrap">
           <div class="iconbtn" id="navMenuBtn" title="Menu" role="button" tabindex="0" aria-haspopup="true"
                aria-expanded="false" aria-controls="navMenu" aria-label="Menu" onclick="toggleNavMenu(event)">☰</div>
@@ -2806,7 +2813,8 @@
               <span>🔔 Notifications</span><span class="navbadge" id="badge" style="display:none">0</span>
             </button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('agents')">Manage Agents</button>
-            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('preferences')">Agent Preferences</button>
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('languages')">Languages</button>
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('whereWhen')">Where &amp; when you'll watch</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('services')">My services</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('svcAnalysis')">Service analysis</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('lists')">Lists</button>
@@ -3230,12 +3238,20 @@
   <div class="uwrap" id="svcAnalysisBody"></div>
 </div>
 
-<!-- PREFERENCES (CAS-532) — the two settings that apply to every agent, no per-agent override: Language
-     and Where & when you'll watch. Retires the old Taste Baseline concept (Genre/How far back/Age rating
-     dropped entirely; new agents use fixed system defaults). Body rendered by renderPreferences(). Reached
-     from the top menu. -->
-<div class="uscreen" id="preferencesScreen" role="dialog" aria-modal="true" aria-label="Preferences">
-  <div class="uwrap" id="preferencesBody"></div>
+<!-- LANGUAGES (CAS-532, split into its own destination CAS-562) — the one language setting that applies
+     to every agent, no per-agent override. Was the top half of a single "Preferences" page; CAS-562 split
+     that page in two because "what films count" and "which windows I track" are unrelated questions. Body
+     rendered by renderLanguages(). Reached from the top menu. -->
+<div class="uscreen" id="languagesScreen" role="dialog" aria-modal="true" aria-label="Languages">
+  <div class="uwrap" id="languagesBody"></div>
+</div>
+
+<!-- WHERE & WHEN (CAS-532, split into its own destination CAS-562) — the other half of the old single
+     Preferences page. Retires the old Taste Baseline concept (Genre/How far back/Age rating dropped
+     entirely; new agents use fixed system defaults). Body rendered by renderWhereWhen(). Reached from the
+     top menu. -->
+<div class="uscreen" id="wwScreen" role="dialog" aria-modal="true" aria-label="Where &amp; when you'll watch">
+  <div class="uwrap" id="wwBody"></div>
 </div>
 
 <!-- LISTS (CAS-428) — manage the user's own manual collections: create, rename, delete. A different screen
@@ -3474,8 +3490,32 @@ const GENTLE = new Set(["G","PG"]);
 const LANG_NAMES = {en:"English",ja:"Japanese",ko:"Korean",zh:"Chinese",cn:"Chinese",yue:"Cantonese",
   hi:"Hindi",ta:"Tamil",te:"Telugu",ml:"Malayalam",kn:"Kannada",bn:"Bengali",mr:"Marathi",pa:"Punjabi",
   fr:"French",de:"German",it:"Italian",es:"Spanish",pt:"Portuguese",ru:"Russian",sv:"Swedish",
-  th:"Thai",id:"Indonesian",vi:"Vietnamese",tl:"Tagalog",nl:"Dutch",da:"Danish",no:"Norwegian",fi:"Finnish",pl:"Polish",tr:"Turkish"};
-const langName = c => LANG_NAMES[c] || (c ? c.toUpperCase() : "Unknown");
+  th:"Thai",id:"Indonesian",vi:"Vietnamese",tl:"Tagalog",nl:"Dutch",da:"Danish",no:"Norwegian",fi:"Finnish",pl:"Polish",tr:"Turkish",
+  // CAS-562: the rest of the catalogue's ~70 codes, the long tail at a handful of titles each. Hand-mapped
+  // rather than left to Intl.DisplayNames alone — that first looked like a safe shortcut (Node's own ICU
+  // names every one of these), but Chromium's bundled ICU turned out NOT to know iu/dz/bo, so a fallback
+  // that "usually works" would still have shipped a bare code on some real devices. Intl.DisplayNames stays
+  // below as a safety net for a code that lands in the catalogue before a developer adds it here.
+  ar:"Arabic", uk:"Ukrainian", ms:"Malay", ne:"Nepali", fa:"Persian", he:"Hebrew", el:"Greek",
+  mn:"Mongolian", zu:"Zulu", et:"Estonian", ur:"Urdu", bg:"Bulgarian", af:"Afrikaans", hu:"Hungarian",
+  ka:"Georgian", cs:"Czech", ca:"Catalan", lv:"Latvian", lt:"Lithuanian", sl:"Slovenian", ro:"Romanian",
+  ga:"Irish", sr:"Serbian", is:"Icelandic", dz:"Dzongkha", nb:"Norwegian Bokmål", ku:"Kurdish", si:"Sinhala",
+  my:"Burmese", mk:"Macedonian", mt:"Maltese", iu:"Inuktitut", hr:"Croatian", ht:"Haitian Creole",
+  gu:"Gujarati", as:"Assamese", mi:"Māori", bo:"Tibetan", uz:"Uzbek", eu:"Basque", sw:"Swahili",
+  sk:"Slovak", yo:"Yoruba",
+  // xx is TMDB's "no linguistic content" tag, not a language — see passesTasteBase, where it's excluded
+  // from the Languages chooser and always passes the filter instead of rendering as a bare code.
+  xx:"No dialogue / other"};
+let _langDisplayNames;
+try { _langDisplayNames = new Intl.DisplayNames(["en"], {type:"language"}); } catch(e){ _langDisplayNames = null; }
+const langName = c => {
+  if(!c) return "Unknown";
+  if(LANG_NAMES[c]) return LANG_NAMES[c];
+  if(_langDisplayNames){
+    try { const n = _langDisplayNames.of(c); if(n && n.toLowerCase()!==c.toLowerCase()) return n; } catch(e){}
+  }
+  return c.toUpperCase();
+};
 
 function addDays(iso, n){ const d=new Date(iso+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
 function fmtDate(iso){ if(!iso) return ""; const [y,m,d]=iso.split("-"); return `${MONTHS[+m-1]} ${y.slice(2)}`; }
@@ -4099,7 +4139,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 546, "commit": "2a940a3", "builtAt": "2026-08-17T21:52:14Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 547, "commit": "c4607dc", "builtAt": "2026-08-17T22:32:17Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8914,63 +8954,97 @@ window.openSvcAnalysis=()=>{
 };
 window.closeSvcAnalysis=()=>{ $("svcAnalysis").classList.remove("open"); document.body.style.overflow=""; };
 
-// ================= PREFERENCES (CAS-532) =================
-// The two settings that apply to every agent, no per-agent override: Language and Where & when you'll
-// watch. Both write straight to their own global state (tasteBase.langs, watchPrefs) the moment a chip or
-// switch is tapped, same as the account screens they replace — there is no Save button here either.
+// ================= LANGUAGES (CAS-532, split into its own screen CAS-562) =================
+// The one taste setting that applies to every agent, no per-agent override. Writes straight to
+// tasteBase.langs the moment a chip is tapped — there is no Save button here, same as before the split.
 // Genre, How far back and Age rating are deliberately absent: a new agent still runs the fixed system
 // defaults (all genres, last 20 years, M and up), but CAS-550 gives them a per-agent door again — Edit
 // Agent, not here, is where they're changed afterwards.
+//
+// CAS-562: LANG_OPTS now holds every code the catalogue carries, too many to render flat ("that is a wall" —
+// the ticket's words). LANG_CHIP_MIN splits the list into the codes that actually carry titles, sorted by
+// count and always visible, and a "More languages" expander for the long tail — Select all/Clear still act
+// on the full list regardless of which chips are showing.
+const LANG_CHIP_MIN = 10;
+let langMoreOpen = false;   // whether the long-tail chips are unfolded — resets to closed on screen close
+function langChipHTML(code, on){
+  const n = langCatalogueCount(code);
+  return `<button type="button" class="chip gen${on?" on":""}" aria-pressed="${on}"
+      onclick="prefToggleLang('${code}')">${on?"✓ ":""}${esc(langName(code))}${n?` <span class="chipn">${n}</span>`:""}</button>`;
+}
 function prefLangChipsHTML(){
   const on=tbLangSet();
-  return LANG_OPTS.map(code=>`<button type="button" class="chip${on.has(code)?" on":""}"
-      aria-pressed="${on.has(code)}" onclick="prefToggleLang('${code}')">${esc(langName(code))}</button>`).join("");
+  const sorted=[...LANG_OPTS].sort((a,b)=>langCatalogueCount(b)-langCatalogueCount(a));
+  const top=sorted.filter(c=>langCatalogueCount(c)>=LANG_CHIP_MIN);
+  const rest=sorted.filter(c=>langCatalogueCount(c)<LANG_CHIP_MIN);
+  let html=top.map(c=>langChipHTML(c, on.has(c))).join("");
+  if(rest.length){
+    const restOn=rest.filter(c=>on.has(c)).length;
+    html+=`<button type="button" class="chip chipmore" aria-expanded="${langMoreOpen}" onclick="prefToggleLangMore()">
+        ${langMoreOpen ? "Fewer languages ▲" : `More languages (${rest.length}${restOn?`, ${restOn} selected`:""}) ▼`}</button>`;
+    if(langMoreOpen) html+=rest.map(c=>langChipHTML(c, on.has(c))).join("");
+  }
+  return html;
 }
+window.prefToggleLangMore=()=>{ langMoreOpen=!langMoreOpen; renderLanguages(); };
 window.prefToggleLang=code=>{
   const on=tbLangSet();
   on.has(code) ? on.delete(code) : on.add(code);
   tasteBase.langs = tbStore(on, LANG_OPTS);
   saveTasteBase();
-  renderPreferences();
+  renderLanguages();
 };
 window.prefLangSetAll=all=>{
   tasteBase.langs = all ? [] : null;
   saveTasteBase();
-  renderPreferences();
+  renderLanguages();
 };
-function renderPreferences(){
-  prefsWatchMode=true;   // retargets winFlags/agentWindows/wwToggleWin/wwChanged at watchPrefs
-  $("preferencesBody").innerHTML=`
-    <div class="ostop"><button class="osback" type="button" onclick="closePreferences()" aria-label="Back">←</button>
-      <h2 class="osh">Preferences</h2></div>
-    <p class="ossub">Applies to every agent — no per-agent override.</p>
-
-    <div class="usec">Language</div>
-    <p class="ucap">Films in these languages are included across all agents.</p>
+function renderLanguages(){
+  $("languagesBody").innerHTML=`
+    <div class="ostop"><button class="osback" type="button" onclick="closeLanguages()" aria-label="Back">←</button>
+      <h2 class="osh">Languages</h2></div>
+    <p class="ossub">Films in these languages are included across all agents.</p>
     <div class="chips">${prefLangChipsHTML()}</div>
     <div class="tbq tbqmin">
       <button type="button" class="q" onclick="prefLangSetAll(true)">Select all</button>
       <button type="button" class="q" onclick="prefLangSetAll(false)">Clear</button>
     </div>
-
-    <div class="usec">Where &amp; when you'll watch</div>
-    <p class="ucap">Track puts matching films into every agent's results. Alert notifies you even if you
-      haven't chosen to track that window. Neither implies the other.</p>
-    <div id="wwLanes"></div>
-
     <p class="ucap" style="margin-top:14px">Genre, How far back and Age rating are set per agent, from Edit
       Agent — not here. New cascades start from fixed system defaults: all genres, last 20 years, M and up.</p>`;
+}
+window.openLanguages=()=>{
+  langMoreOpen=false;
+  renderLanguages();
+  $("languagesScreen").scrollTop=0;
+  $("languagesScreen").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("languages_opened",{});
+};
+window.closeLanguages=()=>{
+  $("languagesScreen").classList.remove("open"); document.body.style.overflow="";
+};
+
+// ================= WHERE & WHEN (CAS-532, split into its own screen CAS-562) =================
+// Track puts matching films into every agent's results. Alert notifies you even if you haven't chosen to
+// track that window. Neither implies the other. Writes straight to watchPrefs — no Save button here either.
+function renderWhereWhen(){
+  prefsWatchMode=true;   // retargets winFlags/agentWindows/wwToggleWin/wwChanged at watchPrefs
+  $("wwBody").innerHTML=`
+    <div class="ostop"><button class="osback" type="button" onclick="closeWhereWhen()" aria-label="Back">←</button>
+      <h2 class="osh">Where &amp; when you'll watch</h2></div>
+    <p class="ossub">Track puts matching films into every agent's results. Alert notifies you even if you
+      haven't chosen to track that window. Neither implies the other.</p>
+    <div id="wwLanes"></div>`;
   drawWatchLanes();
 }
-window.openPreferences=()=>{
-  renderPreferences();
-  $("preferencesScreen").scrollTop=0;
-  $("preferencesScreen").classList.add("open"); document.body.style.overflow="hidden";
-  logEvent("preferences_opened",{});
+window.openWhereWhen=()=>{
+  renderWhereWhen();
+  $("wwScreen").scrollTop=0;
+  $("wwScreen").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("where_when_opened",{});
 };
-window.closePreferences=()=>{
+window.closeWhereWhen=()=>{
   prefsWatchMode=false;
-  $("preferencesScreen").classList.remove("open"); document.body.style.overflow="";
+  $("wwScreen").classList.remove("open"); document.body.style.overflow="";
 };
 
 // ================= Top menu (CAS-345) =================
@@ -9010,7 +9084,8 @@ window.navMenuGo=key=>{
   else if(key==="account") openAccount();
   else if(key==="services") openMenuServices();
   else if(key==="svcAnalysis") openSvcAnalysis();
-  else if(key==="preferences") openPreferences();
+  else if(key==="languages") openLanguages();
+  else if(key==="whereWhen") openWhereWhen();
   else if(key==="lists") openListsScreen();
   else if(key==="about") openAbout();
 };
@@ -9942,12 +10017,13 @@ function loadWatch(agentKey){
   }catch(e){}
   return null;
 }
-// ---- CAS-532: Where & when you'll watch, promoted to a global Preferences setting ------------------
+// ---- CAS-532: Where & when you'll watch, promoted to a global setting --------------------------------
 // One answer for every agent, the same way tasteBase.langs already is — not a per-agent seed a new agent
 // copies and can then drift from. `prefsWatchMode` retargets the SAME lane-card machinery (winFlags,
 // agentWindows, drawWatchLanes, wwToggleWin/Sub, wwChanged) at this global object instead of onbFlow.watch,
-// rather than forking a second copy of it, so the Preferences screen and the (now-orphaned) per-agent screen
-// can never teach two different lessons about what a switch does.
+// rather than forking a second copy of it, so the Where & when screen (CAS-562: its own top-menu destination,
+// split out of the old combined Preferences page) and the (now-orphaned) per-agent screen can never teach
+// two different lessons about what a switch does.
 const WATCH_PREFS_KEY="cascade_watch_prefs";
 const watchPrefsDefaults = () => ({
   upcoming:{list:true, notify:false}, in_cinema:{list:true, notify:false},
@@ -9961,12 +10037,12 @@ try{
   if(raw && typeof raw==="object") watchPrefs={...watchPrefsDefaults(), ...migrateWatch(raw)};
 }catch(e){}
 function saveWatchPrefs(){ try{ localStorage.setItem(WATCH_PREFS_KEY, JSON.stringify(watchPrefs)); }catch(e){} }
-let prefsWatchMode=false;   // true only while the Preferences "Where & when" section is on screen
+let prefsWatchMode=false;   // true only while the Where & when you'll watch screen is on screen
 const activeWatch = () => prefsWatchMode ? watchPrefs : (onbFlow.watch || {});
 // The single source of truth propagates to every EXISTING agent immediately, not just new ones — an agent's
 // own `status`/`listStatus`/`watchWindows` are a cached derivation of watchPrefs now, never an independent
 // answer, so this is the one place that writes them. Runs once at boot (belt-and-suspenders for a cascade
-// saved before this ticket) and again every time the Preferences screen changes a switch.
+// saved before this ticket) and again every time the Where & when screen changes a switch.
 function syncWatchPrefsToCascades(){
   cascades.forEach(c=>{
     const w=watchForKind(watchPrefs, c.kind);   // CAS-532: kind-scoped, same restriction every other reader applies
@@ -10350,11 +10426,15 @@ const baseYearsBack = () => (typeof tasteBase.yearsBack==="number")
 // them, every new agent is seeded with the fixed system defaults instead (all genres, last 20 years, M and
 // up), and there is no live control left that could diverge tasteBase.genres/year/ageLo/ageHi from their
 // permissive defaults. Only Language survives here: it is still the one account-level, no-per-agent-override
-// axis, now set from Preferences instead of the old Taste Baseline accordion.
+// axis, now set from the Languages screen instead of the old Taste Baseline accordion.
 function passesTasteBase(m){
+  // CAS-562: 'xx' (no linguistic content) isn't a language a person can pick, so it always passes here
+  // regardless of tasteBase.langs — including when the filter is cleared (tbNone), since "nothing qualifies"
+  // is a statement about languages and a no-dialogue title isn't one.
+  if(m.language === "xx") return true;
   const l=tasteBase.langs;
   if(tbNone(l)) return false;
-  if(l.length && !l.includes(m.language)) return false;
+  if(l.length && !l.includes(langCanon(m.language))) return false;
   return true;
 }
 // CAS-159: how big that world actually is, right now. It runs the very predicate matchesCriteria applies to
@@ -10442,9 +10522,32 @@ function onbYearPhrase(){
   if(y===1) return "released in the last twelve months";
   return `from the last ${y} years`;
 }
-// Language options for the Preferences taste-baseline row (tasteBase.langs) — CAS-560 retired the
-// per-agent copy of this list (the flow step that used to read it, onbLangPhrase(), is gone with it).
-const LANG_OPTS = ["en","ko","ja","zh","fr","es","hi","it","de","th","sv","pt"];
+// Language options for the Languages screen (tasteBase.langs) — CAS-560 retired the per-agent copy of this
+// list (the flow step that used to read it, onbLangPhrase(), is gone with it). CAS-562 widened it from a
+// fixed dozen to every code the live catalogue actually carries (m.language across MOVIES), so a title in an
+// uncovered language stops being permanently unreachable through the chooser. Two codes are folded out of
+// this list rather than offered as raw options: 'xx' (TMDB's "no linguistic content" tag — see LANG_NAMES/
+// passesTasteBase, it isn't a language and always passes the filter instead) and 'cn', aliased into 'zh' by
+// LANG_ALIAS since the catalogue carries both for what is the same language (Chinese) and offering two
+// same-labelled chips would be worse than picking one. LANG_OPTS is built from ALL of MOVIES, not just
+// currently-showable titles, so a code stays selectable across a title's own showable/upcoming transitions.
+const LANG_ALIAS = { cn: "zh" };
+const langCanon = code => LANG_ALIAS[code] || code;
+const LANG_OPTS = [...new Set(
+  MOVIES.filter(m => m.language && m.language !== "xx").map(m => langCanon(m.language))
+)];
+// How much of the catalogue a language code actually covers — over showable titles only (the same universe
+// SHOWABLE_N counts), so the number on a chip matches "how many of what's actually available right now".
+// Counts through the same cn->zh alias LANG_OPTS uses, so the "Chinese" chip's count is the combined total.
+const langCatalogueCount = (() => {
+  const counts = {};
+  MOVIES.forEach(m => {
+    if(!m.language || m.language === "xx" || !showable(m)) return;
+    const code = langCanon(m.language);
+    counts[code] = (counts[code] || 0) + 1;
+  });
+  return code => counts[code] || 0;
+})();
 // ---- Age rating (#8) ------------------------------------------------------------------------------
 // "Up to and including" the chosen level; the top stop (R 18+) includes everything, which is the default.
 // The ladder is the catalogue's real ratings, so the include-list always lines up with the data.
@@ -10805,6 +10908,7 @@ function wireCinemaReleaseToggle(){
 }
 // ---- Taste-baseline accordion (CAS-146) -----------------------------------------------------------
 let tbOpen = null;   // which row is expanded — exactly one, or none
+let tbLangMoreOpen = false;   // CAS-562: whether the langs row's long-tail chips are unfolded
 // CAS-165: which chips are lit. `null` lights none; `[]` lights them all, because "filter off" and
 // "everything ticked" are the same world and must not look like two different screens.
 const tbGenreSet = () => new Set(tbNone(tasteBase.genres) ? []
@@ -10991,27 +11095,43 @@ const TB_BODIES = {
   },
   langs(b, upd){
     // CAS-165: the same two controls Genres has, and the same three states behind them. "Select all" writes
-    // [] rather than the twelve codes, because 186 films are in a language we don't list and a filter that
-    // is off must not quietly drop them — that is why the row says "Any language" and not "12 of 12".
+    // [] rather than the full code list, because a filter that is off must not quietly drop a title in an
+    // unlisted language — that is why the row says "Any language" and not "N of N".
+    // CAS-562: LANG_OPTS grew from a fixed dozen to every catalogue code, so this row uses the same
+    // top-by-count + "More languages" split as the Languages screen (LANG_CHIP_MIN) instead of a flat list.
     const on=tbLangSet();
     b.innerHTML=`<p class="tbhint">English is on by default. Add any others you'll watch.</p>
       <div class="chips" id="tbLangChips"></div>
       <div class="tbq"><button type="button" class="q" data-a="all">Select all</button>
         <button type="button" class="q" data-a="none">Clear</button></div>`;
     const box=b.querySelector("#tbLangChips");
-    LANG_OPTS.forEach(code=>{
+    const sorted=[...LANG_OPTS].sort((a,c)=>langCatalogueCount(c)-langCatalogueCount(a));
+    const top=sorted.filter(code=>langCatalogueCount(code)>=LANG_CHIP_MIN);
+    const rest=sorted.filter(code=>langCatalogueCount(code)<LANG_CHIP_MIN);
+    const addChip=code=>{
       const c=document.createElement("button");
-      c.type="button"; c.className="chip"+(on.has(code)?" on":"");
+      c.type="button"; c.className="chip gen"+(on.has(code)?" on":"");
       c.setAttribute("aria-pressed", String(on.has(code)));
-      c.textContent=langName(code);
+      c.textContent=(on.has(code)?"✓ ":"")+langName(code);
       c.onclick=()=>{
         on.has(code) ? on.delete(code) : on.add(code);
         tasteBase.langs = tbStore(on, LANG_OPTS);
         c.classList.toggle("on", on.has(code)); c.setAttribute("aria-pressed", String(on.has(code)));
+        c.textContent=(on.has(code)?"✓ ":"")+langName(code);
         upd();
       };
       box.appendChild(c);
-    });
+    };
+    top.forEach(addChip);
+    if(rest.length){
+      const more=document.createElement("button");
+      more.type="button"; more.className="chip chipmore";
+      more.setAttribute("aria-expanded", String(tbLangMoreOpen));
+      more.textContent = tbLangMoreOpen ? "Fewer languages ▲" : `More languages (${rest.length}) ▼`;
+      more.onclick=()=>{ tbLangMoreOpen=!tbLangMoreOpen; drawTasteRows(); };
+      box.appendChild(more);
+      if(tbLangMoreOpen) rest.forEach(addChip);
+    }
     b.querySelector('[data-a="all"]').onclick =()=>{ tasteBase.langs=[];   saveTasteBase(); drawTasteRows(); };
     b.querySelector('[data-a="none"]').onclick=()=>{ tasteBase.langs=null; saveTasteBase(); drawTasteRows(); };
   },
@@ -11238,9 +11358,11 @@ const SHARP_STEPS = {
           ${stream ? `<button type="button" class="easub" onclick="briefGo('years')">
             <span class="eash">How far back</span><span class="easv">${esc(yearsLabel(flowYearsBack()))}</span></button>` : ""}
         </div>
-        <!-- CAS-531 #4: "Where & when you'll watch" is gone from this page — it's a system-wide Preferences
-             setting now (CAS-532), one place for every agent instead of a per-agent door. -->
-        <p class="eaptr"><span class="ic">↗</span><span>Where &amp; when you'll watch now lives in Preferences — applies to every agent. So does Language.</span></p>
+        <!-- CAS-531 #4: "Where & when you'll watch" is gone from this page — it's a system-wide setting now
+             (CAS-532), one place for every agent instead of a per-agent door. CAS-562 split that single
+             Preferences destination into Languages and Where & when you'll watch, so this note names both
+             top-menu rows directly rather than a page that no longer exists. -->
+        <p class="eaptr"><span class="ic">↗</span><span>Where &amp; when you'll watch and Language now live in the top menu — Languages and Where &amp; when you'll watch — and apply to every agent.</span></p>
         <!-- CAS-268: Delete only appears for an agent that EXISTS. A brand-new agent reaching this screen
              from New Cascade (CAS-246) has never been saved, so there is nothing to delete — offering the
              button there would either do nothing or claim to have removed something that was never on the
