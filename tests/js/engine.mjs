@@ -125,7 +125,7 @@ const EXPORTS = `
   STARTERS, startersFor, starterPreview, starterCount, starterAgentName, starterWatch, RECOMMENDED_FOR,
   AGENT_WINDOWS, agentWindows, watchToStatuses, listToStatuses, migrateWatch,
   MISSION_DIALS, MISSION_DIALS_USED, missionRest, missionKind, laneCrit,
-  axisCountsNow, genreCountsNow, langCountsNow,
+  axisCountsNow, genreCountsNow,
   onbApply, onbCount, pickStarter, flowStart, flowPriority, flowStop, FLOWS,
   tasteBase, cascades,
   get onbFlow(){ return onbFlow; },

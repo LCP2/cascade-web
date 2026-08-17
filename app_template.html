@@ -2961,8 +2961,6 @@
   <div class="chips" id="ageChips"></div>
   <div class="flabel">Culture</div>
   <div class="chips" id="cultureChips"></div>
-  <div class="flabel">Language</div>
-  <div class="chips" id="langChips"></div>
   <div class="flabel">Genre</div>
   <div class="chips" id="genreChips"></div>
   <div class="flabel">Never show me</div>
@@ -3933,7 +3931,7 @@ const ux = {on:true};
 try{ const v=localStorage.getItem("cascade_ux"); if(v!==null) ux.on = v==="1"; }catch(e){}
 function saveUx(){ try{ localStorage.setItem("cascade_ux", ux.on?"1":"0"); }catch(e){} }
 const alerts=[];
-const filt={status:new Set(), year:new Set(), age:new Set(), culture:new Set(), lang:new Set(), genre:new Set(),
+const filt={status:new Set(), year:new Set(), age:new Set(), culture:new Set(), genre:new Set(),
   exclude:new Set(),       // genres you never want to see — the ONE criterion that subtracts (CAS-71)
   imdb:0, rt:0, gross:0, search:"", foundOnly:false, hideWatched:false, showHidden:false, awards:false,
   recent:false,             // CAS-468: only films whose status pill is currently glowing (isRecent)
@@ -3945,6 +3943,7 @@ const $=id=>document.getElementById(id);
 
 // ---- My Cascades: saved living searches (prototype state — localStorage, per device) ----
 const SORT_MIG_KEY = "cascade_sortmig_148";   // one-shot: see the sort migration in loadCascades()
+const LANG_MIG_KEY = "cascade_langmig_560";   // one-shot: see the CAS-560 language migration below
 function loadCascades(){
   try{
     const a=JSON.parse(localStorage.getItem("cascade_cascades")||"[]");
@@ -3960,6 +3959,18 @@ function loadCascades(){
         a.forEach(c=>{ if(!c.sort || c.sort==="imdb") c.sort="availability"; });
         localStorage.setItem("cascade_cascades", JSON.stringify(a));
         localStorage.setItem(SORT_MIG_KEY,"1");
+      }
+    }catch(e){}
+    // CAS-560: language retired as a per-agent field. normCascade() forces c.lang to [] on every load
+    // regardless, so this is belt-and-braces — it writes the migrated value BACK to storage once, so the
+    // raw saved JSON stops carrying a stray ["en"] forever rather than only correcting it in memory.
+    try{
+      if(!localStorage.getItem(LANG_MIG_KEY)){
+        if(a.some(c=>(c.lang||[]).length)){
+          a.forEach(c=>{ c.lang=[]; });
+          localStorage.setItem("cascade_cascades", JSON.stringify(a));
+        }
+        localStorage.setItem(LANG_MIG_KEY,"1");
       }
     }catch(e){}
     return a;   // filled out to the current shape by normCascade() below — a Cascade saved before the
@@ -4394,8 +4405,6 @@ addChips("ageChips",
     const ia=AGE_ORDER.indexOf(a),ib=AGE_ORDER.indexOf(b); return (ia<0?99:ia)-(ib<0?99:ib)||a.localeCompare(b);}),
   filt.age, "yr");
 addChips("cultureChips", [...new Set(MOVIES.map(m=>m.culture).filter(Boolean))].sort(), filt.culture, "yr");
-addChips("langChips", [...new Set(MOVIES.map(m=>m.language).filter(Boolean))].sort((a,b)=>langName(a).localeCompare(langName(b))),
-  filt.lang, "yr", langName);
 addChips("genreChips", ALL_GENRES, filt.genre, "gen");
 addChips("excludeChips", ALL_GENRES, filt.exclude, "exc");
 // The watched / not-interested chips are gone from this row (CAS-100). Since your ANSWER on a film is what
@@ -4557,7 +4566,7 @@ $("grossMin").onchange=e=>{filt.gross=+e.target.value;render();};
 $("budgetBand").onchange=e=>{filt.budget=+e.target.value; if(!filt.budget) filt.includeUnbudgeted=false; render();};
 $("tentpoleSel").onchange=e=>{filt.tentpole=e.target.value;render();};   // options filled below, with the bands
 function clearFilters(){
-  ["status","year","age","culture","lang","genre","exclude"].forEach(k=>filt[k].clear());
+  ["status","year","age","culture","genre","exclude"].forEach(k=>filt[k].clear());
   filt.imdb=0;filt.rt=0;filt.gross=0;filt.foundOnly=false;filt.hideWatched=false;filt.showHidden=false;
   filt.awards=false;filt.recent=false;filt.search="";filt.includeUnrated=false;
   filt.budget=0;filt.includeUnbudgeted=false;filt.tentpole="any";
@@ -4566,7 +4575,7 @@ function clearFilters(){
 // Push filt back onto the Filters modal's controls (a Cascade sets filters programmatically).
 function syncFilterUI(){
   const sets={statusChips:filt.status, yearChips:filt.year, ageChips:filt.age,
-              cultureChips:filt.culture, langChips:filt.lang, genreChips:filt.genre,
+              cultureChips:filt.culture, genreChips:filt.genre,
               excludeChips:filt.exclude};
   Object.entries(sets).forEach(([el,set])=>{
     [...$(el).children].forEach(c=>c.classList.toggle("on", set.has(c.dataset.val)));
@@ -4735,7 +4744,6 @@ function passes(m){
   if(filt.year.size && !filt.year.has(yearOf(m))) return false;
   if(filt.age.size && !filt.age.has(m.age_rating)) return false;
   if(filt.culture.size && !filt.culture.has(m.culture)) return false;
-  if(filt.lang.size && !filt.lang.has(m.language)) return false;
   // Exclude beats include. "Horror, but never gore-comedy" has to mean it: a film carrying an excluded genre is
   // out even if another of its genres is one you asked for — otherwise the skip list is advisory, not a rule.
   if(filt.exclude.size && (m.genres||[]).some(g=>filt.exclude.has(g))) return false;
@@ -6647,7 +6655,7 @@ window.toggleExpand=id=>{
   if(wtw){ wtw.classList.toggle("open", on); if(svcBtn) svcBtn.classList.toggle("open", on); }
 };
 function activeCount(){
-  let n=filt.status.size+filt.year.size+filt.age.size+filt.culture.size+filt.lang.size+filt.genre.size;
+  let n=filt.status.size+filt.year.size+filt.age.size+filt.culture.size+filt.genre.size;
   if(filt.imdb)n++; if(filt.rt)n++; if(filt.gross)n++; if(filt.foundOnly)n++;
   // hideWatched / showHidden are deliberately NOT counted (CAS-100): they no longer remove a row from any
   // list, so counting them would claim a filter is doing work that nothing is doing.
@@ -6856,10 +6864,6 @@ const AGE_LEVELS = [...ALL_AGES].filter(a=>!AGE_LADDER_EXCLUDE.has(a)).sort((a,b
   const ia=AGE_ORDER.indexOf(a), ib=AGE_ORDER.indexOf(b);
   return (ia<0?99:ia)-(ib<0?99:ib) || a.localeCompare(b);
 });
-// Languages the catalogue actually has, commonest first — so the chips are never a wish-list.
-const LANG_COUNT = {};
-MOVIES.forEach(m=>{ if(m.language) LANG_COUNT[m.language]=(LANG_COUNT[m.language]||0)+1; });
-const ALL_LANGS = Object.keys(LANG_COUNT).sort((a,b)=>LANG_COUNT[b]-LANG_COUNT[a] || langName(a).localeCompare(langName(b)));
 // Audience/origin buckets the PIPELINE derived (original language + production countries). Only the ones
 // this catalogue actually contains are offered — an empty "Bollywood" chip would be a promise we can't keep.
 const CULTURE_COUNT = {};
@@ -6954,13 +6958,18 @@ function normCascade(c, opts){
   // agent never singled any out and lists everything it watches — the behaviour every agent had before this
   // field existed, so an old agent needs no migration to keep looking the same.
   c.listStatus = c.listStatus||[];
-  // CAS-182: genre / lang / age carry THREE states now, the same three the taste-baseline rows have used
-  // since CAS-165 — null = explicitly none (nothing qualifies) · [] = the filter is off · [a,b] = exactly
-  // those. `||[]` would flatten null back to "off", which is the bug CAS-165 fixed on the baseline: the
-  // user clears every chip, the row reads back as "all", and every chip lights up again.
+  // CAS-182: genre / age carry THREE states — null = explicitly none (nothing qualifies) · [] = the
+  // filter is off · [a,b] = exactly those, the same three the taste-baseline rows have used since CAS-165.
+  // `||[]` would flatten null back to "off", which is the bug CAS-165 fixed on the baseline: the user
+  // clears every chip, the row reads back as "all", and every chip lights up again.
   c.genre = (c.genre===null) ? null : (c.genre||[]);
   c.age   = (c.age===null)   ? null : (c.age||[]);
-  c.lang  = (c.lang===null)  ? null : (c.lang||[]);
+  // CAS-560: language is retired as a per-agent field — Preferences' tasteBase.langs is the only language
+  // filter now (see passesTasteBase). Every agent, new or loaded, is forced to [] here regardless of what
+  // it carries (a pre-CAS-560 agent's stray ["en"], a stale template literal), which both migrates old
+  // agents in place — this runs on every load, local or account (rowToCascade) — and stops any future
+  // seed path from silently reintroducing the field.
+  c.lang = [];
   // CAS-250: how far back is a NUMBER OF YEARS now, rolling from today, not an index into a fixed ladder.
   // An agent saved under the index is converted; one saved since keeps its own answer.
   if(typeof c.yearsBack!=="number") c.yearsBack = yearsFromLegacy(c.yearStop||0);
@@ -7037,44 +7046,46 @@ function normCascade(c, opts){
 }
 const CASCADE_TEMPLATES = [
   {key:"my_taste", icon:"🎯", name:"My taste", blurb:"Great films that clear my rating bar",
-   crit:{status:[], genre:[], age:[], lang:["en"], imdb:7.5, rt:0, awards:false, myServices:false}},
+   crit:{status:[], genre:[], age:[], imdb:7.5, rt:0, awards:false, myServices:false}},
   {key:"watch_tonight", icon:"🍿", name:"Watch tonight", blurb:"Included on services I already have",
-   crit:{status:["included_streaming"], genre:[], age:[], lang:["en"], imdb:6.5, rt:0, awards:false,
+   crit:{status:["included_streaming"], genre:[], age:[], imdb:6.5, rt:0, awards:false,
          myServices:{included_streaming:true}},
    alerts:{pvod:false, rental:false, included_streaming:true}},
   {key:"rent_radar", icon:"📼", name:"Rent radar", blurb:"Good films that reach Rent (~$7)",
-   crit:{status:["rental"], genre:[], age:[], lang:["en"], imdb:6.5, rt:0, awards:false, myServices:false}},
+   crit:{status:["rental"], genre:[], age:[], imdb:6.5, rt:0, awards:false, myServices:false}},
   {key:"bargain", icon:"🏷️", name:"Bargain hunter", blurb:"Never overpay — tell me when it drops below $30",
-   crit:{status:["rental","included_streaming"], genre:[], age:[], lang:["en"], imdb:0, rt:0, awards:false, myServices:false}},
+   crit:{status:["rental","included_streaming"], genre:[], age:[], imdb:0, rt:0, awards:false, myServices:false}},
   {key:"family", icon:"👨‍👩‍👧", name:"Family fun", blurb:"Cert-appropriate films for me and the kids",
-   crit:{status:[], genre:["Family","Animation","Adventure"], age:["G","PG"], lang:["en"], imdb:6, rt:0, awards:false, myServices:false}},
+   crit:{status:[], genre:["Family","Animation","Adventure"], age:["G","PG"], imdb:6, rt:0, awards:false, myServices:false}},
   {key:"prestige", icon:"🏆", name:"Awards & prestige", blurb:"Winners and nominees, as they become watchable",
-   crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:true, myServices:false}},
+   crit:{status:[], genre:[], age:[], imdb:0, rt:0, awards:true, myServices:false}},
   {key:"genre_fan", icon:"🎃", name:"Genre superfan", blurb:"A standing radar for one genre — horror to start",
-   crit:{status:[], genre:["Horror"], age:[], lang:[], imdb:0, rt:0, awards:false, myServices:false}},
+   crit:{status:[], genre:["Horror"], age:[], imdb:0, rt:0, awards:false, myServices:false}},
   // The one Cascade whose moment IS the cinema: it watches films on their way to a release, so the arrival is
   // the news. The default bells (rent + stream) are rows it doesn't watch — it would have rung none of them.
   {key:"blockbuster", icon:"💥", name:"Blockbuster radar", blurb:"The films heading for cinemas, most anticipated first",
-   crit:{status:["upcoming"], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false, myServices:false, sort:"popularity"},
+   crit:{status:["upcoming"], genre:[], age:[], imdb:0, rt:0, awards:false, myServices:false, sort:"popularity"},
    alerts:{cinema:true, pvod:false, rental:false, included_streaming:false}},
   // Date night: crowd-pleasing genres, a bar high enough that neither of you resents the pick, at home,
   // and scoped to what you already pay for — nobody rents a $30 premium for a Tuesday.
   {key:"date_night", icon:"🍷", name:"Date night", blurb:"Crowd-pleasers you both agree on, on your services",
-   crit:{status:["rental","included_streaming"], genre:["Romance","Comedy","Drama"], age:[], lang:["en"],
+   crit:{status:["rental","included_streaming"], genre:["Romance","Comedy","Drama"], age:[],
          imdb:RATING_STOPS[2].imdb, rt:0, awards:false, myServices:{rental:true, included_streaming:true}},
    alerts:{cinema:false, pvod:false, rental:true, included_streaming:true}},
   // Rewatch: "older" is a real filter here, not a vibe — every year in the catalogue except the current one.
   {key:"rewatch", icon:"🛋️", name:"Rewatch & comfort", blurb:"Films you already love, now included or cheap",
-   crit:{status:["rental","included_streaming"], genre:[], age:[], lang:[], year:EARLIER_YEARS,
+   crit:{status:["rental","included_streaming"], genre:[], age:[], year:EARLIER_YEARS,
          imdb:RATING_STOPS[3].imdb, rt:0, awards:false, myServices:false},
    alerts:{cinema:false, pvod:false, rental:true, included_streaming:true}},
-  // Foreign & Arthouse: shippable for real now that CAS-52 landed the language field. Non-English titles
-  // that clear the rating bar — which is exactly what the two fields we have can honestly express.
+  // Foreign & Arthouse: CAS-560 retired the per-agent language field (account-wide Preferences is the only
+  // language filter now), so this preset can no longer express "non-English" as a criterion — it is a plain
+  // rating-bar preset like "My taste" until/unless a future ticket gives Preferences (or agents) a way to
+  // ask for the OPPOSITE of a language set, which tasteBase.langs does not support today.
   {key:"foreign", icon:"🎭", name:"Foreign & arthouse", blurb:"Non-English films that clear the rating bar",
-   crit:{status:[], genre:[], age:[], lang:ALL_LANGS.filter(l=>l!=="en"),
+   crit:{status:[], genre:[], age:[],
          imdb:RATING_STOPS[1].imdb, rt:0, awards:false, myServices:false}},
   {key:"custom", icon:"⚙️", name:"Custom", blurb:"Start from a sensible baseline and tune it",
-   crit:{status:[], genre:[], age:[], lang:["en"], imdb:6.5, rt:0, awards:false, myServices:false}},
+   crit:{status:[], genre:[], age:[], imdb:6.5, rt:0, awards:false, myServices:false}},
 ];
 CASCADE_TEMPLATES.forEach(t=>normCascade(t.crit));
 cascades.forEach(normCascade);   // saved Cascades are filled out here, not at load — ALERT_DEFAULTS lives above
@@ -7091,7 +7102,7 @@ cascades.forEach((c,i)=>{ if(typeof c.order!=="number") c.order=i; });
 // criteria, the windows, the scope and the alert moments. Nothing about a second copy can ever find a film the
 // first didn't, so keeping it is noise with no upside.
 // Only EXACT twins collapse. Two Cascades that differ anywhere — even one genre chip — are two real radars.
-const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.age, c.lang, c.culture, c.year,
+const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.age, c.culture, c.year,
   c.imdb, c.rt, c.awards, c.budget, c.includeUnbudgeted, c.includeUnrated, c.tentpole,
   c.selCrowd||0, c.selCritScore||0, c.selAwards||0, c.selScale||0, c.selBuzz||0, !!c.selOr, c.yearsBack||0,
   !!c.cinemaReleaseOnly,
@@ -7328,7 +7339,7 @@ function matchesCriteria(m,c,ignoreBlocked){
   if((c.exclude||[]).length && (m.genres||[]).some(g=>c.exclude.includes(g))) return false;   // skip beats match
   // CAS-182: cleared means cleared. A dimension holding null admits nothing, so the count says 0 rather
   // than quietly reverting to the whole catalogue behind a screen of switched-off chips.
-  if(c.genre===null || c.age===null || c.lang===null) return false;
+  if(c.genre===null || c.age===null) return false;
   if(c.genre.length && !c.genre.includes((m.genres||[])[0])) return false;
   if(!ageOpen(c) && !c.age.includes(m.age_rating)) return false;
   if((c.year||[]).length && !c.year.includes(yearOf(m))) return false;
@@ -7336,7 +7347,8 @@ function matchesCriteria(m,c,ignoreBlocked){
   // — that one is "these exact years", this one is "the last N years from today". Both can be set; neither
   // is derived from the other.
   if(c.yearsBack && !releasedSince(m, yearsCutoff(c.yearsBack))) return false;
-  if(c.lang.length && !c.lang.includes(m.language)) return false;
+  // CAS-560: the agent-level language filter is retired — passesTasteBase() above is the only language gate
+  // an agent applies now.
   if((c.culture||[]).length && !c.culture.includes(m.culture)) return false;
   if(c.awards && !m.award) return false;
   if(!ratingOK(m, c.imdb||0, c.includeUnrated)) return false;
@@ -7454,7 +7466,7 @@ function alertPromise(c){
 const setTo=(s,arr)=>{ s.clear(); (arr||[]).forEach(v=>s.add(v)); };
 function applyCascade(c){
   clearFilters();
-  setTo(filt.status,c.status); setTo(filt.genre,c.genre); setTo(filt.age,c.age); setTo(filt.lang,c.lang);
+  setTo(filt.status,c.status); setTo(filt.genre,c.genre); setTo(filt.age,c.age);
   setTo(filt.exclude,c.exclude||[]);
   setTo(filt.culture,c.culture||[]); setTo(filt.year,c.year||[]);   // year rides the Filters panel's own chips
   filt.imdb=c.imdb||0; filt.rt=c.rt||0; filt.awards=!!c.awards;   // c.myServices is honoured via scopedFor()
@@ -7502,7 +7514,7 @@ function cascadeDirty(){
   const c=activeCascade(); if(!c) return false;
   return !sameSet(filt.status,c.status) || !sameSet(filt.genre,c.genre) || !sameSet(filt.age,c.age)
       || !sameSet(filt.exclude,c.exclude||[])
-      || !sameSet(filt.lang,c.lang||[]) || !sameSet(filt.culture,c.culture||[]) || !sameSet(filt.year,c.year||[])
+      || !sameSet(filt.culture,c.culture||[]) || !sameSet(filt.year,c.year||[])
       || filt.imdb!==(c.imdb||0) || filt.rt!==(c.rt||0) || filt.awards!==!!c.awards
       || filt.includeUnrated!==!!c.includeUnrated || filt.sort!==(c.sort||"availability")
       || filt.budget!==(c.budget||0) || filt.includeUnbudgeted!==!!c.includeUnbudgeted
@@ -7511,7 +7523,7 @@ function cascadeDirty(){
 }
 window.saveCascadeEdits=()=>{
   const c=activeCascade(); if(!c) return;
-  c.status=[...filt.status]; c.genre=[...filt.genre]; c.age=[...filt.age]; c.lang=[...filt.lang];
+  c.status=[...filt.status]; c.genre=[...filt.genre]; c.age=[...filt.age];
   c.exclude=[...filt.exclude];
   c.culture=[...filt.culture]; c.year=[...filt.year];
   c.imdb=filt.imdb; c.rt=filt.rt; c.awards=filt.awards; c.sort=filt.sort;
@@ -8070,7 +8082,7 @@ addEventListener("scroll", ()=>{ if(document.querySelector(".cpop.fpop")) closeF
 // thorough would be describing a radar that doesn't exist.
 const filtAsCriteria = () => ({
   status:[...filt.status], genre:[...filt.genre], exclude:[...filt.exclude], age:[...filt.age],
-  lang:[...filt.lang], culture:[...filt.culture], year:[...filt.year],
+  culture:[...filt.culture], year:[...filt.year],
   imdb:filt.imdb, rt:filt.rt, includeUnrated:filt.includeUnrated,
   budget:filt.budget, includeUnbudgeted:filt.includeUnbudgeted, tentpole:filt.tentpole,
   awards:filt.awards, myServices:{}, excludeWatched:filt.hideWatched, excludeBlocked:!filt.showHidden,
@@ -8082,7 +8094,6 @@ function critBits(c){
   if(arr("status").length)  b.push(arr("status").map(w=>STATUS_LABEL[w]||w).join(" or "));
   if(c.imdb)                b.push(`rating ${c.imdb.toFixed(1)}+`);
   if(c.rt)                  b.push(`critics ${c.rt}%+`);
-  if(arr("lang").length)    b.push(arr("lang").map(langName).join(" or "));
   if(arr("culture").length) b.push(arr("culture").join(" or "));
   if(arr("age").length)     b.push(`rated ${arr("age").join(", ")}`);
   if(arr("year").length)    b.push(`released ${arr("year").slice().sort().reverse().join(", ")}`);
@@ -8151,7 +8162,7 @@ $("saveAsGo").onclick=()=>{
 // criterion dropped, so the number on the button is the number you'll get. No "try adjusting your filters".
 function filtSnapshot(){
   const s={sets:{}};
-  ["status","year","age","culture","lang","genre","exclude"].forEach(k=>{ s.sets[k]=[...filt[k]]; });
+  ["status","year","age","culture","genre","exclude"].forEach(k=>{ s.sets[k]=[...filt[k]]; });
   ["imdb","rt","gross","awards","recent","budget","tentpole","includeUnrated","includeUnbudgeted","foundOnly",
    "hideWatched","search"].forEach(k=>{ s[k]=filt[k]; });
   return s;
@@ -8169,7 +8180,6 @@ const RELAXERS = [
   {key:"exclude",  label:()=>`the ${filt.exclude.size} genre${filt.exclude.size===1?"":"s"} you're skipping`,
    on:()=>filt.exclude.size>0, clear:()=>filt.exclude.clear()},
   {key:"year",     label:()=>"the release years",  on:()=>filt.year.size>0,    clear:()=>filt.year.clear()},
-  {key:"lang",     label:()=>"the language",       on:()=>filt.lang.size>0,    clear:()=>filt.lang.clear()},
   {key:"culture",  label:()=>"the origin",         on:()=>filt.culture.size>0, clear:()=>filt.culture.clear()},
   {key:"age",      label:()=>"the age rating",     on:()=>filt.age.size>0,     clear:()=>filt.age.clear()},
   {key:"budget",   label:()=>`the budget band (${BUDGET_BANDS[filt.budget].label})`, on:()=>filt.budget>0,
@@ -8334,7 +8344,7 @@ function commitDraft(){
   const c=isNew ? {id:cascadeNewId()} : cascades.find(x=>x.id===draft.id);
   Object.assign(c, {name, icon:draft.icon, template:draft.template, status:draft.status, genre:draft.genre,
     exclude:draft.exclude,
-    age:draft.age, lang:draft.lang, culture:draft.culture, year:draft.year, imdb:draft.imdb, rt:draft.rt,
+    age:draft.age, culture:draft.culture, year:draft.year, imdb:draft.imdb, rt:draft.rt,
     ratingStop:draft.ratingStop, includeUnrated:draft.includeUnrated,
     budget:draft.budget, includeUnbudgeted:draft.includeUnbudgeted, tentpole:draft.tentpole,
     selCrowd:draft.selCrowd, selCritScore:draft.selCritScore, selAwards:draft.selAwards,
@@ -8590,9 +8600,9 @@ function buildQuality(){
     </div>
     <!-- CAS-475: Primary language dropped from this editor too — Language is account-level only now
          (Account > Taste baseline), and this pre-0.8 modal is still the editor for shared links and the
-         empty-deck quick starts (CAS-246), so it needed the same row pulled as the Briefing hub. draft.lang
-         itself is untouched: a shared/templated draft keeps whatever value it arrived with, same as any
-         other agent this ticket leaves alone. -->
+         empty-deck quick starts (CAS-246), so it needed the same row pulled as the Briefing hub. CAS-560
+         later retired the field itself — normCascade forces every agent's lang to [] on load, so there is
+         no longer a value for a shared/templated draft to carry through here either. -->
     <div class="qrow">
       <div class="qhead"><span class="qt">Audience / origin</span><span class="qcap" style="margin:0" id="cCultCap"></span></div>
       <div class="chips" id="cCultChips"></div>
@@ -9296,7 +9306,7 @@ function starterPreview(s, kind){
   // something the card should quote as wide open). The card and the agent pickStarter is about to build
   // still agree at creation, since both start from these same fixed values — CAS-550 makes Genre/How-far-
   // back/Age editable afterwards from the Briefing, but not at this starting point.
-  d.genre=[]; d.year=[]; d.lang=["en"];
+  d.genre=[]; d.year=[];   // CAS-560: lang is no longer seeded — normCascade forces it to [] regardless
   d.age=(s.crit.age&&s.crit.age.length) ? s.crit.age : AGE_LEVELS.filter(a=>!GENTLE.has(a));
   d.selCrowd=s.crit.selCrowd||0; d.selScale=s.crit.selScale||0;
   d.selCritScore=s.crit.selCritScore||0; d.selAwards=s.crit.selAwards||0;
@@ -9375,7 +9385,7 @@ window.pickStarter=key=>{
   // its own explicit crit.age.
   onbFlow.draft.genre = s.crit.genre||[];
   onbFlow.draft.age = (s.crit.age && s.crit.age.length) ? s.crit.age : AGE_LEVELS.filter(a=>!GENTLE.has(a));
-  onbFlow.draft.lang = ["en"];
+  // CAS-560: lang is no longer seeded on a new agent — normCascade forces it to [] regardless.
   // CAS-532: last 20 years, fixed, for every new agent regardless of lane.
   onbFlow.draft.yearsBack = 20;
   onbFlow.draft.yearStop = 0;        // legacy fallback field, kept for an older build reading it
@@ -10276,7 +10286,6 @@ function axisCountsNow(axis, valueOf){
   return out;
 }
 const genreCountsNow = () => axisCountsNow("genre", m=>m.genres||[]);
-const langCountsNow  = () => axisCountsNow("lang",  m=>m.language);
 // Repaint in place rather than rebuilding the chips: rebuilding on every toggle would drop focus off the
 // chip you just pressed, which is how a keyboard user loses their place mid-row.
 function paintChipCounts(boxId, counts){
@@ -10433,16 +10442,9 @@ function onbYearPhrase(){
   if(y===1) return "released in the last twelve months";
   return `from the last ${y} years`;
 }
-// ---- Language (#7) --------------------------------------------------------------------------------
-// English is on by default; the rest are opt-in. Uses the app's real language codes so the scope works,
-// and an empty selection means "any language" — so deselecting even English widens rather than dead-ends.
+// Language options for the Preferences taste-baseline row (tasteBase.langs) — CAS-560 retired the
+// per-agent copy of this list (the flow step that used to read it, onbLangPhrase(), is gone with it).
 const LANG_OPTS = ["en","ko","ja","zh","fr","es","hi","it","de","th","sv","pt"];
-function onbLangPhrase(){
-  const l=dT().lang;
-  if(l===null) return "films in <b>no language you've kept</b>";
-  if(!l.length) return "films in <b>any language</b>";
-  return `<b>${l.map(langName).join(", ")}-language</b> films`;
-}
 // ---- Age rating (#8) ------------------------------------------------------------------------------
 // "Up to and including" the chosen level; the top stop (R 18+) includes everything, which is the default.
 // The ladder is the catalogue's real ratings, so the include-list always lines up with the data.
@@ -10512,11 +10514,6 @@ const trailGenres = () => { const g=dT().genre, ex=genreExcludeSuffix();
        : !g.length ? "All genres"+ex
        : g.length<=2 ? g.join(", ")+ex
        : `${g.length} of ${ONB_GENRES.length}`+ex; };
-const trailLangs = () => { const l=dT().lang;
-  return l===null ? "None selected"
-       : !l.length ? "Any language"
-       : l.length===1 ? langName(l[0])
-       : `${langName(l[0])} +${l.length-1}`; };
 const trailAge = () => { const a=dT().age;
   return a===null ? "None selected"
        : (!a.length || a.length===AGE_LEVELS.length) ? "All ratings"
@@ -10532,7 +10529,6 @@ const ONB_TRAIL = {
   name:        {label:"Name",     value:()=> (onbFlow.name||"").trim() || onbFlow.defaultName || null},
   genres:      {label:"Style",    value:trailGenres},
   years:       {label:"How far back", value:()=> yearsLabel(flowYearsBack())},
-  language:    {label:"Language", value:trailLangs},
   age:         {label:"Rating",   value:trailAge},
   services:    {label:"Services", value:trailServices},
   notifysettings:{label:"Notify", value:trailNotify},
@@ -10857,7 +10853,6 @@ function tbSumAge(){
 const dT = () => onbFlow.draft || {};
 const dSet = (v, all) => new Set(v===null ? [] : (v||[]).length ? v : all);
 const dGenreSet = () => dSet(dT().genre, ONB_GENRES);
-const dLangSet  = () => dSet(dT().lang,  LANG_OPTS);
 const dAgeSet   = () => dSet(dT().age,   AGE_LEVELS);
 // CAS-397: `exclude` is a preset-seeded skip list (Family Movies) that this screen's chips never exposed —
 // a genre could be silently dropped with nothing on the Style screen or its summary saying so. This is the
@@ -10903,11 +10898,6 @@ const flowCnt = n => `<span class="cnt">${n} film${n===1?"":"s"}</span> match ri
 // no extra information. What is left is the part only this line said: what the step is currently set TO.
 // The `n` argument stays so the one-computation-per-paint rule (CAS-198/164) is undisturbed for the
 // screens that still quote a number, and so re-adding it here is a one-word change.
-function langSayHTML(n){
-  const l=dT().lang;
-  const what = l===null ? "no languages" : !l.length ? "any language" : l.map(langName).join(", ");
-  return `Watching in <b>${esc(what)}</b>`;
-}
 const TB_ROWS = [
   {key:"genres", icon:"🎭", label:"Genres",        sum:tbSumGenres},
   {key:"year",   icon:"🕰️", label:"How far back",  sum:tbSumYear},
@@ -11345,45 +11335,9 @@ const SHARP_STEPS = {
     // refresh the count and the summary line already go through.
     refresh(){ paintChipCounts("onbStepGenres", genreCountsNow()); },
   },
-  language: {
-    title: "Language",
-    progress: 65,
-    noAgent: true,
-    say: langSayHTML,
-    lead(){ return `watches ${onbLangPhrase()}`; },
-    body(){
-      return `<p class="ossub">Which languages are you happy to watch in?</p>
-        <div class="chips" id="onbStepLangs"></div>
-        <div class="tbq tbqmin">
-          <button type="button" class="q" onclick="flowSetAll('lang',true)">Select all</button>
-          <button type="button" class="q" onclick="flowSetAll('lang',false)">Clear all</button></div>
-        <p class="ossumline" id="onbStepSay">${langSayHTML(stepCount(SHARP_STEPS.language))}</p>`;
-    },
-    wire(){
-      const box=$("onbStepLangs"); if(!box) return;
-      const on=dLangSet();
-      // CAS-224: Language carried no counts at all. It does now, on the same basis as Style — and because a
-      // film has exactly one language, these ones partition the matching set and sum to the total.
-      const counts=langCountsNow();
-      box.innerHTML="";
-      LANG_OPTS.forEach(code=>{
-        const c=document.createElement("button");
-        c.type="button";
-        c.className="chip gen"+(on.has(code)?" on":"");
-        c.dataset.chipkey=code;
-        c.setAttribute("aria-pressed", String(on.has(code)));
-        c.innerHTML=`${esc(langName(code))} <span class="chcount" style="opacity:.55">· ${counts[code]||0}</span>`;
-        c.onclick=()=>{
-          on.has(code) ? on.delete(code) : on.add(code);
-          onbFlow.draft.lang = tbStore(new Set(LANG_OPTS.filter(x=>on.has(x))), LANG_OPTS);
-          c.classList.toggle("on", on.has(code)); c.setAttribute("aria-pressed", String(on.has(code)));
-          onbRefresh();
-        };
-        box.appendChild(c);
-      });
-    },
-    refresh(){ paintChipCounts("onbStepLangs", langCountsNow()); },
-  },
+  // CAS-560: the "language" step (per-agent Language) is retired along with the field it edited — Language
+  // is Preferences-only now (tasteBase.langs). It was already unreachable (never listed in FLOWS, so
+  // flowList() could never walk to it), so deleting it changes no behaviour.
   name: {
     title: "Name your Agent",
     progress: 100,
@@ -11684,8 +11638,9 @@ let onbStepKey=null;
 // watch, and what you will let through — so asking them back to back means the second is answered while the
 // first is still in mind, instead of across an unrelated screen. Everything else keeps the order it had; only
 // `age` moved, in both lanes.
-// CAS-338: Language is no longer a first-run step in either lane — onbFlow.draft.lang is seeded ["en"] at
-// pickStarter (assume English), or carries whatever a chosen starter template bakes in.
+// CAS-338: Language is no longer a first-run step in either lane. CAS-560 later removed the seed this
+// comment used to describe (pickStarter no longer sets a lang, and normCascade forces every agent's lang
+// to [] regardless) — Preferences' tasteBase.langs is the only language filter now.
 // CAS-475: "My streaming services" is no longer a first-run step either — naming your services and the
 // "only show films on my services" switch are both account-level state already (`prefs`, in
 // localStorage/the synced prefs row), never per-agent, so asking for them mid-creation was a second place to
@@ -12715,20 +12670,6 @@ window.openAccountStep=key=>{
 };
 window.openAccountAuth=()=>{ acctResume=true; closeAccount(); openModal($("authModal")); };
 function accountResume(){ if(!acctResume) return; acctResume=false; openAccount(); }
-// One row per setting, each read off the DRAFT so the row and the screen behind it cannot disagree.
-function briefSum(key){
-  const v=(onbFlow.draft||{})[key];
-  const all={genre:ONB_GENRES, lang:LANG_OPTS, age:AGE_LEVELS}[key];
-  const noneWord={genre:"No genres", lang:"No languages", age:"No ratings"}[key];
-  const allWord ={genre:"All genres", lang:"Any language", age:"All ratings"}[key];
-  // CAS-397: exclude is a genre-axis criterion the include list alone cannot show — "All genres" must not
-  // print over a standing skip list, or the row is exactly the hidden filter the ticket is about.
-  const exSuffix = key==="genre" ? genreExcludeSuffix() : "";
-  if(v===null) return noneWord;
-  if(!v.length || v.length===all.length) return allWord+exSuffix;
-  if(key==="lang") return v.map(langName).join(", ");
-  return (v.length<=3 ? v.join(", ") : `${v.length} of ${all.length}`)+exSuffix;
-}
 // ---- CAS-253: an email alert needs somewhere to send it ----------------------------------------------
 // Switching "Send me alerts by email" on and walking past the empty field left an agent whose email bell was
 // armed and undeliverable — the monitor's delivery_plan calls that state "wait" and quietly retries it
@@ -14359,7 +14300,6 @@ function sanitiseShared(o){
     genre:keepKnown(o.genre, ALL_GENRES),
     exclude:keepKnown(o.exclude, ALL_GENRES),
     age:keepKnown(o.age, AGE_LEVELS),
-    lang:keepKnown(o.lang, ALL_LANGS),
     culture:keepKnown(o.culture, ALL_CULTURES),
     year:keepKnown(o.year, ALL_YEARS),
     imdb:num(o.imdb,0,10,0), rt:num(o.rt,0,100,0),
@@ -14607,6 +14547,10 @@ else if(dedupedN)
     const { data, error } = await c.from("cascades").select("*");   // RLS: only mine
     if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); cascadesReady=true; return; }
     cascadeBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
+    // CAS-560: a pre-CAS-560 row can still carry a real lang array — rowToCascade (via normCascade) clears
+    // it in memory either way, but flag it here so the corrected row gets pushed back rather than left
+    // stale in the account until this device happens to touch the agent for some other reason.
+    const langDirty = (data||[]).some(r => ((r.criteria||{}).lang||[]).length);
     let remote = (data||[]).map(rowToCascade);
     const localOnes = cascades.slice();
     // CAS-393: the membership step's own email gate (CAS-387) can create this account seconds after
@@ -14635,7 +14579,7 @@ else if(dedupedN)
     // account sync) purely so the NEXT cold start has something instant to show while this same fetch
     // revalidates in the background.
     saveCascadesLocal();
-    if(justOnboarded) scheduleSync();
+    if(justOnboarded || langDirty) scheduleSync();
     offerMerge();
     if(typeof afterSignIn==="function") afterSignIn();
   }
@@ -14651,6 +14595,8 @@ else if(dedupedN)
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("cascades").select("*");
     if(error){ console.warn("Cascade reconcile", error); return; }
+    // CAS-560: same stale-lang push-back as loadAccount, for the background convergence path.
+    const langDirty = (data||[]).some(r => ((r.criteria||{}).lang||[]).length);
     const remote=(data||[]).map(rowToCascade);
     const remoteIds=new Set(remote.map(x=>x.id));
     remote.forEach(r=>{
@@ -14672,6 +14618,7 @@ else if(dedupedN)
     // reconciles too, not just the first load — otherwise it drifts back out of date the longer a session
     // runs and a later cold start shows stale cards instead of the last-known-good state.
     saveCascadesLocal();
+    if(langDirty) scheduleSync();
     if(typeof render==="function") render();
   }
   // What this device is carrying that the account has not got. Filled by the three loaders as they run,
