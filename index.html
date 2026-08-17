@@ -3967,7 +3967,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 533, "commit": "5fac75f", "builtAt": "2026-08-17T07:31:56Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 534, "commit": "ff36317", "builtAt": "2026-08-17T08:18:53Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8665,8 +8665,9 @@ window.closeSvcAnalysis=()=>{ $("svcAnalysis").classList.remove("open"); documen
 // The two settings that apply to every agent, no per-agent override: Language and Where & when you'll
 // watch. Both write straight to their own global state (tasteBase.langs, watchPrefs) the moment a chip or
 // switch is tapped, same as the account screens they replace — there is no Save button here either.
-// Genre, How far back and Age rating are deliberately absent: retired everywhere (CAS-532 #3), so a new
-// agent runs the fixed system defaults instead (all genres, last 20 years, M and up).
+// Genre, How far back and Age rating are deliberately absent: a new agent still runs the fixed system
+// defaults (all genres, last 20 years, M and up), but CAS-550 gives them a per-agent door again — Edit
+// Agent, not here, is where they're changed afterwards.
 function prefLangChipsHTML(){
   const on=tbLangSet();
   return LANG_OPTS.map(code=>`<button type="button" class="chip${on.has(code)?" on":""}"
@@ -8704,9 +8705,8 @@ function renderPreferences(){
       haven't chosen to track that window. Neither implies the other.</p>
     <div id="wwLanes"></div>
 
-    <p class="ucap" style="margin-top:14px">Genre, How far back and Age rating are no longer set here or
-      per agent. New cascades now start from fixed system defaults: all genres, last 20 years, M and up —
-      nothing to configure.</p>`;
+    <p class="ucap" style="margin-top:14px">Genre, How far back and Age rating are set per agent, from Edit
+      Agent — not here. New cascades start from fixed system defaults: all genres, last 20 years, M and up.</p>`;
   drawWatchLanes();
 }
 window.openPreferences=()=>{
@@ -9063,9 +9063,9 @@ function starterPreview(s, kind){
   const d=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
   // CAS-532: fixed system defaults, verbatim — all genres, last 20 years, M and up — except age, which
   // stays the preset's OWN cap (CAS-307: Family Movies' rating ladder is part of its standard, not
-  // something the card should quote as wide open). There is no more Genre/How-far-back/Age UI anywhere to
-  // diverge these from the default, so the card and the agent pickStarter is about to build can only ever
-  // agree.
+  // something the card should quote as wide open). The card and the agent pickStarter is about to build
+  // still agree at creation, since both start from these same fixed values — CAS-550 makes Genre/How-far-
+  // back/Age editable afterwards from the Briefing, but not at this starting point.
   d.genre=[]; d.year=[]; d.lang=["en"];
   d.age=(s.crit.age&&s.crit.age.length) ? s.crit.age : AGE_LEVELS.filter(a=>!GENTLE.has(a));
   d.selCrowd=s.crit.selCrowd||0; d.selScale=s.crit.selScale||0;
@@ -9137,11 +9137,12 @@ window.pickStarter=key=>{
   // are the same measurement. genre/age fall back to those defaults but defer to the preset's own crit when
   // it sets one (CAS-307), so a preset's Style/Rating standard survives into the draft instead of always
   // being reset to wide open — draftFromTemplate already copied s.crit.exclude in above, untouched here.
-  // CAS-532: fixed system defaults — all genres, last 20 years, M and up — with no UI left anywhere to
-  // change them. A preset's own crit still wins where it sets one (CAS-307: Family Movies' age cap), same
-  // as it always has; only the OPEN default (G/PG off) is fixed now instead of depending on the offered
-  // name — the name-based family branch is retired because it only ever fired for the one starter that
-  // already carries its own explicit crit.age.
+  // CAS-532: fixed system defaults — all genres, last 20 years, M and up — as the STARTING values for a new
+  // agent; CAS-550 makes them editable afterwards from the Briefing, but a new agent still opens on these. A
+  // preset's own crit still wins where it sets one (CAS-307: Family Movies' age cap), same as it always
+  // has; only the OPEN default (G/PG off) is fixed now instead of depending on the offered name — the
+  // name-based family branch is retired because it only ever fired for the one starter that already carries
+  // its own explicit crit.age.
   onbFlow.draft.genre = s.crit.genre||[];
   onbFlow.draft.age = (s.crit.age && s.crit.age.length) ? s.crit.age : AGE_LEVELS.filter(a=>!GENTLE.has(a));
   onbFlow.draft.lang = ["en"];
@@ -10986,12 +10987,18 @@ const SHARP_STEPS = {
       // own doors edit (onbApply()) — an unsaved agent (no draft yet) simply has nothing to count.
       const nNew = onbFlow.draft ? newlyAddedCount(onbApply()) : 0;
       const mission = missionDetail();
+      const style = styleDetail();
+      const stream = missionKind()==="stream";
       // CAS-531: Mission and Style are promoted to the primary visual elements — big tinted doors carrying
       // every selection the agent's bar/style actually holds, not the old one-line "11 of 19" summary — so
       // the two things that most decide what an agent finds are the two things this page leads with. Rating
       // and How far back stay reachable underneath, just smaller and flatter: real settings, lower stakes.
       // The name row is gone — CAS-531 #1 moved it into the page header (see renderOnbStep's key==="briefing"
       // branch), so a rename opens the identical "name" spoke this row used to.
+      // CAS-550: Style, Rating and How far back are back as doors — CAS-532 retired them "everywhere" as a
+      // deliberate call, not a bug, and this ticket reverses that part by a later decision. How far back
+      // stays off a cinema agent: its year cutoff is a no-op there (AU theatrical releases are inherently
+      // recent), so the door would set nothing.
       return `<p class="ossub">Reconfigure this agent here.${nNew ? ` <b>${nNew}</b> newly added film${nNew===1?"":"s"} in its list right now.` : ""}</p>
         <button type="button" class="eacard msn" onclick="briefGo('selectivity')">
           <span class="eachd"><span class="di">🎯</span><span class="dh">Mission</span></span>
@@ -11000,9 +11007,17 @@ const SHARP_STEPS = {
             ? mission.lines.map(l=>`<span class="eamline">${esc(l)}</span>`).join("")
             : `<span class="eamline">No bar set — everything qualifies</span>`}</span>
           <span class="dc">›</span></button>
-        <!-- CAS-532: Style, Rating and How far back are gone from this page — no UI anywhere sets them any
-             more, per-agent or otherwise. Every agent runs the fixed system defaults (all genres, last 20
-             years, M and up) baked in at creation. -->
+        <button type="button" class="eacard sty" onclick="briefGo('genres')">
+          <span class="eachd"><span class="di">🎭</span><span class="dh">Style</span></span>
+          ${style.headline ? `<span class="eamhead">${esc(style.headline)}</span>` : ""}
+          <span class="eamlines">${style.lines.map(l=>`<span class="eamline">${esc(l)}</span>`).join("")}</span>
+          <span class="dc">›</span></button>
+        <div class="easec">
+          <button type="button" class="easub" onclick="briefGo('age')">
+            <span class="eash">Rating</span><span class="easv">${esc(trailAge())}</span></button>
+          ${stream ? `<button type="button" class="easub" onclick="briefGo('years')">
+            <span class="eash">How far back</span><span class="easv">${esc(yearsLabel(flowYearsBack()))}</span></button>` : ""}
+        </div>
         <!-- CAS-531 #4: "Where & when you'll watch" is gone from this page — it's a system-wide Preferences
              setting now (CAS-532), one place for every agent instead of a per-agent door. -->
         <p class="eaptr"><span class="ic">↗</span><span>Where &amp; when you'll watch now lives in Preferences — applies to every agent. So does Language.</span></p>
@@ -11448,8 +11463,10 @@ let onbStepKey=null;
 // seeding a new streaming agent's per-window `myServices` scope off whatever `prefs.on` already is (CAS-199),
 // same as it always has — this only removes the prompt, not the seed. Naming services (or turning the
 // switch on) now happens at Account > My streaming services, before or after the agent exists either way.
-// CAS-532: "genres"/"age"/"years" are gone from both lanes — Style, Rating and How far back no longer have
-// any UI, first-run or otherwise (see pickStarter for the fixed system defaults that replace them).
+// CAS-532: "genres"/"age"/"years" stay out of both lanes' FLOWS — a new agent still starts from the
+// pickStarter defaults (see there) and walks this same short line. CAS-550 gives Style, Rating and How far
+// back UI again, but only from the Briefing afterwards, by its own explicit "out of scope: first-run flow
+// is unchanged" — so this list is deliberately still short, not stale.
 const FLOWS = {
   cinema: ["priority","pickagent","selectivity","name","keepfinding","notifysettings"],
   stream: ["priority","pickagent","selectivity","name","keepfinding","notifysettings"],
@@ -12884,8 +12901,23 @@ function missionDetail(){
   if(!headline && lines.length) headline=lines.shift();
   return {headline, lines};
 }
-// CAS-532: styleChipsHTML/ratingFullText/hubTasteSummary retired with the Briefing's Style/Rating rows and
-// the hub's "taste" door — there is no remaining caller (Style and Rating no longer have any UI).
+// CAS-550: the Briefing's Style card is Mission's equal now, so it wants the same headline+lines shape
+// missionDetail() gives Mission, not CAS-531's chip-pill styleChipsHTML() (retired by CAS-532 along with
+// the rest of this row, never revived). Reads the same on/exclude state the genres screen's chips do.
+function styleDetail(){
+  const g=dT().genre, excl=dExcludeSet();
+  if(g===null) return {headline:"No styles selected", lines:["Nothing qualifies — pick at least one"]};
+  const included=ONB_GENRES.filter(x=>dGenreSet().has(x) && !excl.has(x));
+  if(included.length===ONB_GENRES.length)
+    return {headline:"All styles", lines:["Nothing excluded — every genre qualifies"]};
+  if(!included.length) return {headline:"No styles match", lines:["Every choice is currently excluded"]};
+  const lines=[included.join(" · ")];
+  if(excl.size) lines.push(`Skipping: ${[...excl].join(", ")}`);
+  return {headline:`${included.length} of ${ONB_GENRES.length} styles`, lines};
+}
+// CAS-532: styleChipsHTML/ratingFullText/hubTasteSummary were retired along with this row and the hub's
+// "taste" door. CAS-550 restores the row but not those two helpers — trailAge() and styleDetail() (above)
+// cover Rating and Style instead, and hubTasteSummary's only caller (the "taste" door) is still gone.
 window.onbOpenDoor=key=>{
   const steps=HUB_DOORS[key]; if(!steps) return;
   logEvent("onbhub_door",{key, wired:flowOn});
