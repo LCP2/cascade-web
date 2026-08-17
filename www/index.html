@@ -2539,7 +2539,16 @@
     padding:14px 15px;margin-top:16px;
     /* CAS-540: sticky within #yourMovies's own scroll container (see syncYmCollapse()'s comment for why
        that's this card's scrollport, not window/the page, unlike #cascbar). */
-    position:sticky;top:0;z-index:5;transition:padding .18s ease}
+    position:sticky;top:0;z-index:5;transition:padding .18s ease;
+    /* CAS-543: CAS-540's comment says this mirrors #cascbar's mechanism (own anchor, scroll-driven toggle,
+       no-transition-on-live-scroll — all present in syncYmCollapse()), but it never copied .cascbar's own
+       compositing-layer promotion (CAS-519's actual fix, see that rule's comment): WebKit drops a
+       position:sticky element's stuck position for the rest of a scroll gesture if the element changes size
+       — exactly what .collapsed does — while that gesture crosses the sticky threshold. Missing this line,
+       .ymcard could lose its pin mid-scroll on a real device: the card scrolls away in normal flow while the
+       browser still reserves its stuck-position space at the top of the scrollport, i.e. exactly the "header
+       gone, blank space left behind" Lee reported. */
+    transform:translateZ(0);-webkit-transform:translateZ(0)}
   .ymcard.no-transition,.ymcard.no-transition *{transition:none!important}
   /* CAS-540: the collapsed pill — icon/title/count stay, the sub-line and action row (Edit/Search/Filter/
      Sort) go, mirroring .cascbar.collapsed's own "keep the name, drop everything else" shape. */
@@ -3967,7 +3976,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 534, "commit": "ff36317", "builtAt": "2026-08-17T08:18:53Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 535, "commit": "0df8d8a", "builtAt": "2026-08-17T08:45:24Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
