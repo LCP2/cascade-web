@@ -4099,7 +4099,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 545, "commit": "b074bec", "builtAt": "2026-08-17T21:26:02Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 546, "commit": "2a940a3", "builtAt": "2026-08-17T21:52:14Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -14900,6 +14900,11 @@ else if(dedupedN)
     if(!filmSyncing && !filmTimer) reconcileFilms();
     if(!listsSyncing && !listsTimer){ reconcileLists(); reconcileListMembership(); }
     if(!watchSyncing && !watchTimer) reconcileFilmWatches();
+    // CAS-561: taste/watch_windows only pulled the account's answer on sign-in/boot before this —
+    // a tab left open across a change on another device stayed on its stale baseline until reloaded.
+    // Guarded on !upTimer the same way the other reconciles are, so a pull can't land on top of an
+    // edit this device made that hasn't reached the account yet.
+    if(!upTimer) loadUserPrefs();
     // CAS-487: the bell has no push channel on web, so nothing else ever refreshes it —
     // without this, an open tab's badge/drawer are frozen at whatever they were on load.
     loadRealAlerts();
@@ -15246,7 +15251,10 @@ else if(dedupedN)
     return { user_id:uid(),
              sub_services:[...prefs.sub], store_services:[...prefs.store],
              services_only:!!prefs.on,
-             taste:JSON.parse(JSON.stringify(tasteBase)) };
+             taste:JSON.parse(JSON.stringify(tasteBase)),
+             // CAS-561: rides the same row/upsert as taste — see that ticket for why it lives here
+             // rather than a dedicated table.
+             watch_windows:JSON.parse(JSON.stringify(watchPrefs)) };
   }
   let upTimer=null;
   function scheduleUserPrefsSync(){ clearTimeout(upTimer); upTimer=setTimeout(runUserPrefsSync, 500); }
@@ -15255,6 +15263,13 @@ else if(dedupedN)
     const { error } = await c.from("user_prefs").upsert([userPrefsRow()], { onConflict:"user_id" });
     if(error) console.warn("user_prefs upsert", error);
   }
+  // CAS-561 merge rule: user_prefs is one row per user holding whole-object fields (taste,
+  // watch_windows) rather than an array of rows like cascades — there is nothing to diff or prune per
+  // item, so "last write wins" IS the upsert itself: whichever device's debounced write reaches the
+  // account last is what the row holds, and the next device to load (below) or reconcile (see
+  // reconcileOnReturn) simply adopts it whole. No separate timestamp field is needed for that — a
+  // union would risk silently re-widening a language/window a user deliberately narrowed on another
+  // device, which CAS-561 explicitly rules out.
   async function loadUserPrefs(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("user_prefs").select("*").limit(1);   // RLS: only mine
@@ -15264,16 +15279,31 @@ else if(dedupedN)
     setTo(prefs.sub, row.sub_services||[]);
     setTo(prefs.store, row.store_services||[]);
     prefs.on = !!row.services_only;
+    // CAS-561: a row that exists but has never carried taste/watch_windows (created before this
+    // ticket, or before CAS-211 for taste) must not be read as "the account has decided []" — that
+    // would silently drop this device's local baseline. Carry the local value up instead, same as the
+    // no-row branch above, rather than overwriting it with an empty default.
+    let carryUp=false;
     if(row.taste && typeof row.taste==="object" && Object.keys(row.taste).length){
       tasteBase = {...baseDefaults(), ...row.taste};
-      saveTasteBase();
-    }
+      saveTasteBaseLocal();
+    } else carryUp=true;
+    if(row.watch_windows && typeof row.watch_windows==="object" && Object.keys(row.watch_windows).length){
+      watchPrefs = {...watchPrefsDefaults(), ...migrateWatch(row.watch_windows)};
+      saveWatchPrefsLocal();
+      syncWatchPrefsToCascades();
+    } else carryUp=true;
     savePrefsLocal();
     syncServiceChips(); updatePrefSwitch(); updatePrefBtn();
     if(typeof render==="function") render();
+    if(carryUp) scheduleUserPrefsSync();
   }
   const saveTasteBaseLocal = saveTasteBase;
   saveTasteBase = function(){ saveTasteBaseLocal(); if(accountActive()) scheduleUserPrefsSync(); };
+  const saveWatchPrefsLocal = saveWatchPrefs;
+  // CAS-561: same chokepoint shape as saveTasteBase above — Where & when you'll watch is the other
+  // CAS-532 "system-wide, no per-agent override" setting, so it gets the same account round-trip.
+  saveWatchPrefs = function(){ saveWatchPrefsLocal(); if(accountActive()) scheduleUserPrefsSync(); };
 
   const saveNotifyLocal = saveNotify;
   // CAS-484: `wins` lives on the same notify entries film_picks does, so the one save chokepoint
