@@ -19,18 +19,18 @@ async function buildAgent(page, kind, presetName){
   await toListing(page);
 }
 
-test("CAS-532: Preferences sits in the top menu between Service analysis and Lists", async ({ page }) => {
+test("CAS-532: Agent Preferences sits in the top menu directly under Manage Agents (CAS-551)", async ({ page }) => {
   await buildAgent(page, "cinema", "Blockbusters");
   await page.locator("#navMenuBtn").click();
   const labels = await page.locator("#navMenu .navitem").allTextContents();
-  const svcIdx = labels.findIndex(t => t.includes("Service analysis"));
-  const prefIdx = labels.findIndex(t => t.includes("Preferences"));
-  const listsIdx = labels.findIndex(t => t.includes("Lists"));
-  expect(svcIdx).toBeGreaterThanOrEqual(0);
-  expect(prefIdx).toBe(svcIdx + 1);
-  expect(listsIdx).toBe(prefIdx + 1);
+  const agentsIdx = labels.findIndex(t => t.includes("Manage Agents"));
+  const prefIdx = labels.findIndex(t => t.includes("Agent Preferences"));
+  const servicesIdx = labels.findIndex(t => t.includes("My services"));
+  expect(agentsIdx).toBeGreaterThanOrEqual(0);
+  expect(prefIdx).toBe(agentsIdx + 1);
+  expect(servicesIdx).toBe(prefIdx + 1);
 
-  await page.locator("#navMenu .navitem", { hasText: "Preferences" }).click();
+  await page.locator("#navMenu .navitem", { hasText: "Agent Preferences" }).click();
   await expect(page.locator("#navMenu")).not.toHaveClass(/open/);
   await expect(page.locator("#preferencesScreen")).toHaveClass(/open/);
   await expect(page.locator("#preferencesScreen .osh")).toHaveText("Preferences");
