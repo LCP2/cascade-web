@@ -2597,8 +2597,9 @@
   .listnewbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   /* ---- CAS-529: "Your Movies" filterable feed — the rose-accented panel above the live results.
        Chips/Select-all-Clear-all reuse the Style step's language (.chips/.chip, CAS-397); the cascade rows
-       reuse the Agents row shell (.agrow) with a check-toggle in place of Edit; the rewatch switch reuses
-       .tgl (the invite flow's own toggle). Only the rose fill/border and this block's layout are new. */
+       reuse the Agents row shell (.agrow) with a check-toggle in place of Edit; the watched-verdicts row
+       (CAS-570) reuses .nopt/--wwc, the watch-priority filter popover's own control. Only the rose
+       fill/border and this block's layout are new. */
   .ympanel{background:var(--panel);border:1px solid rgba(255,47,135,.32);border-radius:16px;
     padding:16px 15px;margin-top:16px}
   .ymphead{font-family:var(--font-display);font-weight:700;font-size:11px;letter-spacing:.05em;
@@ -2619,10 +2620,13 @@
   .ymcasctgl.on{background:var(--rose-grad);border-color:var(--rose);color:#fff}
   .ymcasctgl:hover{border-color:var(--rose)}
   .ymcasctgl:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  .ymrewatchrow{display:flex;align-items:center;gap:12px;background:var(--panel2);border:1px solid var(--line);
-    border-radius:12px;padding:12px 13px;margin-top:18px}
-  .ymrewatchrow .uic{background:rgba(255,47,135,.14);color:var(--rose-ink)}
-  .ymrewatchrow .tgl.on{background:var(--rose-grad);border-color:var(--rose)}
+  /* CAS-570: the single rewatch switch became one tickbox per verdict. These reuse .nopt/--wwc — the same
+     control the watch-priority filter popover already uses (line ~8055) — so the tick, the colour slot and
+     the pressed state are the app's existing ones rather than a fourth kind of checkbox. --wwc is fed each
+     step's own colour from WATCH_STEPS, so the row reads as the same best-worst ramp it does everywhere
+     else. .nopt is full-width by default (it lists vertically in the popover); here it hugs its label. */
+  .ymverdicts{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+  .ymverdicts .nopt{width:auto;flex:0 0 auto;padding:7px 11px}
   .ymresultbar{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:20px 2px 10px;
     font-size:13.5px}
   .ymresultbar b{color:var(--ink);font-weight:800}
@@ -12020,8 +12024,8 @@ window.openMenuServices=()=>{
 // sub-sections) that used to sit below the feed is gone — it had no other entry point, so removal drops
 // the feature entirely rather than leaving it reachable elsewhere.
 // ---- CAS-529: the filterable "what can I watch now" feed — the screen's new PRIMARY view -----------------
-// Service filter × cascade filter × rewatch toggle, live. Match rule is Lee's own: a film qualifies if it
-// sits in at least one TICKED cascade (listedBy — the exact predicate the deck/Agents-row count already
+// Service filter × cascade filter × per-verdict watched inclusion (CAS-570), live. Match rule is Lee's own:
+// a film qualifies if it sits in at least one TICKED cascade (listedBy — the exact predicate the deck/Agents-row count already
 // use, CAS-279's invariant) AND its own Watch it ticks (filmOptOn) cover at least one TICKED service.
 // The four service keys are WATCH_LEVEL_KEYS (CAS-349's Watch ladder) under the names this screen uses.
 // CAS-536: a tick alone isn't enough — filmOptOn only answers "did you ever say you wanted this", not "can
@@ -12043,7 +12047,7 @@ const YM_SVC = [
 ];
 let ymSvcOn = new Set(["stream"]);   // ticked service filters — default Streaming only
 let ymCascOff = new Set();           // cascade ids explicitly UNticked — default empty, i.e. every cascade
-let ymRewatch = false;               // include already-Watched films — default off
+let ymWatchedOn = new Set();   // watched verdicts to include — empty = exclude every watched film (the old default)
 const ymCascTicked = c => !ymCascOff.has(c.id);
 // CAS-535: the three controls above are now collapsed behind the compact card's Edit button by default —
 // these are its own state, plus the new Search/Filter/Sort icon row's state.
@@ -12054,12 +12058,14 @@ let ymWatchTiers = new Set();   // Filter icon — reuses FILTER_TIERS/filmHasWa
                                  // scoped to this feed rather than the deck's per-cascade filt.watchTiers.
 let ymSort = null;              // Sort icon — null keeps the feed's own "best match" order; else a sortMoviesBy key.
 // Never (blocked) stays excluded outright — that bucket is a permanent no, not something this feed
-// reconsiders. Watched only rejoins when the rewatch toggle is on, so a Wow can be picked again without
-// every watched film flooding back by default.
+// reconsiders. A watched film only rejoins when its own verdict is ticked in ymWatchedOn (CAS-570), so a
+// Wow can be picked again without every watched film flooding back by default.
 function ymFeedMatches(m){
   const id=m.tmdb_id;
   if(blocked.has(id)) return false;
-  if(!ymRewatch && watched.has(id)) return false;
+  // CAS-570: one tickbox per verdict, not one switch for all of them. opinionOf() returns "" for an unwatched
+  // film, which is never in the set, so unwatched films are unaffected by this line either way.
+  if(watched.has(id) && !ymWatchedOn.has(opinionOf(id))) return false;
   if(!YM_SVC.some(s=>ymSvcOn.has(s.key) && filmCurrentlyAt(id,s.wk) && filmOptOn(id,{key:s.wk}))) return false;
   if(ymSearchTerm && !m.title.toLowerCase().includes(ymSearchTerm)) return false;
   if(ymWatchTiers.size && ![...ymWatchTiers].some(k=>k==="undecided" ? filmIsUndecided(id) : filmHasWatchTier(id,k))) return false;
@@ -12079,7 +12085,8 @@ function ymFeedList(){
 window.ymSvcToggle=key=>{ ymSvcOn.has(key)?ymSvcOn.delete(key):ymSvcOn.add(key); renderYourMovies(); };
 window.ymSvcSetAll=on=>{ ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]); renderYourMovies(); };
 window.ymCascToggle=id=>{ ymCascOff.has(id)?ymCascOff.delete(id):ymCascOff.add(id); renderYourMovies(); };
-window.ymRewatchToggle=()=>{ ymRewatch=!ymRewatch; renderYourMovies(); };
+window.ymVerdictToggle=k=>{ ymWatchedOn.has(k)?ymWatchedOn.delete(k):ymWatchedOn.add(k); renderYourMovies(); };
+window.ymVerdictSetAll=on=>{ ymWatchedOn = new Set(on ? WATCH_STEPS.map(s=>s.key) : []); renderYourMovies(); };
 window.ymEditToggle=()=>{ ymEditOpen=!ymEditOpen; renderYourMovies(); };
 // CAS-541: the Edit panel used to be dismissible only by re-tapping "Edit" itself — every other popover in
 // the app (the deck's own Watch it filter, closeFilterPanel above) also closes on an outside tap, Escape, or
@@ -12249,6 +12256,12 @@ function ymPanelHTML(matchCount){
         onclick="ymCascToggle('${escA(c.id)}')">✓</button>
     </div>`;
   }).join("");
+  const verdictBoxes=WATCH_STEPS.map(s=>{
+    const on=ymWatchedOn.has(s.key);
+    return `<button type="button" class="nopt${on?" on":""}" style="--wwc:${s.cd}"
+      aria-pressed="${on}" onclick="ymVerdictToggle('${s.key}')">
+      <span class="wwb">✓</span><span>${esc(s.lbl)}</span></button>`;
+  }).join("");
   return `<div class="ympanel">
     <div class="ymphead">Where you can watch it</div>
     <div class="chips">${svcChips}</div>
@@ -12259,12 +12272,11 @@ function ymPanelHTML(matchCount){
     </div>
     <div class="ymphead ymcaschead">Cascades to include · ${cascOn} of ${cascades.length}</div>
     <div class="ymcasclist">${cascRows || `<p class="unone">No cascades yet.</p>`}</div>
-    <div class="ymrewatchrow">
-      <span class="uic">↻</span>
-      <span class="utxt"><span class="ut">Include films I've watched</span>
-        <span class="ussub">so you can pick a rewatch, e.g. a Wow</span></span>
-      <button type="button" class="tgl${ymRewatch?" on":""}" role="switch" aria-checked="${ymRewatch}"
-        onclick="ymRewatchToggle()"></button>
+    <div class="ymphead ymcaschead">Films I've watched · include</div>
+    <div class="ymverdicts">${verdictBoxes}</div>
+    <div class="ymlinkrow">
+      <span><button type="button" class="ymlink" onclick="ymVerdictSetAll(true)">Select all</button> ·
+        <button type="button" class="ymlink" onclick="ymVerdictSetAll(false)">Clear all</button></span>
     </div>
   </div>`;
 }
@@ -12279,7 +12291,9 @@ function ymSummaryLine(){
     : "No services selected";
   const cascOn=cascades.filter(ymCascTicked).length;
   const cascPart = `${cascOn} of ${cascades.length} cascade${cascades.length===1?"":"s"}`;
-  const rewatchPart = ymRewatch ? "incl. watched" : "not incl. watched";
+  const rewatchPart = !ymWatchedOn.size ? "not incl. watched"
+    : ymWatchedOn.size===WATCH_STEPS.length ? "incl. all watched"
+    : "incl. " + WATCH_STEPS.filter(s=>ymWatchedOn.has(s.key)).map(s=>s.lbl.replace("!","")).join(" + ");
   return [svcPart, cascPart, rewatchPart].join(" · ");
 }
 function ymCardHTML(matchCount){
@@ -12324,13 +12338,14 @@ function ymCardHTML(matchCount){
 }
 function ymResultLineHTML(films){
   const n=films.length, head=`<b>${n} film${n===1?"":"s"}</b>`;
-  if(!ymRewatch) return `${head} <span>· sorted by best match</span>`;
+  if(!ymWatchedOn.size) return `${head} <span>· sorted by best match</span>`;
   const already=films.filter(m=>watched.has(m.tmdb_id)).length;
   return `${head} <span>· incl. ${already} you've already watched</span>`;
 }
 // Streams the feed's cards in with the deck's own chunking shape (CAS-129), but always the full
 // cardHTML — never the stub fillListChunked uses for a taggedOut film, because a Watched film only
-// reaches this list when the rewatch toggle deliberately asked to reconsider it, and a stub can't be acted on.
+// reaches this list when its own verdict was deliberately ticked back in (CAS-570), and a stub can't be
+// acted on.
 let ymCardGen=0;
 function ymFillCards(el, films){
   const gen=++ymCardGen;

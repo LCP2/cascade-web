@@ -1,7 +1,9 @@
 // CAS-529: "Your Movies" — a live, filterable "what can I watch now" feed replaces the old static screen
 // as the primary view. Match rule (Lee's own words): a film qualifies if it sits in at least one TICKED
 // cascade AND its own Watch it ticks cover at least one TICKED service. Default: Streaming only, every
-// cascade ticked, rewatch off.
+// cascade ticked, no watched verdicts included.
+// CAS-570: the single "include watched" switch became one tickbox per WATCH_STEPS verdict — the tests
+// below that used to flip .ymrewatchrow .tgl now tick the specific verdict box instead.
 // CAS-546: the old three-bucket "Movie selections" list that used to sit below this feed is gone — the
 // test that pinned it in place ("stays put, unchanged, below it") is removed along with the feature.
 import { test, expect } from "@playwright/test";
@@ -86,7 +88,7 @@ async function selectOnlyService(page, label){
   }
 }
 
-test("CAS-529: opens on the feed with its default filters — Streaming only, every cascade ticked, rewatch off", async ({ page }) => {
+test("CAS-529: opens on the feed with its default filters — Streaming only, every cascade ticked, no watched verdicts", async ({ page }) => {
   await toStreamListing(page);
   await openYourMovies(page);
 
@@ -102,9 +104,10 @@ test("CAS-529: opens on the feed with its default filters — Streaming only, ev
 
   await expect(page.locator(".agrow.ym-casc")).toHaveCount(1);
   await expect(page.locator(".ymcasctgl")).toHaveClass(/on/);
-  await expect(page.locator(".ymcaschead")).toHaveText(/1 of 1/);
+  // CAS-570 also carries the .ymcaschead margin-top class (style-only reuse) — scope to the cascades header.
+  await expect(page.locator(".ymcaschead").first()).toHaveText(/1 of 1/);
 
-  await expect(page.locator(".ymrewatchrow .tgl")).not.toHaveClass(/on/);
+  await expect(page.locator(".ymverdicts .nopt.on")).toHaveCount(0);   // CAS-570: nothing ticked by default
 });
 
 test("CAS-529: match rule needs the film's OWN Watch it tick on a ticked service, not just any ticked service", async ({ page }) => {
@@ -146,7 +149,7 @@ test("CAS-529: match rule needs at least one TICKED cascade to list the film, ev
 
   await page.locator(".ymcasctgl").click();   // the only cascade — untick it
   await expect(page.locator(".ymcasctgl")).not.toHaveClass(/on/);
-  await expect(page.locator(".ymcaschead")).toHaveText(/0 of 1/);
+  await expect(page.locator(".ymcaschead").first()).toHaveText(/0 of 1/);
   await expect(page.locator(`#ymCards #card-${id}`)).toHaveCount(0);
   await expect(page.locator(".unone", { hasText: "No films match" })).toBeVisible();
 
@@ -154,7 +157,7 @@ test("CAS-529: match rule needs at least one TICKED cascade to list the film, ev
   await expect(page.locator(`#ymCards #card-${id}`)).toBeVisible();
 });
 
-test("CAS-529: rewatch toggle — a Watched film is excluded by default and reappears (with the incl. wording) once it's on", async ({ page }) => {
+test("CAS-529/570: a Watched film is excluded by default and reappears once its own verdict is ticked", async ({ page }) => {
   await toStreamListing(page);
   const id = await firstCardId(page);
   const svc = await currentSvcKey(page, id);
@@ -168,13 +171,14 @@ test("CAS-529: rewatch toggle — a Watched film is excluded by default and reap
   await openYmEdit(page);
   await selectOnlyService(page, SVC_LABEL[svc]);
 
-  await page.locator(".ymrewatchrow .tgl").click();
-  await expect(page.locator(".ymrewatchrow .tgl")).toHaveClass(/on/);
+  const wowBox = page.locator(".ymverdicts .nopt", { hasText: "Wow!" });
+  await wowBox.click();
+  await expect(wowBox).toHaveClass(/on/);
   await expect(page.locator(`#ymCards #card-${id}`)).toBeVisible();
   await expect(page.locator(".ymresultbar")).toHaveText(/incl\. 1 you've already watched/);
 });
 
-test("CAS-529: a film marked Never stays excluded even with rewatch on", async ({ page }) => {
+test("CAS-529/570: a film marked Never stays excluded even with every watched verdict ticked", async ({ page }) => {
   await toStreamListing(page);
   const id = await firstCardId(page);
   await tickWatchIt(page, id, "stream");
@@ -182,7 +186,7 @@ test("CAS-529: a film marked Never stays excluded even with rewatch on", async (
 
   await openYourMovies(page);
   await openYmEdit(page);
-  await page.locator(".ymrewatchrow .tgl").click();
+  await page.locator(".ymlinkrow .ymlink", { hasText: "Select all" }).last().click();   // every verdict on
   await expect(page.locator(`#ymCards #card-${id}`)).toHaveCount(0);
 });
 
