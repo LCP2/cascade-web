@@ -2467,6 +2467,12 @@
      person can never actually see it. --hdrh is the header's own live-measured height (see
      syncHeaderHeight()), the same var .cascbar already sticks under. */
   #agentsScreen, #yourMovies{top:var(--hdrh,0px)}
+  /* CAS-567: .uwrap's calc(22px + env(safe-area-inset-top)) clearance is written for the .uscreens that
+     cover the header at top:0. #yourMovies is not one of them — it starts at var(--hdrh), so the header has
+     already spent the notch inset and this padding double-counts it: 22px in a desktop harness, 22px + the
+     real inset on the device. Find's equivalent (.cascbar) starts 2px under the header; this matches it.
+     #agentsScreen has the same defect and is deliberately NOT changed here — see CAS-565. */
+  #yourMovies .uwrap{padding-top:0}
   /* CAS-509: same env(safe-area-inset-top) clearance as the header — .uscreen (Your Movies, Agents,
      Review, Account, Service analysis, Lists, About) is fixed from the viewport's true top:0, so its
      .ostop back button was sitting under the notch/status bar with none of the header's allowance. */
@@ -2630,14 +2636,26 @@
   .ymcards{display:flex;flex-direction:column;gap:14px;margin:0 -16px;padding:0 5px}
   /* ---- CAS-535: the compact "Watch List" card — same rose accent as .ympanel (now only shown behind Edit),
        shaped like the deck's own small Agent card: icon chip, title, film count, action-icon row. */
+  /* CAS-567: the sticky band. .ymcard is a 354px rounded card at left:18, so while it was the sticky element
+     itself, film cards scrolled through the 18px either side of it and the 16px above it. Find's .cascbar is
+     full-bleed and opaque, which is why it never shows this. The negative side margins cancel .uwrap's 16px
+     padding, so the band reaches the scrollport edge; the card keeps its own shape inside it.
+     The compositing-layer promotion moves here with position:sticky — see the CAS-543 note below for why it
+     has to be on whichever element is actually stuck.
+     CAS-554 device-parity-ignore: R2 — this top:0 is .ymcard's own former one, carried over: #yourMovies sits
+     at top:var(--hdrh,0px), below the header, not the viewport's true top:0, so this scrollport never reaches
+     the notch and needs no safe-area padding. */
+  .ymsticky{position:sticky;top:0;z-index:5;background:var(--bg);margin:0 -16px;padding:8px 16px;
+    transition:padding .18s ease;transform:translateZ(0);-webkit-transform:translateZ(0)}
+  .ymsticky.collapsed{padding-bottom:6px;box-shadow:0 6px 16px -8px rgba(0,0,0,.7)}
   .ymcard{background:var(--panel);border:1px solid rgba(255,47,135,.32);border-radius:16px;
-    padding:14px 15px;margin-top:16px;
+    padding:14px 15px;margin-top:0;
     /* CAS-540: sticky within #yourMovies's own scroll container (see syncYmCollapse()'s comment for why
        that's this card's scrollport, not window/the page, unlike #cascbar).
        CAS-554 device-parity-ignore: R2 — #yourMovies itself sits at top:var(--hdrh,0px), below the header,
        not the viewport's true top:0 (see #agentsScreen,#yourMovies above), so this scrollport never reaches
        the notch and .ymcard's own top:0 needs no safe-area padding. */
-    position:sticky;top:0;z-index:5;transition:padding .18s ease;
+    position:static;transition:padding .18s ease;
     /* CAS-543: CAS-540's comment says this mirrors #cascbar's mechanism (own anchor, scroll-driven toggle,
        no-transition-on-live-scroll — all present in syncYmCollapse()), but it never copied .cascbar's own
        compositing-layer promotion (CAS-519's actual fix, see that rule's comment): WebKit drops a
@@ -2646,11 +2664,12 @@
        .ymcard could lose its pin mid-scroll on a real device: the card scrolls away in normal flow while the
        browser still reserves its stuck-position space at the top of the scrollport, i.e. exactly the "header
        gone, blank space left behind" Lee reported. */
-    transform:translateZ(0);-webkit-transform:translateZ(0)}
-  .ymcard.no-transition,.ymcard.no-transition *{transition:none!important}
+    transform:none;-webkit-transform:none}
+  .ymcard.no-transition,.ymcard.no-transition *,
+  .ymsticky.no-transition,.ymsticky.no-transition *{transition:none!important}
   /* CAS-540: the collapsed pill — icon/title/count stay, the sub-line and action row (Edit/Search/Filter/
      Sort) go, mirroring .cascbar.collapsed's own "keep the name, drop everything else" shape. */
-  .ymcard.collapsed{padding:8px 15px;box-shadow:0 6px 16px -8px rgba(0,0,0,.7);cursor:pointer}
+  .ymcard.collapsed{padding:8px 15px;cursor:pointer}
   .ymcard.collapsed .ymctop{align-items:center}
   .ymcard.collapsed .ymcicon{width:28px;height:28px;border-radius:9px}
   .ymcard.collapsed .ymctitle{font-size:10px}
@@ -4159,7 +4178,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 551, "commit": "0c1f60e", "builtAt": "2026-08-18T02:22:10Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 552, "commit": "3f4c0f7", "builtAt": "2026-08-18T02:41:09Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -12095,8 +12114,12 @@ function syncYmCollapse(){
   ymExpandProgrammatic=false;
   if(skipTransition) card.classList.add("no-transition");
   card.classList.toggle("collapsed", now);
+  // CAS-567: the band is the sticky element now, and it carries the collapsed padding + shadow.
+  const band=$("ymSticky");
+  if(band){ if(skipTransition) band.classList.add("no-transition"); band.classList.toggle("collapsed", now); }
   void card.offsetHeight;
-  if(skipTransition) requestAnimationFrame(()=>card.classList.remove("no-transition"));
+  if(skipTransition) requestAnimationFrame(()=>{
+    card.classList.remove("no-transition"); band && band.classList.remove("no-transition"); });
 }
 $("yourMovies").addEventListener("scroll",()=>{ if(ymCollapseRaf) return;
   ymCollapseRaf=requestAnimationFrame(()=>{ ymCollapseRaf=0; syncYmCollapse(); }); },{passive:true});
@@ -12333,7 +12356,7 @@ function renderYourMovies(){
   const feed=ymFeedList();
   $("yourMoviesBody").innerHTML=`
     <div id="ymAnchor" aria-hidden="true" style="height:1px"></div>
-    ${ymCardHTML(feed.length)}
+    <div class="ymsticky${ymCollapsed?" collapsed":""}" id="ymSticky">${ymCardHTML(feed.length)}</div>
     ${ymEditOpen ? ymPanelHTML(feed.length) : ""}
     <div class="ymresultbar" id="ymResultBar">${ymResultLineHTML(feed)}</div>
     <div class="ymcards" id="ymCards">${feed.length?"":`<p class="unone">No films match — loosen a filter above.</p>`}</div>`;
