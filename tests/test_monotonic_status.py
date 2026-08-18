@@ -179,8 +179,14 @@ class TransientProviderDropEndToEnd(unittest.TestCase):
         events = pp.diff_and_alert(day1)
 
         self.assertEqual(day1[0]["status"], ["included_streaming"])
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]["new_window"], "included_streaming")
+        arrivals = [e for e in events if e["kind"] == "arrived"]
+        self.assertEqual(len(arrivals), 1)
+        self.assertEqual(arrivals[0]["new_window"], "included_streaming")
+        # CAS-578 R4: rental is real news too — the film genuinely left it the same run streaming
+        # arrived, so a paired "left" event is expected here, not a bug.
+        departures = [e for e in events if e["kind"] == "left"]
+        self.assertEqual(len(departures), 1)
+        self.assertEqual(departures[0]["lost_window"], "rental")
 
 
 class ZeroAuRowsNeverInventAPaidTier(unittest.TestCase):
@@ -367,6 +373,115 @@ class ALatchedUpcomingTitleSelfCorrectsOnTheNextRun(unittest.TestCase):
         self.assertEqual(day1[0]["poll_tier"], "slow")                # no longer latched at "none"
         self.assertEqual(day1[0]["status"], ["included_streaming"])   # the real offer, found and committed
         self.assertTrue(day1[0]["offers"])
+
+
+class DiffAndAlertEmitsDepartures(unittest.TestCase):
+    """CAS-578 R4/AC4: a film LEAVING a window is exactly as interesting as one entering it, and
+    diff_and_alert must say so — the flip side of the "arrived" events it has always emitted."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        state_dir = self._tmp.name
+        patches = [
+            mock.patch.object(pp, "STATE_DIR", state_dir),
+            mock.patch.object(pp, "SNAPSHOT_FILE", os.path.join(state_dir, "last_snapshot.json")),
+            mock.patch.object(pp, "ALERTS_FILE", os.path.join(state_dir, "alerts.json")),
+        ]
+        for p in patches:
+            p.start(); self.addCleanup(p.stop)
+
+    def test_a_confirmed_loss_emits_a_left_event(self):
+        # The CAS-578 D2 shape: a title held included_streaming, its sub offer is gone, and this run's
+        # committed status (post monotonic-guard) genuinely no longer holds the window.
+        day0 = [_title(1, status=["included_streaming"])]
+        pp.diff_and_alert(day0)
+
+        day1 = [_title(1, status=["in_cinema"], offers=[])]
+        events = pp.diff_and_alert(day1)
+
+        left = [e for e in events if e["kind"] == "left"]
+        self.assertEqual(len(left), 1)
+        self.assertEqual(left[0]["lost_window"], "included_streaming")
+        self.assertEqual(left[0]["tmdb_id"], 1)
+
+    def test_a_title_gaining_a_second_window_loses_nothing(self):
+        day0 = [_title(1, status=["rental"])]
+        pp.diff_and_alert(day0)
+
+        day1 = [_title(1, status=["rental", "included_streaming"])]
+        events = pp.diff_and_alert(day1)
+
+        self.assertEqual([e for e in events if e["kind"] == "left"], [])
+
+    def test_a_titles_first_sighting_never_emits_a_departure(self):
+        day0 = [_title(1, status=["in_cinema"])]
+        events = pp.diff_and_alert(day0)   # nothing "prior" to have left
+        self.assertEqual([e for e in events if e["kind"] == "left"], [])
+
+
+class WindowDatesAreCorrectableNotPermanent(unittest.TestCase):
+    """CAS-578 R2/R3: window_dates must only stamp a home window (pvod/rental/included_streaming)
+    when a real offer backs it THIS run, and must drop a stamp once the film has genuinely,
+    monotonic-guard-confirmed left it — the D1 defect was setdefault() making every stamp
+    permanent regardless of what later evidence said."""
+
+    def test_a_home_window_is_never_stamped_without_an_offer(self):
+        m = {"tmdb_id": 1, "title": "X", "status": ["rental"], "offers": []}
+        wd = pp.update_window_dates([m], {}, {}, "2026-08-18")
+        self.assertNotIn("rental", wd["1"])
+        self.assertNotIn("rental", m["window_dates"])
+
+    def test_a_home_window_is_stamped_when_a_real_offer_backs_it(self):
+        m = {"tmdb_id": 1, "title": "X", "status": ["rental"],
+             "offers": [{"service": "Amazon Video", "type": "rent", "price": 6.99}]}
+        wd = pp.update_window_dates([m], {}, {}, "2026-08-18")
+        self.assertEqual(wd["1"]["rental"], "2026-08-18")
+
+    def test_the_earliest_corroborated_date_is_kept_not_overwritten(self):
+        m = {"tmdb_id": 1, "title": "X", "status": ["rental"],
+             "offers": [{"service": "Amazon Video", "type": "rent", "price": 6.99}]}
+        wd = pp.update_window_dates([m], {"1": {"rental": "2026-07-01"}}, {}, "2026-08-18")
+        self.assertEqual(wd["1"]["rental"], "2026-07-01")
+
+    def test_a_confirmed_departure_drops_the_stamp(self):
+        # Toy Story 5's exact shape: rental/included_streaming/pvod were stamped by the old bug,
+        # status has since self-corrected to in_cinema, and nothing ever removed the old stamps —
+        # this proves the writer now does, the moment a real prior/after diff shows the departure.
+        prev_by_id = {1: {"status": ["included_streaming"]}}
+        m = {"tmdb_id": 1, "title": "Toy Story 5", "status": ["in_cinema"], "offers": []}
+        wd = pp.update_window_dates(
+            [m], {"1": {"in_cinema": "2026-06-01", "included_streaming": "2026-07-23"}},
+            prev_by_id, "2026-08-18")
+        self.assertNotIn("included_streaming", wd["1"])
+        self.assertEqual(wd["1"]["in_cinema"], "2026-06-01")    # untouched — offer-less by design
+
+    def test_in_cinema_and_upcoming_are_never_gated_on_an_offer(self):
+        m = {"tmdb_id": 1, "title": "X", "status": ["in_cinema"], "offers": []}
+        wd = pp.update_window_dates([m], {}, {}, "2026-08-18")
+        self.assertEqual(wd["1"]["in_cinema"], "2026-08-18")
+
+
+class MassStampGuardCatchesABadRun(unittest.TestCase):
+    """CAS-578 R6/AC7: the guard that would have caught D1 before it ever reached the catalogue."""
+
+    def test_a_run_that_would_move_more_than_the_threshold_share_is_refused(self):
+        prev = {i: {"status": ["in_cinema"]} for i in range(100)}
+        records = [{"tmdb_id": i, "status": ["rental"]} for i in range(100)]   # 100% -> rental
+        with self.assertRaises(pp.MassStampGuardTripped):
+            pp.check_mass_stamp_guard(records, prev)
+
+    def test_an_ordinary_run_under_the_threshold_passes(self):
+        prev = {i: {"status": ["in_cinema"]} for i in range(100)}
+        records = [{"tmdb_id": i, "status": ["rental"] if i < 2 else ["in_cinema"]}
+                   for i in range(100)]                                        # 2% -> rental
+        pp.check_mass_stamp_guard(records, prev)   # must not raise
+
+    def test_a_titles_first_sighting_never_counts_toward_the_guard(self):
+        # CAS-128: lifting the catalogue cap moved thousands of titles from "doesn't exist yet"
+        # into some window in one run — real catalogue growth, not a reclassification bug.
+        records = [{"tmdb_id": i, "status": ["upcoming"]} for i in range(1000)]
+        pp.check_mass_stamp_guard(records, {})   # must not raise
 
 
 if __name__ == "__main__":

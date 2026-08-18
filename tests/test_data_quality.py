@@ -32,6 +32,11 @@ BLOCKING_TESTS = {
     "CatalogueShape.test_every_film_has_the_fields_the_ui_prints",
     "DataCompleteness.test_the_showable_catalogue_is_a_real_population",
     "DataCompleteness.test_every_showable_film_carries_what_it_cannot_be_shown_without",
+    # CAS-578: D1/D2 were exactly this class of app-breaker (a listing claiming you can watch
+    # something with nothing behind it) and both slipped past every existing check for weeks —
+    # these two are the assertions AC2/AC4 require, and they block for the same reason the four above do.
+    "AvailabilityIsBackedBySomething.test_a_home_window_is_never_claimed_with_zero_offers",
+    "AvailabilityIsBackedBySomething.test_included_streaming_is_never_claimed_without_a_current_sub_offer",
 }
 
 # The windows a film can hold, in journey order — the same list the front end calls CASCADE.
@@ -132,6 +137,28 @@ class AvailabilityIsBackedBySomething(unittest.TestCase):
             if set(m["status"]) & HOME_WINDOWS and not m["offers"]:
                 bad.append((m["title"], m["status"]))
         self.assertEqual(bad, [], f"confirmed home-window films with no offers: {bad[:5]}")
+
+    def test_a_home_window_is_never_claimed_with_zero_offers(self):
+        # CAS-578 AC2/D1: unlike test_a_home_window_is_never_claimed_on_no_offer above (which only
+        # checks CONFIRMED films), this is unconditional. The 112-title corruption reached the
+        # catalogue entirely through the ESTIMATED path — an offer-less title mass-stamped a paid
+        # window by a pre-CAS-412 bug — which the older, confirmed-only check never saw at all.
+        bad = [(m["title"], m["status"]) for m in self.movies
+               if set(m["status"]) & HOME_WINDOWS and not m["offers"]]
+        self.assertEqual(bad, [], f"films holding a home window with zero offers: {bad[:5]}")
+
+    def test_included_streaming_is_never_claimed_without_a_current_sub_offer(self):
+        # CAS-578 AC4/AC5/D2: 675 titles kept an included_streaming badge long after their
+        # subscription offer disappeared, because nothing ever re-checked a claimed window against
+        # today's real offers — there was no departure path in the code at all. Zero is the count.
+        bad = []
+        for m in self.movies:
+            if "included_streaming" not in m["status"]:
+                continue
+            if not any(o.get("type") in ("sub", "free") for o in m["offers"]):
+                bad.append((m["title"], [o.get("type") for o in m["offers"]]))
+        self.assertEqual(bad, [],
+                          f"included_streaming claimed with no current sub/free offer: {bad[:5]}")
 
     def test_offers_are_well_formed(self):
         bad = []
