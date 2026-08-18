@@ -248,9 +248,11 @@
      and right-aligned to it (right:0 against the wrap, which is exactly as wide as the icon), so it never
      spans past the icon that opened it. */
   .navmenu-wrap{position:relative}
-  /* CAS-533: z-index 95, not 60 — the header (and its Menu button) now stays reachable while Agents/Your
-     Movies is open (see #agentsScreen, #yourMovies above), and those sit at z-index:84, higher than this
-     dropdown used to need to be. */
+  /* CAS-533 raised this to 95 intending to clear #agentsScreen/#yourMovies at z-index:84. That could never
+     work — header{position:sticky;z-index:30} is a STACKING CONTEXT, so this value only orders the dropdown
+     against the header's other children, never against anything outside it. The menu stayed unreachable
+     over both screens until CAS-568, which fixed it from the other end by dropping those two screens to
+     z-index:29. The 95 is kept: it still orders this above the header's own children. */
   .navmenu{position:absolute;top:calc(100% + 8px);right:0;z-index:95;display:none;flex-direction:column;
     min-width:180px;background:var(--panel);border:1px solid var(--line);border-radius:12px;
     box-shadow:0 12px 28px rgba(0,0,0,.4);overflow:hidden}
@@ -2484,7 +2486,14 @@
      true top:0 — otherwise the chip's active fill paints on the same frame the screen covers it, and a
      person can never actually see it. --hdrh is the header's own live-measured height (see
      syncHeaderHeight()), the same var .cascbar already sticks under. */
-  #agentsScreen, #yourMovies{top:var(--hdrh,0px)}
+  /* CAS-568: these two are the only .uscreens that sit BELOW the header instead of covering it, so they
+     must sit below it in z-ORDER too. Without that, the header's Menu dropdown — trapped in the header's
+     own stacking context (position:sticky + z-index:30), so its own z-index:95 cannot escape — paints and
+     hit-tests behind them, and the menu is dead while either screen is open. 29 is above .cascbar (20) and
+     below the header (30); nothing in the app uses 21-29.
+     NOT solved by raising the header: the five .uscreens that DO cover it (Account, Lists, About, Review,
+     Service analysis) share the same z-index:84, so any header above 84 paints over them too. */
+  #agentsScreen, #yourMovies{top:var(--hdrh,0px); z-index:29}
   /* CAS-567: .uwrap's calc(22px + env(safe-area-inset-top)) clearance is written for the .uscreens that
      cover the header at top:0. #yourMovies is not one of them — it starts at var(--hdrh), so the header has
      already spent the notch inset and this padding double-counts it: 22px in a desktop harness, 22px + the
