@@ -1215,11 +1215,6 @@
   .dcard.loading .dc-spin{width:16px;height:16px;border-radius:50%;
     border:2px solid rgba(255,255,255,.2);border-top-color:var(--dim);animation:btnspin .8s linear infinite}
   @media (prefers-reduced-motion:reduce){ .dcard.loading .dc-spin{animation-duration:2.4s} }
-  /* The built-in All card: home base. Reads as belonging to the deck but not as one of YOUR agents — it
-     has no actions row, so it sits shorter than the rest and needs its own bottom padding. */
-  .dcard.all .dc-in{border-color:#3a4a63;padding-bottom:14px}
-  .dcard.all .dc-name{color:var(--dim)}
-  .dcard.all.is-centre .dc-name{color:var(--ink)}
   .casccta{font-size:12px;color:var(--faint);line-height:1.5;margin:0 12px}
   .ca-btn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;
     padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
@@ -1259,7 +1254,6 @@
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cascbar.rail .dc-acts{flex:1 0 100%;padding-top:7px}
   .cascbar.rail .ca-btn{padding:4px 8px;font-size:11px}
-  .cascbar.rail .dcard.all .dc-in{padding-bottom:8px}
   /* Reduced motion: no coverflow transform — a plain horizontal snap-scroll (the JS clears the inline styles too) */
   @media (prefers-reduced-motion:reduce){
     .deckstrip{scroll-behavior:auto;transition:none}
@@ -4061,20 +4055,19 @@ const cascades = loadCascades();
 // `cascades.length` can be trusted; a guest device (the common case) is authoritative immediately.
 let cascadesReady = true;
 try{ cascadesReady = localStorage.getItem("cascade_had_account") !== "1"; }catch(e){}
-// ---- The built-in "All" Cascade (CAS-101) --------------------------------------
-// Home base, and the deck's first card. It is NOT a saved Cascade: it never enters `cascades`, so it is
-// never persisted, edited, deleted, synced or alerted on. It IS the no-Cascade-open state — which the app
-// already had — given a card of its own, so the whole catalogue is something you can CHOOSE rather than
-// only fall back to. activeCascade() returning null for it is the point, not an oversight: every scope,
-// dirty-check and alert path downstream already means "no Cascade open" by that null.
-const ALL_ID = "__all__";
-const ALL_ICON = "🎞️";
-let activeId = ALL_ID;
-try{ activeId = localStorage.getItem("cascade_active") || ALL_ID; }catch(e){}
-function setActive(id){ activeId=id||ALL_ID; try{ localStorage.setItem("cascade_active",activeId); }catch(e){} }
+// ---- The active Cascade (CAS-566: no more built-in "All") -----------------------
+// activeId names the open agent, or null when there isn't one. Null happens only with zero agents —
+// activeCascade() returning null downstream means exactly that now, not "the whole catalogue is open".
+function firstAgentId(){ return cascades.length ? cascades[0].id : null; }
+let activeId = null;
+try{ activeId = localStorage.getItem("cascade_active") || null; }catch(e){}
+function setActive(id){ activeId=id||firstAgentId(); try{ localStorage.setItem("cascade_active",activeId||""); }catch(e){} }
 const activeCascade = () => cascades.find(c=>c.id===activeId) || null;
-// Stale pointer from a deleted Cascade → home base, not nowhere.
-if(activeId!==ALL_ID && !activeCascade()) setActive(ALL_ID);
+// CAS-566/R2/R7: land on the stored agent if it still exists; otherwise the first agent, once there is one.
+// Catches a deleted agent's stale pointer AND a pre-CAS-566 install whose stored id was "__all__" — neither
+// matches a real cascade, so both fall through here. Guarded on cascades.length so a genuinely empty account
+// (nothing to promote to) is left at null rather than writing a no-op correction on every check.
+if(!activeCascade() && cascades.length) setActive(firstAgentId());
 
 // ---- CAS-428: Lists — user-curated, manual collections (a different thing from an Agent) ---------------
 // An Agent is auto-populated by its own criteria; a List is the opposite — nothing lands in one except by
@@ -4166,7 +4159,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 550, "commit": "283ba88", "builtAt": "2026-08-18T01:53:58Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 551, "commit": "0c1f60e", "builtAt": "2026-08-18T02:22:10Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -4622,6 +4615,10 @@ function showFoundList(){ settleFoundView(); }
 // CAS-419: the invisible <select> is the only thing that changes filt.sort; this just repaints the icon
 // button around it — a tooltip naming the current order, and the active-dot for "you're off the default".
 function syncSortCtl(){
+  // CAS-566: sortCtl only lives inside whichever card is .is-active (deckSync's reparenting) — with zero
+  // agents there is no such card, so it sits detached (not in the document) until one exists again, and
+  // every $() lookup inside it (sort/sortDot are its own children) would otherwise return null.
+  if(!sortCtl.isConnected) return;
   const opt=$("sort").querySelector(`option[value="${filt.sort}"]`);
   $("sortCtl").title="Order: "+(opt?opt.textContent:"");
   $("sortDot").hidden=(filt.sort==="availability");
@@ -4654,7 +4651,9 @@ function syncFilterUI(){
   $("budgetBand").value=filt.budget; $("tentpoleSel").value=filt.tentpole;
   $("sort").value=filt.sort; syncSortCtl();
 }
-$("resetBtn").onclick=()=>{ setActive(ALL_ID); clearFilters(); syncFilterUI(); render(); };
+// CAS-566/R5: used to mean "drop every filter and show everything" via All — without All it means
+// "drop every filter on the agent you are on". It must not change which agent is open.
+$("resetBtn").onclick=()=>{ clearFilters(); syncFilterUI(); render(); };
 
 // CAS-530: was the header bell's own onclick — the bell is gone from the bar, so Notifications' Menu entry
 // (navMenuGo('notifications')) calls this instead.
@@ -4665,14 +4664,18 @@ $("closeDrawer").onclick=closeDrawer;
 $("overlay").onclick=e=>{if(e.target.id==="overlay")closeDrawer();};
 function closeDrawer(){$("drawer").classList.remove("open");setTimeout(()=>$("overlay").classList.remove("open"),200);}
 // CAS-445: tapping a film in the Notifications panel opens its card. The film may not be in the currently
-// active Cascade's filtered listing at all (that's the whole point of a cross-agent notifications surface),
-// so this switches to All — the one view guaranteed to hold every film — and searches it down to this title
-// before expanding. Cards stream in in batches (CAS-129), so the card may not exist in the DOM the instant
-// the listing re-renders; poll briefly for it rather than assuming the first paint already has it.
+// active Cascade's filtered listing at all (that's the whole point of a cross-agent notifications surface).
+// CAS-566: there is no more All to jump to as the guaranteed-to-hold-everything view, so this opens the
+// first agent that actually lists the film instead, and searches it down to this title before expanding. A
+// notification is about a film an agent found, so in practice one always will; if somehow none does, stay
+// on the current agent and search it anyway rather than jump agents for nothing. Cards stream in in batches
+// (CAS-129), so the card may not exist in the DOM the instant the listing re-renders; poll briefly for it
+// rather than assuming the first paint already has it.
 window.openNotifyFilm=(id)=>{
   const m=MOVIES.find(x=>x.tmdb_id===id); if(!m) return;
   closeDrawer();
-  openCascade(ALL_ID);
+  const host=cascades.find(c=>listedBy(m,c));
+  if(host) openCascade(host.id);
   setSearchTerm(m.title);
   let tries=0;
   const tryExpand=()=>{
@@ -6566,8 +6569,11 @@ const listedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m)).length
 const newlyAddedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m) && newlyAddedKind(m)).length;
 function scopeRows(){
   const c=activeCascade();
-  // No Cascade open = the All card = the catalogue itself, which is what that card says it is.
-  const rows = c ? MOVIES.filter(m=>listedBy(m,c)) : MOVIES.filter(passesOrStub);
+  // CAS-566/R3: activeCascade() is null only with zero agents now (no more All to fall back to as "the
+  // catalogue itself") — that state lists nothing at all, so a first-run user does not land on 5,633
+  // unfiltered films.
+  if(!c) return [];
+  const rows = MOVIES.filter(m=>listedBy(m,c));
   const searched = filt.search ? rows.filter(m=>m.title.toLowerCase().includes(filt.search)) : rows;
   // CAS-382: no tier ticked = no filter, same "nothing picked = show everything" rule every other chip set
   // in `passes()` follows.
@@ -6615,9 +6621,10 @@ const isFresh = m => heldOpen.has(m.tmdb_id) ? heldOpen.get(m.tmdb_id).fresh
 function renderListChrome(){
   const el=$("listChrome"); if(!el) return;
   // CAS-150: the starter block used to live in the empty "New" list, which is where a first-time user landed.
-  // With one list a first-timer lands on the catalogue instead — full of films, so never empty — and the
-  // nudge would have had nowhere to appear. It sits above the listing while there are no Cascades at all,
-  // and goes the moment there is one.
+  // CAS-566: it sits above the listing rather than inside its empty state because the listing's own empty
+  // state (scopeRows()/emptyResultsHTML(), R3) is reserved for "this agent matched nothing" — a genuinely
+  // different message from "you have no agent yet". It shows while there are no Cascades at all, and goes
+  // the moment there is one.
   el.innerHTML = cascadeStartHTML();   // CAS-273: "Finish your agent" no longer rides above the listing
 }
 // CAS-136: the membership-setup banner is no longer part of the listing — it sits at the very top of the
@@ -7547,20 +7554,8 @@ function applyCascade(c){
 // Opening is idempotent: landing a card in the deck's centre IS selecting it, so this can be called
 // with the already-open Cascade. Closing is the centre card's × — never a side-effect of selection.
 window.openCascade=id=>{
-  // "All" is the reset view: choosing it drops every filter and shows the whole catalogue. No count in the
-  // toast — the count line under the results is the one that's already true.
   // CAS-134: moving to another cascade is leaving this one's list, so its held stubs settle now — a film you
   // answered under one agent must not turn up as a stub on another agent's New list.
-  if(id===ALL_ID){
-    if(activeId===ALL_ID) return;
-    setActive(ALL_ID); settleFoundView(); clearFilters(); syncFilterUI(); restoreCascadeSearch();
-    closeFilterPanel(); restoreCascadeWatchTiers();
-    $("groups").classList.add("listloading");   // CAS-421: held blurred till the new agent's list is ready
-    render();
-    logEvent("cascade_opened", {key:"all"});
-
-    return;
-  }
   const c=cascades.find(x=>x.id===id); if(!c || activeId===id) return;
   setActive(id); settleFoundView(); applyCascade(c); restoreCascadeSearch();
   $("groups").classList.add("listloading");     // CAS-421: held blurred till the new agent's list is ready
@@ -7609,12 +7604,11 @@ const deckStrip=$("cascStrip");
 const sortCtl=$("sortCtl");   // CAS-371: one live node, reparented into the open card's .dc-acts — see deckSync()
 const deckMotion=matchMedia("(prefers-reduced-motion: reduce)");
 const deckCards=()=>[...deckStrip.children];
-// Deck order: [0] the built-in All card, [1 … n] your Cascades, [n+1] "+ New Cascade". Every index that
-// crosses into `cascades` goes through deckAt() rather than doing the ±1 by hand at each call site.
-const deckCount=()=>cascades.length+2;
-const deckAt=i=>(i>=1 && i<=cascades.length) ? cascades[i-1] : null;   // null = the All card or the New card
-const deckIsAll=i=>i===0;
-const deckIsNew=i=>i>=cascades.length+1;
+// CAS-566: Deck order: [0 … n-1] your Cascades, [n] "+ New Cascade". Every index that crosses into
+// `cascades` goes through deckAt() rather than doing the arithmetic by hand at each call site.
+const deckCount=()=>cascades.length+1;
+const deckAt=i=>(i>=0 && i<cascades.length) ? cascades[i] : null;   // null = the New card
+const deckIsNew=i=>i>=cascades.length;
 // CAS-203: `kind` joins the signature. The deck is only rebuilt when this string changes, so a lane the
 // signature didn't mention would leave the card wearing the last agent's colour after an edit.
 const cascSig=()=>cascades.map(c=>c.id+"|"+c.icon+"|"+c.name+"|"+c.kind).join("~");
@@ -7678,8 +7672,7 @@ function deckFocus(i,moveDom){
   if(moveDom) deckCards()[deckIdx]?.focus({preventScroll:true});
 }
 // Centring the "+ New" card selects nothing — browsing past your Cascades must not close the open one.
-// Centring All DOES select: it is a real view, and landing on it is how you get back to the whole catalogue.
-const deckSelect=i=>{ if(deckIsAll(i)) return openCascade(ALL_ID); const c=deckAt(i); if(c) openCascade(c.id); };
+const deckSelect=i=>{ const c=deckAt(i); if(c) openCascade(c.id); };
 // The hybrid-discoverability question in one line: did they ever touch My Cascades at all, and by what?
 // Logged once per session per method, so the log shows discovery rather than drowning in scroll events.
 const deckSeen=new Set();
@@ -7689,27 +7682,14 @@ function deckGo(i,moveDom){
   deckFocus(n,moveDom); deckCentre(n,true); deckSelect(n);
 }
 function deckBuild(){
-  // All carries no Edit / Share / × — "cannot be deleted or edited" is a card with nothing to press,
-  // not a button that refuses you. It does still carry the 🔍: All is a cascade in the deck as far as the
-  // listing is concerned, and "search this cascade" is exactly what it does there too (CAS-136).
-  // CAS-150: the 🔍 moved off the card's top corner and DOWN into the control row, next to Edit / 🔗 / ×.
-  // It is one of the things you do to the open Cascade, so it belongs with the others rather than floating
-  // over the card as a fourth kind of thing.
+  // CAS-150: the 🔍 sits in the control row, next to Edit / 🔗 / × — one of the things you do to the open
+  // Cascade, so it belongs with the others rather than floating over the card as a fourth kind of thing.
   const searchBtn = label =>
     `<button class="ca-btn x dc-search" data-act="search" type="button" aria-label="Search ${escA(label)}"
              title="Search this cascade">🔍</button>`;
-  // CAS-382: alongside Edit/search, same row. All has no watch-priority concept of its own (it isn't
-  // watching anything, it's the whole catalogue), so it doesn't get one.
   const filterBtn = label =>
     `<button class="ca-btn x dc-filter" data-act="filter" type="button" aria-haspopup="true" aria-expanded="false"
              aria-label="Filter ${escA(label)} by watch priority" title="Filter by watch priority">${ICON.filter}</button>`;
-  deckStrip.innerHTML=`
-    <div class="dcard all" role="group" aria-label="All — the whole catalogue" tabindex="-1" data-id="${ALL_ID}"><div class="dc-in">
-      <div class="dc-icon">${ALL_ICON}</div>
-      <div class="dc-name">All</div>
-      <div class="dc-sub"></div>
-      <div class="dc-acts">${searchBtn("All")}</div>
-    </div></div>`
   // CAS-203: the card wears the agent's own lane. This is the ONE place the type is stated on the listing
   // now — CAS-204 takes the stripe off the film cards, because a colour repeated on every row stops being
   // information — so an agent card has to carry it.
@@ -7717,7 +7697,7 @@ function deckBuild(){
   // type is spelled out in words, colour (above) is the at-a-glance version. Name and film-count still
   // start at the box's own left padding, same as the label row — .dc-in is a plain vertical stack, so
   // nothing here indents under the icon.
-  + cascades.map(c=>`
+  deckStrip.innerHTML=cascades.map(c=>`
     <div class="dcard agent-${c.kind==="stream"?"str":"cin"}" role="group" aria-label="${esc(c.name)}" tabindex="-1" data-id="${c.id}"><div class="dc-in">
       <div class="dc-top"><span class="dc-icon">${c.icon}</span><span class="dc-type">${c.kind==="stream"?"Streaming":"Cinema"} agent</span></div>
       <div class="dc-name">${esc(c.name)}</div>
@@ -7756,16 +7736,17 @@ function deckSync(shown){
   // loading→New-Agent swap below still triggers a rebuild even when that fetch resolves to nothing.
   const sig=cascSig()+"|"+cascadesReady;
   const ai=cascades.findIndex(c=>c.id===activeId);
-  // +1 for the All card ahead of them; All itself (and a first load with nothing open) centres on 0.
-  const target=ai>=0 ? ai+1 : activeId===ALL_ID ? 0 : Math.min(deckIdx,deckCount()-1);
+  // CAS-566: deckAt(i) reads cascades[i] directly now, so a found index IS the target — no more +1 offset
+  // for a card that no longer exists.
+  const target=ai>=0 ? ai : Math.min(deckIdx,deckCount()-1);
   if(sig!==deckSig){
     deckSig=sig; deckBuild();
     deckFocus(target,false);
     deckCentre(deckIdx,false);
   } else if(target!==deckIdx){
     // CAS-450: activeId can change without ever touching the deck itself (afterSignIn landing on the
-    // first agent, resetBtn, openNotifyFilm's jump to All) — the card list didn't change so the rebuild
-    // branch above never fires, but the deck still has to end up centred on whichever card is actually open.
+    // first agent, deleteAgentAsk landing on the new first agent) — the card list didn't change so the
+    // rebuild branch above never fires, but the deck still has to end up centred on whichever card is open.
     deckFocus(target,false);
     deckCentre(deckIdx,false);
   } else {
@@ -7773,20 +7754,6 @@ function deckSync(shown){
   }
   const dirty=cascadeDirty();
   deckCards().forEach((el,i)=>{
-    if(deckIsAll(i)){
-      const on=activeId===ALL_ID;
-      // `shown` is whatever the CURRENT scope is showing, which in the New scope is the recent pick-ups — not
-      // the catalogue All stands for. So All only borrows it in the All scope; anywhere else it states the
-      // catalogue total, which is true from wherever you're standing. And never an alert promise: All is a
-      // view, not a standing watch, and saying otherwise would be an alert we'd never send.
-      const live=on;   // CAS-150: one list, so All's card always speaks for the list it draws
-      const n=live?shown:SHOWABLE_N;             // CAS-170: the catalogue you can actually reach
-      el.classList.toggle("is-active",on);
-      // CAS-270: the count, and nothing after it. The card is a control you flick past, not a place to
-      // read — everything the old sub-line carried is said in full on the screen the card opens.
-      el.querySelector(".dc-sub").textContent=`${n} film${n===1?"":"s"}`;
-      return;
-    }
     const c=deckAt(i); if(!c) return;                // the "+ New" card paints nothing
     const on=c.id===activeId;
     // Real counts on every card — the open one shows what's on screen. CAS-279: a closed card counts with
@@ -7846,7 +7813,7 @@ deckStrip.addEventListener("keydown",e=>{
     // still false — Enter/Space there has nothing to create yet.
     if(deckIsNew(deckIdx)){ if(cascades.length || cascadesReady) newCascade(); }
     else if(c && c.id===activeId) editCascade();   // already centred + open → Enter edits it
-    else deckSelect(deckIdx);                      // All has nothing to edit, so it always just selects
+    else deckSelect(deckIdx);                      // any other agent card just selects
     return;
   }
   const to=e.key==="ArrowRight"?deckIdx+1 : e.key==="ArrowLeft"?deckIdx-1
@@ -8099,7 +8066,7 @@ function positionFilterPanel(pop, btn){
   pop.style.top = opensUp ? (btnR.top-barR.top-8-h)+"px" : (btnR.bottom-barR.top+8)+"px";
 }
 function onFilterIcon(card, btn){
-  const id=card.dataset.id; if(!id) return;             // All / New have no watch-priority filter
+  const id=card.dataset.id; if(!id) return;             // the "+ New" card has no watch-priority filter
   const already=btn.classList.contains("open");
   closeFilterPanel();
   if(already) return;                                    // second tap closes it
@@ -8280,6 +8247,9 @@ window.relaxFilter=key=>{
 };
 window.resetEverything=()=>{ setActive(null); clearFilters(); syncFilterUI(); render(); };
 function emptyResultsHTML(){
+  // CAS-566: zero agents is not "this agent's filters matched nothing" — there is no agent, and nothing to
+  // relax or reset. cascadeStartHTML() (rendered above the listing) already carries the call to action.
+  if(!cascades.length) return "";
   const c=activeCascade();
   const opts=relaxOptions();
   // The my-services scope isn't a filt field — it comes from the open Cascade or the ⚙️ switch — so it
@@ -8866,7 +8836,7 @@ function deleteAgentAsk(c){
             : "")
     + `Anything you added by hand stays, and your watched / not-interested marks aren't touched.`)) return false;
   cascades.splice(cascades.indexOf(c),1); saveCascades();
-  if(activeId===c.id){ setActive(ALL_ID); clearFilters(); syncFilterUI(); }
+  if(activeId===c.id){ setActive(firstAgentId()); clearFilters(); syncFilterUI(); }
   logEvent("cascade_deleted",{id:c.id, films:mine});
   // CAS-287: deleting already asks first, and the deck visibly loses the card. A banner afterwards is a
   // third telling of the same fact.
@@ -14579,14 +14549,14 @@ function afterSignIn(){
   if(splashUp){ $("splash").classList.remove("open"); flowStop(); }
   document.body.style.overflow="";
   if(cascades.length){
-    // CAS-420/CAS-409: arrival at an account with agents already made is arrival at the FIRST one — All
-    // is a view you choose, not the default you land on. Always land there, not only when the incoming
-    // view happened to be All: CAS-420's "device already on a specific agent, leave it" carve-out let a
-    // restored session's activeId already NAME a real agent whose filters had still never actually been
-    // applied this boot (the top-of-file activeCascade() lookup runs before loadAccount() has populated
-    // `cascades`), so it kept rendering as the unfiltered All list despite activeId being correct.
-    // openCascade()'s own "already active, do nothing" guard would hit that exact case, so clear activeId
-    // first to force it through setActive + applyCascade + the switcher highlight + the repaint.
+    // CAS-420/CAS-409/CAS-566: arrival at an account with agents already made is arrival at the FIRST one.
+    // Always land there, not only when the incoming view happened to lack a real filtered listing: CAS-420's
+    // "device already on a specific agent, leave it" carve-out let a restored session's activeId already
+    // NAME a real agent whose filters had still never actually been applied this boot (the top-of-file
+    // activeCascade() lookup runs before loadAccount() has populated `cascades`), so it kept rendering
+    // unfiltered despite activeId being correct. openCascade()'s own "already active, do nothing" guard
+    // would hit that exact case, so clear activeId first to force it through setActive + applyCascade +
+    // the switcher highlight + the repaint.
     activeId=null;
     openCascade(cascades[0].id);
     logEvent("signin_returning",{cascades:cascades.length});
@@ -14703,7 +14673,7 @@ else if(dedupedN)
   function replaceCascades(list){
     cascades.length = 0;
     list.forEach(c => cascades.push(c));
-    if(activeId!==ALL_ID && !cascades.some(c=>c.id===activeId)) setActive(ALL_ID);
+    if(!activeCascade() && cascades.length) setActive(firstAgentId());
     cascadesReady = true;   // CAS-517: this IS the account fetch (or the guest fallback) resolving
     if(typeof render==="function") render();
   }
@@ -14821,7 +14791,7 @@ else if(dedupedN)
         if(cascadeBaseline.has(id) && !remoteIds.has(id)) cascades.splice(i,1);
       }
     }
-    if(activeId!==ALL_ID && !cascades.some(x=>x.id===activeId)) setActive(ALL_ID);
+    if(!activeCascade() && cascades.length) setActive(firstAgentId());
     cascadeBaseline=remoteIds;
     // CAS-424: converge on whichever device last reordered — only once anyone actually has, so a background
     // reconcile never reshuffles an account nobody has touched the Agents screen on.

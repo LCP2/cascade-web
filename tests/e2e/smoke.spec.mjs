@@ -12,6 +12,25 @@ import {
   freshApp, toShortlist, shortlistCards, pickCard, finishFlow, toListing, settleListing, ctaLocator,
 } from "./helpers.mjs";
 
+// Mirrors cas565.spec.mjs's addSecondAgent — a second agent made from the deck's "New Agent" card stops at
+// the Briefing hub instead of walking the splash flow, so it needs its own "Save agent" exit.
+async function addSecondAgent(page, kind){
+  const newCard = page.locator(".dcard.new");
+  await newCard.locator(".dc-name").click();
+  await expect(newCard).toHaveClass(/is-centre/);
+  await newCard.locator('button[data-act="new"]').click();
+  await expect(page.locator(".priobtn").first()).toBeVisible();
+  await page.locator(kind === "stream" ? ".priobtn.str" : ".priobtn.cin").click();
+  await expect(page.locator(".scard").first()).toBeVisible();
+  const cards = await shortlistCards(page);
+  const card = page.locator(".scard", { has: page.locator(".sc-name", { hasText: cards[0].name }) }).first();
+  await card.click();
+  const saveBtn = page.locator(".osfoot .oscta", { hasText: "Save agent" });
+  await expect(saveBtn).toBeVisible();
+  await saveBtn.click();
+  await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
+}
+
 test("the app loads and onboarding renders", async ({ page }) => {
   await freshApp(page);
   await expect(page.locator("#splashCta")).toBeVisible();
@@ -65,22 +84,24 @@ test("a film card's Watched control lands an answer", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => watched.size), { timeout: 10_000 }).toBeGreaterThan(0);
 });
 
-test("'Only show films on my services' changes the listing count", async ({ page }) => {
+test("'Only show films on my services' changes what a new agent finds", async ({ page }) => {
   // Every window a streaming agent lists (Premium/Rent/Streaming) is service-scoped, so switching the
   // filter on with no services named must drop the count — this exercises the real mechanism the switch
   // controls, not just its own visible state.
   // CAS-480: CAS-475 moved this switch out of the per-agent editor into one account-level spoke (top menu
   // -> My services), which only ever writes the global prefs.on. An open agent's OWN service scope is
   // fixed at the moment it was last saved (CAS-199) and does not follow prefs.on afterwards, so flipping
-  // the switch while that agent's own listing is on screen has no visible effect — only the All view (no
-  // single agent's own scope in play) actually reads prefs.on, so the test moves there first.
+  // the switch while that agent's own listing is on screen has no visible effect.
+  // CAS-566: this used to jump to the All view to read the switch's live effect — All is retired, and R3
+  // means the only state that ever read prefs.on live (activeCascade() null) is now the zero-agent state,
+  // which lists nothing. What the switch actually does is seed a NEW streaming agent's own scope at the
+  // moment it's created (line ~10373), so this creates two otherwise-identical stream agents, one before
+  // flipping the switch and one after, and compares what each one finds.
   await toShortlist(page, "stream");
   const cards = await shortlistCards(page);
   await pickCard(page, cards[0].name);
   await finishFlow(page);
   await toListing(page);
-
-  await page.locator(".dcard.all").click();
   const before = await settleListing(page);
   expect(before).toBeGreaterThan(0);
 
@@ -93,6 +114,7 @@ test("'Only show films on my services' changes the listing count", async ({ page
   await ctaLocator(page).click();   // Done, back to the listing
   await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
 
+  await addSecondAgent(page, "stream");
   const after = await settleListing(page);
   expect(after, `before=${before} after=${after}`).toBeLessThan(before);
 });
