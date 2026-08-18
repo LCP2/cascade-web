@@ -664,6 +664,9 @@ def derive_status(movie: dict, offers: list[dict], today: datetime.date) -> list
 # ---------------------------------------------------------------------------
 AVAILABILITY_TIERS = ["upcoming", "in_cinema", "pvod", "rental", "included_streaming"]
 DOWNGRADE_CONFIRM_RUNS = 2   # consecutive runs a lower reading must repeat before it is trusted
+# CAS-578: the tiers that must be BACKED BY A REAL OFFER before window_dates may stamp them.
+# in_cinema/upcoming are the two legitimate offer-less windows (CAS-395/CAS-412) — never these three.
+HOME_WINDOWS = {"pvod", "rental", "included_streaming"}
 
 def tier_rank(status) -> int:
     """Highest AVAILABILITY_TIERS rank held anywhere in `status` (a status list/set), or
@@ -715,10 +718,18 @@ STATUS_LABEL = {
     "included_streaming": "Included Streaming",
 }
 
+def _load_prev_snapshot() -> dict:
+    """tmdb_id -> yesterday's committed record, or {} on the very first run. Shared by
+    update_window_dates (CAS-578: drops a departed home window's stamp) and diff_and_alert
+    (arrival/departure events) — both need the SAME prior status, read before either one
+    overwrites SNAPSHOT_FILE for today."""
+    if not os.path.exists(SNAPSHOT_FILE):
+        return {}
+    return {m["tmdb_id"]: m for m in json.load(open(SNAPSHOT_FILE))}
+
+
 def diff_and_alert(today_records: list[dict]) -> list[dict]:
-    prev = {}
-    if os.path.exists(SNAPSHOT_FILE):
-        prev = {m["tmdb_id"]: m for m in json.load(open(SNAPSHOT_FILE))}
+    prev = _load_prev_snapshot()
 
     events = []
     for m in today_records:
@@ -736,12 +747,27 @@ def diff_and_alert(today_records: list[dict]) -> list[dict]:
                 events.append({
                     "tmdb_id": m["tmdb_id"],
                     "title": m["title"],
+                    "kind": "arrived",
                     "new_window": w,
                     "label": STATUS_LABEL.get(w, w),
                     "services": [o["service"] for o in m.get("offers", [])
                                  if _window_of(o) == w][:3],
                     "detected": today_records_date(),
                 })
+        # CAS-578 R4: a film LEAVING a window is exactly as interesting as one entering it — "it's
+        # leaving Netflix on Sunday" is arguably the more valuable alert. `before`/`after` are
+        # already the monotonic-guard-resolved statuses (apply_monotonic_status only ever commits a
+        # backward move once it is CONFIRMED — CAS-355), so a window missing here is a real, settled
+        # departure, never a one-day provider-feed gap.
+        for w in before - after:
+            events.append({
+                "tmdb_id": m["tmdb_id"],
+                "title": m["title"],
+                "kind": "left",
+                "lost_window": w,
+                "label": STATUS_LABEL.get(w, w),
+                "detected": today_records_date(),
+            })
     # persist
     os.makedirs(STATE_DIR, exist_ok=True)
     json.dump(today_records, open(SNAPSHOT_FILE, "w"), indent=2)
@@ -750,7 +776,86 @@ def diff_and_alert(today_records: list[dict]) -> list[dict]:
     return events
 
 
+# ---------------------------------------------------------------------------
+# CAS-578 R6 — the guard that would have caught D1. A real release schedule staggers arrivals
+# across the year; three bad runs (2026-07-22/07-23/08-02) each mass-stamped the SAME window onto
+# ~2% of the whole catalogue in one day. 5% is comfortably above any legitimate single-day
+# reclassification this catalogue has ever shown.
+# ---------------------------------------------------------------------------
+MASS_STAMP_GUARD_PCT = 0.05
+
+
+class MassStampGuardTripped(RuntimeError):
+    """Raised by check_mass_stamp_guard when one run would move too much of the catalogue into a
+    single window at once — refuse the write rather than persist what is probably a mass-stamp bug
+    like CAS-578's D1, rather than a real release day."""
+
+
+def check_mass_stamp_guard(records: list[dict], prev_by_id: dict, pct: float = MASS_STAMP_GUARD_PCT) -> None:
+    """Raise MassStampGuardTripped if this run would move more than `pct` of the WHOLE catalogue
+    into one window it did not hold yesterday. A title's very first sighting is excluded — that is
+    catalogue GROWTH (e.g. CAS-128's cap lift, which moved thousands of titles from "doesn't exist
+    yet" into some window in one run), not a reclassification of an existing record, and diff_and_alert's
+    own arrival events already draw the same "first sighting doesn't count" line."""
+    total = len(records)
+    if not total:
+        return
+    threshold = max(1, int(total * pct))
+    gained: dict[str, int] = {}
+    for m in records:
+        tid = m.get("tmdb_id")
+        if tid not in prev_by_id:
+            continue
+        before = set(prev_by_id[tid].get("status", []))
+        after = set(m.get("status", []))
+        for w in after - before:
+            gained[w] = gained.get(w, 0) + 1
+    tripped = {w: n for w, n in gained.items() if n > threshold}
+    if tripped:
+        raise MassStampGuardTripped(
+            f"refusing to write this run: {tripped} title(s) would newly enter one window out of "
+            f"{total} ( > {pct:.0%}, threshold {threshold} ) — looks like a mass-stamp bug (CAS-578), "
+            f"not a real release day")
+
+
+# ---------------------------------------------------------------------------
+# CAS-578 R2/R3 — window_dates becomes CORRECTABLE, not append-only. A home window (pvod/rental/
+# included_streaming) is only ever stamped when a real offer corroborates it THIS run — the
+# window_dates-layer half of CAS-412's belt-and-suspenders, since CAS-412 alone only stopped the ONE
+# path that used to invent a paid tier with zero offers (D1's actual trigger — see the CAS-578 fix
+# comment). in_cinema/upcoming stay offer-less by design (CAS-395/CAS-418) and are untouched here.
+# And once a window genuinely LEAVES status — a monotonic-guard-CONFIRMED departure, the same
+# before/after this run's diff_and_alert uses for its mirror-image "left" event, never a one-day
+# provider gap — its stamp is removed: a first-seen date for a window the film no longer holds is
+# not history worth keeping stamped as current.
+# ---------------------------------------------------------------------------
+def update_window_dates(records: list[dict], wd: dict, prev_by_id: dict, tstamp: str) -> dict:
+    """Merge today's records into the persistent window_dates store `wd` (str(tmdb_id) -> {window:
+    first_seen_date}), also setting each record's own m["window_dates"] to the SAME dict. Pure (no
+    file IO) so tests can drive it directly — run() owns the load/persist around it."""
+    for m in records:
+        key = str(m["tmdb_id"]); rec = wd.get(key, {})
+        offer_windows = {w for w in (_window_of(o) for o in m.get("offers", [])) if w}
+        prev_status = set(prev_by_id.get(m["tmdb_id"], {}).get("status", []))
+        status = set(m.get("status", []))
+        for w in status:
+            if w in HOME_WINDOWS and w not in offer_windows:
+                continue                              # status claims it, no offer backs it today
+            rec.setdefault(w, tstamp)                  # earliest date this window was ever earned
+        for w in (prev_status - status) & HOME_WINDOWS:
+            rec.pop(w, None)                           # confirmed departure — the stamp isn't current history
+        wd[key] = rec
+        m["window_dates"] = rec
+    return wd
+
+
 def _window_of(offer: dict) -> str:
+    # CAS-578 AC8 (the free-offer decision, stated rather than folded in silently): `free` (Tubi,
+    # Plex, Hoopla, SBS On Demand — watchable with no payment, but not a subscription) maps onto
+    # included_streaming, the same window a subscription earns. Both let a viewer watch the film
+    # right now for $0 extra, which is the distinction Cascade's windows exist to draw; a separate
+    # "free" window would only split one no-cost answer into two. derive_status/derive_from_providers
+    # already made this same call independently — this is the one place it is written down.
     if offer["type"] in ("sub", "free"): return "included_streaming"
     if offer["type"] == "buy":  return "pvod"
     if offer["type"] == "rent":
@@ -1066,17 +1171,18 @@ def run(simulate_day: bool = False):
         for m in records:
             m["status"] = derive_status(m, m.get("offers", []), today)
 
+    # CAS-578 R6: refuse to persist a run that would mass-stamp one window across the catalogue —
+    # the guard that would have caught D1. Raises and keeps every existing state/*.json file
+    # untouched (nothing below has written yet) rather than silently corrupting them further.
+    prev_snapshot = _load_prev_snapshot()
+    check_mass_stamp_guard(records, prev_snapshot)
+
     # Record the first date each title was seen in each window, so transition
     # dates become EXACT over time (no backfill — accrues from the first run).
     # The app uses these when present and falls back to estimates otherwise.
     wd = json.load(open(WINDOW_DATES_FILE)) if os.path.exists(WINDOW_DATES_FILE) else {}
-    tstamp = today.isoformat()
+    update_window_dates(records, wd, prev_snapshot, today.isoformat())
     for m in records:
-        key = str(m["tmdb_id"]); rec = wd.get(key, {})
-        for w in m.get("status", []):
-            rec.setdefault(w, tstamp)
-        wd[key] = rec
-        m["window_dates"] = rec
         m.setdefault("availability_confidence", "confirmed")   # CAS-109 (sample/legacy default)
         m.setdefault("poll_tier", ps.classify_tier(m, today))
     os.makedirs(STATE_DIR, exist_ok=True)
@@ -1100,10 +1206,14 @@ def run(simulate_day: bool = False):
     print(f"\n{len(records)} titles written to movies.json  ({'LIVE' if LIVE else 'sample'} data)"
           + (f" — {n_up} of them upcoming (not yet in cinemas)" if n_up else ""))
     print(f"index.html rebuilt — open it in any browser.")
-    print(f"{len(events)} status-change alert(s) this run:")
-    for e in events:
+    arrivals   = [e for e in events if e.get("kind") == "arrived"]
+    departures = [e for e in events if e.get("kind") == "left"]
+    print(f"{len(arrivals)} arrival(s), {len(departures)} departure(s) this run:")
+    for e in arrivals:
         svc = f" on {', '.join(e['services'])}" if e["services"] else ""
         print(f"   • {e['title']}  ->  {e['label']}{svc}")
+    for e in departures:                                        # CAS-578 R4
+        print(f"   • {e['title']}  left {e['label']}")
     if not events:
         print("   (none — run again with --simulate-day to see the alert path fire)")
 
