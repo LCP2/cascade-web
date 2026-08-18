@@ -4236,7 +4236,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 561, "commit": "bbd50c2", "builtAt": "2026-08-18T05:33:09Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 562, "commit": "052727b", "builtAt": "2026-08-18T05:40:22Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8043,7 +8043,16 @@ function armCascObserver(){
     {rootMargin:`-${phoneHeader.offsetHeight}px 0px 0px 0px`, threshold:[0,1]});
   cascIO.observe(anc);
 }
-addEventListener("resize",()=>{ syncHeaderHeight(); armCascObserver(); syncCascCollapse(); });
+// CAS-557: was undebounced. iOS fires a stream of resize events while the soft keyboard animates in (and
+// again as the predictive-text bar changes), and armCascObserver() disconnects and reallocates an
+// IntersectionObserver on every call, each preceded by a layout-forcing offsetHeight read — so every
+// keystroke in a focused field paid for a full observer rebuild and the keyboard went unresponsive.
+// Debounced at 140ms to match the deck's own resize handler (~line 7955, CAS-508), which already does this.
+let cascResizeT=0;
+addEventListener("resize",()=>{
+  clearTimeout(cascResizeT);
+  cascResizeT=setTimeout(()=>{ syncHeaderHeight(); armCascObserver(); syncCascCollapse(); },140);
+});
 syncHeaderHeight(); armCascObserver();
 
 // ---- CAS-136: per-cascade search ------------------------------------------------------------------
