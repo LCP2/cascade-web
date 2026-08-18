@@ -331,7 +331,11 @@
   .chip.on.st-pvod{background:rgba(164,134,240,.22);border-color:var(--purple);color:#d3c2ff}
   .chip.on.st-rental{background:rgba(90,169,240,.2);border-color:var(--blue);color:#bcdcff}
   .chip.on.st-included_streaming{background:rgba(72,199,142,.2);border-color:var(--green);color:#a7eccb}
-  .chip.on.gen,.chip.on.yr{background:rgba(124,92,255,.2);border-color:var(--accent);color:#cfc2ff}
+  /* CAS-563: filled, not outlined. At 20% alpha against 30+ unselected chips the selected one read as
+     "has a border" rather than "is on" — the complaint that opened this ticket. */
+  .chip.on.gen,.chip.on.yr{background:linear-gradient(135deg,var(--accentdeep),var(--accent));
+    border-color:transparent;color:#fff}
+  .chip.on.gen .chipn,.chip.on.yr .chipn{opacity:.85;color:#fff}
   /* the one criterion that SUBTRACTS (CAS-71) — so it must not wear the same colour as the ones that add */
   .chip.on.exc{background:rgba(192,86,63,.22);border-color:#c0563f;color:#ffb9a6}
   .chip.on.svc{background:rgba(72,199,142,.2);border-color:var(--green);color:#a7eccb}
@@ -340,6 +344,13 @@
      a dashed border to read as "reveals more" rather than "a language". */
   .chipn{opacity:.7;font-weight:500;margin-left:1px}
   .chip.chipmore{border-style:dashed}
+  /* CAS-563: the Languages search. .search is reused as-is — its 16px font is load-bearing, since iOS
+     zooms the page on focus for anything smaller. */
+  .langsearchwrap{position:relative;margin:0 0 10px}
+  .langsearchwrap .searchclear{display:none}
+  .langsearchwrap .searchclear.show{display:grid}
+  .langcount{font-size:11.5px;color:var(--faint);font-weight:700;margin:0 0 8px}
+  .langempty{font-size:12.5px;color:var(--faint);padding:8px 0 2px}
   .slider{display:flex;align-items:center;gap:10px}
   .slider input{flex:1;accent-color:var(--accent)}
   .slider .val{font-size:13px;font-weight:700;min-width:44px;text-align:right}
@@ -8967,6 +8978,25 @@ window.closeSvcAnalysis=()=>{ $("svcAnalysis").classList.remove("open"); documen
 // on the full list regardless of which chips are showing.
 const LANG_CHIP_MIN = 10;
 let langMoreOpen = false;   // whether the long-tail chips are unfolded — resets to closed on screen close
+// CAS-563: the search query, lowercased and trimmed. Empty string is the idle screen; the expander only
+// exists in that state, because a filtered list is already short by definition.
+let langQuery = "";
+const langLc = s => String(s||"").toLowerCase();
+// Prefix beats substring, then catalogue count. Plain substring buried Tamil under Italian for "ta";
+// prefix-only hid Italian entirely. Ranking keeps both and puts the likely one first.
+function langRank(code){
+  if(!langQuery) return 0;
+  const name=langLc(langName(code)), c=langLc(code);
+  if(name.startsWith(langQuery) || c.startsWith(langQuery)) return 2;
+  if(name.includes(langQuery)) return 1;
+  return 0;
+}
+function langHits(){
+  return [...LANG_OPTS].map(c=>({c, r:langRank(c), n:langCatalogueCount(c)}))
+    .filter(x=>x.r>0)
+    .sort((a,b)=> b.r-a.r || b.n-a.n)
+    .map(x=>x.c);
+}
 function langChipHTML(code, on){
   const n = langCatalogueCount(code);
   return `<button type="button" class="chip gen${on?" on":""}" aria-pressed="${on}"
@@ -8974,6 +9004,11 @@ function langChipHTML(code, on){
 }
 function prefLangChipsHTML(){
   const on=tbLangSet();
+  if(langQuery){
+    const hits=langHits();
+    if(!hits.length) return `<div class="langempty">No language matches “${esc(langQuery)}”.</div>`;
+    return hits.map(c=>langChipHTML(c, on.has(c))).join("");
+  }
   const sorted=[...LANG_OPTS].sort((a,b)=>langCatalogueCount(b)-langCatalogueCount(a));
   const top=sorted.filter(c=>langCatalogueCount(c)>=LANG_CHIP_MIN);
   const rest=sorted.filter(c=>langCatalogueCount(c)<LANG_CHIP_MIN);
@@ -8986,34 +9021,67 @@ function prefLangChipsHTML(){
   }
   return html;
 }
-window.prefToggleLangMore=()=>{ langMoreOpen=!langMoreOpen; renderLanguages(); };
+// CAS-563: re-render ONLY the chips and the count. renderLanguages() rebuilds the screen's innerHTML,
+// which now contains the search input — calling it on every chip tap would destroy the input and, on a
+// phone, dismiss the keyboard mid-type. Every mutation path below calls this instead.
+function renderLangChips(){
+  const box=$("langChips"); if(!box) return;
+  box.innerHTML=prefLangChipsHTML();
+  const cnt=$("langCount");
+  if(cnt){
+    const on=tbLangSet();
+    const sel=LANG_OPTS.filter(c=>on.has(c));
+    const films=sel.reduce((a,c)=>a+langCatalogueCount(c),0);
+    cnt.textContent = langQuery
+      ? `${langHits().length} of ${LANG_OPTS.length} match “${langQuery}”`
+      : `${sel.length} of ${LANG_OPTS.length} selected · ${films.toLocaleString()} films`;
+  }
+  const x=$("langSearchClear"); if(x) x.classList.toggle("show", !!langQuery);
+}
+window.prefLangSearch=v=>{ langQuery=langLc(v).trim(); renderLangChips(); };
+window.prefLangSearchClear=()=>{
+  langQuery="";
+  const i=$("langSearch"); if(i){ i.value=""; i.focus(); }
+  renderLangChips();
+};
+window.prefToggleLangMore=()=>{ langMoreOpen=!langMoreOpen; renderLangChips(); };
 window.prefToggleLang=code=>{
   const on=tbLangSet();
   on.has(code) ? on.delete(code) : on.add(code);
   tasteBase.langs = tbStore(on, LANG_OPTS);
   saveTasteBase();
-  renderLanguages();
+  renderLangChips();
 };
 window.prefLangSetAll=all=>{
   tasteBase.langs = all ? [] : null;
   saveTasteBase();
-  renderLanguages();
+  renderLangChips();
 };
 function renderLanguages(){
   $("languagesBody").innerHTML=`
     <div class="ostop"><button class="osback" type="button" onclick="closeLanguages()" aria-label="Back">←</button>
       <h2 class="osh">Languages</h2></div>
     <p class="ossub">Films in these languages are included across all agents.</p>
-    <div class="chips">${prefLangChipsHTML()}</div>
+    <div class="langsearchwrap">
+      <input id="langSearch" class="search" type="search" inputmode="search" autocapitalize="off"
+             autocorrect="off" spellcheck="false" placeholder="Search ${LANG_OPTS.length} languages"
+             aria-label="Search languages" oninput="prefLangSearch(this.value)">
+      <button type="button" id="langSearchClear" class="searchclear" aria-label="Clear search"
+              onclick="prefLangSearchClear()">✕</button>
+    </div>
+    <div class="langcount" id="langCount"></div>
+    <div class="chips" id="langChips"></div>
     <div class="tbq tbqmin">
       <button type="button" class="q" onclick="prefLangSetAll(true)">Select all</button>
       <button type="button" class="q" onclick="prefLangSetAll(false)">Clear</button>
     </div>
     <p class="ucap" style="margin-top:14px">Genre, How far back and Age rating are set per agent, from Edit
       Agent — not here. New cascades start from fixed system defaults: all genres, last 20 years, M and up.</p>`;
+  renderLangChips();
 }
 window.openLanguages=()=>{
   langMoreOpen=false;
+  langQuery="";
   renderLanguages();
   $("languagesScreen").scrollTop=0;
   $("languagesScreen").classList.add("open"); document.body.style.overflow="hidden";
