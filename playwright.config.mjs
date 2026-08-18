@@ -22,9 +22,6 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
-    // 390x844 is the reference phone the whole design is drawn at (CAS-162/200).
-    ...devices["Desktop Chrome"],
-    viewport: { width: 390, height: 844 },
     // No traces, screenshots or video. They are the first thing you want when a run goes red, and they are also
     // ~30MB a failure — which on a full disk turns one real failure into fifteen ENOSPC failures that tell you
     // nothing. Set PWTRACE=1 to turn tracing back on for a single investigation.
@@ -36,6 +33,15 @@ export default defineConfig({
     // never waiting on, or failing because of, someone else's CDN.
     serviceWorkers: "block",
   },
+  // CAS-552: Cascade ships to exactly two runtimes, iOS Safari and the Capacitor WKWebView — both WebKit.
+  // The old default project ran Blink with a desktop UA at a phone-sized viewport, an engine/input
+  // combination that exists nowhere in production (CAS-519 passed here and failed on device — CAS-526).
+  // devices["iPhone 13"] sets defaultBrowserType: "webkit", the real iOS UA, isMobile/hasTouch true,
+  // deviceScaleFactor 3 and the 390x844 viewport (the reference phone this design is drawn at,
+  // CAS-162/200), so the hand-rolled viewport override above is gone — it would only fight the descriptor.
+  projects: [
+    { name: "ios", use: { ...devices["iPhone 13"] } },
+  ],
   webServer: {
     command: `python -m http.server ${PORT} --bind 127.0.0.1`,
     url: `http://127.0.0.1:${PORT}/index.html`,
