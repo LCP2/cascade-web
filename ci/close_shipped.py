@@ -2,10 +2,11 @@
 """ci/close_shipped.py — called by promote.yml after main is pushed.
 
 For every CAS-NN key in the commits that just shipped (RANGE_FROM..HEAD), transition the
-ticket to Done, add the per-release label v<RELEASE_VERSION>, and strip the labels that
-mark its earlier pipeline stages (the legacy `on-staging` label, and any older `vX.Y.Z`
-label it's still carrying) so a ticket ends up with exactly one current version label.
-Cascade tracks releases by that label, not by Jira Versions, so this is the whole
+ticket to Done and strip the legacy `on-staging` pipeline label. The per-release
+v<RELEASE_VERSION> label is added ONLY to a ticket that carries no release label yet —
+see CAS-577. A release label states which release a ticket was SHAPED into; it is an input,
+not a record of what happened to be live at promote time, and closing a ticket must never
+change it. Cascade tracks releases by that label, not by Jira Versions, so this is the whole
 "close the board" step.
 
 Stdlib only (urllib) — matches the repo convention; no pip install in CI.
@@ -22,13 +23,14 @@ LABEL = f"v{VERSION}"
 STALE_VERSION_LABEL = re.compile(r"^v\d+\.\d+\.\d+$")
 
 
-def strip_stale_labels(key):
+def strip_pipeline_labels(key):
     st, body = api("GET", f"/rest/api/3/issue/{key}?fields=labels")
     if st != 200:
         print(f"  {key}: cannot read labels -> HTTP {st}")
         return
-    stale = [l for l in body["fields"]["labels"]
-             if l == "on-staging" or (l != LABEL and STALE_VERSION_LABEL.match(l))]
+    # CAS-577: `on-staging` only. Version labels are the shaper's statement of which release
+    # this ticket belongs to — never ours to revise on close.
+    stale = [l for l in body["fields"]["labels"] if l == "on-staging"]
     if not stale:
         return
     st, _ = api("PUT", f"/rest/api/3/issue/{key}",
@@ -38,13 +40,21 @@ def strip_stale_labels(key):
 
 
 def close(key):
-    # add the release label
-    st, _ = api("PUT", f"/rest/api/3/issue/{key}",
-                {"update": {"labels": [{"add": LABEL}]}})
-    if st not in (204, 200):
-        print(f"  {key}: label add -> HTTP {st}")
+    # CAS-577: only label a ticket that arrived without one. A shaped release label wins.
+    st, body = api("GET", f"/rest/api/3/issue/{key}?fields=labels")
+    if st == 200:
+        existing = [l for l in body["fields"]["labels"] if STALE_VERSION_LABEL.match(l)]
+        if existing:
+            print(f"  {key}: keeping shaped release label {', '.join(existing)}")
+        else:
+            st2, _ = api("PUT", f"/rest/api/3/issue/{key}",
+                         {"update": {"labels": [{"add": LABEL}]}})
+            if st2 not in (204, 200):
+                print(f"  {key}: label add -> HTTP {st2}")
+    else:
+        print(f"  {key}: cannot read labels -> HTTP {st}; leaving labels alone")
     ok = transition_by_name(key, "Done")
-    strip_stale_labels(key)
+    strip_pipeline_labels(key)
     return ok
 
 
