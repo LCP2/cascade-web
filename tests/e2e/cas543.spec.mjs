@@ -14,9 +14,13 @@
 //
 // This can't be driven from Chromium (the engine this suite runs under, CAS-552) — the loss only happens
 // inside WebKit's own sticky-position implementation. This spec instead pins the two things that are
-// checkable outside WebKit: the compositing-layer promotion is actually present on .ymcard (so a future
-// edit can't silently drop it again), and the "never absent, no blank space" invariant holds across the
-// full collapse/expand cycle a scroll gesture drives.
+// checkable outside WebKit: the compositing-layer promotion is actually present (so a future edit can't
+// silently drop it again), and the "never absent, no blank space" invariant holds across the full
+// collapse/expand cycle a scroll gesture drives.
+//
+// CAS-567 moved the sticky positioning — and with it this compositing-layer promotion — off .ymcard onto
+// its new wrapper, #ymSticky (.ymcard itself is position:static now). The first test below checks the
+// promotion on its new home; the "never absent" test is unaffected since #ymcard still renders inside it.
 import { test, expect } from "@playwright/test";
 import { toShortlist, shortlistCards, pickCard, finishFlow, toListing, settleListing } from "./helpers.mjs";
 
@@ -65,13 +69,13 @@ async function assertCardPresent(page, card){
   expect(box.width).toBeGreaterThan(0);
 }
 
-test("CAS-543: .ymcard carries the same compositing-layer promotion CAS-519 gave .cascbar", async ({ page }) => {
+test("CAS-543: #ymSticky carries the same compositing-layer promotion CAS-519 gave .cascbar", async ({ page }) => {
   await toStreamListing(page);
   const ids = await firstCardIds(page, 1);
   await tickWatchIt(page, ids[0], "stream");
   await openYourMovies(page);
 
-  const transform = await page.locator("#ymcard").evaluate(el => getComputedStyle(el).transform);
+  const transform = await page.locator("#ymSticky").evaluate(el => getComputedStyle(el).transform);
   // translateZ(0) computes to a 4x4 matrix3d, never the identity "none" — that's the whole point of the
   // promotion (it forces its own compositing layer). Assert it's actually a matrix, not merely non-empty.
   expect(transform).not.toBe("none");
