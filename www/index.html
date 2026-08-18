@@ -4178,7 +4178,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 552, "commit": "3f4c0f7", "builtAt": "2026-08-18T02:41:09Z"};
+const BUILD_INFO = {"version": "0.9.1", "major": 0, "minor": 9, "patch": 1, "build": 553, "commit": "6d13fc5", "builtAt": "2026-08-18T03:51:02Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6130,6 +6130,10 @@ function watchPanelKey(e){ if(e.key==="Escape"){ e.stopPropagation(); closeWatch
 // before our handlers even start running, so there is nothing in-process to intercept. keepRowInPlace snaps
 // back to this before it takes its own "was" measurement, which is the only thing that has to be correct.
 let watchPanelAnchorY=null;
+// CAS-569: the Your-Movies-container analogue of watchPanelAnchorY above — same Chromium content-visibility
+// reveal-scroll, but landing on #yourMovies' own scrollTop (its overflow-y:auto container) rather than the
+// window's scrollY, since body scroll is frozen while that screen is open. null when Your Movies isn't open.
+let ymPanelAnchorTop=null;
 window.openWatchPanel=(id, btn)=>{
   // CAS-281: "was MY panel already open?", not "was ANY panel open?". The old test closed whatever was open
   // and returned, so tapping a second control while a first was open closed the first and opened nothing —
@@ -6140,6 +6144,8 @@ window.openWatchPanel=(id, btn)=>{
   if(mine){ watchPanelAnchorY=null; return; }    // tapping the chip again closes the panel it opened
   const stub=btn.closest(".stub"); if(stub) stub.classList.add("ratingopen");
   watchPanelAnchorY=scrollY;
+  const ymEl=$("yourMovies");
+  ymPanelAnchorTop = (ymEl && ymEl.classList.contains("open")) ? ymEl.scrollTop : null;
   const cur=opinionOf(id);
   const pop=document.createElement("div");
   // CAS-374: content-width, right-aligned under the Watched chip — no in-panel close, the chip is the toggle.
@@ -13948,6 +13954,25 @@ function fastPatchFindRow(id){
 }
 function repaintAfterOpinion(id){
   recomputeFound();
+  // CAS-569: Your Movies is a second listing of the same films with its own renderer. Without this branch a
+  // verdict given on the Watch List was saved and filtered correctly in the model (ymFeedList dropped the
+  // film) while the DOM and the count line kept showing it — the film only left on the next full render, i.e.
+  // when you closed and reopened the screen. ymRefreshFeed() is the same partial update the search field
+  // uses: count + result line + cards, leaving the Watch List card and the Edit panel untouched.
+  const ym=$("yourMovies");
+  if(ym && ym.classList.contains("open")){
+    // Reading ym.scrollTop HERE is already too late — CAS-315's own comment on watchPanelAnchorY explains why:
+    // Chromium silently scrolls a content-visibility:auto card's nearest scrollable ancestor (here, #yourMovies
+    // itself, since it's the overflow-y:auto container) the moment the focused Watched-panel button is removed
+    // from the DOM, and that happens before this function is even called. ymPanelAnchorTop is the snapshot
+    // openWatchPanel took of #yourMovies' scrollTop before any of that could happen — the offset to hold is
+    // that one, not whatever ym.scrollTop already drifted to by now.
+    const y = ymPanelAnchorTop!=null ? ymPanelAnchorTop : ym.scrollTop;
+    ymPanelAnchorTop=null;
+    ymRefreshFeed();
+    ym.scrollTop=y;
+    return;
+  }
   if(fastPatchFindRow(id)) return;                     // instant single-node swap
   render();                                            // fallback (off-screen cards skip layout, so cheap)
 }
@@ -13990,6 +14015,14 @@ addEventListener("scroll", trimFoot, {passive:true});
 // had and the height it now has, so the change reads as a shrink (or an unfold) rather than a swap. Under
 // prefers-reduced-motion it lands at its new height instantly, still without moving.
 function keepRowInPlace(id, repaint){
+  // CAS-569: Find's row-tracking below assumes the SAME row survives, at the same id, across repaint() — true
+  // for a fold-to-stub, but false for the Watch List, where the row leaves the DOM entirely and its id gets
+  // reassigned (by ymAvoidCardIdCollisions) to the unrelated, hidden deck copy underneath. Left unguarded,
+  // `now=rowFor(id)` below resolves to that hidden copy and the drift/scrollBy math below scrolls the window
+  // by the (meaningless) distance between the two elements' positions. ymRefreshFeed (inside repaintAfterOpinion)
+  // already holds #yourMovies' own scrollTop, so this screen needs none of Find's row math — just repaint.
+  const ym=$("yourMovies");
+  if(ym && ym.classList.contains("open")){ repaint(); return; }
   const row=rowFor(id);
   if(!row){ repaint(); return; }
   // CAS-315: undo whatever Chromium's content-visibility reveal already did to the window before this ran —
