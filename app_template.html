@@ -8043,7 +8043,16 @@ function armCascObserver(){
     {rootMargin:`-${phoneHeader.offsetHeight}px 0px 0px 0px`, threshold:[0,1]});
   cascIO.observe(anc);
 }
-addEventListener("resize",()=>{ syncHeaderHeight(); armCascObserver(); syncCascCollapse(); });
+// CAS-557: was undebounced. iOS fires a stream of resize events while the soft keyboard animates in (and
+// again as the predictive-text bar changes), and armCascObserver() disconnects and reallocates an
+// IntersectionObserver on every call, each preceded by a layout-forcing offsetHeight read — so every
+// keystroke in a focused field paid for a full observer rebuild and the keyboard went unresponsive.
+// Debounced at 140ms to match the deck's own resize handler (~line 7955, CAS-508), which already does this.
+let cascResizeT=0;
+addEventListener("resize",()=>{
+  clearTimeout(cascResizeT);
+  cascResizeT=setTimeout(()=>{ syncHeaderHeight(); armCascObserver(); syncCascCollapse(); },140);
+});
 syncHeaderHeight(); armCascObserver();
 
 // ---- CAS-136: per-cascade search ------------------------------------------------------------------
