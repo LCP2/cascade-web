@@ -1,0 +1,39 @@
+name: Watchmode evaluation
+
+# CAS-579: one-off capability evaluation, run manually. Read-only against the
+# repo — it writes a report artifact and commits nothing. Exists in CI because
+# WATCHMODE_API_KEY is a GitHub secret and is not present on any developer machine.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run the evaluation
+        env:
+          WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
+          CASCADE_CATALOGUE: movies.json
+          CAS579_REPORT: watchmode_eval_report.md
+        run: python scripts/cas579_watchmode_eval.py
+
+      - name: Publish the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchmode-eval-report
+          path: watchmode_eval_report.md
+          if-no-files-found: error
+
+      - name: Echo the report into the run log
+        if: always()
+        run: cat watchmode_eval_report.md
