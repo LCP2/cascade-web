@@ -223,6 +223,24 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
 
+      # CAS-581: the browser *binary* above was already cached, but the OS packages `install-deps`
+      # apt-get pulls underneath it were not - every run re-downloaded them from the apt mirrors,
+      # ~7m47s of an ~8-minute job, and mirror slowness could stall the run long enough to get it
+      # cancelled (CAS-552 made this job WebKit's much heavier dependency set). This caches apt's own
+      # download cache, keyed on the same Playwright-version hash as the browser cache above, so a
+      # Playwright version bump invalidates both together and pays the download cost once, not
+      # silently installs OS deps for a stale version. apt-get itself always runs via sudo (root), so
+      # ownership never blocks it - but actions/cache runs as the unprivileged runner user and cannot
+      # write into a root-owned directory to restore/save the cache without this.
+      - name: Allow caching the apt archive
+        run: sudo chown "$(whoami)" /var/cache/apt/archives
+
+      - name: Cache apt archives (webkit OS dependencies)
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-webkit-${{ hashFiles('package-lock.json') }}
+
       - name: Install the matching browser
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps webkit
