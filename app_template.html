@@ -5104,7 +5104,10 @@ const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
 // Blockbuster-style agent (sort:"popularity") was falling through to sortMoviesBy and losing the
 // oldest-first read entirely.
 const sortForKey = (g,key,cinema) =>
-    (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byTimelineAsc
+    // CAS-410: "Newest cinema" (key==="cinema") is in PRE_RELEASE_SORTS because it's a literal pre-release
+    // date order like Title — but for a cinema agent it needs to read the same direction as every other
+    // Upcoming sort (soonest first), not sortMoviesBy's plain descending. Non-cinema agents keep it descending.
+    (g==="upcoming" && (!PRE_RELEASE_SORTS.has(key) || (cinema && key==="cinema"))) ? byTimelineAsc
   : (cinema && g==="in_cinema") ? byTimelineAsc
   : key==="availability" ? (cinema||g==="upcoming" ? byTimelineAsc : byTimeline)
   : key==="imdb" ? byRatingDesc

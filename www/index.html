@@ -4336,7 +4336,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 574, "commit": "f4a2e5a", "builtAt": "2026-08-19T22:51:43Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 575, "commit": "c624253", "builtAt": "2026-08-19T23:48:44Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5104,7 +5104,10 @@ const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
 // Blockbuster-style agent (sort:"popularity") was falling through to sortMoviesBy and losing the
 // oldest-first read entirely.
 const sortForKey = (g,key,cinema) =>
-    (g==="upcoming" && !PRE_RELEASE_SORTS.has(key)) ? byTimelineAsc
+    // CAS-410: "Newest cinema" (key==="cinema") is in PRE_RELEASE_SORTS because it's a literal pre-release
+    // date order like Title — but for a cinema agent it needs to read the same direction as every other
+    // Upcoming sort (soonest first), not sortMoviesBy's plain descending. Non-cinema agents keep it descending.
+    (g==="upcoming" && (!PRE_RELEASE_SORTS.has(key) || (cinema && key==="cinema"))) ? byTimelineAsc
   : (cinema && g==="in_cinema") ? byTimelineAsc
   : key==="availability" ? (cinema||g==="upcoming" ? byTimelineAsc : byTimeline)
   : key==="imdb" ? byRatingDesc
