@@ -1620,6 +1620,52 @@
     backdrop-filter:blur(4px)}
   .splashlogin:hover{border-color:var(--violet);color:var(--ink)}
   .splashlogin:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+  /* ===== PUBLIC ABOUT PAGE ==============================================
+     A one-screen answer to "what is this?", reachable WITHOUT an account.
+     Same shell as .filmpage so it inherits the app's page geometry rather
+     than inventing a second one; z-index 90 puts it above both the splash
+     (80) and the film page (85), so it can be opened from either. */
+  .about{position:fixed;top:0;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;
+    background:var(--bg);z-index:90;display:none;overflow-y:auto;
+    padding:0 20px calc(48px + env(safe-area-inset-bottom,0px))}
+  .about.open{display:block}
+  .abclose{position:sticky;top:0;background:var(--bg);display:flex;justify-content:flex-end;
+    padding:calc(14px + env(safe-area-inset-top,0px)) 0 6px;z-index:2}
+  .abclose button{background:none;border:0;color:var(--dim);font:inherit;font-size:14px;
+    padding:6px 2px;cursor:pointer}
+  .abclose button:hover{color:var(--ink)}
+  .abword{font-family:var(--font-body);font-weight:500;letter-spacing:.44em;font-size:17px;
+    color:var(--ink);text-align:center;margin:2px 0 6px}
+  .abtag{font-family:var(--font-body);font-weight:500;letter-spacing:.14em;font-size:12px;
+    text-transform:uppercase;color:var(--faint);text-align:center;margin:0 0 26px}
+  .abh{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;
+    color:var(--faint);margin:26px 0 9px}
+  .abp{font-size:14.5px;line-height:1.62;color:var(--dim);margin:0 0 12px}
+  .abp strong{color:var(--ink);font-weight:600}
+  .abp a{color:var(--dim)}
+  /* the ladder as a list, not the splash's pills — here it is the explanation, not a badge row */
+  .abwin{list-style:none;margin:0 0 4px;padding:0}
+  .abwin li{display:flex;align-items:baseline;gap:11px;padding:7px 0;
+    border-top:1px solid var(--line);font-size:14px;color:var(--dim)}
+  .abwin li:first-child{border-top:0}
+  .abwin b{color:var(--ink);font-weight:600;min-width:92px;display:inline-block}
+  .abdot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;position:relative;top:-1px}
+  .abnote{border:1px solid var(--line);background:var(--panel);border-radius:12px;
+    padding:13px 15px;margin:6px 0 0}
+  .abnote p{margin:0;font-size:13.5px;line-height:1.6;color:var(--dim)}
+  .abnote p+p{margin-top:8px}
+  .abcred{margin:8px 0 0;font-size:12px;line-height:1.65;color:var(--faint)}
+  .abcred p{margin:0 0 6px}
+  .abcred a{color:var(--dim);text-decoration:none}
+  .abcred a:hover{text-decoration:underline}
+  .abfoot{margin-top:26px;padding-top:14px;border-top:1px solid var(--line);
+    font-size:12px;color:var(--faint);text-align:center}
+  /* the door on the splash — deliberately quiet, below Log in */
+  .splashabout{display:block;width:100%;margin-top:14px;padding:4px;background:none;border:0;
+    color:var(--faint);font:inherit;font-size:13px;text-decoration:underline;
+    text-underline-offset:3px;cursor:pointer}
+  .splashabout:hover{color:var(--dim)}
   @media (prefers-reduced-motion:reduce){ .splashinner{animation:none} }
 
   /* ---- agent cards (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
@@ -3242,7 +3288,7 @@
     <div class="splashword">CASCADE</div>
     <!-- CAS-257: the tagline. Directly under the wordmark, so the first thing after the name says what
          the thing IS — the bullets below say what it does. -->
-    <div class="splashtag" id="splashTag">Movie Agents</div>
+    <div class="splashtag" id="splashTag">Movies</div>
     <!-- CAS-258: all five windows Cascade follows, not four — Purchase was missing, which made the strip
          quietly untrue about what the app tracks. Split 2 / 3: before it is home, then home. -->
     <div class="splashloz">
@@ -3268,6 +3314,7 @@
          only has to name the door. It also puts the two doors in the same grammar — Sign up / Log in. -->
     <button class="splashcta" id="splashCta" type="button">Sign up</button>
     <button class="splashlogin" id="splashLogin" type="button">Log in</button>
+    <button class="splashabout" id="splashAbout" type="button">What is Cascade?</button>
   </div>
 </div>
 
@@ -3276,6 +3323,59 @@
      the signup flow. Sits above the splash (z-index 85 > 80) so it shows whatever else the boot decided to
      put up behind it, and closing it reveals that page rather than a dead end. -->
 <div class="filmpage" id="filmPage" role="dialog" aria-modal="true" aria-label="Film"></div>
+
+<!-- PUBLIC ABOUT PAGE. Reachable from the splash without an account, because the first question
+     anyone who is not already a user asks is "what is this?" — and until now the only answer was a
+     Sign up button. It is also the page a data vendor, an app-store reviewer, or anyone sent the
+     link will land on, which is why "in development / free / nothing for sale" is stated plainly
+     rather than left to be inferred. -->
+<div class="about" id="aboutPage" role="dialog" aria-modal="true" aria-label="About Cascade">
+  <div class="abclose"><button type="button" id="aboutClose">Close</button></div>
+
+  <div class="abword">CASCADE</div>
+  <div class="abtag">It does the watching for you</div>
+
+  <p class="abp"><strong>Cascade watches how films move.</strong></p>
+  <p class="abp">Every film travels the same path — announced, into cinemas, out to premium digital,
+    then rental, then streaming. Cascade follows that path for Australia and tells you the moment a
+    film you have been waiting for lands somewhere you can actually watch it.</p>
+  <p class="abp">It is not a search box for what is on tonight. It is a standing watch on the films
+    you mean to see, so you stop finding out six weeks late.</p>
+
+  <div class="abh">The five windows</div>
+  <ul class="abwin">
+    <li><span class="abdot" style="background:var(--upcoming)"></span><b>Upcoming</b> announced, dated, not yet out</li>
+    <li><span class="abdot" style="background:var(--amber)"></span><b>In cinemas</b> showing on Australian screens</li>
+    <li><span class="abdot" style="background:var(--purple)"></span><b>Premium</b> early digital, before rental</li>
+    <li><span class="abdot" style="background:var(--blue)"></span><b>Rental</b> rent or buy at the usual price</li>
+    <li><span class="abdot" style="background:var(--green)"></span><b>Streaming</b> included with a service you pay for</li>
+  </ul>
+
+  <div class="abh">Who it is for</div>
+  <p class="abp">People who keep a running list of films they mean to see, and keep missing the
+    moment those films become watchable.</p>
+
+  <div class="abh">Where it is up to</div>
+  <div class="abnote">
+    <p><strong>Cascade is in development.</strong> It is free to use. There is no subscription, no
+      advertising, no affiliate links and nothing for sale.</p>
+    <p>It covers <strong>Australia only</strong>, and currently tracks
+      <strong id="aboutCount">several thousand</strong> films across cinema and every major
+      Australian streaming, rental and free service.</p>
+  </div>
+
+  <div class="abh">Where the data comes from</div>
+  <div class="abcred">
+    <p>This product uses the TMDB API but is not endorsed or certified by TMDB.
+      <a href="https://www.themoviedb.org" target="_blank" rel="noopener">The Movie Database &#8599;</a></p>
+    <p>Powered by <a href="https://api.watchmode.com" target="_blank" rel="noopener">Watchmode &#8599;</a></p>
+    <p>Streaming availability by <a href="https://www.justwatch.com" target="_blank" rel="noopener">JustWatch &#8599;</a></p>
+    <p>Cascade is not affiliated with any streaming service, and does not play or host video.
+      Watching a film still needs whatever subscription or purchase the service asks for.</p>
+  </div>
+
+  <div class="abfoot">Codynamics &middot; Australia</div>
+</div>
 
 <!-- THE SIGNUP FLOW (CAS-188) — one frame for every step of it, from "what's your priority?" through to
      notify settings. The body per step is rendered by renderOnbStep(); progress, summary and counts all
@@ -9367,6 +9467,18 @@ $("splashLogin").onclick=()=>{
 // (CAS-559: now a plain "can't reach its account service" message) still tells the truth about why the
 // door doesn't work rather than hiding it. So the door always shows, and what's behind it tells the
 // truth either way.
+
+// ---- CAS-582: the third splash door — "What is Cascade?", reachable without an account -----------
+// Open/close only, the same contract .filmpage already honours: the splash stays up underneath,
+// untouched, so closing returns the visitor exactly where they were.
+$("splashAbout").onclick=()=>{
+  logEvent("splash_about");
+  $("aboutPage").scrollTop=0;
+  $("aboutPage").classList.add("open");
+};
+$("aboutClose").onclick=()=>$("aboutPage").classList.remove("open");
+document.addEventListener("keydown", e => { if(e.key==="Escape" && $("aboutPage").classList.contains("open")) $("aboutPage").classList.remove("open"); });
+if(MOVIES && MOVIES.length) $("aboutCount").textContent = MOVIES.length.toLocaleString("en-AU");
 
 // ---- Agent select (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
 // The mock's ten first-agent cards. Each carries real criteria, so its green "N films match now" is the
