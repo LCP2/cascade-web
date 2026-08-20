@@ -32,14 +32,13 @@ test("CAS-582: Escape closes About and returns to the splash", async ({ page }) 
   await expect(page.locator("#splashCta")).toBeVisible();
 });
 
-test("CAS-582: the catalogue count renders as a formatted number", async ({ page }) => {
+test("CAS-584: no monetisation claim or film count on the About page", async ({ page }) => {
   await freshApp(page);
   await page.locator("#splashAbout").click();
 
-  const countText = await page.locator("#aboutCount").textContent();
-  const movieCount = await page.evaluate(() => MOVIES.length);
-  expect(countText.trim()).toBe(movieCount.toLocaleString("en-AU"));
-  expect(countText.trim()).not.toBe("0");
+  await expect(page.locator("#aboutCount")).toHaveCount(0);
+  const noteText = await page.locator(".abnote").innerText();
+  expect(noteText).not.toMatch(/subscription|advertising|affiliate/i);
 });
 
 test("CAS-582: the existing in-app TMDB/Watchmode/JustWatch credit block is untouched", async ({ page }) => {
