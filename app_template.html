@@ -4263,6 +4263,34 @@ function loadCascades(){
   }catch(e){ return []; }
 }
 function saveCascades(){ try{ localStorage.setItem("cascade_cascades", JSON.stringify(cascades)); }catch(e){} }
+// ---- CAS-589: the Watch List's own filter state, persisted the same way a Cascade is (guest key +
+// account chokepoint below) instead of living only in module-level `let`s that reset on reload. The
+// record is a plain object of the five fields the Watch screen actually keeps between visits — see
+// watchlistRecord()/applyWatchlistRecord() near the ymSvcOn/ymCascOff/etc. declarations for the
+// Set<->array bridge. saveWatchlist is a plain hoisted function (not a const arrow) so the account
+// IIFE below can reassign the identifier the same way it already does for saveCascades/saveLists.
+const WATCHLIST_KEY = "cascade_watchlist";
+function watchlistDefaults(){ return {svcOn:["stream"], cascOff:[], watchedOn:[], watchTiers:[], sort:null}; }
+function normWatchlist(o){
+  const d=watchlistDefaults();
+  if(!o || typeof o!=="object") return d;
+  const arr=v=>Array.isArray(v) ? v.filter(x=>typeof x==="string") : null;
+  return {
+    svcOn:      arr(o.svcOn)      || d.svcOn,
+    cascOff:    arr(o.cascOff)    || d.cascOff,
+    watchedOn:  arr(o.watchedOn)  || d.watchedOn,
+    watchTiers: arr(o.watchTiers) || d.watchTiers,
+    sort:       typeof o.sort==="string" ? o.sort : null,
+  };
+}
+function loadWatchlist(){
+  try{
+    const raw=localStorage.getItem(WATCHLIST_KEY);
+    if(raw===null) return null;   // no record yet — caller runs the first-load migration
+    return normWatchlist(JSON.parse(raw));
+  }catch(e){ return null; }
+}
+function saveWatchlist(){ try{ localStorage.setItem(WATCHLIST_KEY, JSON.stringify(watchlistRecord())); }catch(e){} }
 // New Cascade ids are UUIDs so they drop straight into the account table's uuid primary key (CAS-83).
 // crypto.randomUUID is available on the live https site and on localhost; the string fallback covers
 // any non-secure context so guest mode never breaks.
@@ -12397,6 +12425,31 @@ let ymSearchTerm = "";
 let ymWatchTiers = new Set();   // Filter icon — reuses FILTER_TIERS/filmHasWatchTier (CAS-382's own predicate),
                                  // scoped to this feed rather than the deck's per-cascade filt.watchTiers.
 let ymSort = null;              // Sort icon — null keeps the feed's own "best match" order; else a sortMoviesBy key.
+// ---- CAS-589: bridge the five fields above to the persisted record (loadWatchlist/saveWatchlist,
+// guest section near saveCascades). ymEditOpen/ymSearchOpen/ymSearchTerm and ymCollapsed stay
+// module `let`s only — they are transient UI, not part of the record.
+function watchlistRecord(){
+  return {svcOn:[...ymSvcOn], cascOff:[...ymCascOff], watchedOn:[...ymWatchedOn],
+          watchTiers:[...ymWatchTiers], sort:ymSort};
+}
+function applyWatchlistRecord(rec){
+  ymSvcOn=new Set(rec.svcOn); ymCascOff=new Set(rec.cascOff); ymWatchedOn=new Set(rec.watchedOn);
+  ymWatchTiers=new Set(rec.watchTiers); ymSort=rec.sort;
+}
+// CAS-517-style ambiguity: on a signed-in device an absent account row could mean "genuinely no
+// record yet" or "the fetch hasn't returned" — ymReady is this record's OWN flag (not cascadesReady,
+// which only answers that question for `cascades`), so a write can't fire on stale defaults before
+// the real answer arrives (AC5). Guest devices have nothing to wait for, so they start ready.
+let ymReady = true;
+try{ ymReady = localStorage.getItem("cascade_had_account") !== "1"; }catch(e){}
+(function(){
+  const rec=loadWatchlist();
+  if(rec) applyWatchlistRecord(rec);
+  else saveWatchlist();   // first-load migration: seed a record from today's hardcoded defaults
+})();
+// Every UI write site below calls this instead of saveWatchlist() directly, so none of them can
+// push a still-default record over a real account answer while that answer is still in flight.
+function ymPersist(){ if(ymReady) saveWatchlist(); }
 // Never (blocked) stays excluded outright — that bucket is a permanent no, not something this feed
 // reconsiders. A watched film only rejoins when its own verdict is ticked in ymWatchedOn (CAS-570), so a
 // Wow can be picked again without every watched film flooding back by default.
@@ -12422,11 +12475,13 @@ function ymFeedList(){
     return score(b)-score(a) || (b.imdb_rating||0)-(a.imdb_rating||0);
   });
 }
-window.ymSvcToggle=key=>{ ymSvcOn.has(key)?ymSvcOn.delete(key):ymSvcOn.add(key); renderYourMovies(); };
-window.ymSvcSetAll=on=>{ ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]); renderYourMovies(); };
-window.ymCascToggle=id=>{ ymCascOff.has(id)?ymCascOff.delete(id):ymCascOff.add(id); renderYourMovies(); };
-window.ymVerdictToggle=k=>{ ymWatchedOn.has(k)?ymWatchedOn.delete(k):ymWatchedOn.add(k); renderYourMovies(); };
-window.ymVerdictSetAll=on=>{ ymWatchedOn = new Set(on ? WATCH_STEPS.map(s=>s.key) : []); renderYourMovies(); };
+window.ymSvcToggle=key=>{ ymSvcOn.has(key)?ymSvcOn.delete(key):ymSvcOn.add(key); ymPersist(); renderYourMovies(); };
+window.ymSvcSetAll=on=>{ ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]); ymPersist(); renderYourMovies(); };
+window.ymCascToggle=id=>{ ymCascOff.has(id)?ymCascOff.delete(id):ymCascOff.add(id); ymPersist(); renderYourMovies(); };
+window.ymVerdictToggle=k=>{ ymWatchedOn.has(k)?ymWatchedOn.delete(k):ymWatchedOn.add(k); ymPersist(); renderYourMovies(); };
+window.ymVerdictSetAll=on=>{ ymWatchedOn = new Set(on ? WATCH_STEPS.map(s=>s.key) : []); ymPersist(); renderYourMovies(); };
+// ymEditOpen is transient UI (not part of the record) — this must NOT call ymPersist(), so opening
+// the panel never churns an account write (CAS-589 AC2).
 window.ymEditToggle=()=>{ ymEditOpen=!ymEditOpen; renderYourMovies(); };
 // CAS-541: the Edit panel used to be dismissible only by re-tapping "Edit" itself — every other popover in
 // the app (the deck's own Watch it filter, closeFilterPanel above) also closes on an outside tap, Escape, or
@@ -12500,12 +12555,14 @@ function armYmObserver(){
 let ymSearchRenderTimer=null;
 window.setYmSearchTerm=raw=>{
   ymSearchTerm=raw.trim().toLowerCase();
+  ymPersist();   // ymSearchTerm itself isn't part of the record — this only re-saves the real 5 fields
   clearTimeout(ymSearchRenderTimer);
   ymSearchRenderTimer=setTimeout(ymRefreshFeed, 150);
 };
 window.ymSearchToggle=()=>{
   ymSearchOpen=!ymSearchOpen;
   if(!ymSearchOpen) ymSearchTerm="";
+  ymPersist();
   renderYourMovies();
   if(ymSearchOpen){ const inp=$("ymSearchInput"); if(inp) inp.focus(); }
 };
@@ -12543,6 +12600,7 @@ window.onYmFilterIcon=()=>{
 };
 window.ymToggleFilterTier=key=>{
   ymWatchTiers.has(key) ? ymWatchTiers.delete(key) : ymWatchTiers.add(key);
+  ymPersist();
   const pop=document.querySelector(".cpop.ymfpop");
   if(pop) pop.querySelector(".nopts").innerHTML=ymFilterRowsHTML();
   ymRefreshFeed();
@@ -12552,7 +12610,7 @@ document.addEventListener("click", e=>{
   if(e.target.closest(".cpop.ymfpop") || e.target.closest("#ymFilterBtn")) return;
   closeYmFilterPanel();
 }, true);
-window.ymSortChange=v=>{ ymSort = v||null; ymRefreshFeed(); };
+window.ymSortChange=v=>{ ymSort = v||null; ymPersist(); ymRefreshFeed(); };
 const YM_SORT_OPTS=[
   {v:"",label:"Best match"},
   {v:"availability",label:"Availability"},
@@ -15423,6 +15481,72 @@ else if(dedupedN)
   }
   function replaceListsInPlace(arr){ lists.length=0; arr.forEach(l=>lists.push(l)); }
 
+  // ==========================================================================
+  // CAS-589: the Watch List's own filter record, one row per account
+  // --------------------------------------------------------------------------
+  // Shaped like a cascade row on purpose (id + user_id + an opaque criteria blob, CAS-408-style
+  // baseline tracked as a single row id rather than a Set of ids) even though today there is only
+  // ever one — CAS-590 turns this into a real array of rows without any schema change, the same way
+  // cascadeToRow/rowToCascade's opaque criteria blob means a new field never needs a migration.
+  // ==========================================================================
+  function watchlistToRow(id){ return { id: id || cascadeNewId(), user_id:uid(), criteria: watchlistRecord() }; }
+  let watchlistRowId=null;   // this device's known row id, once loaded or first created
+  let ymSyncTimer=null, ymSyncing=false, ymSyncAgain=false;
+  function scheduleWatchlistSync(){ clearTimeout(ymSyncTimer); ymSyncTimer=setTimeout(runWatchlistSync, 500); }
+  async function runWatchlistSync(){
+    if(!accountActive() || !ymReady) return;   // CAS-589 AC5: never push a still-default record up
+    if(ymSyncing){ ymSyncAgain=true; return; }
+    ymSyncing=true;
+    try{ await syncWatchlistToAccount(); }
+    catch(err){ console.warn("Cascade: watchlist sync failed", err); }
+    finally{ ymSyncing=false; if(ymSyncAgain){ ymSyncAgain=false; scheduleWatchlistSync(); } }
+  }
+  async function syncWatchlistToAccount(){
+    const c=client(), owner=uid(); if(!c||!owner) return;
+    const row=watchlistToRow(watchlistRowId);
+    const { error } = await c.from("watchlists").upsert([row], { onConflict:"id" });
+    if(error){ console.warn("Watchlist upsert", error); return; }
+    watchlistRowId=row.id;
+  }
+  async function loadWatchlistAccount(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("watchlists").select("*").limit(1);   // RLS: only mine
+    if(error){ console.warn("Watchlist load", error); ymReady=true; return; }
+    const row=(data||[])[0];
+    if(!row){
+      // CAS-589 migration: a genuinely new account has no row yet — seed one from this device's
+      // current (guest-default) record, mirroring loadUserPrefs's "no row yet" branch.
+      ymReady=true;
+      scheduleWatchlistSync();
+      return;
+    }
+    watchlistRowId=row.id;
+    applyWatchlistRecord(normWatchlist(row.criteria));
+    saveWatchlistLocal();   // mirror into the guest cache for the next cold start, same as cascades
+    ymReady=true;
+    if(typeof render==="function") render();
+  }
+  // CAS-408-style background convergence — user_prefs' own merge rule applies here too: one row per
+  // user holding whole-object fields, nothing to diff or prune per item, so "last write wins" IS the
+  // upsert itself and a reconcile simply adopts whichever answer the account currently holds.
+  async function reconcileWatchlist(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("watchlists").select("*").limit(1);
+    if(error){ console.warn("Watchlist reconcile", error); return; }
+    const row=(data||[])[0]; if(!row) return;
+    watchlistRowId=row.id;
+    applyWatchlistRecord(normWatchlist(row.criteria));
+    saveWatchlistLocal();
+    if(typeof render==="function") render();
+  }
+  function loadGuestWatchlist(){
+    const rec=loadWatchlist();
+    applyWatchlistRecord(rec || watchlistDefaults());
+    watchlistRowId=null;
+    ymReady=true;
+    if(typeof render==="function") render();
+  }
+
   // ---- wrap the one save chokepoint ----------------------------------------
   // Guest: write localStorage as before. Signed-in: don't touch the guest key (so sign-out returns
   // the user to their own on-device set) — schedule an account sync instead.
@@ -15441,6 +15565,11 @@ else if(dedupedN)
     if(accountActive()) scheduleListsSync();
     else saveListMembershipLocal();
   };
+  const saveWatchlistLocal = saveWatchlist;
+  saveWatchlist = function(){
+    if(accountActive()) scheduleWatchlistSync();
+    else saveWatchlistLocal();
+  };
 
   // ---- react to auth state --------------------------------------------------
   // CAS-460: additive-only timing around the account-data fan-out, so a real-device console can show
@@ -15449,7 +15578,8 @@ else if(dedupedN)
     const _t460fanout = performance.now();
     console.log('[CAS-460] account fan-out start (' + label + ')', _t460fanout);
     Promise.allSettled([
-      loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadUserPrefs(), loadRealAlerts(), loadListsAccount()
+      loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadUserPrefs(), loadRealAlerts(), loadListsAccount(),
+      loadWatchlistAccount()
     ]).then(()=>{
       const t1 = performance.now();
       console.log('[CAS-460] account fan-out end (' + label + ')', t1, 'elapsed_ms', (t1-_t460fanout).toFixed(1));
@@ -15469,7 +15599,7 @@ else if(dedupedN)
       }
     } else if(currentUser !== null){
       // Signed out → back to the on-device set, and the bell stops showing another account's news.
-      currentUser = null; loadGuest(); loadGuestFilms(); loadGuestLists(); realAlerts=[]; updateBadge();
+      currentUser = null; loadGuest(); loadGuestFilms(); loadGuestLists(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
       cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
       try{ localStorage.setItem("cascade_had_account","0"); }catch(e){}
     }
@@ -15494,6 +15624,7 @@ else if(dedupedN)
     if(!filmSyncing && !filmTimer) reconcileFilms();
     if(!listsSyncing && !listsTimer){ reconcileLists(); reconcileListMembership(); }
     if(!watchSyncing && !watchTimer) reconcileFilmWatches();
+    if(ymReady && !ymSyncing && !ymSyncTimer) reconcileWatchlist();
     // CAS-561: taste/watch_windows only pulled the account's answer on sign-in/boot before this —
     // a tab left open across a change on another device stayed on its stale baseline until reloaded.
     // Guarded on !upTimer the same way the other reconciles are, so a pull can't land on top of an

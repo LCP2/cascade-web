@@ -2,7 +2,7 @@
 -- Source of truth: Confluence "Cascade Web — Architecture & CC Build Spec" §3.
 -- Apply this in the Supabase SQL editor (see supabase/README.md). Safe to re-run.
 --
--- Ten tables:
+-- Eleven tables:
 --   cascades      — one row per saved agent, per user (the user owns their rows via RLS).
 --   user_prefs    — the account-level defaults a NEW agent starts from, plus the services the
 --                   user actually pays for. CAS-211.
@@ -19,6 +19,10 @@
 --                   — the opposite of a cascade. CAS-428.
 --   list_films    — one row per (user, film, list): a film can sit in several lists at once, so
 --                   this is a true join table, unlike user_films/film_picks. CAS-428.
+--   watchlists    — the Watch screen's own persisted filter record: which services/agents/watched-
+--                   verdicts/tiers/sort it's currently scoped to. Shaped like `cascades` (id +
+--                   opaque criteria jsonb) on purpose, not `user_prefs`'s one-row-per-user shape, so
+--                   CAS-590 can grow this into several named lists with no schema change. CAS-589.
 --   notifications — the alert ledger; the daily monitoring job writes it with the
 --                   service_role key (which bypasses RLS) and de-dupes against it so the
 --                   same (cascade, movie, moment) is never delivered twice. The app reads
@@ -250,6 +254,33 @@ create policy list_films_owner on public.list_films
 create index if not exists list_films_list_id_idx on public.list_films (list_id);
 
 -- ---------------------------------------------------------------------------
+-- watchlists — the Watch screen's own persisted filter record (CAS-589)
+-- ---------------------------------------------------------------------------
+-- Shaped exactly like `cascades` — a thin id/user_id pair plus an opaque `criteria` jsonb blob —
+-- rather than `user_prefs`'s single-row-per-user shape, even though the app upserts only one row
+-- per user today. That is deliberate: CAS-590 (multiple named watch lists) turns this into a real
+-- array of rows with no further schema change, the same way a new cascade field never needs a
+-- migration because criteria is opaque to the database.
+create table if not exists public.watchlists (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  -- svcOn / cascOff / watchedOn / watchTiers / sort — the five fields the Watch screen's filters
+  -- keep between visits (CAS-589). cascOff is the COMPLEMENT — ids explicitly unticked — so a newly
+  -- created agent is included by default without this row needing to know about it.
+  criteria   jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.watchlists enable row level security;
+
+drop policy if exists watchlists_owner on public.watchlists;
+create policy watchlists_owner on public.watchlists
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create index if not exists watchlists_user_id_idx on public.watchlists (user_id);
+
+-- ---------------------------------------------------------------------------
 -- notifications — the alert ledger (de-dupe: never email the same
 -- movie+moment twice per cascade)
 -- ---------------------------------------------------------------------------
@@ -367,4 +398,9 @@ create trigger lists_set_updated_at
 drop trigger if exists list_films_set_updated_at on public.list_films;
 create trigger list_films_set_updated_at
   before update on public.list_films
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists watchlists_set_updated_at on public.watchlists;
+create trigger watchlists_set_updated_at
+  before update on public.watchlists
   for each row execute function public.set_updated_at();
