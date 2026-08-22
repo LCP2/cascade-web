@@ -1163,7 +1163,7 @@
   .deckstrip.dragging{scroll-snap-type:none;cursor:grabbing}
   /* The card is the snap box and stays UNtransformed — scroll-snap measures the transformed border box,
      so putting the coverflow transform on .dcard itself would fight the snap. It goes on .dc-in instead. */
-  .dcard{position:relative;flex:0 0 var(--dcw);width:var(--dcw);min-height:118px;scroll-snap-align:center;
+  .dcard{position:relative;flex:0 0 var(--dcw);width:var(--dcw);min-height:96px;scroll-snap-align:center;
     display:flex;cursor:pointer;transition:flex-basis .18s ease}
   .dc-in{flex:1;min-width:0;display:flex;flex-direction:column;text-align:left;
     background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:11px 12px;color:var(--dim);
@@ -2371,6 +2371,44 @@
      right — so the listing starts a screenful sooner. The services "scoped" banner that used to sit under
      them is gone outright (its job — saying the list is narrowed to your services — is now obvious from the
      Buy/Rent/Stream chips themselves); the "empty scope" warning stays, because that one is actionable. */
+  /* ---- SCOPE BAR (v0.9.4): what the Find list is FOR ----
+     Find offers you films to decide on, so the list is three named piles and this bar says which you are
+     looking at. ONE on-colour for all three (var(--accent)) — they are not three kinds of thing.
+     No counts: the count is already the length of the list underneath, and carrying it here forced a
+     double-height control for a number nobody acts on.
+     The caret opens the SAME .cpop listbox the deck card's funnel used to open, anchored under the pill and
+     opening downward — which is why the funnel is gone from the card. */
+  .scopebar{margin:9px 12px 0}
+  .scopepills{display:flex;gap:7px}
+  .scopebtn{flex:1;min-width:0;display:flex;align-items:stretch;border-radius:11px;
+    border:1px solid var(--line);background:var(--panel2);overflow:hidden;transition:.15s}
+  /* The app already has ONE convention for "this control is lit": .dc-search.on / .dc-filter.on, i.e. an
+     accent border over an 18% accent wash with #cfc2ff text. A solid accent fill is a different, louder
+     language that appears nowhere else, so these use the existing one. */
+  .scopebtn.on{border-color:var(--accent);background:rgba(124,92,255,.18)}
+  .scopebtn.open{border-color:var(--accent)}
+  .scmain{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;
+    padding:8px 6px;background:transparent;border:0;color:var(--dim);font-family:inherit;cursor:pointer;
+    -webkit-tap-highlight-color:transparent}
+  .scopebtn.on .scmain{color:#cfc2ff}
+  .scn{font-size:11.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .sccar{flex:0 0 auto;width:24px;border:0;border-left:1px solid var(--line);background:transparent;
+    color:var(--faint);font-size:10px;cursor:pointer;font-family:inherit;transition:.15s}
+  .scopebtn.on .sccar{border-left-color:rgba(124,92,255,.45);color:#cfc2ff}
+  .scopebtn.open .sccar{color:var(--accent)}
+  .scmain:active,.sccar:active{opacity:.75}
+  .scmain:focus-visible,.sccar:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+  /* a lit dot on the caret when that pile is narrowed, so a filter can never be on invisibly */
+  .sccar.narrowed{position:relative}
+  .sccar.narrowed::after{content:"";position:absolute;top:5px;right:5px;width:5px;height:5px;
+    border-radius:50%;background:var(--accenttext)}
+  .cascbar.rail .scopebar{margin-top:7px}
+  /* The listbox keeps its own outline all the way round. Squaring the joined corners only reads as "one
+     control" when the panel is exactly as wide as the pill — and it is not: the Watch it panel is wider,
+     the Watched panel is offset to stay on screen, and the open edge then reads as a cut-off box. A whole
+     rounded panel, sitting just under the pill it belongs to, says the same thing without the artefact. */
+  .cpop.spop{padding:5px 4px 4px;border-color:rgba(124,92,255,.5)}
   .listctl{display:flex;align-items:stretch;gap:8px;margin:8px 12px 0}
   /* CAS-275: the jump rail scrolls horizontally rather than wrapping — a control row that grows a second
      line changes the height of a STICKY bar, which moves the listing under the reader's thumb. Six sections
@@ -3033,6 +3071,7 @@
          there is only one, because a jump control with one destination scrolls you nowhere. CAS-371 took the
          order control out of this row (it now rides with the open agent card, above) — chips are all that's
          left, so the row is just the jump rail now. -->
+    <div class="scopebar" id="scopeBar" role="group" aria-label="Which films to show"></div>
     <div class="listctl" id="listCtl">
       <div class="jumpbar" id="jumpBar" hidden></div>
     </div>
@@ -6761,6 +6800,121 @@ const listedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m)).length
 // listedCount above (a newly-added film that doesn't even list here shouldn't inflate this agent's number),
 // narrowed to the ones newlyAddedKind actually flags.
 const newlyAddedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m) && newlyAddedKind(m)).length;
+// ---- v0.9.4 SCOPE: Watch it / New / Watched ---------------------------------------------------------
+// Find is where you DECIDE. So the list is three piles and this bar says which you are looking at:
+//   Watch it — you have already picked a window for it (filmOptOn on any rung)
+//   New      — no decision, not seen. The default, and the point of the screen.
+//   Watched  — you have given it a verdict, or said Never (taggedOut)
+// Watch it and Watched each open the SAME listbox the deck card's funnel opened (.cpop, .nopt rows, square
+// multi-select ticks) — anchored under the pill, opening down. That is why the funnel is gone from the card.
+const filmDecided = id => filmNotifyState(id).on > 0;
+const scope = {watch:false, new:true, watched:false};
+const scopeTiers = new Set();        // FILTER_TIERS keys — empty means "every window"
+const scopeVerdicts = new Set();     // REVIEW_STEPS keys — empty means "every verdict"
+function inFindScope(m){
+  const id=m.tmdb_id;
+  if(taggedOut(m)) return scope.watched && (!scopeVerdicts.size || scopeVerdicts.has(opinionOf(id)));
+  if(filmDecided(id)) return scope.watch && (!scopeTiers.size || [...scopeTiers].some(k=>filmHasWatchTier(id,k)));
+  return scope.new;
+}
+window.toggleScope = key => {
+  scope[key]=!scope[key];
+  if(!scope.watch && !scope.new && !scope.watched) scope[key]=true;   // never all three off
+  if(!scope[key]) closeScopePanel();
+  render();
+};
+const SCOPE_SETS = {watch:scopeTiers, watched:scopeVerdicts};
+const SCOPE_OPTS = {
+  watch:   () => FILTER_TIERS.map(t=>({key:t.key, lbl:t.label, cd:t.cd})),
+  watched: () => REVIEW_STEPS.map(v=>({key:v.key, lbl:v.lbl,  cd:v.cd})),
+};
+function scopePanelRowsHTML(key){
+  const set=SCOPE_SETS[key];
+  const rows=SCOPE_OPTS[key]().map(o=>{
+    const on=set.has(o.key);
+    return `<button type="button" class="nopt${on?" on":""}${o.key==="notfor"?" sep":""}" style="--wwc:${o.cd}"
+      data-sopt="${o.key}" aria-pressed="${on}"
+      title="${escA(on?o.lbl+" — tap to clear":"Show only "+o.lbl)}">
+      <span class="wwb sq">✓</span><span class="nol">${esc(o.lbl)}</span></button>`;
+  }).join("");
+  return rows;   // no .npthd — the pill the panel is attached to is the header
+}
+// The funnel's positionFilterPanel anchors by RIGHT edge — correct for an icon at the right of a card, wrong
+// for a pill at the LEFT of a three-across row, where a content-width panel then runs off the screen. This
+// anchors the panel's LEFT to the pill's left, floors its width at the pill's, and clamps both edges inside
+// #cascbar. It never opens upward: the bar is at the top of the screen, so there is nowhere to open up into.
+function positionScopePanel(pop, pill){
+  const bar=$("cascbar");
+  // Two things make a one-shot calculation wrong here. `left`/`top` on an absolutely-positioned child are
+  // measured from the offsetParent's PADDING box, not the border box getBoundingClientRect reports; and a
+  // width:max-content panel shrinks to the space left of the containing block's edge, so its width changes
+  // as you move it. So: pin an explicit width first, then converge on the target x/y by correction.
+  pop.style.right="auto"; pop.style.left="0px"; pop.style.top="0px"; pop.style.width="auto";
+  const barR=bar.getBoundingClientRect(), pR=pill.getBoundingClientRect();
+  pop.style.minWidth=Math.round(pR.width)+"px";
+  pop.style.maxWidth=Math.round(barR.width-20)+"px";
+  pop.style.width=Math.ceil(pop.getBoundingClientRect().width)+"px";   // pin it — no more shrink-to-fit
+  const w=pop.getBoundingClientRect().width;
+  const wantX=Math.max(barR.left+10, Math.min(pR.left, barR.right-w-10)), wantY=pR.bottom+5;
+  for(let i=0;i<3;i++){
+    const r=pop.getBoundingClientRect();
+    if(Math.abs(r.left-wantX)<0.5 && Math.abs(r.top-wantY)<0.5) break;
+    pop.style.left=Math.round(parseFloat(pop.style.left||0)+(wantX-r.left))+"px";
+    pop.style.top =Math.round(parseFloat(pop.style.top ||0)+(wantY-r.top ))+"px";
+  }
+}
+function closeScopePanel(){
+  document.querySelectorAll(".cpop.spop").forEach(n=>n.remove());
+  document.querySelectorAll(".sccar[aria-expanded='true']").forEach(b=>b.setAttribute("aria-expanded","false"));
+  document.querySelectorAll(".scopebtn.open").forEach(b=>b.classList.remove("open"));
+}
+window.openScopePanel = (key, btn) => {
+  const already = btn.getAttribute("aria-expanded")==="true";
+  closeScopePanel();
+  if(already) return;                                  // second tap closes it
+  if(!scope[key]){ scope[key]=true; render(); return openScopePanel(key, $("scopeBar").querySelector(`.sccar[data-scope="${key}"]`)); }
+  const pop=document.createElement("div");
+  pop.className="cpop spop al-r";
+  pop.style.cssText="position:absolute;bottom:auto";
+  pop.dataset.scope=key;
+  pop.innerHTML=`<div class="nopts">${scopePanelRowsHTML(key)}</div>`;
+  $("cascbar").appendChild(pop);
+  positionScopePanel(pop, btn.closest(".scopebtn"));
+  btn.setAttribute("aria-expanded","true");
+  btn.closest(".scopebtn").classList.add("open");
+};
+// Multi-select, exactly like the funnel: a tap toggles one row and the panel stays open.
+window.toggleScopeOpt = (key, val) => {
+  const set=SCOPE_SETS[key];
+  set.has(val) ? set.delete(val) : set.add(val);
+  const pop=document.querySelector(".cpop.spop");
+  if(pop) pop.querySelector(".nopts").innerHTML=scopePanelRowsHTML(key);
+  render();
+};
+document.addEventListener("click", e=>{
+  const row=e.target.closest(".cpop.spop .nopt[data-sopt]");
+  if(row){ toggleScopeOpt(row.closest(".cpop.spop").dataset.scope, row.dataset.sopt); return; }
+  const car=e.target.closest(".sccar");
+  if(car){ openScopePanel(car.dataset.scope, car); return; }
+  if(document.querySelector(".cpop.spop") && !e.target.closest(".cpop.spop")) closeScopePanel();
+});
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeScopePanel(); });
+addEventListener("scroll", ()=>{ if(document.querySelector(".cpop.spop")) closeScopePanel(); }, {passive:true});
+function renderScopeBar(){
+  const el=$("scopeBar"); if(!el) return;
+  const openKey=(document.querySelector(".cpop.spop")||{}).dataset ? document.querySelector(".cpop.spop").dataset.scope : "";
+  const pill=(key,label,hasPanel)=>{
+    const on=scope[key], narrowed=hasPanel && SCOPE_SETS[key].size;
+    return `<div class="scopebtn${on?" on":""}${openKey===key?" open":""}">
+      <button type="button" class="scmain" aria-pressed="${on}" onclick="toggleScope('${key}')"
+        title="${escA(on?label+" — tap to hide":"Tap to show "+label)}"><span class="scn">${label}</span></button>
+      ${hasPanel?`<button type="button" class="sccar${narrowed?" narrowed":""}" data-scope="${key}"
+        aria-expanded="${openKey===key}" aria-haspopup="listbox"
+        aria-label="${escA("Narrow "+label)}">▾</button>`:""}
+    </div>`;
+  };
+  el.innerHTML = `<div class="scopepills">${pill("watch","Watch it",true)}${pill("new","New",false)}${pill("watched","Watched",true)}</div>`;
+}
 function scopeRows(){
   const c=activeCascade();
   // CAS-566/R3: activeCascade() is null only with zero agents now (no more All to fall back to as "the
@@ -6771,9 +6925,11 @@ function scopeRows(){
   const searched = filt.search ? rows.filter(m=>m.title.toLowerCase().includes(filt.search)) : rows;
   // CAS-382: no tier ticked = no filter, same "nothing picked = show everything" rule every other chip set
   // in `passes()` follows.
-  return filt.watchTiers.size
+  const tiered = filt.watchTiers.size
     ? searched.filter(m=>[...filt.watchTiers].some(k=>k==="undecided" ? filmIsUndecided(m.tmdb_id) : filmHasWatchTier(m.tmdb_id,k)))
     : searched;
+  scopeRows.pool = tiered;                 // pre-scope pool, for the counts + the "discerning" empty state
+  return tiered.filter(inFindScope);
 }
 // First run: the deck is just the "+ New" card, which asks for a decision without offering a reason. Give them
 // three real starting points instead — each with the number of films it catches TODAY, so the payoff is visible
@@ -7900,7 +8056,6 @@ function deckBuild(){
         <button class="ca-btn save" data-act="save" hidden>Save</button>
         <button class="ca-btn" data-act="edit">Edit</button>
         ${searchBtn(c.name)}
-        ${filterBtn(c.name)}
       </div>
     </div></div>`).join("")
   // CAS-520: a returning signed-in device that hasn't heard back from its account fetch yet (cascadesReady
@@ -8244,11 +8399,7 @@ function filterPanelRowsHTML(){
   // CAS-478: "Undecided" isn't a tier from FILTER_TIERS — it's the absence of one, so it gets its own row
   // (filmIsUndecided, not filmHasWatchTier) and a hairline of its own, the same "different kind of row"
   // separation .nopt.sep already gives Lists' "＋ New list" and the Watch panel's Never.
-  const uOn=filt.watchTiers.has("undecided");
-  const undecided=`<button type="button" class="nopt${uOn?" on":""} sep" style="--wwc:var(--grey)" data-tier="undecided"
-      aria-pressed="${uOn}" onclick="toggleFilterTier('undecided')"
-      title="${escA(uOn?"Undecided — tap to clear":"Show only films with no Watch-it decision yet")}">
-      <span class="wwb sq">✓</span><span class="nol">Undecided</span></button>`;
+  const undecided="";   // v0.9.4: "Undecided" is the New button on the scope bar now
   return `<div class="npthd">Watch it</div>${rows}${undecided}`;
 }
 // The deck strip clips vertical overflow on purpose (.deckstrip's overflow-y:hidden — it's what keeps a
@@ -8445,6 +8596,14 @@ window.relaxFilter=key=>{
   // CAS-287: the count on the card and the list itself both move — no banner needed to say so.
 };
 window.resetEverything=()=>{ setActive(null); clearFilters(); syncFilterUI(); render(); };
+function scopeEmptyHTML(){
+  return `<div class="empty">
+    <div class="emoji">🍿</div>
+    <div class="eh">No qualifying content found.</div>
+    <div class="ep">Either pat yourself on the back for being so discerning, or edit your preferences to see more!</div>
+    <div class="ebtns"><button class="ebtn" onclick="editCascade()"><span>Edit this agent's preferences</span></button></div>
+  </div>`;
+}
 function emptyResultsHTML(){
   // CAS-566: zero agents is not "this agent's filters matched nothing" — there is no agent, and nothing to
   // relax or reset. cascadeStartHTML() (rendered above the listing) already carries the call to action.
@@ -13996,7 +14155,11 @@ function render(){
   const rows=scopeRows();
   const shown=rows.filter(m=>!taggedOut(m));
   const stubbed=rows.length-shown.length;
-  renderCascadeBar(shown.length);
+  // v0.9.4: the scope buttons are a VIEW on the agent's list, so the agent card keeps reporting what the
+  // agent itself found (pre-scope, tagged-out films still discounted) — not how much of it is on screen.
+  const pool=scopeRows.pool||rows;
+  renderScopeBar();
+  renderCascadeBar(pool.filter(m=>!taggedOut(m)).length);
   syncSortCtl();   // CAS-321: keeps the sort pill's label/dot honest even when filt.sort changed elsewhere
   // CAS-102's compact deck was tied to the old Find view. With one listing there is one deck state: the rail,
   // so the results lead wherever you are. (Kept as a class rather than deleted — the deck CSS still owns it.)
@@ -14015,8 +14178,9 @@ function render(){
   // CAS-421: unblur only if no later render() has taken over the list since this one started.
   const listReady=()=>{ if(myGen===renderGen) wrap.classList.remove("listloading"); };
   if(!rows.length){
-    // One list, so one empty: this Cascade matches nothing right now, and that panel carries the ways out.
-    wrap.innerHTML = emptyResultsHTML();
+    // v0.9.4: two different empties. If the agent DID match films and the scope buttons emptied it, that is
+    // not a criteria problem and the relax options would be a lie — say the discerning line instead.
+    wrap.innerHTML = (scopeRows.pool||[]).length ? scopeEmptyHTML() : emptyResultsHTML();
     renderJumpBar();          // CAS-275: no sections, so no jump rail — and no stale one left behind
     markFoundSeen();
     listReady();
