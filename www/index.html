@@ -2971,7 +2971,7 @@
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('whereWhen')">Where &amp; when you'll watch</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('services')">My services</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('svcAnalysis')">Service analysis</button>
-            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('lists')">Lists</button>
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('lists')">Tags</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('account')">Account</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('about')">About</button>
           </div>
@@ -3463,7 +3463,7 @@
 <!-- LISTS (CAS-428) — manage the user's own manual collections: create, rename, delete. A different screen
      from Agents (CAS-424, criteria-driven and reorderable) — these are hand-picked and have no order of their
      own. Body rendered by renderListsScreen(). Reached from the top menu. -->
-<div class="uscreen" id="listsScreen" role="dialog" aria-modal="true" aria-label="Lists">
+<div class="uscreen" id="listsScreen" role="dialog" aria-modal="true" aria-label="Tags">
   <div class="uwrap" id="listsBody"></div>
 </div>
 
@@ -4344,7 +4344,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 584, "commit": "a5ef8fe", "builtAt": "2026-08-22T21:59:54Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 585, "commit": "73cb0df", "builtAt": "2026-08-22T22:04:22Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6035,10 +6035,10 @@ function notifyChipHTML(id){
 // and the chip is a plain count of how many the film is in right now (listsFor/listMembership, above).
 function listsChipHTML(id){
   const here=listsFor(id);
-  const lbl = here.length ? `Lists · ${here.length}` : "Lists";
+  const lbl = here.length ? `Tags · ${here.length}` : "Tags";
   const title = here.length
     ? `In ${here.map(l=>l.name).join(", ")}. Tap to add or remove.`
-    : "Not in any of your lists. Tap to add it to one.";
+    : "Not tagged. Tap to add a tag.";
   // DOM class stays `.ctl.casc` — see the CAS-427 comment above .actions for why this file keeps a control's
   // original class through a relabel rather than chasing every CSS selector each time the name changes.
   return `<button type="button" class="ctl casc" data-kid="${id}" onclick="openListsPanel(${id},this)"
@@ -6058,10 +6058,10 @@ function listsPanelRowsHTML(id){
       title="${escA(on?`In ${l.name} — tap to remove`:`Add to ${l.name}`)}">
       <span class="wwb sq">✓</span><span class="nol">${esc(l.name)}</span></button>`;
   }).join("");
-  const none = lists.length ? "" : `<div class="nopt nonone">You have no lists yet — add one below.</div>`;
+  const none = lists.length ? "" : `<div class="nopt nonone">You have no tags yet — add one below.</div>`;
   const addRow = `<button type="button" class="nopt sep" data-role="newlist"
-      onclick="openNewListRow(${id},this)" title="Create a new list">
-      <span class="nol">＋ New list</span></button>`;
+      onclick="openNewListRow(${id},this)" title="Create a new tag">
+      <span class="nol">＋ New tag</span></button>`;
   return none + rows + addRow;
 }
 window.openListsPanel=(id, btn)=>{
@@ -6101,7 +6101,7 @@ window.toggleFilmListAndRepaint=(id,lid)=>{
 // panel — create it, then it's already ticked, exactly as the acceptance criteria ask for.
 window.openNewListRow=(id, rowBtn)=>{
   rowBtn.outerHTML=`<div class="nopt sep newlistrow" data-role="newlist">
-    <input type="text" class="newlistin" maxlength="40" placeholder="List name" autocomplete="off"
+    <input type="text" class="newlistin" maxlength="40" placeholder="Tag name" autocomplete="off"
       onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
       onblur="commitNewList(${id},this)"></div>`;
   const pop=document.querySelector(`#card-${id} .actions .cpop.lpop`);
@@ -12791,9 +12791,9 @@ function reviewSignalsHTML(films){
   });
   const top=Object.values(tallies).sort((a,b)=>b.n-a.n).slice(0,2);
   const listsLine = listedFilms
-    ? `<b>Lists:</b> ${listedFilms} of this agent's films ${listedFilms===1?"is":"are"} in your lists`
+    ? `<b>Tags:</b> ${listedFilms} of this agent's films ${listedFilms===1?"is":"are"} tagged`
       + (top.length ? ` — mostly ${top.map(t=>`${esc(t.name)} (${t.n})`).join(" and ")}.` : ".")
-    : `<b>Lists:</b> None of this agent's films are in a list yet.`;
+    : `<b>Tags:</b> None of this agent's films are tagged yet.`;
   return `<p>${notifyLine}</p><p>${listsLine}</p>`;
 }
 let reviewAgentId=null;
@@ -12853,15 +12853,15 @@ function renderListsScreen(){
   const n=lists.length;
   $("listsBody").innerHTML=`
     <div class="ostop"><button class="osback" type="button" onclick="closeListsScreen()" aria-label="Back">←</button></div>
-    <div class="agshdr"><h2 class="osh">Lists</h2><span class="agscount">${n} list${n===1?"":"s"}</span></div>
-    <p class="ossub">Your own hand-picked collections. Nothing lands in one except by you, and a film can be
-      in as many as you like — unlike an agent, a List has no criteria of its own.</p>
+    <div class="agshdr"><h2 class="osh">Tags</h2><span class="agscount">${n} tag${n===1?"":"s"}</span></div>
+    <p class="ossub">Your own hand-picked labels. Nothing lands on one except by you, and a film can carry
+      as many as you like — unlike an agent, a Tag has no criteria of its own.</p>
     <div class="ucard" id="listsCard">
       ${lists.length ? lists.map(listRowHTML).join("")
-        : `<div class="urow nodiv"><span class="utxt"><span class="ut">No lists yet</span>
-             <span class="ussub">Add one below, or from a film's Lists control.</span></span></div>`}
+        : `<div class="urow nodiv"><span class="utxt"><span class="ut">No tags yet</span>
+             <span class="ussub">Add one below, or from a film's Tags control.</span></span></div>`}
     </div>
-    <button type="button" class="listnewbtn" id="listNewBtn" onclick="startCreateListRow()">＋ New list</button>`;
+    <button type="button" class="listnewbtn" id="listNewBtn" onclick="startCreateListRow()">＋ New tag</button>`;
 }
 window.openListsScreen=()=>{
   renderListsScreen();
@@ -12900,7 +12900,7 @@ window.startCreateListRow=()=>{
   const btn=$("listNewBtn"); if(!btn) return;
   btn.outerHTML=`<div class="ucard" id="listNewRow" style="margin-top:8px"><div class="urow nodiv">
     <span class="uic">📋</span>
-    <input type="text" class="listnamein" id="listNewInput" maxlength="40" placeholder="List name" autocomplete="off"
+    <input type="text" class="listnamein" id="listNewInput" maxlength="40" placeholder="Tag name" autocomplete="off"
       onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
       onblur="commitCreateListRow(this)"></div></div>`;
   const inp=$("listNewInput"); if(inp) inp.focus();
