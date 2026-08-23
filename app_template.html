@@ -2746,6 +2746,35 @@
   .ymcasclist .agsum{font-size:11px;line-height:1.3;-webkit-line-clamp:1;flex:0 0 auto;white-space:nowrap;
     font-weight:700;color:var(--faint)}
   .ymcasclist .ymcasctgl{width:22px;height:22px;font-size:11px}
+  /* ================= v0.9.4 WATCH: multiple lists =================
+     The Watch screen gets Find's own rail — one card per list, a New List card at the end — so "switch
+     list" is the same gesture as "switch agent". Rose, because that is what Watch is. */
+  .cascbar.rose{--dcc:var(--rose)}
+  .cascbar.rose .dcard .dc-in{border-color:rgba(255,47,135,.28)}
+  .cascbar.rose .dcard.is-centre.is-active .dc-in{border-color:var(--rose);
+    box-shadow:0 0 0 1px var(--rose),0 10px 26px rgba(255,47,135,.22)}
+  .cascbar.rose .dc-name{color:var(--ink)}
+  .cascbar.rose .dcard.is-centre.is-active .dc-name{color:var(--rose2)}
+  .cascbar.rose .dcard.new .dc-in{border-color:#6a2b48}
+  .cascbar.rose .dcard.new .dc-icon,.cascbar.rose .dcard.new .dc-name{color:var(--rose2)}
+  .cascbar.rose .ca-btn.new{background:var(--rose-grad);border-color:transparent;color:#fff}
+  /* TAGS TO INCLUDE reuses the one-line cascade row (one-line, CAS-587) with a tag-shaped icon */
+  .agrow.ym-tag{--dcc:var(--rose)}
+  .agrow.ym-tag .agicon{background:rgba(255,47,135,.16)}
+  /* the list editor's own hub, on the agent editor's shell */
+  .lehdr{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .lesec{margin-top:18px}
+  .lesechd{display:flex;align-items:baseline;gap:8px;font-size:10.5px;font-weight:800;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--faint);margin:0 2px 8px}
+  .lesechd .lesecn{color:var(--rose2)}
+  .lelink{background:transparent;border:0;color:var(--dim);font-family:inherit;font-size:11px;font-weight:700;
+    text-decoration:underline;cursor:pointer;padding:0}
+  .lelinkrow{display:flex;align-items:center;gap:6px;margin-top:9px;font-size:11px;color:var(--dim)}
+  .lelinkrow .lematch{margin-left:auto;color:var(--rose2);font-weight:800}
+  .lesave{width:100%;margin-top:26px;padding:15px;border:0;border-radius:14px;background:var(--rose-grad);
+    color:#fff;font-family:inherit;font-size:16px;font-weight:800;cursor:pointer}
+  .ledel{display:block;margin:14px auto 0;background:transparent;border:0;color:#e0655f;font-family:inherit;
+    font-size:13px;font-weight:800;text-decoration:underline;cursor:pointer}
   .ymcasctgl{flex:0 0 auto;width:28px;height:28px;border-radius:50%;border:1px solid var(--line);
     background:transparent;color:transparent;cursor:pointer;font-size:14px;font-weight:800;
     display:grid;place-items:center;transition:.15s}
@@ -3451,6 +3480,31 @@
 <!-- YOUR MOVIES (CAS-183 / CAS-209) — everything you have said about a film, grouped by what you said,
      plus how well the services you pay for cover what your agents found. Body rendered by renderYourMovies(). -->
 <div class="uscreen" id="yourMovies" role="dialog" aria-modal="true" aria-label="Your Movies">
+  <!-- CAS-590: the watch-list rail lives here, OUTSIDE #yourMoviesBody's innerHTML rebuild, exactly like
+       Find's own #cascStrip sits outside #groups — a persistent deckStrip-equivalent node so its scroll
+       position/listeners survive a feed refresh. #ymAnchor + this bar together ARE #yourMovies's own
+       CAS-540 sticky/collapse mechanism (syncYmCollapse/armYmObserver) — #cascbar's window-scroll based
+       mechanism (syncCascCollapse) never touches this element. -->
+  <div id="ymAnchor" aria-hidden="true" style="height:1px"></div>
+  <div class="ymsticky cascbar rail rose" id="ymSticky">
+    <div class="deck">
+      <div class="deckstrip" id="wlStrip" role="group" aria-label="Watch lists — use the arrow keys to move between them"
+           aria-keyshortcuts="ArrowLeft ArrowRight Home End" tabindex="0"></div>
+    </div>
+    <div class="sortctl ca-btn x" id="ymSortCtl" title="Order">
+      <select id="ymSort" aria-label="Order this list">
+        <option value="">Best match</option>
+        <option value="availability">Availability</option>
+        <option value="imdb">IMDb rating</option>
+        <option value="rt">RT critic</option>
+        <option value="gross">Box office</option>
+        <option value="popularity">Most anticipated</option>
+        <option value="cinema">Newest cinema</option>
+        <option value="title">Title A–Z</option>
+      </select>
+      <span class="sortic" aria-hidden="true">⇅</span>
+    </div>
+  </div>
   <div class="uwrap" id="yourMoviesBody"></div>
 </div>
 
@@ -4269,12 +4323,15 @@ function loadCascades(){
   }catch(e){ return []; }
 }
 function saveCascades(){ try{ localStorage.setItem("cascade_cascades", JSON.stringify(cascades)); }catch(e){} }
-// ---- CAS-589: the Watch List's own filter state, persisted the same way a Cascade is (guest key +
-// account chokepoint below) instead of living only in module-level `let`s that reset on reload. The
-// record is a plain object of the five fields the Watch screen actually keeps between visits — see
-// watchlistRecord()/applyWatchlistRecord() near the ymSvcOn/ymCascOff/etc. declarations for the
-// Set<->array bridge. saveWatchlist is a plain hoisted function (not a const arrow) so the account
-// IIFE below can reassign the identifier the same way it already does for saveCascades/saveLists.
+// ---- CAS-589/590: the Watch List's own filter state, persisted the same way Cascades are (guest key +
+// account chokepoint below) instead of living only in module-level `let`s that reset on reload. CAS-590
+// turns the CAS-589 single record into an ARRAY of named lists — id/name/icon/order plus the five filter
+// fields each list keeps independently — see watchlistRecord()/applyWatchlistRecord() near the
+// ymSvcOn/ymCascOff/etc. declarations for the Set<->array bridge to whichever list is ACTIVE. Which list
+// is open is a separate, device-local pointer (near the `cascades` array below, mirroring
+// activeId/setActive/activeCascade) — never part of this record. saveWatchlists is a plain hoisted
+// function (not a const arrow) so the account IIFE below can reassign the identifier the same way it
+// already does for saveCascades/saveLists.
 const WATCHLIST_KEY = "cascade_watchlist";
 function watchlistDefaults(){ return {svcOn:["stream"], cascOff:[], watchedOn:[], watchTiers:[], sort:null}; }
 function normWatchlist(o){
@@ -4289,14 +4346,32 @@ function normWatchlist(o){
     sort:       typeof o.sort==="string" ? o.sort : null,
   };
 }
-function loadWatchlist(){
+// One list: id/name/icon/order (the deck-style identity fields) plus the five filter fields normWatchlist
+// already knows how to shape — one function so an account row and a freshly-created list normalize
+// identically.
+function normWatchlistEntry(o){
+  const f=normWatchlist(o);
+  return {
+    id:    (o && typeof o.id==="string" && o.id) ? o.id : cascadeNewId(),
+    name:  (o && typeof o.name==="string" && o.name.trim()) ? o.name.trim() : "Watch List",
+    icon:  (o && typeof o.icon==="string" && o.icon) ? o.icon : "🎬",
+    order: (o && typeof o.order==="number") ? o.order : 0,
+    ...f,
+  };
+}
+function loadWatchlists(){
   try{
     const raw=localStorage.getItem(WATCHLIST_KEY);
     if(raw===null) return null;   // no record yet — caller runs the first-load migration
-    return normWatchlist(JSON.parse(raw));
+    const parsed=JSON.parse(raw);
+    if(Array.isArray(parsed)) return parsed.map(normWatchlistEntry);
+    // CAS-590: a pre-590 install has ONE plain record (not an array) at this key — migrate it into
+    // element 0, named "Watch List", keeping its settings exactly.
+    if(parsed && typeof parsed==="object") return [normWatchlistEntry({...parsed, name:"Watch List", order:0})];
+    return null;
   }catch(e){ return null; }
 }
-function saveWatchlist(){ try{ localStorage.setItem(WATCHLIST_KEY, JSON.stringify(watchlistRecord())); }catch(e){} }
+function saveWatchlists(){ try{ localStorage.setItem(WATCHLIST_KEY, JSON.stringify(watchLists)); }catch(e){} }
 // New Cascade ids are UUIDs so they drop straight into the account table's uuid primary key (CAS-83).
 // crypto.randomUUID is available on the live https site and on localhost; the string fallback covers
 // any non-secure context so guest mode never breaks.
@@ -4326,6 +4401,22 @@ const activeCascade = () => cascades.find(c=>c.id===activeId) || null;
 // matches a real cascade, so both fall through here. Guarded on cascades.length so a genuinely empty account
 // (nothing to promote to) is left at null rather than writing a no-op correction on every check.
 if(!activeCascade() && cascades.length) setActive(firstAgentId());
+
+// ---- CAS-590: the Watch lists themselves, and which one is open (device-local — never in the account
+// record) — same shape as the cascades/activeId block just above. ----------------------------------
+const _loadedWatchlists = loadWatchlists();
+const watchLists = _loadedWatchlists || [normWatchlistEntry({name:"Watch List", order:0})];
+watchLists.forEach((l,i)=>{ if(typeof l.order!=="number") l.order=i; });   // default-fill, mirroring cascades' own at "cascades.forEach" above — deliberately without saving
+if(!_loadedWatchlists) saveWatchlists();   // first-load migration/seed, mirroring loadCascades' own pattern
+let watchActiveId=null;
+try{ watchActiveId = localStorage.getItem("cascade_activelist") || null; }catch(e){}
+function firstWatchlistId(){ return watchLists.length ? watchLists[0].id : null; }
+function setActiveWatchlist(id){
+  watchActiveId=id||firstWatchlistId();
+  try{ localStorage.setItem("cascade_activelist", watchActiveId||""); }catch(e){}
+}
+const activeWatchlist = () => watchLists.find(l=>l.id===watchActiveId) || null;
+if(!activeWatchlist() && watchLists.length) setActiveWatchlist(firstWatchlistId());
 
 // ---- CAS-428: Lists — user-curated, manual collections (a different thing from an Agent) ---------------
 // An Agent is auto-populated by its own criteria; a List is the opposite — nothing lands in one except by
@@ -12431,7 +12522,7 @@ let ymSearchTerm = "";
 let ymWatchTiers = new Set();   // Filter icon — reuses FILTER_TIERS/filmHasWatchTier (CAS-382's own predicate),
                                  // scoped to this feed rather than the deck's per-cascade filt.watchTiers.
 let ymSort = null;              // Sort icon — null keeps the feed's own "best match" order; else a sortMoviesBy key.
-// ---- CAS-589: bridge the five fields above to the persisted record (loadWatchlist/saveWatchlist,
+// ---- CAS-589/590: bridge the five fields above to whichever list is active (loadWatchlists/saveWatchlists,
 // guest section near saveCascades). ymEditOpen/ymSearchOpen/ymSearchTerm and ymCollapsed stay
 // module `let`s only — they are transient UI, not part of the record.
 function watchlistRecord(){
@@ -12448,14 +12539,23 @@ function applyWatchlistRecord(rec){
 // the real answer arrives (AC5). Guest devices have nothing to wait for, so they start ready.
 let ymReady = true;
 try{ ymReady = localStorage.getItem("cascade_had_account") !== "1"; }catch(e){}
-(function(){
-  const rec=loadWatchlist();
-  if(rec) applyWatchlistRecord(rec);
-  else saveWatchlist();   // first-load migration: seed a record from today's hardcoded defaults
-})();
-// Every UI write site below calls this instead of saveWatchlist() directly, so none of them can
+// CAS-590: the five fields above are scratch state for whichever list is ACTIVE — applyActiveWatchlist()
+// loads them from it (on boot and on every switch, see wlSelect()); ymPersist() writes them back into
+// that same list's own record before saving the whole array. watchLists/activeWatchlist() are seeded
+// above (near `cascades`/`activeId`), before this module runs, so there is always a list to load from.
+function applyActiveWatchlist(){
+  const l=activeWatchlist();
+  applyWatchlistRecord(l ? normWatchlist(l) : watchlistDefaults());
+}
+applyActiveWatchlist();
+// Every UI write site below calls this instead of saveWatchlists() directly, so none of them can
 // push a still-default record over a real account answer while that answer is still in flight.
-function ymPersist(){ if(ymReady) saveWatchlist(); }
+function ymPersist(){
+  if(!ymReady) return;
+  const l=activeWatchlist();
+  if(l) Object.assign(l, watchlistRecord());
+  saveWatchlists();
+}
 // Never (blocked) stays excluded outright — that bucket is a permanent no, not something this feed
 // reconsiders. A watched film only rejoins when its own verdict is ticked in ymWatchedOn (CAS-570), so a
 // Wow can be picked again without every watched film flooding back by default.
@@ -12514,39 +12614,37 @@ let ymCollapsed=false;
 let ymCollapseRaf=0;
 let ymExpandProgrammatic=false;
 function syncYmCollapse(){
-  const card=$("ymcard"), anc=$("ymAnchor"), scroller=$("yourMovies");
-  if(!card||!anc||!scroller) return;
+  // CAS-590: #ymSticky is now the one element doing both jobs — the sticky wrapper AND (via .cascbar.rose)
+  // the watch-list rail itself — so there's only one node to toggle .collapsed on, not a separate card+band.
+  const bar=$("ymSticky"), anc=$("ymAnchor"), scroller=$("yourMovies");
+  if(!bar||!anc||!scroller) return;
   const was=ymCollapsed;
-  // .ymcard sticks at top:0 of #yourMovies's own scrollport (the header sits above #yourMovies entirely, so
-  // unlike #cascbar there's no extra header-height offset to account for) — comparing the anchor's viewport
-  // position to the scroller's own gives the stuck line regardless of where #yourMovies itself sits on screen.
+  // #ymSticky sticks at top:0 of #yourMovies's own scrollport (the header sits above #yourMovies entirely,
+  // so unlike #cascbar there's no extra header-height offset to account for) — comparing the anchor's
+  // viewport position to the scroller's own gives the stuck line regardless of where #yourMovies sits.
   const top=anc.getBoundingClientRect().top, stop=scroller.getBoundingClientRect().top;
   const now = scroller.scrollTop>0 && (was ? top<=stop+6 : top<=stop);
   if(now===was) return;
   ymCollapsed=now;
   const skipTransition=!ymExpandProgrammatic;
   ymExpandProgrammatic=false;
-  if(skipTransition) card.classList.add("no-transition");
-  card.classList.toggle("collapsed", now);
-  // CAS-567: the band is the sticky element now, and it carries the collapsed padding + shadow.
-  const band=$("ymSticky");
-  if(band){ if(skipTransition) band.classList.add("no-transition"); band.classList.toggle("collapsed", now); }
-  void card.offsetHeight;
-  if(skipTransition) requestAnimationFrame(()=>{
-    card.classList.remove("no-transition"); band && band.classList.remove("no-transition"); });
+  if(skipTransition) bar.classList.add("no-transition");
+  bar.classList.toggle("collapsed", now);
+  void bar.offsetHeight;
+  if(skipTransition) requestAnimationFrame(()=>{ bar.classList.remove("no-transition"); });
+  wlPaint();   // deckPaint's own collapsed-vs-full transform branch reads this class off the same element
 }
 $("yourMovies").addEventListener("scroll",()=>{ if(ymCollapseRaf) return;
   ymCollapseRaf=requestAnimationFrame(()=>{ ymCollapseRaf=0; syncYmCollapse(); }); },{passive:true});
-// Tapping the already-collapsed pill expands it back, the same "tap what's already open/active" gesture
-// expandCascBar() answers for the deck (CAS-512) — there's no second card to switch to here, so any tap on
-// the collapsed pill means "show me the rest of it" unambiguously.
-function expandYmCard(){
-  const card=$("ymcard"), scroller=$("yourMovies");
-  if(!card||!scroller||!card.classList.contains("collapsed")) return;
+// Tapping the already-active card while the rail is collapsed expands it back — the same gesture
+// expandCascBar() answers for the deck (CAS-512); wired from wlStrip's own click router below, exactly
+// where the deck wires expandCascBar() (mirroring, not reinventing — CAS-590).
+function expandYmSticky(){
+  const bar=$("ymSticky"), scroller=$("yourMovies");
+  if(!bar||!scroller||!bar.classList.contains("collapsed")) return;
   ymExpandProgrammatic=true;
   scroller.scrollTo({top:0, behavior: deckMotion.matches ? "auto" : "smooth"});
 }
-$("yourMoviesBody").addEventListener("click", e=>{ if(e.target.closest(".ymcard.collapsed")) expandYmCard(); });
 let ymIO=null;
 function armYmObserver(){
   if(ymIO){ ymIO.disconnect(); ymIO=null; }
@@ -12555,6 +12653,238 @@ function armYmObserver(){
   ymIO=new IntersectionObserver(()=>syncYmCollapse(), {root:scroller, threshold:[0,1]});
   ymIO.observe(anc);
 }
+
+// ---- CAS-590: the watch-list rail — mirrors My Cascades' own coverflow deck (deckCards/deckCount/deckAt/
+// deckIsNew/cascSig/deckIdx/deckNearest/deckPaint/deckCentre/deckFocus/deckSelect/deckGo/deckBuild/deckSync
+// and the listeners bound on deckStrip) function-for-function, renamed wl*, on its own persistent strip
+// (#wlStrip, mirroring #cascStrip — see the static HTML above #yourMoviesBody). deckMotion (reduced-motion
+// query) is shared rather than duplicated. "Selecting" a card here means switching the active list, not
+// opening a Cascade.
+const wlStrip=$("wlStrip");
+const wlSortCtl=$("ymSortCtl");   // one live node, reparented into the open card's .dc-acts — mirrors sortCtl
+const wlCards=()=>[...wlStrip.children];
+const wlCount=()=>watchLists.length+1;
+const wlAt=i=>(i>=0 && i<watchLists.length) ? watchLists[i] : null;   // null = the New List card
+const wlIsNew=i=>i>=watchLists.length;
+const wlListSig=()=>watchLists.map(l=>l.id+"|"+l.icon+"|"+l.name).join("~");
+let wlIdx=0, wlBuildSig=null, wlHold=false, wlHoldT=null, wlSettleT=null, wlRaf=0, wlDragged=false, wlDrag=null;
+
+function wlNearest(){
+  const mid=wlStrip.scrollLeft+wlStrip.clientWidth/2;
+  let best=0, bestD=Infinity;
+  wlCards().forEach((el,i)=>{
+    const d=Math.abs(el.offsetLeft+el.offsetWidth/2-mid);
+    if(d<bestD){ bestD=d; best=i; }
+  });
+  return best;
+}
+function wlPaint(){
+  const flat=deckMotion.matches;
+  const collapsed=wlStrip.closest(".cascbar")?.classList.contains("collapsed");
+  const mid=wlStrip.scrollLeft+wlStrip.clientWidth/2;
+  wlCards().forEach(el=>{
+    const inner=el.firstElementChild;
+    if(flat){ inner.style.cssText=""; el.style.zIndex=""; return; }
+    const d=(el.offsetLeft+el.offsetWidth/2-mid)/(el.offsetWidth+12);
+    const a=Math.min(Math.abs(d),3);
+    if(collapsed){
+      inner.style.transform=`scale(${1-.08*a})`;
+      inner.style.filter=a>.12?`blur(${Math.min(1.6,1.1*(a-.12))}px)`:"";
+      inner.style.opacity=String(Math.max(.35,1-.35*a));
+    } else {
+      inner.style.transform=`translateX(${-d*34}px) rotateY(${Math.max(-34,Math.min(34,-d*24))}deg) scale(${1-.13*a})`;
+      inner.style.filter=a>.12?`blur(${Math.min(2.4,1.3*(a-.12))}px)`:"";
+      inner.style.opacity=String(Math.max(.3,1-.3*a));
+    }
+    el.style.zIndex=String(50-Math.round(a*10));
+  });
+}
+function wlCentre(i,smooth){
+  const el=wlCards()[i]; if(!el) return;
+  const left=el.offsetLeft+el.offsetWidth/2-wlStrip.clientWidth/2;
+  if(Math.abs(left-wlStrip.scrollLeft)<2) return;
+  wlHold=true; clearTimeout(wlHoldT); wlHoldT=setTimeout(()=>{wlHold=false;},700);
+  wlStrip.scrollTo({left, behavior:(smooth && !deckMotion.matches)?"smooth":"auto"});
+}
+function wlFocus(i,moveDom){
+  wlIdx=Math.max(0,Math.min(wlCount()-1,i));
+  wlCards().forEach((el,j)=>{
+    el.tabIndex=j===wlIdx?0:-1;
+    el.classList.toggle("is-centre",j===wlIdx);
+    if(j===wlIdx) el.setAttribute("aria-current","true"); else el.removeAttribute("aria-current");
+  });
+  if(moveDom) wlCards()[wlIdx]?.focus({preventScroll:true});
+}
+const wlSelect=i=>{
+  const l=wlAt(i); if(!l || l.id===watchActiveId) return;
+  setActiveWatchlist(l.id);
+  applyActiveWatchlist();
+  renderYourMovies();
+};
+function wlGo(i,moveDom){
+  const n=Math.max(0,Math.min(wlCount()-1,i));
+  wlFocus(n,moveDom); wlCentre(n,true); wlSelect(n);
+}
+// A closed list's own card shows a coarse count (which ticked cascades list a film, nothing about
+// service/watched/tier state) — the same simplification listedCount() makes for a closed Agent card
+// (CAS-279's own comment). The ACTIVE card shows the real, fully-filtered feed length instead.
+function watchlistRawCount(l){
+  const cascOff=new Set(l.cascOff);
+  return MOVIES.filter(m=>!blocked.has(m.tmdb_id) && cascades.some(c=>!cascOff.has(c.id) && listedBy(m,c))).length;
+}
+function wlBuild(){
+  wlStrip.innerHTML=watchLists.map(l=>{
+    const editOn=l.id===watchActiveId && ymEditOpen;
+    return `
+    <div class="dcard" role="group" aria-label="${esc(l.name)}" tabindex="-1" data-id="${l.id}"><div class="dc-in">
+      <div class="dc-top"><span class="dc-icon">${l.icon}</span><span class="dc-type">Watch list</span></div>
+      <div class="dc-name">${esc(l.name)}</div>
+      <div class="dc-sub"></div>
+      <div class="dc-acts">
+        <button class="ca-btn ymcedit${editOn?" on":""}" data-act="edit" aria-pressed="${editOn}">Edit</button>
+        <button class="ca-btn x dc-search" data-act="search" type="button" aria-label="Search ${escA(l.name)}"
+                title="Search this list">🔍</button>
+        <button class="ca-btn x dc-filter" data-act="filter" type="button" aria-haspopup="true" aria-expanded="false"
+                aria-label="Filter ${escA(l.name)} by watch priority" title="Filter by watch priority">${ICON.filter}</button>
+      </div>
+    </div></div>`;
+  }).join("")
+  + (watchLists.length || ymReady
+    ? `<div class="dcard new" role="group" aria-label="New List" tabindex="-1"><div class="dc-in">
+      <div class="dc-icon">＋</div>
+      <div class="dc-name">New List</div>
+      <div class="dc-sub">Start a new watch list.</div>
+      <div class="dc-acts"><button class="ca-btn new" data-act="new">Create</button></div>
+    </div></div>`
+    : `<div class="dcard loading" role="group" aria-label="Loading your watch lists" tabindex="-1"><div class="dc-in">
+      <span class="dc-spin" aria-hidden="true"></span>
+      <div class="dc-name">Loading your watch lists…</div>
+    </div></div>`);
+}
+function wlSync(shown){
+  const sig=wlListSig()+"|"+ymReady;
+  const ai=watchLists.findIndex(l=>l.id===watchActiveId);
+  const target=ai>=0 ? ai : Math.min(wlIdx,wlCount()-1);
+  if(sig!==wlBuildSig){
+    wlBuildSig=sig; wlBuild();
+    wlFocus(target,false);
+    wlCentre(wlIdx,false);
+  } else if(target!==wlIdx){
+    wlFocus(target,false);
+    wlCentre(wlIdx,false);
+  } else {
+    wlFocus(wlIdx,false);
+  }
+  wlCards().forEach((el,i)=>{
+    const l=wlAt(i); if(!l) return;
+    const on=l.id===watchActiveId;
+    const n=on?shown:watchlistRawCount(l);
+    el.classList.toggle("is-active",on);
+    el.querySelector(".dc-name").textContent=l.name;
+    el.querySelector(".dc-sub").textContent=`${n} film${n===1?"":"s"}`;
+    const editBtn=el.querySelector('[data-act="edit"]');
+    if(editBtn){ const editOn=on&&ymEditOpen; editBtn.classList.toggle("on",editOn); editBtn.setAttribute("aria-pressed",String(editOn)); }
+  });
+  const actsHome=wlStrip.querySelector(".dcard.is-active .dc-acts");
+  if(actsHome && wlSortCtl.parentElement!==actsHome) actsHome.appendChild(wlSortCtl);
+  wlPaint();
+}
+// Create makes a list immediately — no criteria funnel, unlike newCascade()/commitDraft(): default name,
+// appended at the end, made active, saved, and opened. Renaming happens in the (later-ticket) edit screen.
+function wlCreate(){
+  const l=normWatchlistEntry({name:"New List", order:watchLists.length});
+  watchLists.push(l);
+  setActiveWatchlist(l.id);
+  applyActiveWatchlist();
+  saveWatchlists();
+  renderYourMovies();
+  logEvent("watchlist_created",{});
+}
+// Pointer repair mirrors the boot-time repair at "if(!activeCascade() && cascades.length) setActive(...)" —
+// deleting the open list must never leave the pointer stale. No delete UI ships in this ticket (CAS-592's
+// own screen calls this); watchLists reaching zero is a valid state, exactly like cascades reaching zero.
+function removeWatchlist(id){
+  const i=watchLists.findIndex(l=>l.id===id); if(i<0) return;
+  watchLists.splice(i,1);
+  if(watchActiveId===id){ setActiveWatchlist(firstWatchlistId()); applyActiveWatchlist(); }
+  saveWatchlists();
+  renderYourMovies();
+  logEvent("watchlist_deleted",{});
+}
+wlStrip.addEventListener("scroll",()=>{
+  if(!wlRaf) wlRaf=requestAnimationFrame(()=>{ wlRaf=0; wlPaint(); });
+  clearTimeout(wlSettleT);
+  wlSettleT=setTimeout(()=>{
+    const i=wlNearest();
+    if(wlHold){ wlHold=false; wlFocus(i,false); return; }
+    wlGo(i,false);
+  },120);
+},{passive:true});
+wlStrip.addEventListener("keydown",e=>{
+  if(e.target.closest("#ymSortCtl")) return;
+  const last=wlCount()-1;
+  if(e.key==="Enter"||e.key===" "){
+    e.preventDefault();
+    const l=wlAt(wlIdx);
+    if(wlIsNew(wlIdx)){ if(watchLists.length || ymReady) wlCreate(); }
+    else if(l && l.id===watchActiveId) ymEditToggle();
+    else wlSelect(wlIdx);
+    return;
+  }
+  const to=e.key==="ArrowRight"?wlIdx+1 : e.key==="ArrowLeft"?wlIdx-1
+         : e.key==="Home"?0 : e.key==="End"?last : null;
+  if(to===null) return;
+  e.preventDefault(); wlGo(to,true);
+});
+let wlWheelAcc=0, wlWheelLock=0;
+wlStrip.addEventListener("wheel",e=>{
+  const d=Math.abs(e.deltaX)>Math.abs(e.deltaY)?e.deltaX:e.deltaY;
+  const to=wlIdx+(d>0?1:-1);
+  if(to<0||to>=wlCount()) return;
+  e.preventDefault();
+  const now=performance.now();
+  if(now<wlWheelLock) return;
+  wlWheelAcc=(wlWheelAcc>0)===(d>0) ? wlWheelAcc+d : d;
+  if(Math.abs(wlWheelAcc)<26) return;
+  wlWheelAcc=0; wlWheelLock=now+200; wlGo(to,false);
+},{passive:false});
+wlStrip.addEventListener("pointerdown",e=>{
+  if(e.pointerType!=="mouse"||e.button!==0||e.target.closest("button")||e.target.closest("#ymSortCtl")) return;
+  wlDrag={x:e.clientX,left:wlStrip.scrollLeft,moved:0,id:e.pointerId}; wlDragged=false;
+  wlStrip.classList.add("dragging");
+});
+wlStrip.addEventListener("pointermove",e=>{
+  if(!wlDrag||e.pointerId!==wlDrag.id) return;
+  const dx=e.clientX-wlDrag.x;
+  wlDrag.moved=Math.max(wlDrag.moved,Math.abs(dx));
+  if(wlDrag.moved>4&&!wlDrag.cap){ wlDrag.cap=true; wlDragged=true; wlStrip.setPointerCapture(e.pointerId); }
+  wlStrip.scrollLeft=wlDrag.left-dx;
+});
+const wlDragEnd=()=>{
+  if(!wlDrag) return;
+  if(wlDrag.cap){ try{ wlStrip.releasePointerCapture(wlDrag.id); }catch(_){} }
+  wlDrag=null; wlStrip.classList.remove("dragging");
+};
+wlStrip.addEventListener("pointerup",wlDragEnd);
+wlStrip.addEventListener("pointercancel",wlDragEnd);
+wlStrip.addEventListener("click",e=>{
+  const card=e.target.closest(".dcard"); if(!card) return;
+  if(e.target.closest("#ymSortCtl")) return;
+  const act=e.target.closest("button[data-act]")?.dataset.act;
+  if(act==="new") return wlCreate();
+  if(act==="edit") return ymEditToggle();
+  if(act==="search") return ymSearchToggle();
+  if(act==="filter") return onYmFilterIcon(e.target.closest("button[data-act]"));
+  if(wlDragged) return;
+  const i=wlCards().indexOf(card);
+  const wasActive=card.classList.contains("is-active");
+  wlGo(i,true);
+  if(wasActive) expandYmSticky();
+});
+let wlResizeT=null;
+addEventListener("resize",()=>{ clearTimeout(wlResizeT); wlResizeT=setTimeout(()=>{ wlCentre(wlIdx,false); wlPaint(); },140); });
+deckMotion.addEventListener("change",()=>{ wlCentre(wlIdx,false); wlPaint(); });
+
 // ---- CAS-535: the compact card's own Search/Filter/Sort — the same icons/behaviour the deck's agent card
 // already uses for a film list (search reveals a live text box, filter is a multi-select watch-priority
 // popover, sort is a real native <select> stretched over an icon button), scoped to this feed's own state.
@@ -12587,13 +12917,15 @@ function ymFilterRowsHTML(){
       <span class="wwb sq">✓</span><span class="nol">Undecided</span></button>`;
   return `<div class="npthd">Watch it</div>${rows}${undecided}`;
 }
+// CAS-590: one filter icon per rail card (only the active one is interactive — the deck's own
+// pointer-events:none-until-.is-active pattern), so this now takes the actual button element, mirroring
+// the deck's own onFilterIcon(card,btn), instead of looking up a single #ymFilterBtn by id.
 function closeYmFilterPanel(){
   document.querySelectorAll(".cpop.ymfpop").forEach(n=>n.remove());
-  const btn=$("ymFilterBtn");
-  if(btn){ btn.classList.remove("open"); btn.setAttribute("aria-expanded","false"); }
+  wlStrip.querySelectorAll(".dc-filter.open").forEach(b=>{ b.classList.remove("open"); b.setAttribute("aria-expanded","false"); });
 }
-window.onYmFilterIcon=()=>{
-  const btn=$("ymFilterBtn"); if(!btn) return;
+function onYmFilterIcon(btn){
+  if(!btn) return;
   const already=btn.classList.contains("open");
   closeYmFilterPanel();
   if(already) return;   // second tap closes it
@@ -12603,7 +12935,7 @@ window.onYmFilterIcon=()=>{
   btn.parentElement.appendChild(pop);
   wirePanelSlide(pop, ".nopt[data-tier]", el=>ymToggleFilterTier(el.dataset.tier));
   btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
-};
+}
 window.ymToggleFilterTier=key=>{
   ymWatchTiers.has(key) ? ymWatchTiers.delete(key) : ymWatchTiers.add(key);
   ymPersist();
@@ -12613,25 +12945,16 @@ window.ymToggleFilterTier=key=>{
 };
 document.addEventListener("click", e=>{
   if(!document.querySelector(".cpop.ymfpop")) return;
-  if(e.target.closest(".cpop.ymfpop") || e.target.closest("#ymFilterBtn")) return;
+  if(e.target.closest(".cpop.ymfpop") || e.target.closest(".dc-filter")) return;
   closeYmFilterPanel();
 }, true);
 window.ymSortChange=v=>{ ymSort = v||null; ymPersist(); ymRefreshFeed(); };
-const YM_SORT_OPTS=[
-  {v:"",label:"Best match"},
-  {v:"availability",label:"Availability"},
-  {v:"imdb",label:"IMDb rating"},
-  {v:"rt",label:"RT critic"},
-  {v:"gross",label:"Box office"},
-  {v:"popularity",label:"Most anticipated"},
-  {v:"cinema",label:"Newest cinema"},
-  {v:"title",label:"Title A–Z"},
-];
+$("ymSort").onchange=e=>ymSortChange(e.target.value);
 // A per-keystroke search/filter change only needs the feed's own count/result-line/cards refreshed — not the
 // whole screen (renderYourMovies would tear down and rebuild the search input mid-type, stealing its focus).
 function ymRefreshFeed(){
   const feed=ymFeedList();
-  const count=$("ymCardCount"); if(count) count.textContent=`${feed.length} film${feed.length===1?"":"s"}`;
+  wlSync(feed.length);   // keeps the active rail card's own live count in step with search-as-you-type etc
   const bar=$("ymResultBar"); if(bar) bar.innerHTML=ymResultLineHTML(feed);
   const cardsEl=$("ymCards");
   if(cardsEl){
@@ -12688,58 +13011,6 @@ function ymPanelHTML(matchCount){
 // screen's first thing — same shell (icon chip, title, film count, action-icon row) the deck's own small
 // Agent card uses. Its plain-language line states the same three things ymPanelHTML lets you edit, so the
 // two never say something different about the live filter state.
-function ymSummaryLine(){
-  const svcOn=YM_SVC.filter(s=>ymSvcOn.has(s.key));
-  const svcPart = svcOn.length===YM_SVC.length ? "All services"
-    : svcOn.length ? svcOn.map(s=>s.label).join(" + ")
-    : "No services selected";
-  const cascOn=cascades.filter(ymCascTicked).length;
-  const cascPart = `${cascOn} of ${cascades.length} cascade${cascades.length===1?"":"s"}`;
-  const rewatchPart = !ymWatchedOn.size ? "not incl. watched"
-    : ymWatchedOn.size===WATCH_STEPS.length ? "incl. all watched"
-    : "incl. " + WATCH_STEPS.filter(s=>ymWatchedOn.has(s.key)).map(s=>s.lbl.replace("!","")).join(" + ");
-  return [svcPart, cascPart, rewatchPart].join(" · ");
-}
-function ymCardHTML(matchCount){
-  const searchRow = ymSearchOpen ? `<div class="ymcsearch">
-      <input id="ymSearchInput" class="search" type="text" inputmode="search" placeholder="Search your watch list"
-             autocomplete="off" aria-label="Search your watch list" value="${escA(ymSearchTerm)}"
-             oninput="setYmSearchTerm(this.value)">
-      <button class="searchclear show" type="button" aria-label="Close search" onclick="ymSearchToggle()">×</button>
-    </div>` : "";
-  const sortOpts = YM_SORT_OPTS.map(o=>
-    `<option value="${o.v}"${(ymSort||"")===o.v?" selected":""}>${o.label}</option>`).join("");
-  return `<div class="ymcard${ymCollapsed?" collapsed":""}" id="ymcard">
-    <div class="ymctop">
-      <span class="ymcicon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-             stroke-linejoin="round" width="20" height="20" focusable="false">
-          <path d="M6.5 4.2h11a1 1 0 0 1 1 1v14.6l-6.5-3.9-6.5 3.9V5.2a1 1 0 0 1 1-1z"/>
-          <path d="M10.3 9.4v5.2l4.1-2.6z" fill="currentColor" stroke="none"/>
-        </svg>
-      </span>
-      <div class="ymcmain">
-        <div class="ymctitle">Watch List</div>
-        <div class="ymccount" id="ymCardCount">${matchCount} film${matchCount===1?"":"s"}</div>
-        <div class="ymcsub">${esc(ymSummaryLine())}</div>
-      </div>
-    </div>
-    <div class="ymcacts">
-      <button type="button" class="ca-btn ymcedit${ymEditOpen?" on":""}" aria-pressed="${ymEditOpen}"
-        onclick="ymEditToggle()">Edit</button>
-      <button type="button" class="ca-btn x" aria-label="Search your watch list" title="Search this list"
-        onclick="ymSearchToggle()">🔍</button>
-      <button type="button" class="ca-btn x" id="ymFilterBtn" aria-haspopup="true" aria-expanded="false"
-        aria-label="Filter your watch list by watch priority" title="Filter by watch priority"
-        onclick="onYmFilterIcon()">${ICON.filter}</button>
-      <div class="sortctl ca-btn x" id="ymSortCtl" title="Order">
-        <select aria-label="Order this list" onchange="ymSortChange(this.value)">${sortOpts}</select>
-        <span class="sortic" aria-hidden="true">⇅</span>
-      </div>
-    </div>
-    ${searchRow}
-  </div>`;
-}
 function ymResultLineHTML(films){
   const n=films.length, head=`<b>${n} film${n===1?"":"s"}</b>`;
   if(!ymWatchedOn.size) return `${head} <span>· sorted by best match</span>`;
@@ -12778,23 +13049,35 @@ function ymAvoidCardIdCollisions(){
   });
 }
 function renderYourMovies(){
+  // CAS-590: #ymAnchor and #ymSticky (the rail) are now persistent HTML outside #yourMoviesBody — see the
+  // static shell above #yourMoviesBody — so only the search row/edit panel/result bar/cards are rebuilt
+  // here; wlSync() repaints the persistent rail separately, exactly like render()/deckSync() on Find.
   const feed=ymFeedList();
+  wlSync(feed.length);
+  const searchRow = ymSearchOpen ? `<div class="ymcsearch">
+      <input id="ymSearchInput" class="search" type="text" inputmode="search" placeholder="Search your watch list"
+             autocomplete="off" aria-label="Search your watch list" value="${escA(ymSearchTerm)}"
+             oninput="setYmSearchTerm(this.value)">
+      <button class="searchclear show" type="button" aria-label="Close search" onclick="ymSearchToggle()">×</button>
+    </div>` : "";
   $("yourMoviesBody").innerHTML=`
-    <div id="ymAnchor" aria-hidden="true" style="height:1px"></div>
-    <div class="ymsticky${ymCollapsed?" collapsed":""}" id="ymSticky">${ymCardHTML(feed.length)}</div>
+    ${searchRow}
     ${ymEditOpen ? ymPanelHTML(feed.length) : ""}
     <div class="ymresultbar" id="ymResultBar">${ymResultLineHTML(feed)}</div>
     <div class="ymcards" id="ymCards">${feed.length?"":`<p class="unone">No films match — loosen a filter above.</p>`}</div>`;
   if(feed.length) ymFillCards($("ymCards"), feed);
   ymAvoidCardIdCollisions();
-  armYmObserver();   // CAS-540: #ymAnchor above is a fresh node every render, so the observer needs re-arming
+  armYmObserver();
 }
 window.openYourMovies=()=>{
   // CAS-534: the header's other mode chip (Agents) now targets the always-present home view rather than a
   // dialog, but Manage Agents (opened from the menu) is still a full-screen overlay — close it first so only
   // one "screen" ever covers the home content at once.
   if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
-  ymCollapsed=false; renderYourMovies();   // CAS-540: reopening always starts expanded
+  // CAS-590: #ymSticky is persistent now (not rebuilt from ymCollapsed every render) — reopening always
+  // starts expanded, so the DOM class has to be cleared explicitly, not just the JS flag.
+  ymCollapsed=false; $("ymSticky").classList.remove("collapsed");
+  renderYourMovies();
   $("yourMovies").scrollTop=0;
   $("yourMovies").classList.add("open"); document.body.style.overflow="hidden";
   $("moviesBtn").classList.add("active"); $("moviesBtn").setAttribute("aria-expanded","true");
@@ -15488,69 +15771,110 @@ else if(dedupedN)
   function replaceListsInPlace(arr){ lists.length=0; arr.forEach(l=>lists.push(l)); }
 
   // ==========================================================================
-  // CAS-589: the Watch List's own filter record, one row per account
-  // --------------------------------------------------------------------------
-  // Shaped like a cascade row on purpose (id + user_id + an opaque criteria blob, CAS-408-style
-  // baseline tracked as a single row id rather than a Set of ids) even though today there is only
-  // ever one — CAS-590 turns this into a real array of rows without any schema change, the same way
-  // cascadeToRow/rowToCascade's opaque criteria blob means a new field never needs a migration.
+  // CAS-590: the Watch List's own filter record — now an ARRAY of named lists, one row per list, the
+  // same upsert/baseline-diff-delete shape `cascades` already uses (CAS-589's single-row shape, matched
+  // by a bare id with no signature, is retired here — see watchlistSigOf below).
   // ==========================================================================
-  function watchlistToRow(id){ return { id: id || cascadeNewId(), user_id:uid(), criteria: watchlistRecord() }; }
-  let watchlistRowId=null;   // this device's known row id, once loaded or first created
+  function watchlistToRow(l){
+    const { id, name, icon, order, ...criteria } = l;
+    return { id, user_id:uid(), criteria: {...criteria, name, icon, order} };
+  }
+  function rowToWatchlist(row){ return normWatchlistEntry({...(row.criteria||{}), id:row.id}); }
+  // A real signature, mirroring cascSigOf (which also excludes name — see dedupeCascades' own comment:
+  // two records differing only in name are still the same one). Trap: matching on name alone (the way
+  // loadListsAccount does for the OTHER Lists/Tags feature, which has no criteria to sign) would merge
+  // two devices' genuinely different lists the moment they happen to share a name.
+  const watchlistSigOf = l => JSON.stringify([l.svcOn, l.cascOff, l.watchedOn, l.watchTiers, l.sort]);
+  let watchlistBaseline=null;
   let ymSyncTimer=null, ymSyncing=false, ymSyncAgain=false;
   function scheduleWatchlistSync(){ clearTimeout(ymSyncTimer); ymSyncTimer=setTimeout(runWatchlistSync, 500); }
   async function runWatchlistSync(){
     if(!accountActive() || !ymReady) return;   // CAS-589 AC5: never push a still-default record up
     if(ymSyncing){ ymSyncAgain=true; return; }
     ymSyncing=true;
-    try{ await syncWatchlistToAccount(); }
+    try{ await syncWatchlistsToAccount(); }
     catch(err){ console.warn("Cascade: watchlist sync failed", err); }
     finally{ ymSyncing=false; if(ymSyncAgain){ ymSyncAgain=false; scheduleWatchlistSync(); } }
   }
-  async function syncWatchlistToAccount(){
+  async function syncWatchlistsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
-    const row=watchlistToRow(watchlistRowId);
-    const { error } = await c.from("watchlists").upsert([row], { onConflict:"id" });
-    if(error){ console.warn("Watchlist upsert", error); return; }
-    watchlistRowId=row.id;
+    const rows=watchLists.map(watchlistToRow);
+    if(rows.length){
+      const { error } = await c.from("watchlists").upsert(rows, { onConflict:"id" });
+      if(error){ console.warn("Watchlist upsert", error); return; }
+    }
+    const ids=new Set(watchLists.map(x=>x.id).filter(isUuid));
+    if(watchlistBaseline){
+      const gone=[...watchlistBaseline].filter(id=>!ids.has(id));
+      if(gone.length){
+        const { error } = await c.from("watchlists").delete().eq("user_id", owner).in("id", gone);
+        if(error){ console.warn("Watchlist delete", error); return; }
+      }
+    }
+    watchlistBaseline=ids;
   }
   async function loadWatchlistAccount(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("watchlists").select("*").limit(1);   // RLS: only mine
-    if(error){ console.warn("Watchlist load", error); ymReady=true; return; }
-    const row=(data||[])[0];
-    if(!row){
-      // CAS-589 migration: a genuinely new account has no row yet — seed one from this device's
-      // current (guest-default) record, mirroring loadUserPrefs's "no row yet" branch.
+    const { data, error } = await c.from("watchlists").select("*");   // RLS: only mine
+    if(error){ console.warn("Watchlist load", error); toast("⚠️ Couldn't reach your account — showing on-device watch lists."); ymReady=true; return; }
+    watchlistBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
+    const remote=(data||[]).map(rowToWatchlist);
+    if(!remote.length){
+      // CAS-589/590 migration: a genuinely new account has no rows yet — seed it from this device's own
+      // current (guest) lists, mirroring loadUserPrefs's "no row yet" branch.
       ymReady=true;
       scheduleWatchlistSync();
       return;
     }
-    watchlistRowId=row.id;
-    applyWatchlistRecord(normWatchlist(row.criteria));
-    saveWatchlistLocal();   // mirror into the guest cache for the next cold start, same as cascades
+    // CAS-590: fold in any list this device holds that the account doesn't already have an equivalent of
+    // — matched on watchlistSigOf (the criteria signature), NOT name, so two lists that happen to share a
+    // name but differ in what they actually watch are never silently collapsed into one.
+    const sigs=new Set(remote.map(watchlistSigOf));
+    const localOnly=watchLists.filter(x=>!sigs.has(watchlistSigOf(x)));
+    const merged=[...remote, ...localOnly];
+    merged.sort((a,b)=>(a.order??1e9)-(b.order??1e9));
+    watchLists.length=0; merged.forEach(l=>watchLists.push(l));
+    if(!activeWatchlist() && watchLists.length) setActiveWatchlist(firstWatchlistId());
+    applyActiveWatchlist();
+    saveWatchlistsLocal();   // mirror into the guest cache for the next cold start, same as cascades
     ymReady=true;
+    if(localOnly.length) scheduleWatchlistSync();   // push the folded-in local-only lists up
     if(typeof render==="function") render();
+    if(typeof renderYourMovies==="function") renderYourMovies();
   }
-  // CAS-408-style background convergence — user_prefs' own merge rule applies here too: one row per
-  // user holding whole-object fields, nothing to diff or prune per item, so "last write wins" IS the
-  // upsert itself and a reconcile simply adopts whichever answer the account currently holds.
-  async function reconcileWatchlist(){
+  // CAS-408-style background convergence — id-based upsert/prune, exactly like reconcileCascades.
+  async function reconcileWatchlists(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("watchlists").select("*").limit(1);
+    const { data, error } = await c.from("watchlists").select("*");
     if(error){ console.warn("Watchlist reconcile", error); return; }
-    const row=(data||[])[0]; if(!row) return;
-    watchlistRowId=row.id;
-    applyWatchlistRecord(normWatchlist(row.criteria));
-    saveWatchlistLocal();
+    const remote=(data||[]).map(rowToWatchlist);
+    const remoteIds=new Set(remote.map(x=>x.id));
+    remote.forEach(r=>{
+      const i=watchLists.findIndex(x=>x.id===r.id);
+      if(i>=0) watchLists[i]=r; else watchLists.push(r);
+    });
+    if(watchlistBaseline){
+      for(let i=watchLists.length-1;i>=0;i--){
+        const id=watchLists[i].id;
+        if(watchlistBaseline.has(id) && !remoteIds.has(id)) watchLists.splice(i,1);
+      }
+    }
+    if(!activeWatchlist() && watchLists.length) setActiveWatchlist(firstWatchlistId());
+    applyActiveWatchlist();
+    watchlistBaseline=remoteIds;
+    saveWatchlistsLocal();
     if(typeof render==="function") render();
+    if(typeof renderYourMovies==="function") renderYourMovies();
   }
   function loadGuestWatchlist(){
-    const rec=loadWatchlist();
-    applyWatchlistRecord(rec || watchlistDefaults());
-    watchlistRowId=null;
+    const recs=loadWatchlists();
+    watchLists.length=0;
+    (recs && recs.length ? recs : [normWatchlistEntry({name:"Watch List", order:0})]).forEach(l=>watchLists.push(l));
+    if(!activeWatchlist() && watchLists.length) setActiveWatchlist(firstWatchlistId());
+    applyActiveWatchlist();
     ymReady=true;
     if(typeof render==="function") render();
+    if(typeof renderYourMovies==="function") renderYourMovies();
   }
 
   // ---- wrap the one save chokepoint ----------------------------------------
@@ -15571,10 +15895,10 @@ else if(dedupedN)
     if(accountActive()) scheduleListsSync();
     else saveListMembershipLocal();
   };
-  const saveWatchlistLocal = saveWatchlist;
-  saveWatchlist = function(){
+  const saveWatchlistsLocal = saveWatchlists;
+  saveWatchlists = function(){
     if(accountActive()) scheduleWatchlistSync();
-    else saveWatchlistLocal();
+    else saveWatchlistsLocal();
   };
 
   // ---- react to auth state --------------------------------------------------
@@ -15607,6 +15931,7 @@ else if(dedupedN)
       // Signed out → back to the on-device set, and the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestLists(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
       cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
+      watchlistBaseline=null;
       try{ localStorage.setItem("cascade_had_account","0"); }catch(e){}
     }
   });
@@ -15630,7 +15955,7 @@ else if(dedupedN)
     if(!filmSyncing && !filmTimer) reconcileFilms();
     if(!listsSyncing && !listsTimer){ reconcileLists(); reconcileListMembership(); }
     if(!watchSyncing && !watchTimer) reconcileFilmWatches();
-    if(ymReady && !ymSyncing && !ymSyncTimer) reconcileWatchlist();
+    if(ymReady && !ymSyncing && !ymSyncTimer) reconcileWatchlists();
     // CAS-561: taste/watch_windows only pulled the account's answer on sign-in/boot before this —
     // a tab left open across a change on another device stayed on its stale baseline until reloaded.
     // Guarded on !upTimer the same way the other reconciles are, so a pull can't land on top of an
