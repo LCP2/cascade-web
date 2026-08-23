@@ -2659,7 +2659,7 @@
   .agtop{display:flex;align-items:center;gap:9px;min-width:0}
   .agnamewrap{flex:1;min-width:0;display:flex;flex-direction:column}
   /* CAS-565: kept — not orphaned. renderAgentsScreen()'s rows no longer use it (see .agbody above), but
-     the Your Movies panel's ym-casc rows (ymPanelHTML(), reusing this same .agrow shell) still do. */
+     the list editor's ym-casc rows (CAS-592's leInnerHTML(), reusing this same .agrow shell) still do. */
   .agmain{flex:1;min-width:0;display:flex;flex-direction:column}
   /* CAS-556: this label used to read the raw lane colour (var(--dcc)) as TEXT. --lane-cin is a deep
      navy tuned to sit as a 3px edge/tint, not as small uppercase text — at that size it fails WCAG AA
@@ -3526,6 +3526,15 @@
     </div>
   </div>
   <div class="uwrap" id="yourMoviesBody"></div>
+</div>
+
+<!-- LIST EDITOR (CAS-592): editing a watch list's own criteria, off its own screen — the agent editor's
+     shell (.sharpstep/.osstage/.osinner) and header (.osh.eahn + .eapenc), NOT its step machine. Body
+     rendered by leInnerHTML(). Writes live (see leSave()'s comment) — every dial here calls the SAME
+     ymSvcToggle/ymCascToggle/ymVerdictToggle the old inline panel used, which already persist through
+     ymPersist() on every change. -->
+<div class="sharpstep" id="leScreen" role="dialog" aria-modal="true" aria-label="Edit watch list">
+  <div class="osstage"><div class="osinner" id="leInner"></div></div>
 </div>
 
 <!-- AGENTS (CAS-424): every agent in one place — type, a summary of its selections, its film count, and
@@ -12553,16 +12562,16 @@ let ymSvcOn = new Set(["stream"]);   // ticked service filters — default Strea
 let ymCascOff = new Set();           // cascade ids explicitly UNticked — default empty, i.e. every cascade
 let ymWatchedOn = new Set();   // watched verdicts to include — empty = exclude every watched film (the old default)
 const ymCascTicked = c => !ymCascOff.has(c.id);
-// CAS-535: the three controls above are now collapsed behind the compact card's Edit button by default —
-// these are its own state, plus the new Search/Filter/Sort icon row's state.
-let ymEditOpen = false;
+// CAS-535: the three controls above are collapsed behind the compact card's Edit button by default —
+// CAS-592: Edit now navigates to its own screen (leOpen/leOn) instead of toggling a panel here. The
+// Search/Filter/Sort icon row below keeps its own transient state.
 let ymSearchOpen = false;
 let ymSearchTerm = "";
 let ymWatchTiers = new Set();   // Filter icon — reuses FILTER_TIERS/filmHasWatchTier (CAS-382's own predicate),
                                  // scoped to this feed rather than the deck's per-cascade filt.watchTiers.
 let ymSort = null;              // Sort icon — null keeps the feed's own "best match" order; else a sortMoviesBy key.
 // ---- CAS-589/590: bridge the five fields above to whichever list is active (loadWatchlists/saveWatchlists,
-// guest section near saveCascades). ymEditOpen/ymSearchOpen/ymSearchTerm and ymCollapsed stay
+// guest section near saveCascades). ymSearchOpen/ymSearchTerm and ymCollapsed stay
 // module `let`s only — they are transient UI, not part of the record.
 function watchlistRecord(){
   return {svcOn:[...ymSvcOn], cascOff:[...ymCascOff], watchedOn:[...ymWatchedOn],
@@ -12620,29 +12629,14 @@ function ymFeedList(){
     return score(b)-score(a) || (b.imdb_rating||0)-(a.imdb_rating||0);
   });
 }
-window.ymSvcToggle=key=>{ ymSvcOn.has(key)?ymSvcOn.delete(key):ymSvcOn.add(key); ymPersist(); renderYourMovies(); };
-window.ymSvcSetAll=on=>{ ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]); ymPersist(); renderYourMovies(); };
-window.ymCascToggle=id=>{ ymCascOff.has(id)?ymCascOff.delete(id):ymCascOff.add(id); ymPersist(); renderYourMovies(); };
-window.ymVerdictToggle=k=>{ ymWatchedOn.has(k)?ymWatchedOn.delete(k):ymWatchedOn.add(k); ymPersist(); renderYourMovies(); };
-window.ymVerdictSetAll=on=>{ ymWatchedOn = new Set(on ? WATCH_STEPS.map(s=>s.key) : []); ymPersist(); renderYourMovies(); };
-// ymEditOpen is transient UI (not part of the record) — this must NOT call ymPersist(), so opening
-// the panel never churns an account write (CAS-589 AC2).
-window.ymEditToggle=()=>{ ymEditOpen=!ymEditOpen; renderYourMovies(); };
-// CAS-541: the Edit panel used to be dismissible only by re-tapping "Edit" itself — every other popover in
-// the app (the deck's own Watch it filter, closeFilterPanel above) also closes on an outside tap, Escape, or
-// scroll, so this matches that convention rather than staying a one-off. Scroll-close matters even more once
-// CAS-540 lets the Watch List card collapse to a pill under scroll: without it, the Edit button moves/shrinks
-// while the panel stays open, the exact "detached panel" bug CAS-528 already fixed once for the deck.
-function closeYmEditPanel(){ if(ymEditOpen){ ymEditOpen=false; renderYourMovies(); } }
-document.addEventListener("click", e=>{
-  if(!ymEditOpen) return;
-  if(e.target.closest(".ympanel") || e.target.closest(".ymcedit")) return;
-  closeYmEditPanel();
-}, true);
-document.addEventListener("keydown", e=>{
-  if(e.key==="Escape" && ymEditOpen) closeYmEditPanel();
-});
-addEventListener("scroll", ()=>{ if(ymEditOpen) closeYmEditPanel(); }, {passive:true});
+window.ymSvcToggle=key=>{ ymSvcOn.has(key)?ymSvcOn.delete(key):ymSvcOn.add(key); ymPersist(); renderYourMovies(); leRefreshIfOpen(); };
+window.ymSvcSetAll=on=>{ ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]); ymPersist(); renderYourMovies(); leRefreshIfOpen(); };
+window.ymCascToggle=id=>{ ymCascOff.has(id)?ymCascOff.delete(id):ymCascOff.add(id); ymPersist(); renderYourMovies(); leRefreshIfOpen(); };
+// CAS-592: the list editor's own "Select all · Clear all" row for cascades — ymCascToggle above only ever
+// flipped one at a time, which is all the old inline panel needed since it had no bulk row for this section.
+window.ymCascSetAll=on=>{ ymCascOff=new Set(on?[]:cascades.map(c=>c.id)); ymPersist(); renderYourMovies(); leRefreshIfOpen(); };
+window.ymVerdictToggle=k=>{ ymWatchedOn.has(k)?ymWatchedOn.delete(k):ymWatchedOn.add(k); ymPersist(); renderYourMovies(); leRefreshIfOpen(); };
+window.ymVerdictSetAll=on=>{ ymWatchedOn = new Set(on ? WATCH_STEPS.map(s=>s.key) : []); ymPersist(); renderYourMovies(); leRefreshIfOpen(); };
 // ---- CAS-540: the Watch List card collapses to a pill under scroll, mirroring #cascbar's own mechanism
 // (own anchor element, scroll-triggered collapsed-state toggle, no-transition-on-live-scroll handling —
 // CAS-512/519/526) rather than a separate one-off. One real difference: #cascbar sticks under the page's
@@ -12773,14 +12767,13 @@ function watchlistRawCount(l){
 }
 function wlBuild(){
   wlStrip.innerHTML=watchLists.map(l=>{
-    const editOn=l.id===watchActiveId && ymEditOpen;
     return `
     <div class="dcard" role="group" aria-label="${esc(l.name)}" tabindex="-1" data-id="${l.id}"><div class="dc-in">
       <div class="dc-top"><span class="dc-icon">${l.icon}</span><span class="dc-type">Watch list</span></div>
       <div class="dc-name">${esc(l.name)}</div>
       <div class="dc-sub"></div>
       <div class="dc-acts">
-        <button class="ca-btn ymcedit${editOn?" on":""}" data-act="edit" aria-pressed="${editOn}">Edit</button>
+        <button class="ca-btn ymcedit" data-act="edit">Edit</button>
         <button class="ca-btn x dc-search" data-act="search" type="button" aria-label="Search ${escA(l.name)}"
                 title="Search this list">🔍</button>
         <button class="ca-btn x dc-filter" data-act="filter" type="button" aria-haspopup="true" aria-expanded="false"
@@ -12821,8 +12814,6 @@ function wlSync(shown){
     el.classList.toggle("is-active",on);
     el.querySelector(".dc-name").textContent=l.name;
     el.querySelector(".dc-sub").textContent=`${n} film${n===1?"":"s"}`;
-    const editBtn=el.querySelector('[data-act="edit"]');
-    if(editBtn){ const editOn=on&&ymEditOpen; editBtn.classList.toggle("on",editOn); editBtn.setAttribute("aria-pressed",String(editOn)); }
   });
   const actsHome=wlStrip.querySelector(".dcard.is-active .dc-acts");
   if(actsHome && wlSortCtl.parentElement!==actsHome) actsHome.appendChild(wlSortCtl);
@@ -12866,7 +12857,7 @@ wlStrip.addEventListener("keydown",e=>{
     e.preventDefault();
     const l=wlAt(wlIdx);
     if(wlIsNew(wlIdx)){ if(watchLists.length || ymReady) wlCreate(); }
-    else if(l && l.id===watchActiveId) ymEditToggle();
+    else if(l && l.id===watchActiveId) leOpen();
     else wlSelect(wlIdx);
     return;
   }
@@ -12911,7 +12902,7 @@ wlStrip.addEventListener("click",e=>{
   if(e.target.closest("#ymSortCtl")) return;
   const act=e.target.closest("button[data-act]")?.dataset.act;
   if(act==="new") return wlCreate();
-  if(act==="edit") return ymEditToggle();
+  if(act==="edit") return leOpen();
   if(act==="search") return ymSearchToggle();
   if(act==="filter") return onYmFilterIcon(e.target.closest("button[data-act]"));
   if(wlDragged) return;
@@ -13002,20 +12993,33 @@ function ymRefreshFeed(){
   }
   ymAvoidCardIdCollisions();
 }
-// Component reuse (CAS-529's own spec): chips + Select all/Clear all read exactly like the Style step
-// (CAS-397's .chips/.chip/.tbq pattern); each cascade row reuses the Agents screen's .agrow shell
-// (icon/name/summary, CAS-424) with a check-toggle standing in for that row's Edit button.
-function ymPanelHTML(matchCount){
+// ================= CAS-592: the list editor — its own .sharpstep screen, off the agent editor's shell
+// (#leScreen/.osstage/#leInner mirror .sharpstep#onbStep/.osstage/.osinner) but NOT its step machine — one
+// screen, no hub, no spokes. Writes LIVE: every dial below is the exact ymSvcToggle/ymCascToggle/
+// ymVerdictToggle the old inline panel called, which already run ymPersist() on every change, so there is no
+// separate draft to commit — Save (leSave) is a confirm-and-close, not a commit step. Delete (leDelete) never
+// touches a draft either — it calls removeWatchlist(), the same saved-record deletion the (pre-592) Manage
+// Lists screen already shipped, so pointer repair (AC7) is that function's existing behaviour, not new code.
+// ================================================================================================
+let leOn=false, leRenaming=false;
+// Component reuse (CAS-529's own spec, carried over unchanged): chips + Select all/Clear all read exactly
+// like the Style step (CAS-397's .chips/.chip/.tbq pattern); each cascade row reuses the Agents screen's
+// .agrow shell (icon/name/summary, CAS-424) with a check-toggle standing in for that row's Edit button. Only
+// the section wrapper markup is new here — .lesec/.lesechd/.lelink/.lelinkrow/.lematch, all already in the
+// stylesheet from CAS-590 and unused until now.
+function leInnerHTML(){
+  const l=activeWatchlist(); if(!l) return "";
+  const n=ymFeedList().length;
   const svcChips=YM_SVC.map(s=>`<button type="button" class="chip ymchip${ymSvcOn.has(s.key)?" on":""}"
       aria-pressed="${ymSvcOn.has(s.key)}" onclick="ymSvcToggle('${s.key}')">${esc(s.label)}</button>`).join("");
   const cascOn=cascades.filter(ymCascTicked).length;
   const cascRows=cascades.map(c=>{
-    const on=ymCascTicked(c), n=listedCount(c);
+    const on=ymCascTicked(c), cn=listedCount(c);
     return `<div class="agrow ym-casc agent-${c.kind==="stream"?"str":"cin"}">
       <span class="agicon" aria-hidden="true">${c.icon}</span>
       <span class="agmain">
         <span class="agname">${esc(c.name)}</span>
-        <span class="agsum">${n}</span>
+        <span class="agsum">${cn}</span>
       </span>
       <button type="button" class="ymcasctgl${on?" on":""}" aria-pressed="${on}"
         aria-label="${escA((on?"Remove ":"Include ")+c.name+" in this feed")}"
@@ -13028,28 +13032,89 @@ function ymPanelHTML(matchCount){
       aria-pressed="${on}" onclick="ymVerdictToggle('${s.key}')">
       <span class="wwb">✓</span><span>${esc(s.lbl)}</span></button>`;
   }).join("");
-  return `<div class="ympanel">
-    <div class="ymphead">Where you can watch it</div>
-    <div class="chips">${svcChips}</div>
-    <div class="ymlinkrow">
-      <span><button type="button" class="ymlink" onclick="ymSvcSetAll(true)">Select all</button> ·
-        <button type="button" class="ymlink" onclick="ymSvcSetAll(false)">Clear all</button></span>
-      <span class="ymmatch">${matchCount} film${matchCount===1?"":"s"} match</span>
+  const onlyOne=watchLists.length<=1;
+  return `
+    <div class="ostop lehdr">
+      <button class="osback" type="button" onclick="leClose()" aria-label="Back">←</button>
+      ${leRenaming
+        ? `<input type="text" class="listnamein" id="leNameInput" maxlength="40" value="${escA(l.name)}"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}" onblur="leCommitRename(this)">`
+        : `<h2 class="osh eahn">${escA(l.name)}</h2>
+           <button class="eapenc" type="button" onclick="leStartRename()" aria-label="Rename list">✏️</button>`}
     </div>
-    <div class="ymphead ymcaschead">Cascades to include · ${cascOn} of ${cascades.length}</div>
-    <div class="ymcasclist">${cascRows || `<p class="unone">No cascades yet.</p>`}</div>
-    <div class="ymphead ymcaschead">Films I've watched · include</div>
-    <div class="ymverdicts">${verdictBoxes}</div>
-    <div class="ymlinkrow">
-      <span><button type="button" class="ymlink" onclick="ymVerdictSetAll(true)">Select all</button> ·
-        <button type="button" class="ymlink" onclick="ymVerdictSetAll(false)">Clear all</button></span>
+    <div class="oscount" id="leCount" aria-live="polite"><b>${n}</b> film${n===1?"":"s"} match right now</div>
+    <div class="lesec">
+      <div class="lesechd">Where you can watch it</div>
+      <div class="chips">${svcChips}</div>
+      <div class="lelinkrow">
+        <button type="button" class="lelink" onclick="ymSvcSetAll(true)">Select all</button>
+        <button type="button" class="lelink" onclick="ymSvcSetAll(false)">Clear all</button>
+      </div>
     </div>
-  </div>`;
+    <div class="lesec">
+      <div class="lesechd">Cascades to include <span class="lesecn">· ${cascOn} of ${cascades.length}</span></div>
+      <div class="ymcasclist">${cascRows || `<p class="unone">No cascades yet.</p>`}</div>
+      <div class="lelinkrow">
+        <button type="button" class="lelink" onclick="ymCascSetAll(true)">Select all</button>
+        <button type="button" class="lelink" onclick="ymCascSetAll(false)">Clear all</button>
+        <span class="lematch">${n} film${n===1?"":"s"} match</span>
+      </div>
+    </div>
+    <div class="lesec">
+      <div class="lesechd">Films I've watched · include</div>
+      <div class="ymverdicts">${verdictBoxes}</div>
+      <div class="lelinkrow">
+        <button type="button" class="lelink" onclick="ymVerdictSetAll(true)">Select all</button>
+        <button type="button" class="lelink" onclick="ymVerdictSetAll(false)">Clear all</button>
+      </div>
+    </div>
+    <button type="button" class="lesave" onclick="leSave()">Save list</button>
+    <button type="button" class="ledel" ${onlyOne?"disabled":""} onclick="leDelete()"
+        title="${onlyOne?"The last list can’t be deleted":`Delete ${escA(l.name)}`}">Delete list</button>`;
 }
+function leRefreshIfOpen(){ if(leOn){ const el=$("leInner"); if(el) el.innerHTML=leInnerHTML(); } }
+window.leOpen=()=>{
+  const l=activeWatchlist(); if(!l) return;
+  closeYourMovies();
+  leOn=true; leRenaming=false;
+  $("leScreen").scrollTop=0;
+  $("leInner").innerHTML=leInnerHTML();
+  $("leScreen").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("watchlist_edit_opened",{id:l.id});
+};
+window.leClose=()=>{
+  leOn=false; leRenaming=false;
+  $("leScreen").classList.remove("open"); document.body.style.overflow="";
+  openYourMovies();
+};
+// Every dial already wrote through ymPersist() the moment it changed (see the module comment above) — Save
+// has nothing left to commit, so it is just the screen's confirm-and-return action.
+window.leSave=()=>{ leClose(); };
+window.leDelete=()=>{
+  const l=activeWatchlist(); if(!l) return;
+  if(watchLists.length<=1) return;   // AC7: the last list can never be deleted, mirrors confirmDeleteWatchlistRow
+  const n=watchlistRawCount(l);
+  if(!confirm(`Delete the list "${l.name}"?\n\n${n?`It has ${n} film${n===1?"":"s"} in it — `:""}This can't be undone.`)) return;
+  removeWatchlist(l.id);
+  leClose();
+};
+window.leStartRename=()=>{
+  leRenaming=true; leRefreshIfOpen();
+  const inp=$("leNameInput"); if(inp){ inp.focus(); inp.select(); }
+};
+window.leCommitRename=(inputEl)=>{
+  leRenaming=false;
+  const l=activeWatchlist();
+  if(l && inputEl && inputEl.isConnected){
+    const name=(inputEl.value||"").trim();
+    if(name){ l.name=name; saveWatchlists(); logEvent("watchlist_renamed",{id:l.id}); }
+  }
+  leRefreshIfOpen();
+};
 // CAS-535: the compact "Watch List" summary/control card, replacing the always-expanded panel above as the
 // screen's first thing — same shell (icon chip, title, film count, action-icon row) the deck's own small
-// Agent card uses. Its plain-language line states the same three things ymPanelHTML lets you edit, so the
-// two never say something different about the live filter state.
+// Agent card uses. Its plain-language line states the same three things the list editor (CAS-592) lets you
+// edit, so the two never say something different about the live filter state.
 function ymResultLineHTML(films){
   const n=films.length, head=`<b>${n} film${n===1?"":"s"}</b>`;
   if(!ymWatchedOn.size) return `${head} <span>· sorted by best match</span>`;
@@ -13101,7 +13166,6 @@ function renderYourMovies(){
     </div>` : "";
   $("yourMoviesBody").innerHTML=`
     ${searchRow}
-    ${ymEditOpen ? ymPanelHTML(feed.length) : ""}
     <div class="ymresultbar" id="ymResultBar">${ymResultLineHTML(feed)}</div>
     <div class="ymcards" id="ymCards">${feed.length?"":`<p class="unone">No films match — loosen a filter above.</p>`}</div>`;
   if(feed.length) ymFillCards($("ymCards"), feed);
@@ -13602,14 +13666,12 @@ window.openManageListsScreen=()=>{
 window.closeManageListsScreen=()=>{
   $("manageListsScreen").classList.remove("open"); document.body.style.overflow="";
 };
-// Until the list-editor screen (CAS-592) lands, "edit" means: close this screen, make the row's list
-// active, and open the Watch screen with its existing inline edit panel already open.
+// CAS-592: "edit" closes this screen, makes the row's list active, and opens the list editor directly on it.
 window.editWatchlistRow=(id)=>{
   closeManageListsScreen();
   setActiveWatchlist(id);
   applyActiveWatchlist();
-  ymEditOpen=true;
-  openYourMovies();
+  leOpen();
 };
 window.startRenameWatchlistRow=(id)=>{
   const row=document.querySelector(`.agrow[data-id="${id}"]`); if(!row) return;   // ids are our own uuids — safe unescaped in an attribute selector
