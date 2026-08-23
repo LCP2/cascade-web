@@ -1138,7 +1138,7 @@
   .cascbar.collapsed{padding:2px 0 0;box-shadow:0 6px 16px -8px rgba(0,0,0,.7)}
   .cascbar.collapsed .cascsearch,.cascbar.collapsed .sortctl,.cascbar.collapsed .listctl,
   .cascbar.collapsed #cascDetail,.cascbar.collapsed .dc-top,.cascbar.collapsed .dc-icon,
-  .cascbar.collapsed .dc-sub,.cascbar.collapsed .dc-learn,.cascbar.collapsed .dc-acts{display:none}
+  .cascbar.collapsed .dc-sub,.cascbar.collapsed .dc-rev,.cascbar.collapsed .dc-learn,.cascbar.collapsed .dc-acts{display:none}
   .cascbar.collapsed{--dcw:150px}
   .cascbar.collapsed .deckstrip{padding:5px calc(50% - var(--dcw)/2) 6px}
   .cascbar.collapsed .dcard{min-height:0}
@@ -1218,6 +1218,11 @@
      now render at every position (so a peeked card is the SAME layout as the active one, just blurred by
      deckPaint()'s existing filter) and only the interaction — not the paint — is gated on being the open card. */
   .dc-sub{font-size:11px;color:var(--dim);margin-top:4px;line-height:1.4}
+  /* the waiting-work count: Find's blue, so it ties to the For review pill above it */
+  .dc-rev{margin-top:5px;align-self:flex-start;font-size:10.5px;font-weight:800;letter-spacing:.03em;
+    text-transform:uppercase;color:#cddcff;background:rgba(76,125,255,.16);
+    border:1px solid rgba(76,125,255,.5);border-radius:999px;padding:2px 8px;line-height:1.5}
+  .dc-rev[hidden]{display:none}
   /* CAS-441: quiet, always-on — not a chip you set, just a fact about the agent, so it carries none of the
      .ctl fill-bar/on-state machinery. Same interaction gating as .dc-acts (CAS-421): painted at every deck
      position, only tappable once the card is centred + open. */
@@ -2390,30 +2395,34 @@
   /* The app already has ONE convention for "this control is lit": .dc-search.on / .dc-filter.on, i.e. an
      accent border over an 18% accent wash with #cfc2ff text. A solid accent fill is a different, louder
      language that appears nowhere else, so these use the existing one. */
-  .scopebtn.on{border-color:var(--accent);background:rgba(124,92,255,.18)}
-  .scopebtn.open{border-color:var(--accent)}
+  /* The lit state reads in Find's OWN blue (--brand-blue, the centre stop of the Find chip's gradient),
+     not the purple --accent. The bar now sits directly under the Find chip, and a purple control there
+     looked like it belonged to something else. Fill stays a low-alpha wash so the bar reads as chrome
+     rather than as three solid buttons competing with the agent card below it. */
+  .scopebtn.on{border-color:rgba(76,125,255,.65);background:rgba(76,125,255,.16)}
+  .scopebtn.open{border-color:rgba(76,125,255,.85)}
   .scmain{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;
     padding:8px 6px;background:transparent;border:0;color:var(--dim);font-family:inherit;cursor:pointer;
     -webkit-tap-highlight-color:transparent}
-  .scopebtn.on .scmain{color:#cfc2ff}
+  .scopebtn.on .scmain{color:#cddcff}
   .scn{font-size:11.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
   .sccar{flex:0 0 auto;width:24px;border:0;border-left:1px solid var(--line);background:transparent;
     color:var(--faint);font-size:10px;cursor:pointer;font-family:inherit;transition:.15s}
-  .scopebtn.on .sccar{border-left-color:rgba(124,92,255,.45);color:#cfc2ff}
-  .scopebtn.open .sccar{color:var(--accent)}
+  .scopebtn.on .sccar{border-left-color:rgba(76,125,255,.4);color:#cddcff}
+  .scopebtn.open .sccar{color:var(--brand-blue)}
   .scmain:active,.sccar:active{opacity:.75}
   .scmain:focus-visible,.sccar:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
   /* a lit dot on the caret when that pile is narrowed, so a filter can never be on invisibly */
   .sccar.narrowed{position:relative}
   .sccar.narrowed::after{content:"";position:absolute;top:5px;right:5px;width:5px;height:5px;
-    border-radius:50%;background:var(--accenttext)}
-  .cascbar.rail .scopebar{margin-top:7px}
+    border-radius:50%;background:var(--brand-blue)}
+  .cascbar.rail .scopebar{margin:8px 12px 9px}
   /* The listbox keeps its own outline all the way round. Squaring the joined corners only reads as "one
      control" when the panel is exactly as wide as the pill — and it is not: the Watch it panel is wider,
      the Watched panel is offset to stay on screen, and the open edge then reads as a cut-off box. A whole
      rounded panel, sitting just under the pill it belongs to, says the same thing without the artefact. */
-  .cpop.spop{padding:5px 4px 4px;border-color:rgba(124,92,255,.5)}
+  .cpop.spop{padding:5px 4px 4px;border-color:rgba(76,125,255,.5)}
   .listctl{display:flex;align-items:stretch;gap:8px;margin:8px 12px 0}
   /* CAS-275: the jump rail scrolls horizontally rather than wrapping — a control row that grows a second
      line changes the height of a STICKY bar, which moves the listing under the reader's thumb. Six sections
@@ -3074,6 +3083,10 @@
   <div class="cascbar" id="cascbar">
     <!-- CAS-371: the "AGENTS" heading is gone — the agent box is the first thing in the bar now, so
          everything below it sits that much higher. -->
+    <!-- The scope bar sits ABOVE the deck on purpose. It is a mode for the whole of Find, not a control
+         belonging to the open agent: switching it changes what every agent's list shows, so putting it
+         under one agent's card claimed a narrower scope than it has. -->
+    <div class="scopebar" id="scopeBar" role="group" aria-label="Which films to show"></div>
     <div class="deck">
       <!-- Not a listbox: an option is not allowed to contain buttons, and the centre card carries
            Edit and Search (CAS-271/CAS-272 took Close and Share off it). A group of groups keeps those
@@ -3112,7 +3125,6 @@
          there is only one, because a jump control with one destination scrolls you nowhere. CAS-371 took the
          order control out of this row (it now rides with the open agent card, above) — chips are all that's
          left, so the row is just the jump rail now. -->
-    <div class="scopebar" id="scopeBar" role="group" aria-label="Which films to show"></div>
     <div class="listctl" id="listCtl">
       <div class="jumpbar" id="jumpBar" hidden></div>
     </div>
@@ -6931,6 +6943,10 @@ const listedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m)).length
 // listedCount above (a newly-added film that doesn't even list here shouldn't inflate this agent's number),
 // narrowed to the ones newlyAddedKind actually flags.
 const newlyAddedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m) && newlyAddedKind(m)).length;
+// How many of this agent's films are still waiting on a decision — the For-review pile, scoped to one
+// agent. Same predicate the scope bar's New/For-review pill uses (not tagged out, no Watch-it window
+// ticked), so the two can never disagree.
+const toReviewCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m) && !filmDecided(m.tmdb_id)).length;
 // ---- v0.9.4 SCOPE: Watch it / New / Watched ---------------------------------------------------------
 // Find is where you DECIDE. So the list is three piles and this bar says which you are looking at:
 //   Watch it — you have already picked a window for it (filmOptOn on any rung)
@@ -8183,6 +8199,7 @@ function deckBuild(){
       <div class="dc-top"><span class="dc-icon">${c.icon}</span><span class="dc-type">${c.kind==="stream"?"Streaming":"Cinema"} agent</span></div>
       <div class="dc-name">${esc(c.name)}</div>
       <div class="dc-sub"></div>
+      <div class="dc-rev" hidden></div>
       <div class="dc-acts">
         <button class="ca-btn save" data-act="save" hidden>Save</button>
         <button class="ca-btn" data-act="edit">Edit</button>
@@ -8259,6 +8276,13 @@ function deckSync(shown){
                                  : "any service")
           : "")
       + (nNew ? ` · ${nNew} new` : "");
+    // CAS-598: with For review switched off you cannot tell from the list whether this agent has anything
+    // waiting — the pile is simply absent. The count belongs on the agent, because it differs per agent,
+    // and it is a separate lit span rather than another clause on the sub-line so it reads as a call to
+    // action rather than one more statistic. Hidden at zero: "0 to review" is noise on a finished agent.
+    const nRev=toReviewCount(c);
+    const revEl=el.querySelector(".dc-rev");
+    if(revEl){ revEl.textContent = nRev ? `${nRev} to review` : ""; revEl.hidden = !nRev; }
     el.querySelector('[data-act="save"]').hidden=!(on&&dirty);
   });
   // CAS-371: sort rides with whichever card is open (All included) — moved, not rebuilt, into that card's
