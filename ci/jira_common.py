@@ -35,10 +35,10 @@ def api(method, path, body=None):
 def shipped_keys(range_from, range_to="HEAD"):
     """CAS-NN keys touched by commits in range_from..range_to."""
     if range_from in ("", ZERO_SHA):
-        out = subprocess.check_output(["git", "log", "--format=%s%n%b", "-1", range_to], text=True)
+        out = subprocess.check_output(["git", "log", "--format=%s", "-1", range_to], text=True)
     else:
         out = subprocess.check_output(
-            ["git", "log", "--format=%s%n%b", f"{range_from}..{range_to}"], text=True)
+            ["git", "log", "--format=%s", f"{range_from}..{range_to}"], text=True)
     return sorted(set(re.findall(r"\bCAS-\d+\b", out)),
                   key=lambda k: int(k.split("-")[1]))
 
