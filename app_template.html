@@ -8024,12 +8024,11 @@ const alertMuted = k => prefs.alertsOff.has(k);
 // not muted globally. Every promise the app makes — the deck's "alerts on…" line, the agent's
 // voice, the editor's own paint, and the alert_moments we hand the monitor — reads off this, so
 // they cannot drift apart and start promising an email that will never arrive.
-// CAS-502: an agent's own bell never rings any more — Watch it on the film itself is the only thing
-// that notifies now — so this is unconditionally false. `c.alerts`/alert_moments are left as they
-// are (nothing destroyed, easy to reverse); this is the one place that stops promising delivery
-// from them.
+// CAS-601: agent Alert toggles are the control for status alerts again (Lee's decision of 2026-08-24,
+// reversing CAS-502 AC1). A bell rings when it's switched on for this agent, its window is reachable
+// for the agent's scope, and the type isn't globally muted.
 function alertLive(c,k){
-  return false;
+  return !!(c.alerts||ALERT_DEFAULTS)[k] && reachableRows(c).has(k) && !alertMuted(k);
 }
 const liveAlerts = c => Object.keys(ALERT_SHORT).filter(k=>alertLive(c,k));
 function alertSummary(c){
@@ -15764,6 +15763,13 @@ else if(dedupedN)
     // it in memory either way, but flag it here so the corrected row gets pushed back rather than left
     // stale in the account until this device happens to touch the agent for some other reason.
     const langDirty = (data||[]).some(r => ((r.criteria||{}).lang||[]).length);
+    // CAS-601: an agent saved while alertLive() was hardwired false carries a stale (empty)
+    // alert_moments — flag it the same way so the corrected value gets pushed back rather than
+    // left stale in the account until this device happens to touch the agent for some other reason.
+    const alertDirty = (data||[]).some(r => {
+      const moments = momentsOf(rowToCascade(r)), stored = r.alert_moments||[];
+      return moments.length!==stored.length || moments.some(k=>!stored.includes(k));
+    });
     let remote = (data||[]).map(rowToCascade);
     const localOnes = cascades.slice();
     // CAS-393: the membership step's own email gate (CAS-387) can create this account seconds after
@@ -15792,7 +15798,7 @@ else if(dedupedN)
     // account sync) purely so the NEXT cold start has something instant to show while this same fetch
     // revalidates in the background.
     saveCascadesLocal();
-    if(justOnboarded || langDirty) scheduleSync();
+    if(justOnboarded || langDirty || alertDirty) scheduleSync();
     offerMerge();
     if(typeof afterSignIn==="function") afterSignIn();
   }

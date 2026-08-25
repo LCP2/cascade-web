@@ -153,14 +153,11 @@ def main(argv=None) -> int:
         for u, ms in excluded_moments(_load_json(args.excluded)).items():
             muted.setdefault(u, set()).update(ms)
 
-    # CAS-506: restore agent-level delivery for `announced` ONLY — a film new to Cascade that
-    # matches an active agent's taste notifies with no Watch it tick required. Every other moment
-    # (hits_cinema/hits_pvod/hits_rent/hits_stream) stays Watch-it-only exactly as CAS-502 built it.
-    # Feeding match() only the `announced` transitions (rather than all of them) is what keeps a
-    # cascade whose stored `alert_moments` still names a window moment from resurrecting the noise
-    # CAS-502 removed — match() itself, and the `alert_moments` column, are otherwise unchanged.
-    announced_transitions = [t for t in transitions if t.moment == "announced"]
-    agent_hits = match(cascades, announced_transitions, already=already, catalogue=today_movies,
+    # CAS-601: an agent's own Alert toggles are the control again (Lee's decision of 2026-08-24,
+    # reversing CAS-502 AC1/widening CAS-506) — every moment a cascade's `alert_moments` names can
+    # notify, not just `announced`. match() already gates on `alert_moments`/criteria/suppressed/
+    # excluded, so feeding it every transition is the whole change; nothing in match() itself moves.
+    agent_hits = match(cascades, transitions, already=already, catalogue=today_movies,
                        excluded=muted)
 
     # CAS-484: a per-film "Watch it" tick is the sole source for every OTHER moment. Run after the
@@ -185,8 +182,8 @@ def main(argv=None) -> int:
     if args.target_user:
         by_user = {u: hits for u, hits in by_user.items() if str(u) == args.target_user}
 
-    print(f"[monitor] matching against {len(cascades)} active cascade(s) from {source} (announced "
-          f"moment only) and {len(watches)} per-film Watch-it row(s); "
+    print(f"[monitor] matching against {len(cascades)} active cascade(s) from {source} "
+          f"and {len(watches)} per-film Watch-it row(s); "
           f"{sum(len(v) for v in muted.values())} global alert-type exclude(s) across "
           f"{len(muted)} user(s); {sum(len(v) for v in by_user.values())} new alert(s).")
     if not by_user:

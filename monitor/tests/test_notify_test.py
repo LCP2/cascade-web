@@ -104,11 +104,11 @@ class BuildCatalogues(unittest.TestCase):
 
 
 class DeliverySourceProof(unittest.TestCase):
-    """CAS-502 AC3 (still true post-CAS-506, AC2/AC3): proves the rule end to end through the real
-    `python -m monitor` pipeline, fed by the harness's own catalogue builder — not a synthetic
-    shortcut. A WINDOW moment (hits_stream here) an agent's own alert_moments/criteria would
-    otherwise have caught must stay silent with no Watch it tick; a per-film Watch-it tick on the
-    same film+window is the only thing that delivers it."""
+    """CAS-601 (reverses CAS-502 AC1, supersedes CAS-502 AC3): proves the rule end to end through
+    the real `python -m monitor` pipeline, fed by the harness's own catalogue builder — not a
+    synthetic shortcut. A WINDOW moment (hits_stream here) an agent's own alert_moments/criteria
+    catches delivers with no Watch it tick required; a per-film Watch-it tick on the same
+    film+window must still resolve to exactly one alert, not two (the agent/watch de-dupe)."""
 
     TARGET_USER = "5ef56b23-cdec-5c0a-af6d-3bea00000001"
     DATE = "2026-08-13"
@@ -138,16 +138,17 @@ class DeliverySourceProof(unittest.TestCase):
                 rc = main(argv)
             return rc, buf.getvalue()
 
-    def test_an_agent_match_with_no_watch_it_tick_stays_silent(self):
+    def test_an_agent_match_delivers_with_no_watch_it_tick(self):
         rc, out = self._run(watches=[])
         self.assertEqual(rc, 0)
-        # The transition itself still shows in the plain diff log (line 3) — that's the diff stage,
-        # not delivery. What matters is that matching produced zero alerts and nothing was digested.
-        self.assertIn("0 new alert(s)", out)
-        self.assertIn("no new alerts for anyone", out)
-        self.assertNotIn("digest preview", out)
+        self.assertIn("1 new alert(s)", out)
+        self.assertNotIn("no new alerts for anyone", out)
+        self.assertIn("digest preview", out)
+        self.assertIn(self.target["title"], out)
 
     def test_the_same_film_with_a_watch_it_tick_delivers(self):
+        # The agent already caught this film with no tick (previous test) — a Watch-it tick on the
+        # SAME film+window must not turn that one alert into two (agent/watch de-dupe via cascade_hits).
         watches = [{"user_id": self.TARGET_USER, "movie_id": str(self.target["tmdb_id"]),
                     "windows": ["stream"]}]
         rc, out = self._run(watches)
@@ -156,6 +157,16 @@ class DeliverySourceProof(unittest.TestCase):
         self.assertNotIn("no new alerts for anyone", out)
         self.assertIn("digest preview", out)
         self.assertIn(self.target["title"], out)
+
+    def test_an_agent_with_no_alert_moments_stays_silent(self):
+        # CAS-601 AC5: the gate still bites — same fixture film, same cascade, but alert_moments
+        # emptied out (as if this moment's Alert toggle were off) must alert nobody.
+        self.cascades = [{**self.cascades[0], "alert_moments": []}]
+        rc, out = self._run(watches=[])
+        self.assertEqual(rc, 0)
+        self.assertIn("0 new alert(s)", out)
+        self.assertIn("no new alerts for anyone", out)
+        self.assertNotIn("digest preview", out)
 
 
 class AnnouncedDeliveryProof(unittest.TestCase):
