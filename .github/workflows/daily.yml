@@ -59,7 +59,27 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add index.html movies.json state
           git commit -m "Daily refresh $(date -u +%F)" || echo "nothing to commit"
-          git push origin HEAD:staging || echo "nothing to push"
+          # CAS-605: a bare push here silently swallowed a lost race against the CC-web worker
+          # pushing to staging mid-run (`|| echo "nothing to push"` ate a real rejection along
+          # with the harmless no-op case). Retry up to 3x, rebasing onto the remote each time; a
+          # genuine conflict fails the step rather than attempting a resolution (see
+          # scripts/push_with_rebase.sh for the same algorithm's standalone, tested form).
+          attempt=1
+          while [ "$attempt" -le 3 ]; do
+            git fetch origin staging
+            if ! git rebase origin/staging; then
+              echo "::error::rebase conflict pushing to staging: $(git diff --name-only --diff-filter=U | tr '\n' ' ')"
+              git rebase --abort
+              exit 1
+            fi
+            git push origin HEAD:staging && break
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::failed to push to staging after 3 attempts"
+              exit 1
+            fi
+            echo "push rejected (attempt $attempt/3), retrying after rebase"
+            attempt=$((attempt + 1))
+          done
 
       - name: Live-size the catalogue (CAS-354 — TMDB discover total_results)
         # Current-scope vs widened-AU-watchable totals, straight from TMDB discover. The TMDB
@@ -72,7 +92,23 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add docs/appraisals/cas-catalogue-sizing.md
           git commit -m "CAS-354: catalogue sizing $(date -u +%F)" || echo "nothing to commit"
-          git push origin HEAD:staging || echo "nothing to push"
+          # CAS-605: same bounded retry as the "Commit refreshed app + data" step above.
+          attempt=1
+          while [ "$attempt" -le 3 ]; do
+            git fetch origin staging
+            if ! git rebase origin/staging; then
+              echo "::error::rebase conflict pushing to staging: $(git diff --name-only --diff-filter=U | tr '\n' ' ')"
+              git rebase --abort
+              exit 1
+            fi
+            git push origin HEAD:staging && break
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::failed to push to staging after 3 attempts"
+              exit 1
+            fi
+            echo "push rejected (attempt $attempt/3), retrying after rebase"
+            attempt=$((attempt + 1))
+          done
 
       - name: Run the Cascade monitor (diff → match → de-dupe → email)
         # Reads yesterday's catalogue from git history (last refresh on an earlier calendar day). With the Supabase +
