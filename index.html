@@ -4543,7 +4543,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 603, "commit": "445b0e2", "builtAt": "2026-08-25T23:11:10Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 604, "commit": "9ec3e80", "builtAt": "2026-08-25T23:26:15Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -16187,7 +16187,7 @@ else if(dedupedN)
     console.log('[CAS-460] account fan-out start (' + label + ')', _t460fanout);
     Promise.allSettled([
       loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadUserPrefs(), loadRealAlerts(), loadListsAccount(),
-      loadWatchlistAccount()
+      loadWatchlistAccount(), loadFilmPicks()
     ]).then(()=>{
       const t1 = performance.now();
       console.log('[CAS-460] account fan-out end (' + label + ')', t1, 'elapsed_ms', (t1-_t460fanout).toFixed(1));
@@ -16207,7 +16207,7 @@ else if(dedupedN)
       }
     } else if(currentUser !== null){
       // Signed out → back to the on-device set, and the bell stops showing another account's news.
-      currentUser = null; loadGuest(); loadGuestFilms(); loadGuestLists(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
+      currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); loadGuestLists(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
       cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
       watchlistBaseline=null;
       try{ localStorage.setItem("cascade_had_account","0"); }catch(e){}
@@ -16352,6 +16352,15 @@ else if(dedupedN)
     recomputeFound();
     if(typeof render==="function") render();
   }
+  // CAS-609: `notify` is a const captured by closures across the file, so re-reading it on sign-out
+  // must mutate it in place (delete every key, then copy the fresh guest read back in) rather than
+  // reassign — the same reason loadGuestLists() mutates `listMembership` instead of replacing it.
+  function loadGuestNotify(){
+    Object.keys(notify).forEach(id=>delete notify[id]);
+    Object.assign(notify, loadNotify());
+    recomputeFound();
+    if(typeof render==="function") render();
+  }
   const saveWatchStatusLocal = saveWatchStatus;
   saveWatchStatus = function(){
     if(accountActive()) scheduleFilmSync();
@@ -16427,6 +16436,29 @@ else if(dedupedN)
     notifyPrefs.emailOn = !!row.email_on;
     notifyPrefs.email   = row.email_address || "";
     saveNotifyPrefs();
+    // CAS-609: excluded_moments was write-only — prefsRow() has pushed it since it existed, but
+    // nothing read it back. Replace, not union, same as the three columns above.
+    prefs.alertsOff = new Set(Array.isArray(row.excluded_moments) ? row.excluded_moments : []);
+    savePrefs();
+  }
+  // CAS-609: film_picks was push-only (upsert+delete, no select) — a manual "notify me"/"never
+  // mention this" pick never came back down to a second device, and never got replaced on an account
+  // change. entryFor() lands each row on the same notify[id] clearAccountNotify()/loadFilmWatches()
+  // just emptied or created.
+  async function loadFilmPicks(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("film_picks").select("movie_id,state");
+    if(error){ console.warn("film_picks load", error); return; }
+    const remote=data||[];
+    remote.forEach(r=>{
+      const id=Number(r.movie_id); if(!isFinite(id)) return;
+      const e=entryFor(id);
+      if(r.state==="off") e.removed=true;
+      else if(r.state==="mine") e.source="manual";
+    });
+    pickBaseline=new Set(remote.map(r=>String(r.movie_id)));
+    recomputeFound();
+    if(typeof render==="function") render();
   }
 
   // ==========================================================================
@@ -16491,8 +16523,17 @@ else if(dedupedN)
     }
     watchBaseline=ids;
   }
+  // CAS-609: the account is the answer, not the union of it and whatever the previous account (or
+  // guest session) left in `notify` — clear every key before either half of the account's notify
+  // state (film_watch here, film_picks in loadFilmPicks) is applied. Both this and loadFilmPicks are
+  // fired from the same synchronous fireAccountFanout() turn, so the clear always lands before either
+  // async apply, regardless of which request resolves first.
+  function clearAccountNotify(){
+    Object.keys(notify).forEach(id=>delete notify[id]);
+  }
   async function loadFilmWatches(){
     const c=client(); if(!c||!accountActive()) return;
+    clearAccountNotify();
     const { data, error } = await c.from("film_watch").select("movie_id,windows");
     if(error){ console.warn("film_watch load", error); return; }
     const remote=data||[];
