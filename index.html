@@ -2471,7 +2471,10 @@
      card's edge. The active-dot still marks "off the default"; the current choice is a tooltip (title on
      the wrapper, set by syncSortCtl) plus the selected option inside the native picker itself. */
   .sortctl{position:relative}
-  .sortic{font-size:13px;line-height:1;position:relative}
+  /* The icon is decorative (aria-hidden) and position:relative so it can anchor .sortdot — which puts
+     it in front of the invisible <select> stretched over the button, and it swallowed the tap. It must
+     never take pointer events; the select underneath is the real control. */
+  .sortic{font-size:13px;line-height:1;position:relative;pointer-events:none}
   .sortdot{position:absolute;top:-3px;right:-3px;width:7px;height:7px;border-radius:50%;
     background:var(--cyan);border:1.5px solid var(--panel2)}
   /* The real control: a native select, invisible and stretched over the whole button, so a tap anywhere on
@@ -4461,6 +4464,7 @@ const $=id=>document.getElementById(id);
 
 // ---- My Cascades: saved living searches (prototype state — localStorage, per device) ----
 const SORT_MIG_KEY = "cascade_sortmig_148";   // one-shot: see the sort migration in loadCascades()
+const SORT_MIG_KEY_2 = "cascade_sortmig_cascade";  // one-shot: default order becomes the Cascade score
 const LANG_MIG_KEY = "cascade_langmig_560";   // one-shot: see the CAS-560 language migration below
 function loadCascades(){
   try{
@@ -4479,6 +4483,15 @@ function loadCascades(){
         localStorage.setItem(SORT_MIG_KEY,"1");
       }
     }catch(e){}
+      // Same shape again, one key later: "availability" used to BE the default order (CAS-148), so every
+      // agent saved since carries it whether or not anyone chose it. The default is now the Cascade score,
+      // so that carried-over value is migrated - ONCE, and written back, so an availability order picked
+      // deliberately from here on is never overwritten. Any other order the user chose is left alone.
+      if(!localStorage.getItem(SORT_MIG_KEY_2)){
+        a.forEach(c=>{ if(!c.sort || c.sort==="availability" || c.sort==="imdb") c.sort="cascade"; });
+        localStorage.setItem("cascade_cascades", JSON.stringify(a));
+        localStorage.setItem(SORT_MIG_KEY_2,"1");
+      }
     // CAS-560: language retired as a per-agent field. normCascade() forces c.lang to [] on every load
     // regardless, so this is belt-and-braces — it writes the migrated value BACK to storage once, so the
     // raw saved JSON stops carrying a stray ["en"] forever rather than only correcting it in memory.
@@ -4681,7 +4694,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 787, "commit": "0e64d80", "builtAt": "2026-08-26T23:52:53Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 789, "commit": "948d663", "builtAt": "2026-08-26T23:57:17Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5143,7 +5156,7 @@ function syncSortCtl(){
   if(!sortCtl.isConnected) return;
   const opt=$("sort").querySelector(`option[value="${filt.sort}"]`);
   $("sortCtl").title="Order: "+(opt?opt.textContent:"");
-  $("sortDot").hidden=(filt.sort==="availability");
+  $("sortDot").hidden=(filt.sort==="cascade");
 }
 $("sort").onchange=e=>{filt.sort=e.target.value;syncSortCtl();render();};
 $("imdbMin").oninput=e=>{filt.imdb=+e.target.value;$("imdbVal").textContent=filt.imdb?filt.imdb.toFixed(1)+"+":"Any";render();};
@@ -8255,7 +8268,7 @@ function applyCascade(c){
   filt.budget=c.budget||0; filt.includeUnbudgeted=!!c.includeUnbudgeted; filt.tentpole=c.tentpole||"any";
   // The two Exclude toggles ARE the View chips — one state, two places to reach it.
   filt.hideWatched=c.excludeWatched!==false; filt.showHidden=c.excludeBlocked===false;
-  filt.sort=c.sort||"availability";                                      // Blockbuster radar leads with popularity
+  filt.sort=c.sort||"cascade";                                      // Blockbuster radar leads with popularity
   syncFilterUI();
 }
 // Opening is idempotent: landing a card in the deck's centre IS selecting it, so this can be called
@@ -9111,7 +9124,7 @@ function commitDraft(){
     selScale:draft.selScale, selBuzz:draft.selBuzz, selOr:draft.selOr,
     awards:draft.awards, cinemaReleaseOnly:draft.cinemaReleaseOnly, myServices:{...draft.myServices},
     excludeWatched:draft.excludeWatched, excludeBlocked:draft.excludeBlocked,
-    sort:draft.sort||"imdb", alerts:draft.alerts, watchWindows:draft.watchWindows,
+    sort:draft.sort||"cascade", alerts:draft.alerts, watchWindows:draft.watchWindows,
     // CAS-228: listStatus travels with status. Left out, the agent on disk would watch the right windows and
     // list all of them, so turning List off for one window would appear to work and then not survive a save.
     listStatus:draft.listStatus,
@@ -15714,7 +15727,7 @@ function sanitiseShared(o){
     imdb:num(o.imdb,0,10,0), rt:num(o.rt,0,100,0),
     budget:num(o.budget,0,BUDGET_BANDS.length-1,0),
     tentpole:TENTPOLE_STOPS.some(t=>t.key===o.tentpole) ? o.tentpole : "any",
-    sort:["imdb","rt","gross","popularity","cinema","title"].includes(o.sort) ? o.sort : "imdb",
+    sort:["cascade","imdb","rt","gross","popularity","cinema","title"].includes(o.sort) ? o.sort : "cascade",
     includeUnrated:!!o.includeUnrated, includeUnbudgeted:!!o.includeUnbudgeted,
     // Per-window scope survives the trip. `!!o.myServices` would have coerced the object to `true` and
     // normCascade would then switch ALL THREE windows on — a link scoped to Stream arriving scoped to
