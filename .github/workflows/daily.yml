@@ -22,6 +22,10 @@ on:
         description: "Demo (advanced): diff against this exact git ref's movies.json. Overrides days_back. Blank = use days_back."
         required: false
         default: ""
+      probe_title:
+        description: "CAS-607 diagnostic: probe TMDB for one title (why isn't it in the catalogue?) instead of the daily refresh. Prints candidates + AU release dates + AU providers + an ingest verdict, then exits — no ingest, no commit, no monitor, no qa.yml dispatch. Blank = normal refresh. (Only appears in the Actions UI once this input has reached main via a promote.)"
+        required: false
+        default: ""
 
 permissions:
   contents: write                # allow the job to commit the refreshed files
@@ -46,7 +50,17 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Probe a title (CAS-607)
+        # Diagnostic-only mode: when probe_title is set, run ONLY the probe against TMDB and
+        # exit — no ingest, no commit, no monitor, no qa.yml dispatch. Every step below is
+        # skipped for this run.
+        if: ${{ github.event.inputs.probe_title != '' }}
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: python scripts/catalogue_sizing.py --probe "${{ github.event.inputs.probe_title }}"
+
       - name: Build today's catalogue (ingest → enrich → poll → derive → build)
+        if: ${{ github.event.inputs.probe_title == '' }}
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
@@ -54,6 +68,7 @@ jobs:
         run: python poc_pipeline.py
 
       - name: Commit refreshed app + data (this becomes "today" for tomorrow's diff)
+        if: ${{ github.event.inputs.probe_title == '' }}
         run: |
           git config user.name  "cascade-bot"
           git config user.email "actions@users.noreply.github.com"
@@ -84,6 +99,7 @@ jobs:
       - name: Live-size the catalogue (CAS-354 — TMDB discover total_results)
         # Current-scope vs widened-AU-watchable totals, straight from TMDB discover. The TMDB
         # key only exists here (never on the dev PC), so this step is the only place it can run.
+        if: ${{ github.event.inputs.probe_title == '' }}
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
         run: |
@@ -114,6 +130,7 @@ jobs:
         # Reads yesterday's catalogue from git history (last refresh on an earlier calendar day). With the Supabase +
         # Resend secrets present it does the real thing; without them it runs --dry-run so the
         # workflow still passes (no writes, no email).
+        if: ${{ github.event.inputs.probe_title == '' }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -155,6 +172,7 @@ jobs:
         # gate would never fire for a daily-refresh-only push. An explicit API dispatch is not
         # subject to that suppression, so this keeps main from drifting behind a staging refresh
         # that has no other ticket push to piggyback on.
+        if: ${{ github.event.inputs.probe_title == '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run qa.yml --ref staging

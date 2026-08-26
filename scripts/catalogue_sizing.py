@@ -21,12 +21,19 @@ Runs discover/movie queries and reports total_results + total_pages for each:
 Requires TMDB_API_KEY in env. That key is a GitHub Actions secret only (not on the dev
 PC, per CAS-335) — this script is a no-op without it, by design; it is meant to run in
 CI (.github/workflows/daily.yml), never locally.
+CAS-607 added `--probe "<title>"`: a diagnostic mode for "why isn't this film in the catalogue?"
+that does NOT run the four sizing queries and does NOT write cas-catalogue-sizing.md. It looks
+up up to 5 TMDB search matches, prints their AU release_dates and AU watch/providers, and derives
+a verdict (theatrical / upcoming / streaming / none) from the same LOOKBACK_DAYS /
+UPCOMING_LOOKAHEAD_DAYS / release-type constants poc_pipeline's ingest passes use.
 """
 from __future__ import annotations
-import datetime, os, sys
+import datetime, os, sys, urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from poc_pipeline import TMDB_BASE, REGION, LOOKBACK_DAYS, TMDB_KEY, get_json  # noqa: E402
+from poc_pipeline import (  # noqa: E402
+    TMDB_BASE, REGION, LOOKBACK_DAYS, UPCOMING_LOOKAHEAD_DAYS, TMDB_KEY, get_json, tmdb_providers,
+)
 
 DOC_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                          "docs", "appraisals", "cas-catalogue-sizing.md")
@@ -157,7 +164,76 @@ def write_memo(current: dict, widened: dict, widened_bounded: dict,
         f.write("\n".join(lines) + "\n")
 
 
+def verdict(au_release_dates: list[tuple[int, str]], has_au_provider: bool,
+            today: datetime.date) -> str:
+    """CAS-607 — would poc_pipeline's ingest have picked this title up, and by which pass?
+    `au_release_dates` is a list of (type, iso_date) AU release_dates entries; `has_au_provider`
+    is whether /watch/providers has any AU flatrate/rent/buy row. Mirrors, in order,
+    `_discover_au_theatrical`'s current-scope window, its upcoming-window call, then
+    `_discover_au_streaming` (no release_dates requirement at all — provider presence alone
+    qualifies), so a title with neither verdicts as ingested by none of the three passes."""
+    lookback_start = (today - datetime.timedelta(days=LOOKBACK_DAYS)).isoformat()
+    upcoming_end = (today + datetime.timedelta(days=UPCOMING_LOOKAHEAD_DAYS)).isoformat()
+    today_iso = today.isoformat()
+    theatrical_dates = [d for t, d in au_release_dates if t in (2, 3)]
+    if any(lookback_start <= d <= today_iso for d in theatrical_dates):
+        return "theatrical pass (AU type 2|3 release within the last LOOKBACK_DAYS)"
+    if any(today_iso < d <= upcoming_end for d in theatrical_dates):
+        return "upcoming pass (AU type 2|3 release within the next UPCOMING_LOOKAHEAD_DAYS)"
+    if has_au_provider:
+        return "streaming pass (AU watch/provider row, no in-window AU type 2|3 release)"
+    return "none — not ingested by any pass"
+
+
+def probe_title(query: str) -> int:
+    """CAS-607 — up to 5 TMDB search matches (or one exact lookup, if `query` is a bare tmdb_id)
+    for `query`, each with its AU release_dates, AU watch/providers, and an ingest verdict. Prints
+    to stdout only; never writes DOC_FILE or runs the sizing queries above."""
+    if not TMDB_KEY:
+        print("[catalogue_sizing] --probe needs TMDB_API_KEY, which is a CI-only secret (CAS-335) "
+              "and is not set in this environment.", file=sys.stderr)
+        return 1
+    if query.isdigit():
+        detail = get_json(f"{TMDB_BASE}/movie/{query}?api_key={TMDB_KEY}")
+        candidates = [detail] if detail.get("id") else []
+    else:
+        search = get_json(f"{TMDB_BASE}/search/movie?api_key={TMDB_KEY}&query={urllib.parse.quote(query)}")
+        candidates = (search.get("results") or [])[:5]
+    if not candidates:
+        print(f"[catalogue_sizing] no TMDB match for {query!r}")
+        return 0
+    today = datetime.date.today()
+    for c in candidates:
+        tmdb_id = c["id"]
+        print(f"tmdb_id={tmdb_id}  title={c.get('title')!r}  original_title={c.get('original_title')!r}  "
+              f"year={(c.get('release_date') or '----')[:4]}  popularity={c.get('popularity')}")
+        rd = get_json(f"{TMDB_BASE}/movie/{tmdb_id}/release_dates?api_key={TMDB_KEY}")
+        au_release_dates = []
+        for entry in rd.get("results", []):
+            if entry["iso_3166_1"] == REGION:
+                for d in entry["release_dates"]:
+                    au_release_dates.append((d["type"], d["release_date"][:10]))
+        if au_release_dates:
+            for t, d in sorted(au_release_dates, key=lambda td: td[1]):
+                print(f"  AU release_dates: type={t} date={d}")
+        else:
+            print("  NO AU RELEASE DATES")
+        prov = tmdb_providers(tmdb_id)
+        stream_providers = sorted(set(prov["flatrate"] + prov["rent"] + prov["buy"]))
+        if stream_providers:
+            print(f"  AU providers: {', '.join(stream_providers)}")
+        else:
+            print("  NO AU PROVIDERS")
+        print(f"  verdict: {verdict(au_release_dates, bool(stream_providers), today)}")
+    return 0
+
+
 def main() -> int:
+    if len(sys.argv) >= 2 and sys.argv[1] == "--probe":
+        if len(sys.argv) < 3:
+            print("[catalogue_sizing] --probe requires a title, e.g. --probe \"Some Film\"", file=sys.stderr)
+            return 1
+        return probe_title(sys.argv[2])
     if not TMDB_KEY:
         print("[catalogue_sizing] TMDB_API_KEY not set — nothing to do here (this script is CI-only).")
         return 0
