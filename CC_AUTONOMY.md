@@ -38,7 +38,7 @@ stop. Never commit secrets.
 
 ## Do the work
 - Implement to the **acceptance criteria and nothing beyond**. Honour the out-of-scope list.
-- Read `CLAUDE.md`, the Confluence **Cascade Web — Architecture & CC Build Spec**, and **UX Psychology —
+- Read the Confluence **Cascade Web — Architecture & CC Build Spec** and **UX Psychology —
   Principles & Cascade Applications** before any craft or design decision. Truthful copy only: never a
   fabricated count, urgency, timer or capability.
 - Front-end work goes in `app_template.html`. Backend/monitor work goes in `/monitor/` or
@@ -54,27 +54,29 @@ stop. Never commit secrets.
   `index.html`'s only change is its stamp. (CAS-537: a test-only commit skipped this step, and the footer's
   build stamp under-reported every ship for several tickets until a later front-end ticket happened to
   rebuild.)
-- Follow the repo convention of one Playwright spec per ticket: `tests/e2e/cas<NNN>.spec.mjs`.
-- **Verify fast in-session; CI is the gate.** The full `npm run qa` now runs in CI on every push to
-  `staging` (`.github/workflows/qa.yml`, CAS-236). Do **not** run the whole suite in-session — it exceeds
-  the run's foreground limit and loops. Run only the fast checks against your build, **synchronously, one
-  at a time, in the foreground of this same run** — never background one (including the Playwright spec)
-  and schedule a wakeup to check on it later; that starts a fresh paid run that re-does all the diagnosis
-  from scratch instead of resuming where you left off, and has cost real wasted runs in practice.
+- **Do not write a Playwright spec for your ticket.** The e2e gate is `tests/e2e/smoke.spec.mjs` only
+  (CAS-385); per-ticket `cas<NNN>.spec.mjs` files are not run by CI. Only add or change an e2e spec when
+  the ticket text explicitly asks for it.
+- **Verify fast in-session; CI is the gate.** The full gate runs in CI on every push to `staging`
+  (`.github/workflows/qa.yml`). In-session, run exactly these three checks against your build,
+  synchronously, one at a time, in the foreground of this same run — never background one and schedule a
+  wakeup to check on it later; that starts a fresh paid run that re-does all the diagnosis from scratch:
+  1. `npm run build`
+  2. `npm run test:lint`
+  3. `npm run test:engine`
+  Do **not** run `npm run test:data`, `npm run test:monitor`, `npm run test:e2e`, or any Playwright spec
+  in-session. CI owns them: its `data` job runs `python -m tests.run_data_quality` (CAS-405), which
+  splits blocking app-breakers from report-only checks — a flat local `python -m unittest discover -s
+  tests` has no such split, so known report-only failures (e.g. the CAS-227 upcoming latch) read as red
+  locally and burn the run diagnosing failures that are not yours.
 
   Capture each command's **real exit code immediately after that command**, never through a pipe —
-  `cmd | tail` reports `tail`'s exit code, not the command's, so a real failure can silently read as green.
-  If a command's output is too large to keep in context, redirect it to a file and only read the **file**
-  (with `tail`/`grep`) after you've already checked the exit code, e.g.:
-  ```
-  npm run build > /tmp/build.log 2>&1; BUILD_EXIT=$?
-  [ $BUILD_EXIT -ne 0 ] && tail -50 /tmp/build.log
-  ```
-  Apply that same redirect-then-check pattern to `npm run test:engine`, `npm run test:data`,
-  `npm run test:monitor`, and `npx playwright test tests/e2e/cas<NNN>.spec.mjs` (the last is the ticket's
-  own e2e spec — run it in the foreground and let it finish naturally in this run). Do not proceed on red.
-  On green, commit and push to `staging` — CI's QA run is the authoritative gate, and `promote` refuses any
-  staging commit whose QA is not green.
+  `cmd | tail` reports `tail`'s exit code, not the command's, so a real failure can silently read as
+  green. If a command's output is too large to keep in context, redirect it to a file and only read the
+  file (with `tail`/`grep`) after you've already checked the exit code: run
+  `npm run build > /tmp/build.log 2>&1; BUILD_EXIT=$?` and only then
+  `[ $BUILD_EXIT -ne 0 ] && tail -50 /tmp/build.log`. Do not proceed on red. On green, commit and push to
+  `staging` — CI's QA run is the authoritative gate.
 - If a ticket says an asset or spec "will be attached" and it is not in the ticket text, **do not invent
   it** — stop, label it `needs-lee`, and say what is missing.
 
@@ -99,7 +101,7 @@ Print exactly one outcome marker on the final line:
   real exit codes directly — a scheduled wakeup starts a new paid run that re-does the diagnosis from
   scratch instead of resuming, which has already wasted real runs on this project.
 - Never write to `main`. Never `git checkout main`, merge to main, push main, or force-push anything.
-  Production changes only when Lee promotes, and that gate is the whole point.
+  Only `promote.yml` writes `main` (it fires automatically on a green QA — recorded Cascade exemption).
 - Never edit CI / workflow / signing files — if a ticket needs that, set it `BLOCKED` and add the
   `needs-lee` label. (The one exception ever granted was CAS-300, the ticket that installed this kit.)
 - Never enter credentials, accept store agreements, or run a deploy. Those stop at the human.
