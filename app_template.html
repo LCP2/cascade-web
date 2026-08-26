@@ -6523,7 +6523,19 @@ function wirePanelSlide(pop, itemSel, onPick){
 // past the row's right edge on a narrow phone.
 function positionPanel(pop, anchorBtn){
   const hdr=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hdrh"))||0;
-  if(pop.getBoundingClientRect().top < hdr+8) pop.classList.add("pop-down");
+  // CAS-604 prerequisite: --hdrh is the header alone, but #cascbar (Find) and #ymSticky (Watch) stick
+  // directly BELOW it with their own heights, and .card's overflow:hidden + content-visibility:auto mean
+  // .cpop's z-index can never paint above them. So the band to clear is the measured BOTTOM of whichever
+  // of those bars is currently on screen, falling back to the header when neither is.
+  const stickyBottom = el => {
+    if(!el) return 0;
+    const r = el.getBoundingClientRect();
+    return (r.height > 0 && r.bottom > 0) ? r.bottom : 0;
+  };
+  const occluded = Math.max(hdr,
+    stickyBottom(document.getElementById("cascbar")),
+    stickyBottom(document.getElementById("ymSticky")));
+  if(pop.getBoundingClientRect().top < occluded+8) pop.classList.add("pop-down");
   if(anchorBtn){
     const row=pop.parentElement;
     const max=Math.max(0, row.clientWidth - pop.offsetWidth);
