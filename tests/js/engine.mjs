@@ -117,6 +117,7 @@ const EXPORTS = `
   agentWindow, winOn, subOn, winSubs, PRIORITY_WATCH, ALERT_DEFAULTS, ALERT_SHORT, ALERT_MOMENT,
   alertLive, reachableRows, liveAlerts, drawWatchLanes,
   selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK,
+  qScore, sortMoviesBy, ratingOf, IMDB_MIN_VOTES,
   SCALE_REF, BUZZ_STOPS, VOTE_REF, CRIT_MARKS, AWARD_STOPS, awardRank, parseAwards,
   AGE_LEVELS, ONB_GENRES, LANG_OPTS, GENRE_COUNT,
   YEARS_STOPS, YEARS_STOP_POS, yearsForPos, posForYears, yearsCutoff, releasedSince,

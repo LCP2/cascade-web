@@ -223,3 +223,28 @@ test("scale: an unknown scale is never the reason a film is dropped", () => {
   if(small) assert.equal(E.selScaleMatch(small, { selScale: 100e6 }), false,
     `${small.title} at $${small.budget} passed a $100M floor`);
 });
+
+// ---- 8. THE CASCADE SCORE (CAS-603) ---------------------------------------------------------------------
+// One number from the three the card already prints, so a thin-voted IMDb average can no longer outrank a
+// broadly-agreed film just because nothing else was reading the critic scores.
+test("cascade score: critic agreement beats a thin-voted IMDb average, and unscored films sort last", () => {
+  const wellReviewed  = { title: "Well Reviewed",  imdb_rating: 8.2, imdb_votes: 1000000, metacritic: 90, rt_critic: 93 };
+  const thinVoted      = { title: "Thin Voted",     imdb_rating: 8.9, imdb_votes: 1343 };
+  const lowRatedButCriticked = { title: "Low Rated But Criticked", imdb_rating: 3.0, imdb_votes: 1000000, metacritic: 40, rt_critic: 35 };
+  const noCritics      = { title: "No Critics",     imdb_rating: 9.5, imdb_votes: 1000000 };
+  const underVotes     = { title: "Under Votes",    imdb_rating: 9.9, imdb_votes: E.IMDB_MIN_VOTES - 1, metacritic: 95, rt_critic: 98 };
+
+  assert.ok(E.sortMoviesBy(wellReviewed, thinVoted, "cascade") < 0,
+    "a film with real critic agreement did not outrank a thin-voted IMDb average");
+
+  // A film with no critic score sorts after every film that has one, whatever its own IMDb rating — even a
+  // poorly-reviewed one.
+  for(const scored of [wellReviewed, lowRatedButCriticked]){
+    assert.ok(E.sortMoviesBy(noCritics, scored, "cascade") > 0,
+      `a film with no critic score did not sort after ${scored.title}`);
+  }
+
+  // Below IMDB_MIN_VOTES the IMDb figure must not count as a rating at all — qScore should read it exactly as
+  // it would an entry with no IMDb rating and no critic scores.
+  assert.equal(E.qScore(underVotes), -1, "a film under the vote floor was still treated as rated");
+});
