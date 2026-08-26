@@ -205,7 +205,7 @@ test("CAS-529: the reused card component's own Watch it control works live from 
   // merely ticked — aria-pressed is the one that reflects "a level is ticked at all" (st.on), so that's
   // the live-state check that belongs to this feed, not the card component's own currency styling.
   await expect(chip).toHaveAttribute("aria-pressed", "true");
-  await expect(chip).toContainText("Watch it");
+  await expect(chip).toContainText("Notify");    // CAS-610: relabelled back from "Watch it"
   await expect(page.locator(`#ymCards #card-${id} .ctl.watch`)).toBeVisible();
   await expect(page.locator(`#ymCards #card-${id} .ctl.casc`)).toBeVisible();   // Lists control, present too
 });
