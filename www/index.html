@@ -2979,6 +2979,14 @@
     background:var(--grad);
     text-shadow:0 1px 2px rgba(10,14,26,.55);
   }
+  /* ---- The Cascade score ------------------------------------------------------ */
+  .qscore{flex:none;margin-left:auto;font-weight:800;font-size:13px;padding:1px 7px;border-radius:7px;
+    border:1px solid transparent;font-variant-numeric:tabular-nums}
+  .qscore.hi{color:#8fe0b4;border-color:rgba(72,199,142,.45);background:rgba(72,199,142,.13)}
+  .qscore.mid{color:#bcdcff;border-color:rgba(90,169,240,.4);background:rgba(90,169,240,.12)}
+  .qscore.lo{color:#9aa3b2;border-color:rgba(255,255,255,.14)}
+  .qscore.none{color:#5c6472;border-color:rgba(255,255,255,.10)}
+  .card.expanded .qscore{font-size:14px}
 </style>
 </head>
 <body>
@@ -3117,6 +3125,7 @@
       <select id="sort" aria-label="Order">
         <option value="availability">Availability</option>
         <option value="imdb">IMDb rating</option>
+        <option value="cascade">Cascade score</option>
         <option value="rt">RT critic</option>
         <option value="gross">Box office</option>
         <option value="popularity">Most anticipated</option>
@@ -3519,6 +3528,7 @@
         <option value="">Best match</option>
         <option value="availability">Availability</option>
         <option value="imdb">IMDb rating</option>
+        <option value="cascade">Cascade score</option>
         <option value="rt">RT critic</option>
         <option value="gross">Box office</option>
         <option value="popularity">Most anticipated</option>
@@ -4546,7 +4556,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 606, "commit": "7902869", "builtAt": "2026-08-25T23:48:52Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 607, "commit": "eaa3e01", "builtAt": "2026-08-26T00:31:45Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5275,8 +5285,31 @@ function byTimelineAsc(a,b){
   if(!db) return -1;
   return da.localeCompare(db);
 }
+// ---- The Cascade score --------------------------------------------------------
+// One number per film: the mean of the scores it actually carries — the same three the card prints.
+// -1 means "not rankable on quality": no reliable IMDb vote, or no critic score at all.
+function qScore(m){
+  const r = ratingOf(m);
+  if(r===null || (m.metacritic==null && m.rt_critic==null)) return -1;
+  const p=[r*10];
+  if(m.metacritic!=null) p.push(m.metacritic);
+  if(m.rt_critic!=null)  p.push(m.rt_critic);
+  return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
+}
+function qScoreHTML(m){
+  const q=qScore(m);
+  if(q<0) return `<span class="qscore none" title="Not enough agreement to score this yet">&ndash;</span>`;
+  return `<span class="qscore ${q>=85?"hi":q>=70?"mid":"lo"}" title="Cascade score &mdash; IMDb, Metacritic and RT combined">${q}</span>`;
+}
 function sortMoviesBy(a,b,key){
   switch(key){
+    case "cascade": {
+      const sa=qScore(a), sb=qScore(b);
+      if(sa<0 && sb<0) return byRatingDesc(a,b);
+      if(sa<0) return 1;
+      if(sb<0) return -1;
+      return sb-sa;
+    }
     case "availability": return byTimeline(a,b);
     case "rt": return (b.rt_critic||0)-(a.rt_critic||0);
     case "gross": return (b.worldwide_gross||0)-(a.worldwide_gross||0);
@@ -5923,7 +5956,7 @@ function cardHTML(m, markNew=false){
         </div>
         <!-- CAS-373: the title text gets its own span so it (not the badge) is what truncates — the rating
              badge is flex:none and always shows, collapsed or expanded. -->
-        <div class="title"><span class="titletext">${m.title}</span>${cert}${fixtureBadge}</div>
+        <div class="title"><span class="titletext">${m.title}</span>${cert}${fixtureBadge}${qScoreHTML(m)}</div>
         <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
