@@ -4566,7 +4566,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 610, "commit": "907fd45", "builtAt": "2026-08-26T01:42:09Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 611, "commit": "d07ab5c", "builtAt": "2026-08-26T02:40:58Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6523,7 +6523,19 @@ function wirePanelSlide(pop, itemSel, onPick){
 // past the row's right edge on a narrow phone.
 function positionPanel(pop, anchorBtn){
   const hdr=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hdrh"))||0;
-  if(pop.getBoundingClientRect().top < hdr+8) pop.classList.add("pop-down");
+  // CAS-604 prerequisite: --hdrh is the header alone, but #cascbar (Find) and #ymSticky (Watch) stick
+  // directly BELOW it with their own heights, and .card's overflow:hidden + content-visibility:auto mean
+  // .cpop's z-index can never paint above them. So the band to clear is the measured BOTTOM of whichever
+  // of those bars is currently on screen, falling back to the header when neither is.
+  const stickyBottom = el => {
+    if(!el) return 0;
+    const r = el.getBoundingClientRect();
+    return (r.height > 0 && r.bottom > 0) ? r.bottom : 0;
+  };
+  const occluded = Math.max(hdr,
+    stickyBottom(document.getElementById("cascbar")),
+    stickyBottom(document.getElementById("ymSticky")));
+  if(pop.getBoundingClientRect().top < occluded+8) pop.classList.add("pop-down");
   if(anchorBtn){
     const row=pop.parentElement;
     const max=Math.max(0, row.clientWidth - pop.offsetWidth);
