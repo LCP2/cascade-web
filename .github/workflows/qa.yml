@@ -197,6 +197,32 @@ jobs:
           path: qa-failures/monitor.txt
           retention-days: 7
 
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Device-parity lint (CAS-554)
+        run: node tests/lint/device-parity.mjs 2>&1 | tee lint.log
+
+      - name: Capture failure detail
+        if: failure()
+        run: |
+          mkdir -p qa-failures
+          (grep -m1 -E '^\[R[0-9]\]' lint.log || tail -5 lint.log) \
+            > qa-failures/lint.txt
+
+      - name: Upload failure detail
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-failure-lint
+          path: qa-failures/lint.txt
+          retention-days: 7
+
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -278,7 +304,7 @@ jobs:
   # CAS-462: Jira checkpoint only — no build artefact depends on this, so it runs after the
   # other 5 jobs (not in parallel with them) and only on green, via `needs:`.
   mark-on-staging:
-    needs: [build-check, engine, data, monitor, e2e]
+    needs: [build-check, engine, data, monitor, e2e, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -303,7 +329,7 @@ jobs:
   # default failure propagation. Each QA job already uploaded a qa-failure-<job> artifact with its
   # first failing line (see the "Capture failure detail" steps above) if it failed.
   on-failure:
-    needs: [build-check, engine, data, monitor, e2e]
+    needs: [build-check, engine, data, monitor, e2e, lint]
     if: failure()
     # download-artifact's `pattern` option lists this run's artifacts via the Actions API, which
     # needs actions:read — the top-level `permissions:` block above restricts every other scope to
@@ -336,10 +362,11 @@ jobs:
           DATA:        ${{ needs.data.result }}
           MONITOR:     ${{ needs.monitor.result }}
           E2E:         ${{ needs.e2e.result }}
+          LINT:        ${{ needs.lint.result }}
         run: |
           FAILED=""
           DETAIL=""
-          for pair in "build-check:$BUILD_CHECK" "engine:$ENGINE" "data:$DATA" "monitor:$MONITOR" "e2e:$E2E"; do
+          for pair in "build-check:$BUILD_CHECK" "engine:$ENGINE" "data:$DATA" "monitor:$MONITOR" "e2e:$E2E" "lint:$LINT"; do
             name="${pair%%:*}"; result="${pair##*:}"
             if [ "$result" = "failure" ]; then
               FAILED="${FAILED:+$FAILED, }$name"
