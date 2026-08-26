@@ -47,7 +47,7 @@ test("CAS-478: the Filter panel has a Watch it heading and an Undecided row", as
   await filterBtn.click();
   const pop = page.locator(".cpop.fpop");
   await expect(pop).toBeVisible();
-  await expect(pop.locator(".npthd")).toHaveText("Watch it");
+  await expect(pop.locator(".npthd")).toHaveText("Notify");    // CAS-610: relabelled back from "Watch it"
 
   const tierRows = pop.locator(".nopt[data-tier]");
   await expect(tierRows).toHaveCount(4);
