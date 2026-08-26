@@ -455,7 +455,17 @@
       "tomb  syn"
       "tomb  money"
       "tomb  scores"
-      "badge awards"}
+      "badge awards"
+      "credits credits"}
+  /* CAS-612 (v0.9.5): Awards / Director / Cast move up out of .expand and into the card body, above the
+     RELEASED band. They get their OWN full-width grid row rather than joining the text column, so a cast
+     list has the whole card to wrap in; the 124px pad (poster 112 + column-gap 12) puts their left edge
+     exactly on the synopsis, which is the alignment the row is for. */
+  .credits.incard{grid-area:credits;display:none;padding-left:124px;margin:4px 0 0}
+  .card.expanded .credits.incard{display:block}
+  .credits.incard .credit{font-size:12px}
+  .credits.incard .credit .clbl{flex:0 0 62px}
+  .credits.incard .credit.awardsrow+.credit{margin-top:10px}
   .ptomb{grid-area:tomb;align-self:start;display:flex;flex-direction:column;gap:8px;width:112px}
   .poster{width:100%;aspect-ratio:2/3;border-radius:10px;
     background:var(--panel2) center/cover no-repeat;position:relative;
@@ -4556,7 +4566,7 @@ $("updated").textContent = "Updated " + fmtDate(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 608, "commit": "8d3f3bc", "builtAt": "2026-08-26T01:24:19Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 609, "commit": "d5b3d75", "builtAt": "2026-08-26T01:33:35Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5704,12 +5714,14 @@ function pastOpeningFrame(m, day=TODAY){
 }
 // CAS-436: Awards, Director and Cast are one label->value list — Awards joins the rows here (instead of
 // being a separate block above them) so all three share the same .clbl column and wrap the same way.
-function creditsHTML(m){
+function creditsHTML(m, inCard){
   const rows=[];
   const aw=awardsBreakdownHTML(m); if(aw) rows.push(aw);
   if(m.director) rows.push(`<div class="credit"><span class="clbl">Director</span><span class="cval">${esc(m.director)}</span></div>`);
   if((m.cast||[]).length) rows.push(`<div class="credit"><span class="clbl">Cast</span><span class="cval">${esc(m.cast.join(", "))}</span></div>`);
-  return rows.length ? `<div class="credits">${rows.join("")}</div>` : "";
+  // CAS-612 (v0.9.5): `inCard` is the listing card's copy, which rides in .ctop's own credits row and is
+  // shown only while the card is expanded. The standalone film page keeps calling this with no flag.
+  return rows.length ? `<div class="credits${inCard?" incard":""}">${rows.join("")}</div>` : "";
 }
 // ---- CAS-284: share a film -------------------------------------------------------------------------------
 // CAS-272 removed the cascade "share" for being a string on a clipboard dressed up as a share. This one is
@@ -5965,6 +5977,10 @@ function cardHTML(m, markNew=false){
              chips keep the text column, same row — row-aligned with the badge, column-aligned with IMDb. -->
         <div class="mrow r-badge">${badge}</div>
         <div class="mrow r-awards">${cinemaReleaseChip(m)}${awardChips(m)}</div>
+        <!-- CAS-612 (v0.9.5): Awards/Director/Cast now sit here, above the RELEASED band, rather than in
+             .expand below the control row. The .incard class is what gates them on .card.expanded — .expand's own
+             max-height animation does not reach them here. -->
+        ${creditsHTML(m, true)}
       </div>
     </div>
     ${bandHTML(m, svcLine)}
@@ -5987,7 +6003,7 @@ function cardHTML(m, markNew=false){
     </div>
     <!-- CAS-436: the detail section (awards/director/cast/trailers/share) opens BELOW the control row, not
          above it — it is extra material about the film, not something that has to be seen before you act. -->
-    <div class="expand">${creditsHTML(m)}${trailersHTML(m)}${shareFilmHTML(m)}</div>
+    <div class="expand">${trailersHTML(m)}${shareFilmHTML(m)}</div>
   </div>`;
 }
 // ---- The three verdicts (CAS-100) ----------------------------------------------
@@ -7275,9 +7291,12 @@ window.toggleExpand=id=>{
   const on=expandedSet.has(id);
   const c=document.getElementById("card-"+id); if(!c) return;
   c.classList.toggle("expanded", on);
-  // opening the card also reveals its "where to watch" list (if it has offers)
+  // CAS-612 (v0.9.5): opening a card no longer opens its "where to watch" list. The full provider list
+  // is a second question ("where exactly?"), asked by tapping the availability capsule (bandHTML's
+  // .captog) — expanding the card was answering it unasked and pushing everything else off screen.
+  // CLOSING the card still resets the list, so a card never reopens with it already down.
   const wtw=c.querySelector(".wtw"), svcBtn=c.querySelector(".svcbtn");
-  if(wtw){ wtw.classList.toggle("open", on); if(svcBtn) svcBtn.classList.toggle("open", on); }
+  if(wtw && !on){ wtw.classList.remove("open"); if(svcBtn) svcBtn.classList.remove("open"); }
 };
 function activeCount(){
   let n=filt.status.size+filt.year.size+filt.age.size+filt.culture.size+filt.genre.size;
