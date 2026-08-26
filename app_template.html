@@ -3056,6 +3056,59 @@
   .card:not(.expanded) .cmini{height:24px;padding:0 8px;font-size:11px;border-radius:7px;gap:5px}
   .card:not(.expanded) .cmini .cic{display:none}
   .card:not(.expanded) .cmini .ctog svg{width:10px;height:10px}
+  /* ==== CONDENSED CARD, REV 2 =================================================
+     Collapsed cards only. Every rule is scoped .card:not(.expanded); the expanded
+     card is untouched.
+       (1) the date comes off the availability lozenge
+       (2) the poster becomes the card's full-height left column, kept at 2:3, so
+           its WIDTH follows from the card height (146px -> 96px) and everything
+           else clears it
+       (3) an Oscar mark on the scores row where the film has one
+       (6) "Can Watch" needs more room than "Notify"
+     ------------------------------------------------------------------------- */
+  /* (2) 96px is 2/3 of the 146px collapsed card height. The two are BOUND: the
+     poster's width is derived by aspect-ratio from the card height, and this
+     padding must equal it. If the collapsed card height ever changes, this number
+     changes with it. Do not set one without the other. */
+  .card:not(.expanded){position:relative;padding-left:96px;min-height:96px}
+  /* align-self:stretch and grid-area:auto undo CAS-184/CAS-179, which otherwise
+     collapse this absolutely-positioned column to zero height. */
+  .card:not(.expanded) .ptomb{position:absolute;left:0;top:0;bottom:0;width:auto;
+    aspect-ratio:2/3;align-self:stretch;grid-area:auto;display:block;
+    gap:0;padding:0;margin:0;z-index:1}
+  .card:not(.expanded) .poster{width:100%;height:100%;aspect-ratio:2/3;
+    border-radius:10px 0 0 10px;border:0;border-right:1px solid var(--line);
+    background-size:cover;background-position:center}
+  .card:not(.expanded) .ctop{grid-template-columns:minmax(0,1fr);
+    grid-template-areas:"title" "scores";margin-left:0;width:100%}
+  /* the poster now forms the card's left edge, so the inner rows do not need
+     their own 10px gutter on top of it */
+  .card:not(.expanded) .cbody{padding-left:9px}
+  .card:not(.expanded) .bandw{padding-left:9px}
+  .card:not(.expanded) .cfoot{padding-left:9px}
+  /* (1) no date in the lozenge, so it shrinks to its label */
+  .card:not(.expanded) .capdate{display:none}
+  .card:not(.expanded) .cap{padding:1px 9px}
+  /* the content column is narrower now. .cap is flex:none by default, so a long
+     service name ("SBS On Demand") pushed the band past the card edge; and the
+     timeline connectors should give way before the service name does. */
+  .card:not(.expanded) .cap{flex:0 1 auto;min-width:0}
+  .card:not(.expanded) .cap .saveline{min-width:0;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .card:not(.expanded) .wline{flex:0 1 10px;min-width:5px}
+  /* (3) the Oscar mark, at the end of the scores row. Hidden on an expanded card,
+     which already prints the full award text in its award chips. */
+  .oscmark{flex:none;font-size:11px;font-weight:800;letter-spacing:.02em;margin-left:6px;
+    padding:1px 6px;border-radius:6px;white-space:nowrap}
+  .oscmark.won{color:#ffd98a;border:1px solid rgba(255,196,74,.5);background:rgba(255,196,74,.12)}
+  .oscmark.nom{color:#cfd7e6;border:1px solid rgba(255,255,255,.18)}
+  .card:not(.expanded) .mrow.r-scores .oscmark{margin-left:2px}
+  .card.expanded .oscmark{display:none}
+  /* (6) "Can Watch" is wider than "Notify"; equal thirds truncated it to "Can W..." */
+  .card:not(.expanded) .actions .ctl{flex:1 1 auto;min-width:0}
+  .card:not(.expanded) .actions .ctl.notify{flex:1.25 1 auto}
+  .card:not(.expanded) .cmini{padding:0 4px}
+  .card:not(.expanded) .actions{gap:5px}
 </style>
 </head>
 <body>
@@ -5368,6 +5421,14 @@ function qScore(m){
   if(m.rt_critic!=null)  p.push(m.rt_critic);
   return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
 }
+function oscMarkHTML(m){
+  const t=String(m.award_text||"");
+  const w=t.match(/Won (\d+) Oscar/i);
+  if(w) return `<span class="oscmark won" title="${escA(t)}">\u{1F3C6} ${w[1]}</span>`;
+  const nm=t.match(/Nominated for (\d+) Oscar/i);
+  if(nm) return `<span class="oscmark nom" title="${escA(t)}">✦ ${nm[1]}</span>`;
+  return "";
+}
 function qScoreHTML(m){
   const q=qScore(m);
   if(q<0) return `<span class="qscore none" title="Not enough agreement to score this yet">&ndash;</span>`;
@@ -6034,7 +6095,7 @@ function cardHTML(m, markNew=false){
         <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
-        <div class="mrow r-scores">${scoresRowHTML(m)}</div>
+        <div class="mrow r-scores">${scoresRowHTML(m)}${oscMarkHTML(m)}</div>
         <!-- CAS-373: the badge (Landmark/Anticipated/…) moves under the poster, left column; the awards
              chips keep the text column, same row — row-aligned with the badge, column-aligned with IMDb. -->
         <div class="mrow r-badge">${badge}</div>
@@ -6321,7 +6382,10 @@ function notifyChipHTML(id){
   // zero-on is a resting state rather than a silence that needs naming.
   // CAS-467: relabelled "Notify" -> "Watch it" for display only; CAS-610 reverted the label back to
   // "Notify" — the underlying notify* names/state were untouched either way.
-  const lbl = st.on && st.on<st.total ? `Notify · ${st.on}` : "Notify";
+  // When st.current is true the film has REACHED the level you asked about — the button already
+  // glows gold for it; it now also says so, instead of still reading "Notify".
+  const lbl = st.current ? "Can Watch"
+            : (st.on && st.on<st.total ? `Notify · ${st.on}` : "Notify");
   const title = st.total===0 ? "This agent isn't tracking a level for this film yet. Tap to pick where you want to watch it, or say Never."
               : st.on===0 ? "Nothing about this film will reach you yet. Tap to choose what does."
               : `You'll be told when this film reaches ${st.on} of ${st.total} levels you've picked. Tap to change.`;
