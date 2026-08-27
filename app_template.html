@@ -2603,6 +2603,33 @@
     font-size:11.5px;font-weight:600;color:var(--dim);text-decoration:underline;text-underline-offset:3px}
   .tbq.tbqmin .q:hover{color:var(--ink);border-color:transparent}
   .tbq.tbqmin .q:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* ==== ONBOARDING BRIEFING (CAS-B) =========================================
+     The briefing screens share one skin. Chips are the existing .chips/.chip
+     pattern; only the roster strip is new. */
+  .obwrap{padding:18px 20px 26px;max-width:390px;margin:0 auto}
+  .obhd{font-size:22px;font-weight:800;color:var(--ink);margin:0 0 3px;letter-spacing:-.01em}
+  .obsub{font-size:12.5px;color:var(--accent);margin:0 0 18px}
+  .obq{font-size:15px;font-weight:750;color:var(--ink);margin:0 0 9px}
+  .obq:not(:first-of-type){margin-top:20px}
+  .obhint{font-size:11.5px;color:var(--faint);margin:7px 0 0;line-height:1.5}
+  .obgrp{font-size:10px;font-weight:800;letter-spacing:.14em;color:var(--faint);margin:16px 0 7px}
+  /* the persistent roster strip
+     CAS-626 device-parity-ignore: R2 — this sticks to its scrolling ancestor's padding edge, not the true
+     viewport edge: .sharpstep (the onboarding screen this renders inside) is `position:fixed;inset:0` with
+     its own flat 24px bottom padding, so .obstrip's bottom:0 lands 24px above the device edge already,
+     same reasoning as .ymsticky's ignore above. */
+  .obstrip{position:sticky;bottom:0;background:linear-gradient(180deg,rgba(11,15,24,0),var(--bg) 22%);
+    padding:14px 0 4px;margin-top:22px;border-top:1px solid var(--line)}
+  .obsl{font-size:9.5px;font-weight:800;letter-spacing:.15em;color:var(--faint);margin-bottom:8px}
+  .obsl b{color:var(--green)}
+  .obag{display:inline-block;padding:4px 9px;border-radius:7px;font-size:11px;margin:0 6px 6px 0;
+    border:1px solid rgba(122,167,240,.32);background:rgba(122,167,240,.08);color:#bcdcff;
+    transition:opacity .18s, box-shadow .18s, background .18s}
+  .obag.lit{border-color:var(--accent);background:rgba(122,167,240,.2);color:#e2efff;
+    box-shadow:0 0 0 1px rgba(122,167,240,.35)}
+  .obag.dim{border-color:var(--line);background:none;color:var(--faint)}
+  .obag.pop{animation:obpop .28s ease-out}
+  @keyframes obpop{0%{transform:scale(.82);opacity:0}60%{transform:scale(1.06)}100%{transform:scale(1);opacity:1}}
   /* ==== CAS-183 / CAS-209: Your Movies (and the shape Account will reuse) ====
      A plain full-width column of grouped rows. It is a place you READ, so nothing here is a control except
      the rows themselves, and every number on it is counted off real state. */
@@ -10361,6 +10388,21 @@ function buildOnbAgents(a){
     return c;
   });
 }
+// The strip under every briefing screen. `lit` is the set of agent keys this screen briefs —
+// null means "all of them", which is what a screen that changes every agent passes. A key that
+// was not in the previous render animates in, which is what makes S1 read as construction
+// rather than as a form.
+let obLastKeys = [];
+function obStripHTML(agents, lit, label){
+  const keys = agents.map(a=>a.template);
+  const html = agents.map(a=>{
+    const on   = !lit || lit.includes(a.template);
+    const fresh= !obLastKeys.includes(a.template);
+    return `<span class="obag ${on?"lit":"dim"}${fresh?" pop":""}">${esc(a.name)}</span>`;
+  }).join("");
+  obLastKeys = keys;
+  return `<div class="obstrip"><div class="obsl">${label}</div>${html}</div>`;
+}
 // The volume answer is NOT a criteria dial. Making it one would mean setting selCrowd on the
 // stream lane and selBuzz on the cinema lane — two different questions wearing one label, and
 // laneCrit would silently discard whichever was wrong for the agent. It is instead a LISTING
@@ -10884,7 +10926,8 @@ const voteSay = v => v<VOTE_OFF ? null : `scored ${v.toFixed(1)}+ by viewers`;
 const onbFlow = {draft:null, name:ONB_DEFAULT_NAME, defaultName:ONB_DEFAULT_NAME,
                  voteVal:VOTE_MIN, critScore:0, awardStop:0, scaleVal:0, buzzStop:0, selOr:false,   // #4 dials (CAS-114/145/166/249)
                  barTouched:false, barAutoRelaxed:null,   // CAS-158 first-open state
-                 watch:{}};                                // CAS-160 viewing windows: {lane: [optKey,…]}
+                 watch:{},                                 // CAS-160 viewing windows: {lane: [optKey,…]}
+                 answers:null};                            // CAS-626: the briefing screens' own roster answers
 
 // ---- Agent settings: the windows this agent's TYPE has (CAS-160, rebuilt by CAS-228) --------------------
 // CAS-160 made availability the user's choice rather than a property of the preset. It modelled that as three
@@ -12430,6 +12473,80 @@ const SHARP_STEPS = {
         <div class="osfoot"><button class="oscta" type="button" onclick="briefSave()">Save agent</button>
           ${d.id ? `<button class="osdel" type="button" onclick="briefDelete()">Delete agent</button>` : ""}
         </div>`;
+    },
+  },
+  // ---- CAS-626 Onboarding S1: the briefing screen that creates the roster ---------------------------
+  // Step 2 of the new A→B→C→D→E briefing sequence (CAS-626). All three questions here create agents, so
+  // by the end of this screen the whole roster exists and the strip has shown every one of them appear.
+  // Preview-only (`?step=briefing1`) until every screen in the sequence exists — see CAS-629, which cuts
+  // FLOWS over. `me` is pre-selected and LOCKED (Lee, 27 Aug 2026): the roster can never be empty, so
+  // there is no empty state and no disabled Continue on this screen.
+  briefing1: {
+    noAgent: true,
+    body(){
+      return `<div class="obwrap">
+  <h2 class="obhd">Set your agents</h2>
+  <p class="obsub">Every answer puts one on the job.</p>
+
+  <p class="obq">Who do you watch with?</p>
+  <div class="chips" id="obWho"></div>
+
+  <p class="obq">Do you go to the cinema?</p>
+  <div class="chips" id="obCinema"></div>
+
+  <p class="obq">Do you follow the Oscars?</p>
+  <div class="chips" id="obAwards"></div>
+</div>`;
+    },
+    wire(){
+      if(!onbFlow.answers) onbFlow.answers = onbAnswersDefault();
+      const ans = onbFlow.answers;
+      // One chip factory for all three groups: `locked` renders selected and inert (CAS-626 §B2.3 — the
+      // `me` chip must not respond to a tap, not even to no-op the same value back in).
+      const obChip = (label, on, locked, onTap) => {
+        const b=document.createElement("button");
+        b.type="button";
+        b.className="chip gen"+(on?" on":"");
+        b.textContent=label;
+        b.setAttribute("aria-pressed", String(on));
+        if(locked) b.setAttribute("aria-disabled","true");
+        else b.onclick=onTap;
+        return b;
+      };
+      const who=$("obWho");
+      if(who){
+        who.innerHTML="";
+        [["me","me"],["partner","partner"],["kids","kids"],["friends","friends"]].forEach(([label,val])=>{
+          who.appendChild(obChip(label, ans.who.includes(val), val==="me", ()=>{
+            const i=ans.who.indexOf(val);
+            i<0 ? ans.who.push(val) : ans.who.splice(i,1);
+            renderOnbStep("briefing1");
+          }));
+        });
+      }
+      const cinema=$("obCinema");
+      if(cinema){
+        cinema.innerHTML="";
+        [["for special films","special"],["often","often"],["never","never"]].forEach(([label,val])=>{
+          cinema.appendChild(obChip(label, ans.cinema===val, false, ()=>{
+            ans.cinema=val; renderOnbStep("briefing1");
+          }));
+        });
+      }
+      const awards=$("obAwards");
+      if(awards){
+        awards.innerHTML="";
+        [["closely","closely"],["the big ones","big"],["no","no"]].forEach(([label,val])=>{
+          awards.appendChild(obChip(label, ans.awards===val, false, ()=>{
+            ans.awards=val; renderOnbStep("briefing1");
+          }));
+        });
+      }
+      // The strip is not part of the EXACT body markup above — it lives outside it, as a sticky sibling,
+      // same as every other briefing screen (shared context, CAS-626).
+      const agents = buildOnbAgents(ans);
+      const wrap = document.querySelector("#onbStepInner .obwrap");
+      if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, null, `<b>${agents.length}</b> AGENTS ON THE JOB`));
     },
   },
   // ---- CAS-188 #1: what are you here for? -----------------------------------------------------------
@@ -14611,6 +14728,7 @@ function openOnbStep(key, agentKey){
   // "above average+" for a bar that is no longer there, which is a claim nothing enforces.
   onbFlow.draft.imdb=0; onbFlow.draft.ratingStop=0;
   if(key==="selectivity") autoRelaxBar();
+  if(key==="briefing1") onbFlow.answers = onbAnswersDefault();   // CAS-626: fresh roster on every preview open
   const picked = agentKey && STARTERS.find(x=>x.key===agentKey);
   // CAS-222: the preview offers the same channel+preset name the wired flow does, so a ?step=name preview
   // doesn't show a different default from the real thing.
