@@ -3162,9 +3162,12 @@
              both so the chip's own background shows through.
              CAS-616 (v0.9.5): Watch is now the FIRST chip in the row. Find left the bar for the top-right menu
              and Manage Agents took its place, so the two chips are the app's two destinations and Find is the
-             thing underneath them. -->
-        <div class="modechip ym" id="moviesBtn" title="Watch" role="button" tabindex="0"
-             aria-haspopup="dialog" aria-expanded="false" aria-label="Watch" onclick="openYourMovies()">
+             thing underneath them.
+             CAS-633 (v0.9.5): Find IS Watch now — Your Movies is retired, so this chip opens the Find listing
+             itself (showAgentsHome()) rather than a dialog, and is no longer a dialog opener. Lit whenever the
+             Find listing is what's showing — see syncWatchChip(). -->
+        <div class="modechip ym active" id="moviesBtn" title="Watch" role="button" tabindex="0"
+             aria-label="Watch" onclick="showAgentsHome()">
           <svg class="mcicon" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path class="f" d="M6 3.6h12a1 1 0 0 1 1 1V20.8l-7-3.95-7 3.95V4.6a1 1 0 0 1 1-1Z" mask="url(#mcWatchMask)"/>
           </svg>
@@ -3205,7 +3208,6 @@
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('notifications')">
               <span>🔔 Notifications</span><span class="navbadge" id="badge" style="display:none">0</span>
             </button>
-            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('find')">Find</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('manageLists')">Manage Lists</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('languages')">Languages</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('whereWhen')">Where &amp; when you'll watch</button>
@@ -3650,6 +3652,9 @@
 </div>
 <!-- YOUR MOVIES (CAS-183 / CAS-209) — everything you have said about a film, grouped by what you said,
      plus how well the services you pay for cover what your agents found. Body rendered by renderYourMovies(). -->
+<!-- CAS-633: retired — Your Movies is unreachable from the UI as of this ticket (nothing calls
+     window.openYourMovies any more), and this screen, the watch-list rail and watchLists are slated for
+     deletion in a later, separate ticket. Not deleted here on purpose — see that ticket's own comment. -->
 <div class="uscreen" id="yourMovies" role="dialog" aria-modal="true" aria-label="Your Movies">
   <!-- CAS-590: the watch-list rail lives here, OUTSIDE #yourMoviesBody's innerHTML rebuild, exactly like
        Find's own #cascStrip sits outside #groups — a persistent deckStrip-equivalent node so its scroll
@@ -9707,9 +9712,10 @@ window.openSvcAnalysis=()=>{
   renderSvcAnalysis();
   $("svcAnalysis").scrollTop=0;
   $("svcAnalysis").classList.add("open"); document.body.style.overflow="hidden";
+  syncWatchChip();
   logEvent("svc_analysis_opened",{ranked:serviceAdvice().ranked.length});
 };
-window.closeSvcAnalysis=()=>{ $("svcAnalysis").classList.remove("open"); document.body.style.overflow=""; };
+window.closeSvcAnalysis=()=>{ $("svcAnalysis").classList.remove("open"); document.body.style.overflow=""; syncWatchChip(); };
 
 // ================= LANGUAGES (CAS-532, split into its own screen CAS-562) =================
 // The one taste setting that applies to every agent, no per-agent override. Writes straight to
@@ -9831,10 +9837,12 @@ window.openLanguages=()=>{
   renderLanguages();
   $("languagesScreen").scrollTop=0;
   $("languagesScreen").classList.add("open"); document.body.style.overflow="hidden";
+  syncWatchChip();
   logEvent("languages_opened",{});
 };
 window.closeLanguages=()=>{
   $("languagesScreen").classList.remove("open"); document.body.style.overflow="";
+  syncWatchChip();
 };
 
 // ================= WHERE & WHEN (CAS-532, split into its own screen CAS-562) =================
@@ -9854,11 +9862,13 @@ window.openWhereWhen=()=>{
   renderWhereWhen();
   $("wwScreen").scrollTop=0;
   $("wwScreen").classList.add("open"); document.body.style.overflow="hidden";
+  syncWatchChip();
   logEvent("where_when_opened",{});
 };
 window.closeWhereWhen=()=>{
   prefsWatchMode=false;
   $("wwScreen").classList.remove("open"); document.body.style.overflow="";
+  syncWatchChip();
 };
 
 // ================= Top menu (CAS-345) =================
@@ -9877,9 +9887,10 @@ window.openAbout=()=>{
   renderAbout();
   $("aboutScreen").scrollTop=0;
   $("aboutScreen").classList.add("open"); document.body.style.overflow="hidden";
+  syncWatchChip();
   logEvent("about_opened",{});
 };
-window.closeAbout=()=>{ $("aboutScreen").classList.remove("open"); document.body.style.overflow=""; };
+window.closeAbout=()=>{ $("aboutScreen").classList.remove("open"); document.body.style.overflow=""; syncWatchChip(); };
 window.toggleNavMenu=e=>{
   e && e.stopPropagation();
   const open=!$("navMenu").classList.contains("open");
@@ -13479,7 +13490,8 @@ window.leOpen=()=>{
 window.leClose=()=>{
   leOn=false; leRenaming=false;
   $("leScreen").classList.remove("open"); document.body.style.overflow="";
-  openYourMovies();
+  // CAS-633: used to reopen Your Movies underneath — that screen is retired now, so closing the editor
+  // just reveals whatever's already there instead of reaching for a screen nothing can open any more.
 };
 // Every dial already wrote through ymPersist() the moment it changed (see the module comment above) — Save
 // has nothing left to commit, so it is just the screen's confirm-and-return action.
@@ -13702,19 +13714,32 @@ window.openAgentsScreen=()=>{
   $("agentsScreen").scrollTop=0;
   $("agentsScreen").classList.add("open"); document.body.style.overflow="hidden";
   $("agentsBtn").classList.add("active"); $("agentsBtn").setAttribute("aria-pressed","true");
+  syncWatchChip();
   logEvent("agents_screen_opened",{count:cascades.length});
 };
 window.closeAgentsScreen=()=>{
   $("agentsScreen").classList.remove("open"); document.body.style.overflow="";
   $("agentsBtn").classList.remove("active"); $("agentsBtn").setAttribute("aria-pressed","false");
+  syncWatchChip();
 };
 // CAS-534: the header's Agents chip — closes whichever screen currently covers the deck+movie-list home view
 // (Your Movies, or Manage Agents if reached via the menu) to reveal it. Selected (lit) by default and
 // whenever Your Movies is closed, since home is the app's other mode besides Your Movies.
+// CAS-633: also the Watch chip's own onclick now — Watch and Agents both land here whenever they need the
+// Find listing itself uncovered, since Find no longer has a chip of its own.
 window.showAgentsHome=()=>{
   if($("yourMovies").classList.contains("open")) closeYourMovies();
   if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
+  syncWatchChip();
 };
+// CAS-633: #moviesBtn (Watch) now opens the Find listing itself rather than a dialog, so it can't be lit by
+// one open/close pair the way #agentsBtn is — it tracks whatever else is covering that listing instead.
+// Lit whenever no .uscreen (Agents, Manage Lists, Review, Account, Service analysis, Languages, Where &
+// when, Tags, About — and Your Movies itself, in the unlikely event it's ever reopened) is open. Called
+// from every .uscreen's own open/close pair.
+function syncWatchChip(){
+  $("moviesBtn").classList.toggle("active", !document.querySelector(".uscreen.open"));
+}
 // CAS-501: the row's own central area (icon/name/summary/count) opens the agent, exactly like selecting its
 // deck card does. Delegated at the list in wireAgentsDrag(), and the grip/Learning-chip/Edit button opt out
 // of it — a drag or a press on any of those must never be read as a row tap.
@@ -13832,11 +13857,13 @@ window.openReviewScreen=(id)=>{
   renderReviewScreen();
   $("reviewScreen").scrollTop=0;
   $("reviewScreen").classList.add("open"); document.body.style.overflow="hidden";
+  syncWatchChip();
   logEvent("agent_review_opened",{id});
 };
 window.closeReviewScreen=()=>{
   $("reviewScreen").classList.remove("open"); document.body.style.overflow="";
   reviewAgentId=null;
+  syncWatchChip();
 };
 
 // ---- CAS-428: Lists screen — create / rename / delete, mirroring the Agents screen's shell but with no
@@ -13873,10 +13900,12 @@ window.openListsScreen=()=>{
   renderListsScreen();
   $("listsScreen").scrollTop=0;
   $("listsScreen").classList.add("open"); document.body.style.overflow="hidden";
+  syncWatchChip();
   logEvent("lists_screen_opened",{count:lists.length});
 };
 window.closeListsScreen=()=>{
   $("listsScreen").classList.remove("open"); document.body.style.overflow="";
+  syncWatchChip();
 };
 window.startRenameList=(id)=>{
   const row=document.querySelector(`.listrow[data-lid="${id}"]`); if(!row) return;   // ids are our own uuids — safe unescaped in an attribute selector
@@ -14058,10 +14087,12 @@ window.openManageListsScreen=()=>{
   renderManageListsScreen();
   $("manageListsScreen").scrollTop=0;
   $("manageListsScreen").classList.add("open"); document.body.style.overflow="hidden";
+  syncWatchChip();
   logEvent("manage_lists_screen_opened",{count:watchLists.length});
 };
 window.closeManageListsScreen=()=>{
   $("manageListsScreen").classList.remove("open"); document.body.style.overflow="";
+  syncWatchChip();
 };
 // CAS-592: "edit" closes this screen, makes the row's list active, and opens the list editor directly on it.
 window.editWatchlistRow=(id)=>{
@@ -14236,9 +14267,10 @@ window.openAccount=()=>{
   renderAccount();
   $("accountScreen").scrollTop=0;
   $("accountScreen").classList.add("open"); document.body.style.overflow="hidden";
+  syncWatchChip();
   logEvent("account_opened",{signedIn:accountWho().in});
 };
-window.closeAccount=()=>{ $("accountScreen").classList.remove("open"); document.body.style.overflow=""; };
+window.closeAccount=()=>{ $("accountScreen").classList.remove("open"); document.body.style.overflow=""; syncWatchChip(); };
 // A defaults row opens the very screen the flow uses for that setting, rather than a second copy of it.
 // The step frame sits above this one, so Account steps aside and comes back when the step closes.
 let acctResume=false;
