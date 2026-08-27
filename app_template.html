@@ -2667,6 +2667,27 @@
   .obag.dim{border-color:var(--line);background:none;color:var(--faint)}
   .obag.pop{animation:obpop .28s ease-out}
   @keyframes obpop{0%{transform:scale(.82);opacity:0}60%{transform:scale(1.06)}100%{transform:scale(1);opacity:1}}
+  /* ==== CAS-629 Onboarding S5/S6: the roster commits (S5) and reports back (S6) — both are read-only
+     rows/cards inside the shared .obwrap skin above, nothing here is a control. */
+  .obworklist{display:flex;flex-direction:column;gap:10px;margin:18px 0 4px}
+  .obwrow{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:12px;
+    background:var(--panel);border:1px solid var(--line)}
+  .obwic{flex:0 0 auto;font-size:18px}
+  .obwnm{flex:1;min-width:0;font-size:13.5px;font-weight:700;color:var(--ink)}
+  .obwst{flex:0 0 auto;font-size:12px;font-weight:800;color:var(--faint)}
+  .obwst.done{color:var(--green)}
+  .obwst.done b{color:var(--ink)}
+  .obwspin{display:inline-block;width:14px;height:14px;border-radius:50%;
+    border:2px solid rgba(255,255,255,.18);border-top-color:var(--accent);animation:btnspin .7s linear infinite}
+  @media (prefers-reduced-motion:reduce){ .obwspin{animation-duration:2.4s} }
+  .obpanel{margin:16px 0 4px;padding:14px;border-radius:14px;background:var(--panel);border:1px solid var(--line)}
+  .obtop3{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+  .obtopcard{display:flex;align-items:center;gap:11px}
+  .obtopposter{flex:0 0 auto;width:38px;height:56px;border-radius:6px;background-color:#0E1320;
+    background-size:cover;background-position:center;border:1px solid var(--line)}
+  .obtopinfo{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .obtoptitle{font-size:13px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .obtopsrc{font-size:11px;color:var(--dim)}
   /* ==== CAS-183 / CAS-209: Your Movies (and the shape Account will reuse) ====
      A plain full-width column of grouped rows. It is a place you READ, so nothing here is a control except
      the rows themselves, and every number on it is counted off real state. */
@@ -9305,8 +9326,8 @@ let draft=null;
 function newCascade(){
   draft=null;
   logEvent("new_agent_started");
-  flowStart();
-  flowNewAgent=true;      // set AFTER flowStart, which resets the flow's own state
+  flowStart("priority");   // CAS-629: this lane still opens on the old priority screen, not briefing1
+  flowNewAgent=true;       // set AFTER flowStart, which resets the flow's own state
 }
 window.newCascade=newCascade;
 const draftFromTemplate = t => ({id:null, template:t.key, icon:t.icon, name:t.name,
@@ -11040,7 +11061,8 @@ const onbFlow = {draft:null, name:ONB_DEFAULT_NAME, defaultName:ONB_DEFAULT_NAME
                  voteVal:VOTE_MIN, critScore:0, awardStop:0, scaleVal:0, buzzStop:0, selOr:false,   // #4 dials (CAS-114/145/166/249)
                  barTouched:false, barAutoRelaxed:null,   // CAS-158 first-open state
                  watch:{},                                 // CAS-160 viewing windows: {lane: [optKey,…]}
-                 answers:null};                            // CAS-626: the briefing screens' own roster answers
+                 answers:null,                             // CAS-626: the briefing screens' own roster answers
+                 workingAgents:null, reportStats:null};    // CAS-629: S5's committed roster, S6/S7's shared N/M/K
 
 // ---- Agent settings: the windows this agent's TYPE has (CAS-160, rebuilt by CAS-228) --------------------
 // CAS-160 made availability the user's choice rather than a property of the preset. It modelled that as three
@@ -13146,32 +13168,107 @@ ${who.includes("kids") ? `
   // Recorded, not promised: the email field is captured on the draft and nothing here claims a message has
   // been scheduled. Delivery is the monitor's ticket (CAS-185); saying otherwise would be a capability we
   // have not built.
+  // CAS-629: the two controls (and the email field) are now shared with S6 `report`, which asks the
+  // identical question once for the whole roster instead of once per agent — see notifyControlsHTML/
+  // wireNotifyControls below. This step stays defined for its own ?step=notifysettings preview, but is
+  // no longer in FLOWS (see there).
   notifysettings: {
     title: "Agent notifications",
     progress: 100,
     noAgent: true,
     cta: "Continue",
     body(){
-      const on=k=>notifyPrefs[k]?" on":"";
       return `<p class="ossub">As new movies come along that meet your brief, this agent will ping you. How would you like to be notified?</p>
-        <button type="button" class="bigtoggle${on("inApp")}" onclick="flowNotify('inApp',this)">
-          <span class="btmain">Allow in-app notifications</span><span class="btcheck">✓</span></button>
-        <p class="ossub" id="onbInAppHint">Tapping this will ask iOS for permission to notify you — you can change your mind any time.</p>
-        <p class="fielderr" id="onbInAppDenied" role="alert" hidden>You said no to notifications — you can turn them on later in iOS Settings → Cascade.</p>
-        <button type="button" class="bigtoggle${on("emailOn")}" onclick="flowNotify('emailOn',this)">
-          <span class="btmain">Send me alerts by email</span><span class="btcheck">✓</span></button>
-        <div class="emailwrap${notifyPrefs.emailOn?" show":""}" id="onbEmailWrap">
-          <label class="nlbl" for="onbEmail">Your email</label>
-          <input class="osfield" id="onbEmail" type="email" autocomplete="email" inputmode="email"
-                 aria-describedby="onbEmailErr" placeholder="you@email.com"
-                 value="${escA(notifyPrefs.email||"")}">
-          <p class="fielderr" id="onbEmailErr" role="alert" hidden></p></div>`;
+        ${notifyControlsHTML()}`;
+    },
+    wire(){ wireNotifyControls(); },
+  },
+  // ---- CAS-629 Onboarding S5: working — the roster commits here, the ONLY place onboarding writes
+  // agents (Change E1). Each row starts on a spinner and resolves to its real countCriteria() match
+  // count; the screen then advances itself, so there is no Continue to wait on.
+  working: {
+    noAgent: true,
+    hub: true,   // auto-advancing — no Back/Skip/Continue chrome to race against the timer
+    body(){
+      const agents = onbFlow.workingAgents || buildOnbAgents(onbFlow.answers||onbAnswersDefault());
+      return `<div class="obwrap">
+  <h2 class="obhd">Setting your agents to work</h2>
+  <div class="obworklist" id="obWorkList">${agents.map(a=>`
+    <div class="obwrow">
+      <span class="obwic">${a.icon}</span><span class="obwnm">${esc(a.name)}</span>
+      <span class="obwst"><span class="obwspin"></span></span>
+    </div>`).join("")}</div>
+  <p class="obhint">They keep looking, and tell you the moment something lands.</p>
+</div>`;
     },
     wire(){
-      const el=$("onbEmail");
-      if(el) el.oninput=()=>{ notifyPrefs.email=el.value.trim(); saveNotifyPrefs(); notifyGate(); };
-      notifyGate();
-      paintInAppDenied();   // CAS-463: fresh entry to the step always starts from the neutral hint
+      const ans = onbFlow.answers || onbAnswersDefault();
+      let agents = onbFlow.workingAgents;
+      const firstRun = !agents;
+      if(firstRun){
+        agents = buildOnbAgents(ans);
+        agents.forEach(c=>{ c.id=cascadeNewId(); });
+        cascades.push(...agents);
+        saveCascades();
+        setActive(agents[0].id);
+        onbAnswersSave(ans);
+        onbFlow.workingAgents = agents;
+      }
+      const rows=[...$("obWorkList").children];
+      const reveal=i=>{
+        const row=rows[i]; if(!row) return;
+        const n=countCriteria(agents[i]);
+        const st=row.querySelector(".obwst");
+        if(st){ st.innerHTML=`<b>${n}</b> found`; st.classList.add("done"); }
+      };
+      const wrap = document.querySelector("#onbStepInner .obwrap");
+      if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, null, `<b>${agents.length}</b> AGENTS ON THE JOB`));
+      if(!firstRun){ agents.forEach((_,i)=>reveal(i)); return; }
+      const DELAY=400, CAP=6000;
+      agents.forEach((c,i)=>setTimeout(()=>reveal(i), Math.min(DELAY*(i+1), CAP)));
+      setTimeout(()=>{ if(flowOn && onbStepKey==="working") flowNext(); }, Math.min(DELAY*agents.length, CAP));
+    },
+  },
+  // ---- CAS-629 Onboarding S6: report back — the proof (three real films, scored) and the one question
+  // onboarding still asks: how to reach you (Change E3). N/M/K feed straight into S7's recap (Change E4)
+  // so the two screens can never disagree.
+  report: {
+    progress: 80,
+    noAgent: true,
+    cta: "Continue",
+    body(){
+      const top = onbTopFilms(3);
+      return `<div class="obwrap">
+  <h2 class="obhd">Your agents reported back</h2>
+  <div class="obpanel">
+    <div class="obgrp">BEST OF WHAT THEY FOUND</div>
+    <div class="obtop3">${top.map(({m,q,agent})=>{
+      const bg=m.poster?` style="background-image:url(https://image.tmdb.org/t/p/w185${m.poster})"`:"";
+      const where=STATUS_LABEL[primaryStatus(m)]||"";
+      return `<div class="obtopcard">
+        <div class="obtopposter"${bg}></div>
+        <div class="obtopinfo">
+          <span class="obtoptitle">${esc(m.title)}</span>
+          <span class="obtopsrc">${esc(agent.name)} · ${esc(where)}</span>
+        </div>
+        ${qScoreHTML(m)}
+      </div>`;
+    }).join("")}</div>
+  </div>
+  <p class="obhint" id="obReportLine"></p>
+  <div class="obgrp">HOW THEY REACH YOU</div>
+  ${notifyControlsHTML()}
+</div>`;
+    },
+    wire(){
+      if(!onbFlow.reportStats) onbFlow.reportStats = onbComputeReportStats();
+      const {n,m,k} = onbFlow.reportStats;
+      const line=$("obReportLine");
+      if(line) line.innerHTML = `${n} agent${n===1?"":"s"} watched <b>${m}</b> film${m===1?"":"s"}. <b>${k}</b> ${k===1?"is":"are"} worth your time — and they never stop looking.`;
+      wireNotifyControls();
+      const agents = onbFlow.workingAgents || [];
+      const wrap = document.querySelector("#onbStepInner .obwrap");
+      if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, null, `<b>${agents.length}</b> AGENTS ON THE JOB`));
     },
   },
   years: {
@@ -13259,9 +13356,16 @@ let onbStepKey=null;
 // pickStarter defaults (see there) and walks this same short line. CAS-550 gives Style, Rating and How far
 // back UI again, but only from the Briefing afterwards, by its own explicit "out of scope: first-run flow
 // is unchanged" — so this list is deliberately still short, not stale.
+// CAS-629 E0: the first-run flow is cut over to the new A→E briefing sequence — every screen it lists
+// now exists (briefing1/briefing2/together shipped by CAS-626/627/628; working/report are this ticket's
+// own S5/S6, above). There is no "membership" entry: membership is reached by falling past the end of
+// flowList(), exactly as the old flow's reveal was. Both lanes are identical now (no priority screen to
+// tell them apart), so `flowKind` is set directly by flowStart() below instead. The "+ New Cascade"
+// (flowNewAgent) path still walks the OLD priority → pickagent → Briefing hop — see flowNext/flowBack —
+// since that path is deliberately untouched by this ticket (CAS-246).
 const FLOWS = {
-  cinema: ["priority","pickagent","selectivity","name","keepfinding","notifysettings"],
-  stream: ["priority","pickagent","selectivity","name","keepfinding","notifysettings"],
+  cinema: ["briefing1","briefing2","together","services","working","report"],
+  stream: ["briefing1","briefing2","together","services","working","report"],
 };
 const flowList    = () => FLOWS[flowKind] || FLOWS.cinema;
 // CAS-628: a step may declare `skip(ans)` to say it has nothing to ask given the briefing answers so far
@@ -13303,7 +13407,10 @@ let flowOn=false;              // inside the wired flow (vs a standalone ?step= 
 // picked and hands over to the Briefing rather than walking the linear sharpening screens and finishing on
 // the membership page. Cleared by flowStart/flowStop, so it can never leak into a first run.
 let flowNewAgent=false;
-let flowKind="cinema";         // what the priority screen answered
+// CAS-629: no priority screen sets this on the first run any more — flowStart() below sets it directly
+// so every lane-dependent read (starterCardsHTML's ".str" class, PRIORITY_WATCH, etc.) still has a
+// defined value. The "+ New Cascade" path (flowNewAgent) still answers it via window.flowPriority.
+let flowKind="cinema";
 let flowSlideT=null;
 const flowChromed = key => flowOn && flowCounted().includes(key);
 // CAS-377: the top-menu "My services" row opens the same My-services step a Briefing row does — one screen
@@ -13312,13 +13419,17 @@ const flowChromed = key => flowOn && flowCounted().includes(key);
 // since there is no Briefing hub to return to here.
 let menuStepOn=false;
 const stepSpoke = key => menuStepOn || (briefOn && key!=="briefing");
-function flowStart(){
+// CAS-629: `startKey` is the "+ New Cascade" escape hatch (newCascade() passes "priority") — the first
+// run itself always opens on briefing1, the new sequence's own first screen.
+function flowStart(startKey){
   flowOn=true; flowNewAgent=false;
+  flowKind="stream";            // no priority screen to set it on the first run — see the declaration above
   onbDone=freshDone(); onbDoor=null; onbDoorIdx=0; onbDonePulse=null;
   onbFlow.draft=null;          // no agent yet — nothing on the first two screens quotes a count
+  onbFlow.workingAgents=null; onbFlow.reportStats=null;   // CAS-629: a fresh roster commits fresh every run
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("flow_start");
-  gotoStep("priority","none");
+  gotoStep(startKey||"briefing1","none");
 }
 function flowStop(){
   flowOn=false; flowNewAgent=false; briefOn=false; menuStepOn=false;
@@ -13327,25 +13438,29 @@ function flowStop(){
   $("stepHdr").hidden=true; $("stepNav").hidden=true;
 }
 function flowNext(){
+  // CAS-629: "+ New Cascade" (flowNewAgent) still walks the old priority → pickagent hop, independent of
+  // FLOWS now that FLOWS itself no longer contains either step (see the FLOWS declaration above).
+  if(flowNewAgent){
+    if(onbStepKey==="priority") return gotoStep("pickagent","fwd");
+    if(onbStepKey==="pickagent"){ flowNewAgent=false; return briefNewAgent(); }
+  }
   const list=flowList(); let i=list.indexOf(onbStepKey);
-  // CAS-246: a second agent made from the deck stops here. The agent is picked, which is everything the
-  // Briefing needs to open on something real, and the Briefing is where the rest of it is set — so walking
-  // the linear screens as well would ask the same questions twice, once in a line and once in a hub.
-  if(flowNewAgent && onbStepKey==="pickagent"){ flowNewAgent=false; return briefNewAgent(); }
   i++;
   while(i<list.length && stepSkipped(list[i])) i++;   // CAS-628: walk straight past a skipped step
   if(i<list.length) return gotoStep(list[i],"fwd");
-  flowOn=false; finishSharpSequence();       // past the last step → commit the agent and show its haul
+  flowOn=false; finishSharpSequence();       // past the last step → S7 membership (Change E4)
 }
 function flowBack(){
+  // CAS-629: symmetric with flowNext's own flowNewAgent branch above.
+  if(flowNewAgent){
+    if(onbStepKey==="pickagent") return gotoStep("priority","back");
+    return flowStop();   // back off the front of "priority" — see the CAS-347 note this used to sit on
+  }
   const list=flowList(); let i=list.indexOf(onbStepKey)-1;
   while(i>=0 && stepSkipped(list[i])) i--;   // CAS-628: symmetric with flowNext — a skipped step is never landed on
   if(i>=0) return gotoStep(list[i],"back");
   // CAS-347: off the front of the flow. Only the actual first-run entry (splashGo/afterSignIn) has the
-  // splash underneath to back out to — "+ New Cascade" (flowNewAgent) is launched from an already-open
-  // deck, which is still mounted behind the overlay, so closing the flow is the whole fix. Showing the
-  // splash on top of it booted a signed-in user back to the login wall.
-  if(flowNewAgent) return flowStop();
+  // splash underneath to back out to.
   flowStop(); showSplash();                  // off the front of the flow → back out to the splash
 }
 window.flowPriority=kind=>{ flowKind=kind; logEvent("flow_priority",{kind}); flowNext(); };
@@ -14924,6 +15039,10 @@ const EMAIL_RE = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
 const emailValid = v => EMAIL_RE.test(String(v||"").trim());
 // Is the notify step answerable as it stands? Off = yes, always. On = only with an address.
 const notifyReady = () => !notifyPrefs.emailOn || emailValid(notifyPrefs.email);
+// CAS-629: the notify controls now render on two steps — the standalone notifysettings preview and S6
+// "report", which asks the same question once for the whole roster — so the gate has to hold the CTA on
+// either one, not just the old key.
+const NOTIFY_GATED_STEPS = new Set(["notifysettings","report"]);
 function notifyGate(){
   const on=!!notifyPrefs.emailOn, val=(notifyPrefs.email||"").trim(), ok=notifyReady();
   const err=$("onbEmailErr");
@@ -14937,11 +15056,34 @@ function notifyGate(){
   }
   const field=$("onbEmail"); if(field) field.classList.toggle("bad", on && !!val && !ok);
   const b=$("onbStepCta")||$("flowCta");
-  if(b && onbStepKey==="notifysettings"){
+  if(b && NOTIFY_GATED_STEPS.has(onbStepKey)){
     b.disabled=!ok;
     b.classList.toggle("blocked", !ok);
     b.title = ok ? "" : "Add the email address your alerts should go to, or switch email alerts off";
   }
+}
+// ---- CAS-629: the two notify controls, shared verbatim by notifysettings (its own ?step= preview) and
+// S6 "report" (the wired flow's own copy, asked once for the whole roster instead of once per agent).
+function notifyControlsHTML(){
+  const on=k=>notifyPrefs[k]?" on":"";
+  return `<button type="button" class="bigtoggle${on("inApp")}" onclick="flowNotify('inApp',this)">
+      <span class="btmain">Allow in-app notifications</span><span class="btcheck">✓</span></button>
+    <p class="ossub" id="onbInAppHint">Tapping this will ask iOS for permission to notify you — you can change your mind any time.</p>
+    <p class="fielderr" id="onbInAppDenied" role="alert" hidden>You said no to notifications — you can turn them on later in iOS Settings → Cascade.</p>
+    <button type="button" class="bigtoggle${on("emailOn")}" onclick="flowNotify('emailOn',this)">
+      <span class="btmain">Send me alerts by email</span><span class="btcheck">✓</span></button>
+    <div class="emailwrap${notifyPrefs.emailOn?" show":""}" id="onbEmailWrap">
+      <label class="nlbl" for="onbEmail">Your email</label>
+      <input class="osfield" id="onbEmail" type="email" autocomplete="email" inputmode="email"
+             aria-describedby="onbEmailErr" placeholder="you@email.com"
+             value="${escA(notifyPrefs.email||"")}">
+      <p class="fielderr" id="onbEmailErr" role="alert" hidden></p></div>`;
+}
+function wireNotifyControls(){
+  const el=$("onbEmail");
+  if(el) el.oninput=()=>{ notifyPrefs.email=el.value.trim(); saveNotifyPrefs(); notifyGate(); };
+  notifyGate();
+  paintInAppDenied();   // CAS-463: fresh entry to the step always starts from the neutral hint
 }
 // CAS-463: "Allow in-app notifications" used to just flip a local flag. Now it asks for a real OS-level
 // permission and — on a native grant — captures the device token push delivery (CAS-465) needs. Only a
@@ -15157,7 +15299,7 @@ function onbRefresh(){
   if(trail) trail.outerHTML = onbTrailHTML(onbStepKey) || "";
   // CAS-253: onbRefresh rewrites the button, so the gate is reapplied after it — otherwise any repaint
   // (a toggle, a count moving) would hand back a Continue the screen is not ready for.
-  if(onbStepKey==="notifysettings") notifyGate();
+  if(NOTIFY_GATED_STEPS.has(onbStepKey)) notifyGate();
 }
 // #4 selectivity refresh (CAS-114): update the "What this does" line + count, and let onbRefresh update the
 // CTA count from the same live figure.
@@ -15200,16 +15342,16 @@ function openOnbStep(key, agentKey){
   return true;
 }
 window.closeOnbStep=()=>{ flowStop(); if(typeof accountResume==="function") accountResume(); };
-// The end of the flow: layer the choices onto the picked agent, commit it, and hand the committed agent to
-// the payoff. CAS-188 renamed nothing here — the flow that reaches it is a line now rather than a hub, but
-// what "finish" means is unchanged.
+// The end of the flow. CAS-629: the roster was already committed on entering "working" (Change E1) — the
+// single-draft commit this used to do (onbApply/commitDraft, keyed off wiz.starter) is no longer reached
+// by the first run at all; that path only still exists for the "+ New Cascade" wizard/lane, which never
+// reaches this function (it hands off to briefNewAgent() instead — see flowNext).
 function finishSharpSequence(){
   flowStop();
-  draft = onbApply();                       // layer the sharpening choices onto the picked agent
-  const {c} = commitDraft();
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
-  logEvent("agent_created",{starter:wiz.starter, matches:countCriteria(c), sharpened:true});
-  openMembership(wiz.starter, c.name, c);   // CAS-201: straight to the one page that carries the haul
+  const agents = onbFlow.workingAgents || [];
+  logEvent("agent_created",{count:agents.length, sharpened:true});
+  openOnbMembership();   // CAS-629 Change E4: the roster recap, not a single agent's haul
 }
 // Back: inside the wired flow it is the flow's own back (one step, sliding the other way). Inside a hub door
 // on a ?step= preview it still walks that door backwards. Otherwise it just closes the preview.
@@ -15235,7 +15377,7 @@ window.onbStepSkip=()=>{
 window.onbStepContinue=()=>{
   // CAS-253: the disabled button is the visible half; this is the half a keyboard or a stale handler cannot
   // get round. An armed email bell with no address is not a state the flow may leave this screen in.
-  if(onbStepKey==="notifysettings" && !notifyReady()){
+  if(NOTIFY_GATED_STEPS.has(onbStepKey) && !notifyReady()){
     notifyGate();
     const f=$("onbEmail"); if(f) f.focus();
     const err=$("onbEmailErr");
@@ -15430,6 +15572,66 @@ function openMembership(agentKey, nameOverride, cascade){
   return true;
 }
 function closeMembership(){ $("membScreen").classList.remove("open"); document.body.style.overflow=""; }
+// ---- CAS-629 Changes E3/E4: the roster's own numbers, read off onbFlow.workingAgents ------------------
+// N/M/K are computed once (S6's wire() caches them onto onbFlow.reportStats) and read a second time by
+// S7's recap (Change E4 AC5), so the two screens can never print different numbers for the same roster.
+// "Worth your time" is the app's own existing quality line — qScoreHTML already tiers a film "mid" (worth
+// watching) from 70, so 70 is the floor here rather than a new number invented for this one line.
+const OB_WORTH_FLOOR = 70;
+function onbComputeReportStats(){
+  const agents = onbFlow.workingAgents || [];
+  const films = MOVIES.filter(m=>agents.some(c=>watchesFilm(m,c)));
+  return {n:agents.length, m:films.length, k:films.filter(m=>qScore(m)>=OB_WORTH_FLOOR).length};
+}
+// The top `limit` films across every generated agent, by Cascade score — each paired with the one agent
+// that found it (the first match, same "who gets named" rule attributionHTML already uses elsewhere).
+function onbTopFilms(limit){
+  const agents = onbFlow.workingAgents || [];
+  return MOVIES.map(m=>{
+    const agent = agents.find(c=>watchesFilm(m,c));
+    return agent ? {m, q:qScore(m), agent} : null;
+  }).filter(x=>x && x.q>=0).sort((a,b)=>b.q-a.q).slice(0, limit);
+}
+// ---- CAS-629 Change E4: S7 membership — the standing-agents recap. Same #membScreen/#membBody chrome as
+// openMembership() above (membStart/membNeedsEmail/membEmailError all keep working unchanged, since they
+// key off #membEmail/#membEmailErr/.membcta by id/class, not by which function painted them); only the
+// content differs, and only for this, onboarding's own final step. The poster wall is gone (Change E4) —
+// three real films already made the case on S6, immediately before this screen.
+const OB_MEMB_BENEFITS = ["Film alerts","Your services only","Sharper every week","As many agents as you like"];
+function openOnbMembership(){
+  const {n,m,k} = onbFlow.reportStats || onbComputeReportStats();
+  const needsEmail = membNeedsEmail();
+  $("membBody").innerHTML = `
+    <button class="osback" type="button" onclick="onbMembBack()" aria-label="Back">←</button>
+    <span class="cascpill">CASCADE</span>
+    <h2 class="membh">Keep them working</h2>
+    <p class="membhaul">${n} agent${n===1?"":"s"} · <span class="cnt">${k}</span> film${k===1?"":"s"} worth your time · watching ${m}</p>
+    <div class="membenefits">
+      ${OB_MEMB_BENEFITS.map(b=>`<div class="mbrow"><span class="mbic">✓</span>
+        <span class="mbtx"><span class="mbt">${esc(b)}</span></span></div>`).join("")}
+    </div>
+    <p class="memfine">Free for your first month · then <b>$4.99/month</b> · cancel any time. No card needed —
+      we'll always ask before anything is ever charged.</p>
+    ${needsEmail ? `
+    <div class="flabel">Email</div>
+    <input id="membEmail" class="namein" type="email" inputmode="email" autocomplete="email"
+           placeholder="you@example.com">
+    <p class="fielderr" id="membEmailErr" role="alert" hidden></p>` : ""}
+    <button class="membcta" type="button" onclick="membStart()">Start my free month</button>
+    <p class="membproto">Prototype — no account, no payment, no real charge.</p>`;
+  $("membScreen").scrollTop=0;
+  $("membScreen").classList.add("open"); document.body.style.overflow="hidden";
+  logEvent("membership_shown",{onboarding:true, agents:n});
+}
+// Change E4: the one back door this page has ever had — S7 is the only membership context with an S6 to
+// return to. Re-opens the flow on "report" with flowOn restored, exactly like any other flowBack() hop;
+// notifyPrefs (and so the email field) is untouched by any of this, so it comes back populated (AC7).
+window.onbMembBack=()=>{
+  closeMembership();
+  flowOn=true;
+  gotoStep("report","back");
+  $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
+};
 // Starting the free month goes straight to the #12 listing with the finish-setup bar (CAS-121) — no invite,
 // no learn step. In the real flow the sharpened agent is already committed; on the ?step=membership preview we
 // seed one so the listing has cards. Prototype — no real charge is ever made.
