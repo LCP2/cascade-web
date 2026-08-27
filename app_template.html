@@ -3118,6 +3118,12 @@
   .oscmark.nom{color:#cfd7e6;border:1px solid rgba(255,255,255,.18)}
   .card:not(.expanded) .mrow.r-scores .oscmark{margin-left:2px}
   .card.expanded .oscmark{display:none}
+  /* CAS-634: agent attribution, right-aligned after the Oscar mark in the same scores-row slot the
+     collapsed card already gives that line — so it costs no extra height. Hidden expanded: the award
+     chips already say enough there, and this would just be one more thing stacked under the title. */
+  .attrib{flex:0 1 auto;min-width:0;margin-left:auto;padding-left:6px;font-size:10.5px;
+    color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .card.expanded .attrib{display:none}
   /* (6) "Can Watch" is wider than "Notify"; equal thirds truncated it to "Can W..." */
   .card:not(.expanded) .actions .ctl{flex:1 1 auto;min-width:0}
   .card:not(.expanded) .actions .ctl.notify{flex:1.25 1 auto}
@@ -4590,19 +4596,55 @@ const cascades = loadCascades();
 // `cascades.length` can be trusted; a guest device (the common case) is authoritative immediately.
 let cascadesReady = true;
 try{ cascadesReady = localStorage.getItem("cascade_had_account") !== "1"; }catch(e){}
-// ---- The active Cascade (CAS-566: no more built-in "All") -----------------------
-// activeId names the open agent, or null when there isn't one. Null happens only with zero agents —
-// activeCascade() returning null downstream means exactly that now, not "the whole catalogue is open".
+// ---- The active Cascade(s) (CAS-566: no more built-in "All"; CAS-634: the rail is multi-select) -------
+// activeId names the FIRST selected agent, or null when there isn't one — kept so a build from before this
+// ticket still loads on the same device. activeIds is the FULL selection the rail and the listing read
+// from; cascade_active_multi is its own persisted array, and cascade_active always mirrors activeIds[0].
 function firstAgentId(){ return cascades.length ? cascades[0].id : null; }
 let activeId = null;
 try{ activeId = localStorage.getItem("cascade_active") || null; }catch(e){}
-function setActive(id){ activeId=id||firstAgentId(); try{ localStorage.setItem("cascade_active",activeId||""); }catch(e){} }
+let activeIds = [];
+try{
+  const _rawActiveMulti = localStorage.getItem("cascade_active_multi");
+  const _parsedActiveMulti = _rawActiveMulti ? JSON.parse(_rawActiveMulti) : null;
+  if(Array.isArray(_parsedActiveMulti)) activeIds = _parsedActiveMulti.filter(id=>typeof id==="string");
+}catch(e){}
+if(!activeIds.length && activeId) activeIds=[activeId];
+function saveActiveIds(){ try{ localStorage.setItem("cascade_active_multi", JSON.stringify(activeIds)); }catch(e){} }
+function setActive(id){
+  activeId=id||firstAgentId();
+  activeIds = activeId ? [activeId] : [];
+  try{ localStorage.setItem("cascade_active",activeId||""); }catch(e){}
+  saveActiveIds();
+}
+// A tap on a rail card toggles its membership in the selection. The last one standing cannot be removed —
+// an empty rail is not a state the listing can show (CAS-566/R3 already treats "no agent" as "list nothing").
+function toggleActive(id){
+  if(!id) return;
+  const i=activeIds.indexOf(id);
+  if(i>=0){
+    if(activeIds.length<=1) return;
+    activeIds.splice(i,1);
+  } else {
+    activeIds.push(id);
+  }
+  activeId=activeIds[0]||null;
+  try{ localStorage.setItem("cascade_active",activeId||""); }catch(e){}
+  saveActiveIds();
+}
 const activeCascade = () => cascades.find(c=>c.id===activeId) || null;
-// CAS-566/R2/R7: land on the stored agent if it still exists; otherwise the first agent, once there is one.
-// Catches a deleted agent's stale pointer AND a pre-CAS-566 install whose stored id was "__all__" — neither
-// matches a real cascade, so both fall through here. Guarded on cascades.length so a genuinely empty account
-// (nothing to promote to) is left at null rather than writing a no-op correction on every check.
-if(!activeCascade() && cascades.length) setActive(firstAgentId());
+const activeCascades = () => activeIds.map(id=>cascades.find(c=>c.id===id)).filter(Boolean);
+// CAS-566/R2/R7: land on the stored agent(s) if they still exist; otherwise the first agent, once there is
+// one. Catches a deleted agent's stale pointer AND a pre-CAS-566 install whose stored id was "__all__" —
+// neither matches a real cascade, so both fall through here.
+function reconcileActiveIds(){
+  activeIds = activeIds.filter(id=>cascades.some(c=>c.id===id));
+  if(!activeIds.length && cascades.length) activeIds=[firstAgentId()];
+  activeId = activeIds[0] || null;
+  try{ localStorage.setItem("cascade_active",activeId||""); }catch(e){}
+  saveActiveIds();
+}
+reconcileActiveIds();
 
 // ---- CAS-590: the Watch lists themselves, and which one is open (device-local — never in the account
 // record) — same shape as the cascades/activeId block just above. ----------------------------------
@@ -5458,6 +5500,16 @@ function oscMarkHTML(m){
   if(nm) return `<span class="oscmark nom" title="${escA(t)}">✦ ${nm[1]}</span>`;
   return "";
 }
+// CAS-634: which agents would find this film — read off ALL of them, not just the ones currently selected
+// in the rail, since an agent you haven't turned on can still be worth naming. Omitted entirely with a
+// single agent selected: it would name that one agent on every card and say nothing.
+function attributionHTML(m){
+  if(activeIds.length<2) return "";
+  const names=cascades.filter(c=>watchesFilm(m,c)).map(c=>c.name);
+  if(!names.length) return "";
+  const text = names.length<=2 ? names.join(", ") : `${names[0]}, ${names[1]} +${names.length-2}`;
+  return `<span class="attrib" title="${escA(names.join(", "))}">${esc(text)}</span>`;
+}
 function qScoreHTML(m){
   const q=qScore(m);
   if(q<0) return `<span class="qscore none" title="Not enough agreement to score this yet">&ndash;</span>`;
@@ -6134,7 +6186,7 @@ function cardHTML(m, markNew=false){
         <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
-        <div class="mrow r-scores">${scoresRowHTML(m)}${oscMarkHTML(m)}</div>
+        <div class="mrow r-scores">${scoresRowHTML(m)}${oscMarkHTML(m)}${attributionHTML(m)}</div>
         <!-- CAS-624: condensed-card-only, cinema-agent-only — see #groups.cinema-listing rules. Hidden
              everywhere else, including the expanded card, by the base .r-cinfo{display:none}. -->
         <div class="mrow r-cinfo">${cinemaInfoRowHTML(m)}</div>
@@ -7313,12 +7365,13 @@ function renderScopeBar(){
   el.innerHTML = `<div class="scopepills">${pill("watch","Notify",true)}${pill("new","For review",false)}${pill("watched","Watched",true)}</div>`;
 }
 function scopeRows(){
-  const c=activeCascade();
-  // CAS-566/R3: activeCascade() is null only with zero agents now (no more All to fall back to as "the
-  // catalogue itself") — that state lists nothing at all, so a first-run user does not land on 5,633
-  // unfiltered films.
-  if(!c) return [];
-  const rows = MOVIES.filter(m=>listedBy(m,c));
+  const acs=activeCascades();
+  // CAS-566/R3: an empty selection is zero agents now (no more All to fall back to as "the catalogue
+  // itself") — that state lists nothing at all, so a first-run user does not land on 5,633 unfiltered films.
+  // CAS-634: with two or more agents selected the listing is their UNION — a film either agent lists
+  // appears once, never twice.
+  if(!acs.length) return [];
+  const rows = MOVIES.filter(m=>acs.some(c=>listedBy(m,c)));
   const searched = filt.search ? rows.filter(m=>m.title.toLowerCase().includes(filt.search)) : rows;
   // CAS-382: no tier ticked = no filter, same "nothing picked = show everything" rule every other chip set
   // in `passes()` follows.
@@ -7944,10 +7997,9 @@ function dedupeCascades(){
   });
   if(!drop.length) return 0;
   drop.forEach(({c, keep})=>{
-    // The open Cascade must survive the clean-up — it just becomes the twin that was kept.
-    if(activeId===c.id) setActive(keep.id);
     cascades.splice(cascades.indexOf(c), 1);
   });
+  reconcileActiveIds();   // a dropped twin still selected just falls back to the first surviving agent
   saveCascades();
   logEvent("cascades_deduped",{dropped:drop.length});
   return drop.length;
@@ -8305,7 +8357,10 @@ function applyCascade(c){
 window.openCascade=id=>{
   // CAS-134: moving to another cascade is leaving this one's list, so its held stubs settle now — a film you
   // answered under one agent must not turn up as a stub on another agent's New list.
-  const c=cascades.find(x=>x.id===id); if(!c || activeId===id) return;
+  // CAS-634: "already open" now also has to mean nothing ELSE is selected — an id matching activeId can
+  // still be riding alongside other agents in activeIds, and this is the single-select entry point (Manage
+  // Agents, sign-in landing), so it always has to collapse back down to just this one.
+  const c=cascades.find(x=>x.id===id); if(!c || (activeId===id && activeIds.length===1)) return;
   setActive(id); settleFoundView(); applyCascade(c); restoreCascadeSearch();
   $("groups").classList.add("listloading");     // CAS-421: held blurred till the new agent's list is ready
   closeFilterPanel(); restoreCascadeWatchTiers(); render();
@@ -8421,14 +8476,36 @@ function deckFocus(i,moveDom){
   if(moveDom) deckCards()[deckIdx]?.focus({preventScroll:true});
 }
 // Centring the "+ New" card selects nothing — browsing past your Cascades must not close the open one.
-const deckSelect=i=>{ const c=deckAt(i); if(c) openCascade(c.id); };
+// CAS-634: landing a card in the centre still acts on it, but "acting on it" is now a TOGGLE of the rail's
+// selection rather than a switch to it alone — openCascade (single-select) stays the entry point for the
+// Manage Agents row tap and sign-in landing, which really do mean "just this one". Returns true when the
+// card is still selected afterward (it was already selected and wasn't the one removed) — the click
+// handler uses that to decide whether tapping the same card again should expand the bar (CAS-512).
+function deckSelect(i){
+  const c=deckAt(i); if(!c) return false;
+  const wasSelected=activeIds.includes(c.id);
+  const prevActiveId=activeId;
+  toggleActive(c.id);
+  if(activeId!==prevActiveId){
+    // The edit target changed (the primary/first-selected agent was the one just removed) — bring the
+    // Filters panel and search/tier state with it, same as openCascade does when switching.
+    const nc=activeCascade();
+    if(nc){ settleFoundView(); applyCascade(nc); restoreCascadeSearch(); restoreCascadeWatchTiers(); }
+  }
+  closeFilterPanel();
+  $("groups").classList.add("listloading");
+  render();
+  logEvent("cascade_opened", {key:c.template||"custom"});
+  return wasSelected && activeIds.includes(c.id);
+}
 // The hybrid-discoverability question in one line: did they ever touch My Cascades at all, and by what?
 // Logged once per session per method, so the log shows discovery rather than drowning in scroll events.
 const deckSeen=new Set();
 function deckUsed(how){ if(deckSeen.has(how)) return; deckSeen.add(how); logEvent("mycascades_used",{key:how}); }
 function deckGo(i,moveDom){
   const n=Math.max(0,Math.min(deckCount()-1,i));
-  deckFocus(n,moveDom); deckCentre(n,true); deckSelect(n);
+  deckFocus(n,moveDom); deckCentre(n,true);
+  return deckSelect(n);
 }
 function deckBuild(){
   // CAS-150: the 🔍 sits in the control row, next to Edit / 🔗 / × — one of the things you do to the open
@@ -8439,18 +8516,12 @@ function deckBuild(){
   const filterBtn = label =>
     `<button class="ca-btn x dc-filter" data-act="filter" type="button" aria-haspopup="true" aria-expanded="false"
              aria-label="Filter ${escA(label)} by watch priority" title="Filter by watch priority">${ICON.filter}</button>`;
-  // CAS-203: the card wears the agent's own lane. This is the ONE place the type is stated on the listing
-  // now — CAS-204 takes the stripe off the film cards, because a colour repeated on every row stops being
-  // information — so an agent card has to carry it.
-  // CAS-371: the icon rides inline with a "CINEMA AGENT" / "STREAMING AGENT" label — the one place the
-  // type is spelled out in words, colour (above) is the at-a-glance version. Name and film-count still
-  // start at the box's own left padding, same as the label row — .dc-in is a plain vertical stack, so
-  // nothing here indents under the icon.
+  // CAS-203: the card wears the agent's own lane — still true, the colour stripe stays.
+  // CAS-634: the kicker line ("CINEMA AGENT"/"STREAMING AGENT" + icon) and the film count are gone — the
+  // rail card shows the list name and the edit control row only.
   deckStrip.innerHTML=cascades.map(c=>`
     <div class="dcard agent-${c.kind==="stream"?"str":"cin"}" role="group" aria-label="${esc(c.name)}" tabindex="-1" data-id="${c.id}"><div class="dc-in">
-      <div class="dc-top"><span class="dc-icon">${c.icon}</span><span class="dc-type">${c.kind==="stream"?"Streaming":"Cinema"} agent</span></div>
       <div class="dc-name">${esc(c.name)}</div>
-      <div class="dc-sub"></div>
       <div class="dc-rev" hidden></div>
       <div class="dc-acts">
         <button class="ca-btn save" data-act="save" hidden>Save</button>
@@ -8500,34 +8571,14 @@ function deckSync(shown){
   const dirty=cascadeDirty();
   deckCards().forEach((el,i)=>{
     const c=deckAt(i); if(!c) return;                // the "+ New" card paints nothing
-    const on=c.id===activeId;
-    // Real counts on every card — the open one shows what's on screen. CAS-279: a closed card counts with
-    // listedCount rather than countCriteria, because a hand-moved film is in that agent's listing and would
-    // otherwise be missing from the number describing it. The open card already reads the listing itself.
-    const n=on?shown:listedCount(c);
-    el.classList.toggle("is-active",on);
-    el.querySelector(".dc-icon").textContent=c.icon;
-    el.querySelector(".dc-name").innerHTML=`${esc(c.name)}${on&&dirty?' <span class="dirty">· edited</span>':""}`;
-    // CAS-270: the count, and — for a streaming agent only — what the count is drawn FROM. The old line
-    // also carried the alert summary, which is a promise about the future stacked on a statement about
-    // the present; two unrelated facts in one 11px line read as neither. The bells are stated in full on
-    // the Edit screen that owns them.
-    //
-    // The scope suffix stays because for a streaming agent the count is ambiguous without it: "153 films"
-    // means something different if it is the whole catalogue than if it is only what you can already
-    // watch, and nothing else on the card says which. It is spelled out in BOTH directions — an absent
-    // suffix would just be silence, and silence is what made this ambiguous in the first place. A cinema
-    // agent has no such fork, so it gets the bare count.
-    // CAS-447: "N new" rides on the end of the same line, after the scope suffix — one more fact about the
-    // same count, not a second line to scan. Only said when it's actually true of at least one film.
-    const nNew=newlyAddedCount(c);
-    el.querySelector(".dc-sub").textContent=
-      `${n} film${n===1?"":"s"}`
-      + (c.kind==="stream"
-          ? " · " + (anyScope(c) ? (allScoped(c) ? "my services" : `my services on ${scopeSummary(c)}`)
-                                 : "any service")
-          : "")
-      + (nNew ? ` · ${nNew} new` : "");
+    // CAS-634: "selected" (is-active, drives the listing's union) and "the edit target" (activeId, the
+    // first-selected — what the Filters panel and cascadeDirty() are actually comparing against) are no
+    // longer the same question once more than one card can be selected. The dirty mark and Save button
+    // stay tied to the edit target alone; every selected card reads as selected.
+    const selected=activeIds.includes(c.id);
+    const isEditTarget=c.id===activeId;
+    el.classList.toggle("is-active",selected);
+    el.querySelector(".dc-name").innerHTML=`${esc(c.name)}${isEditTarget&&dirty?' <span class="dirty">· edited</span>':""}`;
     // CAS-598: with For review switched off you cannot tell from the list whether this agent has anything
     // waiting — the pile is simply absent. The count belongs on the agent, because it differs per agent,
     // and it is a separate lit span rather than another clause on the sub-line so it reads as a call to
@@ -8535,12 +8586,13 @@ function deckSync(shown){
     const nRev=toReviewCount(c);
     const revEl=el.querySelector(".dc-rev");
     if(revEl){ revEl.textContent = nRev ? `${nRev} to review` : ""; revEl.hidden = !nRev; }
-    el.querySelector('[data-act="save"]').hidden=!(on&&dirty);
+    el.querySelector('[data-act="save"]').hidden=!(isEditTarget&&dirty);
   });
-  // CAS-371: sort rides with whichever card is open (All included) — moved, not rebuilt, into that card's
+  // CAS-371: sort rides with whichever card is centred AND open — moved, not rebuilt, into that card's
   // action row alongside Edit/search, so it inherits the exact same is-centre.is-active visibility the
-  // other controls already use. A no-op appendChild if it's already there.
-  const actsHome=deckStrip.querySelector(".dcard.is-active .dc-acts");
+  // other controls already use. A no-op appendChild if it's already there. CAS-634: qualified on is-centre
+  // too now that more than one card can read is-active — the sort control has exactly one home.
+  const actsHome=deckStrip.querySelector(".dcard.is-centre.is-active .dc-acts");
   if(actsHome && sortCtl.parentElement!==actsHome) actsHome.appendChild(sortCtl);
   deckPaint();
 }
@@ -8619,12 +8671,11 @@ deckStrip.addEventListener("click",e=>{
   if(deckDragged) return;                            // that click was the end of a drag
   const i=deckCards().indexOf(card);
   deckUsed(deckDragged?"drag":"tap");
-  // CAS-512: tapping the agent ALREADY open expands the collapsed box back to full view. Tapping a
-  // different card still just switches to it and stays collapsed — same as swiping to it (CAS-508) — so
-  // switching agents and expanding stay two different gestures, not one.
-  const wasActive=card.classList.contains("is-active");
-  deckGo(i,true);
-  if(wasActive) expandCascBar();
+  // CAS-512: tapping the agent ALREADY open (and, with the last one selected, tapping still can't remove
+  // it — CAS-634) expands the collapsed box back to full view. Tapping a card that is joining or leaving
+  // the selection just toggles it and stays collapsed — same as swiping to it (CAS-508) — so toggling
+  // agents and expanding stay two different gestures, not one.
+  if(deckGo(i,true)) expandCascBar();
 });
 let deckResizeT=null;
 addEventListener("resize",()=>{ clearTimeout(deckResizeT); deckResizeT=setTimeout(()=>{ deckCentre(deckIdx,false); deckPaint(); },140); });
@@ -9601,7 +9652,15 @@ function deleteAgentAsk(c){
             : "")
     + `Anything you added by hand stays, and your watched / not-interested marks aren't touched.`)) return false;
   cascades.splice(cascades.indexOf(c),1); saveCascades();
-  if(activeId===c.id){ setActive(firstAgentId()); clearFilters(); syncFilterUI(); }
+  const wasSelected=activeIds.includes(c.id);
+  if(wasSelected){
+    activeIds=activeIds.filter(id=>id!==c.id);
+    if(!activeIds.length && cascades.length) activeIds=[firstAgentId()];
+    activeId=activeIds[0]||null;
+    try{ localStorage.setItem("cascade_active",activeId||""); }catch(e){}
+    saveActiveIds();
+    clearFilters(); syncFilterUI();
+  }
   logEvent("cascade_deleted",{id:c.id, films:mine});
   // CAS-287: deleting already asks first, and the deck visibly loses the card. A banner afterwards is a
   // third telling of the same fact.
@@ -16262,7 +16321,7 @@ else if(dedupedN)
         if(cascadeBaseline.has(id) && !remoteIds.has(id)) cascades.splice(i,1);
       }
     }
-    if(!activeCascade() && cascades.length) setActive(firstAgentId());
+    reconcileActiveIds();
     cascadeBaseline=remoteIds;
     // CAS-424: converge on whichever device last reordered — only once anyone actually has, so a background
     // reconcile never reshuffles an account nobody has touched the Agents screen on.
