@@ -121,6 +121,11 @@ The **mode line is authoritative** if the two ever disagree.
   `staging` — CI's QA run is the authoritative gate.
 - If a ticket says an asset or spec "will be attached" and it is not in the ticket text, **do not invent
   it** — stop, label it `needs-lee`, and say what is missing.
+- **Put any worktree you create INSIDE the repo**, at `.claude/worktrees/<TICKET-KEY>`, never as a sibling
+  directory such as `C:\Dev\cascade-web-CAS635`. A sibling path is outside your approved directory: you
+  cannot read the files you just checked out there, the run ends with no commit, and the ticket strands in
+  Developing. Two runs were lost this way on 27 Aug 2026. `.claude/worktrees/` is already inside the repo
+  and needs no approval. Remove the worktree when you are done.
 
 ## Hand off
 - Commit as `CAS-NN: <summary>`, push to **`staging`** (never `main`).
