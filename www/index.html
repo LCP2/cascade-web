@@ -2688,6 +2688,9 @@
      chrome the screen does not earn. It still scrolls; only the indicator goes. */
   #agentsScreen{scrollbar-width:none;-ms-overflow-style:none}
   #agentsScreen::-webkit-scrollbar{width:0;height:0;display:none}
+  /* CAS-655: Moving is a main destination, like Agents — it scrolls, it does not need a track. */
+  #movingScreen{scrollbar-width:none;-ms-overflow-style:none}
+  #movingScreen::-webkit-scrollbar{width:0;height:0;display:none}
   /* CAS-567: .uwrap's calc(22px + env(safe-area-inset-top)) clearance is written for the .uscreens that
      cover the header at top:0. #yourMovies is not one of them — it starts at var(--hdrh), so the header has
      already spent the notch inset and this padding double-counts it: 22px in a desktop harness, 22px + the
@@ -3127,9 +3130,13 @@
   .card:not(.expanded) .r-awards,
   .card:not(.expanded) .estline{display:none}
   /* the scores line, compacted to plain text */
-  .card:not(.expanded) .mrow.r-scores{grid-area:scores;margin:0;gap:10px;flex-wrap:nowrap;overflow:hidden}
+  /* CAS-655: flex-wrap:wrap (was nowrap) so .attrib — the last item on this row — drops to its own
+     line instead of squeezing IMDb/RT/Meta when it can't fit alongside them (a Moving row can carry
+     a long agent list). Score cells go flex:none so they never shrink; only .attrib (min-width:0,
+     ellipsised below) gives way. */
+  .card:not(.expanded) .mrow.r-scores{grid-area:scores;margin:0;gap:10px;flex-wrap:wrap;overflow:hidden}
   .card:not(.expanded) .mrow.r-scores .m,
-  .card:not(.expanded) .mrow.r-scores button.m{padding:0;background:none;border:none;font-size:11px;line-height:1.2;white-space:nowrap}
+  .card:not(.expanded) .mrow.r-scores button.m{padding:0;background:none;border:none;font-size:11px;line-height:1.2;white-space:nowrap;flex:none}
   .card:not(.expanded) .mrow.r-scores .m b{font-size:11px}
   .card:not(.expanded) .mrow.r-scores .lab{font-size:10px}
   .card:not(.expanded) .mrow.r-scores .dot{width:6px;height:6px}
@@ -4948,7 +4955,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 824, "commit": "7fc6b1d", "builtAt": "2026-08-27T22:35:42Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 825, "commit": "bae27cd", "builtAt": "2026-08-27T22:41:27Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -14543,6 +14550,19 @@ function movingInWindow(dateStr, windowKey, cutoffMs){
   const days=MOVING_WINDOW_DAYS[windowKey];
   return days!=null && t>Date.now()-days*864e5;
 }
+// CAS-655 Y2c: "Since you last looked" defaults empty on a lot of second visits, leaving the user to hunt
+// for a window with something in it. Walk MOVING_WINDOWS in its stated order and open on the first one
+// holding >=2 rows; failing that, the first holding >=1; failing that, "since_last" with its empty state.
+// Opening selection only — a tap always wins (setMovingWindow), and nothing here is persisted.
+function movingAutoOpenWindow(cutoffMs){
+  const {canRows,newRows,changedRows}=movingData();
+  const all=[...canRows,...newRows,...changedRows];
+  const countFor=key=>all.filter(r=>movingInWindow(r.date,key,cutoffMs)).length;
+  const withTwo=MOVING_WINDOWS.find(w=>countFor(w.key)>=2);
+  if(withTwo) return withTwo.key;
+  const withOne=MOVING_WINDOWS.find(w=>countFor(w.key)>=1);
+  return withOne ? withOne.key : "since_last";
+}
 function movingData(){
   const guest=!(window.CascadePersistence && window.CascadePersistence.accountActive());
   const canRows=[], newRows=[], changedRows=[];
@@ -14683,14 +14703,16 @@ window.closeAgentsScreen=()=>{
 // CAS-636: Moving — the alert feed made visible. Same open/close shape as Agents (mutually exclusive with
 // Your Movies/Agents), plus its own render + seen-state pass (renderMovingScreen marks every row it shows
 // as seen and refreshes the badge, per cascade_moving_seen — see that function for the mechanism).
-// CAS-650: every visit opens on the "since_last" window (never persisted), and the previous
-// cascade_moving_lastvisit is captured into movingVisitCutoff BEFORE the new one is written, so this
-// visit's own rows are judged against where the LAST visit left off, not against themselves.
+// CAS-650: the previous cascade_moving_lastvisit is captured into movingVisitCutoff BEFORE the new one is
+// written, so this visit's own rows are judged against where the LAST visit left off, not against themselves.
+// CAS-655 Y2c: which window the visit OPENS on is no longer always "since_last" — movingAutoOpenWindow
+// picks the first window (in MOVING_WINDOWS order) with something in it, so the user isn't dropped on an
+// empty screen. Never persisted; the user's own tap (setMovingWindow) always overrides it.
 window.openMovingScreen=()=>{
   if($("yourMovies").classList.contains("open")) closeYourMovies();
   if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
-  movingWindow="since_last";
   movingVisitCutoff=loadMovingLastVisit();
+  movingWindow=movingAutoOpenWindow(movingVisitCutoff);
   renderMovingScreen();
   saveMovingLastVisit();
   $("movingScreen").scrollTop=0;
