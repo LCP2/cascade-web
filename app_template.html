@@ -1082,6 +1082,9 @@
   .mvchip{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.3px;padding:3px 7px;
     border-radius:6px;background:var(--panel2);border:1px solid var(--line);color:var(--accenttext)}
   .mlchip.mvagent{cursor:pointer}
+  /* CAS-650: the window chip row — reuses .chip.gen, the same single-select pill already used for
+     other filter rows, so the new control matches the app's existing chip language. */
+  .mvwindows{display:flex;flex-wrap:wrap;gap:6px;padding:0 2px 12px}
   .mvempty{padding:40px 16px;text-align:center}
   .mvemptymain{font-size:14px;font-weight:700;color:var(--ink)}
   .mvemptysub{font-size:12px;color:var(--faint);margin-top:6px}
@@ -4505,6 +4508,17 @@ function saveMovingSeen(){
   if(s===movingSeenSaved) return;
   movingSeenSaved=s;
   try{ localStorage.setItem(MOVING_SEEN_KEY, s); }catch(e){}
+}
+// CAS-650: when Moving was last opened, written AFTER that visit's rows are computed (see openMovingScreen)
+// so the "Since you last looked" window always excludes what it just showed you.
+const MOVING_LASTVISIT_KEY="cascade_moving_lastvisit";
+function loadMovingLastVisit(){
+  const v=localStorage.getItem(MOVING_LASTVISIT_KEY);
+  const t=v?Date.parse(v):NaN;
+  return isNaN(t) ? 0 : t;
+}
+function saveMovingLastVisit(){
+  try{ localStorage.setItem(MOVING_LASTVISIT_KEY, new Date().toISOString()); }catch(e){}
 }
 const entryFor = id => notify[id] || (notify[id]={source:"auto", cascadeIds:[], removed:false, pinnedTo:[], notIn:[]});
 // CAS-279: the two override tests, defined once so the listing, the counts and the Found set cannot disagree
@@ -14410,11 +14424,12 @@ function wireAgentsRate(){
   });
 }
 // ================= CAS-636: Moving — the alert feed made visible =================
-// Every row corresponds to an in-app/email notification: CAN WATCH NOW reuses watchIsCurrent(id), the exact
-// predicate that already gives a card its gold "Can Watch" state (so the two sets can never disagree, AC1);
-// NEW TO YOUR AGENTS reads the notifications ledger (realAlerts) directly rather than a fresh match
-// computation, excluding anything that already qualifies for CAN WATCH NOW (AC2/AC4). No new alert logic —
-// Moving only reads state the monitor/card already compute.
+// CAS-650: every row is a dated event now, not a standing-state snapshot. With an account, all three
+// groups are sourced from the notifications ledger (realAlerts); as a guest, only NEW TO YOUR AGENTS is
+// derivable, from firstFound. watchIsCurrent(id) — the exact predicate that gives a card its gold "Can
+// Watch" state — still decides whether a dated ledger entry belongs in CAN WATCH NOW or AVAILABILITY
+// CHANGED (that split is a membership rule CAS-650 explicitly leaves unchanged), but it no longer
+// MANUFACTURES a row on its own: a row only exists where there is a dated event to hang it on.
 function movingCanWatchReason(id){
   const levels=watchLevelsFor(id);
   const m=MOVIES.find(x=>x.tmdb_id===id);
@@ -14427,49 +14442,93 @@ function movingCanWatchReason(id){
   const l=key && levels.find(x=>x.key===key);
   return l ? `Reached ${l.label}` : "You can watch it now";
 }
-// CAS-644: the moment that decides NEW TO YOUR AGENTS vs AVAILABILITY CHANGED — a ledger entry whose
-// moment is one of REAL_MOMENT_SAID's own keys is a window move (the film was already an agent's, and
-// something about where you can watch it changed); anything else (starting with "announced", the film's
-// first appearance for that agent) is the weaker claim, NEW TO YOUR AGENTS. A moment we can't classify
-// falls to NEW TO YOUR AGENTS rather than being guessed into a window it may not belong to.
+// CAS-644: the moment that decides NEW TO YOUR AGENTS vs a "changed" moment (CAN WATCH NOW/AVAILABILITY
+// CHANGED) — a ledger entry whose moment is one of REAL_MOMENT_SAID's own keys is a window move (the film
+// was already an agent's, and something about where you can watch it changed); anything else (starting
+// with "announced", the film's first appearance for that agent) is the weaker claim, NEW TO YOUR AGENTS.
+// A moment we can't classify falls to NEW TO YOUR AGENTS rather than being guessed into a window it may
+// not belong to.
 const MOVING_CHANGE_CHIP = {
   hits_cinema:"IN CINEMAS", past_opening_weekend:"IN CINEMAS",
   hits_pvod:"NOW RENTABLE", hits_rent:"NOW RENTABLE",
   hits_stream:"NOW STREAMING",
 };
+// CAS-650 CHANGE 2: the time-window chips, in this exact order — default is "since_last" on every visit,
+// the other four are rolling windows measured back from now.
+const MOVING_WINDOWS = [
+  {key:"since_last", label:"Since you last looked"},
+  {key:"today", label:"Today"},
+  {key:"week", label:"Week"},
+  {key:"2weeks", label:"2 weeks"},
+  {key:"month", label:"Month"},
+];
+const MOVING_WINDOW_DAYS = {today:1, week:7, "2weeks":14, month:30};
+const MOVING_EMPTY_COPY = {
+  since_last:"Nothing has moved since you last looked.",
+  today:"Nothing has moved today.",
+  week:"Nothing has moved in the last week.",
+  "2weeks":"Nothing has moved in the last 2 weeks.",
+  month:"Nothing has moved in the last month.",
+};
+let movingWindow="since_last";
+let movingVisitCutoff=0;  // ms epoch snapshot of cascade_moving_lastvisit, taken at open — see openMovingScreen
+// A row's `date` is either a realAlerts emailed_at timestamp or a firstFound day string — both parse with
+// Date.parse. "since_last" compares against the cutoff captured when this visit opened; the other four are
+// rolling windows measured from now, per CHANGE 2.
+function movingInWindow(dateStr, windowKey, cutoffMs){
+  const t=dateStr && Date.parse(dateStr);
+  if(!t || isNaN(t)) return false;
+  if(windowKey==="since_last") return t>cutoffMs;
+  const days=MOVING_WINDOW_DAYS[windowKey];
+  return days!=null && t>Date.now()-days*864e5;
+}
 function movingData(){
-  const canFilmIds=Object.keys(notify).filter(id=>watchIsCurrent(Number(id)) && !watched.has(Number(id)));
-  const canSet=new Set(canFilmIds);
-  const canRows=canFilmIds.map(id=>{
-    const m=MOVIES.find(x=>String(x.tmdb_id)===id);
-    if(!m) return null;
-    const agents=cascades.filter(c=>listedBy(m,c));
-    return {filmId:id, m, groupKey:"can_watch", chip:"CAN WATCH", reason:movingCanWatchReason(m.tmdb_id), agentNames:agents.map(c=>c.name)};
-  }).filter(Boolean);
-
-  const byFilm=new Map();
-  // realAlerts is loaded newest-first (loadRealAlerts orders by emailed_at descending), so the first entry
-  // seen per film is the most recent — exactly the one whose moment should describe the row.
-  realAlerts.forEach(a=>{
-    const fid=String(a.movie_id);
-    if(canSet.has(fid)) return;
-    if(watched.has(Number(fid))) return;   // CHANGE 4: dealt with, never shown as having moved
-    const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
-    if(!m) return;
-    let g=byFilm.get(fid);
-    if(!g){
-      const isChange=Object.prototype.hasOwnProperty.call(REAL_MOMENT_SAID,a.moment);
-      g={filmId:fid, m, groupKey:isChange?"availability_changed":"new_agents",
-         chip:isChange?(MOVING_CHANGE_CHIP[a.moment]||"NEW"):"NEW",
-         reason:REAL_MOMENT_SAID[a.moment]||a.moment, agentNames:[]};
-      byFilm.set(fid,g);
-    }
-    const nm=a.cascade_name||"Your agent";
-    if(!g.agentNames.includes(nm)) g.agentNames.push(nm);
-  });
-  const newRows=[...byFilm.values()].filter(g=>g.groupKey==="new_agents");
-  const changedRows=[...byFilm.values()].filter(g=>g.groupKey==="availability_changed");
-
+  const guest=!(window.CascadePersistence && window.CascadePersistence.accountActive());
+  const canRows=[], newRows=[], changedRows=[];
+  if(guest){
+    // INDICATIVE (CHANGE 1): firstFound only ever says "this film is newly found" — it carries no notion
+    // of a level being reached or lost — so a guest device gets a real NEW TO YOUR AGENTS group and
+    // nothing else. Never fabricate a CAN WATCH NOW/AVAILABILITY CHANGED date for a guest; there isn't one.
+    Object.keys(firstFound).forEach(fid=>{
+      if(watched.has(Number(fid))) return;
+      const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
+      if(!m) return;
+      const agents=cascades.filter(c=>listedBy(m,c));
+      newRows.push({filmId:fid, m, groupKey:"new_agents", chip:"NEW",
+        reason:"New to your agents", agentNames:agents.map(c=>c.name), date:firstFound[fid]});
+    });
+  }else{
+    const byFilm=new Map();
+    // realAlerts is loaded newest-first (loadRealAlerts orders by emailed_at descending), so the first
+    // entry seen per film is the most recent — exactly the one whose moment/date should describe the row.
+    realAlerts.forEach(a=>{
+      const fid=String(a.movie_id);
+      if(watched.has(Number(fid))) return;   // CHANGE 4: dealt with, never shown as having moved
+      const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
+      if(!m) return;
+      let g=byFilm.get(fid);
+      if(!g){
+        const isChange=Object.prototype.hasOwnProperty.call(REAL_MOMENT_SAID,a.moment);
+        // CHANGE 1: CAN WATCH NOW's row is the ledger entry recording the notify being met — an isChange
+        // moment for a film that is still, right now, sitting in a level you ticked. The same kind of
+        // moment for a film no longer in that state is AVAILABILITY CHANGED instead; group membership is
+        // unchanged from before CAS-650, only the row's date now comes from this ledger entry.
+        const canWatch=isChange && watchIsCurrent(Number(fid));
+        g={filmId:fid, m, groupKey:canWatch?"can_watch":(isChange?"availability_changed":"new_agents"),
+           chip:canWatch?"CAN WATCH":(isChange?(MOVING_CHANGE_CHIP[a.moment]||"NEW"):"NEW"),
+           reason:canWatch?movingCanWatchReason(m.tmdb_id):(REAL_MOMENT_SAID[a.moment]||a.moment),
+           agentNames:[], date:a.emailed_at};
+        byFilm.set(fid,g);
+      }
+      const nm=a.cascade_name||"Your agent";
+      if(!g.agentNames.includes(nm)) g.agentNames.push(nm);
+    });
+    byFilm.forEach(g=>{
+      if(g.groupKey==="can_watch") canRows.push(g);
+      else if(g.groupKey==="availability_changed") changedRows.push(g);
+      else newRows.push(g);
+    });
+  }
   const byScoreDesc=(a,b)=>qScore(b.m)-qScore(a.m);
   canRows.sort(byScoreDesc);
   newRows.sort(byScoreDesc);
@@ -14499,33 +14558,49 @@ function movingRowHTML(row){
   const card=taggedOut(m) ? stubHTML(m) : cardHTML(m, false, {hideDismiss:true});
   return `<div class="mvitem">${why}${card}</div>`;
 }
-// CHANGE 1: renders, and marks seen, only the rows actually drawn this pass — a row absent from `shown`
-// (already seen) is left untouched in cascade_moving_seen, and a row present is upserted, so a visit that
-// only ever shows what's still unseen can never mark something it didn't paint.
+// CHANGE 3: movingSeen no longer decides whether a row renders — every row inside the selected window
+// shows, full stop (the render-time filter CAS-644 added is gone). It is still upserted here so
+// movingUnseenCount() (the chip badge — the only thing movingSeen is for now) can tell what has been shown.
 function renderMovingScreen(){
   const {canRows, newRows, changedRows}=movingData();
-  const isUnseen=r=>movingSeen[r.filmId]!==r.groupKey;
-  const shownCan=canRows.filter(isUnseen);
-  const shownNew=newRows.filter(isUnseen);
-  const shownChanged=changedRows.filter(isUnseen);
+  const inWindow=r=>movingInWindow(r.date, movingWindow, movingVisitCutoff);
+  const shownCan=canRows.filter(inWindow);
+  const shownNew=newRows.filter(inWindow);
+  const shownChanged=changedRows.filter(inWindow);
   [...shownCan, ...shownNew, ...shownChanged].forEach(r=>{ movingSeen[r.filmId]=r.groupKey; });
   saveMovingSeen();
   updateMovingBadge();
+  // CHANGE 4: the ledger fetch itself (not any one group) is what's capped at 200 — if this window's raw
+  // entries reach that cap, older matches may have been cut off by the fetch rather than by the window, so
+  // every group shown this pass states it instead of hiding it.
+  const ledgerTruncated = realAlerts.length>=200
+    && realAlerts.filter(a=>movingInWindow(a.emailed_at, movingWindow, movingVisitCutoff)).length>=200;
   const groups=[
     {title:"Can watch now", rows:shownCan},
     {title:"New to your agents", rows:shownNew},
     {title:"Availability changed", rows:shownChanged},
   ].filter(g=>g.rows.length);
-  const head=`<h2 class="osh">Moving</h2><p class="ossub">What changed since you last looked. Same events as your alerts.</p>`;
+  const chipsHTML=MOVING_WINDOWS.map(w=>
+    `<button type="button" class="chip gen${movingWindow===w.key?" on":""}" aria-pressed="${movingWindow===w.key}" onclick="setMovingWindow('${w.key}')">${esc(w.label)}</button>`
+  ).join("");
+  const head=`<h2 class="osh">Moving</h2><p class="ossub">What changed since you last looked. Same events as your alerts.</p>
+    <div class="mvwindows">${chipsHTML}</div>`;
   $("movingBody").innerHTML = groups.length
     ? head + groups.map(g=>`
-      <div class="grouphead"><span>${esc(g.title)}</span><span class="gcount">${g.rows.length}</span></div>
+      <div class="grouphead"><span>${esc(g.title)}${ledgerTruncated?" (showing the most recent 200)":""}</span><span class="gcount">${g.rows.length}</span></div>
       <div class="mvlist">${g.rows.map(movingRowHTML).join("")}</div>`).join("")
     : `${head}<div class="mvempty">
-      <p class="mvemptymain">Nothing has moved since you last looked.</p>
+      <p class="mvemptymain">${esc(MOVING_EMPTY_COPY[movingWindow])}</p>
       <p class="mvemptysub">Your agents are still watching. You'll see it here first.</p>
     </div>`;
 }
+// CAS-650: switching the window re-renders in place. It never touches cascade_moving_lastvisit, which is
+// stamped once per visit (see openMovingScreen), not once per chip tap.
+window.setMovingWindow=(key)=>{
+  if(!MOVING_WINDOWS.some(w=>w.key===key) || movingWindow===key) return;
+  movingWindow=key;
+  renderMovingScreen();
+};
 window.openAgentsScreen=()=>{
   // CAS-534: reached from the top-right menu's "Manage Agents" now, not the header's Agents chip — that chip
   // is the deck+movie-list home view's mode switch and stays lit throughout (this screen is a layer on top of
@@ -14547,10 +14622,16 @@ window.closeAgentsScreen=()=>{
 // CAS-636: Moving — the alert feed made visible. Same open/close shape as Agents (mutually exclusive with
 // Your Movies/Agents), plus its own render + seen-state pass (renderMovingScreen marks every row it shows
 // as seen and refreshes the badge, per cascade_moving_seen — see that function for the mechanism).
+// CAS-650: every visit opens on the "since_last" window (never persisted), and the previous
+// cascade_moving_lastvisit is captured into movingVisitCutoff BEFORE the new one is written, so this
+// visit's own rows are judged against where the LAST visit left off, not against themselves.
 window.openMovingScreen=()=>{
   if($("yourMovies").classList.contains("open")) closeYourMovies();
   if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
+  movingWindow="since_last";
+  movingVisitCutoff=loadMovingLastVisit();
   renderMovingScreen();
+  saveMovingLastVisit();
   $("movingScreen").scrollTop=0;
   $("movingScreen").classList.add("open"); document.body.style.overflow="hidden";
   $("movingBtn").classList.add("active"); $("movingBtn").setAttribute("aria-pressed","true");
@@ -17966,12 +18047,13 @@ else if(dedupedN)
   }
 
   // The bell's real contents. Newest first, and capped: a list nobody can reach the bottom of is
-  // not a list, it is a wall.
+  // not a list, it is a wall. CAS-650: raised 50->200 so Moving's Month window isn't silently truncated
+  // at fifty rows — see renderMovingScreen's ledgerTruncated for how the cap is surfaced when it's hit.
   async function loadRealAlerts(){
     const c=client(); if(!c||!accountActive()){ realAlerts=[]; updateBadge(); return; }
     const { data, error } = await c.from("notifications")
       .select("id,movie_id,moment,title,cascade_name,emailed_at,read_at")
-      .order("emailed_at", { ascending:false }).limit(50);
+      .order("emailed_at", { ascending:false }).limit(200);
     if(error){ console.warn("notifications load", error); return; }
     realAlerts = data || [];
     updateBadge();
