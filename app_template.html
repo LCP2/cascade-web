@@ -406,6 +406,10 @@
      either side of every card, which is a poster's worth of width spent on air. 5px keeps the cards from
      touching the frame and hands the rest to the tombstone. */
   .list{padding:0 5px}
+  /* CAS-627 C2: the "show all N" affordance a depth-capped section grows at its foot. */
+  .obshowall{display:block;width:calc(100% - 10px);margin:6px 5px 4px;padding:10px;border:1px dashed var(--line);
+    border-radius:10px;background:transparent;color:var(--dim);font-family:inherit;font-size:12px;font-weight:700;
+    cursor:pointer}
   /* CAS-373: brighter than --line (adjacent cards read as one continuous panel otherwise) but still subtle
      — no glow, no shadow, just a border a shade past the page's own hairlines. */
   .card{background:var(--panel);border:1px solid rgba(255,255,255,.22);border-radius:16px;margin-bottom:11px;overflow:hidden;
@@ -12549,6 +12553,73 @@ const SHARP_STEPS = {
       if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, null, `<b>${agents.length}</b> AGENTS ON THE JOB`));
     },
   },
+  // ---- CAS-627 Onboarding S2: standing orders, and the listing depth --------------------------------
+  // Step 3 of the new A→B→C→D→E briefing sequence. Two briefs that apply to every agent already on the
+  // roster: how selective they are (onbDepthFor, read by the Find listing — see render()'s onbDepth
+  // handling) and what they must never bring back (written into every agent's own `exclude`, same field
+  // buildOnbAgents already merges `ans.never` into). Preview-only (`?step=briefing2`) until CAS-629 cuts
+  // FLOWS over.
+  briefing2: {
+    noAgent: true,
+    body(){
+      return `<div class="obwrap">
+  <h2 class="obhd">Standing orders</h2>
+  <p class="obsub">Every agent works to these.</p>
+
+  <p class="obq">When you sit down to watch</p>
+  <div class="chips" id="obDepth"></div>
+  <p class="obhint">One selectivity value they all inherit. Change it any time from Preferences.</p>
+
+  <p class="obq">Anything they should never bring you?</p>
+  <div class="chips" id="obNever"></div>
+</div>`;
+    },
+    wire(){
+      if(!onbFlow.answers) onbFlow.answers = onbAnswersDefault();
+      const ans = onbFlow.answers;
+      const obChip = (label, on, onTap) => {
+        const b=document.createElement("button");
+        b.type="button";
+        b.className="chip gen"+(on?" on":"");
+        b.textContent=label;
+        b.setAttribute("aria-pressed", String(on));
+        b.onclick=onTap;
+        return b;
+      };
+      const depth=$("obDepth");
+      if(depth){
+        depth.innerHTML="";
+        [["show me the absolute best only","best"],["give me a wide selection","wide"]].forEach(([label,val])=>{
+          depth.appendChild(obChip(label, ans.depth===val, ()=>{
+            ans.depth=val; renderOnbStep("briefing2");
+          }));
+        });
+      }
+      // Only a value ALL_GENRES actually carries is offered — same rule buildOnbAgents already applies
+      // to the together-tastes screen's genre picks (line ~10372).
+      const never=$("obNever");
+      if(never){
+        never.innerHTML="";
+        [["horror","Horror"],["musicals","Music"],["anime","Animation"],["rom-com","Romance"]]
+          .filter(([,g])=>ALL_GENRES.includes(g))
+          .forEach(([label,val])=>{
+            never.appendChild(obChip(label, ans.never.includes(val), ()=>{
+              const i=ans.never.indexOf(val);
+              i<0 ? ans.never.push(val) : ans.never.splice(i,1);
+              renderOnbStep("briefing2");
+            }));
+          });
+        never.appendChild(obChip("nothing", ans.never.length===0, ()=>{
+          ans.never = [];
+          renderOnbStep("briefing2");
+        }));
+      }
+      // The strip is not part of the EXACT body markup above — it lives outside it, same as briefing1.
+      const agents = buildOnbAgents(ans);
+      const wrap = document.querySelector("#onbStepInner .obwrap");
+      if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, null, `ALL <b>${agents.length}</b> TAKE THIS BRIEF`));
+    },
+  },
   // ---- CAS-188 #1: what are you here for? -----------------------------------------------------------
   // The one question that has to come first, because it is the only one that changes what the rest of the
   // flow asks. It is a starting point, not a commitment — said out loud on the screen, because a fork this
@@ -15366,6 +15437,11 @@ function fillListChunked(listEl, items, gen, freshFn, onDone){
   };
   step();
 }
+// CAS-627 C2: which depth-capped sections have had their cap lifted, keyed "<cascadeId>::<group>".
+// Session-only (a plain module Set, never saved) — reopening the app or switching agents starts capped
+// again, same as every other "for that session" affordance in this app.
+const onbCapLifted = new Set();
+window.onbLiftCap = (cid, g) => { onbCapLifted.add(cid+"::"+g); render(); };
 function render(){
   renderGen++;   // CAS-129: supersede any card-fill still streaming from a previous render
   const myGen=renderGen;   // CAS-421: only THIS render may lift the blur it didn't set
@@ -15424,16 +15500,35 @@ function render(){
   const ac=activeCascade();
   // CAS-421: the groups this pass will actually render, decided up front — so `pending` starts at its
   // final count before any fillListChunked can call back and never dips to zero between groups.
+  // CAS-627 C2: an agent onboarding generated (c.onbCap !== undefined) carries a listing depth — a
+  // Cascade-score floor plus a per-section cap, both read off onbDepthFor(ac). The floor drops
+  // unscorable/low-scoring titles from every section outright; the cap only trims how many of the
+  // survivors are shown, and onbCapLifted (session-only, never persisted) tracks which sections have
+  // had that cap lifted by their own "show all" button — one lift per agent+section, not global.
+  const onbDepth = (ac && ac.onbCap!==undefined) ? onbDepthFor(ac) : null;
   const groups=orderFor(ac)      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
-    .map(g=>({g, items:rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g,ac))}))
+    .map(g=>{
+      let items=rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g,ac));
+      let fullCount=items.length, capped=false;
+      if(onbDepth){
+        items=items.filter(m=>{ const q=qScore(m); return q!==-1 && q>=onbDepth.floor; });
+        fullCount=items.length;
+        if(fullCount>onbDepth.cap && !onbCapLifted.has(ac.id+"::"+g)){
+          items=items.slice(0, onbDepth.cap);
+          capped=true;
+        }
+      }
+      return {g, items, fullCount, capped};
+    })
     .filter(x=>x.items.length);
   let pending=groups.length;
   const oneListDone=()=>{ if(--pending<=0) listReady(); };
-  groups.forEach(({g,items})=>{
+  groups.forEach(({g,items,fullCount,capped})=>{
     const live=items.filter(m=>!taggedOut(m)).length;
     const grp=document.createElement("div"); grp.className="group"; grp.dataset.g=g;
     grp.innerHTML=`<div class="grouphead"><span class="gdot ${g}"></span>${STATUS_LABEL[g]}
-      <span class="gcount">${live}</span></div><div class="list"></div>`;
+      <span class="gcount">${live}</span></div><div class="list"></div>
+      ${capped ? `<button class="obshowall" type="button" onclick="onbLiftCap('${ac.id}','${g}')">Show all ${fullCount}</button>` : ""}`;
     wrap.appendChild(grp);
     fillListChunked(grp.querySelector(".list"), items, renderGen, isFresh, oneListDone);
   });
