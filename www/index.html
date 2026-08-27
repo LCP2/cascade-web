@@ -4919,7 +4919,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 816, "commit": "4fa01ab", "builtAt": "2026-08-27T08:31:51Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 817, "commit": "5370405", "builtAt": "2026-08-27T08:35:25Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6383,7 +6383,6 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
         ${notifyChipHTML(id)}
         ${listsChipHTML(id)}
         ${watchChipHTML(id)}
-        ${hideDismiss?"":dismissChipHTML(id)}
       </div>
     </div>
     <!-- CAS-436: the detail section (awards/director/cast/trailers/share) opens BELOW the control row, not
@@ -6687,20 +6686,6 @@ function listsChipHTML(id){
       <span class="cic">${ICON.deck}</span>
       <span class="clab${here.length?"":" dim"}">${esc(lbl)}</span>
       <span class="ctog">${ICON.chev}</span></span></button>`;
-}
-// CAS-635 N3c: the per-list dismiss — a single tap, no popover. Its label names the single selected agent,
-// or "this list" once more than one is active (same one-vs-many split attributionHTML already reads off
-// activeIds.length).
-function dismissLabel(){
-  const acs=activeCascades();
-  return acs.length>1 ? "this list" : (acs[0] ? acs[0].name : "this list");
-}
-function dismissChipHTML(id){
-  const label=dismissLabel();
-  const title=`Not for ${label}`;
-  return `<button type="button" class="ctl dismiss" onclick="dismissFilmFromList(${id})"
-      title="${escA(title)}" aria-label="${escA(title)}">
-    <span class="cmini"><span class="cic">✕</span><span class="clab">${esc(title)}</span></span></button>`;
 }
 // The panel's rows: one per List (a true multi-select, hence the square .wwb.sq tick — see the CAS-382 CSS
 // comment on that class), plus an always-present "＋ New list" row at the foot.
@@ -16482,21 +16467,6 @@ window.setOpinion=(id,kind)=>{
   // FIRST — so the toast reports what actually happened, not what we assumed. The repaint runs inside
   // keepRowInPlace so the card folds (or unfolds, on the tap that clears it) exactly where you tapped it.
   keepRowInPlace(id, ()=>repaintAfterOpinion(id));   // CAS-129: swap only the tapped row, not the whole list
-};
-// CAS-635 N3c: per-list dismiss. Applies to every currently active agent (not just the first) — a
-// multi-select listing is a union of their lists, so dropping the film from all of them is what makes it
-// actually leave the listing rather than resurface via whichever active agent didn't get the tag.
-window.dismissFilmFromList=id=>{
-  const acs=activeCascades(); if(!acs.length) return;
-  acs.forEach(c=>{
-    const tag=findOrCreateTag(`Not for ${c.name}`); if(!tag) return;
-    addFilmToList(id, tag.id);
-    c.excludeTags = Array.isArray(c.excludeTags) ? c.excludeTags : [];
-    if(!c.excludeTags.includes(tag.id)) c.excludeTags.push(tag.id);
-  });
-  saveCascades();
-  logEvent("film_dismissed_from_list",{agents:acs.length});
-  keepRowInPlace(id, ()=>render());   // CAS-129: the existing removal animation
 };
 // CAS-287: the toast that used to fire here is gone, and opinionToast with it. It was the worst offender the
 // ticket describes: answering a run of films is the single most repeated gesture in the app, and every answer
