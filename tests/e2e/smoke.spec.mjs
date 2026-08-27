@@ -107,6 +107,31 @@ test("opening Notify, Tags or Watched leaves the card rendered and scroll unmove
   }
 });
 
+// CAS-649: CAS-644 made Moving the landing screen and dropped its back control, but #movingScreen wasn't
+// added to the rule that pulls #agentsScreen/#yourMovies down below the sticky header — it rendered at
+// inset:0, z-index:84, covering the header (z-index:30). A returning visitor landed on a screen with no
+// navigation and no way out. This checks the actual failure mode: the header and its three chips are there
+// and working the moment a cold load lands on Moving, not just that #movingScreen itself opened.
+test("a cold load with onboarding seen shows the header, not just Moving", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  await page.reload();
+  await expect(page.locator("#movingScreen")).toHaveClass(/open/);
+  await expect(page.locator("header")).toBeVisible();
+  await expect(page.locator("#agentsBtn")).toBeVisible();
+  await expect(page.locator("#moviesBtn")).toBeVisible();
+  await expect(page.locator("#movingBtn")).toBeVisible();
+
+  await page.locator("#moviesBtn").click();
+  await expect(page.locator("#movingScreen")).not.toHaveClass(/open/);
+  await expect(page.locator("#groups .card").first()).toBeVisible();
+
+  await page.locator("#agentsBtn").click();
+  await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
+});
+
 test("'Only show films on my services' changes what a new agent finds", async ({ page }) => {
   // Every window a streaming agent lists (Premium/Rent/Streaming) is service-scoped, so switching the
   // filter on with no services named must drop the count — this exercises the real mechanism the switch
