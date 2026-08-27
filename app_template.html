@@ -2716,6 +2716,10 @@
      NOT solved by raising the header: the five .uscreens that DO cover it (Account, Lists, About, Review,
      Service analysis) share the same z-index:84, so any header above 84 paints over them too. */
   #agentsScreen, #yourMovies{top:var(--hdrh,0px); z-index:29}
+  /* CAS-A1: Agents is a main destination and its list is short — a track down the right edge is
+     chrome the screen does not earn. It still scrolls; only the indicator goes. */
+  #agentsScreen{scrollbar-width:none;-ms-overflow-style:none}
+  #agentsScreen::-webkit-scrollbar{width:0;height:0;display:none}
   /* CAS-567: .uwrap's calc(22px + env(safe-area-inset-top)) clearance is written for the .uscreens that
      cover the header at top:0. #yourMovies is not one of them — it starts at var(--hdrh), so the header has
      already spent the notch inset and this padding double-counts it: 22px in a desktop harness, 22px + the
@@ -3247,6 +3251,24 @@
         <div class="updated" id="updated"></div>
       </div>
       <div class="hdr-actions">
+        <!-- Agents (was the Find chip; repurposed CAS-616, v0.9.5). The id stays #agentsBtn because six CSS
+             rules and the open/close pair below already key off it, and the name is now literally right: this
+             chip opens the Agents management/reorder screen, which used to live in the menu. It is NOT lit by
+             default any more — nothing in the bar is, while the Find listing is showing, because Find is no
+             longer one of the bar's destinations. The mark is a deck of agent cards.
+             CAS-638: Agents is now the FIRST chip in the row — it's a main nav destination, not a screen you
+             arrive at from somewhere else. -->
+        <div class="modechip" id="agentsBtn" title="Agents" role="button" tabindex="0"
+             aria-pressed="false" aria-label="Agents" onclick="openAgentsScreen()">
+          <svg class="mcicon" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <rect class="s" x="3.2" y="6.6" width="12" height="12.8" rx="2.6" stroke-width="1.8"/>
+            <rect class="g" x="7.6" y="4.6" width="12" height="12.8" rx="2.6"/>
+            <rect class="s" x="7.6" y="4.6" width="12" height="12.8" rx="2.6" stroke-width="1.8"/>
+            <circle class="f" cx="13.6" cy="11" r="2"/>
+          </svg>
+          <span class="mclabel mclabel-full">Agents</span>
+          <span class="mclabel mclabel-short">Agents</span>
+        </div>
         <!-- Watch (CAS-183, resized/reiconed CAS-530, relabelled CAS-564, redrawn CAS-571): everything you've
              said about a film, and how your services cover it. A SOLID bookmark with the play triangle masked
              OUT of it — rose-gradient at rest, flat white on the selected chip, and the notch transparent in
@@ -3277,22 +3299,6 @@
           <span class="mclabel mclabel-full">Moving</span>
           <span class="mclabel mclabel-short">Moving</span>
           <span class="mcbadge" id="movingBadge" style="display:none">0</span>
-        </div>
-        <!-- Agents (was the Find chip; repurposed CAS-616, v0.9.5). The id stays #agentsBtn because six CSS
-             rules and the open/close pair below already key off it, and the name is now literally right: this
-             chip opens the Agents management/reorder screen, which used to live in the menu. It is NOT lit by
-             default any more — nothing in the bar is, while the Find listing is showing, because Find is no
-             longer one of the bar's destinations. The mark is a deck of agent cards. -->
-        <div class="modechip" id="agentsBtn" title="Agents" role="button" tabindex="0"
-             aria-pressed="false" aria-label="Agents" onclick="openAgentsScreen()">
-          <svg class="mcicon" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <rect class="s" x="3.2" y="6.6" width="12" height="12.8" rx="2.6" stroke-width="1.8"/>
-            <rect class="g" x="7.6" y="4.6" width="12" height="12.8" rx="2.6"/>
-            <rect class="s" x="7.6" y="4.6" width="12" height="12.8" rx="2.6" stroke-width="1.8"/>
-            <circle class="f" cx="13.6" cy="11" r="2"/>
-          </svg>
-          <span class="mclabel mclabel-full">Agents</span>
-          <span class="mclabel mclabel-short">Agents</span>
         </div>
         <!-- Top menu (CAS-345, +Notifications CAS-530, +Manage Agents CAS-534, reordered CAS-551, Agent
              Preferences split CAS-562): the account/about surfaces — Languages, Where & when you'll watch,
@@ -3799,7 +3805,8 @@
 </div>
 
 <!-- AGENTS (CAS-424): every agent in one place — type, a summary of its selections, its film count, and
-     drag-to-reorder (top of the list = leftmost in the carousel). Body rendered by renderAgentsScreen(). -->
+     Edit. CAS-638: this is now a main nav destination, so it lost drag-to-reorder (c.order still sets deck
+     order, it just isn't editable here any more) and its back control. Body rendered by renderAgentsScreen(). -->
 <div class="uscreen" id="agentsScreen" role="dialog" aria-modal="true" aria-label="Agents">
   <div class="uwrap" id="agentsBody"></div>
 </div>
@@ -14302,8 +14309,6 @@ function renderAgentsScreen(){
     const shown=listedCount(c);
     return `
     <div class="agrow agent-${c.kind==="stream"?"str":"cin"}" data-id="${escA(c.id)}">
-      <span class="aggrip" data-role="grip" role="button" tabindex="0"
-            aria-label="Reorder ${escA(c.name)}. Use the arrow keys or drag to move it." title="Drag to reorder">☰</span>
       <span class="agbody">
         <span class="agtop">
           <span class="agicon" aria-hidden="true">${c.icon}</span>
@@ -14322,15 +14327,23 @@ function renderAgentsScreen(){
     </div>`;
   }).join("");
   $("agentsBody").innerHTML=`
-    <div class="ostop"><button class="osback" type="button" onclick="closeAgentsScreen()" aria-label="Back">←</button></div>
     <div class="agshdr"><h2 class="osh">Agents</h2><span class="agscount">${n} agent${n===1?"":"s"}</span></div>
-    <p class="ossub">Drag to reorder. The order here is the order across the top of the app — the top agent
-      is the leftmost in your deck.</p>
-    ${n>1 ? `<div class="agkey"><span>Leftmost</span><span>Rightmost</span></div>` : ""}
+    <p class="ossub">Every agent you have, and what each one is set to look for.</p>
     <div class="aglist" id="agList" role="list" aria-label="Your agents, in deck order">
       ${rows || `<p class="unone">No agents yet.</p>`}
     </div>`;
-  wireAgentsDrag();
+  wireAgentsOpen();
+}
+// CAS-638: the grip/drag wiring wireAgentsDrag used to provide is gone from this screen (reorder moved off
+// it — c.order stays the deck's sort key, it just stops being editable here), but tapping a row still has to
+// open it, same as before. This is that leftover half of wireAgentsDrag's click delegation, on its own.
+function wireAgentsOpen(){
+  const list=$("agList"); if(!list) return;
+  list.addEventListener("click", e=>{
+    if(e.target.closest(".ag-learn,.ag-edit")) return;
+    const row=e.target.closest(".agrow"); if(!row) return;
+    openAgentRow(row.dataset.id);
+  });
 }
 // ================= CAS-636: Moving — the alert feed made visible =================
 // Every row corresponds to an in-app/email notification: CAN WATCH NOW reuses watchIsCurrent(id), the exact
@@ -14480,8 +14493,9 @@ function syncWatchChip(){
   $("moviesBtn").classList.toggle("active", !document.querySelector(".uscreen.open"));
 }
 // CAS-501: the row's own central area (icon/name/summary/count) opens the agent, exactly like selecting its
-// deck card does. Delegated at the list in wireAgentsDrag(), and the grip/Learning-chip/Edit button opt out
-// of it — a drag or a press on any of those must never be read as a row tap.
+// deck card does. Delegated at the list in wireAgentsOpen() (CAS-638: was wireAgentsDrag() before reorder
+// left this screen), and the Learning-chip/Edit button opt out of it — a press on either must never be read
+// as a row tap.
 function openAgentRow(id){ closeAgentsScreen(); openCascade(id); }
 window.editAgentRow=id=>{ closeAgentsScreen(); briefOpen(id); };
 // CAS-636: tapping an agent name on a Moving row lands on Watch with that agent selected — same idiom as
