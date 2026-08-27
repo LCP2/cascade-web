@@ -1074,20 +1074,17 @@
   .mlchip{display:inline-block;background:rgba(124,92,255,.16);border:1px solid #4c4270;color:#cfc2ff;
     border-radius:20px;padding:1px 7px;font-size:10px;font-weight:700;margin-right:4px}
   .mlacts{display:flex;flex-direction:column;gap:5px;flex-shrink:0}
-  /* ---- Moving (CAS-636) — same row language as My List above (.mlrow/.mlposter), plus a state pill (the
-     card's own .pill component, reused verbatim) and a Cascade score. ---- */
+  /* ---- Moving (CAS-644) — a change feed: each item is the change line (.mvwhy) that says what happened,
+     above the SAME card the Watch listing renders for that film (.mvitem wraps card, not a bespoke row). ---- */
   .mvlist{margin-bottom:10px}
-  .mvrow{display:flex;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;
-    padding:10px;margin-bottom:8px;cursor:pointer}
-  .mvrow:hover{filter:brightness(1.08)}
-  .mvposter{width:44px;height:66px;border-radius:7px;background:#0c0f14 center/cover no-repeat;flex-shrink:0}
-  .mvmain{flex:1;min-width:0}
-  .mvtop{display:flex;align-items:center;gap:8px}
-  .mvtitle{font-size:13px;font-weight:700;line-height:1.3;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .mvmain .pill{margin-top:5px}
-  .mvreason{font-size:11px;color:var(--dim);margin-top:5px;line-height:1.4}
-  .mvagents{margin-top:5px}
+  .mvitem{margin-bottom:8px}
+  .mvwhy{font-size:11px;color:var(--dim);line-height:1.4;padding:0 2px 6px}
+  .mvchip{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.3px;padding:3px 7px;
+    border-radius:6px;background:var(--panel2);border:1px solid var(--line);color:var(--accenttext)}
   .mlchip.mvagent{cursor:pointer}
+  .mvempty{padding:40px 16px;text-align:center}
+  .mvemptymain{font-size:14px;font-weight:700;color:var(--ink)}
+  .mvemptysub{font-size:12px;color:var(--faint);margin-top:6px}
   /* My List reuses the card's .actbtn — same three icons, same grey default, same purple ON state — and
      only overrides the box. One action wearing two different active colours in two places was exactly the
      inconsistency CAS-64 is here to kill. */
@@ -4917,7 +4914,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 812, "commit": "2ccc569", "builtAt": "2026-08-27T07:34:06Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 813, "commit": "c57a967", "builtAt": "2026-08-27T07:56:35Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6293,7 +6290,7 @@ function pickBtnHTML(id, cls=""){
 // One card, the same in both views. The provenance block that used to sit between the synopsis and the badges
 // came out in CAS-100 — who picked the film is now said by the Pick button's own state and label, in the
 // action row, instead of by a paragraph repeating it above.
-function cardHTML(m, markNew=false){
+function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   const id=m.tmdb_id;
   // CAS-110: an estimated title shows no offers and no prices — see savingsHTML.
   let offers=isEstimated(m) ? [] : dedupOffers(m.offers);
@@ -6381,7 +6378,7 @@ function cardHTML(m, markNew=false){
         ${notifyChipHTML(id)}
         ${listsChipHTML(id)}
         ${watchChipHTML(id)}
-        ${dismissChipHTML(id)}
+        ${hideDismiss?"":dismissChipHTML(id)}
       </div>
     </div>
     <!-- CAS-436: the detail section (awards/director/cast/trailers/share) opens BELOW the control row, not
@@ -14402,14 +14399,24 @@ function movingCanWatchReason(id){
   const l=key && levels.find(x=>x.key===key);
   return l ? `Reached ${l.label}` : "You can watch it now";
 }
+// CAS-644: the moment that decides NEW TO YOUR AGENTS vs AVAILABILITY CHANGED — a ledger entry whose
+// moment is one of REAL_MOMENT_SAID's own keys is a window move (the film was already an agent's, and
+// something about where you can watch it changed); anything else (starting with "announced", the film's
+// first appearance for that agent) is the weaker claim, NEW TO YOUR AGENTS. A moment we can't classify
+// falls to NEW TO YOUR AGENTS rather than being guessed into a window it may not belong to.
+const MOVING_CHANGE_CHIP = {
+  hits_cinema:"IN CINEMAS", past_opening_weekend:"IN CINEMAS",
+  hits_pvod:"NOW RENTABLE", hits_rent:"NOW RENTABLE",
+  hits_stream:"NOW STREAMING",
+};
 function movingData(){
-  const canFilmIds=Object.keys(notify).filter(id=>watchIsCurrent(Number(id)));
+  const canFilmIds=Object.keys(notify).filter(id=>watchIsCurrent(Number(id)) && !watched.has(Number(id)));
   const canSet=new Set(canFilmIds);
   const canRows=canFilmIds.map(id=>{
     const m=MOVIES.find(x=>String(x.tmdb_id)===id);
     if(!m) return null;
     const agents=cascades.filter(c=>listedBy(m,c));
-    return {filmId:id, m, groupKey:"can_watch", reason:movingCanWatchReason(m.tmdb_id), agentNames:agents.map(c=>c.name)};
+    return {filmId:id, m, groupKey:"can_watch", chip:"CAN WATCH", reason:movingCanWatchReason(m.tmdb_id), agentNames:agents.map(c=>c.name)};
   }).filter(Boolean);
 
   const byFilm=new Map();
@@ -14418,63 +14425,78 @@ function movingData(){
   realAlerts.forEach(a=>{
     const fid=String(a.movie_id);
     if(canSet.has(fid)) return;
+    if(watched.has(Number(fid))) return;   // CHANGE 4: dealt with, never shown as having moved
     const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
     if(!m) return;
     let g=byFilm.get(fid);
-    if(!g){ g={filmId:fid, m, groupKey:"new_agents", reason:REAL_MOMENT_SAID[a.moment]||a.moment, agentNames:[]}; byFilm.set(fid,g); }
+    if(!g){
+      const isChange=Object.prototype.hasOwnProperty.call(REAL_MOMENT_SAID,a.moment);
+      g={filmId:fid, m, groupKey:isChange?"availability_changed":"new_agents",
+         chip:isChange?(MOVING_CHANGE_CHIP[a.moment]||"NEW"):"NEW",
+         reason:REAL_MOMENT_SAID[a.moment]||a.moment, agentNames:[]};
+      byFilm.set(fid,g);
+    }
     const nm=a.cascade_name||"Your agent";
     if(!g.agentNames.includes(nm)) g.agentNames.push(nm);
   });
-  const newRows=[...byFilm.values()];
+  const newRows=[...byFilm.values()].filter(g=>g.groupKey==="new_agents");
+  const changedRows=[...byFilm.values()].filter(g=>g.groupKey==="availability_changed");
 
   const byScoreDesc=(a,b)=>qScore(b.m)-qScore(a.m);
   canRows.sort(byScoreDesc);
   newRows.sort(byScoreDesc);
-  return {canRows, newRows};
+  changedRows.sort(byScoreDesc);
+  return {canRows, newRows, changedRows};
 }
 function movingUnseenCount(){
-  const {canRows,newRows}=movingData();
-  return [...canRows,...newRows].filter(r=>movingSeen[r.filmId]!==r.groupKey).length;
+  const {canRows,newRows,changedRows}=movingData();
+  return [...canRows,...newRows,...changedRows].filter(r=>movingSeen[r.filmId]!==r.groupKey).length;
 }
 function updateMovingBadge(){
   const b=$("movingBadge"); if(!b) return;
   const n=movingUnseenCount();
   if(n){ b.style.display="grid"; b.textContent=n; } else b.style.display="none";
 }
+// CHANGE 3: the item is the change line above the SAME card the Watch listing renders for that film —
+// taggedOut() picks the stub exactly as Watch does, and the full card omits the "Not for this list"
+// control (Moving is not a list, so there is nothing to be not-for) but is otherwise the same card.
 function movingRowHTML(row){
-  const m=row.m, w=primaryStatus(m);
-  const poster=m.poster?`background-image:url(https://image.tmdb.org/t/p/w92${m.poster})`:"";
+  const m=row.m;
   // data-agent (not an interpolated JS string literal) so an agent name containing an apostrophe can't
   // break out of the onclick attribute the way ${escA(nm)} inside '...' would.
-  const agentsHTML=row.agentNames.map(nm=>
-    `<span class="mlchip mvagent" role="button" tabindex="0" data-agent="${escA(nm)}" onclick="event.stopPropagation();openMovingAgentEl(this)">${esc(nm)}</span>`
+  const agentsHTML=row.agentNames.map((nm,i)=>
+    `${i?", ":""}<span class="mlchip mvagent" role="button" tabindex="0" data-agent="${escA(nm)}" onclick="event.stopPropagation();openMovingAgentEl(this)">${esc(nm)}</span>`
   ).join("");
-  return `<div class="mvrow" onclick="closeMovingScreen();openFilmPage(${m.tmdb_id})">
-    <div class="mvposter" style="${poster}"></div>
-    <div class="mvmain">
-      <div class="mvtop"><span class="mvtitle">${esc(m.title)}</span>${qScoreHTML(m)}</div>
-      <span class="pill ${w}">${esc(STATUS_LABEL[w]||"")}</span>
-      <div class="mvreason">${esc(row.reason)}</div>
-      ${agentsHTML?`<div class="mvagents">${agentsHTML}</div>`:""}
-    </div>
-  </div>`;
+  const why=`<div class="mvwhy"><span class="mvchip">${esc(row.chip)}</span> · ${esc(row.reason)}${agentsHTML?` · via ${agentsHTML}`:""}</div>`;
+  const card=taggedOut(m) ? stubHTML(m) : cardHTML(m, false, {hideDismiss:true});
+  return `<div class="mvitem">${why}${card}</div>`;
 }
-// Renders and, in the same pass, marks every shown row seen (N4c: "a row is unseen until the screen has
-// been opened with it present") — rows are never removed from cascade_moving_seen once seen, only stop
-// counting toward the badge, so this is a pure upsert.
+// CHANGE 1: renders, and marks seen, only the rows actually drawn this pass — a row absent from `shown`
+// (already seen) is left untouched in cascade_moving_seen, and a row present is upserted, so a visit that
+// only ever shows what's still unseen can never mark something it didn't paint.
 function renderMovingScreen(){
-  const {canRows, newRows}=movingData();
-  [...canRows, ...newRows].forEach(r=>{ movingSeen[r.filmId]=r.groupKey; });
+  const {canRows, newRows, changedRows}=movingData();
+  const isUnseen=r=>movingSeen[r.filmId]!==r.groupKey;
+  const shownCan=canRows.filter(isUnseen);
+  const shownNew=newRows.filter(isUnseen);
+  const shownChanged=changedRows.filter(isUnseen);
+  [...shownCan, ...shownNew, ...shownChanged].forEach(r=>{ movingSeen[r.filmId]=r.groupKey; });
   saveMovingSeen();
   updateMovingBadge();
-  $("movingBody").innerHTML=`
-    <div class="ostop"><button class="osback" type="button" onclick="closeMovingScreen()" aria-label="Back">←</button></div>
-    <h2 class="osh">Moving</h2>
-    <p class="ossub">What changed since you last looked. Same events as your alerts.</p>
-    <div class="grouphead"><span>Can watch now</span><span class="gcount">${canRows.length}</span></div>
-    <div class="mvlist">${canRows.map(movingRowHTML).join("") || `<p class="unone">Nothing has reached a window you asked to be told about yet.</p>`}</div>
-    <div class="grouphead"><span>New to your agents</span><span class="gcount">${newRows.length}</span></div>
-    <div class="mvlist">${newRows.map(movingRowHTML).join("") || `<p class="unone">Nothing new since your agents' last alert.</p>`}</div>`;
+  const groups=[
+    {title:"Can watch now", rows:shownCan},
+    {title:"New to your agents", rows:shownNew},
+    {title:"Availability changed", rows:shownChanged},
+  ].filter(g=>g.rows.length);
+  const head=`<h2 class="osh">Moving</h2><p class="ossub">What changed since you last looked. Same events as your alerts.</p>`;
+  $("movingBody").innerHTML = groups.length
+    ? head + groups.map(g=>`
+      <div class="grouphead"><span>${esc(g.title)}</span><span class="gcount">${g.rows.length}</span></div>
+      <div class="mvlist">${g.rows.map(movingRowHTML).join("")}</div>`).join("")
+    : `${head}<div class="mvempty">
+      <p class="mvemptymain">Nothing has moved since you last looked.</p>
+      <p class="mvemptysub">Your agents are still watching. You'll see it here first.</p>
+    </div>`;
 }
 window.openAgentsScreen=()=>{
   // CAS-534: reached from the top-right menu's "Manage Agents" now, not the header's Agents chip — that chip
@@ -17003,6 +17025,10 @@ const openedShared = openSharedFromURL();
 // so the screen can be reviewed on its own before Lee wires the sequence.
 if(!openedShared && previewStep && openPreviewStep(previewStep, previewAgent)){/* previewing a single step */}
 else if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
+// CAS-644: Moving is where the app opens once onboarding has been seen — it is the change feed, not a
+// static listing, so it is what should greet a returning visitor. A shared link and a film link still win
+// (see below): they say what the visitor arrived for more specifically than "what changed" does.
+else if(!openedShared) openMovingScreen();
 // CAS-437: a film share link's own entry point. Opens OVER whatever the rest of boot just decided —
 // a recipient arrived to see THIS film, not to resume whoever else's session this browser was mid-boot on —
 // and its own higher z-index (85) means it wins the stack without having to touch any of the above.
