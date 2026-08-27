@@ -36,6 +36,48 @@ stop. Never commit secrets.
 >   the cause, link the tracking ticket if one already exists (file one if not), and move it back to
 >   `Ready for Dev` un-changed rather than re-pushing.
 
+## Read the ticket — BUILD MODE and the design image
+
+**The first line of a ticket's description is its BUILD MODE line.** It tells you whether
+you are applying someone else's finished work or designing the implementation yourself.
+These need opposite behaviour from you, so read it before anything else.
+
+**On pickup, check `C:\Dev\cascade-web-Images\` for `<KEY>.*`** (png/jpg/jpeg/webp — one
+image per ticket, named exactly by the ticket key). If one is there, read it. What it means
+depends on the mode. If the ticket refers to an image and none is there, do not invent one:
+stop, label it `needs-lee`, and say which key you looked for.
+
+### BUILD MODE: EXACT — the ticket carries the literal diff
+- Apply each hunk **verbatim**. Do not reinterpret, re-derive, tidy, reformat, re-indent,
+  rename or improve it, and do not "fix" something you think is wrong on the way past.
+- The image is **EVIDENCE of the result, not the specification.** Where the image and the
+  diff appear to disagree, **the diff wins.** Do not build to the picture.
+- If a hunk no longer applies — the anchor text has moved, changed, or occurs a different
+  number of times — **STOP**. Add `needs-lee`, comment which hunk failed and what you
+  actually found at the anchor, and set the ticket BLOCKED. Do not reconstruct the intent.
+- You still write anything the ticket explicitly marks as code for you to write.
+
+### BUILD MODE: INDICATIVE — the ticket describes the intended result
+- The image **IS the reference for the result** — layout, spacing, colour and copy — ahead
+  of prose describing appearance.
+- You choose the markup and CSS. You must still satisfy every acceptance criterion.
+- Prose wins on behaviour; the image wins on appearance. If they disagree on **behaviour**,
+  block with `needs-lee` rather than picking one.
+
+### Mixed tickets
+The mode line states the ticket's default. A section may override it with its own heading —
+`INDICATIVE — the worker writes this` inside an EXACT ticket, or `EXACT — apply verbatim`
+inside an INDICATIVE one. This is normal here: CSS and static markup can be handed over
+finished; new JS behaviour cannot.
+
+### No mode line
+Treat the ticket as **INDICATIVE**. But if it contains what looks like a literal diff and
+carries no `EXACT` line, that is a shaping defect, not an invitation to guess — block with
+`needs-lee` and ask.
+
+An EXACT ticket also carries the label `spec-exact`, so the mode is visible on the board.
+The **mode line is authoritative** if the two ever disagree.
+
 ## Do the work
 - Implement to the **acceptance criteria and nothing beyond**. Honour the out-of-scope list.
 - Read the Confluence **Cascade Web — Architecture & CC Build Spec** and **UX Psychology —
