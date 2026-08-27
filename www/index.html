@@ -4706,7 +4706,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 791, "commit": "e38f74f", "builtAt": "2026-08-27T01:15:15Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 795, "commit": "f2c4711", "builtAt": "2026-08-27T01:28:22Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -10153,6 +10153,163 @@ const STARTERS = [
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:0, selCritics:0, selScale:0, selBuzz:0}},
 ];
+// ================= ONBOARDING AGENT GENERATOR (CAS-A) =================================
+// The new onboarding asks about the PERSON and generates the agents. One recipe per agent
+// Cascade can create; `when` decides whether the answers call for it. Every field here is a
+// real field on the cascade object — see normCascade() — and every value was chosen against
+// the lane rule below, not invented.
+//
+// THE LANE RULE. laneCrit(c, kind) zeroes selCrowd / selCritScore / selAwards on a CINEMA
+// agent and zeroes selBuzz on a STREAM agent. A recipe must never set a dial its own lane
+// discards: the Mission screen would not show it and auto-relax could not loosen it. That is
+// why the cinema recipes carry selBuzz/selScale and the stream recipes carry selCrowd/
+// selCritScore/selAwards, and why NEITHER carries the volume answer — see onbDepth in A2.
+const ONB_AGENTS = [
+  {key:"onb_cinema", icon:"🎬", name:"Must see at the cinema", kind:"cinema",
+   when:a => a.cinema==="special" || a.cinema==="often",
+   // A cinema trip is scarce, so this list is short whatever the depth answer says. capOverride
+   // is read by onbDepthFor() and is the ONLY place a recipe overrides the account-wide depth.
+   capOverride:3,
+   crit:{status:["upcoming","opening_week","in_cinema"], selScale:0, selBuzz:1,
+         myServices:false, yearsBack:20},
+   alerts:{cinema:true, past_opening:false, announced:false, opens_soon:false,
+           pvod:false, rental:false, included_streaming:false},
+   watchWindows:{upcoming:{list:true, notify:false}, in_cinema:{list:true, notify:true}}},
+
+  {key:"onb_cinema_wide", icon:"🎟️", name:"At the cinema now", kind:"cinema",
+   when:a => a.cinema==="often",
+   // No buzz floor — this is the broad "what's on" list, and 3 years back because a film in
+   // cinemas now is recent by definition.
+   crit:{status:["in_cinema"], selScale:0, selBuzz:0, myServices:false, yearsBack:3},
+   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
+           pvod:false, rental:false, included_streaming:false},
+   watchWindows:{in_cinema:{list:true, notify:false}}},
+
+  {key:"onb_home", icon:"📼", name:"Watch at home", kind:"stream",
+   when:a => a.who.includes("me"),
+   // Cinema-grade but not trip-worthy. The crowd + critic pair is what makes this the quality lane.
+   crit:{status:["pvod","rental"], selCrowd:7.0, selCritScore:70, selAwards:0, selScale:0,
+         myServices:{pvod:false, rental:true, included_streaming:false}, yearsBack:20},
+   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
+           pvod:false, rental:true, included_streaming:false},
+   watchWindows:{rent:{list:true, notify:true}}},
+
+  {key:"onb_stream", icon:"📺", name:"Streaming tonight", kind:"stream",
+   when:a => a.who.includes("me"),
+   // Deliberately a lower bar than Watch at home — this is the everyday list.
+   crit:{status:["included_streaming"], selCrowd:6.0, selCritScore:0, selAwards:0, selScale:0,
+         myServices:{pvod:false, rental:false, included_streaming:true}, yearsBack:20},
+   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
+           pvod:false, rental:false, included_streaming:true},
+   watchWindows:{stream:{list:true, notify:true}}},
+
+  {key:"onb_partner", icon:"❤️", name:"With your partner", kind:"stream",
+   when:a => a.who.includes("partner"),
+   // Higher crowd bar than the solo streaming agent: a bad pick costs two people's evening.
+   taste:"partner",
+   crit:{status:["rental","included_streaming"], selCrowd:7.0, selCritScore:0, selAwards:0,
+         selScale:0, myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
+   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
+           pvod:false, rental:true, included_streaming:true},
+   watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
+
+  {key:"onb_family", icon:"👨‍👩‍👧", name:"Family night", kind:"stream",
+   when:a => a.who.includes("kids"),
+   taste:"kids", tasteDefault:["Family","Animation","Adventure"],
+   // The age cap is the expression the existing Family Movies preset uses. Do not re-derive it.
+   crit:{status:["rental","included_streaming"], selCrowd:6.5, selCritScore:0, selAwards:0,
+         selScale:0, extraExclude:["Horror","Crime"],
+         myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
+   ageCap:true,
+   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
+           pvod:false, rental:true, included_streaming:true},
+   watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
+
+  {key:"onb_friends", icon:"🍿", name:"Big nights in", kind:"stream",
+   when:a => a.who.includes("friends"),
+   // selScale 50e6 is the crowd-pleaser signal — the same floor Family Movies uses. Scale is the
+   // one selectivity dial that survives laneCrit on BOTH lanes.
+   crit:{status:["rental","included_streaming"], selCrowd:6.5, selCritScore:0, selAwards:0,
+         selScale:50e6, myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
+   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
+           pvod:false, rental:true, included_streaming:true},
+   watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
+
+  {key:"onb_awards", icon:"🏆", name:"Awards watch", kind:"stream",
+   when:a => a.awards==="closely" || a.awards==="big",
+   // AWARD_STOPS: 1 = "1 nom", 4 = "Winner". yearsBack 0 because an award list is explicitly
+   // all-era, and myServices false because you want to know a winner exists wherever it is.
+   crit:{status:[], selCrowd:0, selCritScore:0, selScale:0, myServices:false, yearsBack:0},
+   awardsRung:a => a.awards==="closely" ? 1 : 4,
+   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
+           pvod:true, rental:true, included_streaming:true},
+   watchWindows:{rent:{list:true, notify:true}, stream:{list:true, notify:true}}},
+];
+
+// The briefing answers, in the shape every recipe's `when` expects. This is also the shape the
+// onboarding screens write and the shape stored under ONB_ANSWERS_KEY.
+function onbAnswersDefault(){
+  return {who:["me"], cinema:"special", awards:"big", depth:"best", never:[], taste:{partner:[], kids:[]}};
+}
+
+// Build the agents from a set of answers. Returns fully normalised cascade objects, in recipe
+// order, ready for the caller to assign ids and push onto `cascades`. It does NOT save, does not
+// set ids, and does not touch the live array — that is the caller's job, so this stays testable.
+function buildOnbAgents(a){
+  const ans = {...onbAnswersDefault(), ...(a||{})};
+  ans.who = Array.isArray(ans.who) ? ans.who : [];
+  ans.never = Array.isArray(ans.never) ? ans.never : [];
+  ans.taste = ans.taste || {};
+  return ONB_AGENTS.filter(r => { try { return !!r.when(ans); } catch(e){ return false; } }).map(r => {
+    const c = {...r.crit};
+    c.template = r.key; c.icon = r.icon; c.name = r.name; c.kind = r.kind;
+    // The shared exclusion rides every agent; a recipe may add its own on top.
+    c.exclude = [...new Set([...(ans.never||[]), ...(r.crit.extraExclude||[])])];
+    delete c.extraExclude;
+    // Genre comes from the together-tastes screen where the recipe asks for it, and falls back to
+    // the recipe's own default (not to "everything") so a skipped screen still means something.
+    if(r.taste){
+      const picked = (ans.taste[r.taste]||[]).filter(g => ALL_GENRES.includes(g));
+      c.genre = picked.length ? picked : (r.tasteDefault||[]);
+    } else {
+      c.genre = [];
+    }
+    c.age = r.ageCap ? AGE_LEVELS.filter(x => !MATURE.has(x)) : [];
+    if(r.awardsRung) c.selAwards = r.awardsRung(ans);
+    c.alerts = {...ALERT_DEFAULTS, ...(r.alerts||{})};
+    c.watchWindows = JSON.parse(JSON.stringify(r.watchWindows||{}));
+    c.sort = "cascade";                       // CAS-618: the Cascade score is the default order
+    c.onbCap = r.capOverride || null;         // read by onbDepthFor(); null means follow the account
+    normCascade(c);
+    laneCrit(c, c.kind);                      // belt and braces: a recipe must not carry a dead dial
+    return c;
+  });
+}
+// The volume answer is NOT a criteria dial. Making it one would mean setting selCrowd on the
+// stream lane and selBuzz on the cinema lane — two different questions wearing one label, and
+// laneCrit would silently discard whichever was wrong for the agent. It is instead a LISTING
+// DEPTH: a Cascade-score floor (qScore, CAS-603) and a cap on how many each agent shows. That is
+// lane-agnostic, reversible from one control, and reuses a number the app already computes.
+const ONB_DEPTH = {
+  best: {cap:3,  floor:80, label:"Show me the absolute best only"},
+  wide: {cap:10, floor:70, label:"Give me a wide selection"},
+};
+const ONB_ANSWERS_KEY = "cascade_onb_answers";
+function onbAnswersLoad(){
+  try{ const raw=localStorage.getItem(ONB_ANSWERS_KEY);
+       return raw ? {...onbAnswersDefault(), ...JSON.parse(raw)} : onbAnswersDefault(); }
+  catch(e){ return onbAnswersDefault(); }
+}
+function onbAnswersSave(a){
+  try{ localStorage.setItem(ONB_ANSWERS_KEY, JSON.stringify(a)); }catch(e){}
+}
+// The depth in force for one agent: the account answer, with a recipe's own cap allowed to make
+// the list SHORTER but never longer.
+function onbDepthFor(c){
+  const d = ONB_DEPTH[(onbAnswersLoad().depth)] || ONB_DEPTH.best;
+  const cap = (c && c.onbCap) ? Math.min(c.onbCap, d.cap) : d.cap;
+  return {cap, floor:d.floor};
+}
 // One recommendation per lane, and it is the preset that answers the question they just asked rather than
 // a fixed favourite. RECOMMENDED is a badge on a card, so it has to move with the list the card is in.
 const RECOMMENDED_FOR = {cinema:"cinema", stream:"streaming"};
