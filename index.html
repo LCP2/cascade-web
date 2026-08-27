@@ -4783,7 +4783,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 802, "commit": "8543626", "builtAt": "2026-08-27T05:02:41Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 803, "commit": "f72fa9d", "builtAt": "2026-08-27T05:17:28Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -12620,6 +12620,73 @@ const SHARP_STEPS = {
       if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, null, `ALL <b>${agents.length}</b> TAKE THIS BRIEF`));
     },
   },
+  // ---- CAS-628 Onboarding S3: together tastes (conditional) --------------------------------------------
+  // Step 4 of the new A→B→C→D→E briefing sequence, and the only one that is skipped: with neither a
+  // partner nor kids on the roster (`who`, from briefing1) there is no companion agent to steer, so
+  // `stepSkipped`/flowNext walk straight past it once CAS-629 wires this key into FLOWS. Preview-only
+  // (`?step=together`) until then.
+  together: {
+    noAgent: true,
+    // Read by flowNext/flowCounted (below FLOWS) once this key is wired in — a screen with nothing to ask
+    // is neither walked nor counted.
+    skip: ans => !((ans.who||[]).includes("partner") || (ans.who||[]).includes("kids")),
+    body(){
+      const ans = onbFlow.answers || onbAnswersDefault();
+      const who = ans.who||[];
+      return `<div class="obwrap">
+  <h2 class="obhd">Watching together</h2>
+  <p class="obsub">These agents need a steer.</p>
+  <p class="obhint" style="margin:0 0 16px">Skip and they'll work it out from what you watch.</p>
+${who.includes("partner") ? `
+  <div class="obgrp">THE PARTNER AGENT</div>
+  <div class="chips" id="obTastePartner"></div>` : ""}
+${who.includes("kids") ? `
+  <div class="obgrp">THE FAMILY AGENT</div>
+  <div class="chips" id="obTasteKids"></div>` : ""}
+</div>`;
+    },
+    wire(){
+      if(!onbFlow.answers) onbFlow.answers = onbAnswersDefault();
+      const ans = onbFlow.answers;
+      const obChip = (label, on, onTap) => {
+        const b=document.createElement("button");
+        b.type="button";
+        b.className="chip gen"+(on?" on":"");
+        b.textContent=label;
+        b.setAttribute("aria-pressed", String(on));
+        b.onclick=onTap;
+        return b;
+      };
+      // One wiring for both groups: `taste` is the ans.taste sub-key this group edits, `defs` the
+      // label/genre pairs. Only a value ALL_GENRES actually carries is offered — same rule briefing2's
+      // "never" chips apply.
+      const wireGroup = (boxId, tasteKey, defs) => {
+        const box=$(boxId); if(!box) return;
+        const set = ans.taste[tasteKey] || (ans.taste[tasteKey]=[]);
+        box.innerHTML="";
+        defs.filter(([,g])=>ALL_GENRES.includes(g)).forEach(([label,g])=>{
+          box.appendChild(obChip(label, set.includes(g), ()=>{
+            const i=set.indexOf(g);
+            i<0 ? set.push(g) : set.splice(i,1);
+            renderOnbStep("together");
+          }));
+        });
+        box.appendChild(obChip("anything", set.length===0, ()=>{
+          set.length=0;
+          renderOnbStep("together");
+        }));
+      };
+      wireGroup("obTastePartner","partner",[["drama","Drama"],["thriller","Thriller"],["comedy","Comedy"],["true story","History"]]);
+      wireGroup("obTasteKids","kids",[["animation","Animation"],["adventure","Adventure"],["comedy","Comedy"],["family","Family"]]);
+      // The strip lights only the two companion agents this screen briefs — everything else (including a
+      // companion not on the roster, so absent from `agents` entirely) renders dim or isn't there at all.
+      const agents = buildOnbAgents(ans);
+      const companionKeys = ["onb_partner","onb_family"];
+      const n = agents.filter(a=>companionKeys.includes(a.template)).length;
+      const wrap = document.querySelector("#onbStepInner .obwrap");
+      if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, companionKeys, `<b>${n}</b> AGENTS TAKE THIS BRIEF`));
+    },
+  },
   // ---- CAS-188 #1: what are you here for? -----------------------------------------------------------
   // The one question that has to come first, because it is the only one that changes what the rest of the
   // flow asks. It is a starting point, not a commitment — said out loud on the screen, because a fork this
@@ -12775,7 +12842,12 @@ const SHARP_STEPS = {
   // The switch is the honest half. Naming your services does not, on its own, mean "hide everything else";
   // that is a second decision, and until it is made the count must not move.
   services: {
-    title: "My services",
+    // CAS-628 D2: reframed as S4 of the briefing sequence — "reused unchanged in behaviour" — everywhere
+    // this step is NOT the top-menu's own bare spoke (menuStepOn). The chips/toggle/count machinery below
+    // is untouched; only the heading, the ossub→obsub subline and the roster strip are new, and only in
+    // that context — body() draws its own obhd there, so the generic mirror stays empty rather than
+    // printing the heading twice. Preview-only (`?step=services`) until CAS-629 wires this key into FLOWS.
+    title(){ return menuStepOn ? "My services" : ""; },
     progress: 95,
     noAgent: true,
     // CAS-381: what the agent WATCHES stays unfiltered (matchesTaste drops myServices — CAS-132: an agent
@@ -12800,11 +12872,23 @@ const SHARP_STEPS = {
         ${total} film${total===1?"":"s"} ${mine===1?"is":"are"} on ${k===1?"it":"them"} right now.`;
     },
     body(){
+      // CAS-628: the briefing context's own opening line — which agents this screen is FOR — replaces the
+      // generic ossub everywhere except the top-menu's bare spoke. Same roster/scope rule as wire()'s strip
+      // below (an agent whose myServices carries any true key), so the number here and the strip's lit
+      // count are the same measurement.
+      const briefing = !menuStepOn;
+      const scopedCount = briefing
+        ? buildOnbAgents(onbFlow.answers||onbAnswersDefault()).filter(a=>Object.values(scopeOf(a)).some(Boolean)).length
+        : 0;
+      const head = briefing
+        ? `<h2 class="obhd">What you already pay for</h2>
+           <p class="obsub">${scopedCount} agent${scopedCount===1?"":"s"} need to know.</p>`
+        : `<p class="ossub">Which do you already pay for? Your agent uses this to tell you what a film is
+          costing you — and, if you want, to leave out what you'd have to buy.</p>`;
       // CAS-251: two sections, because renting and subscribing are two different things you pay for and a
       // person knows exactly which of each they have. Each leads with the services carrying the most of
       // THIS catalogue and hides the tail behind "more", so the screen opens at a size you can answer.
-      return `<p class="ossub">Which do you already pay for? Your agent uses this to tell you what a film is
-          costing you — and, if you want, to leave out what you'd have to buy.</p>
+      const body = `${head}
         <div class="svcsec"><div class="svcsech">My Rental Services</div>
           <div class="chips" id="onbStepStores"></div></div>
         <div class="svcsec"><div class="svcsech">My Streaming Services</div>
@@ -12819,6 +12903,9 @@ const SHARP_STEPS = {
       // single agent in view, so say() above drops the film clause there rather than quoting whichever
       // agent's draft happens to still be sitting in onbFlow (draft is only cleared by the next
       // flowStart/briefOpen, so it can be stale here). The line itself still prints, just service-count only.
+      // CAS-628: the briefing context wraps the whole thing in .obwrap, same shared skin as every other
+      // B-E screen, so wire()'s strip (a sibling, never part of this markup) can anchor off it.
+      return briefing ? `<div class="obwrap">${body}</div>` : body;
     },
     wire(){
       // Each section draws itself, so the two are the same control twice rather than two that can drift.
@@ -12877,6 +12964,14 @@ const SHARP_STEPS = {
         // until some unrelated action re-renders, same bug $("prefSwitch").onclick already avoids below.
         render();
       };
+      // CAS-628: the strip is not part of the EXACT-reused body above — it lives outside it, same as every
+      // other briefing screen, and only in the briefing context (never the top-menu's own bare spoke).
+      if(!menuStepOn){
+        const agents = buildOnbAgents(onbFlow.answers||onbAnswersDefault());
+        const scoped = agents.filter(a=>Object.values(scopeOf(a)).some(Boolean)).map(a=>a.template);
+        const wrap = document.querySelector("#onbStepInner .obwrap");
+        if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, scoped, `<b>${scoped.length}</b> AGENTS TAKE THIS BRIEF`));
+      }
     },
   },
   // ---- CAS-188 #6: keep finding ---------------------------------------------------------------------
@@ -13027,10 +13122,18 @@ const FLOWS = {
   stream: ["priority","pickagent","selectivity","name","keepfinding","notifysettings"],
 };
 const flowList    = () => FLOWS[flowKind] || FLOWS.cinema;
+// CAS-628: a step may declare `skip(ans)` to say it has nothing to ask given the briefing answers so far
+// (the `together` step, with neither a partner nor kids on the roster). flowNext/flowCounted read it off
+// the live onbFlow.answers, so a step like that is neither walked nor counted once a future ticket lists
+// it in FLOWS — this ticket adds the mechanism only; FLOWS itself is untouched.
+const stepSkipped = key => {
+  const s=SHARP_STEPS[key];
+  return !!(s && typeof s.skip==="function" && s.skip(onbFlow.answers||onbAnswersDefault()));
+};
 // CAS-339: keepfinding is walked (it's still in FLOWS, still gets a Back/Continue) but is not one of the
 // COUNTED steps the meter reports — same reason priority/pickagent aren't: it isn't a question with an
 // answer, so putting a number on it would make the header lie about how many are left.
-const flowCounted = () => flowList().slice(2).filter(k => k!=="keepfinding");
+const flowCounted = () => flowList().slice(2).filter(k => k!=="keepfinding" && !stepSkipped(k));
 // The priority answer is not a label — it seeds the windows the agent actually watches, so the choice
 // moves the count on every screen after it. pickStarter lays a saved answer for that same agent over it.
 // CAS-197: a cinema agent starts LISTING both cinema moments — the film reaching a cinema, and the film
@@ -13082,17 +13185,20 @@ function flowStop(){
   $("stepHdr").hidden=true; $("stepNav").hidden=true;
 }
 function flowNext(){
-  const list=flowList(), i=list.indexOf(onbStepKey);
+  const list=flowList(); let i=list.indexOf(onbStepKey);
   // CAS-246: a second agent made from the deck stops here. The agent is picked, which is everything the
   // Briefing needs to open on something real, and the Briefing is where the rest of it is set — so walking
   // the linear screens as well would ask the same questions twice, once in a line and once in a hub.
   if(flowNewAgent && onbStepKey==="pickagent"){ flowNewAgent=false; return briefNewAgent(); }
-  if(i>=0 && i+1<list.length) return gotoStep(list[i+1],"fwd");
+  i++;
+  while(i<list.length && stepSkipped(list[i])) i++;   // CAS-628: walk straight past a skipped step
+  if(i<list.length) return gotoStep(list[i],"fwd");
   flowOn=false; finishSharpSequence();       // past the last step → commit the agent and show its haul
 }
 function flowBack(){
-  const list=flowList(), i=list.indexOf(onbStepKey);
-  if(i>0) return gotoStep(list[i-1],"back");
+  const list=flowList(); let i=list.indexOf(onbStepKey)-1;
+  while(i>=0 && stepSkipped(list[i])) i--;   // CAS-628: symmetric with flowNext — a skipped step is never landed on
+  if(i>=0) return gotoStep(list[i],"back");
   // CAS-347: off the front of the flow. Only the actual first-run entry (splashGo/afterSignIn) has the
   // splash underneath to back out to — "+ New Cascade" (flowNewAgent) is launched from an already-open
   // deck, which is still mounted behind the overlay, so closing the flow is the whole fix. Showing the
@@ -14683,7 +14789,9 @@ function paintFlowChrome(key, step, n){
   $("stepFill").style.width = Math.round((i+1)/counted.length*100)+"%";
   $("stepProg").setAttribute("aria-valuenow", String(i+1));
   $("stepLbl").textContent = `Step ${i+1} of ${counted.length}`;
-  $("stepTitle").textContent = step.title || "";
+  // CAS-628: a step's title may be a function — services now reads menuStepOn to say "My services" only
+  // on the top-menu's bare spoke, since the briefing context draws its own obhd inside body() instead.
+  $("stepTitle").textContent = (typeof step.title==="function" ? step.title() : step.title) || "";
   const cta=$("flowCta"); if(cta) cta.textContent=stepCtaText(step, n);
 }
 function renderOnbStep(key){
@@ -14702,13 +14810,16 @@ function renderOnbStep(key){
   // straight back out of, so it carries no progress rail (there is no sequence to be N-of) and its button
   // says Done rather than Continue.
   const spoke = stepSpoke(key);
+  // CAS-628: a step's title may be a function (services: "My services" on the top-menu spoke only, since
+  // the briefing context draws its own obhd inside body() instead — see the generic mirror above).
+  const title = typeof step.title==="function" ? step.title() : step.title;
   $("onbStepInner").innerHTML = `
     ${chromed ? "" : `<div class="ostop">
       ${menuStepOn ? "" : `<button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>`}
       ${key==="briefing"
         ? `<h2 class="osh eahn">${escA(onbFlow.name || (onbFlow.draft||{}).name || "Unnamed")}</h2>
            <button class="eapenc" type="button" onclick="briefGo('name')" aria-label="Rename agent">✏️</button>`
-        : step.title ? `<h2 class="osh${step.titleClass ? " "+step.titleClass : ""}">${escA(step.title)}</h2>` : ""}
+        : title ? `<h2 class="osh${step.titleClass ? " "+step.titleClass : ""}">${escA(title)}</h2>` : ""}
       ${(last&&!spoke)?`<span class="oslast">LAST ONE</span>`:""}
     </div>
     ${(prog==null||spoke) ? "" : `<div class="osprog"><i style="width:${prog}%"></i></div>`}`}
