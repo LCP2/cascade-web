@@ -2762,9 +2762,23 @@
   .agdetail{display:flex;align-items:baseline;gap:10px;min-width:0}
   .agsum{font-size:11.5px;color:var(--dim);margin-top:0;line-height:1.4;display:-webkit-box;
     -webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;flex:1;min-width:0}
+  /* Still used by watchlistRowHTML (Manage Lists, CAS-591) — the Agents row below stopped using it (CAS-643)
+     but this is not a dead selector. */
   .agcount{flex:0 0 auto;display:flex;align-items:baseline;gap:3px;margin-left:auto;padding-left:4px}
   .agcount b{display:inline;font-size:16px;font-weight:800;color:var(--ink);line-height:1}
   .agcount span{font-size:10.5px;color:var(--dim)}
+  /* CAS-643: who-line, rate slider and health/check-state, replacing the row's old right-hand film count. */
+  .agwho{font-size:11px;color:var(--dim)}
+  .agrate{display:flex;flex-direction:column;gap:4px}
+  .agratehdr{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  .agrateval{font-size:12.5px;font-weight:700;color:var(--ink)}
+  .agratecap{font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+  .agrateslider{width:100%;accent-color:var(--dcc,var(--accent))}
+  .aghealth{font-size:11px;color:var(--dim);border-top:1px solid var(--line);padding-top:6px;margin-top:2px}
+  .agwarn{font-size:11px;color:var(--amber);border-top:1px solid var(--line);padding-top:6px;margin-top:2px;
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .ag-review{flex:0 0 auto;background:transparent;border:0;color:var(--amber);font-weight:700;
+    font-size:11px;padding:2px 4px;cursor:pointer}
   /* CAS-501: the row itself opens the agent (delegated click in wireAgentsDrag), so it gets a pressed state
      like any other tappable surface — Edit sits outside that tap zone, its own ca-btn, sized to sit clear
      of the count on narrow (iPhone) widths rather than crowd it. */
@@ -4903,7 +4917,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 811, "commit": "93cc489", "builtAt": "2026-08-27T07:23:44Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 812, "commit": "2ccc569", "builtAt": "2026-08-27T07:34:06Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8092,6 +8106,14 @@ function normCascade(c, opts){
   // never persisted (commitDraft copies a named field list), because it answers "did you choose this,
   // or did we?", and once a Cascade is saved every setting on it is a choice.
   c.alertsTouched = c.alertsTouched || {};
+  // CAS-643: the per-agent rate stop. Kept only when it's a number — rateStopOf() clamps it into
+  // RATE_STOPS' own range, so this doesn't need to reference RATE_STOPS (declared later in the
+  // file; the templates/legacy normCascade passes below run before that line, so a reference here
+  // would hit it before it's initialised).
+  c.rateStop = (typeof c.rateStop === "number") ? c.rateStop : undefined;
+  // CAS-643: who this agent is for. buildOnbAgents sets it from the recipe; an agent made by hand
+  // has none, and the row prints no who-line for it — do not invent one.
+  c.who = ["me","partner","kids","friends","everyone"].includes(c.who) ? c.who : undefined;
   return c;
 }
 const CASCADE_TEMPLATES = [
@@ -10435,6 +10457,9 @@ function buildOnbAgents(a){
     // never has to know what the user said. A recipe may supply a function or a plain number.
     c.onbCap = (typeof r.capOverride==="function") ? (r.capOverride(ans) || null)
                                                    : (r.capOverride || null);
+    // CAS-643: who the recipe is for — the row's who-line reads this straight off the agent.
+    c.who = r.key==="onb_partner" ? "partner" : r.key==="onb_family" ? "everyone"
+          : r.key==="onb_friends" ? "friends" : "me";
     normCascade(c);
     laneCrit(c, c.kind);                      // belt and braces: a recipe must not carry a dead dial
     return c;
@@ -10464,6 +10489,40 @@ const ONB_DEPTH = {
   best: {cap:3,  floor:80, label:"Show me the absolute best only"},
   wide: {cap:10, floor:70, label:"Give me a wide selection"},
 };
+// The per-agent rate. `n` is how many the agent shows — the cap, exactly, so the slider's effect
+// is visible the moment you drag it. `per` is the cadence the agent's alerts work to; it does NOT
+// change the cap (a list is a snapshot, not a period), and giving it a fuller job needs a
+// surfaced-film ledger that does not exist yet. Stored as an INDEX so no float is ever compared.
+const RATE_STOPS = [
+  {n:1, per:"month", label:"about 1 a month"},
+  {n:2, per:"month", label:"about 2 a month"},
+  {n:1, per:"week",  label:"about 1 a week"},
+  {n:2, per:"week",  label:"about 2 a week"},
+  {n:3, per:"week",  label:"about 3 a week"},
+  {n:5, per:"week",  label:"about 5 a week"},
+];
+// A new agent opens on the stop nearest the account's own answer, so onboarding still sets this
+// and the slider only ever refines it.
+const RATE_DEFAULT = () => (onbAnswersLoad().depth === "wide") ? 3 : 0;
+const rateStopOf = c => {
+  const i = (c && typeof c.rateStop === "number") ? c.rateStop : RATE_DEFAULT();
+  return RATE_STOPS[Math.max(0, Math.min(RATE_STOPS.length-1, i))];
+};
+// The newest film IN THIS LIST, in days. Deliberately not "when this agent last found something":
+// firstFound is account-wide, so that claim is not one the data can support. A dead agent is still
+// detected — if nothing new lands, the maximum stays old.
+function agentNewestDays(c){
+  let best = null;
+  MOVIES.forEach(m => {
+    if(!watchesFilm(m,c)) return;
+    const d = firstFound[m.tmdb_id];
+    if(!d) return;
+    const n = daysSince(d);
+    if(best === null || n < best) best = n;
+  });
+  return best;
+}
+const AGENT_STALE_DAYS = 21;
 const ONB_ANSWERS_KEY = "cascade_onb_answers";
 function onbAnswersLoad(){
   try{ const raw=localStorage.getItem(ONB_ANSWERS_KEY);
@@ -10477,7 +10536,10 @@ function onbAnswersSave(a){
 // the list SHORTER but never longer.
 function onbDepthFor(c){
   const d = ONB_DEPTH[(onbAnswersLoad().depth)] || ONB_DEPTH.best;
-  const cap = (c && c.onbCap) ? Math.min(c.onbCap, d.cap) : d.cap;
+  // The agent's own rate is the cap where it has one. onbCap (a recipe's scarcity override, e.g.
+  // the cinema agent) may only make the list SHORTER, never longer.
+  let cap = (c && typeof c.rateStop === "number") ? rateStopOf(c).n : d.cap;
+  if(c && c.onbCap) cap = Math.min(c.onbCap, cap);
   return {cap, floor:d.floor};
 }
 // One recommendation per lane, and it is the preset that answers the question they just asked rather than
@@ -14232,16 +14294,26 @@ function agentEraSum(c){
   if((c.year||[]).length) return c.year.slice().sort().reverse().join(", ");
   return c.yearsBack ? yearsLabel(c.yearsBack) : "";
 }
+// The row names WHERE it looks and WHAT BAR it applies, and stops. Genre, rating and era were four
+// more clauses that wrapped the line and buried the two that tell one agent from another — they are
+// all one tap away in Edit, and the health line below now carries the numbers.
 function agentRowSummary(c){
-  const bits=[agentWindowSum(c), agentBarSummary(c), agentGenreSum(c), agentAgeSum(c), agentEraSum(c)].filter(Boolean);
+  const bits=[agentWindowSum(c), agentBarSummary(c)].filter(Boolean);
   if(bits.length<2) bits.push("Nothing else narrowed");
   return bits.join(" · ");
 }
 
+// CAS-643: who-line labels, keyed on c.who. "kids" is a normCascade-valid value no recipe emits
+// today, but a label is kept for it so a hand-set value never prints "undefined".
+const WHO_LABELS = {me:"just me", partner:"me + partner", kids:"with the kids",
+                    friends:"with friends", everyone:"everyone"};
 function renderAgentsScreen(){
   const n=cascades.length;
   const rows=cascades.map(c=>{
-    const shown=listedCount(c);
+    const rs=rateStopOf(c), rsIdx=RATE_STOPS.indexOf(rs);
+    const pool=watchCount(c), cap=Math.min(onbDepthFor(c).cap, pool);
+    const newest=agentNewestDays(c);
+    const stale=(newest===null || newest>AGENT_STALE_DAYS);
     return `
     <div class="agrow agent-${c.kind==="stream"?"str":"cin"}" data-id="${escA(c.id)}">
       <span class="agbody">
@@ -14256,8 +14328,20 @@ function renderAgentsScreen(){
         </span>
         <span class="agdetail">
           <span class="agsum">${esc(agentRowSummary(c))}</span>
-          <span class="agcount"><b>${shown}</b><span>film${shown===1?"":"s"}</span></span>
         </span>
+        ${c.who ? `<span class="agwho">${esc(WHO_LABELS[c.who])}</span>` : ""}
+        <span class="agrate">
+          <span class="agratehdr">
+            <span class="agrateval">${esc(rs.label)}</span>
+            <span class="agratecap">best per period</span>
+          </span>
+          <input type="range" class="agrateslider" min="0" max="${RATE_STOPS.length-1}" step="1"
+              value="${rsIdx}" aria-label="How often ${escA(c.name)} shows films">
+        </span>
+        ${stale
+          ? `<span class="agwarn">⚠ nothing newer than 3 weeks — constraints may be too narrow
+              <button type="button" class="ag-review" onclick="editAgentRow('${escA(c.id)}')">Review →</button></span>`
+          : `<span class="aghealth">✓ showing ${cap} · pool ${pool}${newest!==null ? ` · newest ${newest}d ago` : ""}</span>`}
       </span>
     </div>`;
   }).join("");
@@ -14268,6 +14352,7 @@ function renderAgentsScreen(){
       ${rows || `<p class="unone">No agents yet.</p>`}
     </div>`;
   wireAgentsOpen();
+  wireAgentsRate();
 }
 // CAS-638: the grip/drag wiring wireAgentsDrag used to provide is gone from this screen (reorder moved off
 // it — c.order stays the deck's sort key, it just stops being editable here), but tapping a row still has to
@@ -14275,9 +14360,28 @@ function renderAgentsScreen(){
 function wireAgentsOpen(){
   const list=$("agList"); if(!list) return;
   list.addEventListener("click", e=>{
-    if(e.target.closest(".ag-learn,.ag-edit")) return;
+    if(e.target.closest(".ag-learn,.ag-edit,.agrateslider,.ag-review")) return;
     const row=e.target.closest(".agrow"); if(!row) return;
     openAgentRow(row.dataset.id);
+  });
+}
+// CAS-643: the rate slider. "input" (mid-drag) only updates its own label, so a full-row re-render
+// never yanks the slider out from under an in-progress drag; "change" (on release) is what commits
+// c.rateStop, saves, and re-renders — which is also what makes the health line/check state catch up.
+function wireAgentsRate(){
+  const list=$("agList"); if(!list) return;
+  list.addEventListener("input", e=>{
+    const sl=e.target.closest(".agrateslider"); if(!sl) return;
+    const lbl=sl.closest(".agrate").querySelector(".agrateval");
+    if(lbl) lbl.textContent = RATE_STOPS[+sl.value].label;
+  });
+  list.addEventListener("change", e=>{
+    const sl=e.target.closest(".agrateslider"); if(!sl) return;
+    const id=sl.closest(".agrow").dataset.id;
+    const c=cascades.find(x=>x.id===id); if(!c) return;
+    c.rateStop = +sl.value;
+    saveCascades();
+    renderAgentsScreen();
   });
 }
 // ================= CAS-636: Moving — the alert feed made visible =================
