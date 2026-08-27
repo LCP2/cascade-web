@@ -16339,12 +16339,16 @@ function render(){
   const ac=activeCascade();
   // CAS-421: the groups this pass will actually render, decided up front — so `pending` starts at its
   // final count before any fillListChunked can call back and never dips to zero between groups.
-  // CAS-627 C2: an agent onboarding generated (c.onbCap !== undefined) carries a listing depth — a
-  // Cascade-score floor plus a per-section cap, both read off onbDepthFor(ac). The floor drops
-  // unscorable/low-scoring titles from every section outright; the cap only trims how many of the
-  // survivors are shown, and onbCapLifted (session-only, never persisted) tracks which sections have
-  // had that cap lifted by their own "show all" button — one lift per agent+section, not global.
-  const onbDepth = (ac && ac.onbCap!==undefined) ? onbDepthFor(ac) : null;
+  // CAS-627 C2 / CAS-654: every agent carries a listing depth — a Cascade-score floor plus a
+  // per-section cap, both read off onbDepthFor(ac). The gate is the agent HAVING A RATE, not having
+  // come from onboarding: rateStopOf(c) falls back to RATE_DEFAULT() when c.rateStop is unset, so
+  // onbDepthFor applies the same way to a hand-built or pre-onboarding agent as to one the wizard
+  // made. onbCap (a recipe's scarcity override) stays inside onbDepthFor and may only shorten, never
+  // lengthen, the cap it already picked. The floor drops unscorable/low-scoring titles from every
+  // section outright; the cap only trims how many of the survivors are shown, and onbCapLifted
+  // (session-only, never persisted) tracks which sections have had that cap lifted by their own
+  // "show all" button — one lift per agent+section, not global.
+  const onbDepth = ac ? onbDepthFor(ac) : null;
   const groups=orderFor(ac)      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
     .map(g=>{
       // CAS-646: the listing's order is the ACTIVE WATCH LIST's own sort (ymSort), not the open agent's —
