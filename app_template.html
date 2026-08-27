@@ -777,6 +777,9 @@
      A figure we don't hold reads "–" (and never "$–": there is no dollar sign on a number we lack). */
   .mrow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;align-content:center;min-width:0}
   .r-money{grid-area:money} .r-scores{grid-area:scores}
+  /* CAS-624: only ever shown by the #groups.cinema-listing condensed-card override below — hidden here so
+     the expanded card (which has its own r-money/r-scores/r-badge rows) never renders it twice. */
+  .r-cinfo{display:none}
   /* CAS-373: the badge (Landmark/Anticipated/…) now sits in its own row directly under the poster, left
      column, and the awards chips share that row in the text column — column-aligned with IMDb above them.
      Awards must never wrap (the ticket's own words), so this one row trades wrap for horizontal scroll —
@@ -3045,8 +3048,16 @@
   .card:not(.expanded) .mrow.r-scores .m b{font-size:11px}
   .card:not(.expanded) .mrow.r-scores .lab{font-size:10px}
   .card:not(.expanded) .mrow.r-scores .dot{width:6px;height:6px}
+  /* CAS-624: a cinema agent's condensed card shows badge + money instead of the scores line — same
+     grid-area:scores slot, same compacted-to-plain-text treatment as .mrow.r-scores just above. */
+  #groups.cinema-listing .card:not(.expanded) .mrow.r-scores{display:none}
+  #groups.cinema-listing .card:not(.expanded) .mrow.r-cinfo{display:flex;grid-area:scores;margin:0;gap:10px;flex-wrap:nowrap;overflow:hidden}
+  #groups.cinema-listing .card:not(.expanded) .mrow.r-cinfo .m,
+  #groups.cinema-listing .card:not(.expanded) .mrow.r-cinfo button.m{padding:0;background:none;border:none;font-size:11px;line-height:1.2;white-space:nowrap}
+  #groups.cinema-listing .card:not(.expanded) .mrow.r-cinfo .m b{font-size:11px}
+  #groups.cinema-listing .card:not(.expanded) .mrow.r-cinfo .lab{font-size:10px}
   /* availability band: one compact line */
-  .card:not(.expanded) .bandw{padding:2px 10px}
+  .card:not(.expanded) .bandw{padding:5px 10px}
   .card:not(.expanded) .avail2{min-height:20px}
   .card:not(.expanded) .reldate{display:none}
   .card:not(.expanded) .cap{padding:1px 8px;gap:4px;border-radius:8px}
@@ -3054,7 +3065,8 @@
   .card:not(.expanded) .capicon{display:none}
   .card:not(.expanded) .capdate{font-size:10px}
   /* the three controls stay reachable — smaller, never hidden */
-  .card:not(.expanded) .cfoot{padding:4px 10px 5px}
+  .card:not(.expanded) .cfoot{padding:4px 10px}
+  .card:not(.expanded) .expand{padding-bottom:8px}
   .card:not(.expanded) .actions{margin-top:0;gap:6px}
   .card:not(.expanded) .cmini{height:24px;padding:0 8px;font-size:11px;border-radius:7px;gap:5px}
   .card:not(.expanded) .cmini .cic{display:none}
@@ -3091,7 +3103,7 @@
   .card:not(.expanded) .cfoot{padding-left:9px}
   /* (1) no date in the lozenge, so it shrinks to its label */
   .card:not(.expanded) .capdate{display:none}
-  .card:not(.expanded) .cap{padding:1px 9px}
+  .card:not(.expanded) .cap{padding:1px 9px;flex:1 1 auto}
   /* the content column is narrower now. .cap is flex:none by default, so a long
      service name ("SBS On Demand") pushed the band past the card edge; and the
      timeline connectors should give way before the service name does. */
@@ -5604,6 +5616,16 @@ function scaleBadge(m){
     title="${esc(scaleWhy(m))}">${b.ico} <b>${b.label}</b></button>`;
 }
 window.showScale=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(scaleWhy(m)); };
+// CAS-624: a cinema agent's condensed card has no room for both a critics line and a money line, so it
+// shows the money one — same badge data (TENT_BADGE) and the same budgetCell() the money row already
+// renders, just laid out as one line. Gross is dropped entirely rather than shown as "–" when unknown —
+// the condensed row already omits IMDb/RT/Meta cells it doesn't hold, this keeps to that same rule.
+function cinemaInfoRowHTML(m){
+  const kind=scaleTier(m), b=kind && TENT_BADGE[kind];
+  const badge = b ? `<span class="m"><b>${b.ico} ${b.label}</b></span>` : "";
+  const gross = m.worldwide_gross>0 ? `<span class="m"><span class="lab">Gross</span> <b>${money(m.worldwide_gross)}</b></span>` : "";
+  return badge + budgetCell(m) + gross;
+}
 // ---- The IMDb lozenge, vote-gated (CAS-156) ------------------------------------
 // Three states, and they are three different claims, so they don't share a rendering:
 //   trusted   -> the number
@@ -6109,6 +6131,9 @@ function cardHTML(m, markNew=false){
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
         <div class="mrow r-scores">${scoresRowHTML(m)}${oscMarkHTML(m)}</div>
+        <!-- CAS-624: condensed-card-only, cinema-agent-only — see #groups.cinema-listing rules. Hidden
+             everywhere else, including the expanded card, by the base .r-cinfo{display:none}. -->
+        <div class="mrow r-cinfo">${cinemaInfoRowHTML(m)}</div>
         <!-- CAS-373: the badge (Landmark/Anticipated/…) moves under the poster, left column; the awards
              chips keep the text column, same row — row-aligned with the badge, column-aligned with IMDb. -->
         <div class="mrow r-badge">${badge}</div>
@@ -15003,6 +15028,10 @@ function render(){
     ? (shown.length ? `Show ${shown.length} film${shown.length===1?"":"s"}` : "No films match")
     : "Done";
   const wrap=$("groups");
+  // CAS-624: a cinema agent's condensed cards swap their scores line for the film's own scale badge +
+  // money facts (r-cinfo) — a class on the shared list wrapper rather than per-card state, so it applies
+  // uniformly to every card fillListChunked/fastPatchFindRow paint under this agent.
+  wrap.classList.toggle("cinema-listing", (activeCascade()||{}).kind==="cinema");
   // CAS-421: unblur only if no later render() has taken over the list since this one started.
   const listReady=()=>{ if(myGen===renderGen) wrap.classList.remove("listloading"); };
   if(!rows.length){
