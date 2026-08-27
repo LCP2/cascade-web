@@ -5,11 +5,11 @@
 //
 // Every check here asserts BEHAVIOUR — a flow completes, a count moves, a control does the thing it says —
 // never exact copy, colours or DOM shape, so a future approved UI change cannot turn this gate red. The five
-// flows are the ones CAS-385 names as the app's core: app loads, an agent can be built and named,
+// flows are the ones CAS-385 names as the app's core: app loads, onboarding builds a real agent roster,
 // recommendations render, a film's Watched control works, and the my-services filter actually filters.
 import { test, expect } from "@playwright/test";
 import {
-  freshApp, toShortlist, shortlistCards, pickCard, finishFlow, toListing, settleListing, ctaLocator,
+  freshApp, toShortlist, shortlistCards, finishFlow, toListing, settleListing, ctaLocator,
 } from "./helpers.mjs";
 
 // Mirrors cas565.spec.mjs's addSecondAgent — a second agent made from the deck's "New Agent" card stops at
@@ -35,32 +35,27 @@ test("the app loads and onboarding renders", async ({ page }) => {
   await freshApp(page);
   await expect(page.locator("#splashCta")).toBeVisible();
   await page.locator("#splashCta").click();
-  await expect(page.locator(".priobtn").first()).toBeVisible();
+  await expect(page.locator("#obWho")).toBeVisible();
 });
 
-test("an agent can be created and named", async ({ page }) => {
+// CAS-629: onboarding no longer sharpens one hand-named agent — it generates a whole roster from the
+// briefing answers (buildOnbAgents) and commits it on entering "working" (Change E1). This replaces the
+// old "type a name, expect it back" check with the same acceptance criterion CAS-629 itself states (AC1):
+// a non-empty roster, every id distinct, every one a real Cascade — plus one of the two unconditional
+// agents (onb_home fires for any roster, whatever the briefing answers were) actually landing by name.
+test("onboarding commits a real, de-duplicated agent roster", async ({ page }) => {
   await toShortlist(page, "cinema");
-  const cards = await shortlistCards(page);
-  await pickCard(page, cards[0].name);
-
-  const step = () => page.evaluate(() => onbStepKey);
-  for(let i = 0; i < 10 && await step() !== "name"; i++){
-    await ctaLocator(page).click();
-    await page.waitForTimeout(120);
-  }
-  expect(await step()).toBe("name");
-  await page.locator("#onbStepName").fill("Smoke Test Agent");
-
   await finishFlow(page);
   await toListing(page);
-  const names = await page.evaluate(() => cascades.map(c => c.name));
-  expect(names).toContain("Smoke Test Agent");
+  const roster = await page.evaluate(() => cascades.map(c => ({ id: c.id, name: c.name, sort: c.sort })));
+  expect(roster.length).toBeGreaterThan(0);
+  expect(new Set(roster.map(c => c.id)).size).toBe(roster.length);
+  expect(roster.every(c => c.sort === "cascade")).toBe(true);
+  expect(roster.map(c => c.name)).toContain("Watch at home");
 });
 
 test("recommendations render as a results list with items", async ({ page }) => {
   await toShortlist(page, "cinema");
-  const cards = await shortlistCards(page);
-  await pickCard(page, cards[0].name);
   await finishFlow(page);
   await toListing(page);
 
@@ -70,8 +65,6 @@ test("recommendations render as a results list with items", async ({ page }) => 
 
 test("a film card's Watched control lands an answer", async ({ page }) => {
   await toShortlist(page, "cinema");
-  const cards = await shortlistCards(page);
-  await pickCard(page, cards[0].name);
   await finishFlow(page);
   await toListing(page);
 
@@ -98,8 +91,6 @@ test("'Only show films on my services' changes what a new agent finds", async ({
   // moment it's created (line ~10373), so this creates two otherwise-identical stream agents, one before
   // flipping the switch and one after, and compares what each one finds.
   await toShortlist(page, "stream");
-  const cards = await shortlistCards(page);
-  await pickCard(page, cards[0].name);
   await finishFlow(page);
   await toListing(page);
   const before = await settleListing(page);

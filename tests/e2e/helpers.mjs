@@ -43,13 +43,23 @@ export const numberIn = s => {
   return m ? Number(m[0]) : null;
 };
 
-/** Click through the splash and the priority question into the agent shortlist. */
+/** CAS-629: click through the splash and the two roster-briefing screens (S1/S2 — the questions that
+ * generate the WHOLE first-run roster at once, not one agent to sharpen), landing on "services" (S4),
+ * the new sequence's first counted step. "together" (S3) is walked straight past on the way, since the
+ * default answers (`who: ["me"]`) name no partner/kids for it to steer. Kept the name from the old
+ * flow's shortlist-of-agents screen this replaces; `kind` only nudges the cinema question now, since
+ * every roster this builds is a MIX of agents — there is no lane left to choose. */
 export async function toShortlist(page, kind){
   await freshApp(page);
   await page.locator("#splashCta").click();
-  await expect(page.locator(".priobtn").first()).toBeVisible();
-  await page.locator(kind === "stream" ? ".priobtn.str" : ".priobtn.cin").click();
-  await expect(page.locator(".scard").first()).toBeVisible();
+  await expect(page.locator("#obWho")).toBeVisible();
+  if(kind === "stream") await page.locator("#obCinema .chip", { hasText: "never" }).click();
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);              // the flow slides between steps
+  await expect(page.locator("#obDepth")).toBeVisible();
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);
+  await expect(page.locator("#onbStepStores")).toBeVisible();
 }
 
 /** Every card on the shortlist, as {name, countText, count}. */
@@ -76,7 +86,11 @@ export function ctaLocator(page){
 }
 export const ctaCount = page => ctaLocator(page).textContent().then(numberIn);
 
-/** Press Continue until the flow ends, then close the membership page it lands on. Returns the reveal count. */
+/** Press Continue until the flow ends, landing on the membership page (S7). CAS-629: this now walks
+ * services → working (the roster commits here, no click required, but Continue still advances it early)
+ * → report → membership — generic enough that no step name needs to be known here. Returns S7's own
+ * "worth your time" count (`.membhaul .cnt`, CAS-629 Change E4) — a roster-wide figure now, not one
+ * agent's haul. */
 export async function finishFlow(page){
   for(let i = 0; i < 15; i++){
     const stillInFlow = await page.evaluate(() => flowOn === true);
