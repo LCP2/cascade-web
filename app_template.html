@@ -6718,6 +6718,7 @@ window.openListsPanel=(id, btn)=>{
   const mine=open && open.classList.contains("lpop");   // CAS-281: only MY panel counts as a second tap
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
+  watchPanelAnchorY=scrollY;   // CAS-647: see snapToWatchPanelAnchor
   const pop=document.createElement("div");
   // CAS-374-style chrome: content-width, no in-panel close — the chip is the toggle. CAS-439: Lists sits in
   // the middle of the row, not an edge, so it gets .al-c (JS-anchored to the button) rather than .al-l/.al-r.
@@ -6728,7 +6729,8 @@ window.openListsPanel=(id, btn)=>{
   wirePanelSlide(pop, ".nopt[data-lid]", el=>toggleFilmListAndRepaint(id, el.dataset.lid));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
   btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
-  const first=pop.querySelector(".nopt"); if(first && first.tagName==="BUTTON") first.focus();
+  const first=pop.querySelector(".nopt"); if(first && first.tagName==="BUTTON") first.focus({preventScroll:true});
+  snapToWatchPanelAnchor();   // CAS-647
 };
 // Swap the chip and, if the panel is open, its rows — same shared-repaint shape as Watch/Notify's own control.
 function repaintListsControl(id){
@@ -6794,6 +6796,7 @@ window.openNotifyPanel=(id, btn)=>{
   const mine=open && open.classList.contains("npop");   // CAS-281: only MY panel counts as a second tap
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
+  watchPanelAnchorY=scrollY;   // CAS-647: see snapToWatchPanelAnchor
   const pop=document.createElement("div");
   // CAS-374: content-width, left-aligned under the Notify chip — no in-panel close, the chip is the toggle.
   pop.className="cpop npop al-l";
@@ -6810,7 +6813,8 @@ window.openNotifyPanel=(id, btn)=>{
   });
   document.addEventListener("keydown", watchPanelKey, true);
   btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
-  const first=pop.querySelector(".nopt:not(.spent)"); if(first) first.focus();
+  const first=pop.querySelector(".nopt:not(.spent)"); if(first) first.focus({preventScroll:true});
+  snapToWatchPanelAnchor();   // CAS-647
 };
 // Swap the chip and, if the panel is open, its rows — one repaint shared by every Watch action below, since
 // ticking one level can move several rows at once (the auto-tick cascade) and a per-row patch would have to
@@ -6964,6 +6968,15 @@ let watchPanelAnchorY=null;
 // reveal-scroll, but landing on #yourMovies' own scrollTop (its overflow-y:auto container) rather than the
 // window's scrollY, since body scroll is frozen while that screen is open. null when Your Movies isn't open.
 let ymPanelAnchorTop=null;
+// CAS-647: CAS-315 only ever undid this drift on the LATER answer-repaint (keepRowInPlace), so opening a
+// panel — before any answer is given — still let Chromium's silent reveal-scroll (see the CAS-315 comment
+// above) play out uncorrected: the window jumped, taking the list above out of view and, on a card whose
+// body scrolled up under the sticky rail, painting over it. Calling this right after the panel's own
+// focus() call (every open*Panel below now does) catches that same drift before it is ever visible, instead
+// of only cleaning it up once you go on to answer.
+function snapToWatchPanelAnchor(){
+  if(watchPanelAnchorY!=null && Math.abs(scrollY-watchPanelAnchorY)>0.5) scrollBy(0, watchPanelAnchorY-scrollY);
+}
 window.openWatchPanel=(id, btn)=>{
   // CAS-281: "was MY panel already open?", not "was ANY panel open?". The old test closed whatever was open
   // and returned, so tapping a second control while a first was open closed the first and opened nothing —
@@ -6993,6 +7006,7 @@ window.openWatchPanel=(id, btn)=>{
   document.addEventListener("keydown", watchPanelKey, true);
   btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
   const first=pop.querySelector(".cseg"); if(first) first.focus({preventScroll:true});
+  snapToWatchPanelAnchor();   // CAS-647
 };
 // Answering closes the panel first: setOpinion folds the card to its stub, and a panel left open would be
 // anchored to an .actions row that no longer exists.

@@ -77,6 +77,36 @@ test("a film card's Watched control lands an answer", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => watched.size), { timeout: 10_000 }).toBeGreaterThan(0);
 });
 
+// CAS-647: opening Notify, Tags or Watched on a card left the card blank and cut the top of the list. The
+// actual mechanism was a scroll drift (Chromium's silent reveal-scroll on focus, same cause as CAS-315's
+// keepRowInPlace fix) rather than anything about a specific control's own state, so this checks the
+// mechanism directly — scrollY unmoved and the card's own content still visible — across all three
+// controls and the first/mid/last card, per the ticket's acceptance criteria.
+test("opening Notify, Tags or Watched leaves the card rendered and scroll unmoved", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  const cards = page.locator("#groups .card");
+  const count = await cards.count();
+  expect(count).toBeGreaterThan(2);
+  const indices = [0, Math.floor(count / 2), count - 1];
+
+  for(const i of indices){
+    const card = cards.nth(i);
+    await card.scrollIntoViewIfNeeded();
+    const before = await page.evaluate(() => scrollY);
+    for(const ctl of [".ctl.notify", ".ctl.casc", ".ctl.watch"]){
+      await card.locator(ctl).click();
+      await expect(card.locator(".titletext")).toBeVisible();
+      expect(Math.abs((await page.evaluate(() => scrollY)) - before)).toBeLessThan(2);
+      await page.keyboard.press("Escape");
+      await expect(card.locator(".titletext")).toBeVisible();
+      expect(Math.abs((await page.evaluate(() => scrollY)) - before)).toBeLessThan(2);
+    }
+  }
+});
+
 test("'Only show films on my services' changes what a new agent finds", async ({ page }) => {
   // Every window a streaming agent lists (Premium/Rent/Streaming) is service-scoped, so switching the
   // filter on with no services named must drop the count — this exercises the real mechanism the switch
