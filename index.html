@@ -183,7 +183,7 @@
   /* CAS-616 (v0.9.5): a 2-column grid, not a flex row — `1fr 1fr` makes the two chips resolve to the SAME
      width whatever their labels say, so "same importance, same size" is structural rather than a magic
      number that rots the next time a label changes. */
-  .hdr-actions{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;align-items:center}
+  .hdr-actions{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;align-items:center}
   /* CAS-183 added a fourth header icon (Your Movies), which at 360px pushed the row past the edge — the
      brand block on the left is ~168px. CAS-530 dropped the bell (moved into the Menu) and widened the
      remaining two into labelled chips, so the same narrow-phone squeeze gets a step of its own below.
@@ -206,8 +206,8 @@
      chip or it overlapped the CASCADE wordmark at 390px. Explicit height keeps the row's rhythm off the
      label's line box; the pill radius matches the rest of the header stack. Measured at 390: both chips
      87.5px, 14.5px clear of the wordmark. */
-  .modechip{cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;background:var(--panel2);
-    border:1px solid var(--line);color:var(--dim);border-radius:999px;padding:0 7px;height:38px;
+  .modechip{position:relative;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;
+    background:var(--panel2);border:1px solid var(--line);color:var(--dim);border-radius:999px;padding:0 7px;height:38px;
     font-size:12.5px;font-weight:700;white-space:nowrap}
   .modechip svg{flex:none}
   /* CAS-571: the mark is painted from --mcf, which is a gradient while the chip is at rest and flat white
@@ -230,6 +230,15 @@
   #moviesBtn.active{box-shadow:0 5px 16px -5px rgba(255,47,135,.7)}
   .modechip.active{background:var(--grad);border-color:transparent;color:#fff}
   .modechip.ym.active{background:var(--rose-grad);border-color:var(--rose);color:#fff}
+  /* CAS-636: Moving takes the same gold the "Can Watch" state already uses (#ffd54a) — the chip that opens
+     the alert feed is tinted with the one state that feed exists to surface. */
+  #movingBtn{--mcf:#ffd54a}
+  #movingBtn.active{--mcf:#161000}
+  #movingBtn:not(.active){background:rgba(255,213,74,.09);border-color:rgba(255,213,74,.32)}
+  #movingBtn.active{box-shadow:0 5px 16px -5px rgba(255,213,74,.7)}
+  .modechip.mv.active{background:linear-gradient(135deg,#ffd54a 0%,#f0a336 100%);border-color:#ffd54a;color:#161000}
+  .mcbadge{position:absolute;top:-6px;right:-4px;background:var(--rt);color:#fff;font-size:10px;font-weight:800;
+    min-width:16px;height:16px;border-radius:9px;display:grid;place-items:center;padding:0 4px;line-height:1}
   /* CAS-538: two label strings per chip, one shown at a time — .mclabel-short only appears below the
      460px breakpoint above, where "Find"/"Watch" fit but "Agents"/"Your Movies" don't. */
   .mclabel-short{display:none}
@@ -241,6 +250,16 @@
     .modechip{padding:0 7px;gap:4px}
     .modechip .mclabel-full{display:none}
     .modechip .mclabel-short{display:inline}
+  }
+  /* CAS-636: a third chip joined the row (Moving), which the two-chip measurements above never accounted
+     for. Below 400px there isn't room for three labelled pills plus the menu icon without clipping the
+     wordmark, so the row drops to icon-only chips there — .mclabel's full/short swap has nothing left to
+     negotiate once both are hidden. */
+  @media (max-width:400px){
+    .hdr-actions{gap:5px}
+    .modechip{padding:0 8px;gap:0;width:38px}
+    .modechip .mclabel{display:none}
+    .mcbadge{top:-5px;right:-3px}
   }
   /* CAS-269: the rule that hid the 📍 AU pill below 420px went with the pill itself. The header now has
      one thing on the left that can give way — the freshness line — and it ellipsises rather than pushing
@@ -1053,6 +1072,20 @@
   .mlchip{display:inline-block;background:rgba(124,92,255,.16);border:1px solid #4c4270;color:#cfc2ff;
     border-radius:20px;padding:1px 7px;font-size:10px;font-weight:700;margin-right:4px}
   .mlacts{display:flex;flex-direction:column;gap:5px;flex-shrink:0}
+  /* ---- Moving (CAS-636) — same row language as My List above (.mlrow/.mlposter), plus a state pill (the
+     card's own .pill component, reused verbatim) and a Cascade score. ---- */
+  .mvlist{margin-bottom:10px}
+  .mvrow{display:flex;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;
+    padding:10px;margin-bottom:8px;cursor:pointer}
+  .mvrow:hover{filter:brightness(1.08)}
+  .mvposter{width:44px;height:66px;border-radius:7px;background:#0c0f14 center/cover no-repeat;flex-shrink:0}
+  .mvmain{flex:1;min-width:0}
+  .mvtop{display:flex;align-items:center;gap:8px}
+  .mvtitle{font-size:13px;font-weight:700;line-height:1.3;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mvmain .pill{margin-top:5px}
+  .mvreason{font-size:11px;color:var(--dim);margin-top:5px;line-height:1.4}
+  .mvagents{margin-top:5px}
+  .mlchip.mvagent{cursor:pointer}
   /* My List reuses the card's .actbtn — same three icons, same grey default, same purple ON state — and
      only overrides the box. One action wearing two different active colours in two places was exactly the
      inconsistency CAS-64 is here to kill. */
@@ -3211,6 +3244,19 @@
           <span class="mclabel mclabel-full">Watch</span>
           <span class="mclabel mclabel-short">Watch</span>
         </div>
+        <!-- Moving (CAS-636): the alert feed made visible — every row corresponds to an in-app/email
+             notification, so this is the one place Cascade shows "what changed" rather than "what matches".
+             The badge counts rows the user hasn't opened this screen with present yet (cascade_moving_seen). -->
+        <div class="modechip mv" id="movingBtn" title="Moving" role="button" tabindex="0"
+             aria-pressed="false" aria-label="Moving" onclick="openMovingScreen()">
+          <svg class="mcicon" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path class="s" d="M4 15.5 10 9.5 14 13.5 20 5.5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path class="s" d="M14 5.5h6v6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          </svg>
+          <span class="mclabel mclabel-full">Moving</span>
+          <span class="mclabel mclabel-short">Moving</span>
+          <span class="mcbadge" id="movingBadge" style="display:none">0</span>
+        </div>
         <!-- Agents (was the Find chip; repurposed CAS-616, v0.9.5). The id stays #agentsBtn because six CSS
              rules and the open/close pair below already key off it, and the name is now literally right: this
              chip opens the Agents management/reorder screen, which used to live in the menu. It is NOT lit by
@@ -3735,6 +3781,13 @@
      drag-to-reorder (top of the list = leftmost in the carousel). Body rendered by renderAgentsScreen(). -->
 <div class="uscreen" id="agentsScreen" role="dialog" aria-modal="true" aria-label="Agents">
   <div class="uwrap" id="agentsBody"></div>
+</div>
+
+<!-- MOVING (CAS-636): the alert feed made visible. Plain menu-screen shell (z-index:84, top:0) — unlike
+     #agentsScreen/#yourMovies it has no header chip that stays lit underneath it, so it doesn't need their
+     CAS-568 carve-out. -->
+<div class="uscreen" id="movingScreen" role="dialog" aria-modal="true" aria-label="Moving">
+  <div class="uwrap" id="movingBody"></div>
 </div>
 
 <!-- MANAGE LISTS (CAS-591): every watch list in one place — icon, name, film count, and drag-to-reorder,
@@ -4420,6 +4473,24 @@ function saveNotify(){
   notifySaved=s;
   try{ localStorage.setItem(NOTIFY_KEY, s); }catch(e){}
 }
+// CAS-636: Moving's own seen-state — {filmId: lastSeenGroupKey} — separate from the Notifications inbox's
+// read_at, since a Moving row stays visible for the life of its condition and only stops COUNTING once
+// seen; it is never marked read/removed the way an inbox entry is. Same load/save shape as NOTIFY_KEY above.
+const MOVING_SEEN_KEY="cascade_moving_seen";
+function loadMovingSeen(){
+  try{
+    const o=JSON.parse(localStorage.getItem(MOVING_SEEN_KEY)||"{}");
+    return (o && typeof o==="object" && !Array.isArray(o)) ? o : {};
+  }catch(e){ return {}; }
+}
+const movingSeen=loadMovingSeen();
+let movingSeenSaved=null;
+function saveMovingSeen(){
+  const s=JSON.stringify(movingSeen);
+  if(s===movingSeenSaved) return;
+  movingSeenSaved=s;
+  try{ localStorage.setItem(MOVING_SEEN_KEY, s); }catch(e){}
+}
 const entryFor = id => notify[id] || (notify[id]={source:"auto", cascadeIds:[], removed:false, pinnedTo:[], notIn:[]});
 // CAS-279: the two override tests, defined once so the listing, the counts and the Found set cannot disagree
 // about where a film lives. An entry that predates this change has neither array and answers false to both.
@@ -4783,7 +4854,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 803, "commit": "f72fa9d", "builtAt": "2026-08-27T05:17:28Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 804, "commit": "898efe5", "builtAt": "2026-08-27T05:46:29Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -14058,11 +14129,104 @@ function renderAgentsScreen(){
     </div>`;
   wireAgentsDrag();
 }
+// ================= CAS-636: Moving — the alert feed made visible =================
+// Every row corresponds to an in-app/email notification: CAN WATCH NOW reuses watchIsCurrent(id), the exact
+// predicate that already gives a card its gold "Can Watch" state (so the two sets can never disagree, AC1);
+// NEW TO YOUR AGENTS reads the notifications ledger (realAlerts) directly rather than a fresh match
+// computation, excluding anything that already qualifies for CAN WATCH NOW (AC2/AC4). No new alert logic —
+// Moving only reads state the monitor/card already compute.
+function movingCanWatchReason(id){
+  const levels=watchLevelsFor(id);
+  const m=MOVIES.find(x=>x.tmdb_id===id);
+  const hitWindow=m && (m.status||[]).find(w=>{
+    const key=filmOptKeyForWindow(null,w);
+    const l=key && levels.find(x=>x.key===key);
+    return !!(l && filmOptOn(id,l));
+  });
+  const key=hitWindow && filmOptKeyForWindow(null,hitWindow);
+  const l=key && levels.find(x=>x.key===key);
+  return l ? `Reached ${l.label}` : "You can watch it now";
+}
+function movingData(){
+  const canFilmIds=Object.keys(notify).filter(id=>watchIsCurrent(Number(id)));
+  const canSet=new Set(canFilmIds);
+  const canRows=canFilmIds.map(id=>{
+    const m=MOVIES.find(x=>String(x.tmdb_id)===id);
+    if(!m) return null;
+    const agents=cascades.filter(c=>listedBy(m,c));
+    return {filmId:id, m, groupKey:"can_watch", reason:movingCanWatchReason(m.tmdb_id), agentNames:agents.map(c=>c.name)};
+  }).filter(Boolean);
+
+  const byFilm=new Map();
+  // realAlerts is loaded newest-first (loadRealAlerts orders by emailed_at descending), so the first entry
+  // seen per film is the most recent — exactly the one whose moment should describe the row.
+  realAlerts.forEach(a=>{
+    const fid=String(a.movie_id);
+    if(canSet.has(fid)) return;
+    const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
+    if(!m) return;
+    let g=byFilm.get(fid);
+    if(!g){ g={filmId:fid, m, groupKey:"new_agents", reason:REAL_MOMENT_SAID[a.moment]||a.moment, agentNames:[]}; byFilm.set(fid,g); }
+    const nm=a.cascade_name||"Your agent";
+    if(!g.agentNames.includes(nm)) g.agentNames.push(nm);
+  });
+  const newRows=[...byFilm.values()];
+
+  const byScoreDesc=(a,b)=>qScore(b.m)-qScore(a.m);
+  canRows.sort(byScoreDesc);
+  newRows.sort(byScoreDesc);
+  return {canRows, newRows};
+}
+function movingUnseenCount(){
+  const {canRows,newRows}=movingData();
+  return [...canRows,...newRows].filter(r=>movingSeen[r.filmId]!==r.groupKey).length;
+}
+function updateMovingBadge(){
+  const b=$("movingBadge"); if(!b) return;
+  const n=movingUnseenCount();
+  if(n){ b.style.display="grid"; b.textContent=n; } else b.style.display="none";
+}
+function movingRowHTML(row){
+  const m=row.m, w=primaryStatus(m);
+  const poster=m.poster?`background-image:url(https://image.tmdb.org/t/p/w92${m.poster})`:"";
+  // data-agent (not an interpolated JS string literal) so an agent name containing an apostrophe can't
+  // break out of the onclick attribute the way ${escA(nm)} inside '...' would.
+  const agentsHTML=row.agentNames.map(nm=>
+    `<span class="mlchip mvagent" role="button" tabindex="0" data-agent="${escA(nm)}" onclick="event.stopPropagation();openMovingAgentEl(this)">${esc(nm)}</span>`
+  ).join("");
+  return `<div class="mvrow" onclick="closeMovingScreen();openFilmPage(${m.tmdb_id})">
+    <div class="mvposter" style="${poster}"></div>
+    <div class="mvmain">
+      <div class="mvtop"><span class="mvtitle">${esc(m.title)}</span>${qScoreHTML(m)}</div>
+      <span class="pill ${w}">${esc(STATUS_LABEL[w]||"")}</span>
+      <div class="mvreason">${esc(row.reason)}</div>
+      ${agentsHTML?`<div class="mvagents">${agentsHTML}</div>`:""}
+    </div>
+  </div>`;
+}
+// Renders and, in the same pass, marks every shown row seen (N4c: "a row is unseen until the screen has
+// been opened with it present") — rows are never removed from cascade_moving_seen once seen, only stop
+// counting toward the badge, so this is a pure upsert.
+function renderMovingScreen(){
+  const {canRows, newRows}=movingData();
+  [...canRows, ...newRows].forEach(r=>{ movingSeen[r.filmId]=r.groupKey; });
+  saveMovingSeen();
+  updateMovingBadge();
+  $("movingBody").innerHTML=`
+    <div class="ostop"><button class="osback" type="button" onclick="closeMovingScreen()" aria-label="Back">←</button></div>
+    <h2 class="osh">Moving</h2>
+    <p class="ossub">What changed since you last looked. Same events as your alerts.</p>
+    <div class="grouphead"><span>Can watch now</span><span class="gcount">${canRows.length}</span></div>
+    <div class="mvlist">${canRows.map(movingRowHTML).join("") || `<p class="unone">Nothing has reached a window you asked to be told about yet.</p>`}</div>
+    <div class="grouphead"><span>New to your agents</span><span class="gcount">${newRows.length}</span></div>
+    <div class="mvlist">${newRows.map(movingRowHTML).join("") || `<p class="unone">Nothing new since your agents' last alert.</p>`}</div>`;
+}
 window.openAgentsScreen=()=>{
   // CAS-534: reached from the top-right menu's "Manage Agents" now, not the header's Agents chip — that chip
   // is the deck+movie-list home view's mode switch and stays lit throughout (this screen is a layer on top of
   // home, not a different mode). Still mutually exclusive with Your Movies, same as CAS-533.
   if($("yourMovies").classList.contains("open")) closeYourMovies();
+  if($("movingScreen").classList.contains("open")) closeMovingScreen();
   renderAgentsScreen();
   $("agentsScreen").scrollTop=0;
   $("agentsScreen").classList.add("open"); document.body.style.overflow="hidden";
@@ -14075,6 +14239,24 @@ window.closeAgentsScreen=()=>{
   $("agentsBtn").classList.remove("active"); $("agentsBtn").setAttribute("aria-pressed","false");
   syncWatchChip();
 };
+// CAS-636: Moving — the alert feed made visible. Same open/close shape as Agents (mutually exclusive with
+// Your Movies/Agents), plus its own render + seen-state pass (renderMovingScreen marks every row it shows
+// as seen and refreshes the badge, per cascade_moving_seen — see that function for the mechanism).
+window.openMovingScreen=()=>{
+  if($("yourMovies").classList.contains("open")) closeYourMovies();
+  if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
+  renderMovingScreen();
+  $("movingScreen").scrollTop=0;
+  $("movingScreen").classList.add("open"); document.body.style.overflow="hidden";
+  $("movingBtn").classList.add("active"); $("movingBtn").setAttribute("aria-pressed","true");
+  syncWatchChip();
+  logEvent("moving_screen_opened",{});
+};
+window.closeMovingScreen=()=>{
+  $("movingScreen").classList.remove("open"); document.body.style.overflow="";
+  $("movingBtn").classList.remove("active"); $("movingBtn").setAttribute("aria-pressed","false");
+  syncWatchChip();
+};
 // CAS-534: the header's Agents chip — closes whichever screen currently covers the deck+movie-list home view
 // (Your Movies, or Manage Agents if reached via the menu) to reveal it. Selected (lit) by default and
 // whenever Your Movies is closed, since home is the app's other mode besides Your Movies.
@@ -14083,13 +14265,14 @@ window.closeAgentsScreen=()=>{
 window.showAgentsHome=()=>{
   if($("yourMovies").classList.contains("open")) closeYourMovies();
   if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
+  if($("movingScreen").classList.contains("open")) closeMovingScreen();
   syncWatchChip();
 };
 // CAS-633: #moviesBtn (Watch) now opens the Find listing itself rather than a dialog, so it can't be lit by
 // one open/close pair the way #agentsBtn is — it tracks whatever else is covering that listing instead.
-// Lit whenever no .uscreen (Agents, Manage Lists, Review, Account, Service analysis, Languages, Where &
-// when, Tags, About — and Your Movies itself, in the unlikely event it's ever reopened) is open. Called
-// from every .uscreen's own open/close pair.
+// Lit whenever no .uscreen (Agents, Moving, Manage Lists, Review, Account, Service analysis, Languages,
+// Where & when, Tags, About — and Your Movies itself, in the unlikely event it's ever reopened) is open.
+// Called from every .uscreen's own open/close pair.
 function syncWatchChip(){
   $("moviesBtn").classList.toggle("active", !document.querySelector(".uscreen.open"));
 }
@@ -14098,6 +14281,13 @@ function syncWatchChip(){
 // of it — a drag or a press on any of those must never be read as a row tap.
 function openAgentRow(id){ closeAgentsScreen(); openCascade(id); }
 window.editAgentRow=id=>{ closeAgentsScreen(); briefOpen(id); };
+// CAS-636: tapping an agent name on a Moving row lands on Watch with that agent selected — same idiom as
+// openAgentRow above, off the agent's NAME rather than id, since that's all the notifications ledger carries.
+window.openMovingAgent=name=>{
+  const c=cascades.find(x=>x.name===name); if(!c) return;
+  closeMovingScreen(); openCascade(c.id);
+};
+window.openMovingAgentEl=el=>{ openMovingAgent(el.dataset.agent); };
 
 // ---- CAS-441: Review this agent (Phase 1 of the CAS-440 Learning Agents spike) ---------------------------
 // Profiling only, from the user's own behaviour on THIS agent's films — no advice, no Apply (Phase 2/3).
@@ -16193,6 +16383,7 @@ function markPollSeen(){ if(lastPoll) lastSeenPollDay=lastPoll.day; updateBadge(
 function updateBadge(){
   const b=$("badge"), n=unreadReal()+unseenMatchCount();
   if(n){ b.style.display="grid"; b.textContent=n; } else b.style.display="none";
+  updateMovingBadge();
 }
 // ---- The alert, in the agent's voice (CAS-69) ----------------------------------
 // "Cascade found one — Dune just landed on Netflix, which you have." Every clause has to be earned:
