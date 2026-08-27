@@ -146,6 +146,12 @@
      to a non-zero value here instead of 0 on every platform. */
   header{position:sticky;top:0;z-index:30;background:rgba(10,14,26,.96);backdrop-filter:blur(8px);
     border-bottom:1px solid var(--line);padding:calc(12px + env(safe-area-inset-top,0px)) 16px 10px}
+  /* CAS-656: same warning tone as .warnnote, but a full-width strip (no radius/margin) since it lives in the
+     header rather than inside a card. Part of the sticky header's own measured height, so --hdrh (read by
+     every screen and rail below) already accounts for it — no separate offset math needed. */
+  .acctbanner{margin-top:9px;font-size:11px;font-weight:600;line-height:1.4;color:#ffce8f;
+    background:rgba(240,163,54,.14);border:1px solid rgba(240,163,54,.4);border-radius:9px;padding:7px 10px}
+  .acctbanner[hidden]{display:none}
   /* The identity block is allowed to give way; the action icons are not. Without min-width:0 a flex child
      never shrinks below its content, so the brand lockup + freshness line held their full width and
      pushed the icons past the right edge on a 360px phone (CAS-183 added a fourth). Now the freshness line
@@ -3333,6 +3339,12 @@
         </div>
       </div>
     </div>
+    <!-- CAS-656: a persistent, non-dismissing state for "the account failed to load and you're looking at
+         on-device data" — a toast was the wrong weight (it scrolls away; this stays until a load succeeds).
+         Lives in the sticky header, not any one screen, so it survives navigation between Agents, Moving and
+         Watch for free — all three sit BELOW the header (see .uscreen z-index comment above), never over it.
+         Empty/hidden whenever every account surface is connected. -->
+    <div class="acctbanner" id="acctBanner" role="status" aria-live="polite" hidden></div>
     <!-- CAS-150: the header is identity only — logo, freshness, and the three account icons. The
          global search box, the Filters button and Save as… have all left it. Search was global over a list
          that is always scoped to one Cascade, so it was answering a question nobody was asking there; the
@@ -4955,7 +4967,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 825, "commit": "bae27cd", "builtAt": "2026-08-27T22:41:27Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 826, "commit": "a7a2b34", "builtAt": "2026-08-27T22:50:03Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -17247,6 +17259,33 @@ else if(dedupedN)
   const uid = () => { const a=acct(); return (a && a.session && a.session.user) ? a.session.user.id : null; };
   const accountActive = () => !!(client() && uid());
 
+  // ---- CAS-656: per-table load-failure tracking + the persistent "not connected" banner ---------------
+  // A failed READ used to be silent (console.warn, or a toast that scrolled away in seconds) and left the
+  // corresponding sync free to push this device's on-device state over an account it had never actually
+  // read back. Tracked per TABLE (not per feature) because `lists` and `list_films` fail independently on
+  // the live project right now, and a lists-only recovery must not silently clear list_films' own failure.
+  // acctTableFail is the single source of truth both the banner and every push gate below read from.
+  const ACCT_TABLE_SURFACE = { cascades:"agents", lists:"tags", listFilms:"tags", watchlists:"watchLists" };
+  const ACCT_SURFACE_LABEL = { agents:"agents", tags:"tags", watchLists:"watch lists" };
+  const acctTableFail = { cascades:false, lists:false, listFilms:false, watchlists:false };
+  function setAcctTableFail(table, failed){
+    if(acctTableFail[table]===failed) return;
+    acctTableFail[table]=failed;
+    renderAcctBanner();
+  }
+  function renderAcctBanner(){
+    const el=$("acctBanner"); if(!el) return;
+    const down=new Set();
+    Object.keys(acctTableFail).forEach(t=>{ if(acctTableFail[t]) down.add(ACCT_TABLE_SURFACE[t]); });
+    if(!down.size){ el.hidden=true; el.textContent=""; }
+    else{
+      el.textContent="Account not connected — showing on-device data for: "
+        + [...down].map(k=>ACCT_SURFACE_LABEL[k]).join(", ") + ".";
+      el.hidden=false;
+    }
+    syncHeaderHeight();   // the banner is part of the header's own measured height (see .acctbanner CSS)
+  }
+
   // ---- shape mapping: local Cascade <-> table row --------------------------
   // criteria (jsonb) carries the whole local Cascade minus the columns stored on their own
   // (id, name, paused->active). alert_moments (text[]) is DERIVED from the local alerts object for
@@ -17307,6 +17346,7 @@ else if(dedupedN)
   }
   async function syncToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
+    if(acctTableFail.cascades) return;   // CAS-656 AC2: a failed load must not push local state back over it
     const rows = cascades.map(cascadeToRow);
     if(rows.length){
       const { error } = await c.from("cascades").upsert(rows, { onConflict:"id" });
@@ -17335,7 +17375,8 @@ else if(dedupedN)
   async function loadAccount(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("cascades").select("*");   // RLS: only mine
-    if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); cascadesReady=true; return; }
+    if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); cascadesReady=true; setAcctTableFail("cascades", true); return; }
+    setAcctTableFail("cascades", false);
     cascadeBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
     // CAS-560: a pre-CAS-560 row can still carry a real lang array — rowToCascade (via normCascade) clears
     // it in memory either way, but flag it here so the corrected row gets pushed back rather than left
@@ -17391,7 +17432,8 @@ else if(dedupedN)
   async function reconcileCascades(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("cascades").select("*");
-    if(error){ console.warn("Cascade reconcile", error); return; }
+    if(error){ console.warn("Cascade reconcile", error); setAcctTableFail("cascades", true); return; }
+    setAcctTableFail("cascades", false);
     // CAS-560: same stale-lang push-back as loadAccount, for the background convergence path.
     const langDirty = (data||[]).some(r => ((r.criteria||{}).lang||[]).length);
     const remote=(data||[]).map(rowToCascade);
@@ -17513,6 +17555,7 @@ else if(dedupedN)
   }
   async function syncListsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
+    if(acctTableFail.lists) return;   // CAS-656 AC2: a failed load must not push local state back over it
     const rows=lists.map(listToRow);
     if(rows.length){
       const { error } = await c.from("lists").upsert(rows, { onConflict:"id" });
@@ -17530,6 +17573,7 @@ else if(dedupedN)
   }
   async function syncListFilmsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
+    if(acctTableFail.listFilms) return;   // CAS-656 AC2: a failed load must not push local state back over it
     const rows=listFilmRows();
     if(rows.length){
       const { error } = await c.from("list_films").upsert(rows, { onConflict:"user_id,movie_id,list_id" });
@@ -17552,7 +17596,8 @@ else if(dedupedN)
   async function loadListsAccount(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("lists").select("*");
-    if(error){ console.warn("Lists load", error); return; }
+    if(error){ console.warn("Lists load", error); setAcctTableFail("lists", true); return; }
+    setAcctTableFail("lists", false);
     listsBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
     const remote = (data||[]).map(rowToList);
     const localOnes = lists.slice();
@@ -17569,7 +17614,8 @@ else if(dedupedN)
   async function loadListMembershipAccount(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("list_films").select("movie_id,list_id");
-    if(error){ console.warn("list_films load", error); return; }
+    if(error){ console.warn("list_films load", error); setAcctTableFail("listFilms", true); return; }
+    setAcctTableFail("listFilms", false);
     const remote=data||[];
     listFilmBaseline=new Set(remote.map(r=>`${r.movie_id}:${r.list_id}`));
     Object.keys(listMembership).forEach(k=>delete listMembership[k]);
@@ -17583,7 +17629,8 @@ else if(dedupedN)
   async function reconcileLists(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("lists").select("*");
-    if(error){ console.warn("Lists reconcile", error); return; }
+    if(error){ console.warn("Lists reconcile", error); setAcctTableFail("lists", true); return; }
+    setAcctTableFail("lists", false);
     const remote=(data||[]).map(rowToList);
     const remoteIds=new Set(remote.map(x=>x.id));
     remote.forEach(r=>{
@@ -17602,7 +17649,8 @@ else if(dedupedN)
   async function reconcileListMembership(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("list_films").select("movie_id,list_id");
-    if(error){ console.warn("list_films reconcile", error); return; }
+    if(error){ console.warn("list_films reconcile", error); setAcctTableFail("listFilms", true); return; }
+    setAcctTableFail("listFilms", false);
     const remote=data||[];
     const remoteKeys=new Set(remote.map(r=>`${r.movie_id}:${r.list_id}`));
     const localOnly = listFilmBaseline
@@ -17655,6 +17703,7 @@ else if(dedupedN)
   }
   async function syncWatchlistsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
+    if(acctTableFail.watchlists) return;   // CAS-656 AC2: a failed load must not push local state back over it
     const rows=watchLists.map(watchlistToRow);
     if(rows.length){
       const { error } = await c.from("watchlists").upsert(rows, { onConflict:"id" });
@@ -17673,7 +17722,8 @@ else if(dedupedN)
   async function loadWatchlistAccount(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("watchlists").select("*");   // RLS: only mine
-    if(error){ console.warn("Watchlist load", error); toast("⚠️ Couldn't reach your account — showing on-device watch lists."); ymReady=true; return; }
+    if(error){ console.warn("Watchlist load", error); toast("⚠️ Couldn't reach your account — showing on-device watch lists."); ymReady=true; setAcctTableFail("watchlists", true); return; }
+    setAcctTableFail("watchlists", false);
     watchlistBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
     const remote=(data||[]).map(rowToWatchlist);
     if(!remote.length){
@@ -17703,7 +17753,8 @@ else if(dedupedN)
   async function reconcileWatchlists(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("watchlists").select("*");
-    if(error){ console.warn("Watchlist reconcile", error); return; }
+    if(error){ console.warn("Watchlist reconcile", error); setAcctTableFail("watchlists", true); return; }
+    setAcctTableFail("watchlists", false);
     const remote=(data||[]).map(rowToWatchlist);
     const remoteIds=new Set(remote.map(x=>x.id));
     remote.forEach(r=>{
@@ -17789,6 +17840,9 @@ else if(dedupedN)
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); loadGuestLists(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
       cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
       watchlistBaseline=null;
+      // CAS-656: a guest has no account to be disconnected from — clear any failure this device carried
+      // from its last signed-in session, or the banner would wrongly survive a sign-out.
+      Object.keys(acctTableFail).forEach(t=>setAcctTableFail(t, false));
       try{ localStorage.setItem("cascade_had_account","0"); }catch(e){}
     }
   });
