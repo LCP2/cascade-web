@@ -13661,7 +13661,11 @@ function ymFeedMatches(m){
   // CAS-570: one tickbox per verdict, not one switch for all of them. opinionOf() returns "" for an unwatched
   // film, which is never in the set, so unwatched films are unaffected by this line either way.
   if(watched.has(id) && !ymWatchedOn.has(opinionOf(id))) return false;
-  if(!YM_SVC.some(s=>ymSvcOn.has(s.key) && filmCurrentlyAt(id,s.wk) && filmOptOn(id,{key:s.wk}))) return false;
+  // CAS-651: the availability chips ask WHERE THE FILM IS, and nothing else. filmOptOn is a notify
+  // preference — requiring it here (inherited from Your Movies, whose feed was films you had
+  // hand-marked) meant a film only passed the chip if you had separately armed a bell for that
+  // window, so selecting all five still returned only the windows that happened to carry one.
+  if(!YM_SVC.some(s=>ymSvcOn.has(s.key) && filmCurrentlyAt(id,s.wk))) return false;
   if(ymSearchTerm && !m.title.toLowerCase().includes(ymSearchTerm)) return false;
   if(ymWatchTiers.size && ![...ymWatchTiers].some(k=>k==="undecided" ? filmIsUndecided(id) : filmHasWatchTier(id,k))) return false;
   return cascades.some(c=>ymCascTicked(c) && listedBy(m,c));
