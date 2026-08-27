@@ -10166,9 +10166,11 @@ const STARTERS = [
 const ONB_AGENTS = [
   {key:"onb_cinema", icon:"🎬", name:"Must see at the cinema", kind:"cinema",
    when:a => a.cinema==="special" || a.cinema==="often",
-   // A cinema trip is scarce, so this list is short whatever the depth answer says. capOverride
-   // is read by onbDepthFor() and is the ONLY place a recipe overrides the account-wide depth.
-   capOverride:3,
+   // A cinema trip is scarce for someone who goes "for special films", so that list stays short
+   // whatever the depth answer says. Someone who answered "often" told us the opposite, so they
+   // get the account-wide depth like every other agent. capOverride is read by onbDepthFor() and
+   // is the ONLY place a recipe overrides that depth.
+   capOverride:a => a.cinema==="often" ? null : 3,
    crit:{status:["upcoming","opening_week","in_cinema"], selScale:0, selBuzz:1,
          myServices:false, yearsBack:20},
    alerts:{cinema:true, past_opening:false, announced:false, opens_soon:false,
@@ -10280,7 +10282,10 @@ function buildOnbAgents(a){
     c.alerts = {...ALERT_DEFAULTS, ...(r.alerts||{})};
     c.watchWindows = JSON.parse(JSON.stringify(r.watchWindows||{}));
     c.sort = "cascade";                       // CAS-618: the Cascade score is the default order
-    c.onbCap = r.capOverride || null;         // read by onbDepthFor(); null means follow the account
+    // Resolved here, against the answers, so the agent on disk carries a number and onbDepthFor
+    // never has to know what the user said. A recipe may supply a function or a plain number.
+    c.onbCap = (typeof r.capOverride==="function") ? (r.capOverride(ans) || null)
+                                                   : (r.capOverride || null);
     normCascade(c);
     laneCrit(c, c.kind);                      // belt and braces: a recipe must not carry a dead dial
     return c;
