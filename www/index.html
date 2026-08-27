@@ -4840,6 +4840,21 @@ function removeList(id){
   saveListMembership();
   logEvent("list_deleted",{});
 }
+// CAS-635 N3c: the per-list dismiss's tag, found by name (created once, reused after) rather than always
+// pushed like createList() — "at most one tag per agent, however many films are dismissed" (AC4) depends
+// on this being idempotent by name.
+function findOrCreateTag(name){
+  const nm=(name||"").trim(); if(!nm) return null;
+  let l=lists.find(x=>x.name===nm);
+  if(!l){ l={id:cascadeNewId(), name:nm}; lists.push(l); saveLists(); }
+  return l;
+}
+function addFilmToList(id, lid){
+  const key=String(id);
+  const arr=listMembership[key] || (listMembership[key]=[]);
+  if(!arr.includes(lid)) arr.push(lid);
+  saveListMembership();
+}
 
 // CAS-269: "Live AU data · " is gone from the freshness line for the same reason the chip is: it is a
 // constant. What is left is the one part of this line that moves.
@@ -4854,7 +4869,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 805, "commit": "e5c5124", "builtAt": "2026-08-27T05:50:45Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 806, "commit": "05596ec", "builtAt": "2026-08-27T06:08:38Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6318,6 +6333,7 @@ function cardHTML(m, markNew=false){
         ${notifyChipHTML(id)}
         ${listsChipHTML(id)}
         ${watchChipHTML(id)}
+        ${dismissChipHTML(id)}
       </div>
     </div>
     <!-- CAS-436: the detail section (awards/director/cast/trailers/share) opens BELOW the control row, not
@@ -6621,6 +6637,20 @@ function listsChipHTML(id){
       <span class="cic">${ICON.deck}</span>
       <span class="clab${here.length?"":" dim"}">${esc(lbl)}</span>
       <span class="ctog">${ICON.chev}</span></span></button>`;
+}
+// CAS-635 N3c: the per-list dismiss — a single tap, no popover. Its label names the single selected agent,
+// or "this list" once more than one is active (same one-vs-many split attributionHTML already reads off
+// activeIds.length).
+function dismissLabel(){
+  const acs=activeCascades();
+  return acs.length>1 ? "this list" : (acs[0] ? acs[0].name : "this list");
+}
+function dismissChipHTML(id){
+  const label=dismissLabel();
+  const title=`Not for ${label}`;
+  return `<button type="button" class="ctl dismiss" onclick="dismissFilmFromList(${id})"
+      title="${escA(title)}" aria-label="${escA(title)}">
+    <span class="cmini"><span class="cic">✕</span><span class="clab">${esc(title)}</span></span></button>`;
 }
 // The panel's rows: one per List (a true multi-select, hence the square .wwb.sq tick — see the CAS-382 CSS
 // comment on that class), plus an always-present "＋ New list" row at the foot.
@@ -8016,6 +8046,9 @@ function normCascade(c, opts){
   // told it to drop. Pre-existing Cascades predate the toggles, so they adopt the same default.
   c.excludeWatched = c.excludeWatched===undefined ? true : !!c.excludeWatched;
   c.excludeBlocked = c.excludeBlocked===undefined ? true : !!c.excludeBlocked;
+  // CAS-635: tag exclusions default to none — an agent that predates this ticket excluded nothing, and
+  // still excludes nothing until a tag is ticked or a film is dismissed.
+  c.excludeTags = Array.isArray(c.excludeTags) ? c.excludeTags.filter(x=>typeof x==="string") : [];
   c.alerts = {...ALERT_DEFAULTS, ...(c.alerts||{})};
   // Which bells the user has pressed BY HAND this editing session (CAS-103 AC2). Editor-only — it is
   // never persisted (commitDraft copies a named field list), because it answers "did you choose this,
@@ -8315,6 +8348,10 @@ function matchesCriteria(m,c,ignoreBlocked){
   if(scopeOf(c)[ps] && !matchesServices(m, ps)) return false;   // CAS-252/342: see passes()
   if(c.status.length && !c.status.includes(ps)) return false;
   if((c.exclude||[]).length && (m.genres||[]).some(g=>c.exclude.includes(g))) return false;   // skip beats match
+  // CAS-635: a tag is a user's own "this shouldn't be here" answer, so a film carrying an excluded tag drops
+  // out of the listing wherever this agent draws it from — listedBy, watchesFilm and countCriteria all route
+  // through this one gate, so no other call site needs its own excludeTags check.
+  if((c.excludeTags||[]).length && (listMembership[m.tmdb_id]||[]).some(lid=>c.excludeTags.includes(lid))) return false;
   // CAS-182: cleared means cleared. A dimension holding null admits nothing, so the count says 0 rather
   // than quietly reverting to the whole catalogue behind a screen of switched-off chips.
   if(c.genre===null || c.age===null) return false;
@@ -9306,6 +9343,7 @@ function commitDraft(){
     selScale:draft.selScale, selBuzz:draft.selBuzz, selOr:draft.selOr,
     awards:draft.awards, cinemaReleaseOnly:draft.cinemaReleaseOnly, myServices:{...draft.myServices},
     excludeWatched:draft.excludeWatched, excludeBlocked:draft.excludeBlocked,
+    excludeTags:[...(draft.excludeTags||[])],
     sort:draft.sort||"cascade", alerts:draft.alerts, watchWindows:draft.watchWindows,
     // CAS-228: listStatus travels with status. Left out, the agent on disk would watch the right windows and
     // list all of them, so turning List off for one window would appear to work and then not survive a save.
@@ -12536,6 +12574,18 @@ const SHARP_STEPS = {
           ${stream ? `<button type="button" class="easub" onclick="briefGo('years')">
             <span class="eash">How far back</span><span class="easv">${esc(yearsLabel(flowYearsBack()))}</span></button>` : ""}
         </div>
+        <!-- CAS-635 N3a: the per-window service scope (myServices over HOME_KEYS) already exists on the
+             agent — this just surfaces it here, same object, same flags. A tap flips that one window
+             between "All" and "Mine only" in place, no sub-screen. -->
+        <div class="easec">
+          ${AVAIL_ROWS.filter(r=>r.home).map(r=>`<button type="button" class="easub" onclick="briefToggleSvc('${r.key}')">
+            <span class="eash">${esc(r.title)}</span><span class="easv">${d.myServices && d.myServices[r.key] ? "Mine only" : "All"}</span></button>`).join("")}
+        </div>
+        <!-- CAS-635 N3b: exclude-tags, v1 exclude-only — the row opens the one-tick-per-tag spoke below. -->
+        <div class="easec">
+          <button type="button" class="easub" onclick="briefGo('extags')">
+            <span class="eash">Exclude tags</span><span class="easv">${(d.excludeTags||[]).length ? `${(d.excludeTags||[]).length} excluded` : "None"}</span></button>
+        </div>
         <!-- CAS-531 #4: "Where & when you'll watch" is gone from this page — it's a system-wide setting now
              (CAS-532), one place for every agent instead of a per-agent door. CAS-562 split that single
              Preferences destination into Languages and Where & when you'll watch, so this note names both
@@ -12904,6 +12954,27 @@ ${who.includes("kids") ? `
       [...box.children].forEach(b=>{
         b.onclick=()=>{ dAgeToggle(+b.dataset.i); renderOnbStep("age"); };
       });
+    },
+  },
+  // ---- CAS-635 N3b: exclude tags, v1 exclude-only ----------------------------------------------------
+  // One row per existing tag with a tick; ticking adds the tag's id to this agent's excludeTags. There is
+  // no include control — a film not carrying any ticked tag is unaffected, exactly as it always was.
+  extags: {
+    title: "Exclude tags",
+    noAgent: true,
+    body(){
+      const d=onbFlow.draft||{};
+      const ex=new Set(d.excludeTags||[]);
+      const rows=lists.map(l=>{
+        const on=ex.has(l.id);
+        return `<button type="button" class="nopt${on?" on":""}" data-lid="${l.id}" style="--wwc:var(--accent)"
+          aria-pressed="${on}" onclick="briefToggleExcludeTag('${l.id}')"
+          title="${escA(on?`Excluded from this agent's list — tap to include again`:`Exclude ${l.name} from this agent's list`)}">
+          <span class="wwb sq">✓</span><span class="nol">${esc(l.name)}</span></button>`;
+      }).join("");
+      const none = lists.length ? "" : `<div class="nopt nonone">You have no tags yet — tag a film first, then come back here to exclude it.</div>`;
+      return `<p class="ossub">A film carrying a ticked tag is dropped from this agent's list.</p>
+        <div class="nopts">${none}${rows}</div>`;
     },
   },
   // ---- CAS-199: My streaming services ---------------------------------------------------------------
@@ -13310,6 +13381,23 @@ function briefOpen(id){
 // linear onboarding flow uses, so behaviour and styling always match. It used to divert to the older
 // standalone Preferences modal, which had drifted out of sync (no alphabetised chips, no lead/"more" rows).
 window.briefGo=step=>{ logEvent("briefing_row",{step}); gotoStep(step,"fwd"); };
+// CAS-635 N3a: a tap flips one window's service scope in place — no sub-screen, no navigation, same
+// draft/flags the flow's own onbApply() reads back out on Save.
+window.briefToggleSvc=key=>{
+  const d=onbFlow.draft; if(!d) return;
+  if(typeof d.myServices!=="object" || d.myServices===null) d.myServices={};
+  d.myServices[key]=!d.myServices[key];
+  renderOnbStep("briefing");
+};
+// CAS-635 N3b: the exclude-tags spoke's one control — ticking a tag adds its id to this agent's
+// excludeTags, unticking removes it. No include control exists anywhere in this spoke.
+window.briefToggleExcludeTag=lid=>{
+  const d=onbFlow.draft; if(!d) return;
+  d.excludeTags = Array.isArray(d.excludeTags) ? d.excludeTags.slice() : [];
+  const i=d.excludeTags.indexOf(lid);
+  if(i>=0) d.excludeTags.splice(i,1); else d.excludeTags.push(lid);
+  renderOnbStep("extags");
+};
 // CAS-246: hand the just-picked agent to the Briefing WITHOUT committing it. briefOpen() reads a SAVED
 // cascade off the deck; this agent has never been saved, and saving it here so the hub had something to read
 // would put an agent nobody confirmed onto the deck — and leave it there if they backed out. So the draft
@@ -16081,6 +16169,21 @@ window.setOpinion=(id,kind)=>{
   // FIRST — so the toast reports what actually happened, not what we assumed. The repaint runs inside
   // keepRowInPlace so the card folds (or unfolds, on the tap that clears it) exactly where you tapped it.
   keepRowInPlace(id, ()=>repaintAfterOpinion(id));   // CAS-129: swap only the tapped row, not the whole list
+};
+// CAS-635 N3c: per-list dismiss. Applies to every currently active agent (not just the first) — a
+// multi-select listing is a union of their lists, so dropping the film from all of them is what makes it
+// actually leave the listing rather than resurface via whichever active agent didn't get the tag.
+window.dismissFilmFromList=id=>{
+  const acs=activeCascades(); if(!acs.length) return;
+  acs.forEach(c=>{
+    const tag=findOrCreateTag(`Not for ${c.name}`); if(!tag) return;
+    addFilmToList(id, tag.id);
+    c.excludeTags = Array.isArray(c.excludeTags) ? c.excludeTags : [];
+    if(!c.excludeTags.includes(tag.id)) c.excludeTags.push(tag.id);
+  });
+  saveCascades();
+  logEvent("film_dismissed_from_list",{agents:acs.length});
+  keepRowInPlace(id, ()=>render());   // CAS-129: the existing removal animation
 };
 // CAS-287: the toast that used to fire here is gone, and opinionToast with it. It was the worst offender the
 // ticket describes: answering a run of films is the single most repeated gesture in the app, and every answer
