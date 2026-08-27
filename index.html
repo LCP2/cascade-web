@@ -2674,7 +2674,10 @@
      below the header (30); nothing in the app uses 21-29.
      NOT solved by raising the header: the five .uscreens that DO cover it (Account, Lists, About, Review,
      Service analysis) share the same z-index:84, so any header above 84 paints over them too. */
-  #agentsScreen, #yourMovies{top:var(--hdrh,0px); z-index:29}
+  /* CAS-H1: #movingScreen joins them. It is a main nav destination that opens at boot and has no
+     back control, so it must sit BELOW the header like the other two rather than covering it —
+     otherwise the app opens with no navigation and no way out. */
+  #agentsScreen, #yourMovies, #movingScreen{top:var(--hdrh,0px); z-index:29}
   /* CAS-A1: Agents is a main destination and its list is short — a track down the right edge is
      chrome the screen does not earn. It still scrolls; only the indicator goes. */
   #agentsScreen{scrollbar-width:none;-ms-overflow-style:none}
@@ -2683,8 +2686,10 @@
      cover the header at top:0. #yourMovies is not one of them — it starts at var(--hdrh), so the header has
      already spent the notch inset and this padding double-counts it: 22px in a desktop harness, 22px + the
      real inset on the device. Find's equivalent (.cascbar) starts 2px under the header; this matches it.
-     #agentsScreen has the same defect and is deliberately NOT changed here — see CAS-565. */
-  #yourMovies .uwrap{padding-top:0}
+     #agentsScreen has the same defect and is deliberately NOT changed here — see CAS-565.
+     CAS-649: #movingScreen now starts at var(--hdrh) too, same double-count, same fix. It has no sticky
+     content of its own, so this is the only Your-Movies treatment it needs — see CAS-636's shell above. */
+  #yourMovies .uwrap, #movingScreen .uwrap{padding-top:0}
   /* CAS-509: same env(safe-area-inset-top) clearance as the header — .uscreen (Your Movies, Agents,
      Review, Account, Service analysis, Lists, About) is fixed from the viewport's true top:0, so its
      .ostop back button was sitting under the notch/status bar with none of the header's allowance. */
@@ -3781,9 +3786,9 @@
   <div class="uwrap" id="agentsBody"></div>
 </div>
 
-<!-- MOVING (CAS-636): the alert feed made visible. Plain menu-screen shell (z-index:84, top:0) — unlike
-     #agentsScreen/#yourMovies it has no header chip that stays lit underneath it, so it doesn't need their
-     CAS-568 carve-out. -->
+<!-- MOVING (CAS-636): the alert feed made visible. CAS-649: it opens at boot with no back control, so
+     unlike the other one-off Menu-destination .uscreens it must sit BELOW the header (top:var(--hdrh),
+     z-index:29) rather than cover it at top:0 — see #agentsScreen,#yourMovies,#movingScreen above. -->
 <div class="uscreen" id="movingScreen" role="dialog" aria-modal="true" aria-label="Moving">
   <div class="uwrap" id="movingBody"></div>
 </div>
@@ -4914,7 +4919,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 815, "commit": "c2efa94", "builtAt": "2026-08-27T08:26:13Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 816, "commit": "4fa01ab", "builtAt": "2026-08-27T08:31:51Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
