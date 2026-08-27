@@ -1854,6 +1854,9 @@
     padding:calc(28px + env(safe-area-inset-top,0px)) var(--flow-pad) 24px;
     overflow-y:auto;background:radial-gradient(120% 45% at 50% 0%,#141b30 0%,var(--bg) 42%,#080b14 100%)}
   .sharpstep.open{display:flex}
+  /* CAS-A2: the Briefing scrolls but shows no track, matching the Agents screen. */
+  #onbStep{scrollbar-width:none;-ms-overflow-style:none}
+  #onbStep::-webkit-scrollbar{width:0;height:0;display:none}
   /* CAS-157: `margin:auto` centred this block vertically, which on a sparse step (Get selective is the worst)
      left a fat band of nothing above AND below and made the screen read as underfilled — the thing that
      compounds the "everything is too small" impression. Top-aligned instead: the back/progress bar belongs at
@@ -4897,7 +4900,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 808, "commit": "300ef82", "builtAt": "2026-08-27T06:42:04Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 809, "commit": "b11421d", "builtAt": "2026-08-27T06:46:14Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -13477,8 +13480,10 @@ window.flowPriority=kind=>{ flowKind=kind; logEvent("flow_priority",{kind}); flo
 // agent on disk moves — which is also what makes the round-trip demonstrable: what you set in onboarding
 // is on the record, the Briefing reads it back off the record, and saving writes it there again.
 let briefOn=false;
-function briefOpen(id){
+let briefFrom=null;
+function briefOpen(id, from){
   const c=cascades.find(x=>x.id===id); if(!c) return;
+  briefFrom = from || null;
   flowStop(); briefOn=true;
   onbFlow.draft = normCascade(JSON.parse(JSON.stringify(c)));
   onbFlow.name  = c.name || "";
@@ -13537,8 +13542,8 @@ function briefNewAgent(){
 window.briefSave=()=>{
   draft = onbApply();
   const {c} = commitDraft();
-  briefClose();
   showFoundList(); render();
+  briefClose();
 
   logEvent("briefing_saved",{id:c.id, matches:watchCount(c)});
 };
@@ -13551,7 +13556,13 @@ window.briefDelete=()=>{
   if(!deleteAgentAsk(c)) return;
   briefClose(); showFoundList(); render();
 };
-function briefClose(){ briefOn=false; flowStop(); }
+// The one place the Briefing decides where you land. Back and Save must agree — a Save that
+// returns you somewhere Back would not is the same bug wearing a different button.
+function briefReturn(){
+  if(briefFrom==="agents"){ briefFrom=null; return openAgentsScreen(); }
+  briefFrom=null;
+}
+function briefClose(){ briefOn=false; flowStop(); briefReturn(); }
 
 // CAS-377: the top-menu "My services" row opens the SHARP_STEPS.services spoke bare (title + Done, the
 // toggle, the provider chips) — not the older standalone Preferences modal, which had drifted out of sync
@@ -14497,7 +14508,10 @@ function syncWatchChip(){
 // left this screen), and the Learning-chip/Edit button opt out of it — a press on either must never be read
 // as a row tap.
 function openAgentRow(id){ closeAgentsScreen(); openCascade(id); }
-window.editAgentRow=id=>{ closeAgentsScreen(); briefOpen(id); };
+// CAS-A2: do NOT close the Agents screen here. It is where the user came from, and closing it
+// means Back and Save have nothing to return to — they fall through to the Watch listing.
+// briefFrom records the origin; briefReturn() puts them back on it.
+window.editAgentRow=id=>{ briefOpen(id, "agents"); };
 // CAS-636: tapping an agent name on a Moving row lands on Watch with that agent selected — same idiom as
 // openAgentRow above, off the agent's NAME rather than id, since that's all the notifications ledger carries.
 window.openMovingAgent=name=>{
