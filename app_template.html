@@ -7552,7 +7552,10 @@ function scopeRows(){
   // CAS-634: with two or more agents selected the listing is their UNION — a film either agent lists
   // appears once, never twice.
   if(!acs.length) return [];
-  const rows = MOVIES.filter(m=>acs.some(c=>listedBy(m,c)));
+  // CAS-646: the ACTIVE watch list's own svcOn/watchedOn/watchTiers now gate the live listing too — the
+  // same predicate ymFeedMatches already applies to the (unreachable) Your Movies feed, reused here rather
+  // than re-expressed, so the two can never drift apart.
+  const rows = MOVIES.filter(m=>acs.some(c=>listedBy(m,c)) && ymFeedMatches(m));
   const searched = filt.search ? rows.filter(m=>m.title.toLowerCase().includes(filt.search)) : rows;
   // CAS-382: no tier ticked = no filter, same "nothing picked = show everything" rule every other chip set
   // in `passes()` follows.
@@ -13563,11 +13566,14 @@ function filmCurrentlyAt(id, key){
   const m=MOVIES.find(x=>x.tmdb_id===id);
   return !!m && m.status.some(w=>filmOptKeyForWindow(null,w)===key);
 }
+// CAS-V2: the five availability states a film can be in, in the order it passes through them.
+// Upcoming is new here — the list could not previously ask for a film that has not opened yet.
 const YM_SVC = [
-  {key:"cinema", label:"Cinema",    wk:"in_cinema"},
-  {key:"stream", label:"Streaming", wk:"stream"},
-  {key:"rent",   label:"Rent",      wk:"rent"},
-  {key:"buy",    label:"Buy",       wk:"premium"},
+  {key:"upcoming", label:"Upcoming",  wk:"upcoming"},
+  {key:"cinema",   label:"Cinema",    wk:"in_cinema"},
+  {key:"buy",      label:"Buy",       wk:"premium"},
+  {key:"rent",     label:"Rent",      wk:"rent"},
+  {key:"stream",   label:"Streaming", wk:"stream"},
 ];
 let ymSvcOn = new Set(["stream"]);   // ticked service filters — default Streaming only
 let ymCascOff = new Set();           // cascade ids explicitly UNticked — default empty, i.e. every cascade
@@ -13641,16 +13647,19 @@ function ymFeedList(){
     return score(b)-score(a) || (b.imdb_rating||0)-(a.imdb_rating||0);
   });
 }
-window.ymSvcToggle=key=>{ ymSvcOn.has(key)?ymSvcOn.delete(key):ymSvcOn.add(key); ymPersist(); renderYourMovies(); leRefreshIfOpen(); };
-window.ymSvcSetAll=on=>{ ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]); ymPersist(); renderYourMovies(); leRefreshIfOpen(); };
+// CAS-646: svcOn now drives the LIVE listing too (ymFeedMatches, called from scopeRows()), not just this
+// screen's own preview feed — every toggle re-renders it, mirroring ymCascToggle below.
+window.ymSvcToggle=key=>{ ymSvcOn.has(key)?ymSvcOn.delete(key):ymSvcOn.add(key); ymPersist(); renderYourMovies(); render(); leRefreshIfOpen(); };
+window.ymSvcSetAll=on=>{ ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]); ymPersist(); renderYourMovies(); render(); leRefreshIfOpen(); };
 // CAS-642: agent membership (cascOff) now drives the LIVE Find listing's own union too (AC1/AC3), not just
 // this screen's own preview feed — every toggle re-derives activeIds from the active list and re-renders.
 window.ymCascToggle=id=>{ ymCascOff.has(id)?ymCascOff.delete(id):ymCascOff.add(id); ymPersist(); syncActiveIdsFromActiveList(); renderYourMovies(); render(); leRefreshIfOpen(); };
 // CAS-592: the list editor's own "Select all · Clear all" row for cascades — ymCascToggle above only ever
 // flipped one at a time, which is all the old inline panel needed since it had no bulk row for this section.
 window.ymCascSetAll=on=>{ ymCascOff=new Set(on?[]:cascades.map(c=>c.id)); ymPersist(); syncActiveIdsFromActiveList(); renderYourMovies(); render(); leRefreshIfOpen(); };
-window.ymVerdictToggle=k=>{ ymWatchedOn.has(k)?ymWatchedOn.delete(k):ymWatchedOn.add(k); ymPersist(); renderYourMovies(); leRefreshIfOpen(); };
-window.ymVerdictSetAll=on=>{ ymWatchedOn = new Set(on ? WATCH_STEPS.map(s=>s.key) : []); ymPersist(); renderYourMovies(); leRefreshIfOpen(); };
+// CAS-646: watchedOn now drives the LIVE listing too (ymFeedMatches), same reasoning as ymSvcToggle above.
+window.ymVerdictToggle=k=>{ ymWatchedOn.has(k)?ymWatchedOn.delete(k):ymWatchedOn.add(k); ymPersist(); renderYourMovies(); render(); leRefreshIfOpen(); };
+window.ymVerdictSetAll=on=>{ ymWatchedOn = new Set(on ? WATCH_STEPS.map(s=>s.key) : []); ymPersist(); renderYourMovies(); render(); leRefreshIfOpen(); };
 // CAS-642 W2b/AC4: exclude-tags, moved here from the agent Briefing — exclude only, no include control.
 // matchesCriteria (CAS-642's own comment there) reads the ACTIVE list's array, so this has to re-render the
 // live listing too, not just this screen's own preview.
@@ -13984,19 +13993,22 @@ function onYmFilterIcon(btn){
   wirePanelSlide(pop, ".nopt[data-tier]", el=>ymToggleFilterTier(el.dataset.tier));
   btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
 }
+// CAS-646: watchTiers now drives the LIVE listing too (ymFeedMatches), same reasoning as ymSvcToggle above.
 window.ymToggleFilterTier=key=>{
   ymWatchTiers.has(key) ? ymWatchTiers.delete(key) : ymWatchTiers.add(key);
   ymPersist();
   const pop=document.querySelector(".cpop.ymfpop");
   if(pop) pop.querySelector(".nopts").innerHTML=ymFilterRowsHTML();
-  ymRefreshFeed();
+  ymRefreshFeed(); render();
 };
 document.addEventListener("click", e=>{
   if(!document.querySelector(".cpop.ymfpop")) return;
   if(e.target.closest(".cpop.ymfpop") || e.target.closest(".dc-filter")) return;
   closeYmFilterPanel();
 }, true);
-window.ymSortChange=v=>{ ymSort = v||null; ymPersist(); ymRefreshFeed(); };
+// CAS-646: sort now drives the LIVE listing's own per-section order too (render()'s groups.map, not just
+// this screen's own preview feed).
+window.ymSortChange=v=>{ ymSort = v||null; ymPersist(); ymRefreshFeed(); render(); };
 $("ymSort").onchange=e=>ymSortChange(e.target.value);
 // A per-keystroke search/filter change only needs the feed's own count/result-line/cards refreshed — not the
 // whole screen (renderYourMovies would tear down and rebuild the search input mid-type, stealing its focus).
@@ -14073,7 +14085,7 @@ function leInnerHTML(){
     </div>
     <div class="oscount" id="leCount" aria-live="polite"><b>${n}</b> film${n===1?"":"s"} match right now</div>
     <div class="lesec">
-      <div class="lesechd">Where you can watch it</div>
+      <div class="lesechd">AVAILABILITY STATUS</div>
       <div class="chips">${svcChips}</div>
       <div class="lelinkrow">
         <button type="button" class="lelink" onclick="ymSvcSetAll(true)">Select all</button>
@@ -16177,7 +16189,9 @@ function render(){
   const onbDepth = (ac && ac.onbCap!==undefined) ? onbDepthFor(ac) : null;
   const groups=orderFor(ac)      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
     .map(g=>{
-      let items=rows.filter(m=>primaryStatus(m)===g).sort(sortFor(g,ac));
+      // CAS-646: the listing's order is the ACTIVE WATCH LIST's own sort (ymSort), not the open agent's —
+      // "cascade" where the list has none, never the agent's c.sort and never a bare "imdb" default.
+      let items=rows.filter(m=>primaryStatus(m)===g).sort(sortForKey(g, ymSort||"cascade", ac && ac.kind==="cinema"));
       let fullCount=items.length, capped=false;
       if(onbDepth){
         items=items.filter(m=>{ const q=qScore(m); return q!==-1 && q>=onbDepth.floor; });
