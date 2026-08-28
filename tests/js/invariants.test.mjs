@@ -380,3 +380,52 @@ test("mission OR AC5: every zero stop reads Off, and the Cinema Release control 
   assert.ok(/Had a cinema release/i.test(cinemaBlock),
     "the Cinema Release control does not read \"Had a cinema release\"");
 });
+
+// ---- WATCH-LIST SELECTION LOADS ITS OWN RECORD (CAS-666) ------------------------------------------------
+// deckSelect/wlRailCreate are the LIVE deck's own selection/creation paths — the ones that shipped without
+// applyActiveWatchlist(), so the ymSvcOn/etc scratch state kept whichever list was previously open and
+// ymPersist() then stamped those stale values into the newly selected list's own saved record.
+// Records built or read back through the vm sandbox carry vm-realm Arrays, which deepStrictEqual (this
+// file imports assert/strict) treats as unequal to a same-looking native array — every array assertion in
+// data-integrity.test.mjs hits the same thing and spreads first; this does the same for a whole record.
+const plainRecord = r => ({
+  svcOn: [...r.svcOn], cascOff: [...r.cascOff], watchedOn: [...r.watchedOn],
+  watchTiers: [...r.watchTiers], sort: r.sort, excludeTags: [...r.excludeTags],
+});
+
+function seedTwoLists(){
+  E.watchLists.length = 0;
+  const a = E.normWatchlistEntry({ name: "A", order: 0, svcOn: ["stream"], cascOff: ["only-a"] });
+  const b = E.normWatchlistEntry({ name: "B", order: 1, svcOn: ["cinema", "rent"], cascOff: [] });
+  E.watchLists.push(a, b);
+  return { a, b };
+}
+
+test("CAS-666 AC1/AC3: selecting a list through the deck loads that list's own record, not the previous list's", () => {
+  const { a, b } = seedTwoLists();
+  E.setActiveWatchlist(a.id);
+  E.applyActiveWatchlist();
+  assert.deepEqual(plainRecord(E.watchlistRecord()), plainRecord(a),
+    "list A's own record should load on activation");
+
+  assert.ok(E.deckSelect(1), "deckSelect should report a real selection");
+  assert.equal(E.watchActiveId, b.id, "deckSelect did not make list B active");
+  assert.deepEqual(plainRecord(E.watchlistRecord()), plainRecord(b),
+    "deckSelect must load list B's own stored record, not carry list A's scratch state over");
+
+  // AC3: switching back to B must not have overwritten A's own stored record with B's settings.
+  assert.deepEqual(plainRecord(a), { svcOn: ["stream"], cascOff: ["only-a"], watchedOn: [], watchTiers: [], sort: null, excludeTags: [] },
+    "list A's stored record must be unchanged by selecting list B");
+});
+
+test("CAS-666 AC2: creating a list through the deck gets watchlistDefaults(), not the previously active list's settings", () => {
+  const { a } = seedTwoLists();
+  E.setActiveWatchlist(a.id);
+  E.applyActiveWatchlist();
+  assert.equal(E.watchlistRecord().svcOn.join(","), a.svcOn.join(","), "sanity: A's scratch state is loaded");
+
+  E.wlRailCreate();
+  assert.notEqual(E.watchActiveId, a.id, "wlRailCreate must make the new list active, not keep A active");
+  assert.deepEqual(plainRecord(E.watchlistRecord()), plainRecord(E.watchlistDefaults()),
+    "a freshly created list must carry watchlistDefaults(), not list A's svcOn/cascOff");
+});

@@ -132,6 +132,11 @@ const EXPORTS = `
   get onbFlow(){ return onbFlow; },
   get flowKind(){ return flowKind; },
   setFlowKind(k){ flowKind = k; },
+  // CAS-666: the watch-list scratch-state bridge (deckSelect/wlRailCreate are wire code, exercised here the
+  // same way the rest of this file's "wire code" comment describes — DOM reads/writes are absorbed by the stub).
+  watchLists, activeWatchlist, setActiveWatchlist, applyActiveWatchlist, watchlistRecord,
+  normWatchlistEntry, watchlistDefaults, deckSelect, wlRailCreate,
+  get watchActiveId(){ return watchActiveId; },
 };
 `;
 
