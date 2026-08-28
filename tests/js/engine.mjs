@@ -168,6 +168,13 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-662: the listing's own group partition — pure over a rows set and an active agent, no DOM, so it is
   // exactly the "decision" half of render() this harness exists to test independent of the paint half.
   listingGroups,
+  // CAS-613: auto-notify's own decision surface. recomputeFound is the wire-adjacent entry point (it reads
+  // cascades/MOVIES and writes notify), exposed the same way movingData is above; notify/entryFor let a test
+  // seed and read the per-film arming state directly; watchPrefs is exposed through a getter/setter (like
+  // flowKind) because the engine REASSIGNS the binding wholesale on load/sync, not just its contents.
+  recomputeFound, notify, entryFor, watchLevelsFor, WATCH_LEVEL_KEYS,
+  get watchPrefs(){ return watchPrefs; },
+  setWatchPrefs(w){ watchPrefs = w; },
 };
 `;
 
