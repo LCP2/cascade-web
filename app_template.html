@@ -17501,16 +17501,31 @@ else if(dedupedN)
     acctTableFail[table]=failed;
     renderAcctBanner();
   }
+  // CAS-691: the OTHER direction a save can fail to reach the account — not "we don't trust what we last
+  // read" (acctTableFail, above) but "this device has an edit the account doesn't have yet", whether that
+  // push is still in flight, still queued behind a debounce, or has already failed once and is retrying.
+  // Kept as its own map (not folded into acctTableFail) because the two states mean different things and
+  // can be true independently: a table can be mid-push with a perfectly good last read, or vice versa.
+  const acctTablePending = { cascades:false, lists:false, listFilms:false, watchlists:false };
+  function setAcctTablePending(table, pending){
+    if(acctTablePending[table]===pending) return;
+    acctTablePending[table]=pending;
+    renderAcctBanner();
+  }
   function renderAcctBanner(){
     const el=$("acctBanner"); if(!el) return;
-    const down=new Set();
+    const down=new Set(), pending=new Set();
     Object.keys(acctTableFail).forEach(t=>{ if(acctTableFail[t]) down.add(ACCT_TABLE_SURFACE[t]); });
-    if(!down.size){ el.hidden=true; el.textContent=""; }
-    else{
-      el.textContent="Account not connected — showing on-device data for: "
-        + [...down].map(k=>ACCT_SURFACE_LABEL[k]).join(", ") + ".";
-      el.hidden=false;
-    }
+    // A table already flagged "not connected" gets that message, not also "not yet saved" — the reader
+    // has already been told nothing from this device is reaching the account right now.
+    Object.keys(acctTablePending).forEach(t=>{ if(acctTablePending[t] && !acctTableFail[t]) pending.add(ACCT_TABLE_SURFACE[t]); });
+    const parts=[];
+    if(down.size) parts.push("Account not connected — showing on-device data for: "
+      + [...down].map(k=>ACCT_SURFACE_LABEL[k]).join(", ") + ".");
+    if(pending.size) parts.push("Not yet saved to your account — still on this device only: "
+      + [...pending].map(k=>ACCT_SURFACE_LABEL[k]).join(", ") + ".");
+    if(!parts.length){ el.hidden=true; el.textContent=""; }
+    else{ el.textContent=parts.join(" "); el.hidden=false; }
     syncHeaderHeight();   // the banner is part of the header's own measured height (see .acctbanner CSS)
   }
 
@@ -17940,20 +17955,48 @@ else if(dedupedN)
   // loadListsAccount does for the OTHER Lists/Tags feature, which has no criteria to sign) would merge
   // two devices' genuinely different lists the moment they happen to share a name.
   const watchlistSigOf = l => JSON.stringify([l.svcOn, l.cascOff, l.watchedOn, l.watchTiers, l.sort]);
+  // CAS-691: watchlistSigOf is deliberately name-blind for the reason above, but that makes it the WRONG
+  // signature for deciding whether a locally-held copy of a list the account ALREADY knows (same id) has
+  // drifted from it — a rename-only edit would read as "no drift" and the stale remote name would win on
+  // load, silently undoing the rename. cascSigOf (cascades' equivalent) already includes name for exactly
+  // this reason; this is the watch-list match for that id-matched drift check, covering every field the row
+  // actually carries (name/icon/order included).
+  const watchlistFullSigOf = l => JSON.stringify(watchlistToRow(l).criteria);
   let watchlistBaseline=null;
-  let ymSyncTimer=null, ymSyncing=false, ymSyncAgain=false;
-  function scheduleWatchlistSync(){ clearTimeout(ymSyncTimer); ymSyncTimer=setTimeout(runWatchlistSync, 500); }
+  let ymSyncTimer=null, ymSyncing=false, ymSyncAgain=false, ymRetryTimer=null;
+  // CAS-691: every call site that owes the account a push (an edit here, or a drifted/local-only list
+  // folded in on load) marks the table pending — cleared only once a push actually lands with nothing
+  // left queued behind it — so the banner can say "not yet saved" for the whole window, not just while
+  // this specific debounce timer is ticking.
+  function scheduleWatchlistSync(){
+    setAcctTablePending("watchlists", true);
+    clearTimeout(ymSyncTimer); ymSyncTimer=setTimeout(runWatchlistSync, 500);
+    if(ymSyncTimer && typeof ymSyncTimer.unref==="function") ymSyncTimer.unref();
+  }
+  // A failed push must not just vanish — requirement 2 of CAS-691 is "keep retrying". Unref'd so a tab (or
+  // a test) that never sees the account come back doesn't get held open by an endless retry chain.
+  function scheduleWatchlistRetry(){
+    clearTimeout(ymRetryTimer);
+    ymRetryTimer=setTimeout(()=>{ if(accountActive()) scheduleWatchlistSync(); }, 5000);
+    if(ymRetryTimer && typeof ymRetryTimer.unref==="function") ymRetryTimer.unref();
+  }
   async function runWatchlistSync(){
     if(!accountActive() || !ymReady) return;   // CAS-589 AC5: never push a still-default record up
     if(ymSyncing){ ymSyncAgain=true; return; }
     ymSyncing=true;
-    try{ await syncWatchlistsToAccount(); }
+    let ok=false;
+    try{ ok = await syncWatchlistsToAccount(); }
     catch(err){ console.warn("Cascade: watchlist sync failed", err); }
-    finally{ ymSyncing=false; if(ymSyncAgain){ ymSyncAgain=false; scheduleWatchlistSync(); } }
+    finally{
+      ymSyncing=false;
+      if(ymSyncAgain){ ymSyncAgain=false; scheduleWatchlistSync(); }
+      else if(ok) setAcctTablePending("watchlists", false);
+      else scheduleWatchlistRetry();
+    }
   }
   async function syncWatchlistsToAccount(){
-    const c=client(), owner=uid(); if(!c||!owner) return;
-    if(acctTableFail.watchlists) return;   // CAS-656 AC2: a failed load must not push local state back over it
+    const c=client(), owner=uid(); if(!c||!owner) return false;
+    if(acctTableFail.watchlists) return false;   // CAS-656 AC2: a failed load must not push local state back over it
     // CAS-681: belt-and-braces — a payload upsert can't contain the same id twice (Postgres 21000, "ON
     // CONFLICT DO UPDATE command cannot affect row a second time"). loadWatchlistAccount above is the
     // known source, now fixed, but this guard is what surfaces the NEXT one instead of 500ing silently.
@@ -17967,17 +18010,18 @@ else if(dedupedN)
     const rows=[...byId.values()].map(watchlistToRow);
     if(rows.length){
       const { error } = await c.from("watchlists").upsert(rows, { onConflict:"id" });
-      if(error){ console.warn("Watchlist upsert", error); return; }
+      if(error){ console.warn("Watchlist upsert", error); return false; }
     }
     const ids=new Set(watchLists.map(x=>x.id).filter(isUuid));
     if(watchlistBaseline){
       const gone=[...watchlistBaseline].filter(id=>!ids.has(id));
       if(gone.length){
         const { error } = await c.from("watchlists").delete().eq("user_id", owner).in("id", gone);
-        if(error){ console.warn("Watchlist delete", error); return; }
+        if(error){ console.warn("Watchlist delete", error); return false; }
       }
     }
     watchlistBaseline=ids;
+    return true;
   }
   async function loadWatchlistAccount(){
     const c=client(); if(!c||!accountActive()) return;
@@ -18007,7 +18051,9 @@ else if(dedupedN)
     let driftDirty=false;
     watchLists.forEach(x=>{
       const match=remoteById.get(x.id);
-      if(match && watchlistSigOf(match)!==watchlistSigOf(x)){
+      // CAS-691: full-record signature here, not watchlistSigOf — a rename-only edit must count as drift
+      // too, or the stale remote name silently wins below and the local rename is lost.
+      if(match && watchlistFullSigOf(match)!==watchlistFullSigOf(x)){
         const updated=normWatchlistEntry({...x});
         remote[remote.indexOf(match)]=updated;
         remoteById.set(x.id, updated);
@@ -18063,27 +18109,35 @@ else if(dedupedN)
   }
 
   // ---- wrap the one save chokepoint ----------------------------------------
-  // Guest: write localStorage as before. Signed-in: don't touch the guest key (so sign-out returns
-  // the user to their own on-device set) — schedule an account sync instead.
+  // CAS-691: signed in, an edit used to reach nothing durable until the account round trip finished — it
+  // lived only in the in-memory array, so a reload (or the tab dying) before that round trip completed
+  // silently reverted it. Every save now ALWAYS mirrors into the on-device cache first (guest or signed
+  // in, same write), and separately schedules the account sync when signed in — the account sync is what
+  // RECONCILES from here on, not the only place the edit is ever recorded. This does mean the guest cache
+  // key is no longer untouched while signed in (it previously was, deliberately, so sign-out returned a
+  // returning guest to their pre-signin on-device set) — but loadAccount()/loadWatchlistAccount() already
+  // mirror the authoritative account state into that same key on every successful load (CAS-516), so that
+  // protection was already partial; making saves durable the same way closes the actual data-loss hole
+  // without adding a second, inconsistent cache.
   const saveCascadesLocal = saveCascades;
   saveCascades = function(){
+    saveCascadesLocal();
     if(accountActive()) scheduleSync();
-    else saveCascadesLocal();
   };
   const saveListsLocal = saveLists;
   saveLists = function(){
+    saveListsLocal();
     if(accountActive()) scheduleListsSync();
-    else saveListsLocal();
   };
   const saveListMembershipLocal = saveListMembership;
   saveListMembership = function(){
+    saveListMembershipLocal();
     if(accountActive()) scheduleListsSync();
-    else saveListMembershipLocal();
   };
   const saveWatchlistsLocal = saveWatchlists;
   saveWatchlists = function(){
+    saveWatchlistsLocal();
     if(accountActive()) scheduleWatchlistSync();
-    else saveWatchlistsLocal();
   };
 
   // ---- react to auth state --------------------------------------------------
@@ -18120,6 +18174,8 @@ else if(dedupedN)
       // CAS-656: a guest has no account to be disconnected from — clear any failure this device carried
       // from its last signed-in session, or the banner would wrongly survive a sign-out.
       Object.keys(acctTableFail).forEach(t=>setAcctTableFail(t, false));
+      // CAS-691: same reasoning — a guest has nothing pending TO an account either.
+      Object.keys(acctTablePending).forEach(t=>setAcctTablePending(t, false));
       try{ localStorage.setItem("cascade_had_account","0"); }catch(e){}
     }
   });
@@ -18632,6 +18688,14 @@ else if(dedupedN)
                                 // a test could reach directly.
                                 loadWatchlistAccount, syncWatchlistsNow: runWatchlistSync, watchlistToRow,
                                 rowToWatchlist, reconcileWatchlists,
+                                // CAS-691: the guest-cache reload seam (what a cold boot re-reads localStorage
+                                // into before the account fan-out ever runs), the wrapped save chokepoints
+                                // themselves (so a test exercises the real write path an Edit-screen tap
+                                // uses, not a stand-in), and the durability/visibility state, so a test can
+                                // drive "edit, then reload" without a real page load and assert what the
+                                // banner would say without reaching into the DOM.
+                                loadGuestWatchlist, acctTableFail, acctTablePending, setAcctTableFail,
+                                saveWatchlists, saveCascades, saveLists, saveListMembership,
                                 // CAS-484: the per-film Watch-it tick's own load/sync/reconcile seam.
                                 loadFilmWatches, syncWatchesNow: runWatchSync, watchRows, applyWatchRows,
                                 reconcileFilmWatches,
