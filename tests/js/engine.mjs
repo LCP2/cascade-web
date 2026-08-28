@@ -101,6 +101,13 @@ function makeContext(){
 // engine's own code reads them from, so a test can never accidentally be handed a copy.
 // Mutable bindings (flowKind, onbFlow's fields) are exposed through getters so a test always sees live state.
 const EXPORTS = `
+// CAS-667: window.CascadeAuth is normally set up by the auth module script (a separate <script type="module">
+// this harness deliberately does not load, per the file-level comment above — the engine itself never needs
+// it directly, only through window.CascadePersistence.accountActive()). Seed the same shape that module sets
+// on a guest device so accountActive() has something real to read, and a test can flip it to simulate sign-in.
+if(typeof window.CascadeAuth === "undefined"){
+  window.CascadeAuth = { enabled:false, client:null, user:null, session:null, status:"guest" };
+}
 ;globalThis.__ENGINE__ = {
   MOVIES, CASCADE, STATUS_LABEL, SHOWABLE_N,
   matchesCriteria, countCriteria, watchCount, watchesFilm, matchesTaste, listedBy, listWindowOK,
@@ -137,6 +144,15 @@ const EXPORTS = `
   watchLists, activeWatchlist, setActiveWatchlist, applyActiveWatchlist, watchlistRecord,
   normWatchlistEntry, watchlistDefaults, deckSelect, wlRailCreate,
   get watchActiveId(){ return watchActiveId; },
+  // CAS-667: movingData is wire-adjacent (it reads window.CascadePersistence.accountActive()) but its
+  // row-selection arithmetic is exactly the kind of decision this harness exists to test. realAlerts and
+  // firstFound are exposed by reference (mutated via push, never reassigned, in test use) so a test can seed
+  // the ledger; CascadeAuth is exposed the same way so a test can flip a device between guest and signed-in
+  // by setting .enabled/.client/.session, exactly as the real sign-in path does.
+  movingData, realAlerts, firstFound, watched,
+  get movingReady(){ return movingReady; },
+  setMovingReady(v){ movingReady = v; },
+  get CascadeAuth(){ return window.CascadeAuth; },
 };
 `;
 

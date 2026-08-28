@@ -14598,6 +14598,11 @@ const MOVING_EMPTY_COPY = {
 };
 let movingWindow="since_last";
 let movingVisitCutoff=0;  // ms epoch snapshot of cascade_moving_lastvisit, taken at open — see openMovingScreen
+// CAS-667: the same CAS-517-style ambiguity as cascadesReady/ymReady — on a signed-in device, realAlerts
+// still being empty could mean "genuinely no alerts yet" or "loadRealAlerts hasn't returned since boot".
+// movingReady is this ledger's own flag; a guest device has nothing to wait for, so it starts ready.
+let movingReady = true;
+try{ movingReady = localStorage.getItem("cascade_had_account") !== "1"; }catch(e){}
 // A row's `date` is either a realAlerts emailed_at timestamp or a firstFound day string — both parse with
 // Date.parse. "since_last" compares against the cutoff captured when this visit opened; the other four are
 // rolling windows measured from now, per CHANGE 2.
@@ -14623,6 +14628,10 @@ function movingAutoOpenWindow(cutoffMs){
 }
 function movingData(){
   const guest=!(window.CascadePersistence && window.CascadePersistence.accountActive());
+  // CAS-667: a signed-in device must never paint the guest ledger while the real one is still in flight —
+  // Moving is the landing screen, so the first render reliably lost this race. Render nothing until
+  // loadRealAlerts has actually answered; a genuine guest has nothing to wait for and is unaffected.
+  if(!guest && !movingReady) return {canRows:[], newRows:[], changedRows:[]};
   const canRows=[], newRows=[], changedRows=[];
   if(guest){
     // INDICATIVE (CHANGE 1): firstFound only ever says "this film is newly found" — it carries no notion
@@ -14701,6 +14710,16 @@ function movingRowHTML(row){
 // shows, full stop (the render-time filter CAS-644 added is gone). It is still upserted here so
 // movingUnseenCount() (the chip badge — the only thing movingSeen is for now) can tell what has been shown.
 function renderMovingScreen(){
+  // CAS-667: while a signed-in device's alerts ledger is still in flight, movingData() returns nothing to
+  // paint — say so explicitly instead of falling through to the "nothing has moved" empty state, which
+  // would read as a real (and wrong) answer rather than "still loading".
+  const guest=!(window.CascadePersistence && window.CascadePersistence.accountActive());
+  if(!guest && !movingReady){
+    $("movingBody").innerHTML = `<h2 class="osh">Moving</h2><p class="ossub">What changed since you last looked. Same events as your alerts.</p>
+      <div class="mvempty"><p class="mvemptymain">Loading what's moved…</p></div>`;
+    updateMovingBadge();
+    return;
+  }
   const {canRows, newRows, changedRows}=movingData();
   const inWindow=r=>movingInWindow(r.date, movingWindow, movingVisitCutoff);
   const shownCan=canRows.filter(inWindow);
@@ -18259,14 +18278,20 @@ else if(dedupedN)
   // not a list, it is a wall. CAS-650: raised 50->200 so Moving's Month window isn't silently truncated
   // at fifty rows — see renderMovingScreen's ledgerTruncated for how the cap is surfaced when it's hit.
   async function loadRealAlerts(){
-    const c=client(); if(!c||!accountActive()){ realAlerts=[]; updateBadge(); return; }
+    // CAS-667: movingReady must resolve on every exit — including a failed fetch — so a signed-in device
+    // that never gets an answer isn't left showing Moving's loading state forever.
+    const c=client(); if(!c||!accountActive()){ realAlerts=[]; movingReady=true; updateBadge(); return; }
     const { data, error } = await c.from("notifications")
       .select("id,movie_id,moment,title,cascade_name,emailed_at,read_at")
       .order("emailed_at", { ascending:false }).limit(200);
-    if(error){ console.warn("notifications load", error); return; }
+    if(error){ console.warn("notifications load", error); movingReady=true; return; }
     realAlerts = data || [];
+    movingReady=true;
     updateBadge();
     if(typeof renderAlerts==="function") renderAlerts();
+    // A device parked on Moving as the landing screen — the exact race this ticket fixes — must see its
+    // loading state resolve into the real rows once the ledger actually answers, not just on next open.
+    if(typeof renderMovingScreen==="function" && $("movingScreen") && $("movingScreen").classList.contains("open")) renderMovingScreen();
   }
   // Opening the bell is reading it. The rows stay — "we told you about this" is a fact about the
   // past — they just stop counting toward the badge.
