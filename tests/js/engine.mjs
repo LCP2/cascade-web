@@ -126,6 +126,10 @@ if(typeof window.CascadeAuth === "undefined"){
   selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK, voteReadout, critScoreReadout, scaleReadout,
   qScore, qScorable, sortMoviesBy, ratingOf, IMDB_MIN_VOTES,
   SCALE_REF, BUZZ_STOPS, VOTE_REF, CRIT_MARKS, AWARD_STOPS, awardRank, parseAwards,
+  // CAS-678: the one popularity ladder — its cohort gate, its cuts, the per-film stop it computes, and
+  // Landmark's own (unchanged) predicate, so a test can assert the badge/dial/cohort/Landmark relationships
+  // directly rather than re-deriving them from scaleTier() alone.
+  isLandmark, inLadderCohort, buzzStop, buzzBandOf, BUZZ_CUTS, BUZZ_PCTL, BUZZ_KEY,
   AGE_LEVELS, ONB_GENRES, LANG_OPTS, GENRE_COUNT,
   YEARS_STOPS, YEARS_STOP_POS, yearsForPos, posForYears, yearsCutoff, releasedSince,
   yearsFromLegacy, yearsLabel, yearsReadout, flowYearsBack, baseYearsBack, yearOf,
