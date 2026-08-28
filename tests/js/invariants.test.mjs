@@ -1616,6 +1616,127 @@ test("CAS-681 AC4: a watch-list setting changed locally reaches the account and 
   assert.equal(E.watchLists.find(l => l.id === id).sort, "az", "a reload must show the edit that was pushed, not the pre-edit value");
 }));
 
+// ---- SIGNED IN, A WATCH-LIST EDIT IS DURABLE THE INSTANT IT'S MADE, AND A SYNC FAILURE IS VISIBLE (CAS-691) -
+// saveWatchlists used to, while signed in, write NOTHING durable — it only scheduled an account push, so a
+// reload before that push landed (or a push that failed outright) silently reverted the edit, and the failure
+// itself was a bare console.warn. These tests exercise the real wrapped save (window.CascadePersistence's
+// saveWatchlists, the same chokepoint every Edit-screen tap calls) and the guest-cache reload seam
+// (loadGuestWatchlist) a cold boot runs before the account fan-out ever gets a chance to respond.
+function fakeFlakyWatchlistSupabase(initialRows){
+  const state = { rows: initialRows.slice(), down: false };
+  const client = {
+    from(table){
+      assert.equal(table, "watchlists", "the watch-list seam must only ever touch the watchlists table");
+      return {
+        select: async () => state.down ? { data: null, error: { message: "network unreachable" } } : { data: state.rows, error: null },
+        upsert: async (rows) => {
+          if(state.down) return { error: { message: "network unreachable" } };
+          rows.forEach(r => { const i = state.rows.findIndex(x => x.id === r.id); if(i >= 0) state.rows[i] = r; else state.rows.push(r); });
+          return { error: null };
+        },
+        delete(){
+          return { eq(){
+            return { in: async (col, ids) => {
+              if(state.down) return { error: { message: "network unreachable" } };
+              ids.forEach(id => { const i = state.rows.findIndex(x => x.id === id); if(i >= 0) state.rows.splice(i, 1); });
+              return { error: null };
+            } };
+          } };
+        },
+      };
+    },
+  };
+  return { client, state };
+}
+
+test("CAS-691 AC1/AC6: a rename made while signed in survives a reload before the push completes, and is flagged not-yet-saved", () => withCas681State(async () => {
+  const id = "ca691000-0000-4000-8000-000000000001";
+  const remoteRow = { id, user_id: "cas681-test-user",
+    criteria: { name: "Old Name", icon: "🎬", order: 0, svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "score" } };
+  const { client } = fakeFlakyWatchlistSupabase([remoteRow]);
+  signInWithClient(client);
+
+  E.watchLists.length = 0;
+  E.watchLists.push(E.normWatchlistEntry({ id, name: "Old Name", icon: "🎬", order: 0,
+    svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "score" }));
+  await E.CascadePersistence.loadWatchlistAccount();   // establishes the baseline, as a real sign-in would
+
+  // The edit: rename it through the real wire-code save — but never await/flush the network push, the same
+  // way a reload interrupting an in-flight request would.
+  E.watchLists.find(l => l.id === id).name = "New Name";
+  E.CascadePersistence.saveWatchlists();
+
+  assert.equal(JSON.parse(E.localStorage.getItem("cascade_watchlist")).find(l => l.id === id).name, "New Name",
+    "the rename must be written to the on-device cache the instant it's made, not only scheduled for the network");
+  assert.equal(E.CascadePersistence.acctTablePending.watchlists, true, "the app must indicate the change is not yet saved to the account");
+
+  // "Reload": a cold boot always re-reads the on-device cache first, before the account fan-out responds.
+  E.CascadePersistence.loadGuestWatchlist();
+  assert.equal(E.watchLists.find(l => l.id === id).name, "New Name", "the new name must still be present immediately after a reload");
+
+  // The account fan-out now runs against a remote that still has the OLD name (the earlier push never
+  // completed) — the merge must not let the stale remote name win over the not-yet-synced local rename.
+  await E.CascadePersistence.loadWatchlistAccount();
+  assert.equal(E.watchLists.find(l => l.id === id).name, "New Name", "a signed-in load landing on top of an unsynced rename must not revert it");
+}));
+
+test("CAS-691 AC2/AC3: a delete made while the account is unreachable stays deleted locally and is flagged local-only, then clears once reachable again", () => withCas681State(async () => {
+  const idKeep = "ca691000-0000-4000-8000-000000000010";
+  const idGone = "ca691000-0000-4000-8000-000000000011";
+  const remoteRows = [
+    { id: idKeep, user_id: "cas681-test-user", criteria: { name: "Keep", icon: "🎬", order: 0, svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "score" } },
+    { id: idGone, user_id: "cas681-test-user", criteria: { name: "Gone", icon: "🎬", order: 1, svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "score" } },
+  ];
+  const { client, state } = fakeFlakyWatchlistSupabase(remoteRows);
+  signInWithClient(client);
+  E.watchLists.length = 0;
+  await E.CascadePersistence.loadWatchlistAccount();
+  assert.equal(E.watchLists.length, 2, "sanity: both lists loaded");
+
+  state.down = true;   // AC2: the account is unreachable from here
+  E.watchLists.splice(E.watchLists.findIndex(l => l.id === idGone), 1);
+  E.CascadePersistence.saveWatchlists();
+  await E.CascadePersistence.syncWatchlistsNow();   // the immediate push attempt, which fails
+
+  assert.ok(!JSON.parse(E.localStorage.getItem("cascade_watchlist")).some(l => l.id === idGone),
+    "the delete must be written to the on-device cache even though the account push failed");
+  assert.equal(E.CascadePersistence.acctTablePending.watchlists, true, "a failed push must be visible, not silently dropped");
+
+  // "Reload": cold boot re-reads the (correctly-deleted) local cache.
+  E.CascadePersistence.loadGuestWatchlist();
+  assert.ok(!E.watchLists.some(l => l.id === idGone), "the delete must still hold after a reload");
+  assert.ok(state.rows.some(r => r.id === idGone), "sanity: the account itself still has the stale row while unreachable");
+
+  state.down = false;   // AC3: reachable again
+  await E.CascadePersistence.syncWatchlistsNow();
+  assert.ok(!state.rows.some(r => r.id === idGone), "the delete must reach the account once it's reachable again");
+  assert.equal(E.CascadePersistence.acctTablePending.watchlists, false, "the flag must clear once the push actually lands");
+}));
+
+test("CAS-691 AC4: acctTableFail.watchlists is a visible flag, not silence, and it clears on the next successful load", () => withCas681State(async () => {
+  const { client } = fakeWatchlistSupabase([]);
+  signInWithClient(client);
+  const brokenClient = { from(){ return { select: async () => ({ data: null, error: { message: "down" } }) }; } };
+  E.CascadeAuth.client = brokenClient;
+  await E.CascadePersistence.loadWatchlistAccount();
+  assert.equal(E.CascadePersistence.acctTableFail.watchlists, true, "a failed load must flip the visible flag, not just console.warn");
+
+  E.CascadeAuth.client = client;
+  await E.CascadePersistence.loadWatchlistAccount();
+  assert.equal(E.CascadePersistence.acctTableFail.watchlists, false, "a later successful load must clear the flag");
+}));
+
+test("CAS-691 neighbours: saveCascades also mirrors to the on-device cache immediately while signed in — the identical wrapper hole CAS-691 fixed for watch lists", () => withCas681State(async () => {
+  signInWithClient(fakeWatchlistSupabase([]).client);
+  const before = E.cascades.length;
+  E.cascades.push(E.normCascade({ id: "ca691ca5-0000-4000-8000-000000000001", name: "Neighbour Agent" }));
+  E.CascadePersistence.saveCascades();
+  const cached = JSON.parse(E.localStorage.getItem("cascade_cascades") || "[]");
+  assert.ok(cached.some(c => c.id === "ca691ca5-0000-4000-8000-000000000001"),
+    "saveCascades must mirror to the on-device cache immediately while signed in, not only schedule an account sync");
+  E.cascades.length = before;
+}));
+
 // ---- THE WATCH-LIST CARD AND SECTION COUNTS DESCRIBE WHAT render() ACTUALLY PUTS ON SCREEN (CAS-682) ------
 // Reported case: list "Lee Stream", scope bar set to For review + Watched, Notify off. The deck card read 234
 // (watchlistRawCount — the raw agent union, ignoring the scope bar AND the list's own svcOn/watchedOn/
