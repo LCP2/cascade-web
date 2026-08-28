@@ -4985,7 +4985,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 838, "commit": "fc1fb80", "builtAt": "2026-08-28T04:55:16Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 839, "commit": "0936085", "builtAt": "2026-08-28T05:02:06Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -14661,6 +14661,15 @@ let movingIsOpen=false;
 // movingReady is this ledger's own flag; a guest device has nothing to wait for, so it starts ready.
 let movingReady = true;
 try{ movingReady = localStorage.getItem("cascade_had_account") !== "1"; }catch(e){}
+// CAS-670: movingData()/renderMovingScreen() used to derive "guest" from accountActive(), which answers
+// false during the boot race this ticket is about — the app knows it HAS an account but hasn't heard back
+// from it yet, and that false read a signed-in device as a guest and painted firstFound. Whether this
+// device has an account is a durable fact `cascade_had_account` already records, not a live query that can
+// be caught mid-flight, so the branch decision reads that instead. accountActive() stays correct for its
+// other job — "can I query the account right now" — such as inside loadRealAlerts.
+function movingIsGuestDevice(){
+  try{ return localStorage.getItem("cascade_had_account") !== "1"; }catch(e){ return true; }
+}
 // A row's `date` is either a realAlerts emailed_at timestamp or a firstFound day string — both parse with
 // Date.parse. "since_last" compares against the cutoff captured when this visit opened; the other four are
 // rolling windows measured from now, per CHANGE 2.
@@ -14685,7 +14694,7 @@ function movingAutoOpenWindow(cutoffMs){
   return withOne ? withOne.key : "since_last";
 }
 function movingData(){
-  const guest=!(window.CascadePersistence && window.CascadePersistence.accountActive());
+  const guest=movingIsGuestDevice();
   // CAS-667: a signed-in device must never paint the guest ledger while the real one is still in flight —
   // Moving is the landing screen, so the first render reliably lost this race. Render nothing until
   // loadRealAlerts has actually answered; a genuine guest has nothing to wait for and is unaffected.
@@ -14790,7 +14799,7 @@ function renderMovingScreen(){
   // CAS-667: while a signed-in device's alerts ledger is still in flight, movingData() returns nothing to
   // paint — say so explicitly instead of falling through to the "nothing has moved" empty state, which
   // would read as a real (and wrong) answer rather than "still loading".
-  const guest=!(window.CascadePersistence && window.CascadePersistence.accountActive());
+  const guest=movingIsGuestDevice();
   if(!guest && !movingReady){
     $("movingBody").innerHTML = `<h2 class="osh">Moving</h2><p class="ossub">What changed since you last looked. Same events as your alerts.</p>
       <div class="mvempty"><p class="mvemptymain">Loading what's moved…</p></div>`;

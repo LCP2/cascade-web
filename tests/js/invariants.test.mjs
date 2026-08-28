@@ -491,6 +491,9 @@ function setSignedIn(signedIn){
   auth.enabled = signedIn;
   auth.client = signedIn ? {} : null;
   auth.session = signedIn ? { user: { id: "cas667-test-user" } } : null;
+  // CAS-670: the guest branch itself now keys off cascade_had_account, not accountActive() — set it the same
+  // way the real cascade-auth-change listener does so these tests still simulate a signed-in device faithfully.
+  E.localStorage.setItem("cascade_had_account", signedIn ? "1" : "0");
 }
 
 test("CAS-667 AC1: a signed-in device with the alerts ledger unresolved renders nothing, never the guest ledger", () => {
@@ -552,6 +555,87 @@ test("CAS-667 AC3: a genuine guest device still gets firstFound rows regardless 
 
   delete E.firstFound[String(film.tmdb_id)];
   E.setMovingReady(true);
+});
+
+// ---- THE GUEST BRANCH KEYS OFF cascade_had_account, NOT THE LIVE accountActive() ANSWER (CAS-670) --------
+// CAS-667's guard only ever protected the `!guest` branch. The race it was meant to fix happens precisely
+// while accountActive() still reads false on a device that DOES have an account — so the old guest flag
+// stayed true through the whole window and movingData() kept falling into the firstFound branch regardless
+// of the guard. These seed cascade_had_account directly (not via setSignedIn/CascadeAuth) so accountActive()
+// can stay false throughout, exactly reproducing the reported race.
+test("CAS-670 AC1: cascade_had_account=1 with accountActive() false returns empty rows and ignores firstFound", () => {
+  const film = E.MOVIES[0];
+  E.CascadeAuth.enabled = false; E.CascadeAuth.client = null; E.CascadeAuth.session = null;
+  E.localStorage.setItem("cascade_had_account", "1");
+  E.firstFound[String(film.tmdb_id)] = new Date().toISOString();
+  E.setMovingReady(false);
+
+  const { canRows, newRows, changedRows } = E.movingData();
+  assert.equal(canRows.length, 0, "must not render can-watch rows while the ledger is unresolved");
+  assert.equal(newRows.length, 0, "must not read firstFound just because accountActive() reads false");
+  assert.equal(changedRows.length, 0, "must not render changed rows while the ledger is unresolved");
+
+  delete E.firstFound[String(film.tmdb_id)];
+  E.setMovingReady(true);
+  E.localStorage.removeItem("cascade_had_account");
+});
+
+test("CAS-670 AC2: cascade_had_account=1 makes renderMovingScreen show its loading state, never the guest rows", () => {
+  const film = E.MOVIES[0];
+  const fid = String(film.tmdb_id);
+  E.CascadeAuth.enabled = false; E.CascadeAuth.client = null; E.CascadeAuth.session = null;
+  E.localStorage.setItem("cascade_had_account", "1");
+  E.firstFound[fid] = new Date().toISOString();
+  delete E.movingSeen[fid];
+  E.setMovingReady(false);
+
+  E.renderMovingScreen();
+  assert.ok(!(fid in E.movingSeen),
+    "the loading-state early return must never mark a guest-branch row as seen (would only happen if the guest/empty-state path ran instead)");
+
+  delete E.firstFound[fid];
+  E.setMovingReady(true);
+  E.localStorage.removeItem("cascade_had_account");
+});
+
+test("CAS-670 AC3: cascade_had_account absent is a genuine guest device and still gets firstFound rows", () => {
+  const film = E.MOVIES[0];
+  E.localStorage.removeItem("cascade_had_account");
+  E.CascadeAuth.enabled = false; E.CascadeAuth.client = null; E.CascadeAuth.session = null;
+  E.firstFound[String(film.tmdb_id)] = new Date().toISOString();
+  E.setMovingReady(false);   // a guest has nothing to wait for — must be unaffected by this flag
+
+  const { canRows, newRows, changedRows } = E.movingData();
+  assert.equal(canRows.length + changedRows.length, 0, "a guest device has no can-watch/changed rows at all");
+  assert.ok(newRows.some(r => r.filmId === String(film.tmdb_id)),
+    "a guest device (no cascade_had_account) must still get its firstFound row");
+
+  delete E.firstFound[String(film.tmdb_id)];
+  E.setMovingReady(true);
+});
+
+test("CAS-670 AC4: a hard reload on a signed-in device never surfaces a firstFound-sourced row during boot", () => {
+  const film = E.MOVIES[0];
+  const fid = String(film.tmdb_id);
+  E.CascadeAuth.enabled = false; E.CascadeAuth.client = null; E.CascadeAuth.session = null; // still resolving
+  E.localStorage.setItem("cascade_had_account", "1");
+  E.firstFound[fid] = new Date().toISOString();   // a stale guest-era ledger this device happens to carry
+  E.realAlerts.length = 0;
+  E.setMovingReady(false);
+
+  // Boot, pre-answer: nothing may render, and nothing sourced from firstFound.
+  let rows = E.movingData();
+  assert.ok(![...rows.canRows, ...rows.newRows, ...rows.changedRows].some(r => r.filmId === fid),
+    "no point before the ledger resolves may surface a firstFound-sourced row");
+
+  // The ledger answers, still no real alerts for this film — firstFound must still never leak through.
+  E.setMovingReady(true);
+  rows = E.movingData();
+  assert.ok(![...rows.canRows, ...rows.newRows, ...rows.changedRows].some(r => r.filmId === fid),
+    "once resolved, a signed-in device must read its real ledger, never fall back to firstFound");
+
+  delete E.firstFound[fid];
+  E.localStorage.removeItem("cascade_had_account");
 });
 
 // ---- THE MOVING BADGE COUNTS THE SAME WINDOW THE SCREEN SHOWS (CAS-668) -----------------------------------
