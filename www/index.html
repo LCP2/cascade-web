@@ -4981,7 +4981,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 845, "commit": "679befd", "builtAt": "2026-08-28T05:55:31Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 846, "commit": "dee4d3e", "builtAt": "2026-08-28T06:32:55Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7481,8 +7481,16 @@ const settleFoundView = () => { heldOpen.clear(); };
 // title whose run is over with nothing else ever found for it in AU, not a film worth anticipating. CAS-170's
 // invariant already holds every other estimated window to "only a cinema run may be estimated" — upcoming
 // gets the same rule here, at the one gate that decides whether a stale estimate reaches a listing.
-const listWindowOK = (m,c) => (!(c.listStatus||[]).length || c.listStatus.includes(primaryStatus(m)))
-  && (primaryStatus(m)!=="upcoming" || !isEstimated(m));
+// CAS-674: "list whatever the agent watches" (CAS-228, when listStatus was never singled out) has to mean
+// the same windows matchesCriteria's own status filter admits — an EXACT match against c.status — not
+// inScope's "still ahead of" test, which is the broader WATCH question (CAS-67) and was letting a
+// single-window agent (e.g. status:["included_streaming"]) list films from windows still ahead of it that
+// matchesCriteria itself would reject. That gap is what let listedCount(c) exceed countCriteria(c).
+const listWindowOK = (m,c) => {
+  const listSet = (c.listStatus||[]).length ? c.listStatus : (c.status||[]);
+  return (!listSet.length || listSet.includes(primaryStatus(m)))
+    && (primaryStatus(m)!=="upcoming" || !isEstimated(m));
+};
 // CAS-279: a hand-move is the only thing that outranks an agent's criteria about where a film is listed.
 // Moved-out wins outright; pinned-in skips the criteria but still has to clear the agent's own WINDOWS,
 // because those are what the agent lists rather than what it likes — a cinema agent showing a film that is
@@ -8396,9 +8404,11 @@ function selCriticsOK(m,c){
 }
 // Scale match, tri-state: true (clears the floor) · false (known, below it) · null (no budget AND no revenue
 // → truly unknown scale). Budget is the primary signal, worldwide gross the real fallback — so an
-// unknown-budget film is still placed by what it earned, and only a film with neither reads as unknown. The
-// lean lets `null` ride along (never dropped) everywhere this dial is read, CAS-661's OR included — the
-// dial has never had grounds to deny a film for a money figure we don't hold.
+// unknown-budget film is still placed by what it earned, and only a film with neither reads as unknown.
+// CAS-674: `null` rides along (never DENIES a film) wherever this dial is read as an AND-style gate — the
+// dial has never had grounds to deny a film for a money figure we don't hold. It does NOT ride along in
+// matchesCriteria's OR block below: there, only an affirmative `true` clears the Budget route, or `null`
+// would be admitting every unknown-scale film instead of merely declining to deny it.
 // CAS-166: a floor, not a band. Four bands could only ever say "somewhere between these two numbers", which
 // is not how anyone thinks about how big a film they want — you want at least this big. It also fixes what
 // the bands got wrong at the edges: "Studio" excluded a $110M film for being too big, which no one asked for.
@@ -8550,9 +8560,13 @@ function matchesCriteria(m,c,ignoreBlocked){
     const cleared =
       (!preRelease && c.selCrowd && selCrowdOK(m,c)) ||
       (!preRelease && (c.selCritScore||c.selAwards) && selCriticsOK(m,c)) ||
-      (c.selScale && selScaleMatch(m,c)!==false) ||   // CAS-238/288: unknown(null) rides along here too —
-                                                       // this dial never denies a film for a money figure we
-                                                       // don't hold, OR or AND, so it clears its own route
+      // CAS-674: under OR a route must be an AFFIRMATIVE match. selScaleMatch is tri-state (true/false/null);
+      // `!==false` let null (truly unknown scale) clear the route on its own, which was correct under AND
+      // ("never the reason a film is dropped") but means the opposite under OR ("an affirmative reason a
+      // film is admitted"). null now contributes no term, exactly like a dial left Off. The other OR routes
+      // (selCrowdOK, selCriticsOK, selBuzzOK, cinemaReleaseOnly) were audited for the same inversion and are
+      // all already strictly boolean — no tri-state to leak through.
+      (c.selScale && selScaleMatch(m,c)===true) ||
       (!preRelease && c.selBuzz && selBuzzOK(m,c)) ||
       // CAS-360: streaming Mission checkbox — an AU type-3 (general theatrical) release, release history
       // rather than a live "in cinemas now" status. laneCrit keeps this false on every cinema agent.
@@ -11649,10 +11663,10 @@ function onbShownCount(){
   return listedCount(onbApply());
 }
 // CAS-665: the Mission step's own score reading, off the IDENTICAL set onbShownCount() just counted —
-// listedBy + !taggedOut, not agentMetricsCompute's wider watchesFilm() — so it can never describe a
-// different set than the "N films match right now" line above it. MEASURED off qScore, never derived from
-// the dial positions: a film clearing People's vote 7.5 with a Metacritic of 20 scores 47, so the floor
-// isn't predictable from where the dials sit.
+// listedBy + !taggedOut, the same predicate agentMetricsCompute now reads too (CAS-674) — so it can never
+// describe a different set than the "N films match right now" line above it. MEASURED off qScore, never
+// derived from the dial positions: a film clearing People's vote 7.5 with a Metacritic of 20 scores 47, so
+// the floor isn't predictable from where the dials sit.
 function missionScoreStats(c){
   const films=MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m));
   let min=null, unscored=0;
@@ -14547,7 +14561,12 @@ function agentFilmEntryDate(m){
 }
 const AGENT_NEW_TREND_DAYS = 84;   // 12 weeks
 function agentMetricsCompute(c){
-  const films=MOVIES.filter(m=>watchesFilm(m,c));   // Total listed — same test the listing itself runs
+  // CAS-674: this comment always claimed "same test the listing itself runs", but the code read watchesFilm
+  // — the WATCH set (CAS-67: taste + a window still AHEAD), deliberately wider than what's actually shown —
+  // so "Total listed" was quoting the watch-ahead figure, not the listing. listedBy (+ !taggedOut, the same
+  // rule listedCount/missionScoreStats already apply) is the real listing predicate, so the Agents row and
+  // Mission's "N films match right now" can no longer disagree over what one agent has found.
+  const films=MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m));   // Total listed — same test the listing itself runs
   let scoreMin=null, unscored=0;
   films.forEach(m=>{
     const q=qScore(m);
