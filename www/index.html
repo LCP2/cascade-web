@@ -4967,7 +4967,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 828, "commit": "5c5d730", "builtAt": "2026-08-28T01:25:10Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 829, "commit": "5865955", "builtAt": "2026-08-28T01:29:11Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8245,8 +8245,14 @@ const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.a
   // they'd tell you would read as exact twins and the second would be silently collapsed into the first.
   c.watchWindows||{}]);
 function dedupeCascades(){
-  const firstBySig=new Map(); const drop=[];
+  // CAS-658: belt-and-braces for an array that already holds two entries sharing an id (a merge that
+  // ran before the load-time fix above, or any other path that ever double-pushes one). Same id is the
+  // same account row by definition, so this collapses on id ALONE, ahead of and regardless of the
+  // content-signature check below — the first entry survives.
+  const firstBySig=new Map(); const firstById=new Map(); const drop=[];
   cascades.forEach(c=>{
+    if(firstById.has(c.id)){ drop.push({c, keep:firstById.get(c.id)}); return; }
+    firstById.set(c.id, c);
     const sig=cascSigOf(c);
     if(firstBySig.has(sig)) drop.push({c, keep:firstBySig.get(sig)});
     else firstBySig.set(sig, c);
@@ -17423,8 +17429,24 @@ else if(dedupedN)
     const justOnboarded = membCascade && localOnes.some(x=>x.id===membCascade.id) &&
                            !remote.some(x=>cascSigOf(x)===cascSigOf(membCascade));
     if(justOnboarded) remote=[...remote, membCascade];
+    // CAS-658: a local copy sharing an id with an account row is the SAME Cascade, not a new one — the
+    // account already has it. If its content has drifted (edits made here while account writes were
+    // failing), the local copy is the newer state and updates the existing row in place, keeping the id
+    // and the account row it maps to. This is reconciliation, not something to offer: it never enters
+    // pendingMerge.cascades, so the sheet can't promise to "add" an agent the account already has.
+    const remoteById = new Map(remote.map(x=>[x.id, x]));
+    let driftDirty = false;
+    localOnes.forEach(x=>{
+      const match = remoteById.get(x.id);
+      if(match && cascSigOf(match)!==cascSigOf(x)){
+        const merged = normCascade({...x});
+        remote[remote.indexOf(match)] = merged;
+        remoteById.set(x.id, merged);
+        driftDirty = true;
+      }
+    });
     const sigs = new Set(remote.map(cascSigOf));
-    pendingMerge.cascades = localOnes.filter(x=>!sigs.has(cascSigOf(x)));
+    pendingMerge.cascades = localOnes.filter(x=>!remoteById.has(x.id) && !sigs.has(cascSigOf(x)));
     // CAS-424: `order` rides in `criteria` like every other field (cascadeToRow copies the whole object), so
     // the Agents screen's reorder — done on any device — is what this sort restores here. Nothing to sort by
     // (nobody has ever reordered) leaves the account's own row order alone.
@@ -17438,7 +17460,7 @@ else if(dedupedN)
     // account sync) purely so the NEXT cold start has something instant to show while this same fetch
     // revalidates in the background.
     saveCascadesLocal();
-    if(justOnboarded || langDirty || alertDirty) scheduleSync();
+    if(justOnboarded || langDirty || alertDirty || driftDirty) scheduleSync();
     offerMerge();
     if(typeof afterSignIn==="function") afterSignIn();
   }
