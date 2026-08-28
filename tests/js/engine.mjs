@@ -154,6 +154,13 @@ if(typeof window.CascadeAuth === "undefined"){
   ymCascTicked,
   ymCascToggle: (id, btn) => window.ymCascToggle(id, btn),
   ymCascSetAll: on => window.ymCascSetAll(on),
+  // CAS-676: the Edit screen's own open/close (wire code, DOM absorbed by the stub, same pattern as
+  // openMovingScreen/closeMovingScreen below) plus its open flag and its "the deck still owes a rebuild"
+  // flag, so a test can drive a burst of toggles while it's open and assert what got deferred to close.
+  leOpen: () => window.leOpen(),
+  leClose: () => window.leClose(),
+  get leOn(){ return leOn; },
+  get ymDeckStale(){ return ymDeckStale; },
   // CAS-667: movingData is wire-adjacent (it reads window.CascadePersistence.accountActive()) but its
   // row-selection arithmetic is exactly the kind of decision this harness exists to test. realAlerts and
   // firstFound are exposed by reference (mutated via push, never reassigned, in test use) so a test can seed

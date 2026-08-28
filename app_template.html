@@ -13801,12 +13801,36 @@ function ymPersist(){
 // ticks) paid for that many full re-derives. The tapped control still repaints itself immediately (each
 // toggle function below updates its own element before scheduling anything); the three rebuilds and the
 // persist write are coalesced instead, so a burst of taps produces one pass of each, not one per tap.
-let ymRenderRaf=0;
+//
+// CAS-676: coalescing to one pass per burst wasn't enough — the delay measured 3-4s even for a single
+// tap, because that one pass still paid for renderYourMovies()+render(), a whole-catalogue re-derive of
+// the LIVE Find deck and the (closed) Your Movies screen, neither of which is visible: the Edit screen
+// (#leScreen) is a full-viewport modal (.sharpstep, z-index 82) that covers both while it's open, and
+// leOpen() already force-closes Your Movies before showing it. Only leInnerHTML (leRefreshIfOpen) paints
+// anything the user can see. Deferring the other two to leClose() — once per Edit session instead of once
+// per rebuild — is the actual fix; ymDeckStale marks the catch-up as owed so leClose() only pays for it
+// when something the deck cares about (agent membership, scope, tags) actually changed.
+let ymRenderRaf=0, ymDeckStale=false;
+// CAS-676 AC1: one line per interaction — the tap's own (synchronous) repaint, logged by the toggle itself
+// via ymTapPainted() below, and the coalesced rebuild it lands in, logged here once the rebuild completes.
+// ymTapStarts queues every tap folded into the pending rAF so a burst of N taps still yields N log lines,
+// one per real interaction, not one for the whole burst.
+let ymTapStarts=[];
+function ymTapPainted(label,t0){
+  console.log(`[CAS-676] ${label} self-repaint ${(performance.now()-t0).toFixed(1)}ms`);
+  ymTapStarts.push({label,t0});
+}
 function ymScheduleRender(){
   if(ymRenderRaf) return;
   ymRenderRaf=requestAnimationFrame(()=>{
     ymRenderRaf=0;
-    renderYourMovies(); render(); leRefreshIfOpen();
+    const t0=performance.now();
+    if(leOn){ ymDeckStale=true; leRefreshIfOpen(); }
+    else { renderYourMovies(); render(); leRefreshIfOpen(); }
+    const dt=performance.now()-t0;
+    const taps=ymTapStarts; ymTapStarts=[];
+    console.log(`[CAS-676] coalesced rebuild ${dt.toFixed(1)}ms for ${taps.length} tap(s), deck ${leOn?"deferred":"included"}`);
+    taps.forEach(({label,t0:tt})=>console.log(`[CAS-676] ${label} tap-to-rebuild ${(performance.now()-tt).toFixed(1)}ms`));
   });
 }
 let ymPersistTimer=0;
@@ -13854,14 +13878,22 @@ function ymFeedList(){
 // CAS-646: svcOn now drives the LIVE listing too (ymFeedMatches, called from scopeRows()), not just this
 // screen's own preview feed — every toggle re-renders it, mirroring ymCascToggle below.
 window.ymSvcToggle=(key,btn)=>{
+  const t0=performance.now();
   ymSvcOn.has(key)?ymSvcOn.delete(key):ymSvcOn.add(key);
   if(btn){ const on=ymSvcOn.has(key); btn.classList.toggle("on",on); btn.setAttribute("aria-pressed",String(on)); }
+  ymTapPainted("svc",t0);
   ymSchedulePersist(); ymScheduleRender();
 };
-window.ymSvcSetAll=on=>{ ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]); ymSchedulePersist(); ymScheduleRender(); };
+window.ymSvcSetAll=on=>{
+  const t0=performance.now();
+  ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]);
+  ymTapPainted("svc-setall",t0);
+  ymSchedulePersist(); ymScheduleRender();
+};
 // CAS-642: agent membership (cascOff) now drives the LIVE Find listing's own union too (AC1/AC3), not just
 // this screen's own preview feed — every toggle re-derives activeIds from the active list and re-renders.
 window.ymCascToggle=(id,btn)=>{
+  const t0=performance.now();
   ymCascOff.has(id)?ymCascOff.delete(id):ymCascOff.add(id);
   syncActiveIdsFromActiveList(ymCascOff);
   if(btn){
@@ -13870,22 +13902,36 @@ window.ymCascToggle=(id,btn)=>{
     const c=cascades.find(x=>x.id===id);
     if(c) btn.setAttribute("aria-label",(on?"Remove ":"Include ")+c.name+" in this feed");
   }
+  ymTapPainted("casc",t0);
   ymSchedulePersist(); ymScheduleRender();
 };
 // CAS-592: the list editor's own "Select all · Clear all" row for cascades — ymCascToggle above only ever
 // flipped one at a time, which is all the old inline panel needed since it had no bulk row for this section.
-window.ymCascSetAll=on=>{ ymCascOff=new Set(on?[]:cascades.map(c=>c.id)); syncActiveIdsFromActiveList(ymCascOff); ymSchedulePersist(); ymScheduleRender(); };
-// CAS-646: watchedOn now drives the LIVE listing too (ymFeedMatches), same reasoning as ymSvcToggle above.
-window.ymVerdictToggle=(k,btn)=>{
-  ymWatchedOn.has(k)?ymWatchedOn.delete(k):ymWatchedOn.add(k);
-  if(btn){ const on=ymWatchedOn.has(k); btn.classList.toggle("on",on); btn.setAttribute("aria-pressed",String(on)); }
+window.ymCascSetAll=on=>{
+  const t0=performance.now();
+  ymCascOff=new Set(on?[]:cascades.map(c=>c.id)); syncActiveIdsFromActiveList(ymCascOff);
+  ymTapPainted("casc-setall",t0);
   ymSchedulePersist(); ymScheduleRender();
 };
-window.ymVerdictSetAll=on=>{ ymWatchedOn = new Set(on ? WATCH_STEPS.map(s=>s.key) : []); ymSchedulePersist(); ymScheduleRender(); };
+// CAS-646: watchedOn now drives the LIVE listing too (ymFeedMatches), same reasoning as ymSvcToggle above.
+window.ymVerdictToggle=(k,btn)=>{
+  const t0=performance.now();
+  ymWatchedOn.has(k)?ymWatchedOn.delete(k):ymWatchedOn.add(k);
+  if(btn){ const on=ymWatchedOn.has(k); btn.classList.toggle("on",on); btn.setAttribute("aria-pressed",String(on)); }
+  ymTapPainted("verdict",t0);
+  ymSchedulePersist(); ymScheduleRender();
+};
+window.ymVerdictSetAll=on=>{
+  const t0=performance.now();
+  ymWatchedOn = new Set(on ? WATCH_STEPS.map(s=>s.key) : []);
+  ymTapPainted("verdict-setall",t0);
+  ymSchedulePersist(); ymScheduleRender();
+};
 // CAS-642 W2b/AC4: exclude-tags, moved here from the agent Briefing — exclude only, no include control.
 // matchesCriteria (CAS-642's own comment there) reads the ACTIVE list's array, so this has to re-render the
 // live listing too, not just this screen's own preview.
 window.ymTagToggle=(lid,btn)=>{
+  const t0=performance.now();
   ymExcludeTags.has(lid)?ymExcludeTags.delete(lid):ymExcludeTags.add(lid);
   if(btn){
     const on=ymExcludeTags.has(lid);
@@ -13893,6 +13939,7 @@ window.ymTagToggle=(lid,btn)=>{
     const t=lists.find(x=>x.id===lid);
     if(t) btn.title = on?`Excluded from this list — tap to include again`:`Exclude ${t.name} from this list`;
   }
+  ymTapPainted("tag",t0);
   ymSchedulePersist(); ymScheduleRender();
 };
 // ---- CAS-540: the Watch List card collapses to a pill under scroll, mirroring #cascbar's own mechanism
@@ -14360,6 +14407,17 @@ window.leOpen=()=>{
 };
 window.leClose=()=>{
   ymFlushPersist();   // CAS-652: land whatever the trailing debounce hasn't fired yet before the screen goes
+  // CAS-676: a tap right before close can still have a rAF pending that never got to run — cancel it and
+  // fold it into the same catch-up below rather than let it fire after the modal is already gone.
+  if(ymRenderRaf){
+    cancelAnimationFrame(ymRenderRaf); ymRenderRaf=0; ymDeckStale=true;
+    const taps=ymTapStarts; ymTapStarts=[];
+    taps.forEach(({label,t0})=>console.log(`[CAS-676] ${label} tap-to-rebuild ${(performance.now()-t0).toFixed(1)}ms (flushed by leClose)`));
+  }
+  // CAS-676: the deck (render()) and the closed Your Movies screen (renderYourMovies()) were skipped on
+  // every tap this Edit session because #leScreen covered both — pay for the one rebuild they're actually
+  // owed now, revealing the deck fresh instead of never having repainted it since the screen opened.
+  if(ymDeckStale){ ymDeckStale=false; renderYourMovies(); render(); }
   leOn=false; leRenaming=false;
   $("leScreen").classList.remove("open"); document.body.style.overflow="";
   // CAS-633: used to reopen Your Movies underneath — that screen is retired now, so closing the editor
