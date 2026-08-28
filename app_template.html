@@ -8522,15 +8522,22 @@ function matchesCriteria(m,c,ignoreBlocked){
   // is one OR term, not two. c.selOr is intentionally not read here: the OR below is unconditional now that
   // it has shipped, and selOr stays stored (and in cascSigOf) only so an existing agent's signature does not
   // change and re-fire the CAS-212 merge sheet.
-  const missionOn = c.selCrowd || c.selCritScore || c.selAwards || c.selScale || c.selBuzz || c.cinemaReleaseOnly;
+  // CAS-663: the quality dials (People's vote, Critics score, Awards, Buzz) are a claim about how a film
+  // was received, which only exists once someone has had the chance to judge it. Before that —
+  // primaryStatus upcoming or in_cinema — an agent stating any one of them can never list the film, not
+  // because it is bad but because it is unrated. Budget and Cinema Release are facts known before release,
+  // so they keep gating in every window.
+  const preRelease = ps==="upcoming" || ps==="in_cinema";
+  const missionOn = (!preRelease && (c.selCrowd || c.selCritScore || c.selAwards || c.selBuzz))
+    || c.selScale || c.cinemaReleaseOnly;
   if(missionOn){
     const cleared =
-      (c.selCrowd && selCrowdOK(m,c)) ||
-      ((c.selCritScore||c.selAwards) && selCriticsOK(m,c)) ||
+      (!preRelease && c.selCrowd && selCrowdOK(m,c)) ||
+      (!preRelease && (c.selCritScore||c.selAwards) && selCriticsOK(m,c)) ||
       (c.selScale && selScaleMatch(m,c)!==false) ||   // CAS-238/288: unknown(null) rides along here too —
                                                        // this dial never denies a film for a money figure we
                                                        // don't hold, OR or AND, so it clears its own route
-      (c.selBuzz && selBuzzOK(m,c)) ||
+      (!preRelease && c.selBuzz && selBuzzOK(m,c)) ||
       // CAS-360: streaming Mission checkbox — an AU type-3 (general theatrical) release, release history
       // rather than a live "in cinemas now" status. laneCrit keeps this false on every cinema agent.
       (c.cinemaReleaseOnly && !!m.cinema_release);

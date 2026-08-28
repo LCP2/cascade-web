@@ -340,14 +340,40 @@ test("cascade score: fewer films score 90+ once a lone ungated source stops coun
 // would otherwise resolve to.
 const missionCase = (overrides = {}) => E.normCascade({ ...overrides }, { template: true });
 
-test("mission OR AC1: with only People's vote set, the matching set is exactly what selCrowdOK admits", () => {
+// CAS-663: a pre-release film (primaryStatus upcoming or in_cinema) is exempt from the quality dials, so
+// the exact-equivalence-with-selCrowdOK claim below only holds for a film that has had the chance to be
+// judged. isPreRelease mirrors matchesCriteria's own preRelease test.
+const isPreRelease = m => ["upcoming", "in_cinema"].includes(E.primaryStatus(m));
+
+test("mission OR AC1: with only People's vote set, the matching set is exactly what selCrowdOK admits, pre-release films aside", () => {
   const open = missionCase();
   const withCrowd = missionCase({ selCrowd: 7.5 });
   const got = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, withCrowd)));
-  const expected = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, open) && E.selCrowdOK(m, withCrowd)));
+  const expected = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, open)
+    && (isPreRelease(m) || E.selCrowdOK(m, withCrowd))));
   assert.equal(got.size, expected.size, `expected ${expected.size} films clearing selCrowdOK, got ${got.size}`);
   for(const m of got) assert.ok(expected.has(m), `${m.title} matched with only People's vote set but fails selCrowdOK`);
   for(const m of expected) assert.ok(got.has(m), `${m.title} clears selCrowdOK (and the open block) but did not match`);
+});
+
+// CAS-663 AC1/AC2 (ticket's own wording): the quality dials never gate a pre-release film, and the same
+// recipe's behaviour within a released window (included_streaming) is unchanged.
+test("CAS-663: People's vote does not gate upcoming or in_cinema films, but still gates a released window", () => {
+  const open = missionCase();
+  const withCrowd = missionCase({ selCrowd: 7.5 });
+  const preReleaseMovies = E.MOVIES.filter(isPreRelease);
+  assert.ok(preReleaseMovies.length > 0, "no upcoming/in_cinema films in the fixture catalogue to exercise this on");
+  for(const m of preReleaseMovies){
+    if(!E.matchesCriteria(m, open)) continue;   // must clear the open block first
+    assert.ok(E.matchesCriteria(m, withCrowd),
+      `${m.title} (${E.primaryStatus(m)}) was excluded by People's vote despite being pre-release`);
+  }
+  const streamOnly = E.MOVIES.filter(m => E.primaryStatus(m) === "included_streaming");
+  for(const m of streamOnly){
+    if(!E.matchesCriteria(m, open)) continue;
+    assert.equal(E.matchesCriteria(m, withCrowd), E.selCrowdOK(m, withCrowd),
+      `${m.title}: included_streaming film's People's vote gating changed`);
+  }
 });
 
 test("mission OR AC2: two dials set is a strict superset of either dial alone", () => {
