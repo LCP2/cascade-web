@@ -153,6 +153,9 @@ if(typeof window.CascadeAuth === "undefined"){
   get movingReady(){ return movingReady; },
   setMovingReady(v){ movingReady = v; },
   get CascadeAuth(){ return window.CascadeAuth; },
+  // CAS-662: the listing's own group partition — pure over a rows set and an active agent, no DOM, so it is
+  // exactly the "decision" half of render() this harness exists to test independent of the paint half.
+  listingGroups,
 };
 `;
 

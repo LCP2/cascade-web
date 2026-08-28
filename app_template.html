@@ -434,10 +434,6 @@
      either side of every card, which is a poster's worth of width spent on air. 5px keeps the cards from
      touching the frame and hands the rest to the tombstone. */
   .list{padding:0 5px}
-  /* CAS-627 C2: the "show all N" affordance a depth-capped section grows at its foot. */
-  .obshowall{display:block;width:calc(100% - 10px);margin:6px 5px 4px;padding:10px;border:1px dashed var(--line);
-    border-radius:10px;background:transparent;color:var(--dim);font-family:inherit;font-size:12px;font-weight:700;
-    cursor:pointer}
   /* CAS-373: brighter than --line (adjacent cards read as one continuous panel otherwise) but still subtle
      — no glow, no shadow, just a border a shade past the page's own hairlines. */
   .card{background:var(--panel);border:1px solid rgba(255,255,255,.22);border-radius:16px;margin-bottom:11px;overflow:hidden;
@@ -12775,10 +12771,10 @@ const SHARP_STEPS = {
   },
   // ---- CAS-627 Onboarding S2: standing orders, and the listing depth --------------------------------
   // Step 3 of the new A→B→C→D→E briefing sequence. Two briefs that apply to every agent already on the
-  // roster: how selective they are (onbDepthFor, read by the Find listing — see render()'s onbDepth
-  // handling) and what they must never bring back (written into every agent's own `exclude`, same field
-  // buildOnbAgents already merges `ans.never` into). Preview-only (`?step=briefing2`) until CAS-629 cuts
-  // FLOWS over.
+  // roster: how selective they are (onbDepthFor — CAS-662 dropped its use from the Find listing itself,
+  // but it still backs the Agents screen's own match-preview cap) and what they must never bring back
+  // (written into every agent's own `exclude`, same field buildOnbAgents already merges `ans.never`
+  // into). Preview-only (`?step=briefing2`) until CAS-629 cuts FLOWS over.
   briefing2: {
     noAgent: true,
     body(){
@@ -16380,11 +16376,16 @@ function fillListChunked(listEl, items, gen, freshFn, onDone){
   };
   step();
 }
-// CAS-627 C2: which depth-capped sections have had their cap lifted, keyed "<cascadeId>::<group>".
-// Session-only (a plain module Set, never saved) — reopening the app or switching agents starts capped
-// again, same as every other "for that session" affordance in this app.
-const onbCapLifted = new Set();
-window.onbLiftCap = (cid, g) => { onbCapLifted.add(cid+"::"+g); render(); };
+// CAS-662: the listing's own group partition, decided up front — pure over `rows` and the active agent's
+// order, no depth cap or floor any more (selectivity is the agent's own Mission criteria now).
+function listingGroups(rows, ac){
+  return orderFor(ac)      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
+    .map(g=>({g, items: rows.filter(m=>primaryStatus(m)===g)
+      // CAS-646: the listing's order is the ACTIVE WATCH LIST's own sort (ymSort), not the open agent's —
+      // "cascade" where the list has none, never the agent's c.sort and never a bare "imdb" default.
+      .sort(sortForKey(g, ymSort||"cascade", ac && ac.kind==="cinema"))}))
+    .filter(x=>x.items.length);
+}
 function render(){
   renderGen++;   // CAS-129: supersede any card-fill still streaming from a previous render
   const myGen=renderGen;   // CAS-421: only THIS render may lift the blur it didn't set
@@ -16443,41 +16444,14 @@ function render(){
   const ac=activeCascade();
   // CAS-421: the groups this pass will actually render, decided up front — so `pending` starts at its
   // final count before any fillListChunked can call back and never dips to zero between groups.
-  // CAS-627 C2 / CAS-654: every agent carries a listing depth — a Cascade-score floor plus a
-  // per-section cap, both read off onbDepthFor(ac). The gate is the agent HAVING A RATE, not having
-  // come from onboarding: rateStopOf(c) falls back to RATE_DEFAULT() when c.rateStop is unset, so
-  // onbDepthFor applies the same way to a hand-built or pre-onboarding agent as to one the wizard
-  // made. onbCap (a recipe's scarcity override) stays inside onbDepthFor and may only shorten, never
-  // lengthen, the cap it already picked. The floor drops unscorable/low-scoring titles from every
-  // section outright; the cap only trims how many of the survivors are shown, and onbCapLifted
-  // (session-only, never persisted) tracks which sections have had that cap lifted by their own
-  // "show all" button — one lift per agent+section, not global.
-  const onbDepth = ac ? onbDepthFor(ac) : null;
-  const groups=orderFor(ac)      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
-    .map(g=>{
-      // CAS-646: the listing's order is the ACTIVE WATCH LIST's own sort (ymSort), not the open agent's —
-      // "cascade" where the list has none, never the agent's c.sort and never a bare "imdb" default.
-      let items=rows.filter(m=>primaryStatus(m)===g).sort(sortForKey(g, ymSort||"cascade", ac && ac.kind==="cinema"));
-      let fullCount=items.length, capped=false;
-      if(onbDepth){
-        items=items.filter(m=>{ const q=qScore(m); return q!==-1 && q>=onbDepth.floor; });
-        fullCount=items.length;
-        if(fullCount>onbDepth.cap && !onbCapLifted.has(ac.id+"::"+g)){
-          items=items.slice(0, onbDepth.cap);
-          capped=true;
-        }
-      }
-      return {g, items, fullCount, capped};
-    })
-    .filter(x=>x.items.length);
+  const groups=listingGroups(rows, ac);
   let pending=groups.length;
   const oneListDone=()=>{ if(--pending<=0) listReady(); };
-  groups.forEach(({g,items,fullCount,capped})=>{
+  groups.forEach(({g,items})=>{
     const live=items.filter(m=>!taggedOut(m)).length;
     const grp=document.createElement("div"); grp.className="group"; grp.dataset.g=g;
     grp.innerHTML=`<div class="grouphead"><span class="gdot ${g}"></span>${STATUS_LABEL[g]}
-      <span class="gcount">${live}</span></div><div class="list"></div>
-      ${capped ? `<button class="obshowall" type="button" onclick="onbLiftCap('${ac.id}','${g}')">Show all ${fullCount}</button>` : ""}`;
+      <span class="gcount">${live}</span></div><div class="list"></div>`;
     wrap.appendChild(grp);
     fillListChunked(grp.querySelector(".list"), items, renderGen, isFresh, oneListDone);
   });

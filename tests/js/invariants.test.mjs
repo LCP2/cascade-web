@@ -527,3 +527,37 @@ test("CAS-667 AC3: a genuine guest device still gets firstFound rows regardless 
   delete E.firstFound[String(film.tmdb_id)];
   E.setMovingReady(true);
 });
+
+// ---- THE LISTING APPLIES NO DEPTH CAP OR SCORE FLOOR (CAS-662) --------------------------------------------
+// render() used to read one active agent's onboarding depth answer + rate-slider stop and apply that agent's
+// floor/cap to the WHOLE listing — a six-agent list could render one film under a "Show all 36" button, none
+// of which anyone had chosen. AC1 (structural: render() reads no onbDepth, the app carries no obshowall
+// affordance) is checked directly against the source; AC2 (arithmetic: the listing yields exactly the rows it
+// is given, with no further trimming) is checked against listingGroups(), render()'s own DOM-free group
+// partition — the only place the cap used to live.
+test("CAS-662 AC1: render() reads no onbDepth, and the app carries no obshowall affordance", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const renderStart = src.indexOf("\nfunction render(){");
+  assert.ok(renderStart >= 0, "render() was not found");
+  const renderEnd = src.indexOf("\n// ---- CAS-275", renderStart);
+  assert.ok(renderEnd > renderStart, "the end of render() was not found");
+  const renderBody = src.slice(renderStart, renderEnd);
+  assert.ok(!renderBody.includes("onbDepth"), "render() still reads onbDepth");
+  assert.ok(!src.includes("obshowall"), "the app still carries the obshowall affordance");
+});
+
+test("CAS-662 AC2: the listing yields exactly E.listedBy's rows, for every group, no cap or floor", () => {
+  for(const { kind, s, label } of CASES){
+    pickInLane(E, kind, s.key);
+    const d = E.onbApply();
+    const rows = E.MOVIES.filter(m => E.listedBy(m, d));
+    const groups = E.listingGroups(rows, d);
+    const total = groups.reduce((n, x) => n + x.items.length, 0);
+    assert.equal(total, rows.length,
+      `${label}: the listing dropped ${rows.length - total} of ${rows.length} listed film(s) — a cap survived`);
+    // AC3: a group's header count (rendered cards minus tagged-out stubs) can never exceed what render()
+    // actually streams for that group — true as long as no group holds more than its own rows.length.
+    for(const { g, items } of groups) assert.ok(items.length <= rows.filter(m => E.primaryStatus(m) === g).length,
+      `${label}/${g}: group holds more items than the rows that belong to it`);
+  }
+});
