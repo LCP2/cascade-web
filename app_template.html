@@ -9218,14 +9218,20 @@ function emptyResultsHTML(){
   // CAS-566: zero agents is not "this agent's filters matched nothing" — there is no agent, and nothing to
   // relax or reset. cascadeStartHTML() (rendered above the listing) already carries the call to action.
   if(!cascades.length) return "";
-  const c=activeCascade();
+  // CAS-659 AC4: activeCascade() only ever names activeIds[0] — fine when exactly one agent is scoping the
+  // listing, wrong (blames one agent by name) when a multi-agent watch list is. Name the list instead once
+  // two or more of its agents are active; only fall through to "Nothing matches" with none active at all.
+  const acs=activeCascades();
+  const c = acs.length===1 ? acs[0] : null;
+  const list = acs.length>1 ? activeWatchlist() : null;
   const opts=relaxOptions();
   // The my-services scope isn't a filt field — it comes from the open Cascade or the ⚙️ switch — so it
   // gets counted separately, and pointed at the control that actually owns it.
   const scopeHides = prefsActive() ? countIf(()=>{ ignoreScope=true; }) : 0;
   let html=`<div class="empty">
     <div class="emoji">🔍</div>
-    <div class="eh">${c ? `“${esc(c.name)}” came back empty today.` : "Nothing matches all of that at once."}</div>
+    <div class="eh">${c ? `“${esc(c.name)}” came back empty today.`
+      : list ? `“${esc(list.name)}” came back empty today.` : "Nothing matches all of that at once."}</div>
     <div class="ep">Not a broken screen — a real answer: no title in the catalogue clears every bar you've set.
       Drop one and it's back.</div>`;
   if(opts.length){
@@ -17317,10 +17323,16 @@ else if(dedupedN)
   window.CascadeShape = { cascadeToRow, rowToCascade, momentsOf };
 
   // ---- in-memory array swap + repaint --------------------------------------
+  // CAS-659: the active set must come from the active watch list (syncActiveIdsFromActiveList, CAS-642's
+  // own derivation) whenever one exists — a device with no cached activeIds (fresh sign-in, new device, a
+  // cleared cascade_cascades key) used to fall through to the single-agent fallback below and scope the
+  // live listing to one agent while the list editor's own count kept reporting the full ticked set. The
+  // fallback stays for the one case syncActiveIdsFromActiveList can't cover: no watch list at all.
   function replaceCascades(list){
     cascades.length = 0;
     list.forEach(c => cascades.push(c));
-    if(!activeCascade() && cascades.length) setActive(firstAgentId());
+    if(activeWatchlist()) syncActiveIdsFromActiveList();
+    else if(!activeCascade() && cascades.length) setActive(firstAgentId());
     cascadesReady = true;   // CAS-517: this IS the account fetch (or the guest fallback) resolving
     if(typeof render==="function") render();
   }
