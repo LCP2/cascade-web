@@ -4967,7 +4967,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 830, "commit": "1ebb27f", "builtAt": "2026-08-28T01:33:28Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 831, "commit": "86bdea2", "builtAt": "2026-08-28T01:49:19Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7958,7 +7958,7 @@ const isAnticipated= m => isUpcoming(m) && popOf(m) >= ANTICIPATED_BAR;
 // either one alone is a real blockbuster (Obsession: $750k made, $443M taken). A title that clears the
 // popularity bar with neither drops out of the taxonomy rather than borrowing a claim we can't evidence.
 // This also settles the collision with the Budget dial's "Blockbuster" notch: both now mean a big-money
-// film, so "Any size" (which filters nothing) no longer looks contradicted by the badge underneath it.
+// film, so "Off" (which filters nothing) no longer looks contradicted by the badge underneath it.
 const bigMoney     = m => (m.budget||0) >= BIG_BUDGET || (m.worldwide_gross||0) >= BLOCKBUSTER_GROSS;
 const isBlockbuster= m => !isUpcoming(m) && hiPop(m) && bigMoney(m);
 // Landmark = acclaim AND an award AND scale. Not "a Blockbuster that's also good": TMDB popularity is this
@@ -8350,7 +8350,7 @@ function awardRank(m){
 // CAS-249: the awards half of the dial, counted. The rungs nest because a win outranks every nomination
 // count (see AWARD_WIN_RANK), so the set can only ever shrink as the dial is pushed right.
 const AWARD_STOPS = [
-  {label:"Any",     thr:null,          say:null,                                  rank:0},
+  {label:"Off",     thr:null,          say:null,                                  rank:0},
   {label:"1 nom",   thr:"nominated",   say:"award nominees",                      rank:1},
   {label:"2+ noms", thr:"Oscars",      say:"films with two or more nominations",  rank:2},
   {label:"3+ noms", thr:"Oscars",      say:"films with three or more nominations", rank:3},
@@ -8376,7 +8376,8 @@ function selCriticsOK(m,c){
 // Scale match, tri-state: true (clears the floor) · false (known, below it) · null (no budget AND no revenue
 // → truly unknown scale). Budget is the primary signal, worldwide gross the real fallback — so an
 // unknown-budget film is still placed by what it earned, and only a film with neither reads as unknown. The
-// AND lean lets `null` ride along (never dropped); OR requires an affirmative `true`.
+// lean lets `null` ride along (never dropped) everywhere this dial is read, CAS-661's OR included — the
+// dial has never had grounds to deny a film for a money figure we don't hold.
 // CAS-166: a floor, not a band. Four bands could only ever say "somewhere between these two numbers", which
 // is not how anyone thinks about how big a film they want — you want at least this big. It also fixes what
 // the bands got wrong at the edges: "Studio" excluded a $110M film for being too big, which no one asked for.
@@ -8509,21 +8510,27 @@ function matchesCriteria(m,c,ignoreBlocked){
   if((c.culture||[]).length && !c.culture.includes(m.culture)) return false;
   if(c.awards && !m.award) return false;
   if(!ratingOK(m, c.imdb||0, c.includeUnrated)) return false;
-  // Selectivity dials (CAS-114, reworked 2026-07-21; combined with AND from CAS-145 per buildspec §1).
-  // A film must meet EVERY control you turn up. This reverses the earlier OR: under OR, turning a dial up
-  // could only ever ADD films, so the dials read as "ways in" rather than as a bar, and the count moved the
-  // opposite way to the gesture. Under AND the count is the guardrail — it goes down as you get pickier,
-  // which is what "set your bar" means. A dial left open (0) is switched OFF and states no requirement, so
-  // all dials open still means the whole catalogue and pre-dial Cascades keep matching identically.
-  // The score dials can only admit titles carrying that score; the budget dial stays a lean — an unknown
-  // scale is never the reason a film is dropped.
-  if(c.selCrowd   && !selCrowdOK(m,c))                 return false;
-  if((c.selCritScore||c.selAwards) && !selCriticsOK(m,c)) return false;
-  if(c.selScale   && selScaleMatch(m,c)===false)       return false;   // unknown(null) rides along
-  if(c.selBuzz    && !selBuzzOK(m,c))                  return false;
-  // CAS-360: streaming Mission checkbox — an AU type-3 (general theatrical) release, release history
-  // rather than a live "in cinemas now" status. laneCrit keeps this false on every cinema agent.
-  if(c.cinemaReleaseOnly && !m.cinema_release)         return false;
+  // Selectivity dials (CAS-114, reworked CAS-145; CAS-661 makes them alternative routes in). A film clears
+  // this block if it clears AT LEAST ONE dial that is SET — a dial left open (0/off) contributes no term, so
+  // with every dial open the block states no requirement and every film passes it, unchanged from before.
+  // selCritScore and selAwards still share selCriticsOK and stay ANDed inside it — "acclaimed AND nominated"
+  // is one OR term, not two. c.selOr is intentionally not read here: the OR below is unconditional now that
+  // it has shipped, and selOr stays stored (and in cascSigOf) only so an existing agent's signature does not
+  // change and re-fire the CAS-212 merge sheet.
+  const missionOn = c.selCrowd || c.selCritScore || c.selAwards || c.selScale || c.selBuzz || c.cinemaReleaseOnly;
+  if(missionOn){
+    const cleared =
+      (c.selCrowd && selCrowdOK(m,c)) ||
+      ((c.selCritScore||c.selAwards) && selCriticsOK(m,c)) ||
+      (c.selScale && selScaleMatch(m,c)!==false) ||   // CAS-238/288: unknown(null) rides along here too —
+                                                       // this dial never denies a film for a money figure we
+                                                       // don't hold, OR or AND, so it clears its own route
+      (c.selBuzz && selBuzzOK(m,c)) ||
+      // CAS-360: streaming Mission checkbox — an AU type-3 (general theatrical) release, release history
+      // rather than a live "in cinemas now" status. laneCrit keeps this false on every cinema agent.
+      (c.cinemaReleaseOnly && !!m.cinema_release);
+    if(!cleared) return false;
+  }
   if(!budgetOK(m, c.budget||0)) return false;
   if(c.tentpole && c.tentpole!=="any" && !tentpoleIs(m,c.tentpole)) return false;
   if((m.rt_critic||0) < (c.rt||0)) return false;
@@ -11031,7 +11038,7 @@ function onbSeedDraft(){
 // the draft's genre filter is DERIVED from it — all-on means "any" (empty filter), so the count is the true
 // catalogue, exactly the mock's "leave them and it watches everything". Drop one and it narrows to the rest.
 // ---- Selectivity: the dials (#4 / CAS-114, reworked CAS-145) ---------------------------------------
-// Four ideas of "worth watching", each defaulting fully open, combined with AND. People's vote is a
+// Four ideas of "worth watching", each defaulting fully open, combined with OR (CAS-661). People's vote is a
 // CONTINUOUS IMDb bar (its old five-stop ladder went with CAS-145 — the named bands survive as the markers
 // on the slider, VOTE_REF); the other three are stop ladders read by matchesCriteria (selCritics / selScale
 // / selBuzz).
@@ -11044,12 +11051,12 @@ function onbSeedDraft(){
 // what the readout is named after, and tapping one still lands exactly on it. On today's catalogue 734 films
 // carry a critic score — 484 at 60+, 191 at 80+, 79 at 90+ — so the marks sit where the field actually thins.
 const CRIT_MARKS = [
-  {v:0,  label:"Any",           say:null},
+  {v:0,  label:"Off",           say:null},
   {v:60, label:"Well-reviewed", say:"well-reviewed by critics"},
   {v:80, label:"Acclaimed",     say:"critically acclaimed"},
   {v:90, label:"Universal",     say:"universally acclaimed"},
 ];
-const critScoreReadout = v => v ? `Score ${Math.round(v)}+` : "Any";
+const critScoreReadout = v => v ? `Score ${Math.round(v)}+` : "Off";
 const critScoreSay = v => (CRIT_MARKS.filter(r=>r.v>0 && v>=r.v).pop()||{}).say
                        || (v ? `scoring ${Math.round(v)}+ with critics` : null);
 // CAS-166 (reverses buildspec decision #2): Budget & scale is continuous, like People's vote. Four bands
@@ -11065,7 +11072,7 @@ const critScoreSay = v => (CRIT_MARKS.filter(r=>r.v>0 && v>=r.v).pop()||{}).say
 // stop do not move, there is no new card badge, and the lean is untouched: selScaleMatch still answers
 // null for a film whose money we don't know, and those films still ride along.
 const SCALE_REF = [
-  {d:0,     label:"Any size"},
+  {d:0,     label:"Off"},
   {d:1e6,   label:"Indie"},
   {d:15e6,  label:"Studio"},
   {d:100e6, label:"Blockbuster"},
@@ -11073,7 +11080,7 @@ const SCALE_REF = [
 ];
 const SCALE_SEG = 100;                                    // slider units between one named stop and the next
 const SCALE_POS_MAX = SCALE_SEG*(SCALE_REF.length-1);
-const SCALE_OFF_POS = 5;                                  // a dead zone at the bottom, so "Any size" is gettable
+const SCALE_OFF_POS = 5;                                  // a dead zone at the bottom, so "Off" is gettable
 // Dollars for a position, rounded to a figure a person would actually say. Every value on the track is real
 // money that really filters — the readout never rounds to something the filter doesn't use.
 function scaleDollars(pos){
@@ -11094,15 +11101,15 @@ function scalePos(dollars){
   }
   return SCALE_POS_MAX;
 }
-// "Any size" names the OFF position only — a $500K floor is still a floor, so it reads as the smallest named
+// "Off" names the OFF position only — a $500K floor is still a floor, so it reads as the smallest named
 // band rather than claiming to be no restriction at all.
 const scaleBand    = d => (SCALE_REF.filter(r=>r.d>0 && d>=r.d).pop()||SCALE_REF[1]).label;
-const scaleReadout = d => d>0 ? `${scaleBand(d)} · ${money(d)}+` : "Any size";
+const scaleReadout = d => d>0 ? `${scaleBand(d)} · ${money(d)}+` : "Off";
 const scaleSay     = d => d>0 ? `made at ${money(d)} or more` : null;
 // CAS-145: the Buzz dial. Plain English on the face of it — the percentile machinery behind BUZZ_CUTS is
 // not something a person setting a bar should have to read about.
 const BUZZ_STOPS = [
-  {label:"Any",          thr:null,   say:null},
+  {label:"Off",          thr:null,   say:null},
   {label:"Talked-about", thr:null,   say:"being talked about"},
   {label:"Trending",     thr:null,   say:"trending right now"},
   {label:"Must-see",     thr:null,   say:"the ones everyone's watching"},
@@ -11114,7 +11121,7 @@ const VOTE_MIN=5, VOTE_MAX=9, VOTE_OFF=5.6;
 const VOTE_REF = [[6,"Liked"],[7,"Well-liked"],[7.5,"Loved"],[8.2,"Adored"]];
 const votePos  = v => Math.max(0, Math.min(100, (v-VOTE_MIN)/(VOTE_MAX-VOTE_MIN)*100));
 const voteBand = v => (VOTE_REF.filter(r=>v>=r[0]).pop()||[])[1] || "";
-const voteReadout = v => v<VOTE_OFF ? "Any" : `${voteBand(v)?voteBand(v)+" · ":""}${v.toFixed(1)}+`;
+const voteReadout = v => v<VOTE_OFF ? "Off" : `${voteBand(v)?voteBand(v)+" · ":""}${v.toFixed(1)}+`;
 const voteSay = v => v<VOTE_OFF ? null : `scored ${v.toFixed(1)}+ by viewers`;
 
 // CAS-188: genresOn / langsOn / ageStop are gone. They were the pre-CAS-146 per-agent copies of genre,
@@ -12525,10 +12532,10 @@ const SHARP_STEPS = {
     },
     wire(){ onbDonePulse=null; },   // the pulse is a one-time thing: it has now played
   },
-  // #4 Set your bar (CAS-114, reworked by CAS-145 to the R5 spec). Four dials combining with AND, so the live
-  // count falls as you get pickier and IS the guardrail. Only the dials that define THIS agent are up front;
-  // the rest wait under "More controls" at their defaults, because a screen that opens with four bars asks a
-  // person to have an opinion about four things before they've seen anything.
+  // #4 Set your bar (CAS-114, reworked by CAS-145 to the R5 spec; CAS-661 makes the dials alternative routes
+  // in, combined with OR). Only the dials that define THIS agent are up front; the rest wait under "More
+  // controls" at their defaults, because a screen that opens with four bars asks a person to have an opinion
+  // about four things before they've seen anything.
   selectivity: {
     title: "Mission",
     progress: 70,
@@ -12549,10 +12556,11 @@ const SHARP_STEPS = {
       // CAS-360: streaming-only — release history, not a live "in cinemas now" status, so it has no place
       // on a cinema agent's Mission (which already watches films on their way to a cinema).
       const cinemaOnly = missionKind()==="stream" ? `<div class="switch mini" id="onbCinemaRelease" role="switch">
-          <span>🎬 Only movies that had a Cinema Release
+          <span>🎬 Had a cinema release
             <small style="color:var(--faint)">— an AU cinema (not limited) release, at any point</small></span>
           <span class="knob"></span></div>` : "";
       return `<p class="ossub">Set the standards a film has to meet.</p>
+        <p class="oshint" style="text-align:left;margin:0 0 10px">A film needs to clear at least one of these.</p>
         ${dials(primary)}
         ${rest.length ? (onbMoreOpen
           ? dials(rest)
