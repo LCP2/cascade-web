@@ -1697,3 +1697,34 @@ test("CAS-682 AC2/AC4: reproducing For review + Watched (Notify off) — togglin
     unseedCascades(ids);
   }
 });
+
+// ---- CONDENSED CARD STATS ROW IS A PER-FILM DECISION (CAS-686) --------------------------------------------
+// CAS-624 gated the condensed card's money-vs-scores row on the LISTING (#groups.cinema-listing — every card
+// under a cinema agent got the money row, no matter what the film itself held). CAS-686 replaces that with a
+// per-FILM rule: a film showing the scores row needs at least one of a reliable IMDb rating, an RT critic
+// score or a Metacritic score; a film with none of the three gets the money row instead — a count or a row
+// that doesn't describe the film beside it is this project's own repeat failure mode (CAS-680, CAS-682), so
+// this asserts the predicate directly rather than spot-checking a rendered card.
+test("CAS-686: condensedShowsScores agrees with the three-source rule, over fixture films covering every combination", () => {
+  const threeSourceRule = m => E.imdbReliable(m) || m.rt_critic!=null || m.metacritic!=null;
+  const fixtures = [
+    { title: "None",             imdb_rating: null, imdb_votes: 0 },
+    { title: "IMDb only, reliable",    imdb_rating: 7.1, imdb_votes: E.IMDB_MIN_VOTES },
+    { title: "IMDb only, below floor", imdb_rating: 8.5, imdb_votes: E.IMDB_MIN_VOTES - 1 },
+    { title: "RT only",          imdb_rating: null, imdb_votes: 0, rt_critic: 90 },
+    { title: "Meta only",        imdb_rating: null, imdb_votes: 0, metacritic: 55 },
+    { title: "RT + Meta, no IMDb", imdb_rating: null, imdb_votes: 0, rt_critic: 40, metacritic: 45 },
+    { title: "IMDb reliable + RT", imdb_rating: 6.0, imdb_votes: E.IMDB_MIN_VOTES, rt_critic: 20 },
+    { title: "All three",        imdb_rating: 5.5, imdb_votes: E.IMDB_MIN_VOTES, rt_critic: 60, metacritic: 60 },
+    { title: "Below-floor IMDb + RT + Meta", imdb_rating: 9.9, imdb_votes: E.IMDB_MIN_VOTES - 1, rt_critic: 30, metacritic: 35 },
+  ];
+  for(const m of fixtures){
+    assert.equal(E.condensedShowsScores(m), threeSourceRule(m),
+      `${m.title}: condensedShowsScores disagrees with the three-source rule`);
+  }
+  // …and over the real catalogue, so the invariant also holds for whatever the fixture list didn't think of.
+  for(const m of E.MOVIES){
+    assert.equal(E.condensedShowsScores(m), threeSourceRule(m),
+      `${m.title}: condensedShowsScores disagrees with the three-source rule`);
+  }
+});
