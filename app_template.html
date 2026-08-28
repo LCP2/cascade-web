@@ -17897,7 +17897,17 @@ else if(dedupedN)
   async function syncWatchlistsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
     if(acctTableFail.watchlists) return;   // CAS-656 AC2: a failed load must not push local state back over it
-    const rows=watchLists.map(watchlistToRow);
+    // CAS-681: belt-and-braces — a payload upsert can't contain the same id twice (Postgres 21000, "ON
+    // CONFLICT DO UPDATE command cannot affect row a second time"). loadWatchlistAccount above is the
+    // known source, now fixed, but this guard is what surfaces the NEXT one instead of 500ing silently.
+    const byId=new Map();
+    watchLists.forEach(x=>byId.set(x.id, x));   // keep the last occurrence
+    if(byId.size!==watchLists.length){
+      const seen=new Set(), dupes=new Set();
+      watchLists.forEach(x=>{ if(seen.has(x.id)) dupes.add(x.id); else seen.add(x.id); });
+      console.warn("Watchlist sync: dropping duplicate id(s) before upsert", [...dupes]);
+    }
+    const rows=[...byId.values()].map(watchlistToRow);
     if(rows.length){
       const { error } = await c.from("watchlists").upsert(rows, { onConflict:"id" });
       if(error){ console.warn("Watchlist upsert", error); return; }
@@ -17929,8 +17939,25 @@ else if(dedupedN)
     // CAS-590: fold in any list this device holds that the account doesn't already have an equivalent of
     // — matched on watchlistSigOf (the criteria signature), NOT name, so two lists that happen to share a
     // name but differ in what they actually watch are never silently collapsed into one.
+    // CAS-681: a local copy sharing an id with an account row is the SAME list, not a new one — matching
+    // on content signature alone (as above) missed this, because svcOn/cascOff/watchedOn/watchTiers/sort
+    // drift on every Edit-screen tap, so a genuinely-synced list reads as "local-only" the moment it's
+    // touched and gets appended alongside its own remote twin. Two rows sharing one id then 500 the
+    // upsert (Postgres 21000). Same fault, same fix, as CAS-658 did for cascades: the local copy is the
+    // newer state, so it updates the existing row in place rather than duplicating it.
     const sigs=new Set(remote.map(watchlistSigOf));
-    const localOnly=watchLists.filter(x=>!sigs.has(watchlistSigOf(x)));
+    const remoteById=new Map(remote.map(x=>[x.id, x]));
+    let driftDirty=false;
+    watchLists.forEach(x=>{
+      const match=remoteById.get(x.id);
+      if(match && watchlistSigOf(match)!==watchlistSigOf(x)){
+        const updated=normWatchlistEntry({...x});
+        remote[remote.indexOf(match)]=updated;
+        remoteById.set(x.id, updated);
+        driftDirty=true;
+      }
+    });
+    const localOnly=watchLists.filter(x=>!remoteById.has(x.id) && !sigs.has(watchlistSigOf(x)));
     const merged=[...remote, ...localOnly];
     merged.sort((a,b)=>(a.order??1e9)-(b.order??1e9));
     watchLists.length=0; merged.forEach(l=>watchLists.push(l));
@@ -17938,7 +17965,7 @@ else if(dedupedN)
     applyActiveWatchlist();
     saveWatchlistsLocal();   // mirror into the guest cache for the next cold start, same as cascades
     ymReady=true;
-    if(localOnly.length) scheduleWatchlistSync();   // push the folded-in local-only lists up
+    if(localOnly.length || driftDirty) scheduleWatchlistSync();   // push folded-in/updated lists up
     if(typeof render==="function") render();
     if(typeof renderYourMovies==="function") renderYourMovies();
   }
@@ -18543,6 +18570,11 @@ else if(dedupedN)
                                 // CAS-428: Lists' own load/sync/reconcile seam, same shape as the above.
                                 loadListsAccount, syncListsNow: runListsSync, listToRow, rowToList, listFilmRows,
                                 reconcileLists, reconcileListMembership,
+                                // CAS-681: Watch Lists' own load/sync/reconcile seam, same shape as Lists above —
+                                // never wired up before, which is why the id-duplication bug here had no seam
+                                // a test could reach directly.
+                                loadWatchlistAccount, syncWatchlistsNow: runWatchlistSync, watchlistToRow,
+                                rowToWatchlist, reconcileWatchlists,
                                 // CAS-484: the per-film Watch-it tick's own load/sync/reconcile seam.
                                 loadFilmWatches, syncWatchesNow: runWatchSync, watchRows, applyWatchRows,
                                 reconcileFilmWatches,

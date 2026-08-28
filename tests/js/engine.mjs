@@ -225,6 +225,11 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-674: the Agents row's own metrics compute, so a test can check its "total" agrees with the
   // listing (listedCount) rather than the wider watch-ahead set (watchesFilm) it used to read.
   agentMetricsCompute,
+  // CAS-681: the account-persistence seam (load/sync/reconcile for cascades/films/lists/watchlists/etc,
+  // CAS-212's pendingMerge, CAS-408's reconcile family) lives on window.CascadePersistence, assigned once
+  // at the bottom of the account-sync IIFE — a live reference, so a test can stub CascadeAuth.client with
+  // a fake Supabase and call e.g. CascadePersistence.loadWatchlistAccount() directly.
+  get CascadePersistence(){ return window.CascadePersistence; },
 };
 `;
 
