@@ -1861,6 +1861,8 @@
      row of selections rather than above the screen's own title. */
   .oscount{display:block;margin:2px 2px 13px;font-size:13px;line-height:1.55;color:var(--accenttext)}
   .oscount b{font-family:var(--font-display);font-size:15px;font-weight:800;color:var(--accenttext)}
+  .oscountscore{display:block;color:var(--faint);font-size:12px}   /* CAS-665: the Mission score reading */
+  .oscountscore b{font-family:var(--font-display);font-weight:800;color:var(--accenttext)}
   .osh{font-family:var(--font-display);font-size:20px;font-weight:700;margin:0 0 6px;color:var(--ink)}
   .ossub{color:var(--dim);font-size:13px;line-height:1.5;margin:0 0 12px}   /* CAS-130 size / CAS-138 tighten */
   /* CAS-264: the trail. A quiet ledger, not a control — no card chrome, no tap affordance, just the rows
@@ -4979,7 +4981,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 844, "commit": "1835e2f", "builtAt": "2026-08-28T05:49:29Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 845, "commit": "679befd", "builtAt": "2026-08-28T05:55:31Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -11646,6 +11648,28 @@ const onbCount = () => watchCount(onbApply());
 function onbShownCount(){
   return listedCount(onbApply());
 }
+// CAS-665: the Mission step's own score reading, off the IDENTICAL set onbShownCount() just counted —
+// listedBy + !taggedOut, not agentMetricsCompute's wider watchesFilm() — so it can never describe a
+// different set than the "N films match right now" line above it. MEASURED off qScore, never derived from
+// the dial positions: a film clearing People's vote 7.5 with a Metacritic of 20 scores 47, so the floor
+// isn't predictable from where the dials sit.
+function missionScoreStats(c){
+  const films=MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m));
+  let min=null, unscored=0;
+  films.forEach(m=>{
+    const q=qScore(m);
+    if(q<0) unscored++;
+    else if(min===null || q<min) min=q;
+  });
+  return {min, unscored};
+}
+// Suppressed at n===0 (AC3: no placeholder for zero matches) rather than printing a meaningless floor.
+function missionScoreLineHTML(n){
+  if(!n) return "";
+  const {min, unscored}=missionScoreStats(onbApply());
+  const line = min===null ? `${unscored} of ${n} unscored` : `min <b>${min}</b> · ${unscored} of ${n} unscored`;
+  return `<span class="oscountscore">${line}</span>`;
+}
 // ---- CAS-224: per-chip counts, measured off the agent instead of the catalogue --------------------------
 // The Style chips quoted GENRE_COUNT — how many films in the WHOLE catalogue carry that genre — on a page
 // whose own headline said "28 films match right now". Drama · 752 above a total of 28 isn't a small
@@ -11825,9 +11849,16 @@ function stepCtaText(step, n){
 // The mirror itself. Same wording as the button's suffix so the two read as one statement, not two claims.
 // Steps that already open with a count of their own (the hub's big number, the baseline's "in your world"
 // line) opt out with topCount:false rather than printing a second one.
+// CAS-665: the mirror's inner content is its own function now, so the initial paint (stepCountHTML) and the
+// live repaint (onbRefresh) print the identical string — the Mission score line rides along with the count
+// on every call, same "one source" rule CAS-164 set for n itself.
+function stepCountLine(step, n){
+  const base = `<b>${n}</b> film${n===1?"":"s"} match right now`;
+  return step===SHARP_STEPS.selectivity ? `${base}${missionScoreLineHTML(n)}` : base;
+}
 function stepCountHTML(step, n){
   if(n==null || step.topCount===false) return "";
-  return `<div class="oscount" id="onbStepCount" aria-live="polite"><b>${n}</b> film${n===1?"":"s"} match right now</div>`;
+  return `<div class="oscount" id="onbStepCount" aria-live="polite">${stepCountLine(step, n)}</div>`;
 }
 // CAS-182: the window lives on the agent, so how-far-back round-trips with everything else.
 // CAS-250: as a number of years, read through the legacy index only when that is all the agent carries.
@@ -15710,7 +15741,7 @@ function onbRefresh(){
   const b=$("onbStepCta")||$("flowCta");
   if(b) b.textContent = stepSpoke(onbStepKey) ? `Done${ctaCount(n)}` : stepCtaText(step, n);
   const top=$("onbStepCount");
-  if(top && n!=null) top.innerHTML = `<b>${n}</b> film${n===1?"":"s"} match right now`;
+  if(top && n!=null) top.innerHTML = stepCountLine(step, n);
   // CAS-198: the third printer, off the same n.
   const say=$("onbStepSay"); if(say && step && step.say) say.innerHTML = step.say(n);
   // CAS-224: a step whose chips carry live counts repaints them here, so the chips move on the same beat as
