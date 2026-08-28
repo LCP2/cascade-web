@@ -153,6 +153,18 @@ if(typeof window.CascadeAuth === "undefined"){
   get movingReady(){ return movingReady; },
   setMovingReady(v){ movingReady = v; },
   get CascadeAuth(){ return window.CascadeAuth; },
+  // CAS-668: the badge/list agreement — movingWindowRows is the one recipe both renderMovingScreen and
+  // movingUnseenCount filter through, movingBadgeWindow is which window/cutoff applies right now (live if
+  // Moving is open, predicted if it's not), and openMovingScreen/closeMovingScreen/setMovingWindow are the
+  // real wire code (DOM reads/writes absorbed by the stub, exactly like the rest of this file's wire calls).
+  movingWindowRows, movingUnseenCount, movingBadgeWindow, movingAutoOpenWindow, movingInWindow,
+  MOVING_WINDOWS, movingSeen,
+  get movingWindow(){ return movingWindow; },
+  get movingVisitCutoff(){ return movingVisitCutoff; },
+  get movingIsOpen(){ return movingIsOpen; },
+  openMovingScreen: () => window.openMovingScreen(),
+  closeMovingScreen: () => window.closeMovingScreen(),
+  setMovingWindow: (key) => window.setMovingWindow(key),
   // CAS-662: the listing's own group partition — pure over a rows set and an active agent, no DOM, so it is
   // exactly the "decision" half of render() this harness exists to test independent of the paint half.
   listingGroups,

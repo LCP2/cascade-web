@@ -4967,7 +4967,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 835, "commit": "6ffd683", "builtAt": "2026-08-28T03:43:44Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 836, "commit": "aff1a3e", "builtAt": "2026-08-28T03:54:44Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -14599,6 +14599,9 @@ const MOVING_EMPTY_COPY = {
 };
 let movingWindow="since_last";
 let movingVisitCutoff=0;  // ms epoch snapshot of cascade_moving_lastvisit, taken at open — see openMovingScreen
+// CAS-668: whether the screen is actually open right now — the badge mirrors movingWindow/movingVisitCutoff
+// while it is, and predicts the window openMovingScreen would pick while it isn't. See movingBadgeWindow.
+let movingIsOpen=false;
 // CAS-667: the same CAS-517-style ambiguity as cascadesReady/ymReady — on a signed-in device, realAlerts
 // still being empty could mean "genuinely no alerts yet" or "loadRealAlerts hasn't returned since boot".
 // movingReady is this ledger's own flag; a guest device has nothing to wait for, so it starts ready.
@@ -14684,9 +14687,26 @@ function movingData(){
   changedRows.sort(byScoreDesc);
   return {canRows, newRows, changedRows};
 }
-function movingUnseenCount(){
+// CAS-668: the filtered row set both the badge and the list are built from — one recipe, so they cannot
+// disagree about which rows are "in" the window. renderMovingScreen calls this with its live movingWindow/
+// movingVisitCutoff; movingUnseenCount calls it with whatever movingBadgeWindow() says applies right now.
+function movingWindowRows(win, cutoffMs){
   const {canRows,newRows,changedRows}=movingData();
-  return [...canRows,...newRows,...changedRows].filter(r=>movingSeen[r.filmId]!==r.groupKey).length;
+  const inWindow=r=>movingInWindow(r.date, win, cutoffMs);
+  return {shownCan:canRows.filter(inWindow), shownNew:newRows.filter(inWindow), shownChanged:changedRows.filter(inWindow)};
+}
+// CAS-668: while Moving is open, the badge must track whatever window is actually on screen (movingWindow),
+// including a tap via setMovingWindow. While it's closed, there is no "on screen" window yet, so the badge
+// predicts the same window openMovingScreen would pick if opened right now — the same computation, run early.
+function movingBadgeWindow(){
+  if(movingIsOpen) return {win:movingWindow, cutoff:movingVisitCutoff};
+  const cutoff=loadMovingLastVisit();
+  return {win:movingAutoOpenWindow(cutoff), cutoff};
+}
+function movingUnseenCount(){
+  const {win,cutoff}=movingBadgeWindow();
+  const {shownCan,shownNew,shownChanged}=movingWindowRows(win,cutoff);
+  return [...shownCan,...shownNew,...shownChanged].filter(r=>movingSeen[r.filmId]!==r.groupKey).length;
 }
 function updateMovingBadge(){
   const b=$("movingBadge"); if(!b) return;
@@ -14710,6 +14730,8 @@ function movingRowHTML(row){
 // CHANGE 3: movingSeen no longer decides whether a row renders — every row inside the selected window
 // shows, full stop (the render-time filter CAS-644 added is gone). It is still upserted here so
 // movingUnseenCount() (the chip badge — the only thing movingSeen is for now) can tell what has been shown.
+// CAS-668: the row set marked seen is movingWindowRows(movingWindow, movingVisitCutoff) — the exact same
+// function and the exact same window the badge computation reads, so the two can never disagree.
 function renderMovingScreen(){
   // CAS-667: while a signed-in device's alerts ledger is still in flight, movingData() returns nothing to
   // paint — say so explicitly instead of falling through to the "nothing has moved" empty state, which
@@ -14721,11 +14743,7 @@ function renderMovingScreen(){
     updateMovingBadge();
     return;
   }
-  const {canRows, newRows, changedRows}=movingData();
-  const inWindow=r=>movingInWindow(r.date, movingWindow, movingVisitCutoff);
-  const shownCan=canRows.filter(inWindow);
-  const shownNew=newRows.filter(inWindow);
-  const shownChanged=changedRows.filter(inWindow);
+  const {shownCan, shownNew, shownChanged}=movingWindowRows(movingWindow, movingVisitCutoff);
   [...shownCan, ...shownNew, ...shownChanged].forEach(r=>{ movingSeen[r.filmId]=r.groupKey; });
   saveMovingSeen();
   updateMovingBadge();
@@ -14789,6 +14807,7 @@ window.closeAgentsScreen=()=>{
 window.openMovingScreen=()=>{
   if($("yourMovies").classList.contains("open")) closeYourMovies();
   if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
+  movingIsOpen=true;
   movingVisitCutoff=loadMovingLastVisit();
   movingWindow=movingAutoOpenWindow(movingVisitCutoff);
   renderMovingScreen();
@@ -14800,6 +14819,7 @@ window.openMovingScreen=()=>{
   logEvent("moving_screen_opened",{});
 };
 window.closeMovingScreen=()=>{
+  movingIsOpen=false;
   $("movingScreen").classList.remove("open"); document.body.style.overflow="";
   $("movingBtn").classList.remove("active"); $("movingBtn").setAttribute("aria-pressed","false");
   syncWatchChip();
