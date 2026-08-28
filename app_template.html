@@ -2785,8 +2785,14 @@
   /* CAS-643: who-line and health/check-state, replacing the row's old right-hand film count. */
   .agwho{font-size:11px;color:var(--dim)}
   /* CAS-664: the five real metrics, replacing the rate slider's own preview. */
-  .agmetrics{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11px;color:var(--dim)}
-  .agmetrics b{color:var(--ink)}
+  .agmetrics{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--dim)}
+  .agmrow{display:flex;align-items:baseline;gap:5px 9px;min-width:0;flex-wrap:wrap}
+  .agmstat{white-space:nowrap;flex:0 0 auto}
+  .agmstat.total{margin-left:auto;padding-left:8px}
+  .agmrow.a b{color:var(--violet);font-weight:800;font-size:13.5px;line-height:1;
+    font-family:var(--font-display);letter-spacing:-.02em;padding:0 1px}
+  .agmrow.b{font-size:10.5px;color:var(--faint);gap:10px;border-top:1px solid var(--line);padding-top:5px}
+  .agmrow.b b{color:var(--dim);font-weight:700}
   .aghealth{font-size:11px;color:var(--dim);border-top:1px solid var(--line);padding-top:6px;margin-top:2px}
   .agwarn{font-size:11px;color:var(--amber);border-top:1px solid var(--line);padding-top:6px;margin-top:2px;
     display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -14588,15 +14594,18 @@ function agentMetrics(c){
 const fmtAgentRate = n => String(Math.round(n));
 function agentMetricsHTML(c){
   const {total, scoreMin, perMonth, lastFind, d7}=agentMetrics(c);
-  const listed=`<b>${total}</b> listed`;
   const score = total===0 ? "no films listed"
     : scoreMin===null ? null
-    : `Cascade score over <b>${scoreMin}</b>`;
-  const est=`~${fmtAgentRate(perMonth)}/month new (est.)`;
+    : `Cascade over <b>${scoreMin}</b>`;
+  const est=`~<b>${fmtAgentRate(perMonth)}</b> new / month`;
+  const listed=`<b>${total}</b> movies`;
   const last = lastFind===null ? "no finds yet"
     : (daysSince(lastFind)===0 ? "last find today" : `last find ${daysSince(lastFind)}d ago`);
-  const found=`Found ${d7} movie${d7===1?"":"s"} in the last week`;
-  return [listed, score, est, last, found].filter(Boolean).map(s=>`<span class="agmstat">${s}</span>`).join("");
+  const found=`Found <b>${d7}</b> movie${d7===1?"":"s"} in the last week`;
+  const rowA=[score, est].filter(Boolean).map(s=>`<span class="agmstat">${s}</span>`).join("")
+    + `<span class="agmstat total">${listed}</span>`;
+  const rowB=[last, found].map(s=>`<span class="agmstat">${s}</span>`).join("");
+  return `<span class="agmrow a">${rowA}</span><span class="agmrow b">${rowB}</span>`;
 }
 function renderAgentsScreen(){
   const _t664=performance.now();
