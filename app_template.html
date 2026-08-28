@@ -2919,13 +2919,6 @@
   .ymcasctgl.on{background:var(--brand-blue);border-color:var(--brand-blue);color:#fff}
   .ymcasctgl:hover{border-color:var(--brand-blue)}
   .ymcasctgl:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  /* CAS-570: the single rewatch switch became one tickbox per verdict. These reuse .nopt/--wwc — the same
-     control the watch-priority filter popover already uses (line ~8055) — so the tick, the colour slot and
-     the pressed state are the app's existing ones rather than a fourth kind of checkbox. --wwc is fed each
-     step's own colour from WATCH_STEPS, so the row reads as the same best-worst ramp it does everywhere
-     else. .nopt is full-width by default (it lists vertically in the popover); here it hugs its label. */
-  .ymverdicts{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
-  .ymverdicts .nopt{width:auto;flex:0 0 auto;padding:7px 11px}
   .ymresultbar{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:20px 2px 10px;
     font-size:13.5px}
   .ymresultbar b{color:var(--ink);font-weight:800}
@@ -3805,8 +3798,8 @@
 <!-- LIST EDITOR (CAS-592): editing a watch list's own criteria, off its own screen — the agent editor's
      shell (.sharpstep/.osstage/.osinner) and header (.osh.eahn + .eapenc), NOT its step machine. Body
      rendered by leInnerHTML(). Writes live (see leSave()'s comment) — every dial here calls the SAME
-     ymSvcToggle/ymCascToggle/ymVerdictToggle the old inline panel used, which already persist through
-     ymPersist() on every change. -->
+     ymSvcToggle/ymCascToggle the old inline panel used, which already persist through ymPersist() on every
+     change. (CAS-677 removed the section that called ymVerdictToggle — see leInnerHTML's own comment.) -->
 <div class="sharpstep" id="leScreen" role="dialog" aria-modal="true" aria-label="Edit watch list">
   <div class="osstage"><div class="osinner" id="leInner"></div></div>
 </div>
@@ -4696,15 +4689,33 @@ function saveCascades(){ try{ localStorage.setItem("cascade_cascades", JSON.stri
 // function (not a const arrow) so the account IIFE below can reassign the identifier the same way it
 // already does for saveCascades/saveLists.
 const WATCHLIST_KEY = "cascade_watchlist";
-function watchlistDefaults(){ return {svcOn:["stream"], cascOff:[], watchedOn:[], watchTiers:[], sort:null, excludeTags:[]}; }
+// CAS-677: hoisted up from its original spot by the Watch chip code (still there — see the comment there)
+// because watchlistDefaults() below is this array's earliest caller: the top-level watch-list load a few
+// lines down runs before the file reaches WATCH_STEPS's old position, and a `const` referenced before its
+// own declaration throws. WATCH_STEPS itself is unchanged — only its declaration moved.
+const WATCH_STEPS = [
+  {key:"wow",      ico:"wow",     lbl:"Wow!",        cd:"#17d492"},
+  {key:"liked",    ico:"like",    lbl:"Watch Again", cd:"#37c46a"},
+  {key:"enjoyed",  ico:"heart",   lbl:"Enjoyed",      cd:"#22d3ee"},
+  {key:"soso",     ico:"soso",    lbl:"So-so",       cd:"#8a93a6"},
+  {key:"disliked", ico:"dislike", lbl:"Disliked",    cd:"#e08a3c"},
+];
+// CAS-677: watchedOn now defaults to every WATCH_STEPS key (permissive — excludes nothing) rather than [],
+// since the editor UI that could widen a narrower stored value is gone (see normWatchlist migration below).
+function watchlistDefaults(){ return {svcOn:["stream"], cascOff:[], watchedOn:WATCH_STEPS.map(s=>s.key), watchTiers:[], sort:null, excludeTags:[]}; }
 function normWatchlist(o){
   const d=watchlistDefaults();
   if(!o || typeof o!=="object") return d;
   const arr=v=>Array.isArray(v) ? v.filter(x=>typeof x==="string") : null;
+  const watchedOnStored=arr(o.watchedOn);
+  // CAS-677 AC7: a stored watchedOn narrower than the permissive default is the old (pre-migration) shape —
+  // with the editor UI gone, nothing can widen it back through the app, so it's migrated up here on every
+  // load rather than left to strand the list. A value that already covers every step is kept as-is.
+  const watchedOn = (watchedOnStored && d.watchedOn.every(k=>watchedOnStored.includes(k))) ? watchedOnStored : d.watchedOn;
   return {
     svcOn:      arr(o.svcOn)      || d.svcOn,
     cascOff:    arr(o.cascOff)    || d.cascOff,
-    watchedOn:  arr(o.watchedOn)  || d.watchedOn,
+    watchedOn,
     watchTiers: arr(o.watchTiers) || d.watchTiers,
     sort:       typeof o.sort==="string" ? o.sort : null,
     // CAS-642: excludeTags moves here from the agent object — one tag-exclusion home per list, not per agent.
@@ -6513,13 +6524,8 @@ function opinionBtnsHTML(id, cls=""){
 // CAS-349: "Won't Watch" is gone from here — relabelled "Never" and moved to the Watch control (below), whose
 // panel is the one place it now lives. "Enjoyed" is new, between Watch Again and So-so: a cyan step on the
 // ramp, between the greens above it and the grey neutral below.
-const WATCH_STEPS = [
-  {key:"wow",      ico:"wow",     lbl:"Wow!",        cd:"#17d492"},
-  {key:"liked",    ico:"like",    lbl:"Watch Again", cd:"#37c46a"},
-  {key:"enjoyed",  ico:"heart",   lbl:"Enjoyed",      cd:"#22d3ee"},
-  {key:"soso",     ico:"soso",    lbl:"So-so",       cd:"#8a93a6"},
-  {key:"disliked", ico:"dislike", lbl:"Disliked",    cd:"#e08a3c"},
-];
+// CAS-677: WATCH_STEPS itself now lives up near watchlistDefaults (its earliest caller) — see the comment
+// there. Only the declaration moved; everything below still just reads the same array off this identifier.
 // CAS-443: hoisted here (next to WATCH_STEPS, its only dependency) rather than left by the Review panel far
 // below, so the Your Movies Watched-section renderer can share the same ramp + Never/notfor step instead of
 // re-deriving it. Never isn't part of the watched ramp's own colour scale (it's an exclusion flag, not a
@@ -7528,7 +7534,10 @@ const toReviewCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m) && !f
 // Watch it and Watched each open the SAME listbox the deck card's funnel opened (.cpop, .nopt rows, square
 // multi-select ticks) — anchored under the pill, opening down. That is why the funnel is gone from the card.
 const filmDecided = id => filmNotifyState(id).on > 0;
-const scope = {watch:true, new:false, watched:false};
+// CAS-677 AC1: Notify and For review default on, Watched off, for a fresh scope bar — a plain literal is
+// enough since scope is a session-only module object, never persisted, so nothing here can overwrite a
+// value the user already set (AC2) — each load just starts from this same literal, as it always has.
+const scope = {watch:true, new:true, watched:false};
 const scopeTiers = new Set();        // FILTER_TIERS keys — empty means "every window"
 const scopeVerdicts = new Set();     // REVIEW_STEPS keys — empty means "every verdict"
 // CAS-680 Part 2: same three labels renderScopeBar's own pills print ("Notify"/"For review"/"Watched")
@@ -13674,7 +13683,9 @@ const YM_SVC = [
 ];
 let ymSvcOn = new Set(["stream"]);   // ticked service filters — default Streaming only
 let ymCascOff = new Set();           // cascade ids explicitly UNticked — default empty, i.e. every cascade
-let ymWatchedOn = new Set();   // watched verdicts to include — empty = exclude every watched film (the old default)
+let ymWatchedOn = new Set();   // watched verdicts to include — applyActiveWatchlist() below seeds this from
+                                // the active list's own record, permissive (every WATCH_STEPS key) by default
+                                // since CAS-677 removed the only UI that could narrow it
 let ymExcludeTags = new Set();   // CAS-642: tag ids excluded from THIS list — bridged the same way as ymCascOff
 const ymCascTicked = c => !ymCascOff.has(c.id);
 // CAS-535: the three controls above are collapsed behind the compact card's Edit button by default —
@@ -13847,20 +13858,6 @@ window.ymCascSetAll=on=>{
   const t0=performance.now();
   ymCascOff=new Set(on?[]:cascades.map(c=>c.id)); syncActiveIdsFromActiveList(ymCascOff);
   ymTapPainted("casc-setall",t0);
-  ymSchedulePersist(); ymScheduleRender();
-};
-// CAS-646: watchedOn now drives the LIVE listing too (ymFeedMatches), same reasoning as ymSvcToggle above.
-window.ymVerdictToggle=(k,btn)=>{
-  const t0=performance.now();
-  ymWatchedOn.has(k)?ymWatchedOn.delete(k):ymWatchedOn.add(k);
-  if(btn){ const on=ymWatchedOn.has(k); btn.classList.toggle("on",on); btn.setAttribute("aria-pressed",String(on)); }
-  ymTapPainted("verdict",t0);
-  ymSchedulePersist(); ymScheduleRender();
-};
-window.ymVerdictSetAll=on=>{
-  const t0=performance.now();
-  ymWatchedOn = new Set(on ? WATCH_STEPS.map(s=>s.key) : []);
-  ymTapPainted("verdict-setall",t0);
   ymSchedulePersist(); ymScheduleRender();
 };
 // CAS-642 W2b/AC4: exclude-tags, moved here from the agent Briefing — exclude only, no include control.
@@ -14239,9 +14236,10 @@ function ymRefreshFeed(){
 }
 // ================= CAS-592: the list editor — its own .sharpstep screen, off the agent editor's shell
 // (#leScreen/.osstage/#leInner mirror .sharpstep#onbStep/.osstage/.osinner) but NOT its step machine — one
-// screen, no hub, no spokes. Writes LIVE: every dial below is the exact ymSvcToggle/ymCascToggle/
-// ymVerdictToggle the old inline panel called, which already run ymPersist() on every change, so there is no
-// separate draft to commit — Save (leSave) is a confirm-and-close, not a commit step. Delete (leDelete) never
+// screen, no hub, no spokes. Writes LIVE: every dial below is the exact ymSvcToggle/ymCascToggle the old
+// inline panel called (CAS-677 removed the section that called ymVerdictToggle), which already run
+// ymPersist() on every change, so there is no separate draft to commit — Save (leSave) is a confirm-and-close,
+// not a commit step. Delete (leDelete) never
 // touches a draft either — it calls removeWatchlist(), the same saved-record deletion the (pre-592) Manage
 // Lists screen already shipped, so pointer repair (AC7) is that function's existing behaviour, not new code.
 // ================================================================================================
@@ -14278,12 +14276,6 @@ function leInnerHTML(){
         aria-label="${escA((on?"Remove ":"Include ")+c.name+" in this feed")}"
         onclick="ymCascToggle('${escA(c.id)}',this)">✓</button>
     </div>`;
-  }).join("");
-  const verdictBoxes=WATCH_STEPS.map(s=>{
-    const on=ymWatchedOn.has(s.key);
-    return `<button type="button" class="nopt${on?" on":""}" style="--wwc:${s.cd}"
-      aria-pressed="${on}" onclick="ymVerdictToggle('${s.key}',this)">
-      <span class="wwb">✓</span><span>${esc(s.lbl)}</span></button>`;
   }).join("");
   // CAS-642 W2b: exclude tags move here from the agent Briefing (CAS-635) — one row per existing tag, exclude
   // only, no include control, exactly like the spoke it replaces (see briefGo('extags') in the ONB_STEPS
@@ -14328,14 +14320,6 @@ function leInnerHTML(){
     <div class="lesec">
       <div class="lesechd">Exclude tags</div>
       <div class="nopts">${tagsNone}${tagRows}</div>
-    </div>
-    <div class="lesec">
-      <div class="lesechd">Films I've watched · include</div>
-      <div class="ymverdicts">${verdictBoxes}</div>
-      <div class="lelinkrow">
-        <button type="button" class="lelink" onclick="ymVerdictSetAll(true)">Select all</button>
-        <button type="button" class="lelink" onclick="ymVerdictSetAll(false)">Clear all</button>
-      </div>
     </div>
     <button type="button" class="lesave" onclick="leSave()">Save list</button>
     <button type="button" class="ledel" ${onlyOne?"disabled":""} onclick="leDelete()"
