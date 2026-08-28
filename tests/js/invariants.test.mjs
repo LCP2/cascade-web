@@ -658,6 +658,106 @@ test("CAS-673 AC4: the single-agent empty state never names an agent unticked in
   }
 });
 
+// ---- WATCH LIST EDIT DEFERS THE DECK, NOT JUST DEBOUNCES IT (CAS-676) -------------------------------------
+// CAS-652 already coalesced a burst of taps into one rAF; the delay persisted because that one rAF still
+// paid for renderYourMovies()+render() — a whole-catalogue re-derive of two screens #leScreen (a
+// full-viewport modal, CAS-676's own comment at ymScheduleRender) covers and hides. The fix defers both to
+// leClose(); this only re-checks the coalescing property CAS-673 already covers (activeIds stays live).
+// AC4 is checked below by spying on MOVIES.filter (leInnerHTML's own per-agent listedCount pass, and
+// render()'s recomputeFound/scopeRows, both funnel through it) — an own-property shadow on the live array,
+// since the engine's code closes over that exact object, not a copy this test could intercept any other way.
+async function flushRaf(){ await new Promise(r => setTimeout(r, 0)); }
+async function withMoviesFilterSpy(fn){
+  let calls = 0;
+  E.MOVIES.filter = function(...args){ calls++; return Array.prototype.filter.apply(this, args); };
+  try { await fn(); } finally { delete E.MOVIES.filter; }
+  return calls;
+}
+// render() (which leClose() calls to pay off ymDeckStale) ends in recomputeFound() -> trackFirstFound(),
+// which DELETES every firstFound entry not in the just-recomputed `found` set and re-notify-arms the rest —
+// global ledgers, rewritten here against these tests' throwaway cascades/watchlist rather than a person's
+// real ones. Snapshot and restore both around any call that can reach leClose() with fake data still active,
+// so this file's other tests (CAS-671/668 seed firstFound directly and expect it untouched) never see it.
+async function withFoundLedgersSnapshot(fn){
+  const firstFoundSnap = JSON.parse(JSON.stringify(E.firstFound));
+  const notifySnap = JSON.parse(JSON.stringify(E.notify));
+  try { return await fn(); }
+  finally {
+    Object.keys(E.firstFound).forEach(k => delete E.firstFound[k]);
+    Object.assign(E.firstFound, firstFoundSnap);
+    Object.keys(E.notify).forEach(k => delete E.notify[k]);
+    Object.assign(E.notify, notifySnap);
+  }
+}
+function seedCas676List(ids){
+  const savedLists = E.watchLists.slice();
+  const savedActive = E.watchActiveId;
+  const l = E.normWatchlistEntry({ name: "CAS-676 list", order: 0, cascOff: [] });
+  E.watchLists.length = 0;
+  E.watchLists.push(l);
+  E.setActiveWatchlist(l.id);
+  E.applyActiveWatchlist();
+  return () => {
+    E.watchLists.length = 0;
+    savedLists.forEach(sl => E.watchLists.push(sl));
+    E.setActiveWatchlist(savedActive);
+    E.applyActiveWatchlist();
+  };
+}
+
+test("CAS-676 AC2/AC3: the deck and Your Movies are never rebuilt while the Edit screen covers them", async () => {
+  const ids = seedNCascades(6);
+  const restore = seedCas676List(ids);
+  try {
+    await withFoundLedgersSnapshot(async () => {
+      assert.equal(E.leOn, false, "sanity: the Edit screen starts closed");
+      E.leOpen();
+      assert.equal(E.ymDeckStale, false, "opening must not itself owe a deferred rebuild");
+      E.ymCascToggle(ids[0]);
+      await flushRaf();
+      assert.equal(E.ymDeckStale, true,
+        "a tap taken while the Edit screen is open must defer the deck/Your-Movies rebuild, not skip it outright");
+      E.leClose();
+      assert.equal(E.ymDeckStale, false, "closing must pay the deferred rebuild it owed and clear the flag");
+    });
+  } finally {
+    if(E.leOn) E.leClose();
+    restore();
+    unseedCascades(ids);
+  }
+});
+
+test("CAS-676 AC4: the Edit screen's per-agent counts cost the same for a burst of taps as for one", async () => {
+  const ids = seedNCascades(6);
+  const restore = seedCas676List(ids);
+  try {
+    await withFoundLedgersSnapshot(async () => {
+      E.leOpen();
+      const singleCalls = await withMoviesFilterSpy(async () => {
+        E.ymCascToggle(ids[0]);
+        await flushRaf();
+      });
+      E.leClose();
+
+      E.leOpen();
+      const burstCalls = await withMoviesFilterSpy(async () => {
+        E.ymCascToggle(ids[1]); E.ymCascToggle(ids[2]); E.ymCascToggle(ids[3]);
+        await flushRaf();
+      });
+      E.leClose();
+
+      assert.ok(singleCalls > 0, "sanity: a tap on the open Edit screen must run the per-agent count pass");
+      assert.equal(burstCalls, singleCalls,
+        `a 3-tap burst cost ${burstCalls} MOVIES.filter pass(es) against a single tap's ${singleCalls} — ` +
+        `the per-agent counts must be computed once per rebuild, not once per agent per control`);
+    });
+  } finally {
+    if(E.leOn) E.leClose();
+    restore();
+    unseedCascades(ids);
+  }
+});
+
 // ---- MOVING NEVER RENDERS A PROVISIONAL LEDGER (CAS-667) -------------------------------------------------
 // movingData() branches on window.CascadePersistence.accountActive() — flip window.CascadeAuth's real fields
 // (enabled/client/session) the same way sign-in for real does, rather than a stand-in predicate, so the
