@@ -1615,3 +1615,85 @@ test("CAS-681 AC4: a watch-list setting changed locally reaches the account and 
   await E.CascadePersistence.loadWatchlistAccount();
   assert.equal(E.watchLists.find(l => l.id === id).sort, "az", "a reload must show the edit that was pushed, not the pre-edit value");
 }));
+
+// ---- THE WATCH-LIST CARD AND SECTION COUNTS DESCRIBE WHAT render() ACTUALLY PUTS ON SCREEN (CAS-682) ------
+// Reported case: list "Lee Stream", scope bar set to For review + Watched, Notify off. The deck card read 234
+// (watchlistRawCount — the raw agent union, ignoring the scope bar AND the list's own svcOn/watchedOn/
+// watchTiers entirely). The Rent section read 53 against 58 rendered rows (`items.filter(!taggedOut)` dropped
+// five stubs the section still drew). Fix: the card now takes render()'s own `rows` (scopeRows(), the exact
+// set the sections are built from); each section header counts every item in its group, stubs included.
+// AC1/AC6 are checked structurally (render() is DOM-bound and not itself callable from this harness, exactly
+// like CAS-662's own AC1) — AC2/AC3/AC4 are checked arithmetically against the same `rows`/`listingGroups`
+// render() reads, reproducing the reported scope combination.
+test("CAS-682 AC1/AC6: render() feeds the deck card scopeRows()'s own `rows`, not a pre-scope pool", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const renderStart = src.indexOf("\nfunction render(){");
+  assert.ok(renderStart >= 0, "render() was not found");
+  const renderEnd = src.indexOf("\n// ---- CAS-275", renderStart);
+  assert.ok(renderEnd > renderStart, "the end of render() was not found");
+  const renderBody = src.slice(renderStart, renderEnd);
+  assert.ok(renderBody.includes("renderCascadeBar(rows.length)"),
+    "the deck card must be handed rows.length — the exact set the listing below is built from");
+  assert.ok(!renderBody.includes("pool.filter(m=>!taggedOut(m)).length"),
+    "the deck card must no longer fall back to the pre-scope pool count");
+});
+
+test("CAS-682 AC3: render() counts every row a section holds, stubs included, no taggedOut subtraction", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const renderStart = src.indexOf("\nfunction render(){");
+  const renderEnd = src.indexOf("\n// ---- CAS-275", renderStart);
+  const renderBody = src.slice(renderStart, renderEnd);
+  assert.ok(renderBody.includes("const live=items.length;"),
+    "each group's header count must equal every row in that group");
+  assert.ok(!renderBody.includes("items.filter(m=>!taggedOut(m)).length"),
+    "the header must not subtract tagged-out stubs any more — a stub is still a rendered row");
+});
+
+test("CAS-682 AC2/AC4: reproducing For review + Watched (Notify off) — toggling the Watched pill moves scopeRows().length, and listingGroups() carries the resulting stub into its section", () => {
+  const ids = seedNCascades(1);
+  try {
+    withCas680List(ids, () => {
+      E.ymCascSetAll(true);
+      E.ymSvcSetAll(true);
+      const feed = E.ymFeedList();
+      assert.ok(feed.length > 0, "sanity: the reproduction must match at least one film");
+      const target = feed[0];
+      const wasWatched = E.watched.has(target.tmdb_id);
+      E.watched.add(target.tmdb_id);   // opinionOf -> "liked": a tagged-out film, same shape as the reported case
+      assert.ok(E.taggedOut(target), "sanity: marking it watched must make it a stub");
+      const savedScope = { ...E.scope };
+      try {
+        // The reported scope combination: For review + Watched on, Notify off.
+        E.scope.watch = false; E.scope.new = true; E.scope.watched = true;
+        assert.ok(E.scopeRows().some(m => m.tmdb_id === target.tmdb_id),
+          "sanity: Watched on must surface the stub in the reproduced set");
+
+        // AC2: the count moves when a scope pill is toggled.
+        const withWatchedPill = E.scopeRows().length;
+        E.scope.watched = false;
+        const withoutWatchedPill = E.scopeRows().length;
+        assert.notEqual(withoutWatchedPill, withWatchedPill,
+          "turning the Watched pill off must change the count scopeRows() reports — the card must move with it");
+        assert.ok(!E.scopeRows().some(m => m.tmdb_id === target.tmdb_id),
+          "sanity: Watched off must drop the stub again");
+
+        // AC1/AC3 arithmetic: back to the reproduced combination, the card's set and the sections' own sets
+        // must agree exactly, and the stub's section must still hold it.
+        E.scope.watched = true;
+        const rows = E.scopeRows();
+        const ac = E.cascades.find(c => c.id === ids[0]);
+        const groups = E.listingGroups(rows, ac);
+        const total = groups.reduce((n, x) => n + x.items.length, 0);
+        assert.equal(total, rows.length,
+          "every row scopeRows() returns must land in exactly one group — the card and the section headers must describe the same set");
+        const grp = groups.find(x => x.items.some(m => m.tmdb_id === target.tmdb_id));
+        assert.ok(grp, "the stub's own section must still hold it, not silently drop it from the count");
+      } finally {
+        Object.assign(E.scope, savedScope);
+        if(!wasWatched) E.watched.delete(target.tmdb_id);
+      }
+    });
+  } finally {
+    unseedCascades(ids);
+  }
+});
