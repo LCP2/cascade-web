@@ -21,6 +21,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+# tier_rank is the same monotonic-progress test transitions.py already imports; reused here (CAS-602)
+# to find a film's own current window (its highest-ranked status member) rather than to guard a moment.
+from poc_pipeline import tier_rank
+
+from .transitions import Transition, _STATUS_MOMENTS, _detail_for
+
 # --- catalogue-scale constants, ported verbatim from app_template.html (CAS-64) ---
 _ANTICIPATED_TOP = 20      # top N% of UPCOMING titles by popularity
 _BLOCKBUSTER_TOP = 15      # top N% of the whole catalogue by popularity
@@ -292,6 +298,92 @@ def match(cascades: list, transitions: list, already=None, catalogue=None, suppr
             if key in seen:
                 continue
             seen.add(key)   # guard against two identical Cascades double-firing within one run
+            by_user.setdefault(c["user_id"], []).append(
+                Hit(user_id=c["user_id"], cascade_id=c["id"],
+                    cascade_name=c.get("name", "My Cascade"), transition=t,
+                    channels=agent_channels(criteria)))
+    return by_user
+
+
+# --------------------------------------------------------------------------- #
+# CAS-602: a film already held in BOTH catalogues that newly qualifies for an agent — no catalogue
+# transition to hang this off, since the film was already there.
+# --------------------------------------------------------------------------- #
+_MOMENT_FOR_STATUS = dict((status, moment) for moment, status in _STATUS_MOMENTS)
+
+
+def _current_moment(record: dict) -> Optional[str]:
+    """The moment ``newly_qualifies`` maps to for one movie record: the mapped moment of its own
+    CURRENT window (the highest-ranked member of its `status`, via poc_pipeline.tier_rank), or
+    "announced" for a film still `upcoming`. None if the record carries no recognised window."""
+    ranked = [(tier_rank([s]), s) for s in (record.get("status") or [])]
+    ranked = [(r, s) for r, s in ranked if r >= 0]
+    if not ranked:
+        return None
+    window = max(ranked)[1]
+    if window == "upcoming":
+        return "announced"
+    return _MOMENT_FOR_STATUS.get(window)
+
+
+def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list, already=None,
+                          catalogue=None, suppressed=None, excluded=None) -> dict:
+    """Return {user_id: [Hit, ...]} for a film present in both catalogues whose own attributes
+    changed so it now matches an active Cascade's criteria and did NOT match yesterday (Lee's rule,
+    2026-08-24) — an IMDb rating crossing the bar, a metacritic score/award/gross arriving, a genre
+    or age-rating correction. Re-running the SAME criteria against both records is deliberate:
+    editing an agent's criteria must never make its whole existing list "newly qualify" at once.
+
+    Fires only for the moment the film's CURRENT window maps to — the same Alert toggle a real
+    window transition for this film would use, per Lee's decision that this needs no new toggle —
+    and only when that moment is one the Cascade's `alert_moments` actually asks for. The Hit it
+    produces always carries ``Transition(moment="newly_qualifies", ...)`` so its ledger row and
+    de-dupe key are distinct from a window transition for the same film.
+
+    prev_movies / today_movies : lists of movie records (poc_pipeline shape).
+    already, catalogue, suppressed, excluded : same meaning as in ``match()``.
+    """
+    prev_by_id = {str(m.get("tmdb_id")): m for m in prev_movies}
+    today_by_id = {str(m.get("tmdb_id")): m for m in today_movies}
+    seen = set(already or ())
+    off = {(str(u), str(m)) for u, m in (suppressed or ())}
+    muted = excluded_moments(excluded)
+    tiers = scale_tiers(catalogue) if catalogue else {}
+    by_user: dict = {}
+
+    for c in cascades:
+        if not c.get("active", True):
+            continue
+        moments = set(c.get("alert_moments") or [])
+        moments -= muted.get(str(c["user_id"]), set())
+        if not moments:
+            continue
+        criteria = c.get("criteria") or {}
+        for mid, today_record in today_by_id.items():
+            prev_record = prev_by_id.get(mid)
+            if prev_record is None:
+                continue                       # a first sighting is `announced`'s job, not this one
+            if (str(c["user_id"]), mid) in off:
+                continue                       # your answer outranks your Cascade
+            tier = tiers.get(mid)
+            if matches_criteria(prev_record, criteria, tier=tier):
+                continue                       # already matched yesterday -> not a NEW qualification
+            if not matches_criteria(today_record, criteria, tier=tier):
+                continue                       # still doesn't match today
+            moment = _current_moment(today_record)
+            if moment is None or moment not in moments:
+                continue
+            services, price = _detail_for(moment, today_record)
+            probe = Transition(mid, today_record.get("title", ""), moment,
+                               services=services, price=price, movie=today_record)
+            if not service_ok(probe, criteria):
+                continue
+            key = (c["id"], mid, "newly_qualifies")
+            if key in seen:
+                continue
+            seen.add(key)
+            t = Transition(mid, today_record.get("title", ""), "newly_qualifies",
+                          services=services, price=price, movie=today_record)
             by_user.setdefault(c["user_id"], []).append(
                 Hit(user_id=c["user_id"], cascade_id=c["id"],
                     cascade_name=c.get("name", "My Cascade"), transition=t,

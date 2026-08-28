@@ -65,6 +65,8 @@ def moment_phrase(transition) -> str:
         return "Newly announced"
     if m == "opens_soon":
         return "In cinemas next week"
+    if m == "newly_qualifies":
+        return "Now matches this agent"
     return m
 
 

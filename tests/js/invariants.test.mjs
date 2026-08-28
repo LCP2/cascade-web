@@ -898,3 +898,14 @@ test("CAS-613 AC5: recomputeFound() calls saveNotify() at most once per pass", (
   const calls = body.match(/\bsaveNotify\(\)/g) || [];
   assert.equal(calls.length, 1, `recomputeFound() calls saveNotify() ${calls.length} time(s), expected exactly 1`);
 });
+
+// ---- A MONITOR MOMENT CAN NEVER RENDER AS ITS RAW KEY (CAS-602) -------------------------------------------
+// The monitor's `newly_qualifies` moment (a held film whose own attributes newly qualify it for an agent)
+// has to be in REAL_MOMENT_SAID, the bell's own moment-copy lookup, or a ledger row for it would fall
+// through to a.moment itself at the ntfrow render site — a raw internal key on screen.
+test("CAS-602: REAL_MOMENT_SAID carries the newly_qualifies key, so its ledger row never renders raw", () => {
+  assert.ok(Object.prototype.hasOwnProperty.call(E.REAL_MOMENT_SAID, "newly_qualifies"),
+    "REAL_MOMENT_SAID is missing a newly_qualifies entry");
+  assert.equal(typeof E.REAL_MOMENT_SAID.newly_qualifies, "string",
+    "REAL_MOMENT_SAID.newly_qualifies must be real copy, not empty/falsy");
+});

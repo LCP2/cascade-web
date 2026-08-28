@@ -182,6 +182,9 @@ if(typeof window.CascadeAuth === "undefined"){
   recomputeFound, notify, entryFor, watchLevelsFor, WATCH_LEVEL_KEYS,
   get watchPrefs(){ return watchPrefs; },
   setWatchPrefs(w){ watchPrefs = w; },
+  // CAS-602: the bell's own moment-copy lookup, so a test can assert a monitor moment key can never
+  // render as its raw string (see REAL_MOMENT_SAID's own use at the ntfrow render site).
+  REAL_MOMENT_SAID,
 };
 `;
 

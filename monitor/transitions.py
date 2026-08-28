@@ -28,6 +28,12 @@ A *transition* is one movie crossing into one *moment*. The four moments mirror 
     opens_soon            — today is exactly ``opening_date - N`` days (N=7, tunable). Computed from the
                             film's own published date, the mirror of past_opening_weekend, and like it it
                             can only ever fire on a real date.
+    newly_qualifies       — a film already held in BOTH catalogues whose own attributes changed so it now
+                            matches an agent's criteria and did not yesterday (CAS-602): an IMDb rating
+                            crossing the bar, a metacritic score/award/gross arriving, a genre/age
+                            correction. NOT produced here — there is no catalogue transition to hang it
+                            off, since the film was already held — it is agent-dependent and computed
+                            during matching (see ``monitor.matching.match_newly_qualified``).
 
 Honesty guardrail: the three status moments only fire on a *genuine transition* — the film
 must have been in yesterday's catalogue and NOT already in that window. A film's very first
@@ -58,7 +64,7 @@ _STATUS_MOMENTS = (
     ("hits_stream", "included_streaming"),
 )
 MOMENTS = ("hits_cinema", "hits_pvod", "hits_rent", "hits_stream", "past_opening_weekend",
-           "announced", "opens_soon")
+           "announced", "opens_soon", "newly_qualifies")
 
 
 @dataclass

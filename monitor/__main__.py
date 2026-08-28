@@ -32,7 +32,7 @@ import sys
 from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notification_rows,
                render_digest, send_via_resend, excluded_moments,
                prefs_for, excludes_from_prefs, delivery_plan, send_via_apns, push_copy,
-               match_film_watches)
+               match_film_watches, match_newly_qualified)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
 from .store import InMemoryStore, store_from_env
 
@@ -159,6 +159,16 @@ def main(argv=None) -> int:
     # excluded, so feeding it every transition is the whole change; nothing in match() itself moves.
     agent_hits = match(cascades, transitions, already=already, catalogue=today_movies,
                        excluded=muted)
+
+    # CAS-602: a film already held in both catalogues that newly qualifies for an agent because its
+    # OWN attributes changed — no catalogue transition to hang this off, so its "newly_qualifies"
+    # moment is computed straight from the prev/today records rather than from `transitions`.
+    # Folded into agent_hits before `agent_seen` is built below so a film that both newly qualifies
+    # and hits a real window on the same day alerts once, not twice.
+    newly_qualified_hits = match_newly_qualified(cascades, prev_movies, today_movies, already=already,
+                                                 catalogue=today_movies, excluded=muted)
+    for user_id, hits in newly_qualified_hits.items():
+        agent_hits.setdefault(user_id, []).extend(hits)
 
     # CAS-484: a per-film "Watch it" tick is the sole source for every OTHER moment. Run after the
     # agent match so `agent_seen` can carry the (user, movie, moment) pairs `announced` already
