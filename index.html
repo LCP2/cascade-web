@@ -4527,17 +4527,6 @@ function saveMovingSeen(){
   movingSeenSaved=s;
   try{ localStorage.setItem(MOVING_SEEN_KEY, s); }catch(e){}
 }
-// CAS-650: when Moving was last opened, written AFTER that visit's rows are computed (see openMovingScreen)
-// so the "Since you last looked" window always excludes what it just showed you.
-const MOVING_LASTVISIT_KEY="cascade_moving_lastvisit";
-function loadMovingLastVisit(){
-  const v=localStorage.getItem(MOVING_LASTVISIT_KEY);
-  const t=v?Date.parse(v):NaN;
-  return isNaN(t) ? 0 : t;
-}
-function saveMovingLastVisit(){
-  try{ localStorage.setItem(MOVING_LASTVISIT_KEY, new Date().toISOString()); }catch(e){}
-}
 const entryFor = id => notify[id] || (notify[id]={source:"auto", cascadeIds:[], removed:false, pinnedTo:[], notIn:[]});
 // CAS-279: the two override tests, defined once so the listing, the counts and the Found set cannot disagree
 // about where a film lives. An entry that predates this change has neither array and answers false to both.
@@ -4985,7 +4974,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 839, "commit": "0936085", "builtAt": "2026-08-28T05:02:06Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 840, "commit": "201be3c", "builtAt": "2026-08-28T05:10:55Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -14634,10 +14623,9 @@ const MOVING_CHANGE_CHIP = {
   hits_pvod:"NOW RENTABLE", hits_rent:"NOW RENTABLE",
   hits_stream:"NOW STREAMING",
 };
-// CAS-650 CHANGE 2: the time-window chips, in this exact order — default is "since_last" on every visit,
-// the other four are rolling windows measured back from now.
+// CAS-671: the time-window chips, in this exact order (shortest to longest) — rolling windows measured
+// back from now. "Since you last looked" is gone; there is no visit-relative window any more.
 const MOVING_WINDOWS = [
-  {key:"since_last", label:"Since you last looked"},
   {key:"today", label:"Today"},
   {key:"week", label:"Week"},
   {key:"2weeks", label:"2 weeks"},
@@ -14645,15 +14633,13 @@ const MOVING_WINDOWS = [
 ];
 const MOVING_WINDOW_DAYS = {today:1, week:7, "2weeks":14, month:30};
 const MOVING_EMPTY_COPY = {
-  since_last:"Nothing has moved since you last looked.",
   today:"Nothing has moved today.",
   week:"Nothing has moved in the last week.",
   "2weeks":"Nothing has moved in the last 2 weeks.",
   month:"Nothing has moved in the last month.",
 };
-let movingWindow="since_last";
-let movingVisitCutoff=0;  // ms epoch snapshot of cascade_moving_lastvisit, taken at open — see openMovingScreen
-// CAS-668: whether the screen is actually open right now — the badge mirrors movingWindow/movingVisitCutoff
+let movingWindow="today";
+// CAS-668: whether the screen is actually open right now — the badge mirrors movingWindow
 // while it is, and predicts the window openMovingScreen would pick while it isn't. See movingBadgeWindow.
 let movingIsOpen=false;
 // CAS-667: the same CAS-517-style ambiguity as cascadesReady/ymReady — on a signed-in device, realAlerts
@@ -14671,27 +14657,23 @@ function movingIsGuestDevice(){
   try{ return localStorage.getItem("cascade_had_account") !== "1"; }catch(e){ return true; }
 }
 // A row's `date` is either a realAlerts emailed_at timestamp or a firstFound day string — both parse with
-// Date.parse. "since_last" compares against the cutoff captured when this visit opened; the other four are
-// rolling windows measured from now, per CHANGE 2.
-function movingInWindow(dateStr, windowKey, cutoffMs){
+// Date.parse. Every window is a rolling window measured back from now.
+function movingInWindow(dateStr, windowKey){
   const t=dateStr && Date.parse(dateStr);
   if(!t || isNaN(t)) return false;
-  if(windowKey==="since_last") return t>cutoffMs;
   const days=MOVING_WINDOW_DAYS[windowKey];
   return days!=null && t>Date.now()-days*864e5;
 }
-// CAS-655 Y2c: "Since you last looked" defaults empty on a lot of second visits, leaving the user to hunt
-// for a window with something in it. Walk MOVING_WINDOWS in its stated order and open on the first one
-// holding >=2 rows; failing that, the first holding >=1; failing that, "since_last" with its empty state.
-// Opening selection only — a tap always wins (setMovingWindow), and nothing here is persisted.
-function movingAutoOpenWindow(cutoffMs){
+// CAS-671: open on the SHORTEST window holding >=3 rows — MOVING_WINDOWS is already ordered shortest to
+// longest, so the first match walking it in order is the shortest one. If no window reaches 3, open on the
+// longest window (Month) so the user lands on the fullest view rather than an empty one. Opening selection
+// only — a tap always wins (setMovingWindow), and nothing here is persisted.
+function movingAutoOpenWindow(){
   const {canRows,newRows,changedRows}=movingData();
   const all=[...canRows,...newRows,...changedRows];
-  const countFor=key=>all.filter(r=>movingInWindow(r.date,key,cutoffMs)).length;
-  const withTwo=MOVING_WINDOWS.find(w=>countFor(w.key)>=2);
-  if(withTwo) return withTwo.key;
-  const withOne=MOVING_WINDOWS.find(w=>countFor(w.key)>=1);
-  return withOne ? withOne.key : "since_last";
+  const countFor=key=>all.filter(r=>movingInWindow(r.date,key)).length;
+  const withThree=MOVING_WINDOWS.find(w=>countFor(w.key)>=3);
+  return withThree ? withThree.key : "month";
 }
 function movingData(){
   const guest=movingIsGuestDevice();
@@ -14751,24 +14733,22 @@ function movingData(){
   return {canRows, newRows, changedRows};
 }
 // CAS-668: the filtered row set both the badge and the list are built from — one recipe, so they cannot
-// disagree about which rows are "in" the window. renderMovingScreen calls this with its live movingWindow/
-// movingVisitCutoff; movingUnseenCount calls it with whatever movingBadgeWindow() says applies right now.
-function movingWindowRows(win, cutoffMs){
+// disagree about which rows are "in" the window. renderMovingScreen calls this with its live movingWindow;
+// movingUnseenCount calls it with whatever movingBadgeWindow() says applies right now.
+function movingWindowRows(win){
   const {canRows,newRows,changedRows}=movingData();
-  const inWindow=r=>movingInWindow(r.date, win, cutoffMs);
+  const inWindow=r=>movingInWindow(r.date, win);
   return {shownCan:canRows.filter(inWindow), shownNew:newRows.filter(inWindow), shownChanged:changedRows.filter(inWindow)};
 }
 // CAS-668: while Moving is open, the badge must track whatever window is actually on screen (movingWindow),
 // including a tap via setMovingWindow. While it's closed, there is no "on screen" window yet, so the badge
 // predicts the same window openMovingScreen would pick if opened right now — the same computation, run early.
 function movingBadgeWindow(){
-  if(movingIsOpen) return {win:movingWindow, cutoff:movingVisitCutoff};
-  const cutoff=loadMovingLastVisit();
-  return {win:movingAutoOpenWindow(cutoff), cutoff};
+  return movingIsOpen ? movingWindow : movingAutoOpenWindow();
 }
 function movingUnseenCount(){
-  const {win,cutoff}=movingBadgeWindow();
-  const {shownCan,shownNew,shownChanged}=movingWindowRows(win,cutoff);
+  const win=movingBadgeWindow();
+  const {shownCan,shownNew,shownChanged}=movingWindowRows(win);
   return [...shownCan,...shownNew,...shownChanged].filter(r=>movingSeen[r.filmId]!==r.groupKey).length;
 }
 function updateMovingBadge(){
@@ -14793,8 +14773,8 @@ function movingRowHTML(row){
 // CHANGE 3: movingSeen no longer decides whether a row renders — every row inside the selected window
 // shows, full stop (the render-time filter CAS-644 added is gone). It is still upserted here so
 // movingUnseenCount() (the chip badge — the only thing movingSeen is for now) can tell what has been shown.
-// CAS-668: the row set marked seen is movingWindowRows(movingWindow, movingVisitCutoff) — the exact same
-// function and the exact same window the badge computation reads, so the two can never disagree.
+// CAS-668: the row set marked seen is movingWindowRows(movingWindow) — the exact same function and the
+// exact same window the badge computation reads, so the two can never disagree.
 function renderMovingScreen(){
   // CAS-667: while a signed-in device's alerts ledger is still in flight, movingData() returns nothing to
   // paint — say so explicitly instead of falling through to the "nothing has moved" empty state, which
@@ -14806,7 +14786,7 @@ function renderMovingScreen(){
     updateMovingBadge();
     return;
   }
-  const {shownCan, shownNew, shownChanged}=movingWindowRows(movingWindow, movingVisitCutoff);
+  const {shownCan, shownNew, shownChanged}=movingWindowRows(movingWindow);
   [...shownCan, ...shownNew, ...shownChanged].forEach(r=>{ movingSeen[r.filmId]=r.groupKey; });
   saveMovingSeen();
   updateMovingBadge();
@@ -14814,7 +14794,7 @@ function renderMovingScreen(){
   // entries reach that cap, older matches may have been cut off by the fetch rather than by the window, so
   // every group shown this pass states it instead of hiding it.
   const ledgerTruncated = realAlerts.length>=200
-    && realAlerts.filter(a=>movingInWindow(a.emailed_at, movingWindow, movingVisitCutoff)).length>=200;
+    && realAlerts.filter(a=>movingInWindow(a.emailed_at, movingWindow)).length>=200;
   const groups=[
     {title:"Can watch now", rows:shownCan},
     {title:"New to your agents", rows:shownNew},
@@ -14834,8 +14814,7 @@ function renderMovingScreen(){
       <p class="mvemptysub">Your agents are still watching. You'll see it here first.</p>
     </div>`;
 }
-// CAS-650: switching the window re-renders in place. It never touches cascade_moving_lastvisit, which is
-// stamped once per visit (see openMovingScreen), not once per chip tap.
+// CAS-650: switching the window re-renders in place.
 window.setMovingWindow=(key)=>{
   if(!MOVING_WINDOWS.some(w=>w.key===key) || movingWindow===key) return;
   movingWindow=key;
@@ -14862,19 +14841,14 @@ window.closeAgentsScreen=()=>{
 // CAS-636: Moving — the alert feed made visible. Same open/close shape as Agents (mutually exclusive with
 // Your Movies/Agents), plus its own render + seen-state pass (renderMovingScreen marks every row it shows
 // as seen and refreshes the badge, per cascade_moving_seen — see that function for the mechanism).
-// CAS-650: the previous cascade_moving_lastvisit is captured into movingVisitCutoff BEFORE the new one is
-// written, so this visit's own rows are judged against where the LAST visit left off, not against themselves.
-// CAS-655 Y2c: which window the visit OPENS on is no longer always "since_last" — movingAutoOpenWindow
-// picks the first window (in MOVING_WINDOWS order) with something in it, so the user isn't dropped on an
-// empty screen. Never persisted; the user's own tap (setMovingWindow) always overrides it.
+// CAS-671: which window the visit OPENS on is the shortest window holding 3 or more rows, falling back to
+// Month — see movingAutoOpenWindow. Never persisted; the user's own tap (setMovingWindow) always overrides it.
 window.openMovingScreen=()=>{
   if($("yourMovies").classList.contains("open")) closeYourMovies();
   if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
   movingIsOpen=true;
-  movingVisitCutoff=loadMovingLastVisit();
-  movingWindow=movingAutoOpenWindow(movingVisitCutoff);
+  movingWindow=movingAutoOpenWindow();
   renderMovingScreen();
-  saveMovingLastVisit();
   $("movingScreen").scrollTop=0;
   $("movingScreen").classList.add("open"); document.body.style.overflow="hidden";
   $("movingBtn").classList.add("active"); $("movingBtn").setAttribute("aria-pressed","true");

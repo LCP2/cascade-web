@@ -158,8 +158,8 @@ if(typeof window.CascadeAuth === "undefined"){
   // that key directly instead of only being able to flip the (now branch-irrelevant) CascadeAuth fields.
   localStorage,
   // CAS-668: the badge/list agreement — movingWindowRows is the one recipe both renderMovingScreen and
-  // movingUnseenCount filter through, movingBadgeWindow is which window/cutoff applies right now (live if
-  // Moving is open, predicted if it's not), and openMovingScreen/closeMovingScreen/setMovingWindow are the
+  // movingUnseenCount filter through, movingBadgeWindow is which window applies right now (live if Moving
+  // is open, predicted if it's not), and openMovingScreen/closeMovingScreen/setMovingWindow are the
   // real wire code (DOM reads/writes absorbed by the stub, exactly like the rest of this file's wire calls).
   movingWindowRows, movingUnseenCount, movingBadgeWindow, movingAutoOpenWindow, movingInWindow,
   MOVING_WINDOWS, movingSeen,
@@ -168,7 +168,6 @@ if(typeof window.CascadeAuth === "undefined"){
   // to call the real function rather than re-deriving the guard.
   renderMovingScreen: () => window.renderMovingScreen(),
   get movingWindow(){ return movingWindow; },
-  get movingVisitCutoff(){ return movingVisitCutoff; },
   get movingIsOpen(){ return movingIsOpen; },
   openMovingScreen: () => window.openMovingScreen(),
   closeMovingScreen: () => window.closeMovingScreen(),
