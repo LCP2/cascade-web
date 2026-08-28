@@ -3178,25 +3178,31 @@
      Collapsed cards only. Every rule is scoped .card:not(.expanded); the expanded
      card is untouched.
        (1) the date comes off the availability lozenge
-       (2) the poster becomes the card's full-height left column, kept at 2:3, so
-           its WIDTH follows from the card height (146px -> 96px) and everything
-           else clears it
+       (2) the poster is a fixed-width (96px) left column kept at 2:3 (so 144px
+           tall); the column itself spans the full card height so it still reads
+           as one edge-to-edge frame even when the card grows taller than the
+           poster
        (3) an Oscar mark on the scores row where the film has one
        (6) "Can Watch" needs more room than "Notify"
      ------------------------------------------------------------------------- */
-  /* (2) 96px is 2/3 of the 146px collapsed card height. The two are BOUND: the
-     poster's width is derived by aspect-ratio from the card height, and this
-     padding must equal it. If the collapsed card height ever changes, this number
-     changes with it. Do not set one without the other. */
+  /* (2) CAS-687: 96px is now a fixed poster WIDTH — the poster's height follows
+     from it via the 2:3 aspect-ratio, not the other way around. Before this, the
+     poster's width was derived from the card's height, so anything that made the
+     card taller (an open control, a wrapped title, an extra row) widened the
+     poster into the content beside it. The two are no longer bound: this padding
+     stays correct regardless of how tall the card grows. The .ptomb column (not
+     the poster) owns the border/radius/fill and still stretches the full card
+     height, so the strip below the 144px-tall poster reads as the same frame
+     continuing, not a rendering fault. */
   .card:not(.expanded){position:relative;padding-left:96px;min-height:96px}
   /* align-self:stretch and grid-area:auto undo CAS-184/CAS-179, which otherwise
      collapse this absolutely-positioned column to zero height. */
-  .card:not(.expanded) .ptomb{position:absolute;left:0;top:0;bottom:0;width:auto;
-    aspect-ratio:2/3;align-self:stretch;grid-area:auto;display:block;
-    gap:0;padding:0;margin:0;z-index:1}
-  .card:not(.expanded) .poster{width:100%;height:100%;aspect-ratio:2/3;
-    border-radius:10px 0 0 10px;border:0;border-right:1px solid var(--line);
-    background-size:cover;background-position:center}
+  .card:not(.expanded) .ptomb{position:absolute;left:0;top:0;bottom:0;width:96px;
+    align-self:stretch;grid-area:auto;display:block;overflow:hidden;
+    border-radius:10px 0 0 10px;border-right:1px solid var(--line);
+    background:var(--panel2);gap:0;padding:0;margin:0;z-index:1}
+  .card:not(.expanded) .poster{width:100%;height:auto;aspect-ratio:2/3;
+    border-radius:0;border:0;background-size:cover;background-position:center}
   .card:not(.expanded) .ctop{grid-template-columns:minmax(0,1fr);
     grid-template-areas:"title" "scores";margin-left:0;width:100%}
   /* the poster now forms the card's left edge, so the inner rows do not need
@@ -5006,7 +5012,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 856, "commit": "d79ea89", "builtAt": "2026-08-28T21:40:13Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 857, "commit": "00f8366", "builtAt": "2026-08-28T21:45:38Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
