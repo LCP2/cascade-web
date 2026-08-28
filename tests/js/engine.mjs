@@ -143,7 +143,10 @@ if(typeof window.CascadeAuth === "undefined"){
   agentWindow, winOn, subOn, winSubs, PRIORITY_WATCH, ALERT_DEFAULTS, ALERT_SHORT, ALERT_MOMENT,
   alertLive, reachableRows, liveAlerts, drawWatchLanes,
   selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK, voteReadout, critScoreReadout, scaleReadout,
-  qScore, qScorable, sortMoviesBy, ratingOf, IMDB_MIN_VOTES,
+  qScore, qScorable, sortMoviesBy, ratingOf, IMDB_MIN_VOTES, imdbReliable,
+  // CAS-686: the per-film predicate that decides which condensed-card stats row shows (r-scores vs
+  // r-cinfo), so a test can assert the row choice directly rather than re-deriving the three-source rule.
+  condensedShowsScores,
   SCALE_REF, BUZZ_STOPS, VOTE_REF, CRIT_MARKS, AWARD_STOPS, awardRank, parseAwards,
   // CAS-678: the one popularity ladder — its cohort gate, its cuts, the per-film stop it computes, and
   // Landmark's own (unchanged) predicate, so a test can assert the badge/dial/cohort/Landmark relationships
