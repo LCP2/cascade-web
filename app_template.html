@@ -5702,15 +5702,20 @@ function byTimelineAsc(a,b){
 }
 // ---- The Cascade score --------------------------------------------------------
 // One number per film: the mean of the scores it actually carries — the same three the card prints.
-// -1 means "not rankable on quality": no reliable IMDb vote AND no critic score at all — CAS-660 scores a
-// film from whichever of the three it actually carries, not only when it carries all of them.
+// -1 means "not rankable on quality" — CAS-660 scores a film from whichever of the three it actually
+// carries, not only when it carries all of them, but CAS-669 narrows that: neither Metacritic nor RT
+// carries a reliability gate the way IMDb does (no critic-count field to gate on), so a 100% RT built from
+// a handful of reviews was outranking films with three corroborating sources. A film only scores when it
+// has a gated source (today, an IMDb rating above IMDB_MIN_VOTES) or at least two sources agreeing with
+// each other — a single ungated critic score is not enough on its own.
+const qScorable = m => ratingOf(m)!=null || (m.metacritic!=null) + (m.rt_critic!=null) >= 2;
 function qScore(m){
+  if(!qScorable(m)) return -1;
   const r = ratingOf(m);
   const p=[];
   if(r!=null) p.push(r*10);
   if(m.metacritic!=null) p.push(m.metacritic);
   if(m.rt_critic!=null)  p.push(m.rt_critic);
-  if(!p.length) return -1;
   return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
 }
 function qScoreSourcesText(m){
