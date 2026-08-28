@@ -315,8 +315,10 @@ test("scale: no rung of the dial drops a film for having no money figure on it",
 // out once scale is the sole route that admits it and is leaned all the way up. The "never removes"
 // guarantee still holds when another OR route independently admits the SAME film — mirrors matchesCriteria's
 // own OR clauses (minus scale) rather than just checking whether the agent has another dial set, because
-// CAS-663 zeroes out selCrowd/selCritScore/selAwards/selBuzz for a pre-release film specifically — an agent
-// carrying a buzz dial does not mean an upcoming film in `blind` is actually admitted by it.
+// CAS-663 zeroes out selCrowd/selCritScore/selAwards for a pre-release film specifically — an agent carrying
+// a People's-vote/Critics dial does not mean an upcoming film in `blind` is actually admitted by it. CAS-678
+// moves Buzz out of that pre-release exclusion: its ladder is defined ONLY over upcoming-and-in-cinema films,
+// so selBuzzOK is evaluated unconditionally here too, exactly as matchesCriteria now does.
 const isPreReleaseM = m => ["upcoming", "in_cinema"].includes(E.primaryStatus(m));
 test("scale: raising the lean only drops a money-unknown film when scale is its sole qualifying Mission route (CAS-674)", () => {
   for(const { kind, s, label } of CASES){
@@ -326,7 +328,7 @@ test("scale: raising the lean only drops a money-unknown film when scale is its 
       const preRel = isPreReleaseM(m);
       return (!preRel && base.selCrowd && E.selCrowdOK(m, base))
         || (!preRel && (base.selCritScore || base.selAwards) && E.selCriticsOK(m, base))
-        || (!preRel && base.selBuzz && E.selBuzzOK(m, base))
+        || (base.selBuzz && E.selBuzzOK(m, base))
         || (base.cinemaReleaseOnly && !!m.cinema_release);
     };
     const open = E.MOVIES.filter(m => E.watchesFilm(m, E.normCascade({ ...base, selScale: 0 })));

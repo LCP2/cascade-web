@@ -1185,3 +1185,91 @@ test("CAS-602: REAL_MOMENT_SAID carries the newly_qualifies key, so its ledger r
   assert.equal(typeof E.REAL_MOMENT_SAID.newly_qualifies, "string",
     "REAL_MOMENT_SAID.newly_qualifies must be real copy, not empty/falsy");
 });
+
+// ---- CAS-678: ONE POPULARITY LADDER — THE BUZZ DIAL AND THE CARD LOZENGE CANNOT DRIFT APART --------------
+// One cohort (films whose status includes upcoming or in_cinema), one quantity (TMDB popularity), one set of
+// percentile cuts. The card badge and the Buzz dial both read buzzStop()/buzzBandOf(), so these are really
+// one invariant tested from both ends, not two separate claims that happen to agree today.
+test("CAS-678 AC1: one set of popularity thresholds, computed over the upcoming-and-in-cinema cohort", () => {
+  assert.deepEqual([...E.BUZZ_PCTL], [0, 95, 97, 99], "the ladder's percentile stops have moved");
+  assert.equal(E.BUZZ_CUTS.length, E.BUZZ_PCTL.length, "one cut per stop");
+  for(let i = 1; i < E.BUZZ_CUTS.length; i++){
+    assert.ok(E.BUZZ_CUTS[i] >= E.BUZZ_CUTS[i - 1], "the cuts must be non-decreasing — a higher stop is a higher bar");
+  }
+  const cohort = E.MOVIES.filter(m => m.status.includes("upcoming") || m.status.includes("in_cinema"));
+  assert.ok(cohort.length > 0, "the cohort is empty — this test would prove nothing");
+  for(const m of cohort) assert.equal(E.inLadderCohort(m), true, `${m.title}: in the cohort by status but inLadderCohort says no`);
+  for(const m of E.MOVIES.filter(m => !cohort.includes(m))){
+    assert.equal(E.inLadderCohort(m), false, `${m.title}: outside the cohort by status but inLadderCohort says yes`);
+  }
+});
+
+test("CAS-678 AC2: a film displays a band's lozenge if and only if the Buzz dial set to that band returns it", () => {
+  const BAND_KEY = { anticipated: 1, blockbuster: 2, mustsee: 3 };
+  for(const m of E.MOVIES){
+    const badge = E.scaleTier(m);
+    if(badge === "landmark") continue;   // Landmark outranks the ladder — its own axis, tested separately
+    for(const [band, stop] of Object.entries(BAND_KEY)){
+      const dialReturnsExactlyThisBand = E.selBuzzOK(m, { selBuzz: stop })
+        && (stop === 3 || !E.selBuzzOK(m, { selBuzz: stop + 1 }));
+      assert.equal(badge === band, dialReturnsExactlyThisBand,
+        `${m.title}: badge is ${badge || "none"}, dial-at-${band} says ${dialReturnsExactlyThisBand}`);
+    }
+  }
+});
+
+test("CAS-678 AC3: no film outside the cohort carries any of the three ladder lozenges", () => {
+  for(const m of E.MOVIES){
+    if(E.inLadderCohort(m)) continue;
+    assert.equal(E.buzzBandOf(m), null, `${m.title}: outside the cohort but badged ${E.buzzBandOf(m)}`);
+  }
+});
+
+test("CAS-678 AC4: the three bands are disjoint and ordered — a film's band is the highest it clears", () => {
+  for(const m of E.MOVIES){
+    const stop = E.buzzStop(m);
+    assert.ok(stop >= 0 && stop <= 3, `${m.title}: buzzStop ${stop} out of range`);
+    // Every lower stop must also be cleared (a floor, not a band) — otherwise "highest cleared" is undefined.
+    for(let s = 1; s <= stop; s++){
+      assert.equal(E.selBuzzOK(m, { selBuzz: s }), true, `${m.title}: clears stop ${stop} but not the lower stop ${s}`);
+    }
+    for(let s = stop + 1; s <= 3; s++){
+      assert.equal(E.selBuzzOK(m, { selBuzz: s }), false, `${m.title}: buzzStop says ${stop} but also clears the higher stop ${s}`);
+    }
+  }
+});
+
+test("CAS-678 AC5: Landmark behaves exactly as before the change — its predicate is unchanged", () => {
+  const LANDMARK_RT = 85, LANDMARK_META = 75, BIG_BUDGET = 120e6;
+  const BLOCKBUSTER_TOP = 15;
+  const popOf = m => m.popularity || 0;
+  const popAll = E.MOVIES.map(popOf).sort((a, b) => a - b);
+  const blockbusterBar = popAll.length
+    ? popAll[Math.min(popAll.length - 1, Math.round((100 - BLOCKBUSTER_TOP) / 100 * (popAll.length - 1)))] : Infinity;
+  const reproIsLandmark = m => !!m.award
+    && ((m.rt_critic || 0) >= LANDMARK_RT || (m.metacritic || 0) >= LANDMARK_META)
+    && ((m.budget || 0) >= BIG_BUDGET || popOf(m) >= blockbusterBar);
+  let landmarkCount = 0;
+  for(const m of E.MOVIES){
+    assert.equal(E.isLandmark(m), reproIsLandmark(m), `${m.title}: isLandmark disagrees with the pre-CAS-678 formula`);
+    if(E.isLandmark(m)) landmarkCount++;
+  }
+  assert.ok(landmarkCount > 0, "not one film is badged Landmark — this test would prove nothing");
+});
+
+test("CAS-678 AC6: matchesCriteria no longer reads c.tentpole, and no Tentpole UI markup remains", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const start = src.indexOf("\nfunction matchesCriteria(m,c,ignoreBlocked){");
+  assert.ok(start >= 0, "matchesCriteria() was not found");
+  const end = src.indexOf("\nconst countCriteria = c =>", start);
+  assert.ok(end > start, "the end of matchesCriteria() was not found");
+  assert.ok(!/tentpole/i.test(src.slice(start, end)), "matchesCriteria still reads the tentpole criterion");
+  for(const gone of ["TENTPOLE_STOPS", "tentpoleSel", "cTentLoz", "cTentCap", "cTentDesc"]){
+    assert.ok(!src.includes(gone), `${gone} still appears — Tentpole UI has not been fully removed`);
+  }
+  // The stored field itself, and cascSigOf's use of it, are explicitly UNCHANGED (CAS-678 item Four).
+  assert.ok(/c\.tentpole = c\.tentpole\|\|"any";/.test(src), "the stored c.tentpole field's normalisation was removed");
+  const sigStart = src.indexOf("const cascSigOf = c =>");
+  assert.ok(sigStart >= 0, "cascSigOf() was not found");
+  assert.ok(/c\.tentpole/.test(src.slice(sigStart, sigStart + 300)), "cascSigOf no longer carries c.tentpole");
+});
