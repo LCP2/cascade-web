@@ -153,12 +153,20 @@ if(typeof window.CascadeAuth === "undefined"){
   get movingReady(){ return movingReady; },
   setMovingReady(v){ movingReady = v; },
   get CascadeAuth(){ return window.CascadeAuth; },
+  // CAS-670: movingData/renderMovingScreen's guest branch now keys off localStorage's cascade_had_account,
+  // not accountActive() — exposing the stub localStorage (already the engine's own global) lets a test drive
+  // that key directly instead of only being able to flip the (now branch-irrelevant) CascadeAuth fields.
+  localStorage,
   // CAS-668: the badge/list agreement — movingWindowRows is the one recipe both renderMovingScreen and
   // movingUnseenCount filter through, movingBadgeWindow is which window/cutoff applies right now (live if
   // Moving is open, predicted if it's not), and openMovingScreen/closeMovingScreen/setMovingWindow are the
   // real wire code (DOM reads/writes absorbed by the stub, exactly like the rest of this file's wire calls).
   movingWindowRows, movingUnseenCount, movingBadgeWindow, movingAutoOpenWindow, movingInWindow,
   MOVING_WINDOWS, movingSeen,
+  // CAS-670 AC2/AC4: renderMovingScreen is wire code (its DOM write is absorbed by the stub) but its early
+  // return on the loading-state guard is a real decision — whether it marks any row seen — so a test needs
+  // to call the real function rather than re-deriving the guard.
+  renderMovingScreen: () => window.renderMovingScreen(),
   get movingWindow(){ return movingWindow; },
   get movingVisitCutoff(){ return movingVisitCutoff; },
   get movingIsOpen(){ return movingIsOpen; },
