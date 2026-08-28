@@ -16521,11 +16521,11 @@ function render(){
   const rows=scopeRows();
   const shown=rows.filter(m=>!taggedOut(m));
   const stubbed=rows.length-shown.length;
-  // v0.9.4: the scope buttons are a VIEW on the agent's list, so the agent card keeps reporting what the
-  // agent itself found (pre-scope, tagged-out films still discounted) — not how much of it is on screen.
-  const pool=scopeRows.pool||rows;
+  // CAS-682: the deck card describes what this render actually puts on screen for the list, so it takes the
+  // same post-scope, stubs-included set (`rows`) the sections below are built from — not the pre-scope pool
+  // v0.9.4 fixed it to (that made sense while the deck showed agents; CAS-642 made it a watch-list card).
   renderScopeBar();
-  renderCascadeBar(pool.filter(m=>!taggedOut(m)).length);
+  renderCascadeBar(rows.length);
   syncSortCtl();   // CAS-321: keeps the sort pill's label/dot honest even when filt.sort changed elsewhere
   // CAS-102's compact deck was tied to the old Find view. With one listing there is one deck state: the rail,
   // so the results lead wherever you are. (Kept as a class rather than deleted — the deck CSS still owns it.)
@@ -16569,7 +16569,9 @@ function render(){
   let pending=groups.length;
   const oneListDone=()=>{ if(--pending<=0) listReady(); };
   groups.forEach(({g,items})=>{
-    const live=items.filter(m=>!taggedOut(m)).length;
+    // CAS-682: a tagged-out film still renders here, as a stub — a row you can see and count, not a hidden
+    // exclusion — so the header counts every item, matching what fillListChunked below actually streams.
+    const live=items.length;
     const grp=document.createElement("div"); grp.className="group"; grp.dataset.g=g;
     grp.innerHTML=`<div class="grouphead"><span class="gdot ${g}"></span>${STATUS_LABEL[g]}
       <span class="gcount">${live}</span></div><div class="list"></div>`;

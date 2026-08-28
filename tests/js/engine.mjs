@@ -118,6 +118,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // predicates stay different rather than re-deriving them from render() output. YM_SVC/ymSvcOn/ymSvcToggle
   // let a test drive the availability chips the same way a person taps them.
   ymFeedList, ymAgentListCount, inFindScope, scope, scopeRows,
+  // CAS-682: taggedOut — the predicate that decides card vs. stub — so a test can assert a stub is really
+  // a stub, rather than assuming a watched film demonstrates it.
+  taggedOut,
   YM_SVC,
   // CAS-677: WATCH_STEPS (the watched-verdict ramp watchlistDefaults()'s permissive watchedOn is built
   // from), ymWatchedOn itself (by reference, like ymCascOff below, so a test can drive it directly the same
