@@ -4981,7 +4981,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 846, "commit": "dee4d3e", "builtAt": "2026-08-28T06:32:55Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 847, "commit": "41f17d6", "builtAt": "2026-08-28T06:41:19Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -11669,20 +11669,20 @@ function onbShownCount(){
 // the floor isn't predictable from where the dials sit.
 function missionScoreStats(c){
   const films=MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m));
-  let min=null, unscored=0;
+  let min=null;
   films.forEach(m=>{
     const q=qScore(m);
-    if(q<0) unscored++;
-    else if(min===null || q<min) min=q;
+    if(q>=0 && (min===null || q<min)) min=q;
   });
-  return {min, unscored};
+  return {min};
 }
-// Suppressed at n===0 (AC3: no placeholder for zero matches) rather than printing a meaningless floor.
+// Suppressed at n===0 (AC3: no placeholder for zero matches) and when nothing matching carries a score
+// (CAS-675: no meaningful floor to state) rather than printing a meaningless floor.
 function missionScoreLineHTML(n){
   if(!n) return "";
-  const {min, unscored}=missionScoreStats(onbApply());
-  const line = min===null ? `${unscored} of ${n} unscored` : `min <b>${min}</b> · ${unscored} of ${n} unscored`;
-  return `<span class="oscountscore">${line}</span>`;
+  const {min}=missionScoreStats(onbApply());
+  if(min===null) return "";
+  return `<span class="oscountscore">Cascade score over <b>${min}</b></span>`;
 }
 // ---- CAS-224: per-chip counts, measured off the agent instead of the catalogue --------------------------
 // The Style chips quoted GENRE_COUNT — how many films in the WHOLE catalogue carry that genre — on a page
@@ -14535,12 +14535,15 @@ function agentEraSum(c){
   if((c.year||[]).length) return c.year.slice().sort().reverse().join(", ");
   return c.yearsBack ? yearsLabel(c.yearsBack) : "";
 }
-// The row names WHERE it looks and WHAT BAR it applies, and stops. Genre, rating and era were four
-// more clauses that wrapped the line and buried the two that tell one agent from another — they are
-// all one tap away in Edit, and the health line below now carries the numbers.
+// The row names WHERE it looks and WHAT BAR it applies, and stops. Genre and era stay one tap away in
+// Edit — CAS-675 brings rating back (Lee: it was invisible), and a streaming agent's how-far-back with it,
+// since only a streaming agent's window can reach far enough back for that setting to matter.
 function agentRowSummary(c){
-  const bits=[agentWindowSum(c), agentBarSummary(c)].filter(Boolean);
-  if(bits.length<2) bits.push("Nothing else narrowed");
+  const rest=[agentBarSummary(c), agentAgeSum(c)];
+  if(c.kind==="stream" && c.yearsBack) rest.push(yearsLabel(c.yearsBack));
+  const restFiltered=rest.filter(Boolean);
+  const bits=[agentWindowSum(c), ...restFiltered];
+  if(!restFiltered.length) bits.push("Nothing else narrowed");
   return bits.join(" · ");
 }
 
@@ -14567,25 +14570,21 @@ function agentMetricsCompute(c){
   // rule listedCount/missionScoreStats already apply) is the real listing predicate, so the Agents row and
   // Mission's "N films match right now" can no longer disagree over what one agent has found.
   const films=MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m));   // Total listed — same test the listing itself runs
-  let scoreMin=null, unscored=0;
+  let scoreMin=null;
   films.forEach(m=>{
     const q=qScore(m);
-    if(q<0) unscored++;
-    else if(scoreMin===null || q<scoreMin) scoreMin=q;
+    if(q>=0 && (scoreMin===null || q<scoreMin)) scoreMin=q;
   });
-  let lastFind=null, trendCount=0;
-  const recent={d7:0, d14:0, d28:0};
+  let lastFind=null, trendCount=0, d7=0;
   films.forEach(m=>{
     const d=agentFilmEntryDate(m); if(!d) return;
     if(lastFind===null || Date.parse(d)>Date.parse(lastFind)) lastFind=d;
     const n=daysSince(d);
     if(n<AGENT_NEW_TREND_DAYS) trendCount++;
-    if(n<7) recent.d7++;
-    if(n<14) recent.d14++;
-    if(n<28) recent.d28++;
+    if(n<7) d7++;
   });
-  return {total:films.length, scoreMin, unscored,
-    perMonth: trendCount/(AGENT_NEW_TREND_DAYS/30), lastFind, recent};
+  return {total:films.length, scoreMin,
+    perMonth: trendCount/(AGENT_NEW_TREND_DAYS/30), lastFind, d7};
 }
 // recomputeFound-scale sweeps (50-155ms measured) are too slow to run six times per Agents-screen render —
 // cached per agent id, invalidated only when that agent's own signature (cascSigOf, the same one dedupe
@@ -14599,18 +14598,18 @@ function agentMetrics(c){
   agMetricsCache.set(c.id, {sig, metrics});
   return metrics;
 }
-const fmtAgentRate = n => { const r=Math.round(n*10)/10; return r%1===0 ? String(r) : r.toFixed(1); };
+const fmtAgentRate = n => String(Math.round(n));
 function agentMetricsHTML(c){
-  const {total, scoreMin, unscored, perMonth, lastFind, recent}=agentMetrics(c);
+  const {total, scoreMin, perMonth, lastFind, d7}=agentMetrics(c);
   const listed=`<b>${total}</b> listed`;
   const score = total===0 ? "no films listed"
-    : scoreMin===null ? `${unscored} of ${total} unscored`
-    : `min <b>${scoreMin}</b> · ${unscored} of ${total} unscored`;
+    : scoreMin===null ? null
+    : `Cascade score over <b>${scoreMin}</b>`;
   const est=`~${fmtAgentRate(perMonth)}/month new (est.)`;
   const last = lastFind===null ? "no finds yet"
     : (daysSince(lastFind)===0 ? "last find today" : `last find ${daysSince(lastFind)}d ago`);
-  const found=`${recent.d7}/7d · ${recent.d14}/14d · ${recent.d28}/28d found`;
-  return [listed, score, est, last, found].map(s=>`<span class="agmstat">${s}</span>`).join("");
+  const found=`Found ${d7} movie${d7===1?"":"s"} in the last week`;
+  return [listed, score, est, last, found].filter(Boolean).map(s=>`<span class="agmstat">${s}</span>`).join("");
 }
 function renderAgentsScreen(){
   const _t664=performance.now();
