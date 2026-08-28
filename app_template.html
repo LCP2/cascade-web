@@ -4567,6 +4567,24 @@ function recomputeFound(){
   found.clear();
   Object.keys(notify).forEach(id=>{ notify[id].cascadeIds=[]; });   // the auto half is rebuilt, never merged
   hits.forEach((ids,id)=>{ entryFor(id).cascadeIds=ids; });
+  // CAS-613: auto-notify arms a film's earliest acceptable notify window the first time it's found by a
+  // Cascade with autoNotify on, mirroring toggleFilmOpt's manual cascade-down tick. `autoNotified` is a
+  // once-ever guard — set the moment a rung is armed and never re-checked afterward, so a film the user
+  // later unticks by hand is never overruled on a later pass. This loop makes no persistence call of its
+  // own — the unconditional save at the end of this function already covers whatever it changed, once per pass.
+  hits.forEach((ids,id)=>{
+    const e=entryFor(id);
+    if(e.autoNotified) return;
+    if(!ids.some(cid=>{ const c=cascades.find(x=>x.id===cid); return c && c.autoNotify; })) return;
+    const levels=watchLevelsFor(id);
+    const idx=levels.findIndex(l=>!l.spent && (watchPrefs[l.key]||{}).notify===true);
+    if(idx<0) return;             // no qualifying rung yet — leave autoNotified unset, it may qualify later
+    e.wins=e.wins||{};
+    levels.slice(idx).forEach(l=>{ if(!l.spent) e.wins[l.key]=true; });   // CAS-349 cascade-down semantics
+    if(!e.streamTier) e.streamTier="must";
+    e.muted=false;
+    e.autoNotified=true;
+  });
   Object.entries(notify).forEach(([id,e])=>{
     const auto=e.cascadeIds.length>0, mine=e.source==="manual";
     // CAS-469: a per-film Watch-it tick (e.wins) is its own explicit choice, same standing as a manual pin —
@@ -8191,6 +8209,9 @@ function normCascade(c, opts){
   // CAS-643: who this agent is for. buildOnbAgents sets it from the recipe; an agent made by hand
   // has none, and the row prints no who-line for it — do not invent one.
   c.who = ["me","partner","kids","friends","everyone"].includes(c.who) ? c.who : undefined;
+  // CAS-613: per-agent auto-notify. A cascade saved before this ticket carries no such key and reads false,
+  // exactly what it already meant — nothing was ever auto-armed for it.
+  c.autoNotify = !!c.autoNotify;
   return c;
 }
 const CASCADE_TEMPLATES = [
@@ -12229,6 +12250,21 @@ function wireCinemaReleaseToggle(){
     onbFlow.barTouched=true; paint(); selRefresh();
   };
 }
+// CAS-613: the Briefing hub's own "Notify me about what this agent finds" switch — a plain draft boolean,
+// persisted by the same briefSave() path as everything else on this screen, no separate save.
+function wireAutoNotifyToggle(){
+  const sw=$("briefAutoNotify"); if(!sw) return;
+  const paint=()=>{
+    const on=!!onbFlow.draft.autoNotify;
+    sw.classList.toggle("on", on);
+    sw.setAttribute("aria-checked", String(on));
+  };
+  paint();
+  sw.onclick=()=>{
+    onbFlow.draft.autoNotify=!onbFlow.draft.autoNotify;
+    paint();
+  };
+}
 // ---- Taste-baseline accordion (CAS-146) -----------------------------------------------------------
 let tbOpen = null;   // which row is expanded — exactly one, or none
 let tbLangMoreOpen = false;   // CAS-562: whether the langs row's long-tail chips are unfolded
@@ -12682,6 +12718,16 @@ const SHARP_STEPS = {
           ${stream ? `<button type="button" class="easub" onclick="briefGo('years')">
             <span class="eash">How far back</span><span class="easv">${esc(yearsLabel(flowYearsBack()))}</span></button>` : ""}
         </div>
+        <!-- CAS-613: auto-notify — per-agent, arms a film's earliest acceptable notify window the moment
+             the agent finds it (recomputeFound), mirroring toggleFilmOpt's manual tick. watchPrefs stays
+             the gate: if no window is switched on to notify, the honesty note says so instead of the
+             checkbox silently doing nothing. -->
+        <div class="switch mini" id="briefAutoNotify" role="switch">
+          <span>Notify me about what this agent finds
+            <small style="color:var(--faint)">— New films get your earliest notify window ticked automatically.</small></span>
+          <span class="knob"></span></div>
+        ${WATCH_LEVEL_KEYS.some(k=>(watchPrefs[k]||{}).notify===true) ? "" :
+          `<p class="eaptr"><span class="ic">↗</span><span>No notify windows are switched on yet — set one in Where &amp; when you'll watch and this will start working.</span></p>`}
         <!-- CAS-642 W2b: the service-status scope (CAS-635 N3a) and exclude-tags (CAS-635 N3b) spokes moved
              off this screen — both are a statement about a WATCH LIST, not about what this agent is allowed
              to find, and now live in a list's own Edit screen (leInnerHTML) instead. One home each, not two.
@@ -12701,6 +12747,7 @@ const SHARP_STEPS = {
           ${d.id ? `<button class="osdel" type="button" onclick="briefDelete()">Delete agent</button>` : ""}
         </div>`;
     },
+    wire(){ wireAutoNotifyToggle(); },
   },
   // ---- CAS-626 Onboarding S1: the briefing screen that creates the roster ---------------------------
   // Step 2 of the new A→B→C→D→E briefing sequence (CAS-626). All three questions here create agents, so

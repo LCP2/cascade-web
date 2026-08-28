@@ -705,3 +705,119 @@ test("CAS-662 AC2: the listing yields exactly E.listedBy's rows, for every group
       `${label}/${g}: group holds more items than the rows that belong to it`);
   }
 });
+
+// ---- AUTO-NOTIFY ARMS A FILM'S EARLIEST WINDOW (CAS-613) --------------------------------------------------
+// recomputeFound() auto-ticks notify[id].wins for a film found by an autoNotify agent, mirroring
+// toggleFilmOpt's manual cascade-down tick, gated by watchPrefs and guarded by a once-ever `autoNotified`
+// flag. A synthetic cascade pinned onto one real film (pinnedInto, not criteria matching) keeps the film's
+// real catalogue status out of the assertions — except for `stream`, WINDOW_RUNG's last rung, which is
+// never spent for any film, so it is the one deterministic target these tests arm.
+function seedAutoNotifyCascade(on){
+  const id = "cas613-test-cascade";
+  // A full normCascade(), not a bare object: watchesFilm/matchesCriteria run against EVERY film in
+  // MOVIES.forEach (recomputeFound loops the whole catalogue per cascade), and a bare {id,autoNotify}
+  // crashes on the first film that isn't the one this test pins in. imdb:10.1 is above the real 0-10
+  // scale, so criteria matching admits nothing — only pinFilm's pinnedInto override reaches this cascade.
+  const c = E.normCascade({ kind: "stream", status: [], imdb: 10.1 });
+  c.id = id; c.paused = false; c.autoNotify = on;
+  E.cascades.push(c);
+  return id;
+}
+function unseedCascade(id){
+  const i = E.cascades.findIndex(c => c.id === id);
+  if(i >= 0) E.cascades.splice(i, 1);
+}
+function pinFilm(id, cascadeId){
+  const e = E.entryFor(id);
+  e.pinnedTo = [...(e.pinnedTo || []), cascadeId];
+}
+function withWatchPrefs(overrides, fn){
+  const saved = E.watchPrefs;
+  E.setWatchPrefs({ ...saved, ...overrides });
+  try{ fn(); } finally{ E.setWatchPrefs(saved); }
+}
+
+test("CAS-613 AC1: the briefing screen's autoNotify checkbox is unconditional (both cinema and streaming agents)", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const anchor = src.indexOf("<!-- CAS-613: auto-notify");
+  assert.ok(anchor >= 0, "the CAS-613 checkbox block was not found in the briefing step");
+  const block = src.slice(anchor, anchor + 800);
+  assert.ok(block.includes('id="briefAutoNotify"'), "the autoNotify switch must render in the briefing step");
+  assert.ok(!block.trimStart().startsWith("${stream"),
+    "the checkbox must not be gated behind the streaming-only branch — it belongs to both lanes");
+});
+
+test("CAS-613 AC1: autoNotify defaults false and round-trips true through normCascade (the criteria jsonb shape)", () => {
+  const off = E.normCascade({ kind: "stream", status: [] });
+  assert.equal(off.autoNotify, false, "an agent saved before this ticket must read false, not undefined");
+  const on = E.normCascade({ kind: "stream", status: [], autoNotify: true });
+  assert.equal(on.autoNotify, true, "an agent explicitly saved with autoNotify true must keep it");
+});
+
+test("CAS-613 AC2/AC3: autoNotify arms the earliest window with notify on, and nothing when none is", () => {
+  const [film] = unwatchedFilms(1);
+  const id = film.tmdb_id;
+  const cId = seedAutoNotifyCascade(true);
+  try {
+    pinFilm(id, cId);
+    withWatchPrefs({ in_cinema: { list: true, notify: false }, rent: { list: true, notify: false },
+                     stream: { list: true, notify: false } }, () => {
+      E.recomputeFound();
+      const e = E.notify[id];
+      assert.ok(!e || !e.wins || !e.wins.stream, "AC3: nothing must be ticked when no window has notify on");
+      assert.ok(!e || !e.autoNotified, "AC3: the once-ever guard must not be set when nothing qualified");
+    });
+
+    withWatchPrefs({ in_cinema: { list: true, notify: false }, rent: { list: true, notify: false },
+                     stream: { list: true, notify: true } }, () => {
+      E.recomputeFound();
+      const e = E.notify[id];
+      assert.equal(e.wins.stream, true, "AC2: the qualifying window must be ticked");
+      assert.equal(e.autoNotified, true, "the once-ever guard must be set once armed");
+      assert.equal(e.streamTier, "must", "the cascade-down tick must set the same default tier toggleFilmOpt sets");
+      assert.equal(e.muted, false, "the cascade-down tick must unmute, same as toggleFilmOpt");
+    });
+  } finally {
+    delete E.notify[id];
+    unseedCascade(cId);
+  }
+});
+
+test("CAS-613 AC4/AC6: a once-armed film is never re-armed after a manual untick, or unticked when autoNotify goes off", () => {
+  const [film] = unwatchedFilms(1);
+  const id = film.tmdb_id;
+  const cId = seedAutoNotifyCascade(true);
+  try {
+    pinFilm(id, cId);
+    withWatchPrefs({ stream: { list: true, notify: true } }, () => {
+      E.recomputeFound();
+      assert.equal(E.notify[id].wins.stream, true, "sanity: the first pass arms it");
+
+      E.notify[id].wins.stream = false;   // the user's manual untick
+      E.recomputeFound();                 // a second pass, same agent, same watchPrefs
+      assert.equal(E.notify[id].wins.stream, false,
+        "AC4: a manually-unticked auto-armed film must not be re-armed on a later pass");
+
+      const c = E.cascades.find(x => x.id === cId);
+      c.autoNotify = false;               // AC6: turning the agent's switch off
+      E.notify[id].wins.stream = true;    // restore the armed state to isolate AC6 from AC4's untick
+      E.recomputeFound();
+      assert.equal(E.notify[id].wins.stream, true,
+        "AC6: turning autoNotify off must not untick a film already armed");
+    });
+  } finally {
+    delete E.notify[id];
+    unseedCascade(cId);
+  }
+});
+
+test("CAS-613 AC5: recomputeFound() calls saveNotify() at most once per pass", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const start = src.indexOf("\nfunction recomputeFound(){");
+  assert.ok(start >= 0, "recomputeFound() was not found");
+  const end = src.indexOf("\n// What the megaphone's colour", start);
+  assert.ok(end > start, "the end of recomputeFound() was not found");
+  const body = src.slice(start, end);
+  const calls = body.match(/\bsaveNotify\(\)/g) || [];
+  assert.equal(calls.length, 1, `recomputeFound() calls saveNotify() ${calls.length} time(s), expected exactly 1`);
+});
