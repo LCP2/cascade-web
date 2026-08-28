@@ -528,6 +528,124 @@ test("CAS-667 AC3: a genuine guest device still gets firstFound rows regardless 
   E.setMovingReady(true);
 });
 
+// ---- THE MOVING BADGE COUNTS THE SAME WINDOW THE SCREEN SHOWS (CAS-668) -----------------------------------
+// The chip badge used to count unseen rows across every window while renderMovingScreen only ever showed one,
+// so the two numbers could never agree. movingWindowRows(win, cutoff) is now the one recipe both read
+// through — see app_template.html for movingBadgeWindow's live-vs-predicted split.
+const daysAgoISO = n => new Date(Date.now() - n * 864e5).toISOString();
+function unwatchedFilms(n){
+  return E.MOVIES.filter(m => !E.watched.has(m.tmdb_id)).slice(0, n);
+}
+
+test("CAS-668 AC1: the badge equals the unseen count of the exact row set the window would show", () => {
+  const [filmA, filmB] = unwatchedFilms(2);
+  const idA = String(filmA.tmdb_id), idB = String(filmB.tmdb_id);
+  E.firstFound[idA] = daysAgoISO(0);
+  E.firstFound[idB] = daysAgoISO(0);
+  delete E.movingSeen[idA]; delete E.movingSeen[idB];
+
+  // Predicted window/cutoff — what openMovingScreen would compute if opened right now (Moving is closed).
+  assert.equal(E.movingIsOpen, false, "sanity: Moving must be closed for the predicted-window branch to run");
+  const { win, cutoff } = E.movingBadgeWindow();
+  const predicted = E.movingWindowRows(win, cutoff);
+  const predictedIds = predicted.shownNew.map(r => r.filmId);
+  assert.ok(predictedIds.includes(idA) && predictedIds.includes(idB),
+    "sanity: both seeded rows must land in the window the badge predicts");
+  const expectedUnseen = [...predicted.shownCan, ...predicted.shownNew, ...predicted.shownChanged]
+    .filter(r => E.movingSeen[r.filmId] !== r.groupKey).length;
+  assert.equal(E.movingUnseenCount(), expectedUnseen,
+    "the badge must equal the unseen count of movingWindowRows' own filtered set, not every row across all windows");
+
+  // Actually opening must land on the same window and show exactly that predicted set.
+  E.openMovingScreen();
+  assert.equal(E.movingWindow, win, "openMovingScreen must land on the window the badge predicted");
+  const rendered = E.movingWindowRows(E.movingWindow, E.movingVisitCutoff);
+  assert.deepEqual(rendered.shownNew.map(r => r.filmId).sort(), predictedIds.sort(),
+    "renderMovingScreen's own filtered row set must match exactly what the badge predicted");
+  assert.equal(E.movingUnseenCount(), 0, "every row just shown must now count as seen");
+  E.closeMovingScreen();
+
+  delete E.firstFound[idA]; delete E.firstFound[idB];
+  delete E.movingSeen[idA]; delete E.movingSeen[idB];
+});
+
+test("CAS-668 AC2: rendering a window does not clear the unseen state of rows outside it", () => {
+  const [filmA, filmB] = unwatchedFilms(2);
+  const idA = String(filmA.tmdb_id), idB = String(filmB.tmdb_id);
+
+  // Warm up the cutoff, then seed only filmB (3 days old) so the very first open auto-picks "week" cleanly
+  // (since_last/today are both empty, week is the first window with >=1 row).
+  E.openMovingScreen();
+  E.closeMovingScreen();
+  E.firstFound[idB] = daysAgoISO(3);   // inside "week"/"2weeks"/"month", outside "today"
+  delete E.movingSeen[idB];
+  E.openMovingScreen();
+  assert.equal(E.movingWindow, "week", "sanity: a single 3-day-old row must auto-open on the week window");
+
+  // Now filmA appears (10 days old — outside "today"/"week", inside "2weeks"/"month" only). Switching away
+  // from and back to "week" re-renders it with filmA present in the underlying data but outside this window.
+  E.firstFound[idA] = daysAgoISO(10);
+  delete E.movingSeen[idA];
+  E.setMovingWindow("today");
+  E.setMovingWindow("week");
+  const { shownNew } = E.movingWindowRows("week", E.movingVisitCutoff);
+  const weekIds = shownNew.map(r => r.filmId);
+  assert.ok(weekIds.includes(idB) && !weekIds.includes(idA), "sanity: filmB is in the week window, filmA is not");
+
+  assert.equal(E.movingSeen[idB], "new_agents", "the row actually shown in the rendered window must be marked seen");
+  assert.ok(!(idA in E.movingSeen), "a row outside the rendered window must not have its unseen state touched");
+  E.closeMovingScreen();
+
+  delete E.firstFound[idA]; delete E.firstFound[idB];
+  delete E.movingSeen[idA]; delete E.movingSeen[idB];
+});
+
+test("CAS-668 AC3: opening Moving twice with no data change and no user action selects the same window and rows", () => {
+  const [film] = unwatchedFilms(1);
+  const id = String(film.tmdb_id);
+  // Warm up the cutoff first so "since_last"/"today" are already settled (empty) before the two opens being
+  // compared — otherwise the very first-ever open (cutoff 0) is a special case that always wins on since_last.
+  E.openMovingScreen();
+  E.closeMovingScreen();
+
+  E.firstFound[id] = daysAgoISO(3);   // inside "week"/"2weeks"/"month" only, stable across the cutoff advance
+  delete E.movingSeen[id];
+
+  E.openMovingScreen();
+  const window1 = E.movingWindow;
+  const rows1 = E.movingWindowRows(window1, E.movingVisitCutoff).shownNew.map(r => r.filmId).sort();
+  E.closeMovingScreen();
+
+  E.openMovingScreen();
+  const window2 = E.movingWindow;
+  const rows2 = E.movingWindowRows(window2, E.movingVisitCutoff).shownNew.map(r => r.filmId).sort();
+  E.closeMovingScreen();
+
+  assert.equal(window2, window1, "reopening with no data change and no user action must pick the same window");
+  assert.deepEqual(rows2, rows1, "reopening with no data change and no user action must show the same rows");
+
+  delete E.firstFound[id];
+  delete E.movingSeen[id];
+});
+
+test("CAS-668 AC4: an empty window's badge reads 0, not a count borrowed from a different window", () => {
+  const [film] = unwatchedFilms(1);
+  const id = String(film.tmdb_id);
+  E.firstFound[id] = daysAgoISO(10);  // real, unseen, but never inside "today"
+  delete E.movingSeen[id];
+
+  E.openMovingScreen();
+  E.setMovingWindow("today");
+  const { shownNew } = E.movingWindowRows("today", E.movingVisitCutoff);
+  assert.equal(shownNew.length, 0, "sanity: \"today\" really is empty for this seeded data");
+  assert.equal(E.movingUnseenCount(), 0,
+    "the badge must read 0 for an empty window even though an unseen row exists in a different window");
+  E.closeMovingScreen();
+
+  delete E.firstFound[id];
+  delete E.movingSeen[id];
+});
+
 // ---- THE LISTING APPLIES NO DEPTH CAP OR SCORE FLOOR (CAS-662) --------------------------------------------
 // render() used to read one active agent's onboarding depth answer + rate-slider stop and apply that agent's
 // floor/cap to the WHOLE listing — a six-agent list could render one film under a "Show all 36" button, none
