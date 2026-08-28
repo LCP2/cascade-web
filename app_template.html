@@ -1830,6 +1830,11 @@
     padding:calc(28px + env(safe-area-inset-top,0px)) var(--flow-pad) 24px;
     overflow-y:auto;background:radial-gradient(120% 45% at 50% 0%,#141b30 0%,var(--bg) 42%,#080b14 100%)}
   .sharpstep.open{display:flex}
+  /* CAS-688: both #onbStep and #leScreen are .sharpstep at the same z-index, so DOM order alone would
+     decide which paints on top — and #leScreen comes later in the markup, so it would cover the Briefing
+     opened on top of it (Edit on a list-editor agent row) rather than sit under it. #leScreen never needs
+     to be the one on top, so #onbStep gets the tie-break explicitly rather than relying on source order. */
+  #onbStep{z-index:83}
   /* CAS-A2: the Briefing scrolls but shows no track, matching the Agents screen. */
   #onbStep{scrollbar-width:none;-ms-overflow-style:none}
   #onbStep::-webkit-scrollbar{width:0;height:0;display:none}
@@ -2889,6 +2894,9 @@
   .ymcasclist .agsum{font-size:11px;line-height:1.3;-webkit-line-clamp:1;flex:0 0 auto;white-space:nowrap;
     font-weight:700;color:var(--faint)}
   .ymcasclist .ymcasctgl{width:22px;height:22px;font-size:11px}
+  /* CAS-688: Edit sits between the name/count and the include tick, clearly distinct from either — same
+     compact sizing as the row's other controls so a 3-control row still fits without wrapping. */
+  .ymcasclist .ag-edit{flex:0 0 auto;padding:4px 8px;font-size:11px}
   /* ================= v0.9.4 WATCH: multiple lists =================
      The Watch screen gets Find's own rail — one card per list, a New List card at the end — so "switch
      list" is the same gesture as "switch agent". Rose, because that is what Watch is. */
@@ -13674,6 +13682,14 @@ window.briefDelete=()=>{
 // returns you somewhere Back would not is the same bug wearing a different button.
 function briefReturn(){
   if(briefFrom==="agents"){ briefFrom=null; return openAgentsScreen(); }
+  // CAS-688: #leScreen was never closed under the Briefing (see editListCascRow), so returning is just
+  // repainting its content off the now-current cascades — flowStop() already cleared body.style.overflow,
+  // which leScreen still needs since it's the screen left showing.
+  if(briefFrom==="listEditor"){
+    briefFrom=null;
+    document.body.style.overflow="hidden";
+    return leRefreshIfOpen();
+  }
   briefFrom=null;
 }
 function briefClose(){ briefOn=false; flowStop(); briefReturn(); }
@@ -14316,6 +14332,8 @@ function leInnerHTML(){
         <span class="agname">${esc(c.name)}</span>
         <span class="agsum">${cn}</span>
       </span>
+      <button type="button" class="ag-edit ca-btn" onclick="editListCascRow('${escA(c.id)}')"
+          aria-label="Edit ${escA(c.name)}" title="Edit ${escA(c.name)}">Edit</button>
       <button type="button" class="ymcasctgl${on?" on":""}" aria-pressed="${on}"
         aria-label="${escA((on?"Remove ":"Include ")+c.name+" in this feed")}"
         onclick="ymCascToggle('${escA(c.id)}',this)">✓</button>
@@ -14991,6 +15009,9 @@ function openAgentRow(id){ closeAgentsScreen(); openCascade(id); }
 // means Back and Save have nothing to return to — they fall through to the Watch listing.
 // briefFrom records the origin; briefReturn() puts them back on it.
 window.editAgentRow=id=>{ briefOpen(id, "agents"); };
+// CAS-688: same rule as editAgentRow above — do NOT close #leScreen here. It is where the user came from,
+// and closing it would leave Back/Save/Delete with nowhere to return to. briefReturn() puts them back on it.
+window.editListCascRow=id=>{ briefOpen(id, "listEditor"); };
 // CAS-636: tapping an agent name on a Moving row lands on Watch with that agent selected — same idiom as
 // openAgentRow above, off the agent's NAME rather than id, since that's all the notifications ledger carries.
 window.openMovingAgent=name=>{
