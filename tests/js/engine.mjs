@@ -126,7 +126,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // from), ymWatchedOn itself (by reference, like ymCascOff below, so a test can drive it directly the same
   // way a restrictive pre-ticket value would have) and leInnerHTML (the list editor's real render, so a
   // test can assert the removed verdict section is actually gone from its output, not just from source text).
-  WATCH_STEPS, leInnerHTML,
+  // CAS-693: leComputeCounts is the single-pass replacement for the old ymFeedList()+per-agent
+  // ymAgentListCount(c) calls leInnerHTML used to make — exported so a test can assert the two ways of
+  // computing the same figures still agree, without parsing leInnerHTML()'s HTML output for numbers.
+  WATCH_STEPS, leInnerHTML, leComputeCounts,
   get ymWatchedOn(){ return ymWatchedOn; },
   get ymSvcOn(){ return ymSvcOn; },
   ymSvcToggle: (key, btn) => window.ymSvcToggle(key, btn),

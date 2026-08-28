@@ -13688,7 +13688,7 @@ function briefReturn(){
   if(briefFrom==="listEditor"){
     briefFrom=null;
     document.body.style.overflow="hidden";
-    return leRefreshIfOpen();
+    return leRebuild();
   }
   briefFrom=null;
 }
@@ -13784,10 +13784,20 @@ function applyActiveWatchlist(){
 applyActiveWatchlist();
 // Every UI write site below calls this instead of saveWatchlists() directly, so none of them can
 // push a still-default record over a real account answer while that answer is still in flight.
+// CAS-693: matchesCriteria reads the ACTIVE LIST's PERSISTED excludeTags, not the live ymExcludeTags scratch
+// Set — an exclude-tag toggle's effect on matching only lands once this debounced write actually runs. Set
+// by ymTagToggle, consumed (and cleared) the next time ymPersist runs, so leComputeCounts()'s cache gets
+// invalidated again once the write behind it actually lands — not just at the moment of the tap — without
+// invalidating on every OTHER toggle's persist too: cascOff/svcOn are read live everywhere they matter, so
+// their own debounced writes landing late has no bearing on the cache, and invalidating for them here would
+// undo the whole point of caching (every toggle schedules a persist, so this would fire after nearly every
+// tap in real usage, not just after a tag toggle).
+let leTagsDirty=false;
 function ymPersist(){
   if(!ymReady) return;
   const l=activeWatchlist();
   if(l) Object.assign(l, watchlistRecord());
+  if(leTagsDirty){ leTagsDirty=false; leInvalidateCache(); }
   saveWatchlists();
 }
 // CAS-652: every list-Edit toggle used to run ymPersist/renderYourMovies/render/leRefreshIfOpen
@@ -13882,18 +13892,63 @@ function ymFeedList(){
 function ymAgentListCount(c){
   return MOVIES.filter(m=>ymListBaseOK(m) && listedBy(m,c)).length;
 }
+// CAS-693: which films each agent lists (byAgent below) does not depend on which agents happen to be
+// TICKED — ymCascToggle only changes ymCascOff, never a film's criteria or an agent's own. So the expensive
+// part (one MOVIES.filter pass evaluating ymListBaseOK+listedBy for every agent) only has to run once per
+// open, and again whenever something that actually can change a film's membership changes: an availability
+// chip (ymListBaseOK), an exclude tag (matchesCriteria's excludeTags gate) or the agent set itself (renamed,
+// edited, added, removed). A tap on an agent's own include toggle changes none of those, so it reuses the
+// cache and pays only for re-summing already-known memberships against the new tick set — no matchesCriteria
+// calls at all. leInvalidateCache() is called from every one of those actually-invalidating actions below.
+let leCache=null;
+function leInvalidateCache(){ leCache=null; }
+function leBuildCache(){
+  const agentCounts=new Map(cascades.map(c=>[c.id,0]));
+  const okFilms=[];
+  MOVIES.filter(m=>{
+    if(!ymListBaseOK(m)) return false;
+    let agentIds=null;
+    for(const c of cascades){
+      if(listedBy(m,c)){
+        agentCounts.set(c.id, agentCounts.get(c.id)+1);
+        (agentIds || (agentIds=new Set())).add(c.id);
+      }
+    }
+    if(agentIds) okFilms.push({m, agentIds});
+    return !!agentIds;
+  });
+  leCache={okFilms, agentCounts};
+  return leCache;
+}
+// Every count the Edit list screen shows — the header total/scoped figures, the "N of M" ticked count and
+// each agent's own contribution — read off the cache (building it first if it's cold). Only the
+// ticked/scoped tally below re-runs every call, since that's the one thing a plain agent-include toggle
+// actually changes; it costs (eligible films) x (agents that list each one) Set lookups, not a fresh
+// catalogue-wide criteria pass.
+function leComputeCounts(){
+  const {okFilms, agentCounts}=leCache || leBuildCache();
+  let n=0, scoped=0;
+  for(const {m, agentIds} of okFilms){
+    let anyTicked=false;
+    for(const id of agentIds){ if(!ymCascOff.has(id)){ anyTicked=true; break; } }
+    if(anyTicked){ n++; if(inFindScope(m)) scoped++; }
+  }
+  return {n, scoped, counts:agentCounts, cascOn:cascades.filter(ymCascTicked).length};
+}
 // CAS-646: svcOn now drives the LIVE listing too (ymFeedMatches, called from scopeRows()), not just this
 // screen's own preview feed — every toggle re-renders it, mirroring ymCascToggle below.
 window.ymSvcToggle=(key,btn)=>{
   const t0=performance.now();
   ymSvcOn.has(key)?ymSvcOn.delete(key):ymSvcOn.add(key);
   if(btn){ const on=ymSvcOn.has(key); btn.classList.toggle("on",on); btn.setAttribute("aria-pressed",String(on)); }
+  leInvalidateCache();   // CAS-693: an availability chip changes ymListBaseOK for the whole catalogue
   ymTapPainted("svc",t0);
   ymSchedulePersist(); ymScheduleRender();
 };
 window.ymSvcSetAll=on=>{
   const t0=performance.now();
   ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]);
+  leInvalidateCache();   // CAS-693: see ymSvcToggle
   ymTapPainted("svc-setall",t0);
   ymSchedulePersist(); ymScheduleRender();
 };
@@ -13932,6 +13987,7 @@ window.ymTagToggle=(lid,btn)=>{
     const t=lists.find(x=>x.id===lid);
     if(t) btn.title = on?`Excluded from this list — tap to include again`:`Exclude ${t.name} from this list`;
   }
+  leInvalidateCache(); leTagsDirty=true;   // CAS-693: excludeTags gate per film; ymPersist re-invalidates once its write lands
   ymTapPainted("tag",t0);
   ymSchedulePersist(); ymScheduleRender();
 };
@@ -14311,26 +14367,25 @@ let leOn=false, leRenaming=false;
 // stylesheet from CAS-590 and unused until now.
 function leInnerHTML(){
   const l=activeWatchlist(); if(!l) return "";
-  const list=ymFeedList();
-  const n=list.length;
+  // CAS-693: one pass over the catalogue for every count below (was ymFeedList() plus one more
+  // MOVIES.filter per agent) — see leComputeCounts()'s own comment.
+  const {n, scoped, counts, cascOn}=leComputeCounts();
   // CAS-680 Part 2, Lee's option C 2026-08-28: the scope bar (Notify/For review/Watched, CAS-586) stays
   // independent of any one list — ymFeedList() deliberately never applies inFindScope (see its own comment)
   // — so the gap is disclosed here rather than folded into the list's own total. When the scope bar isn't
   // narrowing this list at all, the two counts are equal and only one number is shown.
-  const scoped=list.filter(inFindScope).length;
   const countLine = scoped===n
     ? `<b>${n}</b> film${n===1?"":"s"} match right now`
     : `<b>${n}</b> in this list · <b>${scoped}</b> shown by ${esc(scopeBarActiveLabel())}`;
   const svcChips=YM_SVC.map(s=>`<button type="button" class="chip ymchip${ymSvcOn.has(s.key)?" on":""}"
       aria-pressed="${ymSvcOn.has(s.key)}" onclick="ymSvcToggle('${s.key}',this)">${esc(s.label)}</button>`).join("");
-  const cascOn=cascades.filter(ymCascTicked).length;
   const cascRows=cascades.map(c=>{
-    const on=ymCascTicked(c), cn=ymAgentListCount(c);
+    const on=ymCascTicked(c), cn=counts.get(c.id)||0;
     return `<div class="agrow ym-casc agent-${c.kind==="stream"?"str":"cin"}">
       <span class="agicon" aria-hidden="true">${c.icon}</span>
       <span class="agmain">
         <span class="agname">${esc(c.name)}</span>
-        <span class="agsum">${cn}</span>
+        <span class="agsum" id="le-cnt-${escA(c.id)}">${cn}</span>
       </span>
       <button type="button" class="ag-edit ca-btn" onclick="editListCascRow('${escA(c.id)}')"
           aria-label="Edit ${escA(c.name)}" title="Edit ${escA(c.name)}">Edit</button>
@@ -14370,13 +14425,13 @@ function leInnerHTML(){
       </div>
     </div>
     <div class="lesec">
-      <div class="lesechd">Agents to include <span class="lesecn">· ${cascOn} of ${cascades.length}</span></div>
+      <div class="lesechd">Agents to include <span class="lesecn" id="leCascOn">· ${cascOn} of ${cascades.length}</span></div>
       <div class="ymcasclist">${cascRows || `<p class="unone">No cascades yet.</p>`}</div>
       <p class="leoverlaphint">Agents can overlap — a film two agents both list is one film in the list, so these figures won't add up to the total.</p>
       <div class="lelinkrow">
         <button type="button" class="lelink" onclick="ymCascSetAll(true)">Select all</button>
         <button type="button" class="lelink" onclick="ymCascSetAll(false)">Clear all</button>
-        <span class="lematch">${n} film${n===1?"":"s"} match</span>
+        <span class="lematch" id="leMatch">${n} film${n===1?"":"s"} match</span>
       </div>
     </div>
     <div class="lesec">
@@ -14387,11 +14442,41 @@ function leInnerHTML(){
     <button type="button" class="ledel" ${onlyOne?"disabled":""} onclick="leDelete()"
         title="${onlyOne?"The last list can’t be deleted":`Delete ${escA(l.name)}`}">Delete list</button>`;
 }
-function leRefreshIfOpen(){ if(leOn){ const el=$("leInner"); if(el) el.innerHTML=leInnerHTML(); } }
+// CAS-693 AC4: a svc/casc/tag toggle only ever changes numbers (the header total/scoped figures, the
+// "N of M" agents-ticked count, each agent's own contribution, "N films match") — every control's own "on"
+// state is already painted by its own toggle handler above (ymSvcToggle/ymCascToggle/ymTagToggle) before
+// this runs, so the counts are all that's left to patch. Replacing the whole screen's innerHTML for that
+// would rebuild every icon, name, chip and button node just to change a handful of text nodes.
+function leUpdateCounts(){
+  if(!leOn) return;
+  const {n, scoped, counts, cascOn}=leComputeCounts();
+  const countEl=$("leCount");
+  if(countEl) countEl.innerHTML = scoped===n
+    ? `<b>${n}</b> film${n===1?"":"s"} match right now`
+    : `<b>${n}</b> in this list · <b>${scoped}</b> shown by ${esc(scopeBarActiveLabel())}`;
+  const cascOnEl=$("leCascOn");
+  if(cascOnEl) cascOnEl.textContent=`· ${cascOn} of ${cascades.length}`;
+  const matchEl=$("leMatch");
+  if(matchEl) matchEl.textContent=`${n} film${n===1?"":"s"} match`;
+  counts.forEach((cnt,id)=>{
+    const el=document.getElementById(`le-cnt-${id}`);
+    if(el) el.textContent=cnt;
+  });
+}
+// Called by every svc/casc/tag toggle via ymScheduleRender — counts only, never a full rebuild (see
+// leUpdateCounts above). Renaming and returning from an agent's own Briefing can change things
+// leUpdateCounts doesn't touch (header markup, icon/name/kind) and call leRebuild() directly instead.
+function leRefreshIfOpen(){ leUpdateCounts(); }
+// CAS-693: leRebuild()'s own callers (rename, and returning from editing an agent's Briefing) can change
+// the agent set itself — name/icon/kind cosmetically, or criteria for real via the Briefing — so the cache
+// has to go, not just the DOM.
+function leRebuild(){ leInvalidateCache(); if(leOn){ const el=$("leInner"); if(el) el.innerHTML=leInnerHTML(); } }
 window.leOpen=()=>{
   const l=activeWatchlist(); if(!l) return;
   closeYourMovies();
   leOn=true; leRenaming=false;
+  leInvalidateCache();   // CAS-693: start every session with a fresh cache — nothing guarantees the
+                          // catalogue/watched-set/criteria are unchanged since this list was last open.
   $("leScreen").scrollTop=0;
   $("leInner").innerHTML=leInnerHTML();
   $("leScreen").classList.add("open"); document.body.style.overflow="hidden";
@@ -14427,7 +14512,7 @@ window.leDelete=()=>{
   leClose();
 };
 window.leStartRename=()=>{
-  leRenaming=true; leRefreshIfOpen();
+  leRenaming=true; leRebuild();
   const inp=$("leNameInput"); if(inp){ inp.focus(); inp.select(); }
 };
 window.leCommitRename=(inputEl)=>{
@@ -14437,7 +14522,7 @@ window.leCommitRename=(inputEl)=>{
     const name=(inputEl.value||"").trim();
     if(name){ l.name=name; saveWatchlists(); logEvent("watchlist_renamed",{id:l.id}); }
   }
-  leRefreshIfOpen();
+  leRebuild();
 };
 // CAS-535: the compact "Watch List" summary/control card, replacing the always-expanded panel above as the
 // screen's first thing — same shell (icon chip, title, film count, action-icon row) the deck's own small

@@ -765,29 +765,45 @@ test("CAS-676 AC2/AC3: the deck and Your Movies are never rebuilt while the Edit
   }
 });
 
-test("CAS-676 AC4: the Edit screen's per-agent counts cost the same for a burst of taps as for one", async () => {
+// CAS-693 superseded this test's original premise (that ANY tap, casc included, must run at least one
+// MOVIES.filter pass): an agent's own include toggle never changes which films any agent lists, only which
+// of those already-known memberships get summed, so leComputeCounts()'s per-open cache lets a casc burst
+// cost ZERO catalogue passes once it's warm — strictly better than "one pass per burst, not one per tap".
+// Availability chips DO change film membership (ymListBaseOK), so a svc burst still has to invalidate and
+// rebuild — the "one pass per burst" coalescing CAS-676 introduced still has to hold for that case.
+test("CAS-676 AC4 / CAS-693: a casc-toggle burst costs zero catalogue passes once the cache is warm; a cache-invalidating (svc) burst still costs exactly one, not one per tap", async () => {
   const ids = seedNCascades(6);
   const restore = seedCas676List(ids);
   try {
     await withFoundLedgersSnapshot(async () => {
+      E.leOpen();   // warms leComputeCounts()'s cache
+      const cascBurstCalls = await withMoviesFilterSpy(async () => {
+        E.ymCascToggle(ids[0]); E.ymCascToggle(ids[1]); E.ymCascToggle(ids[2]);
+        await flushRaf();
+      });
+      E.leClose();
+      assert.equal(cascBurstCalls, 0,
+        `a 3-tap agent-include burst cost ${cascBurstCalls} MOVIES.filter pass(es) against the cache's own 0 — ` +
+        `toggling which agents are ticked must never re-scan the catalogue`);
+
       E.leOpen();
-      const singleCalls = await withMoviesFilterSpy(async () => {
-        E.ymCascToggle(ids[0]);
+      const svcSingleCalls = await withMoviesFilterSpy(async () => {
+        E.ymSvcToggle("stream");
         await flushRaf();
       });
       E.leClose();
 
       E.leOpen();
-      const burstCalls = await withMoviesFilterSpy(async () => {
-        E.ymCascToggle(ids[1]); E.ymCascToggle(ids[2]); E.ymCascToggle(ids[3]);
+      const svcBurstCalls = await withMoviesFilterSpy(async () => {
+        E.ymSvcToggle("stream"); E.ymSvcToggle("cinema"); E.ymSvcToggle("upcoming");
         await flushRaf();
       });
       E.leClose();
 
-      assert.ok(singleCalls > 0, "sanity: a tap on the open Edit screen must run the per-agent count pass");
-      assert.equal(burstCalls, singleCalls,
-        `a 3-tap burst cost ${burstCalls} MOVIES.filter pass(es) against a single tap's ${singleCalls} — ` +
-        `the per-agent counts must be computed once per rebuild, not once per agent per control`);
+      assert.ok(svcSingleCalls > 0, "sanity: a cache-invalidating tap (an availability chip) must still run the count pass");
+      assert.equal(svcBurstCalls, svcSingleCalls,
+        `a 3-tap svc burst cost ${svcBurstCalls} MOVIES.filter pass(es) against a single tap's ${svcSingleCalls} — ` +
+        `cache-invalidating toggles must still coalesce to one rebuild per burst, not one per tap`);
     });
   } finally {
     if(E.leOn) E.leClose();
@@ -881,6 +897,65 @@ test("CAS-680 AC7: ymFeedList() still ignores the scope bar, and scopeRows() sti
           "scopeRows() must drop a film the scope bar excludes — it applies inFindScope as its last step");
       } finally {
         if(!wasWatched) E.watched.delete(target.tmdb_id);
+      }
+    });
+  } finally {
+    unseedCascades(ids);
+  }
+});
+
+// ---- WATCH LIST EDIT'S COUNTS SURVIVE THE SINGLE-PASS REWRITE (CAS-693) ------------------------------------
+// leInnerHTML used to call ymFeedList() once and ymAgentListCount(c) once per agent — a fresh full-catalogue
+// MOVIES.filter for each. leComputeCounts() replaces all of that with one pass. This asserts the new
+// single-pass figures still agree with the old per-predicate formulas, and that leInnerHTML's actual HTML
+// output carries exactly those figures — not just that the helper function returns the right numbers.
+test("CAS-693 AC2: leComputeCounts's single pass agrees with the old per-agent/header formulas, and leInnerHTML renders exactly those figures", () => {
+  const ids = seedNCascades(4);
+  try {
+    withCas680List(ids, () => {
+      const chipCombos = [["stream"], ["cinema", "stream"], E.YM_SVC.map(s => s.key), []];
+      for(const combo of chipCombos){
+        E.ymSvcSetAll(false);
+        combo.forEach(k => E.ymSvcToggle(k));
+        E.ymCascSetAll(false);
+        ids.forEach((id, i) => { if(i % 2 === 0) E.ymCascToggle(id); });   // a mixed ticked/unticked set
+
+        const list = E.ymFeedList();
+        const expectedN = list.length;
+        const expectedScoped = list.filter(E.inFindScope).length;
+        const expectedCascOn = E.cascades.filter(E.ymCascTicked).length;
+
+        const actual = E.leComputeCounts();
+        assert.equal(actual.n, expectedN, `chips [${combo.join("+")}]: n`);
+        assert.equal(actual.scoped, expectedScoped, `chips [${combo.join("+")}]: scoped`);
+        assert.equal(actual.cascOn, expectedCascOn, `chips [${combo.join("+")}]: cascOn`);
+        for(const id of ids){
+          const c = E.cascades.find(x => x.id === id);
+          assert.equal(actual.counts.get(id), E.ymAgentListCount(c),
+            `chips [${combo.join("+")}], agent ${id}: single-pass count must match ymAgentListCount`);
+        }
+
+        const html = E.leInnerHTML();
+        const countMatch = html.match(/id="leCount"[^>]*>([\s\S]*?)<\/div>/);
+        assert.ok(countMatch, "sanity: header count line must render");
+        const nums = [...countMatch[1].matchAll(/<b>(\d+)<\/b>/g)].map(m => Number(m[1]));
+        assert.equal(nums[0], expectedN, `chips [${combo.join("+")}]: rendered header n`);
+        if(nums.length > 1) assert.equal(nums[1], expectedScoped, `chips [${combo.join("+")}]: rendered header scoped`);
+
+        const cascOnMatch = html.match(/id="leCascOn"[^>]*>·\s*(\d+) of (\d+)/);
+        assert.ok(cascOnMatch, "sanity: agents-ticked count must render");
+        assert.equal(Number(cascOnMatch[1]), expectedCascOn, `chips [${combo.join("+")}]: rendered cascOn`);
+
+        const matchLineMatch = html.match(/id="leMatch"[^>]*>(\d+)/);
+        assert.ok(matchLineMatch, "sanity: N films match line must render");
+        assert.equal(Number(matchLineMatch[1]), expectedN, `chips [${combo.join("+")}]: rendered lematch`);
+
+        for(const id of ids){
+          const c = E.cascades.find(x => x.id === id);
+          const rowMatch = html.match(new RegExp(`id="le-cnt-${id}"[^>]*>(\\d+)`));
+          assert.ok(rowMatch, `sanity: agent ${id}'s own count must render`);
+          assert.equal(Number(rowMatch[1]), E.ymAgentListCount(c), `chips [${combo.join("+")}], agent ${id}: rendered row count`);
+        }
       }
     });
   } finally {
