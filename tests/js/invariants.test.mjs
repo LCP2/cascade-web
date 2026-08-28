@@ -227,24 +227,58 @@ test("scale: an unknown scale is never the reason a film is dropped", () => {
 // ---- 8. THE CASCADE SCORE (CAS-603) ---------------------------------------------------------------------
 // One number from the three the card already prints, so a thin-voted IMDb average can no longer outrank a
 // broadly-agreed film just because nothing else was reading the critic scores.
-test("cascade score: critic agreement beats a thin-voted IMDb average, and unscored films sort last", () => {
+test("cascade score: critic agreement beats a below-floor IMDb rating with no critic backing, and sourceless films sort last", () => {
   const wellReviewed  = { title: "Well Reviewed",  imdb_rating: 8.2, imdb_votes: 1000000, metacritic: 90, rt_critic: 93 };
-  const thinVoted      = { title: "Thin Voted",     imdb_rating: 8.9, imdb_votes: 1343 };
-  const lowRatedButCriticked = { title: "Low Rated But Criticked", imdb_rating: 3.0, imdb_votes: 1000000, metacritic: 40, rt_critic: 35 };
-  const noCritics      = { title: "No Critics",     imdb_rating: 9.5, imdb_votes: 1000000 };
-  const underVotes     = { title: "Under Votes",    imdb_rating: 9.9, imdb_votes: E.IMDB_MIN_VOTES - 1, metacritic: 95, rt_critic: 98 };
+  const belowFloor    = { title: "Below Floor",    imdb_rating: 9.9, imdb_votes: E.IMDB_MIN_VOTES - 1 };
+  const noSources      = { title: "No Sources",     imdb_rating: null, imdb_votes: 0 };
 
-  assert.ok(E.sortMoviesBy(wellReviewed, thinVoted, "cascade") < 0,
-    "a film with real critic agreement did not outrank a thin-voted IMDb average");
+  assert.ok(E.sortMoviesBy(wellReviewed, belowFloor, "cascade") < 0,
+    "a film with real critic agreement did not outrank a below-floor IMDb rating with no critic backing");
 
-  // A film with no critic score sorts after every film that has one, whatever its own IMDb rating — even a
-  // poorly-reviewed one.
-  for(const scored of [wellReviewed, lowRatedButCriticked]){
-    assert.ok(E.sortMoviesBy(noCritics, scored, "cascade") > 0,
-      `a film with no critic score did not sort after ${scored.title}`);
+  // A film with no source at all sorts after every scored film.
+  assert.ok(E.sortMoviesBy(noSources, wellReviewed, "cascade") > 0,
+    "a film with no source at all did not sort after a scored film");
+
+  // Below IMDB_MIN_VOTES the IMDb figure must not count as a rating at all — with no critic scores backing it
+  // either, the film remains unscorable (CAS-660: a film scores from whatever it has, but a below-floor IMDb
+  // figure is not "having" IMDb).
+  assert.equal(E.qScore(belowFloor), -1, "a film under the vote floor with no critic scores was still treated as rated");
+});
+
+// ---- 9. THE CASCADE SCORE FROM WHATEVER SOURCES ARE PRESENT (CAS-660) --------------------------------------
+// qScore no longer requires all three sources — one reliable source is enough to score. -1 only when the film
+// carries none of the three at all.
+test("cascade score: scored from whatever sources a film has, not only when it has all three", () => {
+  // AC1: -1 iff no source is present at all, and no other film scores -1.
+  for(const m of E.MOVIES){
+    const hasNoSource = E.ratingOf(m) == null && m.metacritic == null && m.rt_critic == null;
+    assert.equal(E.qScore(m) === -1, hasNoSource, `${m.title}: qScore -1 disagrees with "no source present"`);
   }
 
-  // Below IMDB_MIN_VOTES the IMDb figure must not count as a rating at all — qScore should read it exactly as
-  // it would an entry with no IMDb rating and no critic scores.
-  assert.equal(E.qScore(underVotes), -1, "a film under the vote floor was still treated as rated");
+  // AC2: a film with exactly one source scores that source, rounded, IMDb multiplied by 10.
+  const imdbOnly = { title: "IMDb Only",       imdb_rating: 7.3, imdb_votes: 1000000 };
+  const metaOnly = { title: "Metacritic Only", imdb_rating: null, imdb_votes: 0, metacritic: 61 };
+  const rtOnly   = { title: "RT Only",         imdb_rating: null, imdb_votes: 0, rt_critic: 88 };
+  assert.equal(E.qScore(imdbOnly), Math.round(7.3*10), "IMDb-only score should be the IMDb rating x10, rounded");
+  assert.equal(E.qScore(metaOnly), 61, "Metacritic-only score should equal the Metacritic figure");
+  assert.equal(E.qScore(rtOnly), 88, "RT-only score should equal the RT figure");
+
+  // AC3: for every scorable film, qScore lies between the min and max of its present parts, inclusive.
+  for(const m of E.MOVIES){
+    const r = E.ratingOf(m);
+    const parts = [];
+    if(r != null) parts.push(r*10);
+    if(m.metacritic != null) parts.push(m.metacritic);
+    if(m.rt_critic != null) parts.push(m.rt_critic);
+    if(!parts.length) continue;
+    const q = E.qScore(m);
+    assert.ok(q >= Math.min(...parts) && q <= Math.max(...parts),
+      `${m.title}: qScore ${q} falls outside [${Math.min(...parts)}, ${Math.max(...parts)}]`);
+  }
+
+  // AC4: strictly more films are scorable than under the old "rating AND at least one critic score" rule.
+  const oldScorable = E.MOVIES.filter(m => E.ratingOf(m) != null && (m.metacritic != null || m.rt_critic != null)).length;
+  const newScorable = E.MOVIES.filter(m => E.qScore(m) !== -1).length;
+  assert.ok(newScorable > oldScorable,
+    `expected more scorable films under the new rule: old ${oldScorable}, new ${newScorable}`);
 });

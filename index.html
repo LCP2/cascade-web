@@ -4967,7 +4967,7 @@ $("updated").textContent = "Updated " + fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 829, "commit": "5865955", "builtAt": "2026-08-28T01:29:11Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 830, "commit": "1ebb27f", "builtAt": "2026-08-28T01:33:28Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5698,14 +5698,25 @@ function byTimelineAsc(a,b){
 }
 // ---- The Cascade score --------------------------------------------------------
 // One number per film: the mean of the scores it actually carries — the same three the card prints.
-// -1 means "not rankable on quality": no reliable IMDb vote, or no critic score at all.
+// -1 means "not rankable on quality": no reliable IMDb vote AND no critic score at all — CAS-660 scores a
+// film from whichever of the three it actually carries, not only when it carries all of them.
 function qScore(m){
   const r = ratingOf(m);
-  if(r===null || (m.metacritic==null && m.rt_critic==null)) return -1;
-  const p=[r*10];
+  const p=[];
+  if(r!=null) p.push(r*10);
   if(m.metacritic!=null) p.push(m.metacritic);
   if(m.rt_critic!=null)  p.push(m.rt_critic);
+  if(!p.length) return -1;
   return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
+}
+function qScoreSourcesText(m){
+  const names=[];
+  if(ratingOf(m)!=null) names.push("IMDb");
+  if(m.metacritic!=null) names.push("Metacritic");
+  if(m.rt_critic!=null) names.push("RT");
+  if(names.length===1) return `${names[0]} only`;
+  if(names.length===2) return `${names[0]} and ${names[1]}`;
+  return `${names[0]}, ${names[1]} and ${names[2]}`;
 }
 function oscMarkHTML(m){
   const t=String(m.award_text||"");
@@ -5728,7 +5739,7 @@ function attributionHTML(m){
 function qScoreHTML(m){
   const q=qScore(m);
   if(q<0) return `<span class="qscore none" title="Not enough agreement to score this yet">&ndash;</span>`;
-  return `<span class="qscore ${q>=85?"hi":q>=70?"mid":"lo"}" title="Cascade score &mdash; IMDb, Metacritic and RT combined">${q}</span>`;
+  return `<span class="qscore ${q>=85?"hi":q>=70?"mid":"lo"}" title="Cascade score &mdash; ${escA(qScoreSourcesText(m))}">${q}</span>`;
 }
 function sortMoviesBy(a,b,key){
   switch(key){
