@@ -758,6 +758,86 @@ test("CAS-676 AC4: the Edit screen's per-agent counts cost the same for a burst 
   }
 });
 
+// ---- WATCH LIST EDIT COUNTS DESCRIBE THE LIST, NOT THE AGENT OR A GLOBAL VIEW (CAS-680) -------------------
+// Reported case: a list with one availability chip and three of six agents ticked showed a header of 113, per-
+// agent figures of 132/4/15 (listedCount(c) — the agent's OWN global total, none of the list's own filters
+// applied) and a rendered listing of 34. Part 1: the per-agent figure must answer a question about the LIST
+// (ymAgentListCount, same basis ymFeedList() uses), so a single ticked agent's figure can never legitimately
+// disagree with the header. Part 2 (Lee's option C, 2026-08-28): the header/rendered gap itself is not a bug —
+// it is the scope bar (#scopeBar, CAS-586), which is deliberately list-independent — so ymFeedList() must go on
+// ignoring it while scopeRows() goes on applying it.
+function withCas680List(ids, fn){
+  const savedLists = E.watchLists.slice();
+  const savedActive = E.watchActiveId;
+  const savedSvc = new Set(E.ymSvcOn);
+  try {
+    const l = E.normWatchlistEntry({ name: "CAS-680 list", order: 0, cascOff: ids.slice() });
+    E.watchLists.length = 0;
+    E.watchLists.push(l);
+    E.setActiveWatchlist(l.id);
+    E.applyActiveWatchlist();
+    fn(l);
+  } finally {
+    E.watchLists.length = 0;
+    savedLists.forEach(sl => E.watchLists.push(sl));
+    E.setActiveWatchlist(savedActive);
+    E.applyActiveWatchlist();
+    E.ymSvcSetAll(false);
+    savedSvc.forEach(k => E.ymSvcToggle(k));
+  }
+}
+
+test("CAS-680 AC1/AC2: with exactly one agent ticked, its per-agent figure equals the header figure, for every agent and every availability-chip combination", () => {
+  const ids = seedNCascades(6);
+  try {
+    withCas680List(ids, () => {
+      const chipCombos = [["stream"], ["cinema", "stream"], E.YM_SVC.map(s => s.key), ["upcoming"]];
+      for(const combo of chipCombos){
+        E.ymSvcSetAll(false);
+        combo.forEach(k => E.ymSvcToggle(k));
+        for(const id of ids){
+          E.ymCascSetAll(false);
+          E.ymCascToggle(id);
+          const c = E.cascades.find(x => x.id === id);
+          const header = E.ymFeedList().length;
+          const perAgent = E.ymAgentListCount(c);
+          assert.equal(perAgent, header,
+            `chips [${combo.join("+")}], agent ${id}: header says ${header} but the per-agent figure says ${perAgent}`);
+        }
+      }
+    });
+  } finally {
+    unseedCascades(ids);
+  }
+});
+
+test("CAS-680 AC7: ymFeedList() still ignores the scope bar, and scopeRows() still applies it — the two predicates stay deliberately different", () => {
+  const ids = seedNCascades(3);
+  try {
+    withCas680List(ids, () => {
+      E.ymCascSetAll(true);
+      E.ymSvcSetAll(true);           // every availability window counts, for the widest possible match
+      const list = E.ymFeedList();
+      assert.ok(list.length > 0, "sanity: the reproduction must match at least one film");
+
+      // The scope bar defaults to Notify only (scope.watch=true, scope.new/watched=false) — a film with no
+      // Watch-it decision at all fails inFindScope under that default, but ymFeedList() never checks it.
+      assert.equal(E.scope.watch, true, "sanity: default scope is Notify");
+      assert.equal(E.scope.new, false, "sanity: default scope is Notify");
+      const undecided = list.find(m => !E.inFindScope(m));
+      assert.ok(undecided, "sanity: at least one matched film must carry no Watch-it decision under the default scope");
+
+      const rows = E.scopeRows();
+      assert.ok(!rows.some(m => m.tmdb_id === undecided.tmdb_id),
+        "scopeRows() must drop a film the scope bar excludes — it applies inFindScope as its last step");
+      assert.ok(list.some(m => m.tmdb_id === undecided.tmdb_id),
+        "ymFeedList() must still carry that same film — it never applies inFindScope");
+    });
+  } finally {
+    unseedCascades(ids);
+  }
+});
+
 // ---- MOVING NEVER RENDERS A PROVISIONAL LEDGER (CAS-667) -------------------------------------------------
 // movingData() branches on window.CascadePersistence.accountActive() — flip window.CascadeAuth's real fields
 // (enabled/client/session) the same way sign-in for real does, rather than a stand-in predicate, so the

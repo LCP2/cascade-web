@@ -2908,6 +2908,7 @@
     text-decoration:underline;cursor:pointer;padding:0}
   .lelinkrow{display:flex;align-items:center;gap:6px;margin-top:9px;font-size:11px;color:var(--dim)}
   .lelinkrow .lematch{margin-left:auto;color:var(--brand-blue);font-weight:800}
+  .leoverlaphint{margin:8px 2px 0;font-size:11px;line-height:1.4;color:var(--dim)}
   .lesave{width:100%;margin-top:26px;padding:15px;border:0;border-radius:14px;background:var(--brand-blue);
     color:#fff;font-family:inherit;font-size:16px;font-weight:800;cursor:pointer}
   .ledel{display:block;margin:14px auto 0;background:transparent;border:0;color:#e0655f;font-family:inherit;
@@ -7530,6 +7531,10 @@ const filmDecided = id => filmNotifyState(id).on > 0;
 const scope = {watch:true, new:false, watched:false};
 const scopeTiers = new Set();        // FILTER_TIERS keys — empty means "every window"
 const scopeVerdicts = new Set();     // REVIEW_STEPS keys — empty means "every verdict"
+// CAS-680 Part 2: same three labels renderScopeBar's own pills print ("Notify"/"For review"/"Watched")
+// below — kept here too so the Edit screen can name whichever of the three is narrowing its list.
+const SCOPE_LABEL = {watch:"Notify", new:"For review", watched:"Watched"};
+const scopeBarActiveLabel = () => ["watch","new","watched"].filter(k=>scope[k]).map(k=>SCOPE_LABEL[k]).join(" + ");
 function inFindScope(m){
   const id=m.tmdb_id;
   if(taggedOut(m)) return scope.watched && (!scopeVerdicts.size || scopeVerdicts.has(opinionOf(id)));
@@ -13767,7 +13772,9 @@ window.addEventListener("pagehide", ymFlushPersist);
 // Never (blocked) stays excluded outright — that bucket is a permanent no, not something this feed
 // reconsiders. A watched film only rejoins when its own verdict is ticked in ymWatchedOn (CAS-570), so a
 // Wow can be picked again without every watched film flooding back by default.
-function ymFeedMatches(m){
+// CAS-680 Part 1: factored out of ymFeedMatches so ymAgentListCount(c) below can apply the exact same
+// list-level basis (availability chips, verdict set, search, tiers) to one agent at a time.
+function ymListBaseOK(m){
   const id=m.tmdb_id;
   if(blocked.has(id)) return false;
   // CAS-570: one tickbox per verdict, not one switch for all of them. opinionOf() returns "" for an unwatched
@@ -13780,7 +13787,10 @@ function ymFeedMatches(m){
   if(!YM_SVC.some(s=>ymSvcOn.has(s.key) && filmCurrentlyAt(id,s.wk))) return false;
   if(ymSearchTerm && !m.title.toLowerCase().includes(ymSearchTerm)) return false;
   if(ymWatchTiers.size && ![...ymWatchTiers].some(k=>k==="undecided" ? filmIsUndecided(id) : filmHasWatchTier(id,k))) return false;
-  return cascades.some(c=>ymCascTicked(c) && listedBy(m,c));
+  return true;
+}
+function ymFeedMatches(m){
+  return ymListBaseOK(m) && cascades.some(c=>ymCascTicked(c) && listedBy(m,c));
 }
 // "Best match" is a real property of the film, not an invented score (buildspec honesty rule): most of the
 // ticked services it's itself set to Watch it on, then its IMDb rating as the tiebreak. The Sort icon can
@@ -13792,6 +13802,14 @@ function ymFeedList(){
     const score=m=>YM_SVC.filter(s=>ymSvcOn.has(s.key) && filmOptOn(m.tmdb_id,{key:s.wk})).length;
     return score(b)-score(a) || (b.imdb_rating||0)-(a.imdb_rating||0);
   });
+}
+// CAS-680 Part 1: an agent's contribution TO THIS LIST — the same basis ymFeedMatches applies (chips,
+// verdict set, search, tiers, and the active list's own excludeTags via listedBy -> matchesCriteria), but
+// for one agent's own listedBy regardless of whether it is ticked. With exactly one agent ticked, that
+// agent's figure equals ymFeedList().length exactly; an unticked agent's figure shows what ticking it
+// would add. Agents can overlap, so these figures do not sum to the list total — the Edit screen says so.
+function ymAgentListCount(c){
+  return MOVIES.filter(m=>ymListBaseOK(m) && listedBy(m,c)).length;
 }
 // CAS-646: svcOn now drives the LIVE listing too (ymFeedMatches, called from scopeRows()), not just this
 // screen's own preview feed — every toggle re-renders it, mirroring ymCascToggle below.
@@ -14235,12 +14253,21 @@ let leOn=false, leRenaming=false;
 // stylesheet from CAS-590 and unused until now.
 function leInnerHTML(){
   const l=activeWatchlist(); if(!l) return "";
-  const n=ymFeedList().length;
+  const list=ymFeedList();
+  const n=list.length;
+  // CAS-680 Part 2, Lee's option C 2026-08-28: the scope bar (Notify/For review/Watched, CAS-586) stays
+  // independent of any one list — ymFeedList() deliberately never applies inFindScope (see its own comment)
+  // — so the gap is disclosed here rather than folded into the list's own total. When the scope bar isn't
+  // narrowing this list at all, the two counts are equal and only one number is shown.
+  const scoped=list.filter(inFindScope).length;
+  const countLine = scoped===n
+    ? `<b>${n}</b> film${n===1?"":"s"} match right now`
+    : `<b>${n}</b> in this list · <b>${scoped}</b> shown by ${esc(scopeBarActiveLabel())}`;
   const svcChips=YM_SVC.map(s=>`<button type="button" class="chip ymchip${ymSvcOn.has(s.key)?" on":""}"
       aria-pressed="${ymSvcOn.has(s.key)}" onclick="ymSvcToggle('${s.key}',this)">${esc(s.label)}</button>`).join("");
   const cascOn=cascades.filter(ymCascTicked).length;
   const cascRows=cascades.map(c=>{
-    const on=ymCascTicked(c), cn=listedCount(c);
+    const on=ymCascTicked(c), cn=ymAgentListCount(c);
     return `<div class="agrow ym-casc agent-${c.kind==="stream"?"str":"cin"}">
       <span class="agicon" aria-hidden="true">${c.icon}</span>
       <span class="agmain">
@@ -14279,7 +14306,7 @@ function leInnerHTML(){
         : `<h2 class="osh eahn">${escA(l.name)}</h2>
            <button class="eapenc" type="button" onclick="leStartRename()" aria-label="Rename list">✏️</button>`}
     </div>
-    <div class="oscount" id="leCount" aria-live="polite"><b>${n}</b> film${n===1?"":"s"} match right now</div>
+    <div class="oscount" id="leCount" aria-live="polite">${countLine}</div>
     <div class="lesec">
       <div class="lesechd">AVAILABILITY STATUS</div>
       <div class="chips">${svcChips}</div>
@@ -14291,6 +14318,7 @@ function leInnerHTML(){
     <div class="lesec">
       <div class="lesechd">Agents to include <span class="lesecn">· ${cascOn} of ${cascades.length}</span></div>
       <div class="ymcasclist">${cascRows || `<p class="unone">No cascades yet.</p>`}</div>
+      <p class="leoverlaphint">Agents can overlap — a film two agents both list is one film in the list, so these figures won't add up to the total.</p>
       <div class="lelinkrow">
         <button type="button" class="lelink" onclick="ymCascSetAll(true)">Select all</button>
         <button type="button" class="lelink" onclick="ymCascSetAll(false)">Clear all</button>

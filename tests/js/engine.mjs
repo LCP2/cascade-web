@@ -112,6 +112,16 @@ if(typeof window.CascadeAuth === "undefined"){
   MOVIES, CASCADE, STATUS_LABEL, SHOWABLE_N,
   matchesCriteria, countCriteria, watchCount, watchesFilm, matchesTaste, listedBy, listWindowOK,
   listedCount, onbShownCount,
+  // CAS-680: the list-editor's own predicates — ymFeedList (the list's own total, no inFindScope applied),
+  // ymAgentListCount (an agent's contribution TO the active list), inFindScope and scope (the scope bar
+  // that scopeRows() applies and ymFeedList() deliberately does not) — so a test can assert the two
+  // predicates stay different rather than re-deriving them from render() output. YM_SVC/ymSvcOn/ymSvcToggle
+  // let a test drive the availability chips the same way a person taps them.
+  ymFeedList, ymAgentListCount, inFindScope, scope, scopeRows,
+  YM_SVC,
+  get ymSvcOn(){ return ymSvcOn; },
+  ymSvcToggle: (key, btn) => window.ymSvcToggle(key, btn),
+  ymSvcSetAll: on => window.ymSvcSetAll(on),
   normCascade, showable, primaryStatus, inCinemaWindow, isEstimated, deriveStatus, isUpcoming,
   // CAS-255: the my-services scope and the stage dates are both places the app makes a claim about what you
   // can watch and when, so the QA gate needs to reach them the same way the listing does.
