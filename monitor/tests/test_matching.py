@@ -8,7 +8,8 @@ import os
 import unittest
 
 from monitor import (compute_transitions, match, matches_criteria, service_ok,
-                     notification_rows, suppressed_pairs, excluded_moments, match_film_watches)
+                     notification_rows, suppressed_pairs, excluded_moments, match_film_watches,
+                     match_newly_qualified)
 from monitor.matching import Hit, agent_channels
 from monitor.catalogue import load_catalogue_file
 from monitor.store import InMemoryStore
@@ -351,6 +352,112 @@ class FilmWatchTests(unittest.TestCase):
                    {"user_id": "u2", "movie_id": "1", "windows": ["stream"]}]
         hits = match_film_watches(watches, ts)
         self.assertEqual(set(hits), {"u1", "u2"})
+
+
+class NewlyQualifiedTests(unittest.TestCase):
+    """CAS-602: a film already held in both catalogues that newly qualifies for an agent because
+    its OWN attributes changed — an IMDb rating crossing the agent's bar here, standing in for
+    "some other aspect of it has changed such that it now appears when yesterday it didn't"."""
+
+    def _movie(self, imdb, status=("rental",), tmdb_id=9001, title="Rising Star", **extra):
+        m = {"tmdb_id": tmdb_id, "title": title, "genres": ["Drama"], "status": list(status),
+             "cinema_date": "2026-01-01",
+             "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}],
+             "imdb_rating": imdb}
+        m.update(extra)
+        return m
+
+    def _cascade(self, imdb_bar=7.0, moments=("hits_rent",), user_id="u1", cascade_id="c1"):
+        return [{"id": cascade_id, "user_id": user_id, "name": "Drama radar", "active": True,
+                 "alert_moments": list(moments),
+                 "criteria": {"genre": ["Drama"], "imdb": imdb_bar}}]
+
+    # ---- the five named scenarios (CAS-602 change item 5) ----
+    def test_rising_rating_crosses_the_bar_fires_exactly_once(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        hits = match_newly_qualified(self._cascade(imdb_bar=7.0), prev, today)
+        self.assertEqual(len(hits.get("u1", [])), 1)
+        h = hits["u1"][0]
+        self.assertEqual(h.transition.moment, "newly_qualifies")
+        self.assertEqual(h.transition.movie_id, "9001")
+        self.assertEqual(h.cascade_id, "c1")
+
+    def test_same_film_the_following_day_unchanged_does_not_fire_again(self):
+        # Yesterday's run already lifted it above the bar; today it holds at the same rating.
+        prev = [self._movie(7.5)]
+        today = [self._movie(7.5)]
+        hits = match_newly_qualified(self._cascade(imdb_bar=7.0), prev, today)
+        self.assertEqual(hits, {})
+
+    def test_a_film_that_already_matched_yesterday_never_fires(self):
+        # Already above the bar yesterday; a further rise today changes nothing about "newly".
+        prev = [self._movie(8.0)]
+        today = [self._movie(9.0)]
+        hits = match_newly_qualified(self._cascade(imdb_bar=7.0), prev, today)
+        self.assertEqual(hits, {})
+
+    def test_a_film_absent_from_yesterday_never_fires(self):
+        # That is `announced`'s job, not this one's.
+        today = [self._movie(9.0)]
+        hits = match_newly_qualified(self._cascade(imdb_bar=7.0), [], today)
+        self.assertEqual(hits, {})
+
+    def test_gate_honours_alert_moments(self):
+        # The film's current window is `rental` (-> hits_rent), but the cascade only asked for
+        # hits_cinema — the mapped moment must be one the cascade actually asks for.
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        hits = match_newly_qualified(self._cascade(imdb_bar=7.0, moments=("hits_cinema",)), prev, today)
+        self.assertEqual(hits, {})
+
+    def test_gate_honours_the_global_mute(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        hits = match_newly_qualified(self._cascade(imdb_bar=7.0, moments=("hits_rent",)), prev, today,
+                                     excluded={"u1": ["hits_rent"]})
+        self.assertEqual(hits, {})
+
+    # ---- supporting behaviour ----
+    def test_upcoming_film_maps_to_announced(self):
+        prev = [self._movie(6.5, status=("upcoming",))]
+        today = [self._movie(7.5, status=("upcoming",))]
+        hits = match_newly_qualified(self._cascade(imdb_bar=7.0, moments=("announced",)), prev, today)
+        self.assertEqual(len(hits.get("u1", [])), 1)
+        self.assertEqual(hits["u1"][0].transition.moment, "newly_qualifies")
+
+    def test_second_run_with_the_same_ledger_is_silent(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        first = match_newly_qualified(self._cascade(imdb_bar=7.0), prev, today)
+        already = {(h.cascade_id, h.transition.movie_id, h.transition.moment)
+                   for hits in first.values() for h in hits}
+        second = match_newly_qualified(self._cascade(imdb_bar=7.0), prev, today, already=already)
+        self.assertEqual(second, {})
+
+    def test_suppressed_pair_outranks_the_qualification(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        hits = match_newly_qualified(self._cascade(imdb_bar=7.0), prev, today,
+                                     suppressed={("u1", "9001")})
+        self.assertEqual(hits, {})
+
+    def test_service_filter_applies_to_a_streaming_qualification(self):
+        prev = [self._movie(6.5, status=("included_streaming",), offers=[])]
+        today = [self._movie(7.5, status=("included_streaming",),
+                             offers=[{"service": "Netflix", "type": "sub"}])]
+        cascades = [{"id": "c1", "user_id": "u1", "name": "Drama radar", "active": True,
+                     "alert_moments": ["hits_stream"],
+                     "criteria": {"genre": ["Drama"], "imdb": 7.0, "services": ["Stan"]}}]
+        hits = match_newly_qualified(cascades, prev, today)
+        self.assertEqual(hits, {})   # Netflix isn't Stan -> filtered out
+
+    def test_inactive_cascade_ignored(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        cascades = self._cascade(imdb_bar=7.0)
+        cascades[0]["active"] = False
+        self.assertEqual(match_newly_qualified(cascades, prev, today), {})
 
 
 if __name__ == "__main__":

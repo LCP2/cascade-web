@@ -56,6 +56,7 @@ REAL_MOMENT_SAID = {
     "hits_pvod": "is available to buy",
     "hits_rent": "dropped to a rental price",
     "hits_stream": "landed on streaming",
+    "newly_qualifies": "now matches this agent",
 }
 
 
