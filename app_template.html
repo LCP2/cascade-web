@@ -2780,13 +2780,11 @@
   .agcount{flex:0 0 auto;display:flex;align-items:baseline;gap:3px;margin-left:auto;padding-left:4px}
   .agcount b{display:inline;font-size:16px;font-weight:800;color:var(--ink);line-height:1}
   .agcount span{font-size:10.5px;color:var(--dim)}
-  /* CAS-643: who-line, rate slider and health/check-state, replacing the row's old right-hand film count. */
+  /* CAS-643: who-line and health/check-state, replacing the row's old right-hand film count. */
   .agwho{font-size:11px;color:var(--dim)}
-  .agrate{display:flex;flex-direction:column;gap:4px}
-  .agratehdr{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
-  .agrateval{font-size:12.5px;font-weight:700;color:var(--ink)}
-  .agratecap{font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
-  .agrateslider{width:100%;accent-color:var(--dcc,var(--accent))}
+  /* CAS-664: the five real metrics, replacing the rate slider's own preview. */
+  .agmetrics{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11px;color:var(--dim)}
+  .agmetrics b{color:var(--ink)}
   .aghealth{font-size:11px;color:var(--dim);border-top:1px solid var(--line);padding-top:6px;margin-top:2px}
   .agwarn{font-size:11px;color:var(--amber);border-top:1px solid var(--line);padding-top:6px;margin-top:2px;
     display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -8197,10 +8195,9 @@ function normCascade(c, opts){
   // never persisted (commitDraft copies a named field list), because it answers "did you choose this,
   // or did we?", and once a Cascade is saved every setting on it is a choice.
   c.alertsTouched = c.alertsTouched || {};
-  // CAS-643: the per-agent rate stop. Kept only when it's a number — rateStopOf() clamps it into
-  // RATE_STOPS' own range, so this doesn't need to reference RATE_STOPS (declared later in the
-  // file; the templates/legacy normCascade passes below run before that line, so a reference here
-  // would hit it before it's initialised).
+  // CAS-664: the rate slider that used to read this field is gone, and nothing reads it any more —
+  // but the field itself is kept exactly as CAS-643 normalised it, so an agent that carries one keeps
+  // carrying it rather than silently changing shape.
   c.rateStop = (typeof c.rateStop === "number") ? c.rateStop : undefined;
   // CAS-643: who this agent is for. buildOnbAgents sets it from the recipe; an agent made by hand
   // has none, and the row prints no who-line for it — do not invent one.
@@ -10612,25 +10609,6 @@ const ONB_DEPTH = {
   best: {cap:3,  floor:80, label:"Show me the absolute best only"},
   wide: {cap:10, floor:70, label:"Give me a wide selection"},
 };
-// The per-agent rate. `n` is how many the agent shows — the cap, exactly, so the slider's effect
-// is visible the moment you drag it. `per` is the cadence the agent's alerts work to; it does NOT
-// change the cap (a list is a snapshot, not a period), and giving it a fuller job needs a
-// surfaced-film ledger that does not exist yet. Stored as an INDEX so no float is ever compared.
-const RATE_STOPS = [
-  {n:1, per:"month", label:"about 1 a month"},
-  {n:2, per:"month", label:"about 2 a month"},
-  {n:1, per:"week",  label:"about 1 a week"},
-  {n:2, per:"week",  label:"about 2 a week"},
-  {n:3, per:"week",  label:"about 3 a week"},
-  {n:5, per:"week",  label:"about 5 a week"},
-];
-// A new agent opens on the stop nearest the account's own answer, so onboarding still sets this
-// and the slider only ever refines it.
-const RATE_DEFAULT = () => (onbAnswersLoad().depth === "wide") ? 3 : 0;
-const rateStopOf = c => {
-  const i = (c && typeof c.rateStop === "number") ? c.rateStop : RATE_DEFAULT();
-  return RATE_STOPS[Math.max(0, Math.min(RATE_STOPS.length-1, i))];
-};
 // The newest film IN THIS LIST, in days. Deliberately not "when this agent last found something":
 // firstFound is account-wide, so that claim is not one the data can support. A dead agent is still
 // detected — if nothing new lands, the maximum stays old.
@@ -10659,9 +10637,9 @@ function onbAnswersSave(a){
 // the list SHORTER but never longer.
 function onbDepthFor(c){
   const d = ONB_DEPTH[(onbAnswersLoad().depth)] || ONB_DEPTH.best;
-  // The agent's own rate is the cap where it has one. onbCap (a recipe's scarcity override, e.g.
-  // the cinema agent) may only make the list SHORTER, never longer.
-  let cap = (c && typeof c.rateStop === "number") ? rateStopOf(c).n : d.cap;
+  // CAS-664: the rate slider that used to let a per-agent value override this is gone — onbCap (a
+  // recipe's scarcity override, e.g. the cinema agent) is the only thing left that can still narrow it.
+  let cap = d.cap;
   if(c && c.onbCap) cap = Math.min(c.onbCap, cap);
   return {cap, floor:d.floor};
 }
@@ -12823,9 +12801,10 @@ const SHARP_STEPS = {
   // ---- CAS-627 Onboarding S2: standing orders, and the listing depth --------------------------------
   // Step 3 of the new A→B→C→D→E briefing sequence. Two briefs that apply to every agent already on the
   // roster: how selective they are (onbDepthFor — CAS-662 dropped its use from the Find listing itself,
-  // but it still backs the Agents screen's own match-preview cap) and what they must never bring back
-  // (written into every agent's own `exclude`, same field buildOnbAgents already merges `ans.never`
-  // into). Preview-only (`?step=briefing2`) until CAS-629 cuts FLOWS over.
+  // and CAS-664 dropped the Agents screen's own match-preview cap in favour of real metrics, so this
+  // answer currently only reaches a recipe's onbCap floor/cap at generation time) and what they must
+  // never bring back (written into every agent's own `exclude`, same field buildOnbAgents already merges
+  // `ans.never` into). Preview-only (`?step=briefing2`) until CAS-629 cuts FLOWS over.
   briefing2: {
     noAgent: true,
     body(){
@@ -14524,11 +14503,69 @@ function agentRowSummary(c){
 // today, but a label is kept for it so a hand-set value never prints "undefined".
 const WHO_LABELS = {me:"just me", partner:"me + partner", kids:"with the kids",
                     friends:"with friends", everyone:"everyone"};
+// ---- CAS-664: the five real metrics that replaced the rate slider's preview ---------------------------
+// Every one of them is DERIVED, NOT REMEMBERED (Lee's decision 2026-08-28): recomputed from window_dates
+// against the agent's CURRENT criteria on every render, nothing persisted. Editing an agent is therefore
+// the only thing that can move its own numbers — including its own history — and that is intended.
+// The window a matching film "entered" is the same one isRecent() already reads for the status pill's
+// gold glow: CUR_WINDOW_DATE_KEY keyed off the film's current primaryStatus, so this can't disagree with
+// what "recent" already means elsewhere on the film itself.
+function agentFilmEntryDate(m){
+  const key=CUR_WINDOW_DATE_KEY[primaryStatus(m)];
+  return (key && m.window_dates && m.window_dates[key]) || null;
+}
+const AGENT_NEW_TREND_DAYS = 84;   // 12 weeks
+function agentMetricsCompute(c){
+  const films=MOVIES.filter(m=>watchesFilm(m,c));   // Total listed — same test the listing itself runs
+  let scoreMin=null, unscored=0;
+  films.forEach(m=>{
+    const q=qScore(m);
+    if(q<0) unscored++;
+    else if(scoreMin===null || q<scoreMin) scoreMin=q;
+  });
+  let lastFind=null, trendCount=0;
+  const recent={d7:0, d14:0, d28:0};
+  films.forEach(m=>{
+    const d=agentFilmEntryDate(m); if(!d) return;
+    if(lastFind===null || Date.parse(d)>Date.parse(lastFind)) lastFind=d;
+    const n=daysSince(d);
+    if(n<AGENT_NEW_TREND_DAYS) trendCount++;
+    if(n<7) recent.d7++;
+    if(n<14) recent.d14++;
+    if(n<28) recent.d28++;
+  });
+  return {total:films.length, scoreMin, unscored,
+    perMonth: trendCount/(AGENT_NEW_TREND_DAYS/30), lastFind, recent};
+}
+// recomputeFound-scale sweeps (50-155ms measured) are too slow to run six times per Agents-screen render —
+// cached per agent id, invalidated only when that agent's own signature (cascSigOf, the same one dedupe
+// uses) changes, since editing an agent is the only thing allowed to move its numbers.
+const agMetricsCache=new Map();
+function agentMetrics(c){
+  const sig=cascSigOf(c);
+  const hit=agMetricsCache.get(c.id);
+  if(hit && hit.sig===sig) return hit.metrics;
+  const metrics=agentMetricsCompute(c);
+  agMetricsCache.set(c.id, {sig, metrics});
+  return metrics;
+}
+const fmtAgentRate = n => { const r=Math.round(n*10)/10; return r%1===0 ? String(r) : r.toFixed(1); };
+function agentMetricsHTML(c){
+  const {total, scoreMin, unscored, perMonth, lastFind, recent}=agentMetrics(c);
+  const listed=`<b>${total}</b> listed`;
+  const score = total===0 ? "no films listed"
+    : scoreMin===null ? `${unscored} of ${total} unscored`
+    : `min <b>${scoreMin}</b> · ${unscored} of ${total} unscored`;
+  const est=`~${fmtAgentRate(perMonth)}/month new (est.)`;
+  const last = lastFind===null ? "no finds yet"
+    : (daysSince(lastFind)===0 ? "last find today" : `last find ${daysSince(lastFind)}d ago`);
+  const found=`${recent.d7}/7d · ${recent.d14}/14d · ${recent.d28}/28d found`;
+  return [listed, score, est, last, found].map(s=>`<span class="agmstat">${s}</span>`).join("");
+}
 function renderAgentsScreen(){
+  const _t664=performance.now();
   const n=cascades.length;
   const rows=cascades.map(c=>{
-    const rs=rateStopOf(c), rsIdx=RATE_STOPS.indexOf(rs);
-    const pool=watchCount(c), cap=Math.min(onbDepthFor(c).cap, pool);
     const newest=agentNewestDays(c);
     const stale=(newest===null || newest>AGENT_STALE_DAYS);
     return `
@@ -14547,18 +14584,11 @@ function renderAgentsScreen(){
           <span class="agsum">${esc(agentRowSummary(c))}</span>
         </span>
         ${c.who ? `<span class="agwho">${esc(WHO_LABELS[c.who])}</span>` : ""}
-        <span class="agrate">
-          <span class="agratehdr">
-            <span class="agrateval">${esc(rs.label)}</span>
-            <span class="agratecap">best per period</span>
-          </span>
-          <input type="range" class="agrateslider" min="0" max="${RATE_STOPS.length-1}" step="1"
-              value="${rsIdx}" aria-label="How often ${escA(c.name)} shows films">
-        </span>
+        <span class="agmetrics">${agentMetricsHTML(c)}</span>
         ${stale
           ? `<span class="agwarn">⚠ nothing newer than 3 weeks — constraints may be too narrow
               <button type="button" class="ag-review" onclick="editAgentRow('${escA(c.id)}')">Review →</button></span>`
-          : `<span class="aghealth">✓ showing ${cap} · pool ${pool}${newest!==null ? ` · newest ${newest}d ago` : ""}</span>`}
+          : ""}
       </span>
     </div>`;
   }).join("");
@@ -14569,7 +14599,7 @@ function renderAgentsScreen(){
       ${rows || `<p class="unone">No agents yet.</p>`}
     </div>`;
   wireAgentsOpen();
-  wireAgentsRate();
+  console.log('[CAS-664] renderAgentsScreen took', (performance.now()-_t664).toFixed(1), 'ms for', n, 'agents');
 }
 // CAS-638: the grip/drag wiring wireAgentsDrag used to provide is gone from this screen (reorder moved off
 // it — c.order stays the deck's sort key, it just stops being editable here), but tapping a row still has to
@@ -14577,28 +14607,9 @@ function renderAgentsScreen(){
 function wireAgentsOpen(){
   const list=$("agList"); if(!list) return;
   list.addEventListener("click", e=>{
-    if(e.target.closest(".ag-learn,.ag-edit,.agrateslider,.ag-review")) return;
+    if(e.target.closest(".ag-learn,.ag-edit,.ag-review")) return;
     const row=e.target.closest(".agrow"); if(!row) return;
     openAgentRow(row.dataset.id);
-  });
-}
-// CAS-643: the rate slider. "input" (mid-drag) only updates its own label, so a full-row re-render
-// never yanks the slider out from under an in-progress drag; "change" (on release) is what commits
-// c.rateStop, saves, and re-renders — which is also what makes the health line/check state catch up.
-function wireAgentsRate(){
-  const list=$("agList"); if(!list) return;
-  list.addEventListener("input", e=>{
-    const sl=e.target.closest(".agrateslider"); if(!sl) return;
-    const lbl=sl.closest(".agrate").querySelector(".agrateval");
-    if(lbl) lbl.textContent = RATE_STOPS[+sl.value].label;
-  });
-  list.addEventListener("change", e=>{
-    const sl=e.target.closest(".agrateslider"); if(!sl) return;
-    const id=sl.closest(".agrow").dataset.id;
-    const c=cascades.find(x=>x.id===id); if(!c) return;
-    c.rateStop = +sl.value;
-    saveCascades();
-    renderAgentsScreen();
   });
 }
 // ================= CAS-636: Moving — the alert feed made visible =================
