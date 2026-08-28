@@ -6270,11 +6270,15 @@ window.addEventListener("hashchange", ()=>{
   if(id!=null) openFilmPage(id);
   else if($("filmPage").classList.contains("open")) closeFilmPage();
 });
-function trailersHTML(m){
+// CAS-657: the thumbnail URL is carried in data-yt, not an inline background-image, so a collapsed card
+// (hidden by max-height:0, not display:none) never triggers img.youtube.com fetches for films the user
+// hasn't expanded. A card already expanded at render time is the one exception — see the `expanded` param —
+// and toggleExpand fills in the rest the moment a card opens.
+function trailersHTML(m, expanded){
   const t=(m.trailers||[]).slice(0,4);
   const body = t.length
     ? `<div class="trailers">`+t.map(k=>`<button type="button" class="trailer" onclick="openVideoModal(${m.tmdb_id},'${k}')"
-        style="background-image:url(https://img.youtube.com/vi/${k}/mqdefault.jpg)" aria-label="Play trailer"><span class="play">▶</span></button>`).join("")+`</div>`
+        data-yt="${k}"${expanded?` style="background-image:url(https://img.youtube.com/vi/${k}/mqdefault.jpg)"`:""} aria-label="Play trailer"><span class="play">▶</span></button>`).join("")+`</div>`
     : `<div class="notrailer">No trailer available yet.</div>`;
   return `<div class="exhead">Trailers</div>${body}`;
 }
@@ -6435,7 +6439,7 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
     </div>
     <!-- CAS-436: the detail section (awards/director/cast/trailers/share) opens BELOW the control row, not
          above it — it is extra material about the film, not something that has to be seen before you act. -->
-    <div class="expand">${trailersHTML(m)}${shareFilmHTML(m)}</div>
+    <div class="expand">${trailersHTML(m, expandedSet.has(id))}${shareFilmHTML(m)}</div>
   </div>`;
 }
 // ---- The three verdicts (CAS-100) ----------------------------------------------
@@ -7760,6 +7764,11 @@ window.toggleExpand=id=>{
   const on=expandedSet.has(id);
   const c=document.getElementById("card-"+id); if(!c) return;
   c.classList.toggle("expanded", on);
+  // CAS-657: trailer thumbnails are lazy — the background-image is only ever set here, on first expand,
+  // never at render. The guard keeps a collapse/re-expand from re-issuing the same request.
+  if(on) c.querySelectorAll(".trailer[data-yt]").forEach(b=>{
+    if(!b.style.backgroundImage) b.style.backgroundImage=`url(https://img.youtube.com/vi/${b.dataset.yt}/mqdefault.jpg)`;
+  });
   // CAS-612 (v0.9.5): opening a card no longer opens its "where to watch" list. The full provider list
   // is a second question ("where exactly?"), asked by tapping the availability capsule (bandHTML's
   // .captog) — expanding the card was answering it unasked and pushing everything else off screen.
