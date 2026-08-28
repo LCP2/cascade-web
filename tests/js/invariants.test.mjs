@@ -1486,3 +1486,132 @@ test("CAS-678 AC6: matchesCriteria no longer reads c.tentpole, and no Tentpole U
   assert.ok(sigStart >= 0, "cascSigOf() was not found");
   assert.ok(/c\.tentpole/.test(src.slice(sigStart, sigStart + 300)), "cascSigOf no longer carries c.tentpole");
 });
+
+// ---- WATCH-LIST ACCOUNT MERGE NEVER DOUBLE-ADDS AN ID (CAS-681) --------------------------------------------
+// loadWatchlistAccount used to fold in "local-only" lists by content signature alone (CAS-590). A list that
+// genuinely exists in the account, but whose local copy has drifted (svcOn/cascOff/watchedOn/watchTiers/sort
+// all change on every Edit-screen tap), read as local-only and got appended alongside its own remote twin —
+// two rows sharing one id, which Postgres's upsert rejects with 21000 ("ON CONFLICT DO UPDATE command cannot
+// affect row a second time"). Same fault, same fix, as CAS-658 did for cascades. These tests exercise the
+// real seam (window.CascadePersistence, newly wired up for watchlists here) against a fake Supabase client
+// that reproduces the exact 21000 error a real duplicate-id payload would get, rather than a stand-in.
+function fakeWatchlistSupabase(initialRows){
+  const state = { rows: initialRows.slice(), upsertCalls: [] };
+  const client = {
+    from(table){
+      assert.equal(table, "watchlists", "the watch-list seam must only ever touch the watchlists table");
+      return {
+        select: async () => ({ data: state.rows, error: null }),
+        upsert: async (rows) => {
+          state.upsertCalls.push(rows);
+          const ids = rows.map(r => r.id);
+          if(new Set(ids).size !== ids.length){
+            // The real failure mode, reproduced: a payload with a repeated conflict key 500s.
+            return { error: { code: "21000",
+              message: "ON CONFLICT DO UPDATE command cannot affect row a second time",
+              hint: "Ensure that no rows proposed for insertion within the same command have duplicate constrained values." } };
+          }
+          rows.forEach(r => {
+            const i = state.rows.findIndex(x => x.id === r.id);
+            if(i >= 0) state.rows[i] = r; else state.rows.push(r);
+          });
+          return { error: null };
+        },
+        delete(){
+          return { eq(){ return { in: async () => ({ error: null }) }; } };
+        },
+      };
+    },
+  };
+  return { client, state };
+}
+function signInWithClient(client){
+  const auth = E.CascadeAuth;
+  auth.enabled = true; auth.client = client; auth.session = { user: { id: "cas681-test-user" } };
+}
+function signOut(){
+  const auth = E.CascadeAuth;
+  auth.enabled = false; auth.client = null; auth.session = null;
+}
+function withCas681State(fn){
+  const savedLists = E.watchLists.slice();
+  const savedActive = E.watchActiveId;
+  return (async () => {
+    try { await fn(); }
+    finally {
+      E.watchLists.length = 0; savedLists.forEach(l => E.watchLists.push(l));
+      E.setActiveWatchlist(savedActive);
+      signOut();
+    }
+  })();
+}
+
+test("CAS-681 AC1/AC3: a remote row plus a locally-drifted copy of it never doubles up, and the drifted account load no longer 500s", () => withCas681State(async () => {
+  const id = "cas681-0000-4000-8000-000000000001";
+  const remoteRow = { id, user_id: "cas681-test-user",
+    criteria: { name: "My List", icon: "🎬", order: 0, svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "score" } };
+  const { client, state } = fakeWatchlistSupabase([remoteRow]);
+  signInWithClient(client);
+
+  // This device's own copy of the SAME list (same id), edited locally — e.g. a re-sort — while the
+  // account write kept failing, so its content signature differs from the remote row above.
+  E.watchLists.length = 0;
+  E.watchLists.push(E.normWatchlistEntry({ id, name: "My List", icon: "🎬", order: 0,
+    svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "az" }));
+
+  await E.CascadePersistence.loadWatchlistAccount();
+
+  const ids = E.watchLists.map(l => l.id);
+  assert.equal(new Set(ids).size, ids.length, "watchLists must never hold two entries sharing one id");
+  const kept = E.watchLists.find(l => l.id === id);
+  assert.ok(kept, "the shared-id list must still be present after the load");
+  assert.equal(kept.sort, "az", "the local (newer) drifted value must win over the stale remote one");
+
+  // The reported failure, reproduced end to end: pushing the post-load state must not hit the simulated
+  // 21000 (it would if the load had appended a duplicate instead of updating in place).
+  await E.CascadePersistence.syncWatchlistsNow();
+  const lastUpsert = state.upsertCalls[state.upsertCalls.length - 1] || [];
+  const upsertIds = lastUpsert.map(r => r.id);
+  assert.equal(new Set(upsertIds).size, upsertIds.length, "the sync that follows a drifted load must not 500");
+}));
+
+test("CAS-681 AC2: syncWatchlistsToAccount never issues an upsert whose payload contains a repeated id, even if watchLists already holds a duplicate", () => withCas681State(async () => {
+  const id = "cas681-0000-4000-8000-000000000002";
+  const { client, state } = fakeWatchlistSupabase([]);
+  signInWithClient(client);
+
+  // A payload that cannot be built without duplicates is a bug elsewhere (the AC's own words) — seed one
+  // directly to prove the defensive guard in syncWatchlistsToAccount catches it regardless of source.
+  E.watchLists.length = 0;
+  E.watchLists.push(E.normWatchlistEntry({ id, name: "Stale copy", order: 0 }));
+  E.watchLists.push(E.normWatchlistEntry({ id, name: "Newer copy", order: 0 }));
+
+  await E.CascadePersistence.syncWatchlistsNow();
+
+  assert.equal(state.upsertCalls.length, 1, "exactly one upsert must have been attempted");
+  const upsertIds = state.upsertCalls[0].map(r => r.id);
+  assert.equal(new Set(upsertIds).size, upsertIds.length, "the upsert payload must never contain a repeated id");
+  assert.equal(upsertIds.filter(x => x === id).length, 1, "the shared id must appear exactly once");
+}));
+
+test("CAS-681 AC4: a watch-list setting changed locally reaches the account and survives a reload", () => withCas681State(async () => {
+  const id = "cas681-0000-4000-8000-000000000003";
+  const remoteRow = { id, user_id: "cas681-test-user",
+    criteria: { name: "My List", icon: "🎬", order: 0, svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "score" } };
+  const { client, state } = fakeWatchlistSupabase([remoteRow]);
+  signInWithClient(client);
+
+  E.watchLists.length = 0;
+  await E.CascadePersistence.loadWatchlistAccount();
+  assert.equal(E.watchLists.find(l => l.id === id).sort, "score", "sanity: starts on the remote value");
+
+  // The Edit-screen tap: change a setting locally, then let the (fixed) sync path push it.
+  E.watchLists.find(l => l.id === id).sort = "az";
+  await E.CascadePersistence.syncWatchlistsNow();
+  assert.equal(state.rows.find(r => r.id === id).criteria.sort, "az", "the account row must reflect the local edit");
+
+  // "Survives a reload": a fresh load (as a new session/tab would do) must see the edit, not the stale value.
+  E.watchLists.length = 0;
+  await E.CascadePersistence.loadWatchlistAccount();
+  assert.equal(E.watchLists.find(l => l.id === id).sort, "az", "a reload must show the edit that was pushed, not the pre-edit value");
+}));
