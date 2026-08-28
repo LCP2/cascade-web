@@ -268,42 +268,68 @@ test("cascade score: critic agreement beats a below-floor IMDb rating with no cr
   assert.equal(E.qScore(belowFloor), -1, "a film under the vote floor with no critic scores was still treated as rated");
 });
 
-// ---- 9. THE CASCADE SCORE FROM WHATEVER SOURCES ARE PRESENT (CAS-660) --------------------------------------
-// qScore no longer requires all three sources — one reliable source is enough to score. -1 only when the film
-// carries none of the three at all.
-test("cascade score: scored from whatever sources a film has, not only when it has all three", () => {
-  // AC1: -1 iff no source is present at all, and no other film scores -1.
+// ---- 9. THE CASCADE SCORE FROM WHATEVER SOURCES ARE PRESENT, NARROWED BY CAS-669 -----------------------
+// CAS-660 let qScore score from whichever of the three sources a film carries, one reliable source being
+// enough. CAS-669 narrows that: Metacritic and RT carry no reliability gate the way IMDb does, so a lone
+// ungated critic score (a 100% RT off a handful of reviews) was outranking films with real corroboration.
+// A film now needs a gated source (an IMDb rating above IMDB_MIN_VOTES) or at least two sources agreeing.
+test("cascade score: scored from a gated source or two corroborating sources, not one ungated source alone", () => {
+  // AC1: no film whose only source is rt_critic (or only metacritic) has a qScore other than -1.
   for(const m of E.MOVIES){
-    const hasNoSource = E.ratingOf(m) == null && m.metacritic == null && m.rt_critic == null;
-    assert.equal(E.qScore(m) === -1, hasNoSource, `${m.title}: qScore -1 disagrees with "no source present"`);
+    if(E.ratingOf(m) != null) continue;
+    if(m.metacritic != null && m.rt_critic == null) assert.equal(E.qScore(m), -1, `${m.title}: Metacritic-only film scored`);
+    if(m.rt_critic != null && m.metacritic == null) assert.equal(E.qScore(m), -1, `${m.title}: RT-only film scored`);
   }
-
-  // AC2: a film with exactly one source scores that source, rounded, IMDb multiplied by 10.
-  const imdbOnly = { title: "IMDb Only",       imdb_rating: 7.3, imdb_votes: 1000000 };
   const metaOnly = { title: "Metacritic Only", imdb_rating: null, imdb_votes: 0, metacritic: 61 };
   const rtOnly   = { title: "RT Only",         imdb_rating: null, imdb_votes: 0, rt_critic: 88 };
-  assert.equal(E.qScore(imdbOnly), Math.round(7.3*10), "IMDb-only score should be the IMDb rating x10, rounded");
-  assert.equal(E.qScore(metaOnly), 61, "Metacritic-only score should equal the Metacritic figure");
-  assert.equal(E.qScore(rtOnly), 88, "RT-only score should equal the RT figure");
+  assert.equal(E.qScore(metaOnly), -1, "a lone Metacritic score should not score (CAS-669)");
+  assert.equal(E.qScore(rtOnly), -1, "a lone RT score should not score (CAS-669)");
 
-  // AC3: for every scorable film, qScore lies between the min and max of its present parts, inclusive.
+  // AC2: a film whose only source is a gated-eligible IMDb rating still scores, as the rating x10.
+  const imdbOnly = { title: "IMDb Only", imdb_rating: 7.3, imdb_votes: 1000000 };
+  assert.equal(E.qScore(imdbOnly), Math.round(7.3*10), "IMDb-only score should be the IMDb rating x10, rounded");
+
+  // AC3: Metacritic + RT together, with no eligible IMDb, score as their mean.
+  const bothCritics = { title: "Both Critics", imdb_rating: null, imdb_votes: 0, metacritic: 60, rt_critic: 90 };
+  assert.equal(E.qScore(bothCritics), 75, "Metacritic + RT together should score their mean");
+
+  // For every scorable film, qScore lies between the min and max of its counted parts, inclusive.
   for(const m of E.MOVIES){
+    const q = E.qScore(m);
+    if(q === -1) continue;
     const r = E.ratingOf(m);
     const parts = [];
     if(r != null) parts.push(r*10);
     if(m.metacritic != null) parts.push(m.metacritic);
     if(m.rt_critic != null) parts.push(m.rt_critic);
-    if(!parts.length) continue;
-    const q = E.qScore(m);
     assert.ok(q >= Math.min(...parts) && q <= Math.max(...parts),
       `${m.title}: qScore ${q} falls outside [${Math.min(...parts)}, ${Math.max(...parts)}]`);
   }
+});
 
-  // AC4: strictly more films are scorable than under the old "rating AND at least one critic score" rule.
-  const oldScorable = E.MOVIES.filter(m => E.ratingOf(m) != null && (m.metacritic != null || m.rt_critic != null)).length;
-  const newScorable = E.MOVIES.filter(m => E.qScore(m) !== -1).length;
-  assert.ok(newScorable > oldScorable,
-    `expected more scorable films under the new rule: old ${oldScorable}, new ${newScorable}`);
+// ---- 9b. A SINGLE UNGATED SOURCE NO LONGER LEADS THE TOP OF THE LIST (CAS-669) ---------------------------
+// AC4: strictly fewer films score 90+ than under the CAS-660 rule (any single present source was enough),
+// and none of the survivors rest on a single ungated source.
+test("cascade score: fewer films score 90+ once a lone ungated source stops counting, and none of the survivors are lone-sourced", () => {
+  const cas660Score = m => {
+    const r = E.ratingOf(m);
+    const p = [];
+    if(r != null) p.push(r*10);
+    if(m.metacritic != null) p.push(m.metacritic);
+    if(m.rt_critic != null) p.push(m.rt_critic);
+    if(!p.length) return -1;
+    return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
+  };
+  const oldTop = E.MOVIES.filter(m => cas660Score(m) >= 90).length;
+  const newTop = E.MOVIES.filter(m => E.qScore(m) >= 90).length;
+  assert.ok(newTop < oldTop, `expected fewer films scoring 90+ under the new rule: old ${oldTop}, new ${newTop}`);
+
+  for(const m of E.MOVIES){
+    if(E.qScore(m) < 90) continue;
+    const gated = E.ratingOf(m) != null;
+    const corroborated = (m.metacritic != null ? 1 : 0) + (m.rt_critic != null ? 1 : 0) >= 2;
+    assert.ok(gated || corroborated, `${m.title}: scores 90+ resting on a single ungated source`);
+  }
 });
 
 // ---- 10. MISSION DIALS COMBINE WITH OR (CAS-661) ----------------------------------------------------------
