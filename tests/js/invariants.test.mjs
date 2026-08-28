@@ -534,7 +534,10 @@ test("CAS-666 AC1/AC3: selecting a list through the deck loads that list's own r
     "deckSelect must load list B's own stored record, not carry list A's scratch state over");
 
   // AC3: switching back to B must not have overwritten A's own stored record with B's settings.
-  assert.deepEqual(plainRecord(a), { svcOn: ["stream"], cascOff: ["only-a"], watchedOn: [], watchTiers: [], sort: null, excludeTags: [] },
+  // CAS-677: watchedOn defaults to every WATCH_STEPS key (permissive) now, not [] — read off
+  // watchlistDefaults() itself rather than hardcode the step keys here.
+  assert.deepEqual(plainRecord(a),
+    { svcOn: ["stream"], cascOff: ["only-a"], watchedOn: [...E.watchlistDefaults().watchedOn], watchTiers: [], sort: null, excludeTags: [] },
     "list A's stored record must be unchanged by selecting list B");
 });
 
@@ -549,6 +552,41 @@ test("CAS-666 AC2: creating a list through the deck gets watchlistDefaults(), no
   assert.deepEqual(plainRecord(E.watchlistRecord()), plainRecord(E.watchlistDefaults()),
     "a freshly created list must carry watchlistDefaults(), not list A's svcOn/cascOff");
 });
+
+// ---- WATCHED VERDICTS ARE PERMISSIVE BY DEFAULT, AND A RESTRICTIVE STORED VALUE IS MIGRATED UP (CAS-677) ---
+// The editor UI that used to write ymWatchedOn (the five "Films I've watched" tickboxes) is gone — the
+// Watched control in the listing and the scope bar are now the only places that state lives. So
+// watchlistDefaults().watchedOn has to stop meaning "exclude every watched film" ([]) and start meaning
+// "exclude none" (every WATCH_STEPS key), and any list already holding a narrower value has to be widened
+// on load, or that list would be permanently stuck with no UI left that can change it.
+test("CAS-677 AC6: watchlistDefaults().watchedOn contains every WATCH_STEPS key", () => {
+  // Spread WATCH_STEPS itself first — mapping it directly would call the vm realm's own Array.prototype.map,
+  // which returns a vm-realm array that deepStrictEqual treats as unequal to a same-looking native one (see
+  // plainRecord's own comment above for the same gotcha).
+  const keys = [...E.WATCH_STEPS].map(s => s.key);
+  const d = E.watchlistDefaults();
+  assert.deepEqual([...d.watchedOn].sort(), keys.sort(),
+    "a newly created list must exclude no film on watched grounds");
+});
+
+test("CAS-677 AC7: normWatchlist migrates a restrictive stored watchedOn to the permissive default on load", () => {
+  const permissive = [...E.watchlistDefaults().watchedOn].sort();
+
+  const restrictive = E.normWatchlistEntry({ name: "restrictive", order: 0, watchedOn: ["wow"] });
+  assert.deepEqual([...restrictive.watchedOn].sort(), permissive,
+    "a narrower stored watchedOn must be migrated up to the permissive set");
+
+  const legacyEmpty = E.normWatchlistEntry({ name: "legacy", order: 0, watchedOn: [] });
+  assert.deepEqual([...legacyEmpty.watchedOn].sort(), permissive,
+    "the old [] default (exclude every watched film) must migrate to the permissive set too");
+
+  const alreadyPermissive = E.normWatchlistEntry({ name: "already", order: 0, watchedOn: permissive.slice() });
+  assert.deepEqual([...alreadyPermissive.watchedOn].sort(), permissive,
+    "an already-permissive stored value must be kept as-is");
+});
+
+// (More CAS-677 tests — AC3/AC4/AC9, which need the CAS-680 section's seedNCascades/withCas680List helpers —
+// live further down, right after the CAS-680 tests those helpers were built for.)
 
 // ---- AGENT TICK AND ACTIVE SET STAY IN STEP (CAS-673) ------------------------------------------------------
 // ymCascToggle/ymCascSetAll mutate the live scratch Set ymCascOff and then re-derive activeIds via
@@ -820,18 +858,113 @@ test("CAS-680 AC7: ymFeedList() still ignores the scope bar, and scopeRows() sti
       const list = E.ymFeedList();
       assert.ok(list.length > 0, "sanity: the reproduction must match at least one film");
 
-      // The scope bar defaults to Notify only (scope.watch=true, scope.new/watched=false) — a film with no
-      // Watch-it decision at all fails inFindScope under that default, but ymFeedList() never checks it.
-      assert.equal(E.scope.watch, true, "sanity: default scope is Notify");
-      assert.equal(E.scope.new, false, "sanity: default scope is Notify");
-      const undecided = list.find(m => !E.inFindScope(m));
-      assert.ok(undecided, "sanity: at least one matched film must carry no Watch-it decision under the default scope");
+      // CAS-677: the scope bar defaults to Notify + For review on, Watched off (scope.watch=scope.new=true,
+      // scope.watched=false). watchedOn is now permissive by default too, so an undecided film no longer
+      // demonstrates the gap — mark one watched instead: ymFeedMatches still carries it (permissive
+      // watchedOn), but inFindScope fails it (scope.watched is off).
+      assert.equal(E.scope.watch, true, "sanity: default scope leaves Notify on");
+      assert.equal(E.scope.new, true, "sanity: default scope leaves For review on");
+      assert.equal(E.scope.watched, false, "sanity: default scope leaves Watched off");
+      const target = list[0];
+      const wasWatched = E.watched.has(target.tmdb_id);
+      E.watched.add(target.tmdb_id);
+      try {
+        assert.equal(E.inFindScope(target), false,
+          "a watched film must fail inFindScope under the default scope (Watched pill off)");
 
-      const rows = E.scopeRows();
-      assert.ok(!rows.some(m => m.tmdb_id === undecided.tmdb_id),
-        "scopeRows() must drop a film the scope bar excludes — it applies inFindScope as its last step");
-      assert.ok(list.some(m => m.tmdb_id === undecided.tmdb_id),
-        "ymFeedList() must still carry that same film — it never applies inFindScope");
+        const stillMatches = E.ymFeedList();
+        assert.ok(stillMatches.some(m => m.tmdb_id === target.tmdb_id),
+          "ymFeedList() must still carry that same film — it never applies inFindScope");
+
+        const rows = E.scopeRows();
+        assert.ok(!rows.some(m => m.tmdb_id === target.tmdb_id),
+          "scopeRows() must drop a film the scope bar excludes — it applies inFindScope as its last step");
+      } finally {
+        if(!wasWatched) E.watched.delete(target.tmdb_id);
+      }
+    });
+  } finally {
+    unseedCascades(ids);
+  }
+});
+
+test("CAS-677 AC4/AC9: ymWatchedOn still gates ymFeedMatches exactly as before — only its default population changed", () => {
+  const ids = seedNCascades(1);
+  try {
+    withCas680List(ids, () => {
+      E.ymCascSetAll(true);
+      E.ymSvcSetAll(true);
+      const list = E.ymFeedList();
+      assert.ok(list.length > 0, "sanity: the reproduction must match at least one film");
+      const target = list[0];
+      const wasWatched = E.watched.has(target.tmdb_id);
+      E.watched.add(target.tmdb_id);   // opinionOf(target) -> "liked" once no other verdict is set
+      const savedWatchedOn = new Set(E.ymWatchedOn);
+      try {
+        E.ymWatchedOn.clear();         // simulate the old restrictive default
+        assert.ok(!E.ymFeedList().some(m => m.tmdb_id === target.tmdb_id),
+          "a watched film whose verdict is not in ymWatchedOn must still fail ymFeedList's own ymFeedMatches gate");
+
+        E.ymWatchedOn.add("liked");
+        assert.ok(E.ymFeedList().some(m => m.tmdb_id === target.tmdb_id),
+          "adding the matching verdict back to ymWatchedOn must let the film back in — the predicate itself is untouched");
+      } finally {
+        E.ymWatchedOn.clear();
+        savedWatchedOn.forEach(k => E.ymWatchedOn.add(k));
+        if(!wasWatched) E.watched.delete(target.tmdb_id);
+      }
+    });
+  } finally {
+    unseedCascades(ids);
+  }
+});
+
+test("CAS-677 AC3: the watch list Edit screen no longer renders verdict tickboxes or the Films I've watched heading", () => {
+  const ids = seedNCascades(1);
+  try {
+    withCas680List(ids, () => {
+      const html = E.leInnerHTML();
+      assert.ok(!html.includes("Films I've watched"), "the removed heading must not render");
+      assert.ok(!html.includes("ymverdicts"), "the removed verdict-tickbox wrapper must not render");
+      assert.ok(!html.includes("ymVerdictToggle") && !html.includes("ymVerdictSetAll"),
+        "no control should still wire to the removed verdict toggles");
+    });
+  } finally {
+    unseedCascades(ids);
+  }
+});
+
+test("CAS-677 AC1: the scope bar defaults to Notify and For review on, Watched off", () => {
+  // scope is a session-only module object — never persisted (see its own comment) — so this literal IS the
+  // state both a brand-new list and a user who has never touched the bar land on.
+  assert.deepEqual({ watch: E.scope.watch, new: E.scope.new, watched: E.scope.watched },
+    { watch: true, new: true, watched: false });
+});
+
+test("CAS-677 AC8: turning the scope bar's Watched pill on surfaces watched films", () => {
+  const ids = seedNCascades(1);
+  try {
+    withCas680List(ids, () => {
+      E.ymCascSetAll(true);
+      E.ymSvcSetAll(true);
+      const list = E.ymFeedList();
+      assert.ok(list.length > 0, "sanity: the reproduction must match at least one film");
+      const target = list[0];
+      const wasWatched = E.watched.has(target.tmdb_id);
+      E.watched.add(target.tmdb_id);
+      const savedScope = { ...E.scope };
+      try {
+        E.scope.watched = false;
+        assert.ok(!E.scopeRows().some(m => m.tmdb_id === target.tmdb_id),
+          "sanity: with the Watched pill off, the watched film must not appear");
+
+        E.scope.watched = true;
+        assert.ok(E.scopeRows().some(m => m.tmdb_id === target.tmdb_id),
+          "with the Watched pill on, the watched film must appear");
+      } finally {
+        Object.assign(E.scope, savedScope);
+        if(!wasWatched) E.watched.delete(target.tmdb_id);
+      }
     });
   } finally {
     unseedCascades(ids);

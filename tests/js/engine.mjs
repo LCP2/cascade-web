@@ -119,6 +119,12 @@ if(typeof window.CascadeAuth === "undefined"){
   // let a test drive the availability chips the same way a person taps them.
   ymFeedList, ymAgentListCount, inFindScope, scope, scopeRows,
   YM_SVC,
+  // CAS-677: WATCH_STEPS (the watched-verdict ramp watchlistDefaults()'s permissive watchedOn is built
+  // from), ymWatchedOn itself (by reference, like ymCascOff below, so a test can drive it directly the same
+  // way a restrictive pre-ticket value would have) and leInnerHTML (the list editor's real render, so a
+  // test can assert the removed verdict section is actually gone from its output, not just from source text).
+  WATCH_STEPS, leInnerHTML,
+  get ymWatchedOn(){ return ymWatchedOn; },
   get ymSvcOn(){ return ymSvcOn; },
   ymSvcToggle: (key, btn) => window.ymSvcToggle(key, btn),
   ymSvcSetAll: on => window.ymSvcSetAll(on),
