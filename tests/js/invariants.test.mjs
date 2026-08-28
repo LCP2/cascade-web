@@ -433,6 +433,74 @@ test("mission OR AC5: every zero stop reads Off, and the Cinema Release control 
     "the Cinema Release control does not read \"Had a cinema release\"");
 });
 
+// ---- 10b. THE BUDGET ROUTE UNDER OR REQUIRES AN AFFIRMATIVE MATCH (CAS-674) ------------------------------
+// CAS-661 made the Mission dials alternative OR routes in. selScaleMatch is tri-state (true/false/null), and
+// under the PREVIOUS `!==false` reading, a film with no budget or gross figure at all (null) cleared the
+// Budget route on its own — an unknown scale was an AFFIRMATIVE reason to admit a film, not merely "not a
+// reason to deny" it. The fix requires `===true`: a null result now contributes no term, exactly like a
+// dial left Off.
+test("mission OR AC6 (CAS-674): the Budget route only clears on an affirmative scale match", () => {
+  const unknown = E.MOVIES.find(m => !(m.budget > 0) && !(m.worldwide_gross > 0));
+  assert.ok(unknown, "no unknown-scale film in the catalogue — this test would prove nothing");
+  // AC2: a film with neither budget nor worldwide_gross does not clear the Budget route.
+  assert.equal(E.matchesCriteria(unknown, missionCase({ selScale: 100e6 })), false,
+    `${unknown.title} carries no budget or gross and still cleared the Budget route under OR`);
+
+  // AC3: a known budget at or above the floor still clears it, and one known and below it still does not.
+  const above = E.MOVIES.find(m => m.budget >= 100e6);
+  const below = E.MOVIES.find(m => m.budget > 0 && m.budget < 100e6);
+  assert.ok(above && below, "need both an above-floor and a below-floor budgeted film to test AC3");
+  assert.equal(E.matchesCriteria(above, missionCase({ selScale: 100e6 })), true,
+    `${above.title} at $${above.budget} (>= floor) did not clear the Budget route`);
+  assert.equal(E.matchesCriteria(below, missionCase({ selScale: 100e6 })), false,
+    `${below.title} at $${below.budget} (< floor) cleared the Budget route`);
+});
+
+// ---- 11. LISTED NEVER EXCEEDS WHAT MATCHES (CAS-674 AC1) --------------------------------------------------
+// listedCount (what an agent actually LISTS, via listedBy) is a NARROWING of countCriteria (the raw
+// matchesCriteria haul) by window and pin/move state — it can never legitimately exceed it. This was
+// violated for an agent watching a single narrow window with no listStatus singled out: listWindowOK's
+// fallback ("list whatever the agent watches") read that through inScope's broader "still ahead of" test
+// instead of an exact match against c.status, so a single-window agent could list films from windows
+// matchesCriteria itself would reject.
+test("listing never exceeds matching: listedCount(c) <= countCriteria(c), for every real preset", () => {
+  for(const { kind, s, label } of CASES){
+    pickInLane(E, kind, s.key);
+    const d = E.onbApply();
+    const lc = E.listedCount(d), cc = E.countCriteria(d);
+    assert.ok(lc <= cc, `${label}: listedCount ${lc} exceeds countCriteria ${cc}`);
+  }
+});
+
+test("listing never exceeds matching: holds for a single-window agent with no listStatus singled out (CAS-674 repro)", () => {
+  const narrowVariants = [
+    { kind:"cinema", status:["in_cinema"] },
+    { kind:"stream", status:["included_streaming"] },
+    { kind:"stream", status:["pvod","rental"] },
+  ];
+  for(const v of narrowVariants){
+    const c = E.normCascade({ ...v }, {});
+    assert.equal(c.listStatus.length, 0, `${JSON.stringify(v)}: expected no listStatus singled out for this repro`);
+    const lc = E.listedCount(c), cc = E.countCriteria(c);
+    assert.ok(lc <= cc, `${JSON.stringify(v)}: listedCount ${lc} exceeds countCriteria ${cc}`);
+  }
+});
+
+// ---- 12. THE AGENTS ROW AND MISSION AGREE (CAS-674 AC4) ---------------------------------------------------
+// Reproduces the reported case: a cinema agent set to Budget Studio floor + Buzz Trending must report the
+// SAME count on the Agents row (agentMetricsCompute's "total", the deck card's "N listed") as on Mission
+// (listedCount, what onbShownCount/stepCount print as "N films match right now"). Before CAS-674 the Agents
+// row's comment already claimed "same test the listing itself runs" but the code read watchesFilm — the
+// wider watch-ahead set — so the two screens quoted different numbers for one agent.
+test("the Agents row and Mission report the same count for one agent (CAS-674 repro)", () => {
+  const c = E.normCascade({ kind:"cinema", status:["upcoming","opening_week","in_cinema"],
+    selScale:97e6, selBuzz:2 }, {});
+  const agentsRowTotal = E.agentMetricsCompute(c).total;
+  const missionCount = E.listedCount(c);
+  assert.equal(agentsRowTotal, missionCount,
+    `Agents row says ${agentsRowTotal} listed, Mission says ${missionCount} match right now`);
+});
+
 // ---- WATCH-LIST SELECTION LOADS ITS OWN RECORD (CAS-666) ------------------------------------------------
 // deckSelect/wlRailCreate are the LIVE deck's own selection/creation paths — the ones that shipped without
 // applyActiveWatchlist(), so the ymSvcOn/etc scratch state kept whichever list was previously open and

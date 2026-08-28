@@ -309,19 +309,40 @@ test("scale: no rung of the dial drops a film for having no money figure on it",
   }
 });
 
-// The same film, through the whole recipe rather than the one dial: a scale lean must never be the reason a
-// film with no money figure disappears from an agent that otherwise wants it.
-test("scale: raising the lean never removes a film whose scale we do not hold", () => {
+// The same film, through the whole recipe rather than the one dial. CAS-661 made the Mission dials OR
+// routes, and CAS-674 fixed the Budget route's leak: under OR it now takes an AFFIRMATIVE selScaleMatch to
+// clear, so a money-unknown film that qualified ONLY by riding the old `!==false` leak legitimately falls
+// out once scale is the sole route that admits it and is leaned all the way up. The "never removes"
+// guarantee still holds when another OR route independently admits the SAME film — mirrors matchesCriteria's
+// own OR clauses (minus scale) rather than just checking whether the agent has another dial set, because
+// CAS-663 zeroes out selCrowd/selCritScore/selAwards/selBuzz for a pre-release film specifically — an agent
+// carrying a buzz dial does not mean an upcoming film in `blind` is actually admitted by it.
+const isPreReleaseM = m => ["upcoming", "in_cinema"].includes(E.primaryStatus(m));
+test("scale: raising the lean only drops a money-unknown film when scale is its sole qualifying Mission route (CAS-674)", () => {
   for(const { kind, s, label } of CASES){
     pickInLane(E, kind, s.key);
     const base = E.onbApply();
+    const otherRouteAdmits = m => {
+      const preRel = isPreReleaseM(m);
+      return (!preRel && base.selCrowd && E.selCrowdOK(m, base))
+        || (!preRel && (base.selCritScore || base.selAwards) && E.selCriticsOK(m, base))
+        || (!preRel && base.selBuzz && E.selBuzzOK(m, base))
+        || (base.cinemaReleaseOnly && !!m.cinema_release);
+    };
     const open = E.MOVIES.filter(m => E.watchesFilm(m, E.normCascade({ ...base, selScale: 0 })));
     const blind = open.filter(m => !(m.budget > 0) && !(m.worldwide_gross > 0));
     if(!blind.length) continue;
     const top = E.SCALE_REF[E.SCALE_REF.length - 1].d;
     const leaned = new Set(E.MOVIES.filter(m => E.watchesFilm(m, E.normCascade({ ...base, selScale: top }))));
-    for(const m of blind) assert.ok(leaned.has(m),
-      `${label}: ${m.title} fell out at the top scale rung with no money figure to judge it by`);
+    for(const m of blind){
+      if(otherRouteAdmits(m)){
+        assert.ok(leaned.has(m),
+          `${label}: ${m.title} fell out at the top scale rung despite another OR route that should still admit it`);
+      } else {
+        assert.ok(!leaned.has(m),
+          `${label}: ${m.title} (no money figure, scale the only route admitting it) stayed listed at the top scale rung — the Budget OR route should require an affirmative match (CAS-674)`);
+      }
+    }
   }
 });
 

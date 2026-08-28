@@ -195,6 +195,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-602: the bell's own moment-copy lookup, so a test can assert a monitor moment key can never
   // render as its raw string (see REAL_MOMENT_SAID's own use at the ntfrow render site).
   REAL_MOMENT_SAID,
+  // CAS-674: the Agents row's own metrics compute, so a test can check its "total" agrees with the
+  // listing (listedCount) rather than the wider watch-ahead set (watchesFilm) it used to read.
+  agentMetricsCompute,
 };
 `;
 
