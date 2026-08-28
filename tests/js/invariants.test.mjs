@@ -429,3 +429,75 @@ test("CAS-666 AC2: creating a list through the deck gets watchlistDefaults(), no
   assert.deepEqual(plainRecord(E.watchlistRecord()), plainRecord(E.watchlistDefaults()),
     "a freshly created list must carry watchlistDefaults(), not list A's svcOn/cascOff");
 });
+
+// ---- MOVING NEVER RENDERS A PROVISIONAL LEDGER (CAS-667) -------------------------------------------------
+// movingData() branches on window.CascadePersistence.accountActive() — flip window.CascadeAuth's real fields
+// (enabled/client/session) the same way sign-in for real does, rather than a stand-in predicate, so the
+// signed-in branch runs through the exact same check the shipped code runs.
+function setSignedIn(signedIn){
+  const auth = E.CascadeAuth;
+  auth.enabled = signedIn;
+  auth.client = signedIn ? {} : null;
+  auth.session = signedIn ? { user: { id: "cas667-test-user" } } : null;
+}
+
+test("CAS-667 AC1: a signed-in device with the alerts ledger unresolved renders nothing, never the guest ledger", () => {
+  const film = E.MOVIES[0];
+  E.realAlerts.length = 0;
+  E.firstFound[String(film.tmdb_id)] = new Date().toISOString();
+  setSignedIn(true);
+  E.setMovingReady(false);
+
+  const { canRows, newRows, changedRows } = E.movingData();
+  assert.equal(canRows.length, 0, "unresolved ledger must not render can-watch rows");
+  assert.equal(newRows.length, 0, "unresolved ledger must not fall back to the guest firstFound ledger");
+  assert.equal(changedRows.length, 0, "unresolved ledger must not render changed rows");
+
+  delete E.firstFound[String(film.tmdb_id)];
+  setSignedIn(false);
+  E.setMovingReady(true);
+});
+
+test("CAS-667 AC2: opening Moving before and after the ledger resolves ends on the same row set", () => {
+  const film = E.MOVIES[0];
+  setSignedIn(true);
+  E.realAlerts.length = 0;
+  E.realAlerts.push({ id: 1, movie_id: film.tmdb_id, moment: "announced_stream", title: film.title,
+    cascade_name: "Test agent", emailed_at: new Date().toISOString(), read_at: null });
+
+  // Landing on Moving before the account answer comes back — the reported symptom.
+  E.setMovingReady(false);
+  const beforeReady = E.movingData();
+  assert.equal([...beforeReady.canRows, ...beforeReady.newRows, ...beforeReady.changedRows].length, 0,
+    "still-unresolved ledger must render nothing on the landing-screen open");
+
+  // Same visit, once loadRealAlerts has actually answered.
+  E.setMovingReady(true);
+  const afterReady = E.movingData();
+  const afterIds = [...afterReady.canRows, ...afterReady.newRows, ...afterReady.changedRows].map(r => r.filmId);
+  assert.deepEqual(afterIds, [String(film.tmdb_id)],
+    "once ready, movingData must reflect the real alerts ledger instead of staying empty");
+
+  // Navigating away and back — same underlying data, same readiness — must reproduce the identical rows.
+  const reopened = E.movingData();
+  const reopenedIds = [...reopened.canRows, ...reopened.newRows, ...reopened.changedRows].map(r => r.filmId);
+  assert.deepEqual(reopenedIds, afterIds, "reopening Moving must produce the same row set as the prior open");
+
+  E.realAlerts.length = 0;
+  setSignedIn(false);
+});
+
+test("CAS-667 AC3: a genuine guest device still gets firstFound rows regardless of movingReady", () => {
+  const film = E.MOVIES[0];
+  setSignedIn(false);
+  E.firstFound[String(film.tmdb_id)] = new Date().toISOString();
+  E.setMovingReady(false);   // a guest has nothing to wait for — must be unaffected by this flag
+
+  const { canRows, newRows, changedRows } = E.movingData();
+  assert.equal(canRows.length + changedRows.length, 0, "a guest device has no can-watch/changed rows at all");
+  assert.ok(newRows.some(r => r.filmId === String(film.tmdb_id)),
+    "a guest device must still get its firstFound row even while movingReady is false");
+
+  delete E.firstFound[String(film.tmdb_id)];
+  E.setMovingReady(true);
+});
