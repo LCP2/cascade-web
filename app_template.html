@@ -4860,9 +4860,16 @@ try{
 // ACTIVE WATCH LIST's membership instead of direct rail taps — CAS-634's toggleActive is retired as the
 // rail's own input below, but the listing pipeline itself (scopeRows, deckSync's dirty-check machinery for
 // Manage Agents, etc.) is untouched, exactly as the ticket's established facts require.
-function syncActiveIdsFromActiveList(){
+// CAS-673: `l.cascOff` is the PERSISTED record — ymSchedulePersist debounces the write of a live tick
+// by 300ms, so re-deriving from the record immediately after a tick reads the state from BEFORE that
+// tick. A caller that just mutated the live scratch Set (ymCascToggle/ymCascSetAll) must pass it as
+// `liveCascOff` so this reads the tick that hasn't been persisted yet; every other caller here is a
+// list SWITCH (deckSelect/wlRailCreate/loadAccount) or a cascades-array change, where no live scratch
+// state exists for the (possibly just-adopted) active list and the record IS the truth.
+function syncActiveIdsFromActiveList(liveCascOff){
   const l=activeWatchlist();
-  activeIds = l ? cascades.filter(c=>!(l.cascOff||[]).includes(c.id)).map(c=>c.id) : [];
+  const cascOff = liveCascOff ? [...liveCascOff] : (l ? (l.cascOff||[]) : []);
+  activeIds = l ? cascades.filter(c=>!cascOff.includes(c.id)).map(c=>c.id) : [];
   activeId = activeIds[0] || null;
   try{ localStorage.setItem("cascade_active",activeId||""); }catch(e){}
   saveActiveIds();
@@ -13832,7 +13839,7 @@ window.ymSvcSetAll=on=>{ ymSvcOn=new Set(on?YM_SVC.map(s=>s.key):[]); ymSchedule
 // this screen's own preview feed — every toggle re-derives activeIds from the active list and re-renders.
 window.ymCascToggle=(id,btn)=>{
   ymCascOff.has(id)?ymCascOff.delete(id):ymCascOff.add(id);
-  syncActiveIdsFromActiveList();
+  syncActiveIdsFromActiveList(ymCascOff);
   if(btn){
     const on=!ymCascOff.has(id);
     btn.classList.toggle("on",on); btn.setAttribute("aria-pressed",String(on));
@@ -13843,7 +13850,7 @@ window.ymCascToggle=(id,btn)=>{
 };
 // CAS-592: the list editor's own "Select all · Clear all" row for cascades — ymCascToggle above only ever
 // flipped one at a time, which is all the old inline panel needed since it had no bulk row for this section.
-window.ymCascSetAll=on=>{ ymCascOff=new Set(on?[]:cascades.map(c=>c.id)); syncActiveIdsFromActiveList(); ymSchedulePersist(); ymScheduleRender(); };
+window.ymCascSetAll=on=>{ ymCascOff=new Set(on?[]:cascades.map(c=>c.id)); syncActiveIdsFromActiveList(ymCascOff); ymSchedulePersist(); ymScheduleRender(); };
 // CAS-646: watchedOn now drives the LIVE listing too (ymFeedMatches), same reasoning as ymSvcToggle above.
 window.ymVerdictToggle=(k,btn)=>{
   ymWatchedOn.has(k)?ymWatchedOn.delete(k):ymWatchedOn.add(k);
