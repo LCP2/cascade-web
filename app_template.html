@@ -443,6 +443,15 @@
        remembers each card's real height once seen, keeping the scrollbar and offsets stable. */
     content-visibility:auto;contain-intrinsic-size:auto 320px}
   .card.expanded{border-color:#3a3560;box-shadow:0 8px 30px rgba(0,0,0,.55)}
+  /* CAS-684: same fix as CAS-376's .stub.ratingopen, applied to the card popovers (Notify/Tags/Watched).
+     .card's own overflow:hidden and content-visibility:auto (paint containment) both clip a .cpop that
+     paints past the card's box — worse now the condensed card (CAS-617/624/630) is short enough that an
+     open panel routinely overflows it. Paint containment also forces its own stacking context (implicit
+     z-index:0 among siblings by DOM order), so even unclipped the panel would paint under whichever
+     neighbour card sits later in the list. .popopen (added/removed around the panel's own open/close, see
+     closeWatchPanel and openListsPanel/openNotifyPanel/openWatchPanel) lifts both for exactly as long as a
+     panel is open on that card, and opts back into ordinary stacking so it wins over later cards. */
+  .card.popopen{overflow:visible;content-visibility:visible;position:relative;z-index:5}
   /* CAS-179: the card is three bands now — the information body, the availability strip on its own
      tint, and the footer that carries the price line and the controls — so the padding moved off
      .card and onto each band. Only the middle band is allowed to carry window colour. */
@@ -6798,6 +6807,7 @@ window.openListsPanel=(id, btn)=>{
   const mine=open && open.classList.contains("lpop");   // CAS-281: only MY panel counts as a second tap
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
+  const card=btn.closest(".card"); if(card) card.classList.add("popopen");   // CAS-684
   watchPanelAnchorY=scrollY;   // CAS-647: see snapToWatchPanelAnchor
   const pop=document.createElement("div");
   // CAS-374-style chrome: content-width, no in-panel close — the chip is the toggle. CAS-439: Lists sits in
@@ -6876,6 +6886,7 @@ window.openNotifyPanel=(id, btn)=>{
   const mine=open && open.classList.contains("npop");   // CAS-281: only MY panel counts as a second tap
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
+  const card=btn.closest(".card"); if(card) card.classList.add("popopen");   // CAS-684
   watchPanelAnchorY=scrollY;   // CAS-647: see snapToWatchPanelAnchor
   const pop=document.createElement("div");
   // CAS-374: content-width, left-aligned under the Notify chip — no in-panel close, the chip is the toggle.
@@ -7034,6 +7045,7 @@ function closeWatchPanel(){
   // clip by adding .ratingopen for exactly as long as the panel is open; this is the one place every close
   // already runs through, so it comes back off here regardless of which of those paths ended it.
   document.querySelectorAll(".stub.ratingopen").forEach(s=>s.classList.remove("ratingopen"));
+  document.querySelectorAll(".card.popopen").forEach(c=>c.classList.remove("popopen"));   // CAS-684
   document.removeEventListener("keydown", watchPanelKey, true);
 }
 function watchPanelKey(e){ if(e.key==="Escape"){ e.stopPropagation(); closeWatchPanel(); } }
@@ -7066,6 +7078,7 @@ window.openWatchPanel=(id, btn)=>{
   closeWatchPanel();   // CAS-376: also strips any stub's .ratingopen — so that has to be (re)added AFTER this
   if(mine){ watchPanelAnchorY=null; return; }    // tapping the chip again closes the panel it opened
   const stub=btn.closest(".stub"); if(stub) stub.classList.add("ratingopen");
+  const card=btn.closest(".card"); if(card) card.classList.add("popopen");   // CAS-684
   watchPanelAnchorY=scrollY;
   const ymEl=$("yourMovies");
   ymPanelAnchorTop = (ymEl && ymEl.classList.contains("open")) ? ymEl.scrollTop : null;
