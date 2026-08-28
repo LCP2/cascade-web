@@ -116,7 +116,7 @@ const EXPORTS = `
   inferredScale, inferScaleWhy, budgetCell, moneyRowHTML, SCALE_INFER_MIN_PEERS, popOf, scaleTier,
   agentWindow, winOn, subOn, winSubs, PRIORITY_WATCH, ALERT_DEFAULTS, ALERT_SHORT, ALERT_MOMENT,
   alertLive, reachableRows, liveAlerts, drawWatchLanes,
-  selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK,
+  selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK, voteReadout, critScoreReadout, scaleReadout,
   qScore, sortMoviesBy, ratingOf, IMDB_MIN_VOTES,
   SCALE_REF, BUZZ_STOPS, VOTE_REF, CRIT_MARKS, AWARD_STOPS, awardRank, parseAwards,
   AGE_LEVELS, ONB_GENRES, LANG_OPTS, GENRE_COUNT,

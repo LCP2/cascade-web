@@ -9,9 +9,13 @@
 // over a total of 28 broke "a facet is no bigger than the set".
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadEngine, pickInLane } from "./engine.mjs";
 
 const E = loadEngine();
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 // Every preset in every lane it is offered in — the real matrix a person can walk into.
 const LANES = ["cinema", "stream"];
@@ -70,10 +74,25 @@ test("one recipe, one answer: the card's count equals the flow's count", () => {
 });
 
 // ---- 3. MONOTONICITY ------------------------------------------------------------------------------------
-// Narrowing any one axis can only ever remove films. This is what makes a falling count legible as "you asked
-// for more" — CAS-114 reversed the dials to AND for exactly this reason, and a regression here would make the
-// count move the opposite way to the gesture.
+// Narrowing any one axis can only ever remove films — true unconditionally for genre/age/awards/windows,
+// which stay ANDed. The Mission dials (People's vote / Critics & awards / Budget / Buzz) are CAS-661's OR
+// group: raising a dial that is ALREADY set only ever shrinks that one OR term, so the union with the other
+// (unchanged) terms can only shrink or hold — still guaranteed. But turning a dial on FROM OFF is adding a
+// new independent route in, not tightening one, and when another Mission dial is already active in the base
+// recipe that can only add films, never remove them (e.g. stream/streaming: turning on Critics score while
+// People's vote is already the agent's route in took 349 → 380). That case is only guaranteed to narrow when
+// the dial being moved is the SOLE active Mission route (see invariants.test.mjs's own OR-specific test,
+// added by CAS-661), so this general matrix walk skips it rather than asserting something no longer true.
 test("monotonicity: narrowing any single axis never increases the count", () => {
+  // Group id for each Mission-dial perturbation below, and whether that group is already active in a given
+  // recipe. selCritScore/selAwards share one OR term (selCriticsOK), so both perturbations share one group id.
+  const MISSION_GROUP_ID = { "vote bar": "crowd", "critics score": "critics", "awards rung": "critics",
+                              "scale": "scale", "buzz": "buzz" };
+  const groupActive = (id, d) => id === "crowd" ? !!d.selCrowd
+    : id === "critics" ? !!(d.selCritScore || d.selAwards)
+    : id === "scale" ? !!d.selScale : !!d.selBuzz;
+  const missionActiveExcept = (d, exceptId) => Object.values(MISSION_GROUP_ID)
+    .some(id => id !== exceptId && groupActive(id, d)) || !!d.cinemaReleaseOnly;
   const narrower = [
     ["genre",     d => ({ ...d, genre: ["Drama"] })],
     ["age",       d => ({ ...d, age: [E.AGE_LEVELS[0]] })],
@@ -101,6 +120,10 @@ test("monotonicity: narrowing any single axis never increases the count", () => 
     const base = E.onbApply();
     const before = E.watchCount(base);
     for(const [what, tighten] of narrower){
+      const groupId = MISSION_GROUP_ID[what];
+      if(groupId && !groupActive(groupId, base) && missionActiveExcept(base, groupId)) continue;   // CAS-661:
+        // adding a new OR route in, not tightening one already there — only guaranteed to narrow when this
+        // dial is the sole active Mission route (or none was active, i.e. the whole block was open before)
       const after = E.watchCount(E.normCascade(tighten(base)));
       assert.ok(after <= before,
         `${label}: tightening ${what} took the count UP, ${before} → ${after}`);
@@ -281,4 +304,79 @@ test("cascade score: scored from whatever sources a film has, not only when it h
   const newScorable = E.MOVIES.filter(m => E.qScore(m) !== -1).length;
   assert.ok(newScorable > oldScorable,
     `expected more scorable films under the new rule: old ${oldScorable}, new ${newScorable}`);
+});
+
+// ---- 10. MISSION DIALS COMBINE WITH OR (CAS-661) ----------------------------------------------------------
+// The dials used to AND (CAS-114/145): a film had to clear every one you touched. CAS-661 reverses that — a
+// film now clears the Mission block if it clears AT LEAST ONE dial that is SET, so turning a second dial on
+// only ever ADDS films. `{template:true}` skips laneCrit (STARTERS' own normalisation trick, CAS-261) so a
+// standalone criteria object keeps whichever dials this test sets regardless of the lane its empty `status`
+// would otherwise resolve to.
+const missionCase = (overrides = {}) => E.normCascade({ ...overrides }, { template: true });
+
+test("mission OR AC1: with only People's vote set, the matching set is exactly what selCrowdOK admits", () => {
+  const open = missionCase();
+  const withCrowd = missionCase({ selCrowd: 7.5 });
+  const got = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, withCrowd)));
+  const expected = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, open) && E.selCrowdOK(m, withCrowd)));
+  assert.equal(got.size, expected.size, `expected ${expected.size} films clearing selCrowdOK, got ${got.size}`);
+  for(const m of got) assert.ok(expected.has(m), `${m.title} matched with only People's vote set but fails selCrowdOK`);
+  for(const m of expected) assert.ok(got.has(m), `${m.title} clears selCrowdOK (and the open block) but did not match`);
+});
+
+test("mission OR AC2: two dials set is a strict superset of either dial alone", () => {
+  const crowdOnly   = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, missionCase({ selCrowd: 7.5 }))));
+  const criticsOnly = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, missionCase({ selCritScore: 60 }))));
+  const both        = new Set(E.MOVIES.filter(m =>
+    E.matchesCriteria(m, missionCase({ selCrowd: 7.5, selCritScore: 60 }))));
+  for(const m of crowdOnly) assert.ok(both.has(m), `${m.title} clears People's vote alone but not the OR of both`);
+  for(const m of criticsOnly) assert.ok(both.has(m), `${m.title} clears Critics score alone but not the OR of both`);
+  assert.ok(both.size > crowdOnly.size,
+    `combining should add films over People's vote alone: ${crowdOnly.size} → ${both.size}`);
+  assert.ok(both.size > criticsOnly.size,
+    `combining should add films over Critics score alone: ${criticsOnly.size} → ${both.size}`);
+});
+
+test("mission OR AC3: tightening the sole active dial only ever narrows", () => {
+  const sets = [6.0, 7.0, 7.5].map(v =>
+    new Set(E.MOVIES.filter(m => E.matchesCriteria(m, missionCase({ selCrowd: v })))));
+  for(let i = 1; i < sets.length; i++){
+    assert.ok(sets[i].size <= sets[i - 1].size,
+      `raising People's vote widened the set: ${sets[i - 1].size} → ${sets[i].size}`);
+    for(const m of sets[i]) assert.ok(sets[i - 1].has(m),
+      `${m.title} clears the higher People's-vote bar but not the lower one — the dial does not nest`);
+  }
+});
+
+test("mission OR AC4: with every dial off, the block is exactly as if it were not there", () => {
+  const open = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, missionCase())));
+  // Max out every dial and then reopen them all — if the block still leaked a restriction while every dial
+  // reads its own zero stop, this would come back smaller than `open`.
+  const reopened = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, missionCase({
+    selCrowd: 0, selCritScore: 0, selAwards: 0, selScale: 0, selBuzz: 0, cinemaReleaseOnly: false,
+  }))));
+  assert.equal(reopened.size, open.size,
+    `every dial off should equal the open set (${open.size}), got ${reopened.size}`);
+  for(const m of open) assert.ok(reopened.has(m), `${m.title} is in the open set but not the all-dials-off set`);
+});
+
+test("mission OR AC5: every zero stop reads Off, and the Cinema Release control drops \"Only\"", () => {
+  assert.equal(E.CRIT_MARKS[0].label, "Off", `Critics score's zero stop reads "${E.CRIT_MARKS[0].label}"`);
+  assert.equal(E.AWARD_STOPS[0].label, "Off", `Awards' zero stop reads "${E.AWARD_STOPS[0].label}"`);
+  assert.equal(E.SCALE_REF[0].label, "Off", `Budget's zero stop reads "${E.SCALE_REF[0].label}"`);
+  assert.equal(E.BUZZ_STOPS[0].label, "Off", `Buzz's zero stop reads "${E.BUZZ_STOPS[0].label}"`);
+  assert.equal(E.voteReadout(0), "Off", `People's vote's zero stop reads "${E.voteReadout(0)}"`);
+  for(const arr of [E.CRIT_MARKS, E.AWARD_STOPS, E.SCALE_REF, E.BUZZ_STOPS])
+    for(const stop of arr) assert.ok(!/^Any( size)?$/.test(stop.label),
+      `a Mission dial stop still reads "${stop.label}"`);
+  assert.equal(E.critScoreReadout(0), "Off", `critScoreReadout(0) reads "${E.critScoreReadout(0)}"`);
+  assert.equal(E.scaleReadout(0), "Off", `scaleReadout(0) reads "${E.scaleReadout(0)}"`);
+
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const anchor = src.indexOf('id="onbCinemaRelease"');
+  assert.ok(anchor >= 0, "the Cinema Release control markup was not found");
+  const cinemaBlock = src.slice(anchor, anchor + 400);
+  assert.ok(!/Only movies/i.test(cinemaBlock), "the Cinema Release control still reads \"Only movies\"");
+  assert.ok(/Had a cinema release/i.test(cinemaBlock),
+    "the Cinema Release control does not read \"Had a cinema release\"");
 });
