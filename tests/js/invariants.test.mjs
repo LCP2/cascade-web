@@ -482,6 +482,114 @@ test("CAS-666 AC2: creating a list through the deck gets watchlistDefaults(), no
     "a freshly created list must carry watchlistDefaults(), not list A's svcOn/cascOff");
 });
 
+// ---- AGENT TICK AND ACTIVE SET STAY IN STEP (CAS-673) ------------------------------------------------------
+// ymCascToggle/ymCascSetAll mutate the live scratch Set ymCascOff and then re-derive activeIds via
+// syncActiveIdsFromActiveList(). That function used to re-derive from the PERSISTED record (list.cascOff),
+// which ymPersist only writes behind ymSchedulePersist's 300ms debounce (CAS-652) — so reading it back
+// immediately after a tick returned the state from BEFORE that tick. These tests assert the fix
+// synchronously, with no timer ever run, mirroring the ACs' own wording.
+function seedNCascades(n){
+  const ids = [];
+  for(let i = 0; i < n; i++){
+    const c = E.normCascade({ kind: "stream", status: [] });
+    c.id = `cas673-test-cascade-${i}`;
+    c.name = `CAS-673 Agent ${i}`;
+    E.cascades.push(c);
+    ids.push(c.id);
+  }
+  return ids;
+}
+function unseedCascades(ids){
+  ids.forEach(id => {
+    const i = E.cascades.findIndex(c => c.id === id);
+    if(i >= 0) E.cascades.splice(i, 1);
+  });
+}
+// Every test below needs a fresh single active list with every seeded agent ticked in, and must leave
+// watchLists exactly as it found them so later tests in this file are unaffected.
+function withCas673List(ids, fn){
+  const savedLists = E.watchLists.slice();
+  const savedActive = E.watchActiveId;
+  try {
+    const l = E.normWatchlistEntry({ name: "CAS-673 list", order: 0, cascOff: [] });
+    E.watchLists.length = 0;
+    E.watchLists.push(l);
+    E.setActiveWatchlist(l.id);
+    E.applyActiveWatchlist();
+    fn(l);
+  } finally {
+    E.watchLists.length = 0;
+    savedLists.forEach(sl => E.watchLists.push(sl));
+    E.setActiveWatchlist(savedActive);
+    E.applyActiveWatchlist();
+  }
+}
+
+test("CAS-673 AC1: activeCascades() matches ymCascTicked immediately after ymCascToggle, no timer elapsed", () => {
+  const ids = seedNCascades(6);
+  try {
+    withCas673List(ids, () => {
+      // Reproduce the exact reported case: six agents, then untick two.
+      E.ymCascToggle(ids[4]);
+      E.ymCascToggle(ids[5]);
+
+      const tickedIds = E.cascades.filter(E.ymCascTicked).map(c => c.id);
+      const activeCascadeIds = E.activeCascades().map(c => c.id);
+      assert.deepEqual(new Set(activeCascadeIds), new Set(tickedIds),
+        "activeCascades() must contain exactly the ticked agents right after ymCascToggle returns");
+      assert.deepEqual(new Set(E.activeIds), new Set(tickedIds),
+        "activeIds must match ymCascTicked right after ymCascToggle returns");
+      assert.ok(!activeCascadeIds.includes(ids[4]) && !activeCascadeIds.includes(ids[5]),
+        "the two just-unticked agents must not be in the active set");
+
+      // Re-ticking one must bring it straight back in, again with no timer elapsed.
+      E.ymCascToggle(ids[4]);
+      assert.ok(E.activeCascades().map(c => c.id).includes(ids[4]),
+        "re-ticking an agent must be reflected immediately");
+    });
+  } finally {
+    unseedCascades(ids);
+  }
+});
+
+test("CAS-673 AC2: the same holds immediately after ymCascSetAll(true) and ymCascSetAll(false)", () => {
+  const ids = seedNCascades(6);
+  try {
+    withCas673List(ids, () => {
+      E.ymCascSetAll(false);
+      assert.equal(E.activeCascades().length, 0, "ymCascSetAll(false) must clear the active set immediately");
+      assert.equal(E.activeIds.length, 0, "activeIds must be empty immediately after ymCascSetAll(false)");
+
+      E.ymCascSetAll(true);
+      assert.deepEqual(new Set(E.activeCascades().map(c => c.id)), new Set(ids),
+        "ymCascSetAll(true) must restore every agent to the active set immediately");
+      assert.deepEqual(new Set(E.activeIds), new Set(ids),
+        "activeIds must hold every agent immediately after ymCascSetAll(true)");
+    });
+  } finally {
+    unseedCascades(ids);
+  }
+});
+
+test("CAS-673 AC4: the single-agent empty state never names an agent unticked in the active list", () => {
+  const ids = seedNCascades(2);
+  try {
+    withCas673List(ids, () => {
+      E.ymCascToggle(ids[0]);   // one agent left ticked
+      const acs = E.activeCascades();
+      assert.equal(acs.length, 1, "sanity: exactly one agent should remain active");
+      assert.equal(acs[0].id, ids[1], "the ticked agent, not the just-unticked one, must be the sole active agent");
+
+      const html = E.emptyResultsHTML();
+      const uncheckedName = E.cascades.find(c => c.id === ids[0]).name;
+      assert.ok(!html.includes(uncheckedName),
+        "the empty state must never name an agent unticked in the active list");
+    });
+  } finally {
+    unseedCascades(ids);
+  }
+});
+
 // ---- MOVING NEVER RENDERS A PROVISIONAL LEDGER (CAS-667) -------------------------------------------------
 // movingData() branches on window.CascadePersistence.accountActive() — flip window.CascadeAuth's real fields
 // (enabled/client/session) the same way sign-in for real does, rather than a stand-in predicate, so the

@@ -144,6 +144,16 @@ if(typeof window.CascadeAuth === "undefined"){
   watchLists, activeWatchlist, setActiveWatchlist, applyActiveWatchlist, watchlistRecord,
   normWatchlistEntry, watchlistDefaults, deckSelect, wlRailCreate,
   get watchActiveId(){ return watchActiveId; },
+  // CAS-673: activeCascades/activeIds are what the live listing (scopeRows) and the empty state
+  // (emptyResultsHTML) both read; ymCascOff/ymCascTicked are the list editor's own live scratch Set for
+  // agent membership, and ymCascToggle/ymCascSetAll (window-assigned wire code, wrapped the same way
+  // renderMovingScreen is above) are its two write sites — the ones the ordering bug was in.
+  activeCascades, emptyResultsHTML,
+  get activeIds(){ return activeIds; },
+  get ymCascOff(){ return ymCascOff; },
+  ymCascTicked,
+  ymCascToggle: (id, btn) => window.ymCascToggle(id, btn),
+  ymCascSetAll: on => window.ymCascSetAll(on),
   // CAS-667: movingData is wire-adjacent (it reads window.CascadePersistence.accountActive()) but its
   // row-selection arithmetic is exactly the kind of decision this harness exists to test. realAlerts and
   // firstFound are exposed by reference (mutated via push, never reassigned, in test use) so a test can seed
