@@ -463,8 +463,11 @@ test("scale: no rung of the dial drops a film for having no money figure on it",
 // a People's-vote/Critics dial does not mean an upcoming film in `blind` is actually admitted by it. CAS-678
 // moves Buzz out of that pre-release exclusion: its ladder is defined ONLY over upcoming-and-in-cinema films,
 // so selBuzzOK is evaluated unconditionally here too, exactly as matchesCriteria now does.
+// CAS-703: clearing an OR route is no longer sufficient — the leaned agent's own Mission target (its dials'
+// mean, which MOVES as selScale itself leans up, since Scale is one of the cinema dials the mean is over)
+// is now a hard AND on top, so a film only stays admitted if it also meets that target.
 const isPreReleaseM = m => ["upcoming", "in_cinema"].includes(E.primaryStatus(m));
-test("scale: raising the lean only drops a money-unknown film when scale is its sole qualifying Mission route (CAS-674)", () => {
+test("scale: raising the lean only drops a money-unknown film when scale is its sole qualifying Mission route (CAS-674), or it fails the Mission target (CAS-703)", () => {
   for(const { kind, s, label } of CASES){
     pickInLane(E, kind, s.key);
     const base = E.onbApply();
@@ -479,11 +482,17 @@ test("scale: raising the lean only drops a money-unknown film when scale is its 
     const blind = open.filter(m => !(m.budget > 0) && !(m.worldwide_gross > 0));
     if(!blind.length) continue;
     const top = E.SCALE_REF[E.SCALE_REF.length - 1].d;
-    const leaned = new Set(E.MOVIES.filter(m => E.watchesFilm(m, E.normCascade({ ...base, selScale: top }))));
+    const leanedCriteria = E.normCascade({ ...base, selScale: top });
+    const target = E.missionScoreStats(leanedCriteria).min;
+    const scoreClears = m => target === null || E.cascadeScore(m) >= target;
+    const leaned = new Set(E.MOVIES.filter(m => E.watchesFilm(m, leanedCriteria)));
     for(const m of blind){
-      if(otherRouteAdmits(m)){
+      if(otherRouteAdmits(m) && scoreClears(m)){
         assert.ok(leaned.has(m),
           `${label}: ${m.title} fell out at the top scale rung despite another OR route that should still admit it`);
+      } else if(otherRouteAdmits(m)){
+        assert.ok(!leaned.has(m),
+          `${label}: ${m.title} clears another OR route but scores below the leaned agent's Mission target and still listed (CAS-703)`);
       } else {
         assert.ok(!leaned.has(m),
           `${label}: ${m.title} (no money figure, scale the only route admitting it) stayed listed at the top scale rung — the Budget OR route should require an affirmative match (CAS-674)`);
