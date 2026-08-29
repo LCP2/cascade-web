@@ -3248,6 +3248,22 @@
   .attrib{flex:0 1 auto;min-width:0;margin-left:auto;padding-left:6px;font-size:10.5px;
     color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .card.expanded .attrib{display:none}
+  /* CAS-698: the buzz badge, riding the scores row right after the Oscar mark so a pre-release film that
+     also carries a review score doesn't lose its badge (CAS-686 side effect — r-scores and r-cinfo are
+     mutually exclusive per film, and r-cinfo was the badge's only condensed-card home). Placed ahead of
+     .attrib, which is the item that gives way (shrinks/ellipsises, CAS-655) when the row is tight. Hidden
+     expanded: the full-size .r-badge row already carries the badge there. */
+  .buzzchip{flex:none;font-size:11px;font-weight:800;white-space:nowrap}
+  .card.expanded .buzzchip{display:none}
+  /* CAS-698: a buzz-band card's scores row is already tight with three real score cells plus an Oscar
+     mark — measured against the actual catalogue's own worst case (a film carrying all three), that
+     leaves no slack at 360px for a fourth thing to join, even an icon-only badge. A smaller row gap plus
+     a trimmed .oscmark (its padding/border were never stripped for the condensed row the way the score
+     cells' were, CAS-655) buys back the room, scoped to buzz-band cards only — AC6 keeps a badge-less
+     film's row pixel-identical to today. */
+  .card.buzzband:not(.expanded) .mrow.r-scores{gap:2px}
+  .card.buzzband:not(.expanded) .mrow.r-scores .oscmark{padding:1px 2px;border:none;margin-left:0}
+  .card.buzzband:not(.expanded) .mrow.r-scores .buzzchip{margin-left:0}
   /* (6) "Can Watch" is wider than "Notify"; equal thirds truncated it to "Can W..." */
   .card:not(.expanded) .actions .ctl{flex:1 1 auto;min-width:0}
   .card:not(.expanded) .actions .ctl.notify{flex:1.25 1 auto}
@@ -5028,7 +5044,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 869, "commit": "a96dc6d", "builtAt": "2026-08-29T03:05:04Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 870, "commit": "13738b1", "builtAt": "2026-08-29T03:30:52Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5968,6 +5984,19 @@ function scaleBadge(m){
     title="${esc(scaleWhy(m))}">${b.ico} <b>${b.label}</b></button>`;
 }
 window.showScale=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(scaleWhy(m)); };
+// CAS-698: a compact copy of the badge, riding the r-scores row for a condensed card that also has a
+// review score — cinemaInfoRowHTML already carries the badge on r-cinfo, but that row and r-scores are
+// mutually exclusive per film (CAS-686), so a scored film lost its badge as a side effect. Buzz bands only
+// (AC3): Landmark's condensed-card badge is a separate question and stays out of this ticket's scope.
+function buzzChipHTML(m){
+  const kind=buzzBandOf(m);
+  if(!kind) return "";
+  const b=TENT_BADGE[kind];
+  // Icon only, not icon+label — the scores row (CAS-655) is already IMDb/RT/Meta plus the Oscar mark plus
+  // the ellipsising agent attribution; the full "🔥 Must-see" text is what the expanded card's own .r-badge
+  // row and the tap-to-toast tooltip below are for.
+  return `<span class="m buzzchip" title="${escA(b.label)}"><b>${b.ico}</b></span>`;
+}
 // CAS-686: which stats row a condensed card shows is a per-FILM decision, not a per-listing one (CAS-624
 // gated it on the cinema-agent listing wrapper). A film carrying at least one of a reliable IMDb rating,
 // an RT critic score or a Metacritic score keeps the scores row — the other two sources still render as
@@ -6472,6 +6501,10 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   // CAS-686: the condensed card shows the money row instead of the scores row when this film holds none
   // of IMDb/RT/Metacritic — see condensedShowsScores.
   const cinfoCard = !condensedShowsScores(m);
+  // CAS-698: a condensed card whose r-scores row also carries the buzz-band chip gets a tighter gap on
+  // that row — see the .buzzband CSS rule. Scoped to buzz-band films only, so a film with no badge (AC6)
+  // gets the exact row it gets today.
+  const buzzBand = !!buzzBandOf(m);
   // What's new is a fact about the film — the day Cascade first picked it up — so it is stated ON the film,
   // and nowhere else (CAS-107). It no longer decides where the film sits in the list, and the header no longer
   // dresses the whole list up as news; the chip just tells you which of these you haven't seen before.
@@ -6480,7 +6513,7 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   // for callers but no longer rendered.)
   // CAS-179: one grid, one order — title · genres·language · synopsis · money · scores · awards, with
   // the poster spanning down to the scores row and the scale badge tucked under it beside the awards.
-  return `<div class="card ${expandedSet.has(id)?'expanded':''} ${cinfoCard?'cinfo':''}" id="card-${id}">
+  return `<div class="card ${expandedSet.has(id)?'expanded':''} ${cinfoCard?'cinfo':''} ${buzzBand?'buzzband':''}" id="card-${id}">
     <div class="cbody" onclick="cardTap(event,${id})">
       <div class="ctop">
         <!-- CAS-276: the tombstone is the POSTER, and nothing else. The scale badge used to hang below it,
@@ -6495,7 +6528,7 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
         <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
-        <div class="mrow r-scores">${scoresRowHTML(m)}${oscMarkHTML(m)}${attributionHTML(m)}</div>
+        <div class="mrow r-scores">${scoresRowHTML(m)}${oscMarkHTML(m)}${buzzChipHTML(m)}${attributionHTML(m)}</div>
         <!-- CAS-686: condensed-card-only — shown instead of r-scores when this film gets the "cinfo" class
              on .card (condensedShowsScores(m) is false). Hidden everywhere else, including the expanded
              card, by the base .r-cinfo{display:none}. -->
