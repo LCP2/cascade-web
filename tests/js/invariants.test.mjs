@@ -248,7 +248,7 @@ test("scale: an unknown scale is never the reason a film is dropped", () => {
 });
 
 // ---- 8. THE CASCADE SCORE (CAS-603) ---------------------------------------------------------------------
-// One number from the three the card already prints, so a thin-voted IMDb average can no longer outrank a
+// One number from the axes the card already prints, so a thin-voted IMDb average can no longer outrank a
 // broadly-agreed film just because nothing else was reading the critic scores.
 test("cascade score: critic agreement beats a below-floor IMDb rating with no critic backing, and sourceless films sort last", () => {
   const wellReviewed  = { title: "Well Reviewed",  imdb_rating: 8.2, imdb_votes: 1000000, metacritic: 90, rt_critic: 93 };
@@ -268,67 +268,95 @@ test("cascade score: critic agreement beats a below-floor IMDb rating with no cr
   assert.equal(E.qScore(belowFloor), -1, "a film under the vote floor with no critic scores was still treated as rated");
 });
 
-// ---- 9. THE CASCADE SCORE FROM WHATEVER SOURCES ARE PRESENT, NARROWED BY CAS-669 -----------------------
-// CAS-660 let qScore score from whichever of the three sources a film carries, one reliable source being
-// enough. CAS-669 narrows that: Metacritic and RT carry no reliability gate the way IMDb does, so a lone
-// ungated critic score (a 100% RT off a handful of reviews) was outranking films with real corroboration.
-// A film now needs a gated source (an IMDb rating above IMDB_MIN_VOTES) or at least two sources agreeing.
-test("cascade score: scored from a gated source or two corroborating sources, not one ungated source alone", () => {
-  // AC1: no film whose only source is rt_critic (or only metacritic) has a qScore other than -1.
-  for(const m of E.MOVIES){
-    if(E.ratingOf(m) != null) continue;
-    if(m.metacritic != null && m.rt_critic == null) assert.equal(E.qScore(m), -1, `${m.title}: Metacritic-only film scored`);
-    if(m.rt_critic != null && m.metacritic == null) assert.equal(E.qScore(m), -1, `${m.title}: RT-only film scored`);
-  }
-  const metaOnly = { title: "Metacritic Only", imdb_rating: null, imdb_votes: 0, metacritic: 61 };
-  const rtOnly   = { title: "RT Only",         imdb_rating: null, imdb_votes: 0, rt_critic: 88 };
-  assert.equal(E.qScore(metaOnly), -1, "a lone Metacritic score should not score (CAS-669)");
-  assert.equal(E.qScore(rtOnly), -1, "a lone RT score should not score (CAS-669)");
+// ---- 9. THE CASCADE SCORE IS TWO AXES (CAS-694) ------------------------------------------------------------
+// CAS-660 let qScore score from whichever of three raw sources a film carried; CAS-669 then narrowed that to
+// require a gated source or two corroborating ones. CAS-694 replaces both: the score is now exactly TWO
+// axes — People's vote (ratingOf(m) x10) and Critics (critScore(m), see test 9b) — and a film scores if it
+// carries EITHER axis. A lone Metacritic or RT figure IS a whole Critics axis now, not an "ungated single
+// source" to exclude — the coverage widening this brings (measured ~24% -> ~27% catalogue-wide) is the point.
+test("cascade score: scored from either axis (People's vote, Critics), never from budget/gross/popularity/awards", () => {
+  const metaOnly    = { title: "Metacritic Only", imdb_rating: null, imdb_votes: 0, metacritic: 61 };
+  const rtOnly      = { title: "RT Only",         imdb_rating: null, imdb_votes: 0, rt_critic: 88 };
+  const imdbOnly    = { title: "IMDb Only",       imdb_rating: 7.3,  imdb_votes: 1000000 };
+  const bothCritics = { title: "Both Critics",    imdb_rating: null, imdb_votes: 0, metacritic: 60, rt_critic: 90 };
+  const bothAxes    = { title: "Both Axes",       imdb_rating: 8.0,  imdb_votes: 1000000, metacritic: 60, rt_critic: 90 };
+  const neither     = { title: "Neither",         imdb_rating: null, imdb_votes: 0 };
 
-  // AC2: a film whose only source is a gated-eligible IMDb rating still scores, as the rating x10.
-  const imdbOnly = { title: "IMDb Only", imdb_rating: 7.3, imdb_votes: 1000000 };
-  assert.equal(E.qScore(imdbOnly), Math.round(7.3*10), "IMDb-only score should be the IMDb rating x10, rounded");
+  // AC5: a lone Metacritic or RT figure is a whole Critics axis on its own — it scores, as that figure.
+  assert.equal(E.qScore(metaOnly), 61, "a lone Metacritic score is a whole Critics axis and should score as itself");
+  assert.equal(E.qScore(rtOnly), 88, "a lone RT score is a whole Critics axis and should score as itself");
+  // People's vote alone scores as the gated rating x10.
+  assert.equal(E.qScore(imdbOnly), 73, "IMDb-only score should be the gated IMDb rating x10, rounded");
+  // Both critic sources present but no gated IMDb: the Critics axis is their mean, and it's the WHOLE score.
+  assert.equal(E.qScore(bothCritics), 75, "Metacritic+RT with no People's vote should score as the Critics axis alone (their mean)");
+  // Both axes present: the mean of the two AXES — critics must not carry double weight just because both
+  // Metacritic and RT happen to be filled in.
+  assert.equal(E.qScore(bothAxes), Math.round((80 + 75) / 2), "both axes present should average the two AXIS values, not three raw sources");
+  // AC5 (dash half): neither axis present scores -1.
+  assert.equal(E.qScore(neither), -1, "a film with neither axis should not score");
 
-  // AC3: Metacritic + RT together, with no eligible IMDb, score as their mean.
-  const bothCritics = { title: "Both Critics", imdb_rating: null, imdb_votes: 0, metacritic: 60, rt_critic: 90 };
-  assert.equal(E.qScore(bothCritics), 75, "Metacritic + RT together should score their mean");
+  // AC4: budget, worldwide gross, popularity and awards are not terms — perturbing them changes nothing.
+  const rich = { ...bothAxes, budget: 200e6, worldwide_gross: 900e6, popularity: 500, award: "won", award_text: "Won 3 Oscars" };
+  assert.equal(E.qScore(rich), E.qScore(bothAxes), "budget/gross/popularity/awards changed the score");
 
-  // For every scorable film, qScore lies between the min and max of its counted parts, inclusive.
+  // AC3, whole catalogue: qScore is exactly the rounded mean of whichever axes a film carries.
   for(const m of E.MOVIES){
     const q = E.qScore(m);
-    if(q === -1) continue;
-    const r = E.ratingOf(m);
-    const parts = [];
-    if(r != null) parts.push(r*10);
-    if(m.metacritic != null) parts.push(m.metacritic);
-    if(m.rt_critic != null) parts.push(m.rt_critic);
-    assert.ok(q >= Math.min(...parts) && q <= Math.max(...parts),
-      `${m.title}: qScore ${q} falls outside [${Math.min(...parts)}, ${Math.max(...parts)}]`);
+    const r = E.ratingOf(m), cs = E.critScore(m);
+    const axes = [];
+    if(r != null) axes.push(r*10);
+    if(cs != null) axes.push(cs);
+    if(!axes.length){ assert.equal(q, -1, `${m.title}: has neither axis but scored ${q}`); continue; }
+    const expected = Math.round(axes.reduce((x,y)=>x+y,0)/axes.length);
+    assert.equal(q, expected, `${m.title}: qScore ${q} disagrees with the two-axis mean ${expected}`);
   }
 });
 
-// ---- 9b. A SINGLE UNGATED SOURCE NO LONGER LEADS THE TOP OF THE LIST (CAS-669) ---------------------------
-// AC4: strictly fewer films score 90+ than under the CAS-660 rule (any single present source was enough),
-// and none of the survivors rest on a single ungated source.
-test("cascade score: fewer films score 90+ once a lone ungated source stops counting, and none of the survivors are lone-sourced", () => {
-  const cas660Score = m => {
-    const r = E.ratingOf(m);
-    const p = [];
-    if(r != null) p.push(r*10);
-    if(m.metacritic != null) p.push(m.metacritic);
-    if(m.rt_critic != null) p.push(m.rt_critic);
-    if(!p.length) return -1;
-    return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
-  };
-  const oldTop = E.MOVIES.filter(m => cas660Score(m) >= 90).length;
-  const newTop = E.MOVIES.filter(m => E.qScore(m) >= 90).length;
-  assert.ok(newTop < oldTop, `expected fewer films scoring 90+ under the new rule: old ${oldTop}, new ${newTop}`);
+// ---- 9b. CRITICS IS ONE RECORDED FIGURE (CAS-694) -----------------------------------------------------------
+// AC1: critScore has exactly one definition, and AC2: it's the same figure both selCriticsOK (the dial) and
+// qScore (the score) read — the defect this fixes is a dial that tested one source while the score averaged
+// two, which meant the two disagreed about what "the critics" said.
+test("critScore: the mean of Metacritic and RT where both are present, whichever is present otherwise, null when neither is", () => {
+  assert.equal(E.critScore({ metacritic: 60, rt_critic: 90 }), 75, "both present should average to their mean");
+  assert.equal(E.critScore({ metacritic: 61, rt_critic: null }), 61, "Metacritic alone should read as itself");
+  assert.equal(E.critScore({ metacritic: null, rt_critic: 88 }), 88, "RT alone should read as itself");
+  assert.equal(E.critScore({ metacritic: null, rt_critic: null }), null, "neither present should read as null");
+  // rt_critic: 0 is a present (if extreme) score, not an absent one — a truthy-only check would wrongly treat
+  // it as missing, exactly the asymmetry this ticket fixes.
+  assert.equal(E.critScore({ metacritic: null, rt_critic: 0 }), 0, "an RT score of exactly 0 should still read as present");
 
+  // AC2, whole catalogue: selCriticsOK's dial must never disagree with critScore() about a film's own figure.
   for(const m of E.MOVIES){
-    if(E.qScore(m) < 90) continue;
-    const gated = E.ratingOf(m) != null;
-    const corroborated = (m.metacritic != null ? 1 : 0) + (m.rt_critic != null ? 1 : 0) >= 2;
-    assert.ok(gated || corroborated, `${m.title}: scores 90+ resting on a single ungated source`);
+    const cs = E.critScore(m);
+    if(cs == null) continue;
+    assert.equal(E.selCriticsOK(m, E.normCascade({ selCritScore: cs }, { template: true })), true,
+      `${m.title}: selCriticsOK read a different Critics figure than critScore()`);
+  }
+});
+
+// ---- 9c. THE MISSION MINIMUM IS THE DIALS' OWN MEAN, NOT A CATALOGUE SCAN (CAS-694) --------------------------
+// AC7: missionScoreStats used to scan MOVIES for the lowest qScore among listed, unwatched-out films. It is
+// now the mean of whichever Mission dials (People's vote x10, Critics) are ON, or the one dial's value if
+// only one is set — read straight off the criteria object.
+test("missionScoreStats: the mean of the ON Mission dials, not a scan of the listed set", () => {
+  assert.equal(E.missionScoreStats({ selCrowd: 0, selCritScore: 0 }).min, null, "no dial on should give no minimum");
+  assert.equal(E.missionScoreStats({ selCrowd: 7.5, selCritScore: 0 }).min, 75, "People's vote alone should read as its own value x10");
+  assert.equal(E.missionScoreStats({ selCrowd: 0, selCritScore: 60 }).min, 60, "Critics alone should read as its own value");
+  assert.equal(E.missionScoreStats({ selCrowd: 7.5, selCritScore: 61 }).min, Math.round((75+61)/2), "both dials on should read as their mean");
+});
+
+// ---- 9d. qScoreSourcesText NAMES THE AXES (CAS-694) ------------------------------------------------------
+// AC6: the card's own title text names People's vote and Critics — the axes — rather than IMDb/Metacritic/RT,
+// the three raw sources those axes can be built from.
+test("qScoreSourcesText: names the two axes, not the raw sources that feed them", () => {
+  const imdbOnly    = { imdb_rating: 7.3, imdb_votes: 1000000 };
+  const critsOnly   = { imdb_rating: null, imdb_votes: 0, metacritic: 61 };
+  const bothAxes    = { imdb_rating: 8.0, imdb_votes: 1000000, metacritic: 60, rt_critic: 90 };
+  assert.equal(E.qScoreSourcesText(imdbOnly), "People's vote only");
+  assert.equal(E.qScoreSourcesText(critsOnly), "Critics only");
+  assert.equal(E.qScoreSourcesText(bothAxes), "People's vote and Critics");
+  for(const name of ["IMDb", "Metacritic", "RT"]){
+    assert.ok(!E.qScoreSourcesText(bothAxes).includes(name), `qScoreSourcesText named a raw source (${name}), not an axis`);
   }
 });
 

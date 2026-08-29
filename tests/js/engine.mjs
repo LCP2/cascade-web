@@ -146,7 +146,10 @@ if(typeof window.CascadeAuth === "undefined"){
   agentWindow, winOn, subOn, winSubs, PRIORITY_WATCH, ALERT_DEFAULTS, ALERT_SHORT, ALERT_MOMENT,
   alertLive, reachableRows, liveAlerts, drawWatchLanes,
   selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK, voteReadout, critScoreReadout, scaleReadout,
-  qScore, qScorable, sortMoviesBy, ratingOf, IMDB_MIN_VOTES, imdbReliable,
+  // CAS-694: critScore (the one recorded critics figure) and qScore's own text (qScoreSourcesText) and the
+  // Mission step's dial-mean reading (missionScoreStats), so a test can assert all three independently
+  // rather than re-deriving them from qScore's output alone.
+  qScore, critScore, qScoreSourcesText, missionScoreStats, sortMoviesBy, ratingOf, IMDB_MIN_VOTES, imdbReliable,
   // CAS-686: the per-film predicate that decides which condensed-card stats row shows (r-scores vs
   // r-cinfo), so a test can assert the row choice directly rather than re-deriving the three-source rule.
   condensedShowsScores,
