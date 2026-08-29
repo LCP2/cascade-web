@@ -5028,7 +5028,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 865, "commit": "a5c50a8", "builtAt": "2026-08-29T01:09:27Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 866, "commit": "6109b14", "builtAt": "2026-08-29T01:18:33Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5755,32 +5755,39 @@ function byTimelineAsc(a,b){
   if(!db) return -1;
   return da.localeCompare(db);
 }
+// ---- Critics, one recorded figure (CAS-694) ------------------------------------
+// The mean of Metacritic and RT where both are present, whichever one is present otherwise, null when
+// neither is. This is the ONE definition — selCriticsOK (the dial) and qScore (the score) both read it, so
+// the two can never disagree about what "the critics" said the way a dial-tests-one-source /
+// score-averages-two-sources split used to let them.
+const critScore = m => {
+  const mc=m.metacritic, rt=m.rt_critic;
+  if(mc!=null && rt!=null) return Math.round((mc+rt)/2);
+  if(mc!=null) return mc;
+  if(rt!=null) return rt;
+  return null;
+};
 // ---- The Cascade score --------------------------------------------------------
-// One number per film: the mean of the scores it actually carries — the same three the card prints.
-// -1 means "not rankable on quality" — CAS-660 scores a film from whichever of the three it actually
-// carries, not only when it carries all of them, but CAS-669 narrows that: neither Metacritic nor RT
-// carries a reliability gate the way IMDb does (no critic-count field to gate on), so a 100% RT built from
-// a handful of reviews was outranking films with three corroborating sources. A film only scores when it
-// has a gated source (today, an IMDb rating above IMDB_MIN_VOTES) or at least two sources agreeing with
-// each other — a single ungated critic score is not enough on its own.
-const qScorable = m => ratingOf(m)!=null || (m.metacritic!=null) + (m.rt_critic!=null) >= 2;
+// CAS-694: two axes, not three raw sources. People's vote is the gated IMDb rating x10 (ratingOf(m)); Critics
+// is the one combined figure critScore() returns above. Averaging IMDb/Metacritic/RT as three separate terms
+// let critics carry double weight whenever both existed, and a film's score swung on which rows the pipeline
+// happened to fill — the two axes fix that by construction. A film scores if it carries either axis; -1
+// (rendered as the dash) means neither does.
 function qScore(m){
-  if(!qScorable(m)) return -1;
   const r = ratingOf(m);
+  const cs = critScore(m);
   const p=[];
   if(r!=null) p.push(r*10);
-  if(m.metacritic!=null) p.push(m.metacritic);
-  if(m.rt_critic!=null)  p.push(m.rt_critic);
+  if(cs!=null) p.push(cs);
+  if(!p.length) return -1;
   return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
 }
 function qScoreSourcesText(m){
   const names=[];
-  if(ratingOf(m)!=null) names.push("IMDb");
-  if(m.metacritic!=null) names.push("Metacritic");
-  if(m.rt_critic!=null) names.push("RT");
-  if(names.length===1) return `${names[0]} only`;
+  if(ratingOf(m)!=null) names.push("People's vote");
+  if(critScore(m)!=null) names.push("Critics");
   if(names.length===2) return `${names[0]} and ${names[1]}`;
-  return `${names[0]}, ${names[1]} and ${names[2]}`;
+  return `${names[0]} only`;
 }
 function oscMarkHTML(m){
   const t=String(m.award_text||"");
@@ -8400,7 +8407,9 @@ const ageOpen = c => c.age!==null && (!c.age.length || c.age.length===AGE_LEVELS
 // them matches exactly as it did before. matchesCriteria wires them in below.
 //   · selCrowd  — a raw IMDb bar (People's vote). A set bar is crowd-score-only, so an unrated film drops.
 //   · selCritScore — CAS-249: a continuous SCORE floor, 0-100, the same treatment CAS-166 gave Budget &
-//                  scale. It reads Metacritic first and Rotten Tomatoes as a fallback — never blended.
+//                  scale. It reads critScore() (CAS-694: the mean of Metacritic and RT where both are
+//                  present, whichever is present otherwise) — defined above, alongside qScore, since both
+//                  read the same one figure.
 //   · selAwards — CAS-249: the awards half, still stepped, but counted rather than named: 0 any · 1 one
 //                  nomination · 2 two or more · 3 three or more · 4 winner. They were one field before
 //                  (`selCritics`, 0-4), which forced a choice between a review bar and an awards bar when
@@ -8409,7 +8418,6 @@ const ageOpen = c => c.age!==null && (!c.age.length || c.age.length===AGE_LEVELS
 //   · selScale  — CAS-166: a dollar FLOOR now, not a band index. 0 = any; anything above is "made for (or
 //                  took) this much or more". A LEAN, not a hard cut: only known figures are gated; an
 //                  unknown-scale title is never dropped for its scale.
-const critScore = m => (m.metacritic!=null ? m.metacritic : (m.rt_critic ? m.rt_critic : null));
 // CAS-249: how decorated a film is, as ONE number, so the awards rungs nest inside one another.
 // `award_text` carries the count verbatim — "Nominated for 3 Oscars", "Won 7 Oscars" — so the ladder is
 // read off the data rather than invented. A win is worth more than any number of nominations, which is why
@@ -11646,19 +11654,16 @@ const onbCount = () => watchCount(onbApply());
 function onbShownCount(){
   return listedCount(onbApply());
 }
-// CAS-665: the Mission step's own score reading, off the IDENTICAL set onbShownCount() just counted —
-// listedBy + !taggedOut, the same predicate agentMetricsCompute now reads too (CAS-674) — so it can never
-// describe a different set than the "N films match right now" line above it. MEASURED off qScore, never
-// derived from the dial positions: a film clearing People's vote 7.5 with a Metacritic of 20 scores 47, so
-// the floor isn't predictable from where the dials sit.
+// CAS-694: the Mission step's own score reading is now the dials themselves, not a scan of the listed set —
+// the mean of whichever Mission dials are ON (People's vote x10, Critics), or the one dial's value if only
+// one is set. Replaces CAS-665's catalogue scan (the lowest qScore among listed, unwatched-out films), which
+// went stale the moment CAS-694 made the score itself two axes instead of three raw sources.
 function missionScoreStats(c){
-  const films=MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m));
-  let min=null;
-  films.forEach(m=>{
-    const q=qScore(m);
-    if(q>=0 && (min===null || q<min)) min=q;
-  });
-  return {min};
+  const on=[];
+  if(c.selCrowd) on.push(c.selCrowd*10);
+  if(c.selCritScore) on.push(c.selCritScore);
+  if(!on.length) return {min:null};
+  return {min: Math.round(on.reduce((x,y)=>x+y,0)/on.length)};
 }
 // Suppressed at n===0 (AC3: no placeholder for zero matches) and when nothing matching carries a score
 // (CAS-675: no meaningful floor to state) rather than printing a meaningless floor.
