@@ -251,9 +251,12 @@ test("scale: an unknown scale is never the reason a film is dropped", () => {
 // One number from the axes the card already prints, so a thin-voted IMDb average can no longer outrank a
 // broadly-agreed film just because nothing else was reading the critic scores.
 test("cascade score: critic agreement beats a below-floor IMDb rating with no critic backing, and sourceless films sort last", () => {
-  const wellReviewed  = { title: "Well Reviewed",  imdb_rating: 8.2, imdb_votes: 1000000, metacritic: 90, rt_critic: 93 };
-  const belowFloor    = { title: "Below Floor",    imdb_rating: 9.9, imdb_votes: E.IMDB_MIN_VOTES - 1 };
-  const noSources      = { title: "No Sources",     imdb_rating: null, imdb_votes: 0 };
+  // CAS-702: cascadeScore now reads primaryStatus(m) to route pre-release films to cinemaScore instead of
+  // qScore — a released status keeps these fixtures on the qScore axis this test is actually about.
+  const released = { status: ["included_streaming"] };
+  const wellReviewed  = { ...released, title: "Well Reviewed",  imdb_rating: 8.2, imdb_votes: 1000000, metacritic: 90, rt_critic: 93 };
+  const belowFloor    = { ...released, title: "Below Floor",    imdb_rating: 9.9, imdb_votes: E.IMDB_MIN_VOTES - 1 };
+  const noSources      = { ...released, title: "No Sources",     imdb_rating: null, imdb_votes: 0 };
 
   assert.ok(E.sortMoviesBy(wellReviewed, belowFloor, "cascade") < 0,
     "a film with real critic agreement did not outrank a below-floor IMDb rating with no critic backing");
@@ -541,6 +544,33 @@ test("CAS-703 AC3/AC4: unscored films are held back (and counted) only while a t
   assert.equal(heldFilms.length, held, "scoreHeldBackCount disagrees with its own set");
   for(const m of heldFilms) assert.equal(E.listedBy(m, withTarget), false,
     `${m.title} has no score but is still listed while a target is in force`);
+});
+
+// ---- 10b. THE CHOSEN SORT'S OWN COMPARATOR DECIDES THE ORDER (CAS-702) ------------------------------------
+// CAS-699 stopped two guards silently overriding a chosen sort with the release timeline in In Cinema and
+// Upcoming. That was not the whole defect: sortMoviesBy's own "cascade" case still read qScore, which is -1
+// for virtually every real pre-release film (CAS-695 scores them off buzz/budget, not People's
+// vote/Critics) — so once the override was lifted, the "order" it revealed was really a tie-break
+// (rating/popularity), not the Cascade score a person had just picked. Checked against ground truth built
+// independently of listingOrder/sortForKey/sortMoviesBy — cascadeScore itself for one section+sort,
+// alphabetical order (no scoring function at all) for the other — and as a monotonicity, not an exact
+// sequence, because tied scores/titles are free to land in either relative order.
+test("CAS-702: an explicit sort's own comparator decides the rendered order, In Cinema and Upcoming", () => {
+  const cinema = E.MOVIES.filter(m => E.primaryStatus(m) === "in_cinema" && E.cascadeScore(m) >= 0);
+  assert.ok(cinema.length > 3, `only ${cinema.length} scored in_cinema films — not enough to test an order against`);
+  const rendered = E.listingOrder(cinema, "cascade", { kind: "cinema" }, true);
+  for(let i = 1; i < rendered.length; i++){
+    assert.ok(E.cascadeScore(rendered[i - 1]) >= E.cascadeScore(rendered[i]),
+      `In Cinema under Cascade score: "${rendered[i - 1].title}" (${E.cascadeScore(rendered[i - 1])}) sits above "${rendered[i].title}" (${E.cascadeScore(rendered[i])})`);
+  }
+
+  const upcoming = E.MOVIES.filter(m => E.primaryStatus(m) === "upcoming");
+  assert.ok(upcoming.length > 3, `only ${upcoming.length} upcoming films — not enough to test an order against`);
+  const byTitle = E.listingOrder(upcoming, "title", { kind: "cinema" }, true);
+  for(let i = 1; i < byTitle.length; i++){
+    assert.ok(byTitle[i - 1].title.localeCompare(byTitle[i].title) <= 0,
+      `Upcoming under Title: "${byTitle[i - 1].title}" sits above "${byTitle[i].title}"`);
+  }
 });
 
 // ---- 11. LISTED NEVER EXCEEDS WHAT MATCHES (CAS-674 AC1) --------------------------------------------------

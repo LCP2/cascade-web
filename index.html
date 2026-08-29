@@ -4669,11 +4669,15 @@ const ux = {on:true};
 try{ const v=localStorage.getItem("cascade_ux"); if(v!==null) ux.on = v==="1"; }catch(e){}
 function saveUx(){ try{ localStorage.setItem("cascade_ux", ux.on?"1":"0"); }catch(e){} }
 const alerts=[];
+// CAS-702: the ONE default sort. Every fallback that means "no sort chosen yet" reads this, never a literal
+// string of its own — three different literals (imdb / availability / cascade) tracked three different eras
+// of what "the default" meant (CAS-148, CAS-618) and had drifted out of step with each other.
+const DEFAULT_SORT = "cascade";
 const filt={status:new Set(), year:new Set(), age:new Set(), culture:new Set(), genre:new Set(),
   exclude:new Set(),       // genres you never want to see — the ONE criterion that subtracts (CAS-71)
   imdb:0, rt:0, gross:0, search:"", foundOnly:false, hideWatched:false, showHidden:false, awards:false,
   recent:false,             // CAS-468: only films whose status pill is currently glowing (isRecent)
-  sort:"availability",     // CAS-148: the forward availability timeline is the default order (byTimeline)
+  sort:DEFAULT_SORT,
   includeUnrated:false,    // set by the open Cascade's escape hatch; off by default = unrated titles drop out
   budget:0, includeUnbudgeted:false,
   watchTiers:new Set()};   // CAS-382: the agent's own Filter control — see watchTiersById
@@ -4705,7 +4709,7 @@ function loadCascades(){
       // so that carried-over value is migrated - ONCE, and written back, so an availability order picked
       // deliberately from here on is never overwritten. Any other order the user chose is left alone.
       if(!localStorage.getItem(SORT_MIG_KEY_2)){
-        a.forEach(c=>{ if(!c.sort || c.sort==="availability" || c.sort==="imdb") c.sort="cascade"; });
+        a.forEach(c=>{ if(!c.sort || c.sort==="availability" || c.sort==="imdb") c.sort=DEFAULT_SORT; });
         localStorage.setItem("cascade_cascades", JSON.stringify(a));
         localStorage.setItem(SORT_MIG_KEY_2,"1");
       }
@@ -5039,7 +5043,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 873, "commit": "6b42bbd", "builtAt": "2026-08-29T04:27:47Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 874, "commit": "6ed4d81", "builtAt": "2026-08-29T04:48:12Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5501,7 +5505,7 @@ function syncSortCtl(){
   if(!sortCtl.isConnected) return;
   const opt=$("sort").querySelector(`option[value="${filt.sort}"]`);
   $("sortCtl").title="Order: "+(opt?opt.textContent:"");
-  $("sortDot").hidden=(filt.sort==="cascade");
+  $("sortDot").hidden=(filt.sort===DEFAULT_SORT);
 }
 $("sort").onchange=e=>{filt.sort=e.target.value;syncSortCtl();render();};
 $("imdbMin").oninput=e=>{filt.imdb=+e.target.value;$("imdbVal").textContent=filt.imdb?filt.imdb.toFixed(1)+"+":"Any";render();};
@@ -5826,7 +5830,10 @@ function qScoreHTML(m){
 function sortMoviesBy(a,b,key){
   switch(key){
     case "cascade": {
-      const sa=qScore(a), sb=qScore(b);
+      // CAS-702: the Cascade score sort has to read the same score the card shows (qScoreHTML uses
+      // cascadeScore) — qScore alone is -1 for every pre-release film, which made this sort a no-op on
+      // In Cinema/Upcoming even after CAS-699 let it reach those sections at all.
+      const sa=cascadeScore(a), sb=cascadeScore(b);
       if(sa<0 && sb<0) return byRatingDesc(a,b);
       if(sa<0) return 1;
       if(sb<0) return -1;
@@ -8442,7 +8449,7 @@ const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.a
   c.imdb, c.rt, c.awards, c.budget, c.includeUnbudgeted, c.includeUnrated, c.tentpole,
   c.selCrowd||0, c.selCritScore||0, c.selAwards||0, c.selScale||0, c.selBuzz||0, !!c.selOr, c.yearsBack||0,
   !!c.cinemaReleaseOnly,
-  c.myServices, c.alerts, c.sort||"imdb", c.excludeWatched, c.excludeBlocked,
+  c.myServices, c.alerts, c.sort||DEFAULT_SORT, c.excludeWatched, c.excludeBlocked,
   // CAS-160: the viewing windows are part of "the alert moments" too. Three of them (announced / 1 month /
   // 1 week out) all resolve to the same `status`, so without this line two agents that differ only in when
   // they'd tell you would read as exact twins and the second would be silently collapsed into the first.
@@ -8830,7 +8837,7 @@ function applyCascade(c){
   filt.budget=c.budget||0; filt.includeUnbudgeted=!!c.includeUnbudgeted;
   // The two Exclude toggles ARE the View chips — one state, two places to reach it.
   filt.hideWatched=c.excludeWatched!==false; filt.showHidden=c.excludeBlocked===false;
-  filt.sort=c.sort||"cascade";                                      // Blockbuster radar leads with popularity
+  filt.sort=c.sort||DEFAULT_SORT;
   syncFilterUI();
 }
 // Opening is idempotent: landing a card in the deck's centre IS selecting it, so this can be called
@@ -8868,7 +8875,7 @@ function cascadeDirty(){
       || !sameSet(filt.exclude,c.exclude||[])
       || !sameSet(filt.culture,c.culture||[]) || !sameSet(filt.year,c.year||[])
       || filt.imdb!==(c.imdb||0) || filt.rt!==(c.rt||0) || filt.awards!==!!c.awards
-      || filt.includeUnrated!==!!c.includeUnrated || filt.sort!==(c.sort||"availability")
+      || filt.includeUnrated!==!!c.includeUnrated || filt.sort!==(c.sort||DEFAULT_SORT)
       || filt.budget!==(c.budget||0) || filt.includeUnbudgeted!==!!c.includeUnbudgeted
       || filt.hideWatched!==(c.excludeWatched!==false) || filt.showHidden!==(c.excludeBlocked===false);
 }
@@ -10687,7 +10694,7 @@ function buildOnbAgents(a){
     if(r.awardsRung) c.selAwards = r.awardsRung(ans);
     c.alerts = {...ALERT_DEFAULTS, ...(r.alerts||{})};
     c.watchWindows = JSON.parse(JSON.stringify(r.watchWindows||{}));
-    c.sort = "cascade";                       // CAS-618: the Cascade score is the default order
+    c.sort = DEFAULT_SORT;                    // CAS-618: the Cascade score is the default order
     // Resolved here, against the answers, so the agent on disk carries a number and onbDepthFor
     // never has to know what the user said. A recipe may supply a function or a plain number.
     c.onbCap = (typeof r.capOverride==="function") ? (r.capOverride(ans) || null)
@@ -16289,7 +16296,7 @@ function openMembership(agentKey, nameOverride, cascade){
   membCascade = c || null;
   // The real haul, in the listing's own order, from the listing's own membership test (CAS-132/176) — so
   // the posters under the button are the films behind it, not a different set that happens to look nice.
-  const films = c ? listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||"availability", c) : [];
+  const films = c ? listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||DEFAULT_SORT, c) : [];
   const posters = films.slice(0, MEMB_POSTERS).map(m=>{
     const bg=m.poster?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
     return `<div class="rvposter" style="${bg}" title="${escA(m.title)}"></div>`;
@@ -16793,8 +16800,8 @@ function listingGroups(rows, ac){
   return orderFor(ac)      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
     .map(g=>({g, items: rows.filter(m=>primaryStatus(m)===g)
       // CAS-646: the listing's order is the ACTIVE WATCH LIST's own sort (ymSort), not the open agent's —
-      // "cascade" where the list has none, never the agent's c.sort and never a bare "imdb" default.
-      .sort(sortForKey(g, ymSort||"cascade", ac && ac.kind==="cinema", isUserSort))}))
+      // DEFAULT_SORT where the list has none, never the agent's c.sort and never a bare "imdb" default.
+      .sort(sortForKey(g, ymSort||DEFAULT_SORT, ac && ac.kind==="cinema", isUserSort))}))
     .filter(x=>x.items.length);
 }
 function render(){
