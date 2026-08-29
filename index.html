@@ -5028,7 +5028,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 866, "commit": "6109b14", "builtAt": "2026-08-29T01:18:33Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 867, "commit": "11845d2", "builtAt": "2026-08-29T01:32:08Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5808,9 +5808,9 @@ function attributionHTML(m){
   return `<span class="attrib" title="${escA(names.join(", "))}">${esc(text)}</span>`;
 }
 function qScoreHTML(m){
-  const q=qScore(m);
+  const q=cascadeScore(m);
   if(q<0) return `<span class="qscore none" title="Not enough agreement to score this yet">&ndash;</span>`;
-  return `<span class="qscore ${q>=85?"hi":q>=70?"mid":"lo"}" title="Cascade score &mdash; ${escA(qScoreSourcesText(m))}">${q}</span>`;
+  return `<span class="qscore ${q>=85?"hi":q>=70?"mid":"lo"}" title="Cascade score &mdash; ${escA(cascadeScoreSourcesText(m))}">${q}</span>`;
 }
 function sortMoviesBy(a,b,key){
   switch(key){
@@ -8057,10 +8057,12 @@ const isLandmark   = m => !!m.award && hiCritics(m) && (bigBudget(m) || hiPop(m)
 // direction). 99/97/95 keeps the mechanism identical while making a lozenge mean something.
 const BUZZ_PCTL = [0, 95, 97, 99];   // Off · Anticipated · Blockbuster · Must-see
 const inLadderCohort = m => m.status.includes("upcoming") || m.status.includes("in_cinema");
-const BUZZ_CUTS = (()=>{
-  const p = MOVIES.filter(inLadderCohort).map(popOf).filter(v=>typeof v==="number").sort((a,b)=>a-b);
-  return BUZZ_PCTL.map(q=>q ? (p.length ? p[Math.min(p.length-1, Math.floor(p.length*q/100))] : Infinity) : 0);
-})();
+// The cohort's popularity values, sorted once — read by BUZZ_CUTS (cut-off lookup) and, since CAS-695,
+// buzzPctlOf (rank lookup) below. Named so a second sort of the same array can never sneak in.
+const BUZZ_POP_VALS = MOVIES.filter(inLadderCohort).map(popOf).filter(v=>typeof v==="number").sort((a,b)=>a-b);
+const BUZZ_CUTS = BUZZ_PCTL.map(q=>q
+  ? (BUZZ_POP_VALS.length ? BUZZ_POP_VALS[Math.min(BUZZ_POP_VALS.length-1, Math.floor(BUZZ_POP_VALS.length*q/100))] : Infinity)
+  : 0);
 const BUZZ_KEY = [null, "anticipated", "blockbuster", "mustsee"];   // parallel to BUZZ_PCTL/BUZZ_CUTS
 // The highest ladder stop (1..3) a film clears, or 0. A floor per stop, same shape as every other dial in
 // this app: clearing "Blockbuster" also clears "Anticipated". The badge shows only the HIGHEST stop cleared
@@ -8071,6 +8073,62 @@ function buzzStop(m){
   return 0;
 }
 const buzzBandOf = m => BUZZ_KEY[buzzStop(m)] || null;
+
+// ---- CAS-695: the cinema (pre-release) Cascade score ----------------------------------------------------
+// A pre-release film has no reviews yet, so the streaming score's two axes (People's vote, Critics) are
+// empty for nearly all of it — 85% of Upcoming and 79% of In Cinema carried no score before this. The two
+// signals that DO exist before release are how much a film is being talked about (buzz) and how big it is
+// (budget), each read as its own PERCENTILE RANK within the same upcoming-and-in-cinema cohort BUZZ_CUTS
+// uses, so the two are on one scale before they're averaged. BUZZ_PCTL is [0,95,97,99] on this same scale,
+// so Anticipated/Blockbuster/Must-see line up with this score for free. If a later change breaks that
+// alignment, it is a bug.
+// The budget array, built once the same way BUZZ_POP_VALS is: a film with neither budget nor gross
+// contributes no entry, so it never drags a zero into the percentile below it.
+const CINEMA_BUDGET_VALS = MOVIES.filter(inLadderCohort)
+  .map(m=>m.budget||m.worldwide_gross||0).filter(v=>v>0).sort((a,b)=>a-b);
+// The rank of v within a sorted-ascending array, as a percentile 0-100 — the inverse of BUZZ_CUTS' own
+// cutoff lookup. Binary search: this is read on every card, so it must not scan the array per film.
+function pctRankOf(sorted, v){
+  if(!sorted.length) return null;
+  let lo=0, hi=sorted.length;
+  while(lo<hi){ const mid=(lo+hi)>>1; if(sorted[mid]<=v) lo=mid+1; else hi=mid; }
+  return Math.round(lo/sorted.length*100);
+}
+function buzzPctlOf(m){
+  if(!inLadderCohort(m) || typeof m.popularity!=="number") return null;
+  return pctRankOf(BUZZ_POP_VALS, m.popularity);
+}
+function budgetPctlOf(m){
+  if(!inLadderCohort(m)) return null;
+  const v=m.budget||m.worldwide_gross||0;
+  if(!v) return null;
+  return pctRankOf(CINEMA_BUDGET_VALS, v);
+}
+function cinemaScore(m){
+  const p=[];
+  const bz=buzzPctlOf(m), bd=budgetPctlOf(m);
+  if(bz!=null) p.push(bz);
+  if(bd!=null) p.push(bd);
+  if(!p.length) return -1;
+  return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
+}
+// The boundary reused verbatim from matchesCriteria's own preRelease check — quality signals (People's
+// vote, Critics) do not exist until a film has been judged, and this is the one place that judges it.
+const isPreRelease = m => { const ps=primaryStatus(m); return ps==="upcoming" || ps==="in_cinema"; };
+// The Cascade score itself: the cinema score pre-release, the streaming (People's vote/Critics) score once
+// a film is released. PVOD sits on the streaming side by decision (Lee, 2026-08-28) — it is released, so
+// people can and have watched it, even though most PVOD titles in today's catalogue carry neither axis yet.
+function cascadeScore(m){
+  return isPreRelease(m) ? cinemaScore(m) : qScore(m);
+}
+function cascadeScoreSourcesText(m){
+  if(!isPreRelease(m)) return qScoreSourcesText(m);
+  const names=[];
+  if(buzzPctlOf(m)!=null) names.push("Buzz");
+  if(budgetPctlOf(m)!=null) names.push("Budget");
+  if(names.length===2) return `${names[0]} and ${names[1]}`;
+  return names.length ? `${names[0]} only` : "";
+}
 
 // One badge per film: Landmark is its own axis (kept, unchanged, AC5) and outranks the ladder, exactly as
 // its priority in this function always has. Below Landmark, the badge IS the ladder band — nothing else.
@@ -11658,10 +11716,19 @@ function onbShownCount(){
 // the mean of whichever Mission dials are ON (People's vote x10, Critics), or the one dial's value if only
 // one is set. Replaces CAS-665's catalogue scan (the lowest qScore among listed, unwatched-out films), which
 // went stale the moment CAS-694 made the score itself two axes instead of three raw sources.
+// CAS-695: a cinema agent's Mission dials are Buzz and Movie Budget (laneCrit zeroes selCrowd/selCritScore
+// for it), so it needs the CINEMA score's own basis, on the same percentile scale as the card: the Buzz stop
+// is already a percentile (BUZZ_PCTL), and the Budget dial's dollar floor is converted to its percentile in
+// the same cohort array cinemaScore reads, so the two are on one scale before they're averaged.
 function missionScoreStats(c){
   const on=[];
-  if(c.selCrowd) on.push(c.selCrowd*10);
-  if(c.selCritScore) on.push(c.selCritScore);
+  if(c.kind==="cinema"){
+    if(c.selBuzz) on.push(BUZZ_PCTL[c.selBuzz]);
+    if(c.selScale) on.push(pctRankOf(CINEMA_BUDGET_VALS, c.selScale));
+  } else {
+    if(c.selCrowd) on.push(c.selCrowd*10);
+    if(c.selCritScore) on.push(c.selCritScore);
+  }
   if(!on.length) return {min:null};
   return {min: Math.round(on.reduce((x,y)=>x+y,0)/on.length)};
 }

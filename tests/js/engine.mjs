@@ -150,6 +150,12 @@ if(typeof window.CascadeAuth === "undefined"){
   // Mission step's dial-mean reading (missionScoreStats), so a test can assert all three independently
   // rather than re-deriving them from qScore's output alone.
   qScore, critScore, qScoreSourcesText, missionScoreStats, sortMoviesBy, ratingOf, IMDB_MIN_VOTES, imdbReliable,
+  // CAS-695: the Cascade score's own basis switch (cascadeScore/cascadeScoreSourcesText, dispatching on
+  // isPreRelease) and the cinema-side score it dispatches to (cinemaScore, over buzzPctlOf/budgetPctlOf and
+  // their shared sorted cohort arrays/rank lookup) — exported independently so a test can assert each stage
+  // rather than only the combined qScoreHTML output.
+  cascadeScore, cascadeScoreSourcesText, cinemaScore, isPreRelease, buzzPctlOf, budgetPctlOf, pctRankOf,
+  BUZZ_POP_VALS, CINEMA_BUDGET_VALS,
   // CAS-686: the per-film predicate that decides which condensed-card stats row shows (r-scores vs
   // r-cinfo), so a test can assert the row choice directly rather than re-deriving the three-source rule.
   condensedShowsScores,
