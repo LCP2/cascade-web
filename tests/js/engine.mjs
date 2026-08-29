@@ -141,6 +141,9 @@ if(typeof window.CascadeAuth === "undefined"){
   svcCanon, svcName, SVC_LEAD, myService,
   SUB_SERVICES, STORE_SERVICES, stageDate, curSlot, cinemaState, EST_OFFSET, TODAY,
   inCinemaRun, CINEMA_RUN_DAYS, LISTING_ORDER, CINEMA_LISTING_ORDER, orderFor, listingOrder,
+  // CAS-702: the one default-sort constant, and the raw comparator dispatch, so a test can assert the
+  // rendered order against an independently-run comparator rather than re-deriving sortForKey's branches.
+  DEFAULT_SORT, sortForKey,
   fmtDay, fmtDate, bandHTML, windowsLineHTML, savingsHTML,
   inferredScale, inferScaleWhy, budgetCell, moneyRowHTML, SCALE_INFER_MIN_PEERS, popOf, scaleTier,
   agentWindow, winOn, subOn, winSubs, PRIORITY_WATCH, ALERT_DEFAULTS, ALERT_SHORT, ALERT_MOMENT,
