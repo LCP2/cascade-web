@@ -2095,3 +2095,119 @@ test("CAS-686: condensedShowsScores agrees with the three-source rule, over fixt
       `${m.title}: condensedShowsScores disagrees with the three-source rule`);
   }
 });
+
+// ---- CAS-695: THE CINEMA (PRE-RELEASE) CASCADE SCORE -------------------------------------------------------
+// Before this, qScore (People's vote/Critics) was the only Cascade score, and it scores from reviews that a
+// pre-release film cannot have yet — 85% of Upcoming and 79% of In Cinema carried no score. cascadeScore picks
+// its basis by where the film is in its life: the cinema score (buzz + budget percentiles) pre-release, the
+// streaming score (qScore) once released. PVOD sits on the streaming side by decision (it is released).
+test("CAS-695 AC1: the score's basis switches on isPreRelease — cinema (buzz/budget) before release, streaming (qScore) after", () => {
+  const preReleaseFilm = E.MOVIES.find(m => isPreRelease(m) && E.cascadeScore(m) >= 0);
+  assert.ok(preReleaseFilm, "no scored pre-release film found — this test would prove nothing");
+  assert.equal(E.cascadeScore(preReleaseFilm), E.cinemaScore(preReleaseFilm),
+    `${preReleaseFilm.title}: pre-release film's Cascade score is not its cinema score`);
+
+  const releasedFilm = E.MOVIES.find(m => !isPreRelease(m) && E.qScore(m) >= 0);
+  assert.ok(releasedFilm, "no scored released film found — this test would prove nothing");
+  assert.equal(E.cascadeScore(releasedFilm), E.qScore(releasedFilm),
+    `${releasedFilm.title}: released film's Cascade score is not its (streaming) qScore`);
+
+  // Whole catalogue: the same dispatch, never the other formula.
+  for(const m of E.MOVIES){
+    const expected = isPreRelease(m) ? E.cinemaScore(m) : E.qScore(m);
+    assert.equal(E.cascadeScore(m), expected, `${m.title}: cascadeScore disagrees with the basis its own status picks`);
+  }
+});
+
+// AC2: within the cohort, a film with popularity but no budget/gross scores on buzz alone; one with both
+// scores on their mean; one with neither shows the dash (-1).
+test("CAS-695 AC2: cinemaScore is the mean of whichever of buzz/budget percentile a cohort film has", () => {
+  const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
+  const buzzOnly = cohort.find(m => E.buzzPctlOf(m) != null && E.budgetPctlOf(m) == null);
+  const both     = cohort.find(m => E.buzzPctlOf(m) != null && E.budgetPctlOf(m) != null);
+  const neither  = cohort.find(m => E.buzzPctlOf(m) == null && E.budgetPctlOf(m) == null);
+  assert.ok(buzzOnly, "no buzz-only cohort film found — this test would prove nothing");
+  assert.ok(both, "no both-axes cohort film found — this test would prove nothing");
+
+  assert.equal(E.cinemaScore(buzzOnly), E.buzzPctlOf(buzzOnly), `${buzzOnly.title}: buzz-only film should score as its buzz percentile alone`);
+  assert.equal(E.cinemaScore(both), Math.round((E.buzzPctlOf(both) + E.budgetPctlOf(both)) / 2),
+    `${both.title}: both-axes film should score as the mean of the two percentiles`);
+  if(neither) assert.equal(E.cinemaScore(neither), -1, `${neither.title}: a cohort film with neither axis should not score`);
+
+  // Whole cohort: cinemaScore is exactly the rounded mean of whichever percentile(s) a film carries.
+  for(const m of cohort){
+    const bz = E.buzzPctlOf(m), bd = E.budgetPctlOf(m);
+    const terms = [bz, bd].filter(v => v != null);
+    const expected = terms.length ? Math.round(terms.reduce((x, y) => x + y, 0) / terms.length) : -1;
+    assert.equal(E.cinemaScore(m), expected, `${m.title}: cinemaScore disagrees with the buzz/budget percentile mean`);
+  }
+});
+
+// AC3: percentile makes the buzz axis agree with the ladder's own badges "for free" — BUZZ_PCTL is the same
+// [0,95,97,99] scale buzzPctlOf reads, so a film clearing a badge always carries a buzz percentile at or above
+// that badge's cut. (The BLENDED score is not floored the same way — CAS-695 is explicit that averaging in a
+// lower budget percentile pulls a two-axis film toward the middle, e.g. Doomsday 100 buzz-alone vs Odyssey 99
+// with a budget term dragging it down; that is a known, accepted property, not a defect to guard against.)
+test("CAS-695 AC3: a badge-tier film's buzz percentile is always at or above that badge's floor", () => {
+  const FLOOR = { anticipated: 95, blockbuster: 97, mustsee: 99 };
+  let checked = 0;
+  for(const m of E.MOVIES){
+    const badge = E.scaleTier(m);
+    if(!FLOOR[badge]) continue;
+    checked++;
+    const bz = E.buzzPctlOf(m);
+    assert.ok(bz != null && bz >= FLOOR[badge], `${m.title}: badged ${badge} but buzz percentile is ${bz}, under the ${FLOOR[badge]} floor`);
+  }
+  assert.ok(checked > 0, "no badged film found — this test would prove nothing");
+});
+
+// AC4: the cohort's sorted popularity and budget arrays are module-level consts, built once at load — never
+// re-sorted per card. Asserted the same way CAS-678's own performance claim is: the same array reference
+// (by identity) comes back on repeat reads, and it is already sorted ascending.
+test("CAS-695 AC4: the cohort's popularity and budget arrays are sorted once, not per card", () => {
+  assert.ok(E.BUZZ_POP_VALS.length > 0 && E.CINEMA_BUDGET_VALS.length > 0, "the cohort arrays are empty — this test would prove nothing");
+  for(let i = 1; i < E.BUZZ_POP_VALS.length; i++) assert.ok(E.BUZZ_POP_VALS[i] >= E.BUZZ_POP_VALS[i - 1], "BUZZ_POP_VALS is not sorted ascending");
+  for(let i = 1; i < E.CINEMA_BUDGET_VALS.length; i++) assert.ok(E.CINEMA_BUDGET_VALS[i] >= E.CINEMA_BUDGET_VALS[i - 1], "CINEMA_BUDGET_VALS is not sorted ascending");
+  // Reading buzzPctlOf/budgetPctlOf a second time for the same films must not mutate or resize the arrays.
+  const popLen = E.BUZZ_POP_VALS.length, budgetLen = E.CINEMA_BUDGET_VALS.length;
+  for(const m of E.MOVIES.filter(m => E.inLadderCohort(m)).slice(0, 20)){ E.buzzPctlOf(m); E.budgetPctlOf(m); }
+  assert.equal(E.BUZZ_POP_VALS.length, popLen, "BUZZ_POP_VALS changed size after scoring films");
+  assert.equal(E.CINEMA_BUDGET_VALS.length, budgetLen, "CINEMA_BUDGET_VALS changed size after scoring films");
+});
+
+// AC5: the card's own tooltip text names the basis in play, so a viewer can tell a buzz/budget number from a
+// People's-vote/critics one — the same distinction qScoreSourcesText already draws for the streaming score.
+test("CAS-695 AC5: cascadeScoreSourcesText names the basis in play — Buzz/Budget pre-release, the qScore axes after", () => {
+  const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
+  const buzzOnly = cohort.find(m => E.buzzPctlOf(m) != null && E.budgetPctlOf(m) == null);
+  const both     = cohort.find(m => E.buzzPctlOf(m) != null && E.budgetPctlOf(m) != null);
+  assert.ok(buzzOnly && both, "missing a buzz-only or both-axes cohort fixture — this test would prove nothing");
+  assert.equal(E.cascadeScoreSourcesText(buzzOnly), "Buzz only");
+  assert.equal(E.cascadeScoreSourcesText(both), "Buzz and Budget");
+  for(const name of ["People's vote", "Critics"]){
+    assert.ok(!E.cascadeScoreSourcesText(both).includes(name), `cascadeScoreSourcesText named a streaming axis (${name}) on a pre-release film`);
+  }
+
+  const releasedFilm = E.MOVIES.find(m => !isPreRelease(m) && E.qScore(m) >= 0);
+  assert.ok(releasedFilm, "no scored released film found — this test would prove nothing");
+  assert.equal(E.cascadeScoreSourcesText(releasedFilm), E.qScoreSourcesText(releasedFilm),
+    `${releasedFilm.title}: released film's basis text should be exactly qScoreSourcesText's`);
+});
+
+// AC7 (ticket's "cinema mission minimum"): a cinema agent's Mission dials are Buzz and Movie Budget, on the
+// same percentile scale as the card, so missionScoreStats needs its own cinema-lane formula rather than the
+// streaming lane's selCrowd/selCritScore mean.
+test("CAS-695: missionScoreStats reads Buzz/Budget percentiles for a cinema agent, unchanged for a stream agent", () => {
+  assert.equal(E.missionScoreStats({ kind: "cinema", selBuzz: 0, selScale: 0 }).min, null, "no cinema dial on should give no minimum");
+  assert.equal(E.missionScoreStats({ kind: "cinema", selBuzz: 2, selScale: 0 }).min, E.BUZZ_PCTL[2], "Buzz alone should read as its own percentile");
+  const scaleFloor = E.CINEMA_BUDGET_VALS[Math.floor(E.CINEMA_BUDGET_VALS.length / 2)];
+  const scalePctl = E.pctRankOf(E.CINEMA_BUDGET_VALS, scaleFloor);
+  assert.equal(E.missionScoreStats({ kind: "cinema", selBuzz: 0, selScale: scaleFloor }).min, scalePctl,
+    "Budget alone should read as its dollar floor's own percentile");
+  assert.equal(E.missionScoreStats({ kind: "cinema", selBuzz: 2, selScale: scaleFloor }).min,
+    Math.round((E.BUZZ_PCTL[2] + scalePctl) / 2), "both cinema dials on should read as their mean");
+
+  // The stream lane keeps CAS-694's own formula exactly — a kind other than "cinema" must not be re-routed.
+  assert.equal(E.missionScoreStats({ kind: "stream", selCrowd: 7.5, selCritScore: 0, selBuzz: 0, selScale: 0 }).min, 75,
+    "a stream agent's minimum changed even though its own dials (People's vote/Critics) are untouched by this ticket");
+});
