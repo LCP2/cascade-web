@@ -7595,10 +7595,12 @@ const listWindowOK = (m,c) => {
 // the deck card count both drop tagged films, and watchesFilm/recomputeFound are untouched, so an agent
 // still stops watching and stops alerting on a film you have seen. The only thing that changes is that the
 // ROW survives, greyed and undoable, instead of disappearing.
-const listedBy = (m,c) => !movedOutOf(m.tmdb_id,c)
+// CAS-703: ignoreScoreGate is threaded straight through to matchesCriteria so scoreHeldBackCount() can ask
+// "would this film have listed if it carried a score?" without a second copy of this predicate.
+const listedBy = (m,c,ignoreScoreGate) => !movedOutOf(m.tmdb_id,c)
   && (pinnedInto(m.tmdb_id,c)
         ? (inScope(m,c) && listWindowOK(m,c))
-        : (matchesCriteria(m, {...c, status:[], excludeWatched:false, excludeBlocked:false})
+        : (matchesCriteria(m, {...c, status:[], excludeWatched:false, excludeBlocked:false}, undefined, ignoreScoreGate)
              && inScope(m,c) && listWindowOK(m,c)));
 // The number describing a cascade counts RESULTS, so it leaves the stubs out — the same rule the section
 // heads and the open card's own count already follow.
@@ -8641,7 +8643,7 @@ function selBuzzOK(m,c){
   const s=c.selBuzz||0; if(!s) return true;
   return buzzStop(m) >= s;
 }
-function matchesCriteria(m,c,ignoreBlocked){
+function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   // CAS-170: before taste, before anything — an agent can only put a film in front of you if there is a film
   // to watch. This sits here rather than in passes() alone so every derived number (card counts, hub counts,
   // the reveal, Found-list membership via matchesTaste) is drawn from the same set the listing draws.
@@ -8713,6 +8715,18 @@ function matchesCriteria(m,c,ignoreBlocked){
   }
   if(!budgetOK(m, c.budget||0)) return false;
   if((m.rt_critic||0) < (c.rt||0)) return false;
+  // CAS-703: the Mission dials' own mean (missionScoreStats, unchanged) is now a REQUIREMENT, not only the OR
+  // block's shared reading — a film has to clear at least one open door above AND meet the number those dials
+  // imply, so the "Target score" printed on screen is a promise the listing keeps rather than a number that
+  // happens to describe the OR block's loosest admitted title. Reads cascadeScore(m), the exact figure the
+  // card prints, so the gate can never disagree with what's shown. A film with no Cascade score (-1) can never
+  // be shown to meet a score requirement, so it is held back whenever a target is in force — ignoreScoreGate
+  // lets scoreHeldBackCount() below ask "would this have listed but for its missing score?" without
+  // duplicating every other gate in this function.
+  if(!ignoreScoreGate){
+    const target = missionScoreStats(c).min;
+    if(target!==null && cascadeScore(m) < target) return false;
+  }
   return true;
 }
 const countCriteria = c => MOVIES.filter(m=>matchesCriteria(m,c)).length;
@@ -11777,6 +11791,25 @@ function missionScoreLineHTML(n){
   if(min===null) return "";
   return `<span class="oscountscore">Target score · <b>${min}</b></span>`;
 }
+// CAS-703 AC3: the hard score gate above can drop a film with no explanation on the card itself — a film
+// with no Cascade score cannot be shown to meet a score requirement, so it is held back whenever a target is
+// in force. Counts titles that would have listed (listedBy's other gates all clear) but for carrying no
+// score: not listed for real (!listedBy(m,c)) but WOULD be if the score gate alone were lifted
+// (listedBy(m,c,true)) — the same "how many did the dials silently drop" question selSetAside (CAS-164/675)
+// answers for the OR-route dials, now needed for a gate that can drop a title with zero score at all.
+function scoreHeldBackCount(c){
+  if(missionScoreStats(c).min===null) return 0;
+  return MOVIES.filter(m=>cascadeScore(m)===-1 && !taggedOut(m)
+    && !listedBy(m,c) && listedBy(m,c,true)).length;
+}
+// Shown alongside the Target score line, in the same passive-note voice as selSayHtml's own "no score yet"
+// aside (CAS-675) — not suppressed at n===0 like missionScoreLineHTML, since this is often exactly the
+// explanation for why the count reads zero.
+function scoreHeldBackLineHTML(){
+  const held=scoreHeldBackCount(onbApply());
+  if(!held) return "";
+  return `<span class="osaside">${held} film${held===1?"":"s"} have no score yet and aren't shown.</span>`;
+}
 // ---- CAS-224: per-chip counts, measured off the agent instead of the catalogue --------------------------
 // The Style chips quoted GENRE_COUNT — how many films in the WHOLE catalogue carry that genre — on a page
 // whose own headline said "28 films match right now". Drama · 752 above a total of 28 isn't a small
@@ -11961,7 +11994,7 @@ function stepCtaText(step, n){
 // on every call, same "one source" rule CAS-164 set for n itself.
 function stepCountLine(step, n){
   const base = `<b>${n}</b> film${n===1?"":"s"} match right now`;
-  return step===SHARP_STEPS.selectivity ? `${base}${missionScoreLineHTML(n)}` : base;
+  return step===SHARP_STEPS.selectivity ? `${base}${missionScoreLineHTML(n)}${scoreHeldBackLineHTML()}` : base;
 }
 function stepCountHTML(step, n){
   if(n==null || step.topCount===false) return "";

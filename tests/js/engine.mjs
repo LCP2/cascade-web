@@ -156,6 +156,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // rather than only the combined qScoreHTML output.
   cascadeScore, cascadeScoreSourcesText, cinemaScore, isPreRelease, buzzPctlOf, budgetPctlOf, pctRankOf,
   BUZZ_POP_VALS, CINEMA_BUDGET_VALS, CINEMA_BUDGET_MIN,
+  // CAS-703: the Target score hard gate's own held-back count, so a test can assert it against the set it
+  // claims to describe without re-deriving it from stepCountLine's HTML output.
+  scoreHeldBackCount,
   // CAS-686: the per-film predicate that decides which condensed-card stats row shows (r-scores vs
   // r-cinfo), so a test can assert the row choice directly rather than re-deriving the three-source rule.
   condensedShowsScores,

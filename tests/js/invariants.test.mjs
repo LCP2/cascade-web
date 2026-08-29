@@ -484,6 +484,65 @@ test("mission OR AC6 (CAS-674): the Budget route only clears on an affirmative s
     `${below.title} at $${below.budget} (< floor) cleared the Budget route`);
 });
 
+// ---- 10c. THE TARGET SCORE IS A HARD GATE, NOT JUST THE OR BLOCK'S OWN READING (CAS-703) ------------------
+// Before this ticket, missionScoreStats' mean described the OR block's loosest admitted title rather than
+// binding it — an agent showing "Target score · 60" could still list a film scoring 49. AC2: every listed
+// film's printed score (cascadeScore, the exact figure the card shows) must now be >= the agent's own target,
+// for both lanes. AC5: the gate is applied AFTER the OR block, never as another OR route — a film that clears
+// the Budget or Buzz door but scores below the target is still excluded.
+test("CAS-703 AC1/AC2: no listed film's Cascade score is below the agent's own Mission target, cinema and streaming", () => {
+  const cinemaAgent = missionCase({ kind: "cinema", status: ["upcoming", "opening_week", "in_cinema"], selBuzz: 1 });
+  const streamAgent = missionCase({ kind: "stream", status: ["included_streaming", "pvod", "rental"], selCrowd: 7.5 });
+  for(const d of [cinemaAgent, streamAgent]){
+    const target = E.missionScoreStats(d).min;
+    assert.ok(target !== null, "test setup: expected a Mission target to be in force");
+    const listed = E.MOVIES.filter(m => E.listedBy(m, d));
+    assert.ok(listed.length > 0, "test setup: expected at least one film listed to exercise the gate");
+    for(const m of listed) assert.ok(E.cascadeScore(m) >= target,
+      `${d.kind}: ${m.title} lists at Cascade score ${E.cascadeScore(m)}, below its own agent's target ${target}`);
+  }
+});
+
+// AC5: a film that clears an OR door (here, the Budget route) but scores below the target must still be
+// excluded — the gate is an AND on top of the OR block, never itself another way in.
+test("CAS-703 AC5: a film clearing an OR door but scoring below the target is still excluded", () => {
+  const d = missionCase({ kind: "cinema", status: ["upcoming", "opening_week", "in_cinema"], selScale: 1e6, selBuzz: 3 });
+  const target = E.missionScoreStats(d).min;
+  assert.ok(target !== null, "test setup: expected a Mission target to be in force");
+  const clearsOrDoor = E.MOVIES.filter(m => E.matchesCriteria(m, d, undefined, true)
+    && E.cascadeScore(m) >= 0 && E.cascadeScore(m) < target);
+  assert.ok(clearsOrDoor.length > 0,
+    "test setup: expected at least one film that clears the OR block but scores below the target");
+  for(const m of clearsOrDoor) assert.equal(E.matchesCriteria(m, d), false,
+    `${m.title} scores ${E.cascadeScore(m)} (below target ${target}) but still matched with the real gate on`);
+});
+
+// AC3: a film with no Cascade score is held back while a target is in force, and never silently dropped —
+// scoreHeldBackCount says how many. AC4: with no Mission dial set, the gate (and this count) does nothing.
+test("CAS-703 AC3/AC4: unscored films are held back (and counted) only while a target is in force", () => {
+  const noTarget = missionCase({ kind: "stream", status: ["included_streaming", "pvod", "rental"] });
+  assert.equal(E.missionScoreStats(noTarget).min, null, "test setup: expected no Mission dial set");
+  assert.equal(E.scoreHeldBackCount(noTarget), 0, "no target in force should hold nothing back");
+
+  // selCrowd sets the target; selScale opens an OR route an unscored film CAN clear (unlike selCrowd's own
+  // route, which needs a People's-vote rating to clear at all) — selScale doesn't feed a stream agent's own
+  // target (missionScoreStats only reads selCrowd/selCritScore for kind "stream"), so the target stays 75.
+  const withTarget = missionCase({ kind: "stream", status: ["included_streaming", "pvod", "rental"],
+    selCrowd: 7.5, selScale: 100e6 });
+  const target = E.missionScoreStats(withTarget).min;
+  assert.ok(target !== null, "test setup: expected a Mission target to be in force");
+  const held = E.scoreHeldBackCount(withTarget);
+  assert.ok(held > 0, "test setup: expected at least one unscored film held back to exercise the count");
+
+  // Every film the count claims to be holding back must really be unscored, not otherwise listed, and must
+  // have cleared every other gate (it would list if the score gate alone were lifted).
+  const heldFilms = E.MOVIES.filter(m => E.cascadeScore(m) === -1
+    && !E.listedBy(m, withTarget) && E.listedBy(m, withTarget, true));
+  assert.equal(heldFilms.length, held, "scoreHeldBackCount disagrees with its own set");
+  for(const m of heldFilms) assert.equal(E.listedBy(m, withTarget), false,
+    `${m.title} has no score but is still listed while a target is in force`);
+});
+
 // ---- 11. LISTED NEVER EXCEEDS WHAT MATCHES (CAS-674 AC1) --------------------------------------------------
 // listedCount (what an agent actually LISTS, via listedBy) is a NARROWING of countCriteria (the raw
 // matchesCriteria haul) by window and pin/move state — it can never legitimately exceed it. This was
@@ -1575,7 +1634,7 @@ test("CAS-678 AC5: Landmark behaves exactly as before the change — its predica
 
 test("CAS-678 AC6: matchesCriteria no longer reads c.tentpole, and no Tentpole UI markup remains", () => {
   const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
-  const start = src.indexOf("\nfunction matchesCriteria(m,c,ignoreBlocked){");
+  const start = src.indexOf("\nfunction matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){");
   assert.ok(start >= 0, "matchesCriteria() was not found");
   const end = src.indexOf("\nconst countCriteria = c =>", start);
   assert.ok(end > start, "the end of matchesCriteria() was not found");
