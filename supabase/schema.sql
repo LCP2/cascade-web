@@ -280,6 +280,13 @@ create policy watchlists_owner on public.watchlists
 
 create index if not exists watchlists_user_id_idx on public.watchlists (user_id);
 
+-- CAS-692: a deletion is a positive, replicated fact — a device deletes a list by setting deleted_at
+-- rather than removing the row, so an offline device that hasn't seen the deletion can't read an absent
+-- row as "never existed" and silently resurrect it. Rows are never hard-deleted by a client; a row
+-- tombstoned for more than 90 days MAY be hard-deleted by a maintenance step, never by client code.
+alter table public.watchlists add column if not exists deleted_at timestamptz;
+create index if not exists watchlists_deleted_at_idx on public.watchlists (deleted_at);
+
 -- ---------------------------------------------------------------------------
 -- notifications — the alert ledger (de-dupe: never email the same
 -- movie+moment twice per cascade)
