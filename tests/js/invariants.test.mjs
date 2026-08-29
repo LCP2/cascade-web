@@ -1570,30 +1570,52 @@ test("CAS-678 AC6: matchesCriteria no longer reads c.tentpole, and no Tentpole U
 // affect row a second time"). Same fault, same fix, as CAS-658 did for cascades. These tests exercise the
 // real seam (window.CascadePersistence, newly wired up for watchlists here) against a fake Supabase client
 // that reproduces the exact 21000 error a real duplicate-id payload would get, rather than a stand-in.
+// CAS-692: a chainable, awaitable stand-in for a postgrest select() builder — supports the .eq()/.in()/
+// .is()/.maybeSingle() chains the real version/tombstone-aware sync path now issues, while still being
+// directly awaitable (a bare `await client.from(t).select(cols)`) for call sites that chain nothing.
+function wlSelectBuilder(sourceRows){
+  let rows = sourceRows.map(r => ({ ...r }));
+  const builder = {
+    eq(col, val){ rows = rows.filter(r => r[col] === val); return builder; },
+    in(col, vals){ const set = new Set(vals); rows = rows.filter(r => set.has(r[col])); return builder; },
+    is(col, val){ rows = rows.filter(r => (r[col] ?? null) === val); return builder; },
+    maybeSingle: async () => ({ data: rows[0] || null, error: null }),
+    then(resolve, reject){ return Promise.resolve({ data: rows, error: null }).then(resolve, reject); },
+  };
+  return builder;
+}
 function fakeWatchlistSupabase(initialRows){
   const state = { rows: initialRows.slice(), upsertCalls: [] };
   const client = {
     from(table){
       assert.equal(table, "watchlists", "the watch-list seam must only ever touch the watchlists table");
       return {
-        select: async () => ({ data: state.rows, error: null }),
-        upsert: async (rows) => {
+        select: () => wlSelectBuilder(state.rows),
+        upsert(rows){
           state.upsertCalls.push(rows);
           const ids = rows.map(r => r.id);
+          let result;
           if(new Set(ids).size !== ids.length){
             // The real failure mode, reproduced: a payload with a repeated conflict key 500s.
-            return { error: { code: "21000",
+            result = { data: null, error: { code: "21000",
               message: "ON CONFLICT DO UPDATE command cannot affect row a second time",
               hint: "Ensure that no rows proposed for insertion within the same command have duplicate constrained values." } };
+          } else {
+            const nowIso = new Date().toISOString();
+            rows.forEach(r => {
+              const stored = { ...r, updated_at: nowIso };
+              const i = state.rows.findIndex(x => x.id === r.id);
+              if(i >= 0) state.rows[i] = stored; else state.rows.push(stored);
+            });
+            result = { data: rows.map(r => ({ id: r.id, updated_at: nowIso })), error: null };
           }
-          rows.forEach(r => {
-            const i = state.rows.findIndex(x => x.id === r.id);
-            if(i >= 0) state.rows[i] = r; else state.rows.push(r);
-          });
-          return { error: null };
+          return { select: async () => result, then(resolve, reject){ return Promise.resolve(result).then(resolve, reject); } };
         },
-        delete(){
-          return { eq(){ return { in: async () => ({ error: null }) }; } };
+        update(patch){
+          return { eq(){ return { in: async (col, ids) => {
+            ids.forEach(id => { const i = state.rows.findIndex(x => x.id === id); if(i >= 0) state.rows[i] = { ...state.rows[i], ...patch }; });
+            return { error: null };
+          } }; } };
         },
       };
     },
@@ -1703,17 +1725,33 @@ function fakeFlakyWatchlistSupabase(initialRows){
     from(table){
       assert.equal(table, "watchlists", "the watch-list seam must only ever touch the watchlists table");
       return {
-        select: async () => state.down ? { data: null, error: { message: "network unreachable" } } : { data: state.rows, error: null },
-        upsert: async (rows) => {
-          if(state.down) return { error: { message: "network unreachable" } };
-          rows.forEach(r => { const i = state.rows.findIndex(x => x.id === r.id); if(i >= 0) state.rows[i] = r; else state.rows.push(r); });
-          return { error: null };
+        select(){
+          if(state.down){
+            return { eq(){ return this; }, in(){ return this; }, is(){ return this; },
+              maybeSingle: async () => ({ data: null, error: { message: "network unreachable" } }),
+              then(resolve, reject){ return Promise.resolve({ data: null, error: { message: "network unreachable" } }).then(resolve, reject); } };
+          }
+          return wlSelectBuilder(state.rows);
         },
-        delete(){
+        upsert(rows){
+          if(state.down){
+            const result = { data: null, error: { message: "network unreachable" } };
+            return { select: async () => result, then(resolve, reject){ return Promise.resolve(result).then(resolve, reject); } };
+          }
+          const nowIso = new Date().toISOString();
+          rows.forEach(r => {
+            const stored = { ...r, updated_at: nowIso };
+            const i = state.rows.findIndex(x => x.id === r.id);
+            if(i >= 0) state.rows[i] = stored; else state.rows.push(stored);
+          });
+          const result = { data: rows.map(r => ({ id: r.id, updated_at: nowIso })), error: null };
+          return { select: async () => result, then(resolve, reject){ return Promise.resolve(result).then(resolve, reject); } };
+        },
+        update(patch){
           return { eq(){
             return { in: async (col, ids) => {
               if(state.down) return { error: { message: "network unreachable" } };
-              ids.forEach(id => { const i = state.rows.findIndex(x => x.id === id); if(i >= 0) state.rows.splice(i, 1); });
+              ids.forEach(id => { const i = state.rows.findIndex(x => x.id === id); if(i >= 0) state.rows[i] = { ...state.rows[i], ...patch }; });
               return { error: null };
             } };
           } };
@@ -1784,14 +1822,19 @@ test("CAS-691 AC2/AC3: a delete made while the account is unreachable stays dele
 
   state.down = false;   // AC3: reachable again
   await E.CascadePersistence.syncWatchlistsNow();
-  assert.ok(!state.rows.some(r => r.id === idGone), "the delete must reach the account once it's reachable again");
+  // CAS-692 req3: a delete is now a tombstone (deleted_at set), never a removed row — an offline device
+  // must not be able to read an absent row as "never existed" and resurrect it.
+  const goneRow = state.rows.find(r => r.id === idGone);
+  assert.ok(goneRow, "the row itself must still exist — a delete tombstones it, it never removes the row");
+  assert.ok(goneRow.deleted_at, "the delete must reach the account once it's reachable again, as a tombstone");
   assert.equal(E.CascadePersistence.acctTablePending.watchlists, false, "the flag must clear once the push actually lands");
 }));
 
 test("CAS-691 AC4: acctTableFail.watchlists is a visible flag, not silence, and it clears on the next successful load", () => withCas681State(async () => {
   const { client } = fakeWatchlistSupabase([]);
   signInWithClient(client);
-  const brokenClient = { from(){ return { select: async () => ({ data: null, error: { message: "down" } }) }; } };
+  const brokenClient = { from(){ return { select(){ return { eq(){ return this; }, in(){ return this; }, is(){ return this; },
+    then(resolve, reject){ return Promise.resolve({ data: null, error: { message: "down" } }).then(resolve, reject); } }; } }; } };
   E.CascadeAuth.client = brokenClient;
   await E.CascadePersistence.loadWatchlistAccount();
   assert.equal(E.CascadePersistence.acctTableFail.watchlists, true, "a failed load must flip the visible flag, not just console.warn");
@@ -1810,6 +1853,106 @@ test("CAS-691 neighbours: saveCascades also mirrors to the on-device cache immed
   assert.ok(cached.some(c => c.id === "ca691ca5-0000-4000-8000-000000000001"),
     "saveCascades must mirror to the on-device cache immediately while signed in, not only schedule an account sync");
   E.cascades.length = before;
+}));
+
+// ---- WATCH-LIST EDITS SURVIVE ACROSS DEVICES: DIRTY-ROW SYNC, VERSIONING, TOMBSTONES (CAS-692) -------------
+// CAS-691 made an edit durable on the device that made it; it did nothing for a SECOND device, because
+// syncWatchlistsToAccount pushed this device's entire watchLists set on every save and deletion was
+// inferred by diffing against a private per-device baseline — a stale device could silently resurrect a
+// list another device had deleted, or clobber a row it had never itself touched. These tests exercise the
+// same real seam as CAS-681/691 above, simulating a second device's writes by mutating the fake account's
+// `state.rows` directly (bypassing this device's own code), the way CAS-691's own tests simulate a remote
+// that hasn't caught up yet.
+test("CAS-692 AC1 (data layer): a delete confirmed on the account is never resurrected by a load that also carries this device's own unrelated edit", () => withCas681State(async () => {
+  const idKeep = "cas692-0000-4000-8000-000000000001";
+  const idGone = "cas692-0000-4000-8000-000000000002";
+  const remoteRows = [
+    { id: idKeep, user_id: "cas681-test-user", criteria: { name: "List 1", icon: "🎬", order: 0, svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "score" } },
+    { id: idGone, user_id: "cas681-test-user", criteria: { name: "List 2", icon: "🎬", order: 1, svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "score" } },
+  ];
+  const { client, state } = fakeWatchlistSupabase(remoteRows);
+  signInWithClient(client);
+
+  // Device B loads both lists — "still showing list 2" per the AC's own wording.
+  E.watchLists.length = 0;
+  await E.CascadePersistence.loadWatchlistAccount();
+  assert.equal(E.watchLists.length, 2, "sanity: both lists loaded");
+
+  // Device A deletes list 2 — simulated as a tombstone landing directly on the shared account, since B
+  // never reloads before making its own change (exactly the AC's setup).
+  state.rows.find(r => r.id === idGone).deleted_at = "2026-01-01T00:00:00.000Z";
+
+  // Device B, unaware, makes an unrelated change to list 1 and pushes it.
+  E.watchLists.find(l => l.id === idKeep).sort = "az";
+  E.CascadePersistence.saveWatchlists();
+  await E.CascadePersistence.syncWatchlistsNow();
+  assert.equal(state.rows.find(r => r.id === idKeep).criteria.sort, "az", "list 1's edit must reach the account");
+
+  // "Reload both": list 2 must be gone, and list 1 must carry B's change.
+  E.watchLists.length = 0;
+  await E.CascadePersistence.loadWatchlistAccount();
+  assert.ok(!E.watchLists.some(l => l.id === idGone), "the tombstoned list must never reappear after a reload");
+  assert.equal(E.watchLists.find(l => l.id === idKeep).sort, "az", "the unrelated edit must survive the reload");
+}));
+
+test("CAS-692 AC5 (data layer): a tombstoned list never reappears, including on a device that was offline from before the deletion until after it", () => withCas681State(async () => {
+  const idKeep = "cas692-0000-4000-8000-000000000010";
+  const idGone = "cas692-0000-4000-8000-000000000011";
+  const remoteRows = [
+    { id: idKeep, user_id: "cas681-test-user", criteria: { name: "Keep", icon: "🎬", order: 0, svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "score" } },
+    { id: idGone, user_id: "cas681-test-user", criteria: { name: "Gone", icon: "🎬", order: 1, svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "score" } },
+  ];
+  const { client, state } = fakeWatchlistSupabase(remoteRows);
+  signInWithClient(client);
+
+  // This device saw both lists before going offline.
+  E.watchLists.length = 0;
+  await E.CascadePersistence.loadWatchlistAccount();
+  assert.equal(E.watchLists.length, 2, "sanity: both lists loaded before going offline");
+
+  // While this device is away, another device deletes "Gone" — tombstoned directly on the account.
+  state.rows.find(r => r.id === idGone).deleted_at = "2026-01-01T00:00:00.000Z";
+
+  // This device returns and reconciles in the background (the tab-focus path), never doing a full reload.
+  await E.CascadePersistence.reconcileWatchlists();
+  assert.ok(!E.watchLists.some(l => l.id === idGone), "a background reconcile must drop a list tombstoned while this device was away");
+  assert.ok(E.watchLists.some(l => l.id === idKeep), "the untouched list must remain");
+}));
+
+test("CAS-692 req1/AC3: a device that changed nothing never issues a watchlists upsert", () => withCas681State(async () => {
+  const id = "cas692-0000-4000-8000-000000000020";
+  const remoteRow = { id, user_id: "cas681-test-user", criteria: { name: "Untouched", icon: "🎬", order: 0, svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "score" } };
+  const { client, state } = fakeWatchlistSupabase([remoteRow]);
+  signInWithClient(client);
+
+  E.watchLists.length = 0;
+  await E.CascadePersistence.loadWatchlistAccount();
+  await E.CascadePersistence.syncWatchlistsNow();   // nothing has changed since the load
+  assert.equal(state.upsertCalls.length, 0, "a device that has made no changes must never write any row");
+}));
+
+test("CAS-692 req2: a write whose base version is stale is refused, and the newer remote edit wins instead of being silently lost", () => withCas681State(async () => {
+  const id = "cas692-0000-4000-8000-000000000030";
+  const remoteRow = { id, user_id: "cas681-test-user", criteria: { name: "Original", icon: "🎬", order: 0, svcOn: [], cascOff: [], watchedOn: [], watchTiers: [], sort: "score" } };
+  const { client, state } = fakeWatchlistSupabase([remoteRow]);
+  signInWithClient(client);
+
+  E.watchLists.length = 0;
+  await E.CascadePersistence.loadWatchlistAccount();   // establishes this device's base version
+
+  // Another device writes a newer version directly to the account after this device last read it.
+  const row = state.rows.find(r => r.id === id);
+  row.criteria = { ...row.criteria, name: "Renamed elsewhere" };
+  row.updated_at = "2099-01-01T00:00:00.000Z";
+
+  // This device, unaware, edits the same list and tries to push.
+  E.watchLists.find(l => l.id === id).sort = "az";
+  E.CascadePersistence.saveWatchlists();
+  await E.CascadePersistence.syncWatchlistsNow();
+
+  assert.equal(state.upsertCalls.length, 0, "a stale-based write must be refused, not upserted");
+  assert.equal(E.watchLists.find(l => l.id === id).name, "Renamed elsewhere",
+    "the newer remote edit must win locally rather than this device's stale-based edit silently overwriting it");
 }));
 
 // ---- THE WATCH-LIST CARD AND SECTION COUNTS DESCRIBE WHAT render() ACTUALLY PUTS ON SCREEN (CAS-682) ------

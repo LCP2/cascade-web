@@ -5028,7 +5028,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 864, "commit": "813b84f", "builtAt": "2026-08-28T23:33:32Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 865, "commit": "a5c50a8", "builtAt": "2026-08-29T01:09:27Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -18047,7 +18047,36 @@ else if(dedupedN)
   // this reason; this is the watch-list match for that id-matched drift check, covering every field the row
   // actually carries (name/icon/order included).
   const watchlistFullSigOf = l => JSON.stringify(watchlistToRow(l).criteria);
-  let watchlistBaseline=null;
+  // CAS-692: `watchlistKnown` replaces the old bare-id `watchlistBaseline` set with a Map<id, {sig,
+  // version}> — this device's own record of what the ACCOUNT last confirmed for each list it has seen.
+  // Dirty rows to push and rows to tombstone are DERIVED by diffing the live `watchLists` array against
+  // this map, rather than tracked by instrumenting every edit call site (rename, agent toggle, reorder,
+  // create, delete): a list whose signature doesn't match its known entry (or has none at all) is dirty;
+  // a known id no longer present in `watchLists` is a pending delete. Persisting this map to localStorage
+  // alongside `watchLists` itself (CAS-691's own durability) means that diff reproduces the exact same
+  // pending set after a reload — this IS requirement 4's durable pending queue, with nothing separate to
+  // fall out of sync with the array it describes.
+  const WATCHLIST_KNOWN_KEY = "cascade_watchlist_known";
+  function loadWatchlistKnown(){
+    try{
+      const raw=localStorage.getItem(WATCHLIST_KNOWN_KEY);
+      if(!raw) return new Map();
+      const parsed=JSON.parse(raw);
+      return new Map(Array.isArray(parsed) ? parsed : []);
+    }catch(e){ return new Map(); }
+  }
+  function saveWatchlistKnown(){
+    try{ localStorage.setItem(WATCHLIST_KNOWN_KEY, JSON.stringify([...watchlistKnown])); }catch(e){}
+  }
+  let watchlistKnown=loadWatchlistKnown();
+  const watchlistDirtyRows = () => watchLists.filter(x=>{
+    const k=watchlistKnown.get(x.id);
+    return !k || k.sig!==watchlistFullSigOf(x);
+  });
+  const watchlistPendingDeleteIds = () => {
+    const ids=new Set(watchLists.map(x=>x.id));
+    return [...watchlistKnown.keys()].filter(id=>!ids.has(id));
+  };
   let ymSyncTimer=null, ymSyncing=false, ymSyncAgain=false, ymRetryTimer=null;
   // CAS-691: every call site that owes the account a push (an edit here, or a drifted/local-only list
   // folded in on load) marks the table pending — cleared only once a push actually lands with nothing
@@ -18079,43 +18108,99 @@ else if(dedupedN)
       else scheduleWatchlistRetry();
     }
   }
+  // CAS-692 req1/2/3: pushes only what THIS device changed (watchlistDirtyRows/watchlistPendingDeleteIds,
+  // diffed against watchlistKnown — never the whole watchLists set, the old shape that let a stale device
+  // resurrect or clobber rows it never touched), refuses a write whose base version is stale rather than
+  // upserting blindly, and deletes by tombstone (deleted_at) rather than a real row delete.
   async function syncWatchlistsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return false;
     if(acctTableFail.watchlists) return false;   // CAS-656 AC2: a failed load must not push local state back over it
+    const dirty=watchlistDirtyRows();
+    const deletes=watchlistPendingDeleteIds();
+    if(!dirty.length && !deletes.length) return true;   // AC3: a device that changed nothing writes nothing
     // CAS-681: belt-and-braces — a payload upsert can't contain the same id twice (Postgres 21000, "ON
     // CONFLICT DO UPDATE command cannot affect row a second time"). loadWatchlistAccount above is the
     // known source, now fixed, but this guard is what surfaces the NEXT one instead of 500ing silently.
     const byId=new Map();
-    watchLists.forEach(x=>byId.set(x.id, x));   // keep the last occurrence
-    if(byId.size!==watchLists.length){
+    dirty.forEach(x=>byId.set(x.id, x));   // keep the last occurrence
+    if(byId.size!==dirty.length){
       const seen=new Set(), dupes=new Set();
-      watchLists.forEach(x=>{ if(seen.has(x.id)) dupes.add(x.id); else seen.add(x.id); });
+      dirty.forEach(x=>{ if(seen.has(x.id)) dupes.add(x.id); else seen.add(x.id); });
       console.warn("Watchlist sync: dropping duplicate id(s) before upsert", [...dupes]);
     }
-    const rows=[...byId.values()].map(watchlistToRow);
-    if(rows.length){
-      const { error } = await c.from("watchlists").upsert(rows, { onConflict:"id" });
-      if(error){ console.warn("Watchlist upsert", error); return false; }
+    const candidates=[...byId.values()];
+    // req2: read each candidate's CURRENT server state before writing it, so a write can be refused rather
+    // than blindly overwriting a row another device changed (or deleted) after this device last saw it.
+    let remoteState=[];
+    if(candidates.length){
+      const { data, error } = await c.from("watchlists").select("id,updated_at,deleted_at")
+        .eq("user_id", owner).in("id", candidates.map(x=>x.id));
+      if(error){ console.warn("Watchlist version check", error); return false; }
+      remoteState=data||[];
     }
-    const ids=new Set(watchLists.map(x=>x.id).filter(isUuid));
-    if(watchlistBaseline){
-      const gone=[...watchlistBaseline].filter(id=>!ids.has(id));
-      if(gone.length){
-        const { error } = await c.from("watchlists").delete().eq("user_id", owner).in("id", gone);
-        if(error){ console.warn("Watchlist delete", error); return false; }
+    const remoteById=new Map(remoteState.map(r=>[r.id,r]));
+    const toWrite=[];
+    let changedLocally=false;
+    for(const x of candidates){
+      const known=watchlistKnown.get(x.id);
+      const remote=remoteById.get(x.id);
+      if(remote && remote.deleted_at){
+        // Deleted on another device since this one last saw it — a tombstone is a positive fact and wins
+        // over a stale edit; drop this device's copy rather than resurrecting it (AC5).
+        const i=watchLists.findIndex(w=>w.id===x.id); if(i>=0) watchLists.splice(i,1);
+        watchlistKnown.delete(x.id);
+        changedLocally=true;
+        toast(`"${x.name}" was deleted on another device.`);
+        continue;
       }
+      if(remote && known && (remote.updated_at||null)!==known.version){
+        // req2: this device's base version is stale — refuse the write, adopt the newer remote copy, and
+        // say so rather than silently losing the edit.
+        const { data:freshRow, error:freshErr } = await c.from("watchlists").select("*").eq("id", x.id).maybeSingle();
+        if(freshErr || !freshRow){ console.warn("Watchlist refresh-after-conflict", freshErr); continue; }
+        const freshList=rowToWatchlist(freshRow);
+        const i=watchLists.findIndex(w=>w.id===x.id); if(i>=0) watchLists[i]=freshList;
+        watchlistKnown.set(x.id, { sig: watchlistFullSigOf(freshList), version: freshRow.updated_at||null });
+        changedLocally=true;
+        toast(`"${freshList.name}" was changed on another device — your edit here wasn't saved.`);
+        continue;
+      }
+      toWrite.push(x);
     }
-    watchlistBaseline=ids;
+    if(toWrite.length){
+      const rows=toWrite.map(watchlistToRow);
+      const { data, error } = await c.from("watchlists").upsert(rows, { onConflict:"id" }).select("id,updated_at");
+      if(error){ console.warn("Watchlist upsert", error); return false; }
+      const versionById=new Map((data||[]).map(r=>[r.id, r.updated_at]));
+      toWrite.forEach(x=>{
+        watchlistKnown.set(x.id, { sig: watchlistFullSigOf(x), version: versionById.get(x.id)||null });
+      });
+    }
+    if(deletes.length){
+      const nowIso=new Date().toISOString();
+      const { error } = await c.from("watchlists").update({ deleted_at: nowIso })
+        .eq("user_id", owner).in("id", deletes);
+      if(error){ console.warn("Watchlist tombstone", error); return false; }
+      deletes.forEach(id=>watchlistKnown.delete(id));
+    }
+    saveWatchlistKnown();
+    if(changedLocally){
+      saveWatchlistsLocal();
+      if(typeof render==="function") render();
+      if(typeof renderYourMovies==="function") renderYourMovies();
+    }
     return true;
   }
   async function loadWatchlistAccount(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("watchlists").select("*");   // RLS: only mine
+    // req3: a tombstoned row must never even reach this device's merge logic, let alone its screen.
+    const { data, error } = await c.from("watchlists").select("*").is("deleted_at", null);
     if(error){ console.warn("Watchlist load", error); toast("⚠️ Couldn't reach your account — showing on-device watch lists."); ymReady=true; setAcctTableFail("watchlists", true); return; }
     setAcctTableFail("watchlists", false);
-    watchlistBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
-    const remote=(data||[]).map(rowToWatchlist);
-    if(!remote.length){
+    const oldKnown=watchlistKnown;   // this device's OWN last-confirmed state, from before this fetch
+    const remoteRaw=(data||[]).map(rowToWatchlist);
+    const remoteVersionById=new Map((data||[]).map(r=>[r.id, r.updated_at]));
+    if(!remoteRaw.length && !oldKnown.size){
       // CAS-589/590 migration: a genuinely new account has no rows yet — seed it from this device's own
       // current (guest) lists, mirroring loadUserPrefs's "no row yet" branch.
       ymReady=true;
@@ -18131,8 +18216,9 @@ else if(dedupedN)
     // touched and gets appended alongside its own remote twin. Two rows sharing one id then 500 the
     // upsert (Postgres 21000). Same fault, same fix, as CAS-658 did for cascades: the local copy is the
     // newer state, so it updates the existing row in place rather than duplicating it.
-    const sigs=new Set(remote.map(watchlistSigOf));
-    const remoteById=new Map(remote.map(x=>[x.id, x]));
+    const sigs=new Set(remoteRaw.map(watchlistSigOf));
+    const remoteById=new Map(remoteRaw.map(x=>[x.id, x]));
+    let remote=remoteRaw.slice();
     let driftDirty=false;
     watchLists.forEach(x=>{
       const match=remoteById.get(x.id);
@@ -18141,44 +18227,68 @@ else if(dedupedN)
       if(match && watchlistFullSigOf(match)!==watchlistFullSigOf(x)){
         const updated=normWatchlistEntry({...x});
         remote[remote.indexOf(match)]=updated;
-        remoteById.set(x.id, updated);
         driftDirty=true;
       }
     });
-    const localOnly=watchLists.filter(x=>!remoteById.has(x.id) && !sigs.has(watchlistSigOf(x)));
+    // CAS-692 req1/3: an id this device previously confirmed the account held (oldKnown) but that is now
+    // absent from the fresh fetch was deleted — on this device or another — and must never be treated as
+    // "local-only" and pushed back up (that IS AC1/AC5, the bug this ticket fixes). Only an id this device
+    // has never confirmed at all is a genuine candidate to fold in.
+    const localOnly=watchLists.filter(x=>!remoteById.has(x.id) && !oldKnown.has(x.id) && !sigs.has(watchlistSigOf(x)));
     const merged=[...remote, ...localOnly];
     merged.sort((a,b)=>(a.order??1e9)-(b.order??1e9));
     watchLists.length=0; merged.forEach(l=>watchLists.push(l));
     if(!activeWatchlist() && watchLists.length) setActiveWatchlist(firstWatchlistId());
     applyActiveWatchlist();
     saveWatchlistsLocal();   // mirror into the guest cache for the next cold start, same as cascades
+    // The new known baseline is the untouched server truth (pre local-drift overwrite) — a local edit's
+    // signature must still read as dirty against it so the pending push below (and any later sync) fires.
+    watchlistKnown=new Map(remoteRaw.map(r=>[r.id, { sig: watchlistFullSigOf(r), version: remoteVersionById.get(r.id)||null }]));
+    saveWatchlistKnown();
     ymReady=true;
-    if(localOnly.length || driftDirty) scheduleWatchlistSync();   // push folded-in/updated lists up
+    if(localOnly.length || driftDirty || watchlistDirtyRows().length || watchlistPendingDeleteIds().length) scheduleWatchlistSync();
     if(typeof render==="function") render();
     if(typeof renderYourMovies==="function") renderYourMovies();
   }
   // CAS-408-style background convergence — id-based upsert/prune, exactly like reconcileCascades.
   async function reconcileWatchlists(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("watchlists").select("*");
+    const { data, error } = await c.from("watchlists").select("*").is("deleted_at", null);
     if(error){ console.warn("Watchlist reconcile", error); setAcctTableFail("watchlists", true); return; }
     setAcctTableFail("watchlists", false);
+    const oldKnown=watchlistKnown;
     const remote=(data||[]).map(rowToWatchlist);
+    const remoteVersionById=new Map((data||[]).map(r=>[r.id, r.updated_at]));
     const remoteIds=new Set(remote.map(x=>x.id));
     remote.forEach(r=>{
       const i=watchLists.findIndex(x=>x.id===r.id);
-      if(i>=0) watchLists[i]=r; else watchLists.push(r);
+      if(i<0){
+        // CAS-692: absent locally but this device previously confirmed the account held it — THIS device
+        // deleted it and the tombstone push just hasn't landed yet. A stale remote read must not resurrect it.
+        if(oldKnown.has(r.id)) return;
+        watchLists.push(r);
+        watchlistKnown.set(r.id, { sig: watchlistFullSigOf(r), version: remoteVersionById.get(r.id)||null });
+        return;
+      }
+      // Never let a background reconcile clobber an edit still waiting to be pushed — a dirty row wins
+      // locally until this device's own sync catches up and either confirms or refuses it.
+      const known=oldKnown.get(r.id);
+      if(known && known.sig===watchlistFullSigOf(watchLists[i])){
+        watchLists[i]=r;
+        watchlistKnown.set(r.id, { sig: watchlistFullSigOf(r), version: remoteVersionById.get(r.id)||null });
+      }
     });
-    if(watchlistBaseline){
-      for(let i=watchLists.length-1;i>=0;i--){
-        const id=watchLists[i].id;
-        if(watchlistBaseline.has(id) && !remoteIds.has(id)) watchLists.splice(i,1);
+    for(let i=watchLists.length-1;i>=0;i--){
+      const id=watchLists[i].id;
+      if(oldKnown.has(id) && !remoteIds.has(id)){
+        watchLists.splice(i,1);
+        watchlistKnown.delete(id);
       }
     }
     if(!activeWatchlist() && watchLists.length) setActiveWatchlist(firstWatchlistId());
     applyActiveWatchlist();
-    watchlistBaseline=remoteIds;
     saveWatchlistsLocal();
+    saveWatchlistKnown();
     if(typeof render==="function") render();
     if(typeof renderYourMovies==="function") renderYourMovies();
   }
@@ -18255,7 +18365,7 @@ else if(dedupedN)
       // Signed out → back to the on-device set, and the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); loadGuestLists(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
       cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
-      watchlistBaseline=null;
+      watchlistKnown=new Map(); saveWatchlistKnown();
       // CAS-656: a guest has no account to be disconnected from — clear any failure this device carried
       // from its last signed-in session, or the banner would wrongly survive a sign-out.
       Object.keys(acctTableFail).forEach(t=>setAcctTableFail(t, false));
