@@ -5028,7 +5028,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 868, "commit": "3a2d946", "builtAt": "2026-08-29T01:36:18Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 869, "commit": "a96dc6d", "builtAt": "2026-08-29T03:05:04Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8051,11 +8051,12 @@ const isLandmark   = m => !!m.award && hiCritics(m) && (bigBudget(m) || hiPop(m)
 // CAS-678 (Lee, 2026-08-28): ONE popularity ladder, computed over ONE cohort (films whose status includes
 // upcoming or in_cinema — 1,068 of 5,750 measured 2026-08-28), from ONE quantity (TMDB popularity) and
 // nothing else: no budget, no gross, no award, no IMDb-votes corroboration. The cuts are PERCENTILES of that
-// cohort's own popularity distribution, not hand-picked constants. The cohort is severely skewed — median
-// 0.45, 75th percentile 1.26, 85th 2.09, against a max of 746 — so a lower cut such as 75/85/95 puts obscure
-// titles in the same "Anticipated" band as genuinely anticipated ones (the CAS-169 failure, from the other
-// direction). 99/97/95 keeps the mechanism identical while making a lozenge mean something.
-const BUZZ_PCTL = [0, 95, 97, 99];   // Off · Anticipated · Blockbuster · Must-see
+// cohort's own popularity distribution, not hand-picked constants.
+// CAS-697 (Lee, 2026-08-28): 99/97/95 badged only 5% of the cohort (53 of 1,068) and, combined with
+// CINEMA_BUDGET_VALS' unfloored placeholder budgets, made the cinema Mission target unusable — any Buzz
+// setting at all pushed it to ~90+. 65/85/95 badges 213 Anticipated, 106 Blockbuster and 53 Must-see (372 of
+// 1,068, 35%) instead. That jump is the intended widening, confirmed by Lee, not a regression.
+const BUZZ_PCTL = [0, 65, 85, 95];   // Off · Anticipated · Blockbuster · Must-see
 const inLadderCohort = m => m.status.includes("upcoming") || m.status.includes("in_cinema");
 // The cohort's popularity values, sorted once — read by BUZZ_CUTS (cut-off lookup) and, since CAS-695,
 // buzzPctlOf (rank lookup) below. Named so a second sort of the same array can never sneak in.
@@ -8079,13 +8080,19 @@ const buzzBandOf = m => BUZZ_KEY[buzzStop(m)] || null;
 // empty for nearly all of it — 85% of Upcoming and 79% of In Cinema carried no score before this. The two
 // signals that DO exist before release are how much a film is being talked about (buzz) and how big it is
 // (budget), each read as its own PERCENTILE RANK within the same upcoming-and-in-cinema cohort BUZZ_CUTS
-// uses, so the two are on one scale before they're averaged. BUZZ_PCTL is [0,95,97,99] on this same scale,
-// so Anticipated/Blockbuster/Must-see line up with this score for free. If a later change breaks that
-// alignment, it is a bug.
-// The budget array, built once the same way BUZZ_POP_VALS is: a film with neither budget nor gross
-// contributes no entry, so it never drags a zero into the percentile below it.
+// uses, so the two are on one scale before they're averaged. The badge bands and the buzz axis of this score
+// are both percentile ranks in the same cohort array, so a film's BUZZ term equals its badge threshold — but
+// the Cascade score is the MEAN of buzz and budget, so the score and the badge are not the same number
+// whenever a film also carries a budget term.
+// CAS-697 (Lee, 2026-08-28): of the 271 upcoming/in-cinema films that report ANY budget figure, 57% report
+// under $100K and 45% under $10K — TMDB placeholder rows, not real budgets, and they are what put a $100K
+// film at the 57th percentile. CINEMA_BUDGET_MIN floors the array at $1M — the Budget dial's own first
+// labelled stop ("Indie $1M+") — so a film below it carries no budget term and scores on buzz alone, exactly
+// like a film with no budget figure at all. This floor is for the SCORE only, never for admission:
+// selScaleMatch keeps reading m.budget||m.worldwide_gross with no floor.
+const CINEMA_BUDGET_MIN = 1_000_000;
 const CINEMA_BUDGET_VALS = MOVIES.filter(inLadderCohort)
-  .map(m=>m.budget||m.worldwide_gross||0).filter(v=>v>0).sort((a,b)=>a-b);
+  .map(m=>m.budget||m.worldwide_gross||0).filter(v=>v>=CINEMA_BUDGET_MIN).sort((a,b)=>a-b);
 // The rank of v within a sorted-ascending array, as a percentile 0-100 — the inverse of BUZZ_CUTS' own
 // cutoff lookup. Binary search: this is read on every card, so it must not scan the array per film.
 function pctRankOf(sorted, v){
@@ -8101,7 +8108,7 @@ function buzzPctlOf(m){
 function budgetPctlOf(m){
   if(!inLadderCohort(m)) return null;
   const v=m.budget||m.worldwide_gross||0;
-  if(!v) return null;
+  if(v<CINEMA_BUDGET_MIN) return null;
   return pctRankOf(CINEMA_BUDGET_VALS, v);
 }
 function cinemaScore(m){
