@@ -1507,7 +1507,7 @@ test("CAS-602: REAL_MOMENT_SAID carries the newly_qualifies key, so its ledger r
 // percentile cuts. The card badge and the Buzz dial both read buzzStop()/buzzBandOf(), so these are really
 // one invariant tested from both ends, not two separate claims that happen to agree today.
 test("CAS-678 AC1: one set of popularity thresholds, computed over the upcoming-and-in-cinema cohort", () => {
-  assert.deepEqual([...E.BUZZ_PCTL], [0, 95, 97, 99], "the ladder's percentile stops have moved");
+  assert.deepEqual([...E.BUZZ_PCTL], [0, 65, 85, 95], "the ladder's percentile stops have moved");
   assert.equal(E.BUZZ_CUTS.length, E.BUZZ_PCTL.length, "one cut per stop");
   for(let i = 1; i < E.BUZZ_CUTS.length; i++){
     assert.ok(E.BUZZ_CUTS[i] >= E.BUZZ_CUTS[i - 1], "the cuts must be non-decreasing — a higher stop is a higher bar");
@@ -2144,12 +2144,12 @@ test("CAS-695 AC2: cinemaScore is the mean of whichever of buzz/budget percentil
 });
 
 // AC3: percentile makes the buzz axis agree with the ladder's own badges "for free" — BUZZ_PCTL is the same
-// [0,95,97,99] scale buzzPctlOf reads, so a film clearing a badge always carries a buzz percentile at or above
-// that badge's cut. (The BLENDED score is not floored the same way — CAS-695 is explicit that averaging in a
+// scale buzzPctlOf reads, so a film clearing a badge always carries a buzz percentile at or above that badge's
+// cut. (The BLENDED score is not floored the same way — CAS-695 is explicit that averaging in a
 // lower budget percentile pulls a two-axis film toward the middle, e.g. Doomsday 100 buzz-alone vs Odyssey 99
 // with a budget term dragging it down; that is a known, accepted property, not a defect to guard against.)
 test("CAS-695 AC3: a badge-tier film's buzz percentile is always at or above that badge's floor", () => {
-  const FLOOR = { anticipated: 95, blockbuster: 97, mustsee: 99 };
+  const FLOOR = { anticipated: E.BUZZ_PCTL[1], blockbuster: E.BUZZ_PCTL[2], mustsee: E.BUZZ_PCTL[3] };
   let checked = 0;
   for(const m of E.MOVIES){
     const badge = E.scaleTier(m);
@@ -2210,4 +2210,55 @@ test("CAS-695: missionScoreStats reads Buzz/Budget percentiles for a cinema agen
   // The stream lane keeps CAS-694's own formula exactly — a kind other than "cinema" must not be re-routed.
   assert.equal(E.missionScoreStats({ kind: "stream", selCrowd: 7.5, selCritScore: 0, selBuzz: 0, selScale: 0 }).min, 75,
     "a stream agent's minimum changed even though its own dials (People's vote/Critics) are untouched by this ticket");
+});
+
+// ---- CAS-697: RECALIBRATED BUZZ LADDER + THE $1M CINEMA BUDGET FLOOR --------------------------------------
+// The cinema Mission target was unusable: a Budget dial at its minimum already read 57, and any Buzz setting
+// pushed it to 90. Two input constants were wrong, not the formula — BUZZ_PCTL widens 95/97/99 to 65/85/95,
+// and CINEMA_BUDGET_VALS drops the sub-$1M TMDB placeholder rows that were dragging the budget percentile
+// down. Asserted against the live constants, never fixed counts, so a catalogue refresh cannot go stale.
+test("CAS-697 AC1/AC2: the Buzz ladder moved to [0,65,85,95] and badges a materially wider slice of the cohort", () => {
+  assert.deepEqual([...E.BUZZ_PCTL], [0, 65, 85, 95], "the ladder's percentile stops have not moved to CAS-697's values");
+  const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
+  assert.ok(cohort.length > 0, "the cohort is empty — this test would prove nothing");
+  const badged = cohort.filter(m => E.buzzBandOf(m));
+  // Measured on the catalogue at ticket time: 5% under the old [0,95,97,99] ladder, 35% under the new one.
+  // 20% is a safe threshold well clear of both, so a normal day-to-day catalogue refresh cannot flip this.
+  assert.ok(badged.length / cohort.length > 0.2,
+    `only ${badged.length} of ${cohort.length} cohort films are badged — the wider ladder does not appear to be in effect`);
+});
+
+test("CAS-697 AC3/AC6: CINEMA_BUDGET_VALS is floored at CINEMA_BUDGET_MIN, and a sub-floor film scores on buzz alone", () => {
+  assert.ok(E.CINEMA_BUDGET_VALS.length > 0, "CINEMA_BUDGET_VALS is empty — this test would prove nothing");
+  for(const v of E.CINEMA_BUDGET_VALS){
+    assert.ok(v >= E.CINEMA_BUDGET_MIN, `CINEMA_BUDGET_VALS holds ${v}, below the CINEMA_BUDGET_MIN floor`);
+  }
+  const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
+  const belowFloor = cohort.find(m => {
+    const v = m.budget || m.worldwide_gross || 0;
+    return v > 0 && v < E.CINEMA_BUDGET_MIN && E.buzzPctlOf(m) != null;
+  });
+  assert.ok(belowFloor, "no cohort film with a sub-floor budget and a buzz percentile found — this test would prove nothing");
+  assert.equal(E.budgetPctlOf(belowFloor), null, `${belowFloor.title}: below CINEMA_BUDGET_MIN but budgetPctlOf did not return null`);
+  assert.equal(E.cinemaScore(belowFloor), E.buzzPctlOf(belowFloor),
+    `${belowFloor.title}: a sub-floor budget contributed to the score instead of the film scoring on buzz alone`);
+});
+
+test("CAS-697 AC5: selScaleMatch (admission) reads every real budget with no CINEMA_BUDGET_MIN floor", () => {
+  const small = { title: "Indie $500K", budget: 500000, worldwide_gross: 0 };
+  assert.equal(E.selScaleMatch(small, { selScale: 100000 }), true,
+    "a $500K film was not admitted by a $100K Budget dial — the score floor leaked into admission");
+  // Whole catalogue: every sub-floor-budget cohort film must still be admitted by a dial set at or below its
+  // own figure — this is the one way this ticket could quietly break every cinema agent.
+  const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
+  const subFloor = cohort.filter(m => {
+    const v = m.budget || m.worldwide_gross || 0;
+    return v > 0 && v < E.CINEMA_BUDGET_MIN;
+  });
+  assert.ok(subFloor.length > 0, "no sub-floor-budget cohort film found — this test would prove nothing");
+  for(const m of subFloor){
+    const v = m.budget || m.worldwide_gross || 0;
+    assert.equal(E.selScaleMatch(m, { selScale: v }), true,
+      `${m.title}: a $${v} film was not admitted by a Budget dial set at its own figure`);
+  }
 });
