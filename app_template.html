@@ -5849,10 +5849,13 @@ function sortMoviesBy(a,b,key){
 const sortMovies = (a,b) => sortMoviesBy(a,b,filt.sort);
 // An un-released film has no rating, no box office and usually no budget — ranking it by a metric it doesn't
 // have just sorts noise (which is how genuine tentpoles ended up at the bottom of the budget sort). So the
-// Upcoming group always ranks by anticipation, except under the two sorts that DO mean something pre-release.
+// Upcoming group always ranks by anticipation, except under the sorts that DO mean something pre-release.
 // "availability" belongs here too: a release date is the one thing an unreleased film definitely HAS, so the
 // timeline is meaningful pre-release — it is the only order that is.
-const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
+// CAS-699: "cascade" joined this set too. It used to be noise here for the same reason IMDb/RT/gross still
+// are — an unreleased film carried none of the sources qScore reads. CAS-695 gave every pre-release film a
+// real cinema Cascade score (from buzz and budget), so ranking Upcoming by it is meaningful now, not noise.
+const PRE_RELEASE_SORTS=new Set(["availability","title","cinema","cascade"]);
 // CAS-148: the default is the availability timeline, and it ranks every group the same way, Upcoming
 // included. CAS-107's rating order is still there as an explicit choice: rated first, highest first, unrated
 // last, with byRatingDesc falling back to anticipation for the unrated so a group keeps a meaningful order
@@ -5870,15 +5873,19 @@ const PRE_RELEASE_SORTS=new Set(["availability","title","cinema"]);
 // pre-release still win as their own literal order: Title stays alphabetical, and Cinema date stays
 // "Newest cinema" first (its own UI label, unaffected by this ticket).
 // CAS-430: a cinema agent's In Cinema section is the trip-planning line CAS-394 promised — oldest
-// cinema_date at the top — and that has to hold under every sort key, not just "availability". A
-// Blockbuster-style agent (sort:"popularity") was falling through to sortMoviesBy and losing the
-// oldest-first read entirely.
-const sortForKey = (g,key,cinema) =>
+// cinema_date at the top — and that has to hold under every sort key, not just "availability", AS LONG AS
+// the sort is the cascade's own default (nobody has picked anything). CAS-699: an explicit sort a person
+// picked from the menu has to win instead — that is the whole point of picking one, and it was losing to
+// this guard exactly like Upcoming's "cascade" exclusion above was. isUserSort carries that distinction; it
+// is never a second source of truth for the sort key itself, only which of the two reasons produced the key
+// already in hand — derived, at each caller, from whatever already told it: ymSort being non-null in
+// listingGroups (nothing chosen for a list keeps it null), or the caller of listingOrder saying so directly.
+const sortForKey = (g,key,cinema,isUserSort) =>
     // CAS-410: "Newest cinema" (key==="cinema") is in PRE_RELEASE_SORTS because it's a literal pre-release
     // date order like Title — but for a cinema agent it needs to read the same direction as every other
     // Upcoming sort (soonest first), not sortMoviesBy's plain descending. Non-cinema agents keep it descending.
     (g==="upcoming" && (!PRE_RELEASE_SORTS.has(key) || (cinema && key==="cinema"))) ? byTimelineAsc
-  : (cinema && g==="in_cinema") ? byTimelineAsc
+  : (cinema && g==="in_cinema" && !isUserSort) ? byTimelineAsc
   : key==="availability" ? (cinema||g==="upcoming" ? byTimelineAsc : byTimeline)
   : key==="imdb" ? byRatingDesc
   : ((a,b)=>sortMoviesBy(a,b,key));
@@ -5893,10 +5900,13 @@ const sortFor = (g,c) => sortForKey(g, filt.sort, c && c.kind==="cinema");
 // The sort key is taken from the CASCADE being shown, not from the live filt.sort — at reveal time
 // filt.sort is still whatever the previous view was using, and c.sort is what applyCascade is about to
 // put there the moment the user lands in the listing.
-function listingOrder(films, sortKey, c){
+// isUserSort (CAS-699): omitted by every caller here that only ever shows a cascade's own just-applied
+// default (openMembership, the CAS-176/CAS-430 tests below) — a caller that knows sortKey came from a
+// person's own menu pick, not a default, passes true so CAS-430's In Cinema override stands down for it.
+function listingOrder(films, sortKey, c, isUserSort){
   const ordered=[], seen=new Set();
   orderFor(c).forEach(g=>{
-    films.filter(m=>primaryStatus(m)===g).sort(sortForKey(g,sortKey,c && c.kind==="cinema"))
+    films.filter(m=>primaryStatus(m)===g).sort(sortForKey(g,sortKey,c && c.kind==="cinema",isUserSort))
          .forEach(m=>{ ordered.push(m); seen.add(m); });
   });
   // A film whose window isn't one of the six sections has no section to sit in, so the listing never shows
@@ -16756,11 +16766,15 @@ function fillListChunked(listEl, items, gen, freshFn, onDone){
 // CAS-662: the listing's own group partition, decided up front — pure over `rows` and the active agent's
 // order, no depth cap or floor any more (selectivity is the agent's own Mission criteria now).
 function listingGroups(rows, ac){
+  // CAS-699: ymSort is null exactly when nothing has been picked from the list's own sort menu (see its
+  // declaration above) — that already says whether "cascade" here is the fallback default or a person's
+  // explicit pick, so it doubles as isUserSort with no new state of its own.
+  const isUserSort = ymSort!==null;
   return orderFor(ac)      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
     .map(g=>({g, items: rows.filter(m=>primaryStatus(m)===g)
       // CAS-646: the listing's order is the ACTIVE WATCH LIST's own sort (ymSort), not the open agent's —
       // "cascade" where the list has none, never the agent's c.sort and never a bare "imdb" default.
-      .sort(sortForKey(g, ymSort||"cascade", ac && ac.kind==="cinema"))}))
+      .sort(sortForKey(g, ymSort||"cascade", ac && ac.kind==="cinema", isUserSort))}))
     .filter(x=>x.items.length);
 }
 function render(){

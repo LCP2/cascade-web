@@ -229,7 +229,11 @@ if(typeof window.CascadeAuth === "undefined"){
   setMovingWindow: (key) => window.setMovingWindow(key),
   // CAS-662: the listing's own group partition — pure over a rows set and an active agent, no DOM, so it is
   // exactly the "decision" half of render() this harness exists to test independent of the paint half.
+  // CAS-699: ymSort exposed by getter/setter (like watchPrefs/flowKind below) so a test can drive the list's
+  // own sort pick the same way ymSortChange does, and assert listingGroups honours it over CAS-430's default.
   listingGroups,
+  get ymSort(){ return ymSort; },
+  setYmSort(v){ ymSort = v; },
   // CAS-613: auto-notify's own decision surface. recomputeFound is the wire-adjacent entry point (it reads
   // cascades/MOVIES and writes notify), exposed the same way movingData is above; notify/entryFor let a test
   // seed and read the per-film arming state directly; watchPrefs is exposed through a getter/setter (like

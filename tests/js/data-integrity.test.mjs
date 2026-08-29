@@ -254,6 +254,150 @@ test("in cinema: the cinema lane leads with what is out, ends with Upcoming, old
   assert.equal(E.orderFor(E.onbApply()), E.LISTING_ORDER, "the streaming lane picked up the cinema order");
 });
 
+// ---- 1b. AN EXPLICIT SORT REACHES EVERY SECTION (CAS-699) -----------------------------------------------
+// Lee's report: a watch list sorted by Cascade score still showed In Cinema in cinema-date order and
+// Upcoming in release order — two guards (CAS-430's In Cinema override, and Upcoming's stale pre-CAS-695
+// exclusion of "cascade") fired before the chosen key was ever consulted. A film built with only ONE score
+// source (metacritic) gets a qScore equal to that figure exactly (qScore rounds the mean of however many of
+// the two axes are present — see CAS-694), which is what makes these fixtures' expected order exact rather
+// than approximate.
+const cinemaFilm = (title, cinema_date, metacritic) =>
+  ({ title, status: ["in_cinema"], cinema_date, metacritic, rt_critic: null, imdb_rating: null, imdb_votes: 0 });
+const upcomingFilm = (title, cinema_date, metacritic) =>
+  ({ title, status: ["upcoming"], cinema_date, metacritic, rt_critic: null, imdb_rating: null, imdb_votes: 0 });
+
+test("cascade score: In Cinema honours an explicit pick on a cinema cascade (CAS-699 AC2)", () => {
+  // Lee's own case: cinema dates ascend 8 Jul / 23 Jul / 6 Aug while the scores do not — 98, 77, 99.
+  const films = [
+    cinemaFilm("Moana", "2026-07-08", 98),
+    cinemaFilm("Motor City", "2026-07-23", 77),
+    cinemaFilm("Spider-Man: Brand New Day", "2026-08-06", 99),
+  ];
+  const cascadeC = { kind: "cinema" };
+  const picked = [...E.listingOrder(films, "cascade", cascadeC, true)].map(m => m.title);
+  assert.deepEqual(picked, ["Spider-Man: Brand New Day", "Moana", "Motor City"],
+    `an explicit Cascade score pick should read 99, 98, 77 — got ${picked.join(", ")}`);
+  // …and CAS-430's own default is untouched when nobody has picked anything (isUserSort omitted).
+  const byDefault = [...E.listingOrder(films, "cascade", cascadeC)].map(m => m.title);
+  assert.deepEqual(byDefault, ["Moana", "Motor City", "Spider-Man: Brand New Day"],
+    `the cascade's own default should still read oldest cinema date first — got ${byDefault.join(", ")}`);
+});
+
+test("cascade score: Upcoming honours Cascade score, score order and release order in conflict (CAS-699 AC1)", () => {
+  // Release order ascends A, B, C; score order is B (90), C (75), A (60) — deliberately disagreeing so the
+  // test cannot pass on release order alone.
+  const films = [
+    upcomingFilm("A", "2026-09-01", 60),
+    upcomingFilm("B", "2026-10-01", 90),
+    upcomingFilm("C", "2026-11-01", 75),
+  ];
+  const seq = [...E.listingOrder(films, "cascade", { kind: "stream" })].map(m => m.title);
+  assert.deepEqual(seq, ["B", "C", "A"], `Upcoming under Cascade score should read 90, 75, 60 — got ${seq.join(", ")}`);
+});
+
+test("cascade score: a watch list's own live sort (ymSort) reaches In Cinema, same as listingOrder (CAS-699)", () => {
+  // listingGroups is the function render() actually calls (CAS-662) — ymSort, not c.sort, is its sort key
+  // (CAS-646) — so this is the exact path behind Lee's screenshot, not just the shared helper underneath it.
+  const films = [
+    cinemaFilm("Moana", "2026-07-08", 98),
+    cinemaFilm("Motor City", "2026-07-23", 77),
+    cinemaFilm("Spider-Man: Brand New Day", "2026-08-06", 99),
+  ];
+  const ac = { kind: "cinema" };
+  try{
+    const byDefault = [...E.listingGroups(films, ac).flatMap(({ items }) => [...items]).map(m => m.title)];
+    assert.deepEqual(byDefault, ["Moana", "Motor City", "Spider-Man: Brand New Day"],
+      `with nothing picked, the list should still read oldest cinema date first — got ${byDefault.join(", ")}`);
+    E.setYmSort("cascade");
+    const picked = [...E.listingGroups(films, ac).flatMap(({ items }) => [...items]).map(m => m.title)];
+    assert.deepEqual(picked, ["Spider-Man: Brand New Day", "Moana", "Motor City"],
+      `with Cascade score picked from the list's own sort menu, In Cinema should read 99, 98, 77 — got ${picked.join(", ")}`);
+  } finally {
+    E.setYmSort(null);   // module-scope state — leave it as every other test found it
+  }
+});
+
+// AC5: every sort key has to reach every section — table-driven so the next key added can't silently lose
+// to a guard the way "cascade" did. Run against a CINEMA cascade with an explicit pick (isUserSort=true):
+// that is the combination that exercises every branch in sortForKey, including the two CAS-699 touched.
+// "hi"/"lo" are two films differing on exactly the one field each key reads; RELEASED_GROUPS behave alike
+// (none of them read the `cinema` flag except through "availability"), Upcoming is its own row because
+// several keys fall back to the release timeline there on purpose (see sortForKey's own comment).
+const RELEASED_GROUPS = ["opening_week", "in_cinema", "pvod", "rental", "included_streaming"];
+const SORT_TABLE = [
+  // key, released-section [hi,lo] fields, upcoming-section [first,second] behaviour
+  { key: "cascade", field: "metacritic", hi: 90, lo: 10, upcomingByScore: true },
+  { key: "imdb", field: "imdb_rating", hi: 9, lo: 1, upcomingByScore: false },
+  { key: "rt", field: "rt_critic", hi: 90, lo: 10, upcomingByScore: false },
+  { key: "gross", field: "worldwide_gross", hi: 900000000, lo: 1000, upcomingByScore: false },
+  { key: "popularity", field: "popularity", hi: 900, lo: 1, upcomingByScore: false },
+];
+test("sort keys: cascade/imdb/rt/gross/popularity each reach every section (CAS-699 AC5)", () => {
+  for(const { key, field, hi, lo, upcomingByScore } of SORT_TABLE){
+    for(const g of RELEASED_GROUPS){
+      const base = { status: [g], cinema_date: "2026-07-01",
+        imdb_rating: 5, imdb_votes: E.IMDB_MIN_VOTES, metacritic: 50, rt_critic: 50,
+        worldwide_gross: 100, popularity: 100 };
+      const films = [
+        { ...base, title: "Hi", [field]: hi },
+        { ...base, title: "Lo", [field]: lo },
+      ];
+      const seq = [...E.listingOrder(films, key, { kind: "cinema" }, true)].map(m => m.title);
+      assert.deepEqual(seq, ["Hi", "Lo"], `${key} in ${g}: expected the higher ${field} first — got ${seq.join(", ")}`);
+    }
+    // Upcoming: cascade now reaches it (CAS-699 AC1); imdb/rt/gross/popularity still fall back to the
+    // release timeline there on purpose (sortForKey's own comment) — soonest release leads regardless of
+    // the field this key would otherwise rank by.
+    // Soon always carries the LOW field value and Later the HIGH one, so the two possible readings —
+    // "ranked by this key" (Later first, it has the high value) and "fell back to the release timeline"
+    // (Soon first, it releases first) — disagree and the fixture actually discriminates between them.
+    const upBase = { status: ["upcoming"], imdb_rating: 5, imdb_votes: E.IMDB_MIN_VOTES, metacritic: 50, rt_critic: 50,
+      worldwide_gross: 100, popularity: 100 };
+    const upFilms = [
+      { ...upBase, title: "Soon", cinema_date: "2026-09-01", [field]: lo },
+      { ...upBase, title: "Later", cinema_date: "2026-11-01", [field]: hi },
+    ];
+    const upSeq = [...E.listingOrder(upFilms, key, { kind: "cinema" }, true)].map(m => m.title);
+    const expected = upcomingByScore ? ["Later", "Soon"] : ["Soon", "Later"];
+    assert.deepEqual(upSeq, expected,
+      `${key} in upcoming: ${upcomingByScore ? "should follow the score" : "should still fall back to the release timeline"} — got ${upSeq.join(", ")}`);
+  }
+});
+
+test("sort keys: title and availability each reach every section (CAS-699 AC5)", () => {
+  for(const g of [...RELEASED_GROUPS, "upcoming"]){
+    const base = { status: [g], imdb_rating: null, imdb_votes: 0, metacritic: null, rt_critic: null };
+    // title: always alphabetical, in every section including Upcoming.
+    const titleFilms = [
+      { ...base, title: "Alpha", cinema_date: "2026-11-01" },
+      { ...base, title: "Zeta", cinema_date: "2026-07-01" },
+    ];
+    const titleSeq = [...E.listingOrder(titleFilms, "title", { kind: "cinema" }, true)].map(m => m.title);
+    assert.deepEqual(titleSeq, ["Alpha", "Zeta"], `title in ${g}: expected alphabetical order — got ${titleSeq.join(", ")}`);
+    // availability: on a cinema cascade every section (Upcoming included) reads soonest release first —
+    // CAS-177/CAS-470/CAS-394's own rule, untouched by this ticket.
+    const availFilms = [
+      { ...base, title: "Soon", cinema_date: "2026-07-01" },
+      { ...base, title: "Later", cinema_date: "2026-11-01" },
+    ];
+    const availSeq = [...E.listingOrder(availFilms, "availability", { kind: "cinema" }, true)].map(m => m.title);
+    assert.deepEqual(availSeq, ["Soon", "Later"], `availability in ${g}: expected soonest release first — got ${availSeq.join(", ")}`);
+  }
+});
+
+test("sort keys: cinema (\"Newest cinema\") reaches every released section (CAS-699 AC5)", () => {
+  // sortMoviesBy's own "cinema" case is a plain descending cinema_date compare, unaffected by cascade kind
+  // outside the two guards CAS-699 already covers (Upcoming's flip, In Cinema's now-neutralised default).
+  for(const g of RELEASED_GROUPS){
+    const films = [
+      { title: "Newer", status: [g], cinema_date: "2026-11-01", imdb_rating: null, imdb_votes: 0, metacritic: null, rt_critic: null },
+      { title: "Older", status: [g], cinema_date: "2026-07-01", imdb_rating: null, imdb_votes: 0, metacritic: null, rt_critic: null },
+    ];
+    const seq = [...E.listingOrder(films, "cinema", { kind: "cinema" }, true)].map(m => m.title);
+    assert.deepEqual(seq, ["Newer", "Older"], `cinema in ${g}: expected newest cinema date first — got ${seq.join(", ")}`);
+  }
+});
+
 // ---- 2. THE DATES THE CARD SHOWS ------------------------------------------------------------------------
 // stageDate() is what the card prints under each availability lozenge, and it answers in one of two voices:
 // a real observation (est:false) or an offset off the opening date (est:true). Both have to be well formed,
