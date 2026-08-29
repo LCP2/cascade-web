@@ -870,7 +870,7 @@
      tombstone column instead. It's a claim ABOUT the film, not another metric alongside IMDb/RT. Gold, and
      it names the exact tier scaleTier() computes. Press it (or hover) for the signals behind
      it. Width is now content-sized, because it sits in a wrapping row of chips rather than filling a column. */
-  .tentbadge{height:24px;font:inherit;font-size:10.5px;font-weight:700;max-width:100%;
+  .tentbadge{height:24px;font:inherit;font-size:10.5px;font-weight:700;max-width:100%;flex:none;
     padding:0 6px;border-radius:8px;display:inline-flex;gap:5px;align-items:center;justify-content:center;
     white-space:nowrap;overflow:hidden;cursor:pointer;
     border:1px solid rgba(245,214,117,.45);background:rgba(245,214,117,.10);color:var(--gold)}
@@ -3165,7 +3165,10 @@
      the scores line — same grid-area:scores slot, same compacted-to-plain-text treatment as .mrow.r-scores
      just above. Decided per film (condensedShowsScores), not per listing — was #groups.cinema-listing. */
   .card.cinfo:not(.expanded) .mrow.r-scores{display:none}
-  .card.cinfo:not(.expanded) .mrow.r-cinfo{display:flex;grid-area:scores;margin:0;gap:10px;flex-wrap:nowrap;overflow:hidden}
+  /* CAS-701: wrap (was nowrap+overflow:hidden) — a Landmark/buzz lozenge on this row must never truncate
+     or clip (AC4/AC6); the row growing a second line at 360px is accepted, per the same trade-off r-scores
+     already makes (CAS-655). */
+  .card.cinfo:not(.expanded) .mrow.r-cinfo{display:flex;grid-area:scores;margin:0;gap:10px;flex-wrap:wrap;overflow:hidden}
   .card.cinfo:not(.expanded) .mrow.r-cinfo .m,
   .card.cinfo:not(.expanded) .mrow.r-cinfo button.m{padding:0;background:none;border:none;font-size:11px;line-height:1.2;white-space:nowrap}
   .card.cinfo:not(.expanded) .mrow.r-cinfo .m b{font-size:11px}
@@ -3248,22 +3251,14 @@
   .attrib{flex:0 1 auto;min-width:0;margin-left:auto;padding-left:6px;font-size:10.5px;
     color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .card.expanded .attrib{display:none}
-  /* CAS-698: the buzz badge, riding the scores row right after the Oscar mark so a pre-release film that
-     also carries a review score doesn't lose its badge (CAS-686 side effect — r-scores and r-cinfo are
-     mutually exclusive per film, and r-cinfo was the badge's only condensed-card home). Placed ahead of
-     .attrib, which is the item that gives way (shrinks/ellipsises, CAS-655) when the row is tight. Hidden
-     expanded: the full-size .r-badge row already carries the badge there. */
-  .buzzchip{flex:none;font-size:11px;font-weight:800;white-space:nowrap}
-  .card.expanded .buzzchip{display:none}
-  /* CAS-698: a buzz-band card's scores row is already tight with three real score cells plus an Oscar
-     mark — measured against the actual catalogue's own worst case (a film carrying all three), that
-     leaves no slack at 360px for a fourth thing to join, even an icon-only badge. A smaller row gap plus
-     a trimmed .oscmark (its padding/border were never stripped for the condensed row the way the score
-     cells' were, CAS-655) buys back the room, scoped to buzz-band cards only — AC6 keeps a badge-less
-     film's row pixel-identical to today. */
-  .card.buzzband:not(.expanded) .mrow.r-scores{gap:2px}
-  .card.buzzband:not(.expanded) .mrow.r-scores .oscmark{padding:1px 2px;border:none;margin-left:0}
-  .card.buzzband:not(.expanded) .mrow.r-scores .buzzchip{margin-left:0}
+  /* CAS-701: the condensed card's own copy of the scale badge (see condensedBadgeHTML) — the same full
+     .tentbadge lozenge the expanded card's .r-badge row and the film page use, riding whichever stats row
+     the card is showing (r-scores or r-cinfo — see the .card.cinfo rules below; only one is ever visible
+     per film, so this is never rendered twice). flex:none so it never shrinks/truncates (AC4/AC6); placed
+     ahead of .attrib, which is the item that gives way when the row is tight. Hidden expanded: the
+     full-size .r-badge row already carries the same badge there. */
+  .condbadge{flex:none;display:inline-flex}
+  .card.expanded .condbadge{display:none}
   /* (6) "Can Watch" is wider than "Notify"; equal thirds truncated it to "Can W..." */
   .card:not(.expanded) .actions .ctl{flex:1 1 auto;min-width:0}
   .card:not(.expanded) .actions .ctl.notify{flex:1.25 1 auto}
@@ -5044,7 +5039,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 871, "commit": "5d34db7", "builtAt": "2026-08-29T03:44:33Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 872, "commit": "d27d8a7", "builtAt": "2026-08-29T04:13:58Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5994,34 +5989,30 @@ function scaleBadge(m){
     title="${esc(scaleWhy(m))}">${b.ico} <b>${b.label}</b></button>`;
 }
 window.showScale=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(scaleWhy(m)); };
-// CAS-698: a compact copy of the badge, riding the r-scores row for a condensed card that also has a
-// review score — cinemaInfoRowHTML already carries the badge on r-cinfo, but that row and r-scores are
-// mutually exclusive per film (CAS-686), so a scored film lost its badge as a side effect. Buzz bands only
-// (AC3): Landmark's condensed-card badge is a separate question and stays out of this ticket's scope.
-function buzzChipHTML(m){
-  const kind=buzzBandOf(m);
-  if(!kind) return "";
-  const b=TENT_BADGE[kind];
-  // Icon only, not icon+label — the scores row (CAS-655) is already IMDb/RT/Meta plus the Oscar mark plus
-  // the ellipsising agent attribution; the full "🔥 Must-see" text is what the expanded card's own .r-badge
-  // row and the tap-to-toast tooltip below are for.
-  return `<span class="m buzzchip" title="${escA(b.label)}"><b>${b.ico}</b></span>`;
+// CAS-701: the condensed card's own copy of the scale badge — ONE code path (scaleBadge, the exact
+// function the expanded card's .r-badge row and the film page use), wrapped so it can be hidden when the
+// card is expanded (the .r-badge row already shows the same badge there — see .card.expanded .condbadge).
+// scaleTier(m), not buzzBandOf(m): a Landmark film gets its lozenge here too, same as every buzz band.
+// This replaces two defective renderings CAS-698/CAS-686 left behind: an icon-only chip on r-scores, and
+// a plain-text badge on r-cinfo that the row's own .m reset stripped of its border/background — neither
+// exists any more, and there is nowhere else a condensed card can get a badge from.
+function condensedBadgeHTML(m){
+  const b=scaleBadge(m);
+  return b ? `<span class="condbadge">${b}</span>` : "";
 }
 // CAS-686: which stats row a condensed card shows is a per-FILM decision, not a per-listing one (CAS-624
 // gated it on the cinema-agent listing wrapper). A film carrying at least one of a reliable IMDb rating,
 // an RT critic score or a Metacritic score keeps the scores row — the other two sources still render as
 // the existing muted "–" cells when absent. A film with none of the three gets the money row instead.
 const condensedShowsScores = m => imdbReliable(m) || m.rt_critic!=null || m.metacritic!=null;
-// CAS-624 (now CAS-686): a condensed card with no room for both a critics line and a money line shows the
-// money one when condensedShowsScores(m) is false — same badge data (TENT_BADGE) and the same budgetCell()
-// the money row already renders, just laid out as one line. Gross is dropped entirely rather than shown as
-// "–" when unknown — the condensed row already omits IMDb/RT/Meta cells it doesn't hold, this keeps to
-// that same rule.
+// CAS-624 (now CAS-686/701): a condensed card with no room for both a critics line and a money line shows
+// the money one when condensedShowsScores(m) is false — the badge (condensedBadgeHTML) and the same
+// budgetCell() the money row already renders, just laid out as one line. Gross is dropped entirely rather
+// than shown as "–" when unknown — the condensed row already omits IMDb/RT/Meta cells it doesn't hold,
+// this keeps to that same rule.
 function cinemaInfoRowHTML(m){
-  const kind=scaleTier(m), b=kind && TENT_BADGE[kind];
-  const badge = b ? `<span class="m"><b>${b.ico} ${b.label}</b></span>` : "";
   const gross = m.worldwide_gross>0 ? `<span class="m"><span class="lab">Gross</span> <b>${money(m.worldwide_gross)}</b></span>` : "";
-  return badge + budgetCell(m) + gross;
+  return condensedBadgeHTML(m) + budgetCell(m) + gross;
 }
 // ---- The IMDb lozenge, vote-gated (CAS-156) ------------------------------------
 // Three states, and they are three different claims, so they don't share a rendering:
@@ -6511,10 +6502,6 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   // CAS-686: the condensed card shows the money row instead of the scores row when this film holds none
   // of IMDb/RT/Metacritic — see condensedShowsScores.
   const cinfoCard = !condensedShowsScores(m);
-  // CAS-698: a condensed card whose r-scores row also carries the buzz-band chip gets a tighter gap on
-  // that row — see the .buzzband CSS rule. Scoped to buzz-band films only, so a film with no badge (AC6)
-  // gets the exact row it gets today.
-  const buzzBand = !!buzzBandOf(m);
   // What's new is a fact about the film — the day Cascade first picked it up — so it is stated ON the film,
   // and nowhere else (CAS-107). It no longer decides where the film sits in the list, and the header no longer
   // dresses the whole list up as news; the chip just tells you which of these you haven't seen before.
@@ -6523,7 +6510,7 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   // for callers but no longer rendered.)
   // CAS-179: one grid, one order — title · genres·language · synopsis · money · scores · awards, with
   // the poster spanning down to the scores row and the scale badge tucked under it beside the awards.
-  return `<div class="card ${expandedSet.has(id)?'expanded':''} ${cinfoCard?'cinfo':''} ${buzzBand?'buzzband':''}" id="card-${id}">
+  return `<div class="card ${expandedSet.has(id)?'expanded':''} ${cinfoCard?'cinfo':''}" id="card-${id}">
     <div class="cbody" onclick="cardTap(event,${id})">
       <div class="ctop">
         <!-- CAS-276: the tombstone is the POSTER, and nothing else. The scale badge used to hang below it,
@@ -6538,7 +6525,7 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
         <div class="metaline">${(m.genres||[]).length ? esc((m.genres||[]).join(", "))+cult : cult.replace(/^ · /,"")}</div>
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
-        <div class="mrow r-scores">${scoresRowHTML(m)}${oscMarkHTML(m)}${buzzChipHTML(m)}${attributionHTML(m)}</div>
+        <div class="mrow r-scores">${scoresRowHTML(m)}${oscMarkHTML(m)}${condensedBadgeHTML(m)}${attributionHTML(m)}</div>
         <!-- CAS-686: condensed-card-only — shown instead of r-scores when this film gets the "cinfo" class
              on .card (condensedShowsScores(m) is false). Hidden everywhere else, including the expanded
              card, by the base .r-cinfo{display:none}. -->
