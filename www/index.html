@@ -4588,20 +4588,30 @@ function recomputeFound(){
   const _t460recompute = performance.now();
   console.log('[CAS-460] recomputeFound start', _t460recompute);
   const hits=new Map();                             // film id -> the Cascades that chose it, THIS run
-  cascades.forEach(c=>{
-    if(c.paused) return;                            // guest mode (CAS-79): a paused agent watches nothing, so
-                                                    // it adds no Found membership — and since the poll's watchlist
-                                                    // IS the Found set, it raises no alerts either.
-    MOVIES.forEach(m=>{
+  MOVIES.forEach(m=>{
+    const candidates = cascades.filter(c=>{
+      if(c.paused) return false;                    // guest mode (CAS-79): a paused agent watches nothing, so
+                                                      // it adds no Found membership — and since the poll's watchlist
+                                                      // IS the Found set, it raises no alerts either.
       // CAS-279: a hand-move outranks the criteria in BOTH directions, and it has to do so here as well as
       // in the listing — this is the set the poll watches, so a film moved into an agent must be watched by
       // it (or the move buys you a row and no alerts) and one moved out must not be (or it goes on emailing
       // you from an agent you took it off).
-      if(movedOutOf(m.tmdb_id,c)) return;
-      if(!pinnedInto(m.tmdb_id,c) && !watchesFilm(m,c)) return;   // WATCHES, not shows — see matchesTaste
-      if(!hits.has(m.tmdb_id)) hits.set(m.tmdb_id, []);
-      hits.get(m.tmdb_id).push(c.id);
+      return !movedOutOf(m.tmdb_id,c);
     });
+    // CAS-709: a hand-pin always outranks rank/criteria — a pinned film belongs to exactly its pinned
+    // cascade(s), never a criteria match from elsewhere, even a higher-ranked one.
+    const pinned = candidates.filter(c=>pinnedInto(m.tmdb_id,c));
+    let ids;
+    if(pinned.length){
+      ids = pinned.map(c=>c.id);
+    } else {
+      const matched = candidates.filter(c=>watchesFilm(m,c));   // WATCHES, not shows — see matchesTaste
+      if(!matched.length) return;
+      // CAS-709: unpinned, a film belongs to exactly ONE agent — its highest-ranked (lowest .order) match.
+      ids = [matched.reduce((best,c)=> c.order<best.order ? c : best).id];
+    }
+    hits.set(m.tmdb_id, ids);
   });
   found.clear();
   Object.keys(notify).forEach(id=>{ notify[id].cascadeIds=[]; });   // the auto half is rebuilt, never merged
@@ -5054,7 +5064,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 879, "commit": "8e0c0fd", "builtAt": "2026-09-01T06:03:38Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 880, "commit": "f3a8939", "builtAt": "2026-09-01T06:37:50Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
