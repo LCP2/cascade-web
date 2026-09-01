@@ -984,7 +984,13 @@ test("CAS-680 AC1/AC2: with exactly one agent ticked, its per-agent figure equal
   }
 });
 
-test("CAS-680 AC7: ymFeedList() still ignores the scope bar, and scopeRows() still applies it — the two predicates stay deliberately different", () => {
+// CAS-718: the Watch screen's own scope bar (WATCH ON/For review/Watched pills) is retired — CAS-717's
+// tabs already narrow by watch level, so Watch On/For review need no replacement, and Watched moves into
+// the new per-tab Filters sheet (watchWatchedSel, applied by render() via filmMatchesWatchedFilter — see
+// its own comment). scopeRows() itself no longer narrows by any of this; it stays list/agent-matching only.
+// inFindScope/scope/scopeVerdicts/scopeTiers are left defined and still drive leInnerHTML's own preview
+// (leComputeCounts), which this ticket does not touch.
+test("CAS-680/CAS-718 AC7: ymFeedList() still ignores per-tab Watched filtering, and scopeRows() no longer applies any of it", () => {
   const ids = seedNCascades(3);
   try {
     withCas680List(ids, () => {
@@ -993,28 +999,25 @@ test("CAS-680 AC7: ymFeedList() still ignores the scope bar, and scopeRows() sti
       const list = E.ymFeedList();
       assert.ok(list.length > 0, "sanity: the reproduction must match at least one film");
 
-      // CAS-677: the scope bar defaults to Notify + For review on, Watched off (scope.watch=scope.new=true,
-      // scope.watched=false). watchedOn is now permissive by default too, so an undecided film no longer
-      // demonstrates the gap — mark one watched instead: ymFeedMatches still carries it (permissive
-      // watchedOn), but inFindScope fails it (scope.watched is off).
-      assert.equal(E.scope.watch, true, "sanity: default scope leaves Notify on");
-      assert.equal(E.scope.new, true, "sanity: default scope leaves For review on");
-      assert.equal(E.scope.watched, false, "sanity: default scope leaves Watched off");
       const target = list[0];
       const wasWatched = E.watched.has(target.tmdb_id);
       E.watched.add(target.tmdb_id);
+      const savedSel = new Set(E.watchWatchedSel[E.watchTab]);
       try {
-        assert.equal(E.inFindScope(target), false,
-          "a watched film must fail inFindScope under the default scope (Watched pill off)");
+        E.watchWatchedSel[E.watchTab].clear();   // CAS-718 default: nothing selected, tagged-out films hidden
+        assert.equal(E.filmMatchesWatchedFilter(target), false,
+          "a watched film must fail filmMatchesWatchedFilter under the default (empty) Watched selection");
 
         const stillMatches = E.ymFeedList();
         assert.ok(stillMatches.some(m => m.tmdb_id === target.tmdb_id),
-          "ymFeedList() must still carry that same film — it never applies inFindScope");
+          "ymFeedList() must still carry that same film — it never applies watchWatchedSel/filmMatchesWatchedFilter");
 
         const rows = E.scopeRows();
-        assert.ok(!rows.some(m => m.tmdb_id === target.tmdb_id),
-          "scopeRows() must drop a film the scope bar excludes — it applies inFindScope as its last step");
+        assert.ok(rows.some(m => m.tmdb_id === target.tmdb_id),
+          "scopeRows() must no longer drop a watched film itself — Watched narrowing is render()'s own per-tab step now, not scopeRows()'s");
       } finally {
+        E.watchWatchedSel[E.watchTab].clear();
+        savedSel.forEach(k => E.watchWatchedSel[E.watchTab].add(k));
         if(!wasWatched) E.watched.delete(target.tmdb_id);
       }
     });
@@ -1135,7 +1138,7 @@ test("CAS-677 AC1: the scope bar defaults to Notify and For review on, Watched o
     { watch: true, new: true, watched: false });
 });
 
-test("CAS-677 AC8: turning the scope bar's Watched pill on surfaces watched films", () => {
+test("CAS-718 AC (was CAS-677 AC8): selecting a verdict in the Filters sheet's Watched section surfaces that watched film, per tab", () => {
   const ids = seedNCascades(1);
   try {
     withCas680List(ids, () => {
@@ -1145,18 +1148,20 @@ test("CAS-677 AC8: turning the scope bar's Watched pill on surfaces watched film
       assert.ok(list.length > 0, "sanity: the reproduction must match at least one film");
       const target = list[0];
       const wasWatched = E.watched.has(target.tmdb_id);
-      E.watched.add(target.tmdb_id);
-      const savedScope = { ...E.scope };
+      E.watched.add(target.tmdb_id);           // opinionOf -> "liked"
+      const tab = E.watchTab;
+      const savedSel = new Set(E.watchWatchedSel[tab]);
       try {
-        E.scope.watched = false;
-        assert.ok(!E.scopeRows().some(m => m.tmdb_id === target.tmdb_id),
-          "sanity: with the Watched pill off, the watched film must not appear");
+        E.watchWatchedSel[tab].clear();
+        assert.ok(!E.filmMatchesWatchedFilter(target),
+          "sanity: with nothing selected in Watched, the watched film must not pass the filter");
 
-        E.scope.watched = true;
-        assert.ok(E.scopeRows().some(m => m.tmdb_id === target.tmdb_id),
-          "with the Watched pill on, the watched film must appear");
+        E.watchWatchedSel[tab].add(E.opinionOf(target.tmdb_id));
+        assert.ok(E.filmMatchesWatchedFilter(target),
+          "with its own verdict selected in Watched, the watched film must pass the filter");
       } finally {
-        Object.assign(E.scope, savedScope);
+        E.watchWatchedSel[tab].clear();
+        savedSel.forEach(k => E.watchWatchedSel[tab].add(k));
         if(!wasWatched) E.watched.delete(target.tmdb_id);
       }
     });
@@ -2142,7 +2147,10 @@ test("CAS-682 AC3: render() counts every row a section holds, stubs included, no
     "the header must not subtract tagged-out stubs any more — a stub is still a rendered row");
 });
 
-test("CAS-682 AC2/AC4: reproducing For review + Watched (Notify off) — toggling the Watched pill moves scopeRows().length, and listingGroups() carries the resulting stub into its section", () => {
+// CAS-718: the scope bar's Watched pill this AC was reported against is retired — the reproduction now
+// drives the same shape through watchWatchedSel + filmMatchesWatchedFilter (render()'s own post-scopeRows
+// step, see its comment), since scopeRows() itself no longer narrows by Watched state at all.
+test("CAS-682/CAS-718 AC2/AC4: reproducing a Watched selection — toggling watchWatchedSel moves the post-scope row count, and listingGroups() carries the resulting stub into its section", () => {
   const ids = seedNCascades(1);
   try {
     withCas680List(ids, () => {
@@ -2154,35 +2162,37 @@ test("CAS-682 AC2/AC4: reproducing For review + Watched (Notify off) — togglin
       const wasWatched = E.watched.has(target.tmdb_id);
       E.watched.add(target.tmdb_id);   // opinionOf -> "liked": a tagged-out film, same shape as the reported case
       assert.ok(E.taggedOut(target), "sanity: marking it watched must make it a stub");
-      const savedScope = { ...E.scope };
+      const tab = E.watchTab;
+      const savedSel = new Set(E.watchWatchedSel[tab]);
       try {
-        // The reported scope combination: For review + Watched on, Notify off.
-        E.scope.watch = false; E.scope.new = true; E.scope.watched = true;
-        assert.ok(E.scopeRows().some(m => m.tmdb_id === target.tmdb_id),
-          "sanity: Watched on must surface the stub in the reproduced set");
+        E.watchWatchedSel[tab].clear();
+        E.watchWatchedSel[tab].add(E.opinionOf(target.tmdb_id));
+        assert.ok(E.scopeRows().filter(E.filmMatchesWatchedFilter).some(m => m.tmdb_id === target.tmdb_id),
+          "sanity: the stub's own verdict selected must surface it in the reproduced set");
 
-        // AC2: the count moves when a scope pill is toggled.
-        const withWatchedPill = E.scopeRows().length;
-        E.scope.watched = false;
-        const withoutWatchedPill = E.scopeRows().length;
-        assert.notEqual(withoutWatchedPill, withWatchedPill,
-          "turning the Watched pill off must change the count scopeRows() reports — the card must move with it");
-        assert.ok(!E.scopeRows().some(m => m.tmdb_id === target.tmdb_id),
-          "sanity: Watched off must drop the stub again");
+        // AC2: the count moves when the Watched selection is toggled.
+        const withSelection = E.scopeRows().filter(E.filmMatchesWatchedFilter).length;
+        E.watchWatchedSel[tab].clear();
+        const withoutSelection = E.scopeRows().filter(E.filmMatchesWatchedFilter).length;
+        assert.notEqual(withoutSelection, withSelection,
+          "clearing the Watched selection must change the row count — the card must move with it");
+        assert.ok(!E.scopeRows().filter(E.filmMatchesWatchedFilter).some(m => m.tmdb_id === target.tmdb_id),
+          "sanity: clearing the selection must drop the stub again");
 
-        // AC1/AC3 arithmetic: back to the reproduced combination, the card's set and the sections' own sets
+        // AC1/AC3 arithmetic: back to the reproduced selection, the card's set and the sections' own sets
         // must agree exactly, and the stub's section must still hold it.
-        E.scope.watched = true;
-        const rows = E.scopeRows();
+        E.watchWatchedSel[tab].add(E.opinionOf(target.tmdb_id));
+        const rows = E.scopeRows().filter(E.filmMatchesWatchedFilter);
         const ac = E.cascades.find(c => c.id === ids[0]);
         const groups = E.listingGroups(rows, ac);
         const total = groups.reduce((n, x) => n + x.items.length, 0);
         assert.equal(total, rows.length,
-          "every row scopeRows() returns must land in exactly one group — the card and the section headers must describe the same set");
+          "every row must land in exactly one group — the card and the section headers must describe the same set");
         const grp = groups.find(x => x.items.some(m => m.tmdb_id === target.tmdb_id));
         assert.ok(grp, "the stub's own section must still hold it, not silently drop it from the count");
       } finally {
-        Object.assign(E.scope, savedScope);
+        E.watchWatchedSel[tab].clear();
+        savedSel.forEach(k => E.watchWatchedSel[tab].add(k));
         if(!wasWatched) E.watched.delete(target.tmdb_id);
       }
     });

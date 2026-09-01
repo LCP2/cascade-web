@@ -2499,6 +2499,60 @@
      .scopebar's own — same row shape, one step further down the bar. */
   .genrefilter{margin:9px 12px 0}
   .cascbar.rail .genrefilter{margin:8px 12px 9px}
+  /* ---- CAS-718: the Watch control bar (search + Filters + sort) and its Filters sheet — replaces the
+     scope bar's three pills and the genre row's own standalone home above. Same on-colour (--brand-blue)
+     as the tabs/old scope bar, for the same reason: these are chrome belonging to the Find/Watch chip. */
+  .watchctl{display:flex;gap:8px;margin:9px 12px 0;align-items:stretch}
+  .cascbar.rail .watchctl{margin:8px 12px 0}
+  .watchsearchwrap{flex:1;min-width:0;position:relative;display:flex;align-items:center}
+  .watchsearchwrap .search{padding:9px 32px 9px 12px;font-size:14px}
+  .watchsearchwrap .searchclear{width:24px;height:24px}
+  .watchfilterbtn{position:relative;flex:0 0 auto;display:flex;align-items:center;gap:6px;
+    padding:0 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);
+    color:var(--dim);font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;
+    -webkit-tap-highlight-color:transparent}
+  .watchfilterbtn svg{width:15px;height:15px;display:block}
+  .watchfilterbtn.on{border-color:var(--brand-blue);color:#cddcff;background:rgba(76,125,255,.16)}
+  .watchfilterbtn:active{opacity:.75}
+  .watchfilterbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+  .wfbadge{position:absolute;top:-6px;right:-6px;min-width:16px;height:16px;border-radius:9px;
+    background:var(--brand-blue);color:#fff;font-size:10px;font-weight:800;line-height:16px;text-align:center;padding:0 3px}
+  .watchactivefilters{margin:8px 12px 0;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none}
+  .watchactivefilters::-webkit-scrollbar{display:none}
+  .watchactivefilters .chip{flex:0 0 auto;display:flex;align-items:center;gap:6px;
+    background:rgba(76,125,255,.16);border-color:rgba(76,125,255,.5);color:#cddcff}
+  .watchactivefilters .linkbtn.clearall{flex:0 0 auto;padding:6px 4px}
+  /* No existing component here is a true bottom sheet — .modal/.sharpstep are full-viewport, .cpop is a
+     small anchored popover — so this introduces its own slide-up/scrim mechanics. */
+  .wsheetscrim{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:59;opacity:0;pointer-events:none;
+    transition:opacity .2s ease}
+  .wsheetscrim.open{opacity:1;pointer-events:auto}
+  .wsheet{position:fixed;left:50%;bottom:0;transform:translateX(-50%) translateY(100%);width:100%;
+    max-width:480px;height:88vh;height:88dvh;background:var(--bg);border-radius:18px 18px 0 0;z-index:60;
+    display:flex;flex-direction:column;box-shadow:0 -8px 30px rgba(0,0,0,.4);transition:transform .25s ease;
+    padding-bottom:env(safe-area-inset-bottom,0px)}
+  .wsheet.open{transform:translateX(-50%) translateY(0)}
+  .wsheethead{position:sticky;top:0;background:var(--bg);display:flex;justify-content:space-between;
+    align-items:center;padding:calc(14px + env(safe-area-inset-top,0px)) 16px 12px;
+    border-bottom:1px solid var(--line);border-radius:18px 18px 0 0;flex:0 0 auto}
+  .wsheethead h3{margin:0;font-size:16px;font-weight:800}
+  .wsheetclose{background:transparent;border:0;color:var(--dim);font-size:22px;line-height:1;
+    cursor:pointer;padding:4px 8px}
+  .wsheetbody{flex:1;overflow-y:auto;padding:14px 16px}
+  .wsheetsec{margin-bottom:22px}
+  /* Watched chips carry WATCH_STEPS/REVIEW_STEPS' own --wwc colour inline (same convention .nopt.on already
+     uses for the same six values); Styles chips don't set --wwc, so the accent fallback applies to them. */
+  .wsheetsec .chip.on{background:color-mix(in srgb, var(--wwc, var(--accent)) 22%, var(--panel2));
+    border-color:var(--wwc, var(--accent))}
+  .wsheethd{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
+  .wsheethd>span:first-child{font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--faint)}
+  .wsheetlinks{display:flex;gap:12px}
+  .linkbtn{background:transparent;border:0;color:var(--brand-blue);font-size:12px;font-weight:700;
+    cursor:pointer;padding:0;font-family:inherit}
+  .wsheetfoot{display:flex;gap:10px;padding:12px 16px 14px;border-top:1px solid var(--line);flex:0 0 auto}
+  .wsheetfoot .ebtn{flex:0 0 auto;margin:0}
+  .wsheetfoot .donebtn{flex:1}
   /* The listbox keeps its own outline all the way round. Squaring the joined corners only reads as "one
      control" when the panel is exactly as wide as the pill — and it is not: the Watch it panel is wider,
      the Watched panel is offset to stay on screen, and the open edge then reads as a cut-off box. A whole
@@ -3442,51 +3496,59 @@
   <div class="cascbar blue" id="cascbar">
     <!-- CAS-371: the "AGENTS" heading is gone — the agent box is the first thing in the bar now, so
          everything below it sits that much higher. -->
-    <!-- The scope bar sits ABOVE the deck on purpose. It is a mode for the whole of Find, not a control
-         belonging to the open agent: switching it changes what every agent's list shows, so putting it
-         under one agent's card claimed a narrower scope than it has. -->
     <!-- CAS-713 — Cascade 9.7: Watch's fixed top nav. Three sub-tabs (Cinema/Rental/Streaming), each
-         pre-setting the availability-status slice the scope bar and listing below then apply to. It sits
-         above the scope bar because it narrows the pool the scope bar's own Notify/For review/Watched
-         piles are drawn from, not a fourth pile alongside them. -->
+         pre-setting the availability-status slice the listing below then applies to. -->
     <div class="watchtabs" id="watchTabs" role="tablist" aria-label="Watch nav"></div>
-    <div class="scopebar" id="scopeBar" role="group" aria-label="Which films to show"></div>
-    <!-- CAS-714: the styles present in THIS tab's own current results, each toggleable off — a session-only
-         view filter, same shape as scope/watchTab above. It never touches a cascade's own stored c.genre. -->
-    <div class="chips genrefilter" id="genreFilterBar" role="group" aria-label="Filter by style" hidden></div>
-    <div class="deck">
-      <!-- Not a listbox: an option is not allowed to contain buttons, and the centre card carries
-           Edit and Search (CAS-271/CAS-272 took Close and Share off it). A group of groups keeps those
-           buttons reachable to a screen reader. -->
+    <!-- CAS-718: replaces the old WATCH ON/For review/Watched pills, the standalone genre row, and the
+         deck's per-list search/funnel with ONE consolidated per-tab control: a search box, a Filters
+         button (opens #watchSheet — Watched + Styles), and the sort control, unchanged, moved in from the
+         retired deck. -->
+    <div class="watchctl" id="watchCtl">
+      <div class="watchsearchwrap">
+        <input id="watchSearchInput" class="search" type="text" inputmode="search" autocomplete="off"
+               placeholder="Search" aria-label="Search this tab">
+        <button class="searchclear" id="watchSearchClear" aria-label="Clear search" type="button" hidden>×</button>
+      </div>
+      <!-- Same funnel mark as ICON.filter (svgIcon()) — hardcoded here since this markup is static HTML,
+           not a JS template string, so ${ICON.filter} could never have evaluated. -->
+      <button type="button" class="watchfilterbtn" id="watchFilterBtn" aria-haspopup="dialog" aria-expanded="false"
+              aria-controls="watchSheet" onclick="openWatchSheet()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+             stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4.2 5.4h15.6l-6 7.2v6l-3.6 1.8v-7.8z"/></svg>
+        <span>Filters</span><span class="wfbadge" id="watchFilterBadge" hidden>0</span>
+      </button>
+      <!-- CAS-371: the live <select> keeps its value/listeners by staying one persistent node — it used to
+           be reparented into the deck's active card (deckSync()); the deck is gone, so this is now simply
+           its permanent home. -->
+      <div class="sortctl ca-btn x" id="sortCtl">
+        <select id="sort" aria-label="Order">
+          <option value="availability">Availability</option>
+          <option value="imdb">IMDb rating</option>
+          <option value="cascade">Cascade score</option>
+          <option value="rt">RT critic</option>
+          <option value="gross">Box office</option>
+          <option value="popularity">Most anticipated</option>
+          <option value="cinema">Newest cinema</option>
+          <option value="title">Title A–Z</option>
+        </select>
+        <span class="sortic" aria-hidden="true">⇅<span class="sortdot" id="sortDot" hidden></span></span>
+      </div>
+    </div>
+    <!-- CAS-718: one chip per active (non-default) sheet section, each clearing just that section. -->
+    <div class="chips watchactivefilters" id="watchActiveFilters" role="group" aria-label="Active filters" hidden></div>
+    <!-- CAS-718: the watch-list card row is retired as a browsing concept — #cascStrip/#cascSearch stay in
+         the DOM, permanently empty, so the deck*/search helper functions below (still used by Manage
+         Agents' single-agent preview, e.g. restoreCascadeSearch()) don't null-deref; render() no longer
+         calls deckSync()/deckBuild(), so nothing ever paints a .dcard into this again. watchLists/cascOff
+         data itself is untouched — cleanup is a later, separate ticket (same precedent as CAS-711/CAS-642). -->
+    <div class="deck" hidden>
       <div class="deckstrip" id="cascStrip" role="group" aria-label="Watch lists — use the arrow keys to move between them"
            aria-keyshortcuts="ArrowLeft ArrowRight Home End"></div>
     </div>
-    <!-- CAS-136: per-cascade search. Revealed by the 🔍 on a card, scoped to that cascade, and remembered
-         per cascade — switching cascades brings back the term you left in it. -->
     <div class="cascsearch" id="cascSearch" hidden>
       <input id="cascSearchInput" class="search" type="text" inputmode="search"
              placeholder="Search this cascade" autocomplete="off" aria-label="Search this cascade">
       <button class="searchclear show" id="cascSearchClose" aria-label="Close search" type="button">×</button>
-    </div>
-    <!-- CAS-371: sort's real home is the open agent's (or All's) action row inside the deck above, next to
-         Edit and search — deckSync() moves this exact node there on every render, so the live <select>
-         keeps its value and listeners rather than being torn down and rebuilt. This is only where it starts
-         before JS runs its first render(); nothing here is meant to ever be visible. The native <select> is
-         invisible and stretched over the button — see .sortctl select — so this stays a real, accessible
-         menu rather than a hand-rolled one, while reading as an icon button (CAS-419) matching Edit/search/
-         filter in the same row. -->
-    <div class="sortctl ca-btn x" id="sortCtl">
-      <select id="sort" aria-label="Order">
-        <option value="availability">Availability</option>
-        <option value="imdb">IMDb rating</option>
-        <option value="cascade">Cascade score</option>
-        <option value="rt">RT critic</option>
-        <option value="gross">Box office</option>
-        <option value="popularity">Most anticipated</option>
-        <option value="cinema">Newest cinema</option>
-        <option value="title">Title A–Z</option>
-      </select>
-      <span class="sortic" aria-hidden="true">⇅<span class="sortdot" id="sortDot" hidden></span></span>
     </div>
     <!-- CAS-275: jump to a section of the listing. It is rendered from the sections that ACTUALLY exist in
          the current list, so it can never offer a destination that isn't there — and it hides itself when
@@ -3497,6 +3559,22 @@
       <div class="jumpbar" id="jumpBar" hidden></div>
     </div>
     <div id="cascDetail"></div>
+  </div>
+  <!-- CAS-718: the Filters sheet — Watched + Styles, the two working pieces of filtering carried over from
+       the old scope bar/genre row. "Picked by"/"Current status"/"Agents to include" are separate follow-on
+       tickets and are deliberately not here. Slides up from the bottom over a scrim; position:fixed so its
+       place in the DOM doesn't matter. -->
+  <div class="wsheetscrim" id="watchSheetScrim" onclick="closeWatchSheet()"></div>
+  <div class="wsheet" id="watchSheet" role="dialog" aria-modal="true" aria-label="Filters">
+    <div class="wsheethead">
+      <h3>Filters</h3>
+      <button type="button" class="wsheetclose" aria-label="Close" onclick="closeWatchSheet()">×</button>
+    </div>
+    <div class="wsheetbody" id="watchSheetBody"></div>
+    <div class="wsheetfoot">
+      <button type="button" class="ebtn ghost" onclick="clearAllWatchFilters()">Clear all</button>
+      <button type="button" class="donebtn" id="watchSheetShowBtn" onclick="closeWatchSheet()">Show results</button>
+    </div>
   </div>
   <!-- ONE listing (CAS-134, and now literally one: CAS-150 removed the New / All scopes). It is everything
        the open Cascade matches, sectioned by where each film is. The count line and the order blurb that used
@@ -7866,65 +7944,165 @@ function renderWatchTabs(){
   el.innerHTML = WATCH_TABS.map(t=>`<button type="button" class="wtabbtn${watchTab===t.key?" on":""}"
       role="tab" aria-selected="${watchTab===t.key}" onclick="setWatchTab('${t.key}')">${t.label}</button>`).join("");
 }
-// CAS-714: which genres are toggled OFF (hidden) in each Watch tab's own view — session-only, one Set per
-// tab, exactly like `watchTab`/`scope` above. Never persisted and never written back to any cascade's own
-// stored c.genre: this only narrows what a render puts on screen, the same way the scope bar does.
+// CAS-718: the search box's placeholder/value follow whichever tab is active — restoring the raw text you
+// left in THAT tab (not the lowercased match term, so casing/whitespace survive a tab switch) is the same
+// "leave and come back" rule the old per-list search always followed.
+const watchSearchRaw = {cinema:"", rental:"", streaming:""};
+function renderWatchCtl(){
+  const tab=WATCH_TABS.find(t=>t.key===watchTab);
+  const inp=$("watchSearchInput");
+  if(inp){
+    inp.placeholder = tab ? `Search ${tab.label}` : "Search";
+    const raw=watchSearchRaw[watchTab];
+    if(inp.value!==raw) inp.value=raw;
+  }
+  const clr=$("watchSearchClear"); if(clr) clr.hidden = !(inp && inp.value);
+}
+// CAS-714/CAS-718: which genres are toggled OFF (hidden) in each Watch tab's own view — session-only, one
+// Set per tab. Never persisted and never written back to any cascade's own stored c.genre: this only
+// narrows what a render puts on screen. Now rendered inside the Filters sheet's own Styles section
+// (renderWatchSheet below) rather than a standalone bar.
 const watchGenreOff = {cinema:new Set(), rental:new Set(), streaming:new Set()};
 window.toggleWatchGenre = g => {
   const set=watchGenreOff[watchTab];
   set.has(g) ? set.delete(g) : set.add(g);
   render();
 };
-// Built from `rows` BEFORE the genre filter narrows them (render() passes the tab's full post-scope set),
-// so a genre you just toggled off stays in the row to toggle back on instead of vanishing with the films
-// it hid. Hides itself under two genres — same call jumpBar already makes: one option is not a choice.
-function renderGenreFilterBar(rows){
-  const el=$("genreFilterBar"); if(!el) return;
-  const off=watchGenreOff[watchTab];
-  const genres=[...new Set(rows.flatMap(m=>m.genres||[]))].sort();
-  if(genres.length<2){ el.hidden=true; el.innerHTML=""; return; }
-  el.hidden=false;
-  el.innerHTML=genres.map(g=>{
-    const on=!off.has(g);
-    return `<button type="button" class="chip gen${on?" on":""}" aria-pressed="${on}"
-        onclick="toggleWatchGenre('${escA(g)}')"
-        title="${escA(on?g+" — tap to hide":"Tap to show "+g)}">${esc(g)}</button>`;
-  }).join("");
+// CAS-718: the sheet's own genre candidate list, cached per tab from the last render() so
+// selectAllWatchStyles/clearAllWatchStyles don't have to recompute rows from scratch.
+const watchSheetGenres = {cinema:[], rental:[], streaming:[]};
+window.selectAllWatchStyles = () => { watchGenreOff[watchTab].clear(); render(); };
+window.clearAllWatchStyles = () => {
+  const off=watchGenreOff[watchTab]; off.clear();
+  watchSheetGenres[watchTab].forEach(g=>off.add(g));
+  render();
+};
+// CAS-718: search text + the Watched-verdict selection, one set per Watch tab — same session-only,
+// per-tab shape as watchGenreOff above. Replaces the old scope bar's WATCH ON/For review pills (CAS-717's
+// tabs already narrow by watch level, so no replacement is needed) and its WATCHED pill: an empty
+// selection hides tagged-out films entirely, exactly the old scope.watched=false default.
+const watchSearch = {cinema:"", rental:"", streaming:""};
+const watchWatchedSel = {cinema:new Set(), rental:new Set(), streaming:new Set()};
+// CAS-718: the old scope.watched/scopeVerdicts gate, replaced — a tagged-out film shows only when its own
+// verdict is one of the active tab's selected chips; an undecided/decided film is never gated by this at
+// all (that was scope.watch/scope.new's job, both retired with no replacement — CAS-717's tabs already
+// narrow by watch level). A named, standalone predicate (not inlined in render()) so it stays as directly
+// testable as inFindScope always was.
+function filmMatchesWatchedFilter(m){
+  return taggedOut(m) ? watchWatchedSel[watchTab].has(opinionOf(m.tmdb_id)) : true;
 }
-function renderScopeBar(){
-  const el=$("scopeBar"); if(!el) return;
-  const openKey=(document.querySelector(".cpop.spop")||{}).dataset ? document.querySelector(".cpop.spop").dataset.scope : "";
-  const pill=(key,label,hasPanel)=>{
-    const on=scope[key], narrowed=hasPanel && SCOPE_SETS[key].size;
-    return `<div class="scopebtn${on?" on":""}${openKey===key?" open":""}">
-      <button type="button" class="scmain" aria-pressed="${on}" onclick="toggleScope('${key}')"
-        title="${escA(on?label+" — tap to hide":"Tap to show "+label)}"><span class="scn">${label}</span></button>
-      ${hasPanel?`<button type="button" class="sccar${narrowed?" narrowed":""}" data-scope="${key}"
-        aria-expanded="${openKey===key}" aria-haspopup="listbox"
-        aria-label="${escA("Narrow "+label)}">▾</button>`:""}
+let watchSearchRenderT = null;
+window.setWatchSearch = raw => {
+  watchSearchRaw[watchTab]=raw;
+  watchSearch[watchTab]=raw.trim().toLowerCase();
+  const clr=$("watchSearchClear"); if(clr) clr.hidden=!raw;
+  clearTimeout(watchSearchRenderT);
+  watchSearchRenderT=setTimeout(render, 150);   // CAS-514: debounce the heavy re-render, not the echo
+};
+window.clearWatchSearch = () => {
+  $("watchSearchInput").value="";
+  setWatchSearch("");
+  render();
+};
+window.toggleWatchWatched = key => {
+  const set=watchWatchedSel[watchTab];
+  set.has(key) ? set.delete(key) : set.add(key);
+  render();
+};
+window.clearAllWatchWatched = () => { watchWatchedSel[watchTab].clear(); render(); };
+window.clearAllWatchFilters = () => {
+  watchWatchedSel[watchTab].clear();
+  watchGenreOff[watchTab].clear();
+  render();
+};
+let watchSheetOpen=false;
+window.openWatchSheet = () => {
+  watchSheetOpen=true;
+  $("watchSheet").classList.add("open");
+  $("watchSheetScrim").classList.add("open");
+  $("watchFilterBtn").setAttribute("aria-expanded","true");
+  document.body.style.overflow="hidden";
+};
+window.closeWatchSheet = () => {
+  watchSheetOpen=false;
+  $("watchSheet").classList.remove("open");
+  $("watchSheetScrim").classList.remove("open");
+  $("watchFilterBtn").setAttribute("aria-expanded","false");
+  document.body.style.overflow="";
+};
+document.addEventListener("keydown", e=>{ if(e.key==="Escape" && watchSheetOpen) closeWatchSheet(); });
+const chipSummary = labels => labels.length<=2 ? labels.join(", ") : `${labels.slice(0,2).join(", ")} +${labels.length-2}`;
+// CAS-718: builds the sheet's two sections (Watched, Styles) from `rows` BEFORE either narrows them — same
+// "a toggled-off option stays offerable" rule CAS-714's genre row always followed — plus the Filters
+// button's badge, the active-filter chip row, and the footer's live result count.
+function renderWatchSheet(rows, shownCount){
+  const genreOff=watchGenreOff[watchTab];
+  const genres=[...new Set(rows.flatMap(m=>m.genres||[]))].sort();
+  watchSheetGenres[watchTab]=genres;
+  const watchedSel=watchWatchedSel[watchTab];
+  const activeCount=(watchedSel.size?1:0)+(genreOff.size?1:0);
+  const badge=$("watchFilterBadge");
+  if(badge){ badge.hidden=activeCount===0; badge.textContent=activeCount; }
+  const filterBtn=$("watchFilterBtn"); if(filterBtn) filterBtn.classList.toggle("on", activeCount>0);
+  const watchedHTML=REVIEW_STEPS.map(v=>{
+    const on=watchedSel.has(v.key);
+    return `<button type="button" class="chip${on?" on":""}" style="--wwc:${v.cd}" aria-pressed="${on}"
+      onclick="toggleWatchWatched('${v.key}')">${esc(v.lbl)}</button>`;
+  }).join("");
+  const stylesHTML=genres.length ? genres.map(g=>{
+    const on=!genreOff.has(g);
+    return `<button type="button" class="chip gen${on?" on":""}" aria-pressed="${on}"
+      onclick="toggleWatchGenre('${escA(g)}')">${esc(g)}</button>`;
+  }).join("") : `<p class="unone">No styles in this tab yet.</p>`;
+  const body=$("watchSheetBody");
+  if(body) body.innerHTML=`
+    <div class="wsheetsec">
+      <div class="wsheethd"><span>Watched</span></div>
+      <div class="chips">${watchedHTML}</div>
+    </div>
+    <div class="wsheetsec">
+      <div class="wsheethd"><span>Styles</span>
+        <span class="wsheetlinks">
+          <button type="button" class="linkbtn" onclick="selectAllWatchStyles()">Select all</button>
+          <button type="button" class="linkbtn" onclick="clearAllWatchStyles()">Clear all</button>
+        </span>
+      </div>
+      <div class="chips">${stylesHTML}</div>
     </div>`;
-  };
-  el.innerHTML = `<div class="scopepills">${pill("watch","Watch On",true)}${pill("new","For review",false)}${pill("watched","Watched",true)}</div>`;
+  const showBtn=$("watchSheetShowBtn");
+  if(showBtn) showBtn.textContent = shownCount ? `Show ${shownCount} film${shownCount===1?"":"s"}` : "No films match";
+  const chips=[];
+  if(watchedSel.size) chips.push({label:chipSummary(REVIEW_STEPS.filter(v=>watchedSel.has(v.key)).map(v=>v.lbl)),
+    clear:"clearAllWatchWatched()"});
+  if(genreOff.size) chips.push({label:chipSummary([...genreOff]), clear:"clearAllWatchStyles()"});
+  const bar=$("watchActiveFilters"); if(!bar) return;
+  if(!chips.length){ bar.hidden=true; bar.innerHTML=""; return; }
+  bar.hidden=false;
+  bar.innerHTML=chips.map(c=>`<button type="button" class="chip" onclick="${c.clear}">
+      ${esc(c.label)} <span aria-hidden="true">×</span></button>`).join("")
+    + `<button type="button" class="linkbtn clearall" onclick="clearAllWatchFilters()">Clear all</button>`;
 }
 function scopeRows(){
-  const acs=activeCascades();
-  // CAS-566/R3: an empty selection is zero agents now (no more All to fall back to as "the catalogue
-  // itself") — that state lists nothing at all, so a first-run user does not land on 5,633 unfiltered films.
-  // CAS-634: with two or more agents selected the listing is their UNION — a film either agent lists
-  // appears once, never twice.
+  // CAS-718: the deck's per-list agent picker (activeIds/watchActiveId) is retired as a browsing concept —
+  // every agent is always in scope now; the follow-on "Agents to include" ticket restores narrowing, inside
+  // the new sheet rather than the old card row. watchLists/cascOff data itself is untouched (Manage Lists,
+  // leInnerHTML's preview still read it as before).
+  const acs=cascades;
   if(!acs.length) return [];
-  // CAS-646: the ACTIVE watch list's own svcOn/watchedOn/watchTiers now gate the live listing too — the
+  // CAS-646: the ACTIVE watch list's own svcOn/watchedOn/watchTiers still gate the live listing too — the
   // same predicate ymFeedMatches already applies to the (unreachable) Your Movies feed, reused here rather
   // than re-expressed, so the two can never drift apart.
   const rows = MOVIES.filter(m=>acs.some(c=>listedBy(m,c)) && ymFeedMatches(m));
   const searched = filt.search ? rows.filter(m=>m.title.toLowerCase().includes(filt.search)) : rows;
   // CAS-382: no tier ticked = no filter, same "nothing picked = show everything" rule every other chip set
-  // in `passes()` follows.
+  // in `passes()` follows. filt.watchTiers can no longer be set by anything reachable post CAS-718 (its
+  // only control was the retired deck's own funnel icon) so this is always a no-op now; left rather than
+  // removed since leInnerHTML's own preview machinery is untouched and nothing here is load-bearing.
   const tiered = filt.watchTiers.size
     ? searched.filter(m=>[...filt.watchTiers].some(k=>k==="undecided" ? filmIsUndecided(m.tmdb_id) : filmHasWatchTier(m.tmdb_id,k)))
     : searched;
   scopeRows.pool = tiered;                 // pre-scope pool, for the counts + the "discerning" empty state
-  return tiered.filter(inFindScope);
+  return tiered;
 }
 // First run: the deck is just the "+ New" card, which asks for a decision without offering a reason. Give them
 // three real starting points instead — each with the number of films it catches TODAY, so the payoff is visible
@@ -9373,6 +9551,11 @@ function restoreCascadeSearch(){
 }
 $("cascSearchInput").oninput=e=>setSearchTerm(e.target.value);
 $("cascSearchClose").onclick=()=>closeCascadeSearch();
+// CAS-718: the tab's own search box — separate from filt.search/#cascSearchInput above (still used by
+// Manage Agents' single-agent preview via openCascade()/restoreCascadeSearch()), so the two can never
+// compound on the live Watch screen.
+$("watchSearchInput").oninput=e=>setWatchSearch(e.target.value);
+$("watchSearchClear").onclick=()=>clearWatchSearch();
 
 // ---- CAS-382/CAS-642: per-list Filter (watch-priority) -------------------------------------------------
 // Same rule as search just above: the ticked tiers belong to the list you're viewing, so leaving one and
@@ -9609,20 +9792,17 @@ function emptyResultsHTML(){
   // CAS-566: zero agents is not "this agent's filters matched nothing" — there is no agent, and nothing to
   // relax or reset. cascadeStartHTML() (rendered above the listing) already carries the call to action.
   if(!cascades.length) return "";
-  // CAS-659 AC4: activeCascade() only ever names activeIds[0] — fine when exactly one agent is scoping the
-  // listing, wrong (blames one agent by name) when a multi-agent watch list is. Name the list instead once
-  // two or more of its agents are active; only fall through to "Nothing matches" with none active at all.
-  const acs=activeCascades();
-  const c = acs.length===1 ? acs[0] : null;
-  const list = acs.length>1 ? activeWatchlist() : null;
+  // CAS-718: every agent is always in scope now — the deck's per-list picker that used to justify naming a
+  // multi-agent watch list is gone, so only the single-agent case still names anyone; two or more falls
+  // through to the generic line rather than naming a list nobody picked any more.
+  const c = cascades.length===1 ? cascades[0] : null;
   const opts=relaxOptions();
   // The my-services scope isn't a filt field — it comes from the open Cascade or the ⚙️ switch — so it
   // gets counted separately, and pointed at the control that actually owns it.
   const scopeHides = prefsActive() ? countIf(()=>{ ignoreScope=true; }) : 0;
   let html=`<div class="empty">
     <div class="emoji">🔍</div>
-    <div class="eh">${c ? `“${esc(c.name)}” came back empty today.`
-      : list ? `“${esc(list.name)}” came back empty today.` : "Nothing matches all of that at once."}</div>
+    <div class="eh">${c ? `“${esc(c.name)}” came back empty today.` : "Nothing matches all of that at once."}</div>
     <div class="ep">Not a broken screen — a real answer: no title in the catalogue clears every bar you've set.
       Drop one and it's back.</div>`;
   if(opts.length){
@@ -9651,9 +9831,8 @@ window.dismissSvcNote = state => {
   const n=document.querySelector(`[data-svcnote="${state}"]`); if(n) n.remove();
 };
 function renderCascadeBar(shown){
-  deckSync(shown);
-  paintSearchBtns();     // deckSync may have rebuilt the cards, taking the lit 🔍 with them
-  paintFilterBtns();     // CAS-382: same reason — deckBuild() drops the lit funnel along with everything else
+  // CAS-718: the deck (deckSync/deckBuild) is retired from the live Watch screen — #cascStrip stays
+  // permanently empty (see the HTML comment above it), so this no longer paints it.
   const c=activeCascade();
   let html="";
   // Guest mode (CAS-79): the agent is saved but paused. Show its honest status, an honest re-invite tied to a
@@ -17031,22 +17210,25 @@ function render(){
   // Two lists, one pass: `rows` is everything on screen, `shown` is everything that still gets a full card.
   // The difference is the films you tagged out — they stay on screen as stubs, and they don't count as
   // results, because you told us you didn't want them.
-  // CAS-713/CAS-717: the active Watch tab narrows `rows` before anything below reads it, so the deck count,
-  // the jump bar and the groups can never disagree about what this render actually shows.
+  // CAS-713/CAS-717: the active Watch tab narrows `rows` before anything below reads it, so the jump bar
+  // and the groups can never disagree about what this render actually shows.
   let rows=scopeRows().filter(m=>filmMatchesWatchTab(m, watchTab));
-  // CAS-714: the genre filter row is built from the tab's full set above, THEN narrows `rows` the same
-  // way the tab/scope filters already did — so the deck count, the jump bar and the groups agree with it
-  // too, and can never show a film the filter row says is hidden.
-  renderGenreFilterBar(rows);
+  // CAS-718: the tab's own search box narrows next — same case-insensitive substring match the old
+  // per-list search always used.
+  const wsearch=watchSearch[watchTab];
+  if(wsearch) rows=rows.filter(m=>m.title.toLowerCase().includes(wsearch));
+  // CAS-718: the Filters sheet's two sections (Styles, Watched) are built from the tab's full
+  // search-narrowed set above, THEN narrow `rows` the same way the tab/search already did — so the sheet,
+  // the jump bar and the groups agree with it too, and can never show a film the sheet says is hidden.
+  const preSheetRows=rows;
   const genreOff=watchGenreOff[watchTab];
   if(genreOff.size) rows=rows.filter(m=>!(m.genres||[]).some(g=>genreOff.has(g)));
+  rows=rows.filter(filmMatchesWatchedFilter);
   const shown=rows.filter(m=>!taggedOut(m));
   const stubbed=rows.length-shown.length;
-  // CAS-682: the deck card describes what this render actually puts on screen for the list, so it takes the
-  // same post-scope, stubs-included set (`rows`) the sections below are built from — not the pre-scope pool
-  // v0.9.4 fixed it to (that made sense while the deck showed agents; CAS-642 made it a watch-list card).
   renderWatchTabs();
-  renderScopeBar();
+  renderWatchCtl();
+  renderWatchSheet(preSheetRows, shown.length);
   renderCascadeBar(rows.length);
   syncSortCtl();   // CAS-321: keeps the sort pill's label/dot honest even when filt.sort changed elsewhere
   // CAS-102's compact deck was tied to the old Find view. With one listing there is one deck state: the rail,

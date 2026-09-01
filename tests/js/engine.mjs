@@ -120,7 +120,15 @@ if(typeof window.CascadeAuth === "undefined"){
   ymFeedList, ymAgentListCount, inFindScope, scope, scopeRows,
   // CAS-682: taggedOut — the predicate that decides card vs. stub — so a test can assert a stub is really
   // a stub, rather than assuming a watched film demonstrates it.
-  taggedOut,
+  // CAS-718: opinionOf alongside it — the verdict key a taggedOut film carries, which watchWatchedSel below
+  // is keyed by.
+  taggedOut, opinionOf,
+  // CAS-718: the Filters sheet's own per-tab state (watchTab/watchWatchedSel/watchGenreOff/watchSearch) and
+  // the predicate render() filters through (filmMatchesWatchedFilter) — exported the same way watchGenreOff
+  // et al. would be, so a test can drive a tab's Watched/Styles selection directly rather than only through
+  // DOM clicks the stub absorbs.
+  get watchTab(){ return watchTab; },
+  watchWatchedSel, watchGenreOff, watchSearch, filmMatchesWatchedFilter, filmMatchesWatchTab,
   YM_SVC,
   // CAS-677: WATCH_STEPS (the watched-verdict ramp watchlistDefaults()'s permissive watchedOn is built
   // from), ymWatchedOn itself (by reference, like ymCascOff below, so a test can drive it directly the same
