@@ -627,9 +627,12 @@ test("the Agents row and Mission report the same count for one agent (CAS-674 re
 // Records built or read back through the vm sandbox carry vm-realm Arrays, which deepStrictEqual (this
 // file imports assert/strict) treats as unequal to a same-looking native array — every array assertion in
 // data-integrity.test.mjs hits the same thing and spreads first; this does the same for a whole record.
+// CAS-720: excludeTags dropped out of watchlistRecord() itself when the Watch screen's own exclude-tags
+// editor was removed — the field still lives on the list record proper (untouched, still readable off
+// `a`/`b` directly), it just no longer round-trips through the ymSvcOn-style scratch/record bridge.
 const plainRecord = r => ({
   svcOn: [...r.svcOn], cascOff: [...r.cascOff], watchedOn: [...r.watchedOn],
-  watchTiers: [...r.watchTiers], sort: r.sort, excludeTags: [...r.excludeTags],
+  watchTiers: [...r.watchTiers], sort: r.sort,
 });
 
 function seedTwoLists(){
@@ -656,7 +659,7 @@ test("CAS-666 AC1/AC3: selecting a list through the deck loads that list's own r
   // CAS-677: watchedOn defaults to every WATCH_STEPS key (permissive) now, not [] — read off
   // watchlistDefaults() itself rather than hardcode the step keys here.
   assert.deepEqual(plainRecord(a),
-    { svcOn: ["stream"], cascOff: ["only-a"], watchedOn: [...E.watchlistDefaults().watchedOn], watchTiers: [], sort: null, excludeTags: [] },
+    { svcOn: ["stream"], cascOff: ["only-a"], watchedOn: [...E.watchlistDefaults().watchedOn], watchTiers: [], sort: null },
     "list A's stored record must be unchanged by selecting list B");
 });
 

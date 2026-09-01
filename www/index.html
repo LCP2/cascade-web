@@ -5227,7 +5227,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 889, "commit": "d4d46ca", "builtAt": "2026-09-01T21:15:56Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 890, "commit": "c27cd8d", "builtAt": "2026-09-01T21:41:17Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8014,6 +8014,56 @@ function filmMatchesPickedBy(m){
   const src=filmWatchSource(m.tmdb_id);
   return sel==="unset" ? !src : src===sel;
 }
+// CAS-720: STATUS_LABEL's seven raw availability keys, collapsed to the four chips the sheet's own
+// "Current status" section shows — Lee's mapping, confirmed against STATUS_LABEL's current seven keys.
+// past_opening is never a primaryStatus() value (it's a moment, not a window a film holds — see
+// STATUS_LABEL's own comment), so it can never actually drive this chip; kept in the mapping anyway since
+// the ticket names it explicitly and an unreachable entry is harmless.
+const CURRENT_STATUS_GROUPS = [
+  {key:"upcoming", label:"Upcoming", statuses:["upcoming"]},
+  {key:"cinema",   label:"Cinema",   statuses:["opening_week","in_cinema","past_opening"]},
+  {key:"rent",     label:"Rent",     statuses:["pvod","rental"]},
+  {key:"stream",   label:"Stream",   statuses:["included_streaming"]},
+];
+const STATUS_TO_CURGROUP = {};
+CURRENT_STATUS_GROUPS.forEach(g=>g.statuses.forEach(s=>STATUS_TO_CURGROUP[s]=g.key));
+// Which of the four groups are toggled OFF (hidden) per tab — same per-tab, session-only, empty-means-
+// "nothing hidden" off-set shape as watchGenreOff.
+const watchStatusOff = {cinema:new Set(), rental:new Set(), streaming:new Set()};
+window.toggleWatchStatus = key => {
+  const set=watchStatusOff[watchTab];
+  set.has(key) ? set.delete(key) : set.add(key);
+  render();
+};
+window.selectAllWatchStatus = () => { watchStatusOff[watchTab].clear(); render(); };
+window.clearAllWatchStatus = () => {
+  const off=watchStatusOff[watchTab]; off.clear();
+  CURRENT_STATUS_GROUPS.forEach(g=>off.add(g.key));
+  render();
+};
+function filmMatchesCurrentStatus(m){
+  const off=watchStatusOff[watchTab];
+  if(!off.size) return true;
+  const grp=STATUS_TO_CURGROUP[primaryStatus(m)];
+  return grp ? !off.has(grp) : true;
+}
+// CAS-720: "Agents to include" — restores the per-tab agent narrowing scopeRows() gave up when CAS-718
+// retired the deck's per-list agent picker (see that function's own comment), reading from this sheet
+// state instead of the old activeIds/cascOff deck selection. Same per-tab, session-only, empty-means-
+// "nothing excluded" off-set shape as watchGenreOff/watchStatusOff — so a tab that's never had this
+// filter touched defaults to every agent included, with no separate "all on" bookkeeping needed.
+const watchAgentOff = {cinema:new Set(), rental:new Set(), streaming:new Set()};
+window.toggleWatchAgent = id => {
+  const set=watchAgentOff[watchTab];
+  set.has(id) ? set.delete(id) : set.add(id);
+  render();
+};
+window.selectAllWatchAgents = () => { watchAgentOff[watchTab].clear(); render(); };
+window.clearAllWatchAgents = () => {
+  const off=watchAgentOff[watchTab]; off.clear();
+  cascades.forEach(c=>off.add(c.id));
+  render();
+};
 // CAS-718: the old scope.watched/scopeVerdicts gate, replaced — a tagged-out film shows only when its own
 // verdict is one of the active tab's selected chips; an undecided/decided film is never gated by this at
 // all (that was scope.watch/scope.new's job, both retired with no replacement — CAS-717's tabs already
@@ -8045,6 +8095,8 @@ window.clearAllWatchFilters = () => {
   watchPickedBy[watchTab]="all";
   watchWatchedSel[watchTab].clear();
   watchGenreOff[watchTab].clear();
+  watchStatusOff[watchTab].clear();
+  watchAgentOff[watchTab].clear();
   render();
 };
 let watchSheetOpen=false;
@@ -8073,7 +8125,9 @@ function renderWatchSheet(rows, shownCount){
   watchSheetGenres[watchTab]=genres;
   const watchedSel=watchWatchedSel[watchTab];
   const pickedBy=watchPickedBy[watchTab];
-  const activeCount=(pickedBy!=="all"?1:0)+(watchedSel.size?1:0)+(genreOff.size?1:0);
+  const statusOff=watchStatusOff[watchTab];
+  const agentOff=watchAgentOff[watchTab];
+  const activeCount=(pickedBy!=="all"?1:0)+(watchedSel.size?1:0)+(genreOff.size?1:0)+(statusOff.size?1:0)+(agentOff.size?1:0);
   const badge=$("watchFilterBadge");
   if(badge){ badge.hidden=activeCount===0; badge.textContent=activeCount; }
   const filterBtn=$("watchFilterBtn"); if(filterBtn) filterBtn.classList.toggle("on", activeCount>0);
@@ -8089,6 +8143,26 @@ function renderWatchSheet(rows, shownCount){
     return `<button type="button" class="chip gen${on?" on":""}" aria-pressed="${on}"
       onclick="toggleWatchGenre('${escA(g)}')">${esc(g)}</button>`;
   }).join("") : `<p class="unone">No styles in this tab yet.</p>`;
+  // CAS-720: a fixed four chips, not derived from `rows` — unlike Styles' genre candidates, the four
+  // current-status groups exist regardless of what happens to match right now.
+  const statusHTML=CURRENT_STATUS_GROUPS.map(g=>{
+    const on=!statusOff.has(g.key);
+    return `<button type="button" class="chip${on?" on":""}" aria-pressed="${on}"
+      onclick="toggleWatchStatus('${g.key}')">${esc(g.label)}</button>`;
+  }).join("");
+  // CAS-720: leInnerHTML's Agents-to-include checklist (agent name + switch), in cascades rank order —
+  // no per-agent count/Edit here, this list only ever narrows which agents this tab draws from.
+  const agentRowsSorted=[...cascades].sort((a,b)=>(a.order??1e9)-(b.order??1e9));
+  const agentRowsHTML=agentRowsSorted.map(c=>{
+    const on=!agentOff.has(c.id);
+    return `<div class="agrow ym-casc agent-${c.kind==="stream"?"str":"cin"}">
+      <span class="agicon" aria-hidden="true">${c.icon}</span>
+      <span class="agmain"><span class="agname">${esc(c.name)}</span></span>
+      <button type="button" class="ymcasctgl${on?" on":""}" aria-pressed="${on}"
+        aria-label="${escA((on?"Remove ":"Include ")+c.name+" in this tab")}"
+        onclick="toggleWatchAgent('${escA(c.id)}')">✓</button>
+    </div>`;
+  }).join("") || `<p class="unone">No agents yet.</p>`;
   const body=$("watchSheetBody");
   if(body) body.innerHTML=`
     <div class="wsheetsec">
@@ -8107,6 +8181,19 @@ function renderWatchSheet(rows, shownCount){
         </span>
       </div>
       <div class="chips">${stylesHTML}</div>
+    </div>
+    <div class="wsheetsec">
+      <div class="wsheethd"><span>Current status</span></div>
+      <div class="chips">${statusHTML}</div>
+    </div>
+    <div class="wsheetsec">
+      <div class="wsheethd"><span>Agents to include</span>
+        <span class="wsheetlinks">
+          <button type="button" class="linkbtn" onclick="selectAllWatchAgents()">Select all</button>
+          <button type="button" class="linkbtn" onclick="clearAllWatchAgents()">Clear all</button>
+        </span>
+      </div>
+      <div class="ymcasclist">${agentRowsHTML}</div>
     </div>`;
   const showBtn=$("watchSheetShowBtn");
   if(showBtn) showBtn.textContent = shownCount ? `Show ${shownCount} film${shownCount===1?"":"s"}` : "No films match";
@@ -8116,6 +8203,10 @@ function renderWatchSheet(rows, shownCount){
   if(watchedSel.size) chips.push({label:chipSummary(REVIEW_STEPS.filter(v=>watchedSel.has(v.key)).map(v=>v.lbl)),
     clear:"clearAllWatchWatched()"});
   if(genreOff.size) chips.push({label:chipSummary([...genreOff]), clear:"clearAllWatchStyles()"});
+  if(statusOff.size) chips.push({label:chipSummary(CURRENT_STATUS_GROUPS.filter(g=>statusOff.has(g.key)).map(g=>g.label)),
+    clear:"selectAllWatchStatus()"});
+  if(agentOff.size) chips.push({label:chipSummary(cascades.filter(c=>agentOff.has(c.id)).map(c=>c.name)),
+    clear:"selectAllWatchAgents()"});
   const bar=$("watchActiveFilters"); if(!bar) return;
   if(!chips.length){ bar.hidden=true; bar.innerHTML=""; return; }
   bar.hidden=false;
@@ -8125,10 +8216,12 @@ function renderWatchSheet(rows, shownCount){
 }
 function scopeRows(){
   // CAS-718: the deck's per-list agent picker (activeIds/watchActiveId) is retired as a browsing concept —
-  // every agent is always in scope now; the follow-on "Agents to include" ticket restores narrowing, inside
-  // the new sheet rather than the old card row. watchLists/cascOff data itself is untouched (Manage Lists,
-  // leInnerHTML's preview still read it as before).
-  const acs=cascades;
+  // every agent is always in scope by default now. CAS-720 restores narrowing here, reading the new sheet's
+  // own per-tab "Agents to include" state (watchAgentOff) rather than the old activeIds/cascOff deck
+  // selection. watchLists/cascOff data itself is untouched (Manage Lists, leInnerHTML's preview still read
+  // it as before).
+  const agentOff=watchAgentOff[watchTab];
+  const acs=agentOff.size ? cascades.filter(c=>!agentOff.has(c.id)) : cascades;
   if(!acs.length) return [];
   // CAS-646: the ACTIVE watch list's own svcOn/watchedOn/watchTiers still gate the live listing too — the
   // same predicate ymFeedMatches already applies to the (unreachable) Your Movies feed, reused here rather
@@ -9441,11 +9534,9 @@ deckStrip.addEventListener("keydown",e=>{
   const last=deckCount()-1;
   if(e.key==="Enter"||e.key===" "){
     e.preventDefault();
-    const l=deckAt(deckIdx);
     // That same last slot is the loading placeholder (not "New List") while cascadesReady is still false —
     // Enter/Space there has nothing to create yet.
     if(deckIsNew(deckIdx)){ if(watchLists.length || cascadesReady) wlRailCreate(); }
-    else if(l && l.id===watchActiveId) leOpen();    // already centred + open → Enter edits it
     else deckSelect(deckIdx);                       // any other list card just selects
     return;
   }
@@ -9492,7 +9583,6 @@ deckStrip.addEventListener("click",e=>{
   if(e.target.closest("#sortCtl")) return;   // CAS-371: its own click, not a card re-select
   const act=e.target.closest("button[data-act]")?.dataset.act;
   if(act==="new") return wlRailCreate();
-  if(act==="edit") return leOpen();
   if(act==="search") return onSearchIcon(card);
   if(act==="filter") return onFilterIcon(card, e.target.closest("button[data-act]"));
   if(deckDragged) return;                            // that click was the end of a drag
@@ -14275,7 +14365,6 @@ let ymCascOff = new Set();           // cascade ids explicitly UNticked — defa
 let ymWatchedOn = new Set();   // watched verdicts to include — applyActiveWatchlist() below seeds this from
                                 // the active list's own record, permissive (every WATCH_STEPS key) by default
                                 // since CAS-677 removed the only UI that could narrow it
-let ymExcludeTags = new Set();   // CAS-642: tag ids excluded from THIS list — bridged the same way as ymCascOff
 const ymCascTicked = c => !ymCascOff.has(c.id);
 // CAS-535: the three controls above are collapsed behind the compact card's Edit button by default —
 // CAS-592: Edit now navigates to its own screen (leOpen/leOn) instead of toggling a panel here. The
@@ -14290,11 +14379,11 @@ let ymSort = null;              // Sort icon — null keeps the feed's own "best
 // module `let`s only — they are transient UI, not part of the record.
 function watchlistRecord(){
   return {svcOn:[...ymSvcOn], cascOff:[...ymCascOff], watchedOn:[...ymWatchedOn],
-          watchTiers:[...ymWatchTiers], sort:ymSort, excludeTags:[...ymExcludeTags]};
+          watchTiers:[...ymWatchTiers], sort:ymSort};
 }
 function applyWatchlistRecord(rec){
   ymSvcOn=new Set(rec.svcOn); ymCascOff=new Set(rec.cascOff); ymWatchedOn=new Set(rec.watchedOn);
-  ymWatchTiers=new Set(rec.watchTiers); ymSort=rec.sort; ymExcludeTags=new Set(rec.excludeTags);
+  ymWatchTiers=new Set(rec.watchTiers); ymSort=rec.sort;
 }
 // CAS-517-style ambiguity: on a signed-in device an absent account row could mean "genuinely no
 // record yet" or "the fetch hasn't returned" — ymReady is this record's OWN flag (not cascadesReady,
@@ -14313,20 +14402,10 @@ function applyActiveWatchlist(){
 applyActiveWatchlist();
 // Every UI write site below calls this instead of saveWatchlists() directly, so none of them can
 // push a still-default record over a real account answer while that answer is still in flight.
-// CAS-693: matchesCriteria reads the ACTIVE LIST's PERSISTED excludeTags, not the live ymExcludeTags scratch
-// Set — an exclude-tag toggle's effect on matching only lands once this debounced write actually runs. Set
-// by ymTagToggle, consumed (and cleared) the next time ymPersist runs, so leComputeCounts()'s cache gets
-// invalidated again once the write behind it actually lands — not just at the moment of the tap — without
-// invalidating on every OTHER toggle's persist too: cascOff/svcOn are read live everywhere they matter, so
-// their own debounced writes landing late has no bearing on the cache, and invalidating for them here would
-// undo the whole point of caching (every toggle schedules a persist, so this would fire after nearly every
-// tap in real usage, not just after a tag toggle).
-let leTagsDirty=false;
 function ymPersist(){
   if(!ymReady) return;
   const l=activeWatchlist();
   if(l) Object.assign(l, watchlistRecord());
-  if(leTagsDirty){ leTagsDirty=false; leInvalidateCache(); }
   saveWatchlists();
 }
 // CAS-652: every list-Edit toggle used to run ymPersist/renderYourMovies/render/leRefreshIfOpen
@@ -14502,22 +14581,6 @@ window.ymCascSetAll=on=>{
   const t0=performance.now();
   ymCascOff=new Set(on?[]:cascades.map(c=>c.id)); syncActiveIdsFromActiveList(ymCascOff);
   ymTapPainted("casc-setall",t0);
-  ymSchedulePersist(); ymScheduleRender();
-};
-// CAS-642 W2b/AC4: exclude-tags, moved here from the agent Briefing — exclude only, no include control.
-// matchesCriteria (CAS-642's own comment there) reads the ACTIVE list's array, so this has to re-render the
-// live listing too, not just this screen's own preview.
-window.ymTagToggle=(lid,btn)=>{
-  const t0=performance.now();
-  ymExcludeTags.has(lid)?ymExcludeTags.delete(lid):ymExcludeTags.add(lid);
-  if(btn){
-    const on=ymExcludeTags.has(lid);
-    btn.classList.toggle("on",on); btn.setAttribute("aria-pressed",String(on));
-    const t=lists.find(x=>x.id===lid);
-    if(t) btn.title = on?`Excluded from this list — tap to include again`:`Exclude ${t.name} from this list`;
-  }
-  leInvalidateCache(); leTagsDirty=true;   // CAS-693: excludeTags gate per film; ymPersist re-invalidates once its write lands
-  ymTapPainted("tag",t0);
   ymSchedulePersist(); ymScheduleRender();
 };
 // ---- CAS-540: the Watch List card collapses to a pill under scroll, mirroring #cascbar's own mechanism
@@ -14923,17 +14986,6 @@ function leInnerHTML(){
         onclick="ymCascToggle('${escA(c.id)}',this)">✓</button>
     </div>`;
   }).join("");
-  // CAS-642 W2b: exclude tags move here from the agent Briefing (CAS-635) — one row per existing tag, exclude
-  // only, no include control, exactly like the spoke it replaces (see briefGo('extags') in the ONB_STEPS
-  // registry, which onboarding alone still uses).
-  const tagRows=lists.map(t=>{
-    const on=ymExcludeTags.has(t.id);
-    return `<button type="button" class="nopt${on?" on":""}" data-lid="${t.id}" style="--wwc:var(--accent)"
-      aria-pressed="${on}" onclick="ymTagToggle('${escA(t.id)}',this)"
-      title="${escA(on?`Excluded from this list — tap to include again`:`Exclude ${t.name} from this list`)}">
-      <span class="wwb sq">✓</span><span class="nol">${esc(t.name)}</span></button>`;
-  }).join("");
-  const tagsNone = lists.length ? "" : `<div class="nopt nonone">You have no tags yet — tag a film first, then come back here to exclude it.</div>`;
   const onlyOne=watchLists.length<=1;
   return `
     <div class="ostop lehdr">
@@ -14963,17 +15015,13 @@ function leInnerHTML(){
         <span class="lematch" id="leMatch">${n} film${n===1?"":"s"} match</span>
       </div>
     </div>
-    <div class="lesec">
-      <div class="lesechd">Exclude tags</div>
-      <div class="nopts">${tagsNone}${tagRows}</div>
-    </div>
     <button type="button" class="lesave" onclick="leSave()">Save list</button>
     <button type="button" class="ledel" ${onlyOne?"disabled":""} onclick="leDelete()"
         title="${onlyOne?"The last list can’t be deleted":`Delete ${escA(l.name)}`}">Delete list</button>`;
 }
-// CAS-693 AC4: a svc/casc/tag toggle only ever changes numbers (the header total/scoped figures, the
+// CAS-693 AC4: a svc/casc toggle only ever changes numbers (the header total/scoped figures, the
 // "N of M" agents-ticked count, each agent's own contribution, "N films match") — every control's own "on"
-// state is already painted by its own toggle handler above (ymSvcToggle/ymCascToggle/ymTagToggle) before
+// state is already painted by its own toggle handler above (ymSvcToggle/ymCascToggle) before
 // this runs, so the counts are all that's left to patch. Replacing the whole screen's innerHTML for that
 // would rebuild every icon, name, chip and button node just to change a handful of text nodes.
 function leUpdateCounts(){
@@ -17265,6 +17313,7 @@ function render(){
   if(watchPickedBy[watchTab]!=="all") rows=rows.filter(filmMatchesPickedBy);
   const genreOff=watchGenreOff[watchTab];
   if(genreOff.size) rows=rows.filter(m=>!(m.genres||[]).some(g=>genreOff.has(g)));
+  if(watchStatusOff[watchTab].size) rows=rows.filter(filmMatchesCurrentStatus);
   rows=rows.filter(filmMatchesWatchedFilter);
   const shown=rows.filter(m=>!taggedOut(m));
   const stubbed=rows.length-shown.length;
