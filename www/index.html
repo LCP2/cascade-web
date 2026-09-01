@@ -637,6 +637,15 @@
      second visual language — on when the film's current window is one you ticked here (st.current in
      notifyChipHTML), no recency gate (unlike isRecent, which the availability capsule keeps). */
   .ctl.notify.recent .cmini{border-color:#ffd54a;box-shadow:0 0 0 1px rgba(255,213,74,.4),0 0 9px 1px rgba(255,213,74,.55)}
+  /* CAS-712: provenance colour for the Watch On chip — same gold identity as .recent above for an
+     agent-armed level (border only, unless it's also the reached/current level, where .recent's own glow
+     already applies), Watch's own --brand-blue (CAS-705 precedent) for a human-ticked one. The 4-class
+     override below is what makes a reached+manual level read fully blue instead of inheriting .recent's
+     gold glow — equal-specificity rules would otherwise depend on source order. */
+  .ctl.notify.wsrc-auto .cmini{border-color:#ffd54a}
+  .ctl.notify.wsrc-manual .cmini{border-color:var(--brand-blue)}
+  .ctl.notify.recent.wsrc-manual .cmini{border-color:var(--brand-blue);
+    box-shadow:0 0 0 1px rgba(76,125,255,.4),0 0 9px 1px rgba(76,125,255,.55)}
   /* CAS-374/CAS-439: the Watch/Watched chip is now the toggle for its own panel — this arrow is the only cue
      for open vs closed, since the separate collapse chevron inside the panel is gone. The panel opens ABOVE
      the button (CAS-304), so the chevron points UP when closed (that's the direction the list will open) and
@@ -4631,7 +4640,8 @@ function recomputeFound(){
     const idx=levels.findIndex(l=>!l.spent && (watchPrefs[l.key]||{}).notify===true);
     if(idx<0) return;             // no qualifying rung yet — leave autoNotified unset, it may qualify later
     e.wins=e.wins||{};
-    levels.slice(idx).forEach(l=>{ if(!l.spent) e.wins[l.key]=true; });   // CAS-349 cascade-down semantics
+    e.winsSource=e.winsSource||{};   // CAS-712: which of e.wins was armed by the agent vs ticked by hand
+    levels.slice(idx).forEach(l=>{ if(!l.spent){ e.wins[l.key]=true; e.winsSource[l.key]="auto"; } });   // CAS-349 cascade-down semantics
     if(!e.streamTier) e.streamTier="must";
     e.muted=false;
     e.autoNotified=true;
@@ -5066,7 +5076,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 882, "commit": "682fe3f", "builtAt": "2026-09-01T06:51:25Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 883, "commit": "f58a053", "builtAt": "2026-09-01T06:59:49Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6799,15 +6809,34 @@ function watchLevelsFor(id){
 // null for a window that kind's own AGENT_WINDOWS list doesn't carry (e.g. in_cinema on a stream agent),
 // which silently read as "not current" there. Passing null always searches every kind, so the same window
 // resolves to the same option key everywhere.
-function watchIsCurrent(id){
+// CAS-712: factored out of watchIsCurrent so its matched level's key is reusable for provenance lookup
+// (filmWatchSource) — same match, just returning the key that decided it instead of a bare bool.
+function watchCurrentLevelKey(id){
   const m=MOVIES.find(x=>x.tmdb_id===id);
-  if(!m) return false;
+  if(!m) return null;
   const levels=watchLevelsFor(id);
-  return m.status.some(w=>{
+  for(const w of m.status){
     const key=filmOptKeyForWindow(null, w);
     const l=key && levels.find(x=>x.key===key);
-    return !!(l && filmOptOn(id,l));
-  });
+    if(l && filmOptOn(id,l)) return key;
+  }
+  return null;
+}
+function watchIsCurrent(id){
+  return !!watchCurrentLevelKey(id);
+}
+// CAS-712: which colour the Watch On chip reads as — "auto" if an agent armed the level in question,
+// "manual" if a human ticked it, null if there's nothing on yet or it predates this ticket (no recorded
+// source). The level in question is the film's current/reached one if it has one (matching the chip's own
+// "Can Watch" state), else the highest-priority level still ticked — a film with only a future level ticked
+// still gets a provenance colour instead of falling back to plain.
+function filmWatchSource(id){
+  const e=notify[id]; if(!e || !e.wins) return null;
+  const src=e.winsSource||{};
+  const curKey=watchCurrentLevelKey(id);
+  if(curKey) return src[curKey]||null;
+  const onLevel=watchLevelsFor(id).filter(l=>!l.spent).find(l=>filmOptOn(id,l));
+  return onLevel ? (src[onLevel.key]||null) : null;
 }
 // ---- CAS-382: the agent's own Filter control ------------------------------------------------------------
 // The same three levels the Watch panel above lets you set on ONE film, offered here as a multi-select
@@ -6868,7 +6897,12 @@ function notifyChipHTML(id){
   // future level ticked read as fully unset, indistinguishable from a film with no ticks at all — the "Streaming
   // ticked, button still plain" repro. aria-pressed follows the same split: it reports whether a request exists
   // (st.on), not whether it has been satisfied (st.current).
-  return `<button type="button" class="ctl notify${st.current?" on recent":""}" data-nid="${id}"
+  // CAS-712: provenance colour — wsrc-auto/wsrc-manual say whether the level driving the chip's colour
+  // (filmWatchSource: the current/reached one if there is one, else the highest-priority ticked one) was
+  // armed by an agent (CAS-613) or ticked by hand. null (a level ticked before this shipped, with no
+  // recorded source) adds neither class and reads as plain, same as before this ticket.
+  const wsrc=filmWatchSource(id);
+  return `<button type="button" class="ctl notify${st.current?" on recent":""}${wsrc?` wsrc-${wsrc}`:""}" data-nid="${id}"
       onclick="openNotifyPanel(${id},this)" aria-haspopup="true" aria-expanded="false" aria-pressed="${!!st.on}"
       title="${escA(title)}" aria-label="${escA(title)}">
     <span class="cmini"><i class="cfill" style="width:${st.total?100*st.on/st.total:0}%;background:var(--green)"></i>
@@ -7018,6 +7052,7 @@ window.toggleFilmOpt=(id,key)=>{
   const row=levels.find(l=>l.key===key); if(!row || row.spent) return;
   const e=entryFor(id);
   e.wins=e.wins||{};
+  e.winsSource=e.winsSource||{};   // CAS-712: a manual tap always wins provenance, even over a prior auto-arm
   const wasOn=filmOptOn(id,row);
   if(wasOn){
     e.wins[key]=false;                    // CAS-349: "adjust individual ticks afterwards" — a plain untick
@@ -7026,7 +7061,7 @@ window.toggleFilmOpt=(id,key)=>{
     // skipping levels the agent doesn't track or that the film has already passed. Selecting Streaming
     // itself has nothing below it to cascade into — it just ticks itself and lands on its default tier.
     const idx=levels.findIndex(l=>l.key===key);
-    levels.slice(idx).forEach(l=>{ if(!l.spent) e.wins[l.key]=true; });
+    levels.slice(idx).forEach(l=>{ if(!l.spent){ e.wins[l.key]=true; e.winsSource[l.key]="manual"; } });
     if(!e.streamTier) e.streamTier="must";
   }
   // Touching any level un-mutes the film: a whole-film silence and a per-level choice are two different
