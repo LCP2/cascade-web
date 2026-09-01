@@ -2490,6 +2490,12 @@
   .wtabbtn:active{opacity:.75}
   .wtabbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
   .cascbar.rail .watchtabs{margin:8px 12px 0}
+  /* ---- GENRE FILTER (CAS-714): the styles present in the open tab's own current results, each a plain
+     .chip (the same visual pattern the Mission editor's own genre chips already use) — reuses the look,
+     not the wiring, since this filter must never touch a cascade's stored c.genre. Margins mirror
+     .scopebar's own — same row shape, one step further down the bar. */
+  .genrefilter{margin:9px 12px 0}
+  .cascbar.rail .genrefilter{margin:8px 12px 9px}
   /* The listbox keeps its own outline all the way round. Squaring the joined corners only reads as "one
      control" when the panel is exactly as wide as the pill — and it is not: the Watch it panel is wider,
      the Watched panel is offset to stay on screen, and the open edge then reads as a cut-off box. A whole
@@ -3442,6 +3448,9 @@
          piles are drawn from, not a fourth pile alongside them. -->
     <div class="watchtabs" id="watchTabs" role="tablist" aria-label="Watch nav"></div>
     <div class="scopebar" id="scopeBar" role="group" aria-label="Which films to show"></div>
+    <!-- CAS-714: the styles present in THIS tab's own current results, each toggleable off — a session-only
+         view filter, same shape as scope/watchTab above. It never touches a cascade's own stored c.genre. -->
+    <div class="chips genrefilter" id="genreFilterBar" role="group" aria-label="Filter by style" hidden></div>
     <div class="deck">
       <!-- Not a listbox: an option is not allowed to contain buttons, and the centre card carries
            Edit and Search (CAS-271/CAS-272 took Close and Share off it). A group of groups keeps those
@@ -7828,6 +7837,31 @@ function renderWatchTabs(){
   const el=$("watchTabs"); if(!el) return;
   el.innerHTML = WATCH_TABS.map(t=>`<button type="button" class="wtabbtn${watchTab===t.key?" on":""}"
       role="tab" aria-selected="${watchTab===t.key}" onclick="setWatchTab('${t.key}')">${t.label}</button>`).join("");
+}
+// CAS-714: which genres are toggled OFF (hidden) in each Watch tab's own view — session-only, one Set per
+// tab, exactly like `watchTab`/`scope` above. Never persisted and never written back to any cascade's own
+// stored c.genre: this only narrows what a render puts on screen, the same way the scope bar does.
+const watchGenreOff = {cinema:new Set(), rental:new Set(), streaming:new Set()};
+window.toggleWatchGenre = g => {
+  const set=watchGenreOff[watchTab];
+  set.has(g) ? set.delete(g) : set.add(g);
+  render();
+};
+// Built from `rows` BEFORE the genre filter narrows them (render() passes the tab's full post-scope set),
+// so a genre you just toggled off stays in the row to toggle back on instead of vanishing with the films
+// it hid. Hides itself under two genres — same call jumpBar already makes: one option is not a choice.
+function renderGenreFilterBar(rows){
+  const el=$("genreFilterBar"); if(!el) return;
+  const off=watchGenreOff[watchTab];
+  const genres=[...new Set(rows.flatMap(m=>m.genres||[]))].sort();
+  if(genres.length<2){ el.hidden=true; el.innerHTML=""; return; }
+  el.hidden=false;
+  el.innerHTML=genres.map(g=>{
+    const on=!off.has(g);
+    return `<button type="button" class="chip gen${on?" on":""}" aria-pressed="${on}"
+        onclick="toggleWatchGenre('${escA(g)}')"
+        title="${escA(on?g+" — tap to hide":"Tap to show "+g)}">${esc(g)}</button>`;
+  }).join("");
 }
 function renderScopeBar(){
   const el=$("scopeBar"); if(!el) return;
@@ -16949,7 +16983,13 @@ function render(){
   // results, because you told us you didn't want them.
   // CAS-713: the active Watch tab narrows `rows` before anything below reads it, so the deck count, the
   // jump bar and the groups can never disagree about what this render actually shows.
-  const rows=scopeRows().filter(m=>WATCH_TAB_STATUSES[watchTab].has(primaryStatus(m)));
+  let rows=scopeRows().filter(m=>WATCH_TAB_STATUSES[watchTab].has(primaryStatus(m)));
+  // CAS-714: the genre filter row is built from the tab's full set above, THEN narrows `rows` the same
+  // way the tab/scope filters already did — so the deck count, the jump bar and the groups agree with it
+  // too, and can never show a film the filter row says is hidden.
+  renderGenreFilterBar(rows);
+  const genreOff=watchGenreOff[watchTab];
+  if(genreOff.size) rows=rows.filter(m=>!(m.genres||[]).some(g=>genreOff.has(g)));
   const shown=rows.filter(m=>!taggedOut(m));
   const stubbed=rows.length-shown.length;
   // CAS-682: the deck card describes what this render actually puts on screen for the list, so it takes the
