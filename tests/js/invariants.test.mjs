@@ -271,47 +271,49 @@ test("cascade score: critic agreement beats a below-floor IMDb rating with no cr
   assert.equal(E.qScore(belowFloor), -1, "a film under the vote floor with no critic scores was still treated as rated");
 });
 
-// ---- 9. THE CASCADE SCORE IS TWO AXES (CAS-694) ------------------------------------------------------------
-// CAS-660 let qScore score from whichever of three raw sources a film carried; CAS-669 then narrowed that to
-// require a gated source or two corroborating ones. CAS-694 replaces both: the score is now exactly TWO
-// axes — People's vote (ratingOf(m) x10) and Critics (critScore(m), see test 9b) — and a film scores if it
-// carries EITHER axis. A lone Metacritic or RT figure IS a whole Critics axis now, not an "ungated single
-// source" to exclude — the coverage widening this brings (measured ~24% -> ~27% catalogue-wide) is the point.
-test("cascade score: scored from either axis (People's vote, Critics), never from budget/gross/popularity/awards", () => {
+// ---- 9. THE CASCADE SCORE IS THREE SCALE-MATCHED TERMS (CAS-706) -------------------------------------------
+// CAS-660 let qScore score from whichever of three raw sources a film carried; CAS-669 narrowed that; CAS-694
+// then collapsed RT/Metacritic into one combined Critics axis. CAS-706 (Cascade 9.7) reverses CAS-694: the
+// score is back to three separate terms — IMDb (gated rating x10), RT, Metacritic — but RT and Metacritic are
+// each divided by their own catalogue-measured ratio (RT_ADJ, META_ADJ) to the gated IMDb-x10 figure first, so
+// all three terms sit on the same 0-100 scale before averaging. A lone RT or Metacritic figure still scores,
+// as its own scale-matched value, not the raw source.
+const RT_ADJ = 1.0873, META_ADJ = 0.9635;
+test("cascade score: scored from IMDb/RT/Metacritic (scale-matched), never from budget/gross/popularity/awards", () => {
   const metaOnly    = { title: "Metacritic Only", imdb_rating: null, imdb_votes: 0, metacritic: 61 };
   const rtOnly      = { title: "RT Only",         imdb_rating: null, imdb_votes: 0, rt_critic: 88 };
   const imdbOnly    = { title: "IMDb Only",       imdb_rating: 7.3,  imdb_votes: 1000000 };
   const bothCritics = { title: "Both Critics",    imdb_rating: null, imdb_votes: 0, metacritic: 60, rt_critic: 90 };
-  const bothAxes    = { title: "Both Axes",       imdb_rating: 8.0,  imdb_votes: 1000000, metacritic: 60, rt_critic: 90 };
+  const allThree    = { title: "All Three",       imdb_rating: 8.0,  imdb_votes: 1000000, metacritic: 60, rt_critic: 90 };
   const neither     = { title: "Neither",         imdb_rating: null, imdb_votes: 0 };
 
-  // AC5: a lone Metacritic or RT figure is a whole Critics axis on its own — it scores, as that figure.
-  assert.equal(E.qScore(metaOnly), 61, "a lone Metacritic score is a whole Critics axis and should score as itself");
-  assert.equal(E.qScore(rtOnly), 88, "a lone RT score is a whole Critics axis and should score as itself");
+  // A lone Metacritic or RT figure scores as itself, scale-matched against IMDb's x10 convention.
+  assert.equal(E.qScore(metaOnly), Math.round(61 / META_ADJ), "a lone Metacritic score should scale-match against IMDb and score as itself");
+  assert.equal(E.qScore(rtOnly), Math.round(88 / RT_ADJ), "a lone RT score should scale-match against IMDb and score as itself");
   // People's vote alone scores as the gated rating x10.
   assert.equal(E.qScore(imdbOnly), 73, "IMDb-only score should be the gated IMDb rating x10, rounded");
-  // Both critic sources present but no gated IMDb: the Critics axis is their mean, and it's the WHOLE score.
-  assert.equal(E.qScore(bothCritics), 75, "Metacritic+RT with no People's vote should score as the Critics axis alone (their mean)");
-  // Both axes present: the mean of the two AXES — critics must not carry double weight just because both
-  // Metacritic and RT happen to be filled in.
-  assert.equal(E.qScore(bothAxes), Math.round((80 + 75) / 2), "both axes present should average the two AXIS values, not three raw sources");
-  // AC5 (dash half): neither axis present scores -1.
-  assert.equal(E.qScore(neither), -1, "a film with neither axis should not score");
+  // Both critic sources present but no gated IMDb: the mean of the two scale-matched terms, and it's the WHOLE score.
+  assert.equal(E.qScore(bothCritics), Math.round((60 / META_ADJ + 90 / RT_ADJ) / 2), "Metacritic+RT with no People's vote should score as the mean of the two scale-matched terms");
+  // All three present: the mean of the three scale-matched terms.
+  assert.equal(E.qScore(allThree), Math.round((80 + 60 / META_ADJ + 90 / RT_ADJ) / 3), "all three present should average the three scale-matched terms");
+  // Neither term present scores -1.
+  assert.equal(E.qScore(neither), -1, "a film with no term should not score");
 
   // AC4: budget, worldwide gross, popularity and awards are not terms — perturbing them changes nothing.
-  const rich = { ...bothAxes, budget: 200e6, worldwide_gross: 900e6, popularity: 500, award: "won", award_text: "Won 3 Oscars" };
-  assert.equal(E.qScore(rich), E.qScore(bothAxes), "budget/gross/popularity/awards changed the score");
+  const rich = { ...allThree, budget: 200e6, worldwide_gross: 900e6, popularity: 500, award: "won", award_text: "Won 3 Oscars" };
+  assert.equal(E.qScore(rich), E.qScore(allThree), "budget/gross/popularity/awards changed the score");
 
-  // AC3, whole catalogue: qScore is exactly the rounded mean of whichever axes a film carries.
+  // AC3, whole catalogue: qScore is exactly the rounded mean of whichever scale-matched terms a film carries.
   for(const m of E.MOVIES){
     const q = E.qScore(m);
-    const r = E.ratingOf(m), cs = E.critScore(m);
-    const axes = [];
-    if(r != null) axes.push(r*10);
-    if(cs != null) axes.push(cs);
-    if(!axes.length){ assert.equal(q, -1, `${m.title}: has neither axis but scored ${q}`); continue; }
-    const expected = Math.round(axes.reduce((x,y)=>x+y,0)/axes.length);
-    assert.equal(q, expected, `${m.title}: qScore ${q} disagrees with the two-axis mean ${expected}`);
+    const r = E.ratingOf(m);
+    const terms = [];
+    if(r != null) terms.push(r*10);
+    if(m.rt_critic != null) terms.push(m.rt_critic / RT_ADJ);
+    if(m.metacritic != null) terms.push(m.metacritic / META_ADJ);
+    if(!terms.length){ assert.equal(q, -1, `${m.title}: has no term but scored ${q}`); continue; }
+    const expected = Math.round(terms.reduce((x,y)=>x+y,0)/terms.length);
+    assert.equal(q, expected, `${m.title}: qScore ${q} disagrees with the three-term mean ${expected}`);
   }
 });
 
@@ -348,19 +350,19 @@ test("missionScoreStats: the mean of the ON Mission dials, not a scan of the lis
   assert.equal(E.missionScoreStats({ selCrowd: 7.5, selCritScore: 61 }).min, Math.round((75+61)/2), "both dials on should read as their mean");
 });
 
-// ---- 9d. qScoreSourcesText NAMES THE AXES (CAS-694) ------------------------------------------------------
-// AC6: the card's own title text names People's vote and Critics — the axes — rather than IMDb/Metacritic/RT,
-// the three raw sources those axes can be built from.
-test("qScoreSourcesText: names the two axes, not the raw sources that feed them", () => {
+// ---- 9d. qScoreSourcesText NAMES THE THREE RAW SOURCES (CAS-706) -------------------------------------------
+// AC5: the card's own tooltip names People's vote, RT and Metacritic individually now that qScore is back to
+// three scale-matched terms rather than the CAS-694 two-axis (People's vote, Critics) collapse.
+test("qScoreSourcesText: names the individual sources present, not a combined Critics axis", () => {
   const imdbOnly    = { imdb_rating: 7.3, imdb_votes: 1000000 };
-  const critsOnly   = { imdb_rating: null, imdb_votes: 0, metacritic: 61 };
-  const bothAxes    = { imdb_rating: 8.0, imdb_votes: 1000000, metacritic: 60, rt_critic: 90 };
+  const metaOnly    = { imdb_rating: null, imdb_votes: 0, metacritic: 61 };
+  const rtOnly      = { imdb_rating: null, imdb_votes: 0, rt_critic: 88 };
+  const allThree    = { imdb_rating: 8.0, imdb_votes: 1000000, metacritic: 60, rt_critic: 90 };
   assert.equal(E.qScoreSourcesText(imdbOnly), "People's vote only");
-  assert.equal(E.qScoreSourcesText(critsOnly), "Critics only");
-  assert.equal(E.qScoreSourcesText(bothAxes), "People's vote and Critics");
-  for(const name of ["IMDb", "Metacritic", "RT"]){
-    assert.ok(!E.qScoreSourcesText(bothAxes).includes(name), `qScoreSourcesText named a raw source (${name}), not an axis`);
-  }
+  assert.equal(E.qScoreSourcesText(metaOnly), "Metacritic only");
+  assert.equal(E.qScoreSourcesText(rtOnly), "RT only");
+  assert.equal(E.qScoreSourcesText(allThree), "People's vote, RT and Metacritic");
+  assert.ok(!E.qScoreSourcesText(allThree).includes("Critics"), "qScoreSourcesText named the retired combined Critics axis");
 });
 
 // ---- 10. MISSION DIALS COMBINE WITH OR (CAS-661) ----------------------------------------------------------

@@ -5777,9 +5777,9 @@ function byTimelineAsc(a,b){
 }
 // ---- Critics, one recorded figure (CAS-694) ------------------------------------
 // The mean of Metacritic and RT where both are present, whichever one is present otherwise, null when
-// neither is. This is the ONE definition — selCriticsOK (the dial) and qScore (the score) both read it, so
-// the two can never disagree about what "the critics" said the way a dial-tests-one-source /
-// score-averages-two-sources split used to let them.
+// neither is. Read by selCriticsOK — the Critics dial and Mission gate. Cascade 9.7 (2026-09-01) took the
+// score itself back to three separate scale-matched terms (see qScore below) — this figure is admission
+// logic only now. Nothing that admits a film is a term in its score, and this is no longer one.
 const critScore = m => {
   const mc=m.metacritic, rt=m.rt_critic;
   if(mc!=null && rt!=null) return Math.round((mc+rt)/2);
@@ -5788,26 +5788,36 @@ const critScore = m => {
   return null;
 };
 // ---- The Cascade score --------------------------------------------------------
-// CAS-694: two axes, not three raw sources. People's vote is the gated IMDb rating x10 (ratingOf(m)); Critics
-// is the one combined figure critScore() returns above. Averaging IMDb/Metacritic/RT as three separate terms
-// let critics carry double weight whenever both existed, and a film's score swung on which rows the pipeline
-// happened to fill — the two axes fix that by construction. A film scores if it carries either axis; -1
-// (rendered as the dash) means neither does.
+// Cascade 9.7 (Lee, 2026-09-01): back to three raw sources — IMDb, RT, Metacritic — not two combined axes,
+// but scale-matched first. RT_ADJ/META_ADJ are the average ratio of each critic source to the gated
+// IMDb-x10 figure, computed once over the live catalogue on 2026-09-01 (775 films for RT, 764 for
+// Metacritic, all imdbReliable) — NOT recomputed at runtime. Divide each critic source by its own ratio
+// before averaging so all three terms sit on the same 0-100 scale as imdb_rating x10; skipping this step
+// would leave RT/Meta on IMDb's raw 0-10 scale and crush their weight in the average to near nothing.
+// A film scores on whichever of the three terms it actually has (unchanged fallback rule); -1 (rendered as
+// the dash) means it has none. critScore()/selCriticsOK above are UNCHANGED and still drive the Critics
+// dial and Mission gate — this only touches the score.
+const RT_ADJ = 1.0873;    // mean(rt_critic / (gated imdb_rating x10)), 775 films, measured 2026-09-01
+const META_ADJ = 0.9635;  // mean(metacritic / (gated imdb_rating x10)), 764 films, measured 2026-09-01
 function qScore(m){
   const r = ratingOf(m);
-  const cs = critScore(m);
+  const adjRt = m.rt_critic!=null ? m.rt_critic/RT_ADJ : null;
+  const adjMeta = m.metacritic!=null ? m.metacritic/META_ADJ : null;
   const p=[];
   if(r!=null) p.push(r*10);
-  if(cs!=null) p.push(cs);
+  if(adjRt!=null) p.push(adjRt);
+  if(adjMeta!=null) p.push(adjMeta);
   if(!p.length) return -1;
   return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
 }
 function qScoreSourcesText(m){
   const names=[];
   if(ratingOf(m)!=null) names.push("People's vote");
-  if(critScore(m)!=null) names.push("Critics");
+  if(m.rt_critic!=null) names.push("RT");
+  if(m.metacritic!=null) names.push("Metacritic");
+  if(names.length===1) return `${names[0]} only`;
   if(names.length===2) return `${names[0]} and ${names[1]}`;
-  return `${names[0]} only`;
+  return `${names[0]}, ${names[1]} and ${names[2]}`;
 }
 function oscMarkHTML(m){
   const t=String(m.award_text||"");
