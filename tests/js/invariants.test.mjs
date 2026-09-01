@@ -1582,6 +1582,41 @@ test("CAS-613 AC5: recomputeFound() calls saveNotify() at most once per pass", (
   assert.equal(calls.length, 1, `recomputeFound() calls saveNotify() ${calls.length} time(s), expected exactly 1`);
 });
 
+// ---- A FILM BELONGS TO EXACTLY ONE AGENT (CAS-709) --------------------------------------------------------
+// recomputeFound() used to let a film be found by every Cascade whose criteria matched it, so a film could
+// show under two auto-matching agents at once. Now, unpinned, it belongs to exactly its single highest-ranked
+// (lowest .order) match; pinned, it belongs to exactly its pinned cascade(s), full stop, even against a
+// higher-ranked agent's own criteria match.
+test("CAS-709 AC1/AC2: an unpinned film keeps only its top-ranked match; a hand-pin outranks a higher-ranked match", () => {
+  const [film] = unwatchedFilms(1);
+  const id = film.tmdb_id;
+  const before = new Set(Object.keys(E.notify));
+  // Broad, unconstrained criteria (mirrors seedAutoNotifyCascade's shape) so both agents match the same
+  // film by CRITERIA, not by pin — .order is what CAS-709 says must decide between them.
+  const cA = E.normCascade({ kind: "stream", status: [] }); cA.id = "cas709-a"; cA.paused = false; cA.order = -1000;
+  const cB = E.normCascade({ kind: "stream", status: [] }); cB.id = "cas709-b"; cB.paused = false; cB.order = -999;
+  E.cascades.push(cA, cB);
+  try {
+    E.recomputeFound();
+    // vm-realm gotcha: cascadeIds is an Array from the sandboxed engine's own realm, so it must be spread
+    // into a plain array before deepEqual — compared directly it fails even with identical contents.
+    assert.deepEqual([...E.notify[id].cascadeIds], [cA.id],
+      "AC1: an unpinned film matched by two agents must belong to exactly its single highest-ranked (lowest .order) one");
+
+    pinFilm(id, cB.id);   // hand-pin into the LOWER-ranked agent while the higher-ranked one still matches by criteria
+    E.recomputeFound();
+    assert.deepEqual([...E.notify[id].cascadeIds], [cB.id],
+      "AC2: a hand-pin must win outright over a higher-ranked agent's own criteria match");
+  } finally {
+    unseedCascade(cA.id);
+    unseedCascade(cB.id);
+    // The broad-match agents above will have found many other films besides `id` — clean up every notify
+    // entry this test created, not just the one it asserted on, then recompute so real state is restored.
+    for(const k of Object.keys(E.notify)) if(!before.has(k)) delete E.notify[k];
+    E.recomputeFound();
+  }
+});
+
 // ---- A MONITOR MOMENT CAN NEVER RENDER AS ITS RAW KEY (CAS-602) -------------------------------------------
 // The monitor's `newly_qualifies` moment (a held film whose own attributes newly qualify it for an agent)
 // has to be in REAL_MOMENT_SAID, the bell's own moment-copy lookup, or a ledger row for it would fall
