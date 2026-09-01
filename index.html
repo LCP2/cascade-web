@@ -428,6 +428,9 @@
   @media (prefers-reduced-motion:reduce){ #groups{transition:none} }
   .group{margin-top:6px}
   .grouphead{display:flex;align-items:center;gap:8px;padding:12px 12px 8px;font-size:13px;font-weight:800;letter-spacing:.2px}
+  /* CAS-717: the second-level agent divider within a status section — same visual family as .grouphead,
+     one size down, with a hairline above it to read as a seam rather than a second section. */
+  .grouphead.sub{padding:10px 12px 6px;font-size:12px;font-weight:700;color:var(--dim);border-top:1px solid var(--line);margin-top:4px}
   .gdot{width:9px;height:9px;border-radius:50%}
   .gdot.opening_week{background:var(--open)} .gdot.in_cinema{background:var(--amber)}
   .gdot.pvod{background:var(--purple)} .gdot.rental{background:var(--blue)}
@@ -4195,20 +4198,33 @@ const STATUS_LABEL = {
   // and this is the label the alerts and the report print for it.
   past_opening:"Past opening weekend"
 };
-// CAS-713 — Cascade 9.7: Watch becomes three fixed sub-tabs instead of one combined listing, each a
-// pre-set slice of these same six availability statuses. PVOD folds into the Streaming tab — the brief
-// names Cinema/Rental/Streaming and doesn't mention PVOD, and the Scoring page already treats PVOD as the
-// streaming side by decision (flagged in the ticket for Lee to correct if that's wrong).
+// CAS-713 — Cascade 9.7: Watch becomes three fixed sub-tabs instead of one combined listing. PVOD folds
+// into the Streaming tab — the brief names Cinema/Rental/Streaming and doesn't mention PVOD, and the
+// Scoring page already treats PVOD as the streaming side by decision (flagged in the ticket for Lee to
+// correct if that's wrong).
 const WATCH_TABS = [
   {key:"cinema",    label:"Cinema"},
   {key:"rental",    label:"Rental"},
   {key:"streaming", label:"Streaming"}
 ];
-const WATCH_TAB_STATUSES = {
-  cinema:    new Set(["opening_week","in_cinema","upcoming"]),
-  rental:    new Set(["rental"]),
-  streaming: new Set(["included_streaming","pvod"])
-};
+// CAS-717 — Cascade 9.7 again: a tab now filters by each film's chosen WATCH ON level (filmNotifyState's
+// single-select `.key`, post CAS-716), not by its availability status — status stays as the section
+// grouping INSIDE a tab (listingGroups/render below, unchanged). Cinema alone carries a default bucket —
+// an undecided film (no Watch On pick at all) whose current status is still upcoming/in_cinema — so a
+// film nobody has chosen a level for isn't invisible everywhere; Rental/Streaming carry no such default,
+// per the ticket's own settled assumption.
+function filmMatchesWatchTab(m, tab){
+  const key = filmNotifyState(m.tmdb_id).key;
+  if(tab==="cinema"){
+    if(key==="in_cinema") return true;
+    if(key) return false;
+    const ps=primaryStatus(m);
+    return ps==="upcoming" || ps==="in_cinema";
+  }
+  if(tab==="rental")    return key==="rent";
+  if(tab==="streaming") return key==="stream" || key==="premium";
+  return false;
+}
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const FMT_RANK = {SD:1, HD:2, "4K":3};
 const MATURE = new Set(["MA15+","MA 15+","R18+","R 18+","X18+","X 18+"]);
@@ -5123,7 +5139,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 886, "commit": "90adeb7", "builtAt": "2026-09-01T09:27:51Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 887, "commit": "dee9e70", "builtAt": "2026-09-01T11:43:07Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7836,10 +7852,14 @@ addEventListener("scroll", ()=>{ if(document.querySelector(".cpop.spop")) closeS
 // availability statuses the listing below even considers. Session-only state, exactly like `scope`
 // above: never persisted, so a fresh load always starts on Cinema.
 let watchTab = "cinema";
+// CAS-717: which status section a tab auto-scrolls to on opening — its own eponymous group, reusing
+// jumpToSection's existing delta/settle scroll logic rather than new scroll code.
+const WATCH_TAB_SCROLL_TARGET = {cinema:"in_cinema", rental:"rental", streaming:"included_streaming"};
 window.setWatchTab = key => {
   if(watchTab===key) return;
   watchTab=key;
   render();
+  jumpToSection(WATCH_TAB_SCROLL_TARGET[key]);
 };
 function renderWatchTabs(){
   const el=$("watchTabs"); if(!el) return;
@@ -16956,6 +16976,28 @@ function filmOwnerOrder(m){
   if(!ids.length) return Number.MAX_SAFE_INTEGER;
   return Math.min(...ids.map(id=>{ const c=cascades.find(x=>x.id===id); return c ? (c.order??Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER; }));
 }
+// CAS-717: the same owner match as filmOwnerOrder, but returning the cascade itself (for its name/icon)
+// rather than just its rank — used to divide a status section into per-agent blocks below.
+function filmOwnerCascade(m){
+  const ids=(notify[m.tmdb_id]||{}).cascadeIds||[];
+  let best=null;
+  ids.forEach(id=>{
+    const c=cascades.find(x=>x.id===id);
+    if(c && (!best || (c.order??Number.MAX_SAFE_INTEGER)<(best.order??Number.MAX_SAFE_INTEGER))) best=c;
+  });
+  return best;
+}
+// Splits a status section's already agent-sorted `items` (filmOwnerOrder is listingGroups' primary sort
+// key, so one agent's films already run contiguously) into per-owner runs, in the same order.
+function splitByOwner(items){
+  const blocks=[]; let curKey;
+  items.forEach(m=>{
+    const c=filmOwnerCascade(m); const key=c?c.id:null;
+    if(!blocks.length || key!==curKey){ blocks.push({cascade:c, items:[]}); curKey=key; }
+    blocks[blocks.length-1].items.push(m);
+  });
+  return blocks;
+}
 // CAS-662: the listing's own group partition, decided up front — pure over `rows` and the active agent's
 // order, no depth cap or floor any more (selectivity is the agent's own Mission criteria now).
 function listingGroups(rows, ac){
@@ -16989,9 +17031,9 @@ function render(){
   // Two lists, one pass: `rows` is everything on screen, `shown` is everything that still gets a full card.
   // The difference is the films you tagged out — they stay on screen as stubs, and they don't count as
   // results, because you told us you didn't want them.
-  // CAS-713: the active Watch tab narrows `rows` before anything below reads it, so the deck count, the
-  // jump bar and the groups can never disagree about what this render actually shows.
-  let rows=scopeRows().filter(m=>WATCH_TAB_STATUSES[watchTab].has(primaryStatus(m)));
+  // CAS-713/CAS-717: the active Watch tab narrows `rows` before anything below reads it, so the deck count,
+  // the jump bar and the groups can never disagree about what this render actually shows.
+  let rows=scopeRows().filter(m=>filmMatchesWatchTab(m, watchTab));
   // CAS-714: the genre filter row is built from the tab's full set above, THEN narrows `rows` the same
   // way the tab/scope filters already did — so the deck count, the jump bar and the groups agree with it
   // too, and can never show a film the filter row says is hidden.
@@ -17042,17 +17084,33 @@ function render(){
   // CAS-421: the groups this pass will actually render, decided up front — so `pending` starts at its
   // final count before any fillListChunked can call back and never dips to zero between groups.
   const groups=listingGroups(rows, ac);
-  let pending=groups.length;
+  // CAS-717: each status section further splits into per-agent blocks (owner rank order, already how
+  // `items` sorts) — `pending` now counts those blocks, not the sections, since each gets its own
+  // fillListChunked call.
+  const sections=groups.map(({g,items})=>({g, items, blocks:splitByOwner(items)}));
+  let pending=sections.reduce((n,s)=>n+Math.max(s.blocks.length,1), 0);
   const oneListDone=()=>{ if(--pending<=0) listReady(); };
-  groups.forEach(({g,items})=>{
+  sections.forEach(({g,items,blocks})=>{
     // CAS-682: a tagged-out film still renders here, as a stub — a row you can see and count, not a hidden
     // exclusion — so the header counts every item, matching what fillListChunked below actually streams.
     const live=items.length;
     const grp=document.createElement("div"); grp.className="group"; grp.dataset.g=g;
     grp.innerHTML=`<div class="grouphead"><span class="gdot ${g}"></span>${STATUS_LABEL[g]}
-      <span class="gcount">${live}</span></div><div class="list"></div>`;
+      <span class="gcount">${live}</span></div>`;
     wrap.appendChild(grp);
-    fillListChunked(grp.querySelector(".list"), items, renderGen, isFresh, oneListDone);
+    // A section with only one agent's films (or none owned) reads exactly as before — the divider only
+    // earns its keep once there's an actual seam to mark.
+    const multiAgent=blocks.length>1;
+    blocks.forEach(block=>{
+      if(multiAgent){
+        const name=block.cascade ? `${block.cascade.icon} ${esc(block.cascade.name)}` : "Other";
+        const sub=document.createElement("div"); sub.className="grouphead sub"; sub.innerHTML=`<span>${name}</span>`;
+        grp.appendChild(sub);
+      }
+      const listEl=document.createElement("div"); listEl.className="list";
+      grp.appendChild(listEl);
+      fillListChunked(listEl, block.items, renderGen, isFresh, oneListDone);
+    });
   });
   renderJumpBar();     // after the groups exist — it is built FROM them, never from a fixed menu
   // You are looking at it — so the next visit's "since you last looked" counts from here.
