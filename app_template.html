@@ -446,13 +446,13 @@
        remembers each card's real height once seen, keeping the scrollbar and offsets stable. */
     content-visibility:auto;contain-intrinsic-size:auto 320px}
   .card.expanded{border-color:#3a3560;box-shadow:0 8px 30px rgba(0,0,0,.55)}
-  /* CAS-684: same fix as CAS-376's .stub.ratingopen, applied to the card popovers (Notify/Tags/Watched).
+  /* CAS-684: same fix as CAS-376's .stub.ratingopen, applied to the card popovers (Notify/Agent/Watched).
      .card's own overflow:hidden and content-visibility:auto (paint containment) both clip a .cpop that
      paints past the card's box — worse now the condensed card (CAS-617/624/630) is short enough that an
      open panel routinely overflows it. Paint containment also forces its own stacking context (implicit
      z-index:0 among siblings by DOM order), so even unclipped the panel would paint under whichever
      neighbour card sits later in the list. .popopen (added/removed around the panel's own open/close, see
-     closeWatchPanel and openListsPanel/openNotifyPanel/openWatchPanel) lifts both for exactly as long as a
+     closeWatchPanel and openAgentPanel/openNotifyPanel/openWatchPanel) lifts both for exactly as long as a
      panel is open on that card, and opts back into ordinary stacking so it wins over later cards. */
   .card.popopen{overflow:visible;content-visibility:visible;position:relative;z-index:5}
   /* CAS-179: the card is three bands now — the information body, the availability strip on its own
@@ -6589,12 +6589,12 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
            estimate / rent-only), not the card bottom. The old standalone expand chevron and service-list
            button are gone: card expand/collapse is by body tap (CAS-178), and the service list now opens
            from inside the availability capsule when the film has one (see bandHTML/savingsHTML). -->
-      <!-- CAS-279/CAS-428: Lists sits in the MIDDLE, between the two answers about the film itself. It is the
-           one control here that is about your own manual collections, not what you make of the film or how
-           you're told about it. -->
+      <!-- CAS-279/CAS-711: Agent sits in the MIDDLE, between the two answers about the film itself. It is the
+           one control here that is about which agent owns the film, not what you make of it or how you're
+           told about it. -->
       <div class="actions">
         ${notifyChipHTML(id)}
-        ${listsChipHTML(id)}
+        ${agentChipHTML(id)}
         ${watchChipHTML(id)}
       </div>
     </div>
@@ -6876,93 +6876,75 @@ function notifyChipHTML(id){
       <span class="clab${st.on?"":" dim"}">${lbl}</span>
       <span class="ctog">${ICON.chev}</span></span></button>`;
 }
-// ---- CAS-428: the Lists control (replaces the CAS-279 Agent/"move" control) -----------------------------
-// A List is a manual, user-picked collection — the opposite of an Agent, which is auto-populated by its own
-// criteria. So unlike the old Agent control, there is no "move" here: ticking one List never un-ticks another,
-// and the chip is a plain count of how many the film is in right now (listsFor/listMembership, above).
-function listsChipHTML(id){
-  const here=listsFor(id);
-  const lbl = here.length ? `Tags · ${here.length}` : "Tags";
-  const title = here.length
-    ? `In ${here.map(l=>l.name).join(", ")}. Tap to add or remove.`
-    : "Not tagged. Tap to add a tag.";
+// ---- CAS-711: the Agent control (replaces the CAS-428 Lists/"Tags" control) ------------------------------
+// A film belongs to exactly one agent (CAS-708/709 — highest-ranked criteria match, or a hand-pin overriding
+// that). This control shows and sets that ownership directly: the chip names the film's current owner, and
+// the panel is a single-select move, not the old Lists checklist. The Lists/`lists` data model and its own
+// `listsScreen` nav entry are untouched — only this card control moved onto agents; see CAS-711 for the
+// follow-up flag on cleaning up the now-orphaned Lists feature itself.
+function agentChipHTML(id){
+  const owner=cascadesFor(id)[0]||null;
+  const lbl = owner ? owner.name : "No agent";
+  const title = owner
+    ? `Owned by ${owner.icon} ${owner.name}. Tap to move to a different agent.`
+    : "No agent owns this film. Tap to pin one.";
   // DOM class stays `.ctl.casc` — see the CAS-427 comment above .actions for why this file keeps a control's
   // original class through a relabel rather than chasing every CSS selector each time the name changes.
-  return `<button type="button" class="ctl casc" data-kid="${id}" onclick="openListsPanel(${id},this)"
+  return `<button type="button" class="ctl casc" data-kid="${id}" onclick="openAgentPanel(${id},this)"
       aria-haspopup="true" aria-expanded="false" title="${escA(title)}" aria-label="${escA(title)}">
-    <span class="cmini"><i class="cfill" style="width:${here.length?100:0}%;background:var(--accent)"></i>
-      <span class="cic">${ICON.deck}</span>
-      <span class="clab${here.length?"":" dim"}">${esc(lbl)}</span>
+    <span class="cmini"><i class="cfill" style="width:${owner?100:0}%;background:var(--accent)"></i>
+      <span class="cic">${owner?owner.icon:ICON.deck}</span>
+      <span class="clab${owner?"":" dim"}">${esc(lbl)}</span>
       <span class="ctog">${ICON.chev}</span></span></button>`;
 }
-// The panel's rows: one per List (a true multi-select, hence the square .wwb.sq tick — see the CAS-382 CSS
-// comment on that class), plus an always-present "＋ New list" row at the foot.
-function listsPanelRowsHTML(id){
-  const rows=lists.map(l=>{
-    const on=inList(id,l.id);
-    return `<button type="button" class="nopt${on?" on":""}" data-lid="${l.id}" style="--wwc:var(--accent)"
-      aria-pressed="${on}" onclick="toggleFilmListAndRepaint(${id},'${l.id}')"
-      title="${escA(on?`In ${l.name} — tap to remove`:`Add to ${l.name}`)}">
-      <span class="wwb sq">✓</span><span class="nol">${esc(l.name)}</span></button>`;
+// The panel's rows: one per cascade, ordered by rank (CAS-708's `.order`, ascending), a true single-select —
+// hence the round .wwb tick, not the Lists checklist's square one — with the film's current owner pre-ticked.
+function agentPanelRowsHTML(id){
+  const owner=cascadesFor(id)[0]||null;
+  const sorted=[...cascades].sort((a,b)=>(a.order??1e9)-(b.order??1e9));
+  const rows=sorted.map(c=>{
+    const on=!!owner && owner.id===c.id;
+    return `<button type="button" class="nopt${on?" on":""}" data-cid="${c.id}" style="--wwc:var(--accent)"
+      aria-pressed="${on}" onclick="pinFilmToCascadeAndRepaint(${id},'${c.id}')"
+      title="${escA(on?`Owned by ${c.name}`:`Move to ${c.name}`)}">
+      <span class="wwb">✓</span><span class="cic" aria-hidden="true">${c.icon}</span><span class="nol">${esc(c.name)}</span></button>`;
   }).join("");
-  const none = lists.length ? "" : `<div class="nopt nonone">You have no tags yet — add one below.</div>`;
-  const addRow = `<button type="button" class="nopt sep" data-role="newlist"
-      onclick="openNewListRow(${id},this)" title="Create a new tag">
-      <span class="nol">＋ New tag</span></button>`;
-  return none + rows + addRow;
+  const none = cascades.length ? "" : `<div class="nopt nonone">You have no agents yet.</div>`;
+  return none + rows;
 }
-window.openListsPanel=(id, btn)=>{
+window.openAgentPanel=(id, btn)=>{
   const open=btn.closest(".actions").querySelector(".cpop");
-  const mine=open && open.classList.contains("lpop");   // CAS-281: only MY panel counts as a second tap
+  const mine=open && open.classList.contains("apop");   // CAS-281: only MY panel counts as a second tap
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
   const card=btn.closest(".card"); if(card) card.classList.add("popopen");   // CAS-684
   watchPanelAnchorY=scrollY;   // CAS-647: see snapToWatchPanelAnchor
   const pop=document.createElement("div");
-  // CAS-374-style chrome: content-width, no in-panel close — the chip is the toggle. CAS-439: Lists sits in
+  // CAS-374-style chrome: content-width, no in-panel close — the chip is the toggle. CAS-439: Agent sits in
   // the middle of the row, not an edge, so it gets .al-c (JS-anchored to the button) rather than .al-l/.al-r.
-  pop.className="cpop lpop al-c";
-  pop.innerHTML=`<div class="nopts">${listsPanelRowsHTML(id)}</div>`;
+  pop.className="cpop apop al-c";
+  pop.innerHTML=`<div class="nopts">${agentPanelRowsHTML(id)}</div>`;
   btn.closest(".actions").appendChild(pop);
   positionPanel(pop, btn);   // CAS-304, CAS-439
-  wirePanelSlide(pop, ".nopt[data-lid]", el=>toggleFilmListAndRepaint(id, el.dataset.lid));   // CAS-282
+  wirePanelSlide(pop, ".nopt[data-cid]", el=>pinFilmToCascadeAndRepaint(id, el.dataset.cid));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
   btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
   const first=pop.querySelector(".nopt"); if(first && first.tagName==="BUTTON") first.focus({preventScroll:true});
   snapToWatchPanelAnchor();   // CAS-647
 };
-// Swap the chip and, if the panel is open, its rows — same shared-repaint shape as Watch/Notify's own control.
-function repaintListsControl(id){
-  const btn=document.querySelector(`#card-${id} .actions .ctl.casc`); if(!btn) return;
-  const pop=btn.closest(".actions").querySelector(".cpop.lpop");
-  btn.outerHTML=listsChipHTML(id);
-  if(pop){
-    pop.querySelector(".nopts").innerHTML=listsPanelRowsHTML(id);
-    const newBtn=document.querySelector(`#card-${id} .actions .ctl.casc`);
-    if(newBtn){ newBtn.classList.add("open"); newBtn.setAttribute("aria-expanded","true"); }
-  }
-}
-window.toggleFilmListAndRepaint=(id,lid)=>{
-  toggleFilmList(id,lid);
-  logEvent("film_list_toggle",{on:inList(id,lid)});
-  repaintListsControl(id);
-};
-// "＋ New list": the row becomes a text input in place, rather than opening a second modal on top of the
-// panel — create it, then it's already ticked, exactly as the acceptance criteria ask for.
-window.openNewListRow=(id, rowBtn)=>{
-  rowBtn.outerHTML=`<div class="nopt sep newlistrow" data-role="newlist">
-    <input type="text" class="newlistin" maxlength="40" placeholder="Tag name" autocomplete="off"
-      onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
-      onblur="commitNewList(${id},this)"></div>`;
-  const pop=document.querySelector(`#card-${id} .actions .cpop.lpop`);
-  const inp=pop && pop.querySelector(".newlistin");
-  if(inp) setTimeout(()=>inp.focus(),0);
-};
-window.commitNewList=(id, inputEl)=>{
-  if(!inputEl || !inputEl.isConnected) return;   // already committed via Enter; blur firing after is a no-op
-  const name=(inputEl.value||"").trim();
-  if(name){ const l=createList(name); if(l) toggleFilmList(id, l.id); }
-  repaintListsControl(id);
+// Picking a row pins the film to that cascade and outranks its criteria match from here on (CAS-709's pin
+// mechanism), so this has to run the same full recompute an opinion answer does — a moved film can drop out
+// of whichever agent's listing is currently on screen, exactly as an opinion answer can fold a row away.
+window.pinFilmToCascadeAndRepaint=(id, cid)=>{
+  const e=entryFor(id);
+  e.pinnedTo=[cid];
+  // A cascade this film was previously hand-moved OUT of (CAS-279's `notIn`) is excluded from recomputeFound's
+  // own candidate set before pins are even considered — so re-pinning it back in has to clear that first, or
+  // the pin would silently fail to take.
+  if(e.notIn && e.notIn.length) e.notIn=e.notIn.filter(x=>x!==cid);
+  logEvent("film_agent_pin",{cascade:cid});
+  closeWatchPanel();
+  keepRowInPlace(id, ()=>repaintAfterOpinion(id));
 };
 // The Notify panel's rows: one per level the film is eligible for (CAS-477 — every eligible level is shown,
 // live and tickable, regardless of whether THIS agent's own Notify option is on for it; the tick itself is
@@ -7183,7 +7165,7 @@ window.openWatchPanel=(id, btn)=>{
   // and returned, so tapping a second control while a first was open closed the first and opened nothing —
   // a dead tap, and with three controls on the stack that is most of the taps you would make.
   const open=btn.closest(".actions").querySelector(".cpop");
-  const mine=open && !open.classList.contains("npop") && !open.classList.contains("lpop");
+  const mine=open && !open.classList.contains("npop") && !open.classList.contains("apop");
   closeWatchPanel();   // CAS-376: also strips any stub's .ratingopen — so that has to be (re)added AFTER this
   if(mine){ watchPanelAnchorY=null; return; }    // tapping the chip again closes the panel it opened
   const stub=btn.closest(".stub"); if(stub) stub.classList.add("ratingopen");
