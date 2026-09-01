@@ -2766,6 +2766,12 @@
   .aggrip:hover{color:var(--ink)}
   .aggrip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .agrow.dragging .aggrip{cursor:grabbing}
+  /* CAS-708: the Agents screen's rank number shares the grip's own 24px lane (stacked above it) rather
+     than claiming a second column, so restoring drag-to-reorder here costs the row no more width than
+     the grip alone would. */
+  .agranker{flex:0 0 auto;width:24px;align-self:stretch;display:flex;flex-direction:column;align-items:center}
+  .agrank{flex:0 0 auto;font-size:10px;font-weight:800;color:var(--faint);line-height:1;padding:2px 0 1px}
+  .agranker .aggrip{flex:1;width:100%;align-self:auto}
   .agicon{flex:0 0 auto;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;
     font-size:17px;background:rgba(255,255,255,.06)}
   .agrow.agent-cin .agicon{background:rgba(30,69,201,.16)}
@@ -10605,6 +10611,47 @@ const ONB_AGENTS = [
            pvod:false, rental:false, included_streaming:false},
    watchWindows:{upcoming:{list:true, notify:false}, in_cinema:{list:true, notify:true}}},
 
+  {key:"onb_stream", icon:"📺", name:"Streaming tonight", kind:"stream",
+   when:a => true,   // unconditional, same reason as onb_home above
+   // Deliberately a lower bar than Watch at home — this is the everyday list.
+   crit:{status:["included_streaming"], selCrowd:6.0, selCritScore:0, selAwards:0, selScale:0,
+         myServices:{pvod:false, rental:false, included_streaming:true}, yearsBack:20},
+   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
+           pvod:false, rental:false, included_streaming:true},
+   watchWindows:{stream:{list:true, notify:true}}},
+
+  {key:"onb_awards", icon:"🏆", name:"Awards watch", kind:"stream",
+   when:a => a.awards==="closely" || a.awards==="big",
+   // AWARD_STOPS: 1 = "1 nom", 4 = "Winner". yearsBack 0 because an award list is explicitly
+   // all-era, and myServices false because you want to know a winner exists wherever it is.
+   crit:{status:[], selCrowd:0, selCritScore:0, selScale:0, myServices:false, yearsBack:0},
+   awardsRung:a => a.awards==="closely" ? 1 : 4,
+   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
+           pvod:true, rental:true, included_streaming:true},
+   watchWindows:{rent:{list:true, notify:true}, stream:{list:true, notify:true}}},
+
+  {key:"onb_family", icon:"👨‍👩‍👧", name:"Family night", kind:"stream",
+   when:a => a.who.includes("kids"),
+   taste:"kids", tasteDefault:["Family","Animation","Adventure"],
+   // The age cap is the expression the existing Family Movies preset uses. Do not re-derive it.
+   crit:{status:["rental","included_streaming"], selCrowd:6.5, selCritScore:0, selAwards:0,
+         selScale:0, extraExclude:["Horror","Crime"],
+         myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
+   ageCap:true,
+   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
+           pvod:false, rental:true, included_streaming:true},
+   watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
+
+  {key:"onb_partner", icon:"❤️", name:"With your partner", kind:"stream",
+   when:a => a.who.includes("partner"),
+   // Higher crowd bar than the solo streaming agent: a bad pick costs two people's evening.
+   taste:"partner",
+   crit:{status:["rental","included_streaming"], selCrowd:7.0, selCritScore:0, selAwards:0,
+         selScale:0, myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
+   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
+           pvod:false, rental:true, included_streaming:true},
+   watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
+
   {key:"onb_cinema_wide", icon:"🎟️", name:"At the cinema now", kind:"cinema",
    when:a => a.cinema==="often",
    // No buzz floor — this is the broad "what's on" list, and 3 years back because a film in
@@ -10625,37 +10672,6 @@ const ONB_AGENTS = [
            pvod:false, rental:true, included_streaming:false},
    watchWindows:{rent:{list:true, notify:true}}},
 
-  {key:"onb_stream", icon:"📺", name:"Streaming tonight", kind:"stream",
-   when:a => true,   // unconditional, same reason as onb_home above
-   // Deliberately a lower bar than Watch at home — this is the everyday list.
-   crit:{status:["included_streaming"], selCrowd:6.0, selCritScore:0, selAwards:0, selScale:0,
-         myServices:{pvod:false, rental:false, included_streaming:true}, yearsBack:20},
-   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
-           pvod:false, rental:false, included_streaming:true},
-   watchWindows:{stream:{list:true, notify:true}}},
-
-  {key:"onb_partner", icon:"❤️", name:"With your partner", kind:"stream",
-   when:a => a.who.includes("partner"),
-   // Higher crowd bar than the solo streaming agent: a bad pick costs two people's evening.
-   taste:"partner",
-   crit:{status:["rental","included_streaming"], selCrowd:7.0, selCritScore:0, selAwards:0,
-         selScale:0, myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
-   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
-           pvod:false, rental:true, included_streaming:true},
-   watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
-
-  {key:"onb_family", icon:"👨‍👩‍👧", name:"Family night", kind:"stream",
-   when:a => a.who.includes("kids"),
-   taste:"kids", tasteDefault:["Family","Animation","Adventure"],
-   // The age cap is the expression the existing Family Movies preset uses. Do not re-derive it.
-   crit:{status:["rental","included_streaming"], selCrowd:6.5, selCritScore:0, selAwards:0,
-         selScale:0, extraExclude:["Horror","Crime"],
-         myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
-   ageCap:true,
-   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
-           pvod:false, rental:true, included_streaming:true},
-   watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
-
   {key:"onb_friends", icon:"🍿", name:"Big nights in", kind:"stream",
    when:a => a.who.includes("friends"),
    // selScale 50e6 is the crowd-pleaser signal — the same floor Family Movies uses. Scale is the
@@ -10665,16 +10681,6 @@ const ONB_AGENTS = [
    alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
            pvod:false, rental:true, included_streaming:true},
    watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
-
-  {key:"onb_awards", icon:"🏆", name:"Awards watch", kind:"stream",
-   when:a => a.awards==="closely" || a.awards==="big",
-   // AWARD_STOPS: 1 = "1 nom", 4 = "Winner". yearsBack 0 because an award list is explicitly
-   // all-era, and myServices false because you want to know a winner exists wherever it is.
-   crit:{status:[], selCrowd:0, selCritScore:0, selScale:0, myServices:false, yearsBack:0},
-   awardsRung:a => a.awards==="closely" ? 1 : 4,
-   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
-           pvod:true, rental:true, included_streaming:true},
-   watchWindows:{rent:{list:true, notify:true}, stream:{list:true, notify:true}}},
 ];
 
 // The briefing answers, in the shape every recipe's `when` expects. This is also the shape the
@@ -14921,11 +14927,20 @@ function agentMetricsHTML(c){
 function renderAgentsScreen(){
   const _t664=performance.now();
   const n=cascades.length;
-  const rows=cascades.map(c=>{
+  // CAS-708: rank is display/drag order, not array position — sort a local copy by .order so a stale
+  // array position (e.g. mid-drag) never shows the wrong number.
+  const sorted=[...cascades].sort((a,b)=>(a.order??1e9)-(b.order??1e9));
+  const rows=sorted.map((c,i)=>{
+    const rank=i+1;
     const newest=agentNewestDays(c);
     const stale=(newest===null || newest>AGENT_STALE_DAYS);
     return `
     <div class="agrow agent-${c.kind==="stream"?"str":"cin"}" data-id="${escA(c.id)}">
+      <span class="agranker">
+        <span class="agrank" aria-hidden="true">${rank}</span>
+        <span class="aggrip" data-role="grip" role="button" tabindex="0"
+              aria-label="Reorder ${escA(c.name)}. Use the arrow keys or drag to move it." title="Drag to reorder">☰</span>
+      </span>
       <span class="agbody">
         <span class="agtop">
           <span class="agicon" aria-hidden="true">${c.icon}</span>
@@ -14954,7 +14969,7 @@ function renderAgentsScreen(){
     <div class="aglist" id="agList" role="list" aria-label="Your agents, in deck order">
       ${rows || `<p class="unone">No agents yet.</p>`}
     </div>`;
-  wireAgentsOpen();
+  wireAgentsDrag();
   console.log('[CAS-664] renderAgentsScreen took', (performance.now()-_t664).toFixed(1), 'ms for', n, 'agents');
 }
 // CAS-638: the grip/drag wiring wireAgentsDrag used to provide is gone from this screen (reorder moved off
