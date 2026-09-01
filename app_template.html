@@ -2545,6 +2545,16 @@
      uses for the same six values); Styles chips don't set --wwc, so the accent fallback applies to them. */
   .wsheetsec .chip.on{background:color-mix(in srgb, var(--wwc, var(--accent)) 22%, var(--panel2));
     border-color:var(--wwc, var(--accent))}
+  /* CAS-719: "Picked by" — same joined-pill segmented shape as .watchtabs (CAS-713), single-select same
+     as the tab bar itself, reused rather than duplicated since it is the same kind of control. */
+  .pickedbyseg{display:flex;border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--panel2)}
+  .pickedbyseg-s{flex:1;min-width:0;padding:8px 6px;background:transparent;border:0;
+    border-right:1px solid var(--line);color:var(--dim);font-family:inherit;font-size:12.5px;font-weight:700;
+    cursor:pointer;-webkit-tap-highlight-color:transparent;transition:.15s}
+  .pickedbyseg-s:last-child{border-right:0}
+  .pickedbyseg-s.on{background:var(--brand-blue);color:#fff}
+  .pickedbyseg-s:active{opacity:.75}
+  .pickedbyseg-s:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
   .wsheethd{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
   .wsheethd>span:first-child{font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--faint)}
   .wsheetlinks{display:flex;gap:12px}
@@ -3561,9 +3571,9 @@
     <div id="cascDetail"></div>
   </div>
   <!-- CAS-718: the Filters sheet — Watched + Styles, the two working pieces of filtering carried over from
-       the old scope bar/genre row. "Picked by"/"Current status"/"Agents to include" are separate follow-on
-       tickets and are deliberately not here. Slides up from the bottom over a scrim; position:fixed so its
-       place in the DOM doesn't matter. -->
+       the old scope bar/genre row. CAS-719 added "Picked by"; "Current status"/"Agents to include" are
+       separate follow-on tickets and are deliberately not here. Slides up from the bottom over a scrim;
+       position:fixed so its place in the DOM doesn't matter. -->
   <div class="wsheetscrim" id="watchSheetScrim" onclick="closeWatchSheet()"></div>
   <div class="wsheet" id="watchSheet" role="dialog" aria-modal="true" aria-label="Filters">
     <div class="wsheethead">
@@ -7983,6 +7993,27 @@ window.clearAllWatchStyles = () => {
 // selection hides tagged-out films entirely, exactly the old scope.watched=false default.
 const watchSearch = {cinema:"", rental:"", streaming:""};
 const watchWatchedSel = {cinema:new Set(), rental:new Set(), streaming:new Set()};
+// CAS-719: who set the current tab's Watch On level — All/Agent (auto)/Me (manual)/Unset, single-select,
+// same per-tab session-only shape as watchGenreOff/watchWatchedSel above. Values other than "all" match
+// filmWatchSource(id)'s own return values directly ("auto"/"manual"), so there is no translation layer
+// between the control and the field it reads.
+const watchPickedBy = {cinema:"all", rental:"all", streaming:"all"};
+const PICKED_BY_OPTS = [
+  {key:"all",    label:"All"},
+  {key:"auto",   label:"Agent"},
+  {key:"manual", label:"Me"},
+  {key:"unset",  label:"Unset"},
+];
+window.setWatchPickedBy = key => { watchPickedBy[watchTab]=key; render(); };
+window.clearWatchPickedBy = () => { watchPickedBy[watchTab]="all"; render(); };
+// A film not currently on the picked level (filmWatchSource reads whichever level is driving the chip)
+// falls to Unset, the same "nothing recorded" reading filmWatchSource itself already gives that film.
+function filmMatchesPickedBy(m){
+  const sel=watchPickedBy[watchTab];
+  if(sel==="all") return true;
+  const src=filmWatchSource(m.tmdb_id);
+  return sel==="unset" ? !src : src===sel;
+}
 // CAS-718: the old scope.watched/scopeVerdicts gate, replaced — a tagged-out film shows only when its own
 // verdict is one of the active tab's selected chips; an undecided/decided film is never gated by this at
 // all (that was scope.watch/scope.new's job, both retired with no replacement — CAS-717's tabs already
@@ -8011,6 +8042,7 @@ window.toggleWatchWatched = key => {
 };
 window.clearAllWatchWatched = () => { watchWatchedSel[watchTab].clear(); render(); };
 window.clearAllWatchFilters = () => {
+  watchPickedBy[watchTab]="all";
   watchWatchedSel[watchTab].clear();
   watchGenreOff[watchTab].clear();
   render();
@@ -8040,10 +8072,13 @@ function renderWatchSheet(rows, shownCount){
   const genres=[...new Set(rows.flatMap(m=>m.genres||[]))].sort();
   watchSheetGenres[watchTab]=genres;
   const watchedSel=watchWatchedSel[watchTab];
-  const activeCount=(watchedSel.size?1:0)+(genreOff.size?1:0);
+  const pickedBy=watchPickedBy[watchTab];
+  const activeCount=(pickedBy!=="all"?1:0)+(watchedSel.size?1:0)+(genreOff.size?1:0);
   const badge=$("watchFilterBadge");
   if(badge){ badge.hidden=activeCount===0; badge.textContent=activeCount; }
   const filterBtn=$("watchFilterBtn"); if(filterBtn) filterBtn.classList.toggle("on", activeCount>0);
+  const pickedByHTML=PICKED_BY_OPTS.map(o=>`<button type="button" class="pickedbyseg-s${pickedBy===o.key?" on":""}"
+      aria-pressed="${pickedBy===o.key}" onclick="setWatchPickedBy('${o.key}')">${esc(o.label)}</button>`).join("");
   const watchedHTML=REVIEW_STEPS.map(v=>{
     const on=watchedSel.has(v.key);
     return `<button type="button" class="chip${on?" on":""}" style="--wwc:${v.cd}" aria-pressed="${on}"
@@ -8056,6 +8091,10 @@ function renderWatchSheet(rows, shownCount){
   }).join("") : `<p class="unone">No styles in this tab yet.</p>`;
   const body=$("watchSheetBody");
   if(body) body.innerHTML=`
+    <div class="wsheetsec">
+      <div class="wsheethd"><span>Picked by</span></div>
+      <div class="pickedbyseg">${pickedByHTML}</div>
+    </div>
     <div class="wsheetsec">
       <div class="wsheethd"><span>Watched</span></div>
       <div class="chips">${watchedHTML}</div>
@@ -8072,6 +8111,8 @@ function renderWatchSheet(rows, shownCount){
   const showBtn=$("watchSheetShowBtn");
   if(showBtn) showBtn.textContent = shownCount ? `Show ${shownCount} film${shownCount===1?"":"s"}` : "No films match";
   const chips=[];
+  if(pickedBy!=="all") chips.push({label:PICKED_BY_OPTS.find(o=>o.key===pickedBy).label,
+    clear:"clearWatchPickedBy()"});
   if(watchedSel.size) chips.push({label:chipSummary(REVIEW_STEPS.filter(v=>watchedSel.has(v.key)).map(v=>v.lbl)),
     clear:"clearAllWatchWatched()"});
   if(genreOff.size) chips.push({label:chipSummary([...genreOff]), clear:"clearAllWatchStyles()"});
@@ -17221,6 +17262,7 @@ function render(){
   // search-narrowed set above, THEN narrow `rows` the same way the tab/search already did — so the sheet,
   // the jump bar and the groups agree with it too, and can never show a film the sheet says is hidden.
   const preSheetRows=rows;
+  if(watchPickedBy[watchTab]!=="all") rows=rows.filter(filmMatchesPickedBy);
   const genreOff=watchGenreOff[watchTab];
   if(genreOff.size) rows=rows.filter(m=>!(m.genres||[]).some(g=>genreOff.has(g)));
   rows=rows.filter(filmMatchesWatchedFilter);
