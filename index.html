@@ -5227,7 +5227,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 890, "commit": "c27cd8d", "builtAt": "2026-09-01T21:41:17Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 891, "commit": "b209923", "builtAt": "2026-09-01T22:20:00Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8237,6 +8237,17 @@ function scopeRows(){
     : searched;
   scopeRows.pool = tiered;                 // pre-scope pool, for the counts + the "discerning" empty state
   return tiered;
+}
+// CAS-721: the live Watch listing's own pool — agent-inclusion only, then the tab's own predicate. scopeRows()
+// itself still routes through ymFeedMatches's retired service-filter gate (ymSvcOn/ymCascTicked), which
+// nothing can control any more now CAS-718 removed its only entry point (the Manage Lists Edit screen); that
+// machinery stays as-is for its still-present ymFeedList()/ymAgentListCount()/leBuildCache() callers, but the
+// Watch screen — both the full render() and the single-card patch path (patchFindCounts) — reads this instead.
+function watchScopeRows(){
+  const agentOff=watchAgentOff[watchTab];
+  const acs=agentOff.size ? cascades.filter(c=>!agentOff.has(c.id)) : cascades;
+  if(!acs.length) return [];
+  return MOVIES.filter(m=>acs.some(c=>listedBy(m,c)) && filmMatchesWatchTab(m, watchTab));
 }
 // First run: the deck is just the "+ New" card, which asks for a decision without offering a reason. Give them
 // three real starting points instead — each with the number of films it catches TODAY, so the payoff is visible
@@ -17301,7 +17312,7 @@ function render(){
   // results, because you told us you didn't want them.
   // CAS-713/CAS-717: the active Watch tab narrows `rows` before anything below reads it, so the jump bar
   // and the groups can never disagree about what this render actually shows.
-  let rows=scopeRows().filter(m=>filmMatchesWatchTab(m, watchTab));
+  let rows=watchScopeRows();
   // CAS-718: the tab's own search box narrows next — same case-insensitive substring match the old
   // per-list search always used.
   const wsearch=watchSearch[watchTab];
@@ -17463,7 +17474,7 @@ document.addEventListener("click", e=>{
 // A "Not for me"/verdict just folds that film to its stub where it is, so we swap only that one node and
 // patch the visible counters — no full render() over a list that can run to the whole catalogue.
 function patchFindCounts(){
-  const rows=scopeRows();
+  const rows=watchScopeRows();
   const shown=rows.filter(m=>!taggedOut(m));
   CASCADE.forEach(g=>{
     const gc=document.querySelector(`#groups .group[data-g="${g}"] .gcount`);
