@@ -4671,7 +4671,8 @@ function recomputeFound(){
   Object.keys(notify).forEach(id=>{ notify[id].cascadeIds=[]; });   // the auto half is rebuilt, never merged
   hits.forEach((ids,id)=>{ entryFor(id).cascadeIds=ids; });
   // CAS-613: auto-notify arms a film's earliest acceptable notify window the first time it's found by a
-  // Cascade with autoNotify on, mirroring toggleFilmOpt's manual cascade-down tick. `autoNotified` is a
+  // Cascade with autoNotify on, mirroring toggleFilmOpt's manual tick (CAS-716: single-select, so this arms
+  // ONLY that one rung, not a cascade). `autoNotified` is a
   // once-ever guard — set the moment a rung is armed and never re-checked afterward, so a film the user
   // later unticks by hand is never overruled on a later pass. This loop makes no persistence call of its
   // own — the unconditional save at the end of this function already covers whatever it changed, once per pass.
@@ -4684,7 +4685,10 @@ function recomputeFound(){
     if(idx<0) return;             // no qualifying rung yet — leave autoNotified unset, it may qualify later
     e.wins=e.wins||{};
     e.winsSource=e.winsSource||{};   // CAS-712: which of e.wins was armed by the agent vs ticked by hand
-    levels.slice(idx).forEach(l=>{ if(!l.spent){ e.wins[l.key]=true; e.winsSource[l.key]="auto"; } });   // CAS-349 cascade-down semantics
+    // CAS-716: single-select — arm only the earliest qualifying rung, not every rung from it to Streaming.
+    WATCH_LEVEL_KEYS.forEach(k=>{ e.wins[k]=false; });
+    e.wins[levels[idx].key]=true;
+    e.winsSource[levels[idx].key]="auto";
     if(!e.streamTier) e.streamTier="must";
     e.muted=false;
     e.autoNotified=true;
@@ -5119,7 +5123,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 885, "commit": "274339e", "builtAt": "2026-09-01T07:17:55Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 886, "commit": "90adeb7", "builtAt": "2026-09-01T09:27:51Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6819,6 +6823,9 @@ const filmOptOn = (id, opt) => {
 // they were — agent-level settings (drawWatchLanes, untouched) — they just never described somewhere to
 // watch, so this ladder starts one rung later, at the first one that does.
 const WATCH_LEVEL_KEYS = ["in_cinema", "premium", "rent", "stream"];
+// CAS-716: short names for the Watch On chip — "the button should say what the Watch On setting is e.g.
+// Streaming say 'Stream'". The Watch panel's own rows keep their longer AGENT_WINDOWS labels; this is chip-only.
+const WATCH_LEVEL_SHORT_LABEL = {in_cinema:"Cinema", premium:"Premium", rent:"Rent", stream:"Stream"};
 // The rows the Watch panel offers for this film: every level the film is eligible for (in ladder order),
 // each carrying whether the film has already passed it. CAS-477: a level this cascade isn't configured to
 // track is still shown, live and tickable — the film's Watch-it tick is account-wide (filmOptOn), so hiding
@@ -6907,8 +6914,8 @@ function filmHasWatchTier(id, key){
 // lets THAT agent's bell/digest speak up about a level — but that's the agent's configuration, not this count.
 function filmNotifyState(id){
   const levels=watchLevelsFor(id).filter(l=>!l.spent);
-  const on=levels.filter(l=>filmOptOn(id,l)).length;
-  return {on, total:levels.length, current:watchIsCurrent(id)};
+  const onLevel=levels.find(l=>filmOptOn(id,l));   // CAS-716: single-select — at most one, ever
+  return {on:onLevel?1:0, total:levels.length, current:watchIsCurrent(id), key:onLevel?onLevel.key:null};
 }
 // CAS-478: the Filter panel's fourth row — not one more tier, but their absence. "Eligible" is the same
 // !spent set filmNotifyState already counts over (per CAS-477/CAS-500), so a film is Undecided when it
@@ -6925,8 +6932,11 @@ function notifyChipHTML(id){
   // "Notify" — the underlying notify* names/state were untouched either way.
   // When st.current is true the film has REACHED the level you asked about — the button already
   // glows gold for it; it now also says so, instead of still reading "Notify".
+  // CAS-716: Watch On is single-select — the not-yet-reached state names the picked level (e.g. "Stream")
+  // instead of the old generic "Watch On"/"Watch On · N"; "Can Watch" (reached) and plain "Watch On"
+  // (nothing picked) are unchanged.
   const lbl = st.current ? "Can Watch"
-            : (st.on && st.on<st.total ? `Watch On · ${st.on}` : "Watch On");
+            : (st.key ? WATCH_LEVEL_SHORT_LABEL[st.key] : "Watch On");
   const title = st.total===0 ? "This agent isn't tracking a level for this film yet. Tap to pick where you want to watch it, or say Never."
               : st.on===0 ? "Nothing about this film will reach you yet. Tap to choose what does."
               : `You'll be told when this film reaches ${st.on} of ${st.total} levels you've picked. Tap to change.`;
@@ -7097,14 +7107,12 @@ window.toggleFilmOpt=(id,key)=>{
   e.wins=e.wins||{};
   e.winsSource=e.winsSource||{};   // CAS-712: a manual tap always wins provenance, even over a prior auto-arm
   const wasOn=filmOptOn(id,row);
-  if(wasOn){
-    e.wins[key]=false;                    // CAS-349: "adjust individual ticks afterwards" — a plain untick
-  } else {
-    // CAS-349: selecting In-Cinema/Premium/Rent auto-ticks every enabled level FROM here DOWN to Streaming,
-    // skipping levels the agent doesn't track or that the film has already passed. Selecting Streaming
-    // itself has nothing below it to cascade into — it just ticks itself and lands on its default tier.
-    const idx=levels.findIndex(l=>l.key===key);
-    levels.slice(idx).forEach(l=>{ if(!l.spent){ e.wins[l.key]=true; e.winsSource[l.key]="manual"; } });
+  // CAS-716: Watch On is single-select — ticking a level clears every other key first, so at most one is ever
+  // true. Unticking the currently-ticked level is unchanged: it just clears back to no selection.
+  WATCH_LEVEL_KEYS.forEach(k=>{ e.wins[k]=false; });
+  if(!wasOn){
+    e.wins[key]=true;
+    e.winsSource[key]="manual";
     if(!e.streamTier) e.streamTier="must";
   }
   // Touching any level un-mutes the film: a whole-film silence and a per-level choice are two different
