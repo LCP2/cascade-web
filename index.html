@@ -4059,12 +4059,6 @@
   <div class="uwrap" id="reviewBody"></div>
 </div>
 
-<!-- GUEST → ACCOUNT (CAS-212) — the one offer, shown once on sign-in when this device is carrying
-     something the account has not got. Body rendered by renderMigrate(). -->
-<div class="invite" id="migrateSheet" role="dialog" aria-modal="true" aria-label="Bring your work with you">
-  <div class="invcard" id="migrateBody"></div>
-</div>
-
 <!-- ACCOUNT (CAS-206 / CAS-210) — what every new agent starts from, how you are told by default, and the
      membership. Body rendered by renderAccount(). Signing in itself still happens in the email+password
      panel (CAS-82 / CAS-317), which this screen opens rather than duplicates. Reached from the top menu
@@ -5344,7 +5338,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 901, "commit": "d8b2c8e", "builtAt": "2026-09-02T23:21:04Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 902, "commit": "a477355", "builtAt": "2026-09-02T23:42:48Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -11059,6 +11053,10 @@ function agentDraft(over){
 const agentFinds = over => watchCount(agentDraft(over));
 
 const onboardingSeen = () => { try{ return localStorage.getItem("cascade_onboarded")==="1"; }catch(e){ return true; } };
+// CAS-733: the auth module (a separate <script type="module">, so it shares window but not this
+// script's own let/const bindings) needs this to decide whether a signed-out boot is a first run
+// (splash, unchanged) or a returning device (the mandatory sign-in gate).
+window.onboardingSeen = onboardingSeen;
 function finishOnboarding(){
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
   $("onb").classList.remove("open"); document.body.style.overflow="";
@@ -18648,7 +18646,10 @@ else if(dedupedN)
     cascadesReady = true;   // CAS-517: this IS the account fetch (or the guest fallback) resolving
     if(typeof render==="function") render();
   }
-  function loadGuest(){ replaceCascades(loadCascades()); }
+  // CAS-733: signed OUT on a configured build is not a return to some on-device agent set any more —
+  // there is no guest store left to read back (Change 1). This only ever fires on the real signed-in →
+  // signed-out transition below, so the account's agents simply stop being what's on screen.
+  function loadGuest(){ replaceCascades([]); }
 
   // ---- write path: upsert current, delete only what THIS device watched disappear -------------------
   // CAS-408: the old prune deleted every account row "not on this device's screen" — which silently
@@ -18701,6 +18702,13 @@ else if(dedupedN)
     const { data, error } = await c.from("cascades").select("*");   // RLS: only mine
     if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); cascadesReady=true; setAcctTableFail("cascades", true); return; }
     setAcctTableFail("cascades", false);
+    // CAS-733 Change 5: one-time legacy cleanup — a device carrying a pre-account guest agent set
+    // (built back when signed-out was still a usable state) stops carrying it the moment its account
+    // load actually succeeds. Gated on the success branch above, never on a failed read (CAS-656): a
+    // load that never happened is not grounds to erase this device's only copy of anything. Harmless
+    // once there is nothing left to clean — the mirror write below (saveCascadesLocal) repopulates the
+    // same key with the authoritative account state a few lines down.
+    try{ localStorage.removeItem("cascade_cascades"); }catch(e){}
     cascadeBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
     // CAS-560: a pre-CAS-560 row can still carry a real lang array — rowToCascade (via normCascade) clears
     // it in memory either way, but flag it here so the corrected row gets pushed back rather than left
@@ -18715,22 +18723,21 @@ else if(dedupedN)
     });
     let remote = (data||[]).map(rowToCascade);
     const localOnes = cascades.slice();
-    // CAS-393: the membership step's own email gate (CAS-387) can create this account seconds after
-    // finishSharpSequence() committed the agent onboarding just built — so the account this fetch reads
-    // back is, correctly, one that has never synced anything yet. Without this, that agent (still sitting
-    // in `cascades` locally) gets wiped by the plain replace below and only reappears if the user notices
-    // and accepts the "bring this device's work with you" offer. There is no ambiguity to ask about here
-    // the way CAS-212's merge is for a genuine returning device: this account IS new and this agent IS its
-    // first one, so it is folded straight in rather than left to the dialog, and pushed up in the same sync
-    // pass that already exists for every other edit (scheduleSync below).
-    const justOnboarded = membCascade && localOnes.some(x=>x.id===membCascade.id) &&
-                           !remote.some(x=>cascSigOf(x)===cascSigOf(membCascade));
-    if(justOnboarded) remote=[...remote, membCascade];
+    const remoteIds = new Set(remote.map(x=>x.id));
+    // CAS-393/CAS-733: the membership step's own email gate (CAS-387) can create this account seconds
+    // after onboarding committed the agents just built — so the account this fetch reads back is,
+    // correctly, one that has never synced anything yet. Those agents live ONLY in memory while signed
+    // out (saveCascades is a no-op on that path, Change 1), so `cascades` is the one place to find them.
+    // Every agent this onboarding session actually built — the whole roster (buildOnbAgents), not just
+    // the single-agent wizard's membCascade — folds straight in, matched by id. No dialog, no prompt:
+    // CAS-212's merge sheet (and the guest agent store it existed to reconcile) is gone.
+    const builtIds = new Set([...(onbFlow.workingAgents||[]).map(x=>x.id), ...(membCascade ? [membCascade.id] : [])]);
+    const justOnboarded = localOnes.filter(x=>builtIds.has(x.id) && !remoteIds.has(x.id));
+    if(justOnboarded.length) remote=[...remote, ...justOnboarded];
     // CAS-658: a local copy sharing an id with an account row is the SAME Cascade, not a new one — the
     // account already has it. If its content has drifted (edits made here while account writes were
     // failing), the local copy is the newer state and updates the existing row in place, keeping the id
-    // and the account row it maps to. This is reconciliation, not something to offer: it never enters
-    // pendingMerge.cascades, so the sheet can't promise to "add" an agent the account already has.
+    // and the account row it maps to.
     const remoteById = new Map(remote.map(x=>[x.id, x]));
     let driftDirty = false;
     localOnes.forEach(x=>{
@@ -18742,8 +18749,6 @@ else if(dedupedN)
         driftDirty = true;
       }
     });
-    const sigs = new Set(remote.map(cascSigOf));
-    pendingMerge.cascades = localOnes.filter(x=>!remoteById.has(x.id) && !sigs.has(cascSigOf(x)));
     // CAS-424: `order` rides in `criteria` like every other field (cascadeToRow copies the whole object), so
     // the Agents screen's reorder — done on any device — is what this sort restores here. Nothing to sort by
     // (nobody has ever reordered) leaves the account's own row order alone.
@@ -18757,8 +18762,7 @@ else if(dedupedN)
     // account sync) purely so the NEXT cold start has something instant to show while this same fetch
     // revalidates in the background.
     saveCascadesLocal();
-    if(justOnboarded || langDirty || alertDirty || driftDirty) scheduleSync();
-    offerMerge();
+    if(justOnboarded.length || langDirty || alertDirty || driftDirty) scheduleSync();
     if(typeof afterSignIn==="function") afterSignIn();
   }
   // ---- CAS-408: live reconciliation, so two devices converge without re-signing-in -------------------
@@ -18801,68 +18805,9 @@ else if(dedupedN)
     if(langDirty) scheduleSync();
     if(typeof render==="function") render();
   }
-  // What this device is carrying that the account has not got. Filled by the three loaders as they run,
-  // then offered once — the answers arrive from different requests, so the offer waits for all of them.
-  // CAS-428: `lists` joins `cascades`/`films` here rather than getting a dialog of its own.
-  const pendingMerge = {cascades:null, films:null, lists:null, asked:false};
-  const mergeReady = () => pendingMerge.cascades!==null && pendingMerge.films!==null && pendingMerge.lists!==null;
-  const mergeCount = () => (pendingMerge.cascades||[]).length + (pendingMerge.films||[]).length + (pendingMerge.lists||[]).length;
-  function offerMerge(){
-    if(pendingMerge.asked || !mergeReady()) return;
-    if(!mergeCount()){ pendingMerge.asked=true; return; }   // nothing to bring — say nothing
-    pendingMerge.asked=true;
-    renderMigrate();
-    $("migrateSheet").classList.add("open"); document.body.style.overflow="hidden";
-    logEvent("merge_offered",{cascades:(pendingMerge.cascades||[]).length, films:(pendingMerge.films||[]).length,
-                               lists:(pendingMerge.lists||[]).length});
-  }
-  function renderMigrate(){
-    const nc=(pendingMerge.cascades||[]).length, nf=(pendingMerge.films||[]).length, nl=(pendingMerge.lists||[]).length;
-    const line = (n,one,many) => n ? `<div class="invrow"><div class="ir-main">
-      <div class="ir-name">${n} ${n===1?one:many}</div>
-      <div class="ir-sub">${n===1?"It's":"They're"} saved in this browser only right now.</div></div></div>` : "";
-    $("migrateBody").innerHTML=`
-      <h2 class="invh">Bring this device's work with you?</h2>
-      <p class="invp">You've signed in, and your account is now what you're looking at. These are on this
-        browser and not in the account yet:</p>
-      ${line(nc,"Cascade","Cascades")}
-      ${line(nf,"film you've marked","films you've marked")}
-      ${line(nl,"list","lists")}
-      <p class="invnote">Adding them never overwrites anything: a Cascade the account already has is
-        skipped, and a film the account already has an answer for keeps that answer.</p>
-      <button class="invnext" type="button" onclick="mergeAccept()">Add ${mergeCount()===1?"it":"them"} to my account</button>
-      <button class="invskip" type="button" onclick="mergeDecline()">Keep ${mergeCount()===1?"it":"them"} on this device only</button>`;
-  }
-  function closeMigrate(){ $("migrateSheet").classList.remove("open"); document.body.style.overflow=""; }
-  window.mergeAccept = async () => {
-    const add=pendingMerge.cascades||[], films=pendingMerge.films||[], addLists=pendingMerge.lists||[];
-    closeMigrate();
-    // A local Cascade may carry an id this account has never seen; it keeps it (they are uuids), and
-    // upsert on that id is an insert.
-    add.forEach(x=>cascades.push(normCascade(x)));
-    films.forEach(f=>{
-      const id=Number(f.movie_id);
-      if(f.status==="notfor") return blocked.add(id);
-      watched.add(id);
-      if(f.status==="disliked") disliked.add(id);
-      if(f.status==="soso")     indifferent.add(id);
-    });
-    addLists.forEach(l=>lists.push({id:l.id, name:l.name}));
-    recomputeFound();
-    await runSync(); await runFilmSync(); await runListsSync();
-    if(typeof render==="function") render();
-    logEvent("merge_accepted",{cascades:add.length, films:films.length, lists:addLists.length});
-    const bits=[add.length?`${add.length} Cascade${add.length===1?"":"s"}`:"",
-                films.length?`${films.length} film${films.length===1?"":"s"}`:"",
-                addLists.length?`${addLists.length} list${addLists.length===1?"":"s"}`:""].filter(Boolean);
-    toast(`☁️ Added ${bits.join(", ")} to your account.`);
-  };
-  window.mergeDecline = () => {
-    closeMigrate();
-    logEvent("merge_declined",{cascades:(pendingMerge.cascades||[]).length, films:(pendingMerge.films||[]).length,
-                                lists:(pendingMerge.lists||[]).length});
-    toast("👍 Left on this device. Sign out any time and they'll be here.");
-  };
+  // CAS-733: CAS-212's "bring this device's work with you" merge sheet is gone along with the guest
+  // agent store it existed to reconcile — signed-out is no longer a usable state, so there is nothing
+  // built on this device that isn't already accounted for by the on-sign-in fold in loadAccount().
 
   // ==========================================================================
   // CAS-428: Lists per account (`lists` + `list_films`)
@@ -18940,16 +18885,9 @@ else if(dedupedN)
     setAcctTableFail("lists", false);
     listsBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
     const remote = (data||[]).map(rowToList);
-    const localOnes = lists.slice();
-    // A List has no criteria to build a signature from the way cascSigOf does — its name is the whole
-    // object, so a case-insensitive name match is what "the account already has this" has to mean here.
-    const sig = l => (l.name||"").trim().toLowerCase();
-    const remoteSigs = new Set(remote.map(sig));
-    pendingMerge.lists = localOnes.filter(l=>!remoteSigs.has(sig(l)));
     lists.length=0; remote.forEach(l=>lists.push(l));
     await loadListMembershipAccount();
     if(typeof render==="function") render();
-    offerMerge();
   }
   async function loadListMembershipAccount(){
     const c=client(); if(!c||!accountActive()) return;
@@ -19306,6 +19244,10 @@ else if(dedupedN)
   // without adding a second, inconsistent cache.
   const saveCascadesLocal = saveCascades;
   saveCascades = function(){
+    // CAS-733 Change 1: a configured build with no signed-in session has no agent store of its own any
+    // more — the old guest set this used to build in localStorage is exactly what let a device carry
+    // agents an account never saw. Onboarding holds its build in memory only until the account exists.
+    if(acct() && acct().enabled && !accountActive()) return;
     saveCascadesLocal();
     if(accountActive()) scheduleSync();
   };
@@ -19353,7 +19295,8 @@ else if(dedupedN)
         fireAccountFanout('auth-change');
       }
     } else if(currentUser !== null){
-      // Signed out → back to the on-device set, and the bell stops showing another account's news.
+      // CAS-733: signed out → the agent list empties (loadGuest, above) rather than reverting to an
+      // on-device set that no longer exists; the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); loadGuestLists(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
       cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
       agentFilms={}; agentFilmsBaseline=null;
@@ -19477,12 +19420,7 @@ else if(dedupedN)
     if(error){ console.warn("user_films load", error); return; }
     const remote=data||[];
     filmBaseline=new Set(remote.map(r=>String(r.movie_id)));
-    // CAS-212: what this device has said about films the account has said nothing about. Computed
-    // BEFORE the account's rows replace the local sets, because after that the answer is gone.
-    const known=new Set((remote||[]).map(r=>String(r.movie_id)));
-    pendingMerge.films = filmRows().filter(r=>!known.has(String(r.movie_id)));
     applyFilmRows(remote);
-    offerMerge();
   }
   // CAS-408: background convergence, mirroring reconcileCascades — remote is the union of every
   // device's explicit answers, so it can just be re-applied; a not-yet-pushed local answer survives
@@ -19963,10 +19901,6 @@ else if(dedupedN)
                                 loadNotifyPrefs, loadRealAlerts, syncNotifyNow: runNotifySync,
                                 prefsRow, pickRows,
                                 loadUserPrefs, syncUserPrefsNow: runUserPrefsSync, userPrefsRow,
-                                // CAS-212: the merge seam, exposed the same way the shape mappers are —
-                                // it is the one decision in here with no UI of its own to poke at, and a
-                                // rule about what does NOT get copied has to be testable.
-                                pendingMerge, offerMerge, renderMigrate,
                                 // CAS-408: the live-reconcile seam, so the cross-device convergence story
                                 // can be exercised without waiting on a real focus/visibilitychange event.
                                 reconcileCascades, reconcileFilms,
@@ -20026,7 +19960,12 @@ else if(dedupedN)
   const toastSafe = m => { try{ if(typeof window.toast === 'function') window.toast(m); }catch(e){} };
 
   const openAuth  = () => { modal.classList.add('open'); document.body.style.overflow = 'hidden'; };
-  const closeAuth = () => { modal.classList.remove('open');
+  // CAS-733: set while a returning, signed-out device is being routed back through #authSignedOut as a
+  // mandatory gate (Change 3) — there is no cancelling out of it, only signing in.
+  let signedOutGate = false;
+  const closeAuth = () => {
+    if(signedOutGate) return;
+    modal.classList.remove('open');
     if(!document.querySelector('.modal.open')) document.body.style.overflow = ''; };
   const showPanel = which => ['authGuest','authSignedOut','authSignedIn']
     .forEach(p => gid(p).style.display = (p === which ? 'block' : 'none'));
@@ -20065,6 +20004,7 @@ else if(dedupedN)
   // a blank modal. Account status now shows only via renderAccount() / the top-menu Account item, per
   // CAS-345, so there is nothing left for this module to toggle a class on.
   const setSignedIn = user => {
+    signedOutGate = false;   // CAS-733: the mandatory gate (if any) lifts the moment a session lands
     api.user = user; api.status = 'signed-in';
     gid('authWho').textContent = (user && user.email) || 'your account';
     gid('authDone').textContent = 'Done';
@@ -20076,11 +20016,16 @@ else if(dedupedN)
     // happened yet and there's a way out, where "Done" implied a completed action.
     gid('authDone').textContent = 'Cancel';
     showPanel('authSignedOut');
-    // CAS-401: route every signed-out resolution — boot with no session, a sign-out, or a lapsed
-    // token — back to the splash front door, not left sitting in the interface. Guarded on splash
-    // not already being open so first-run's own showSplash() (which fires first, synchronously,
-    // before this async module resolves) doesn't get a redundant duplicate call.
-    if(!gid('splash').classList.contains('open') && typeof window.showSplash === 'function') window.showSplash();
+    // CAS-733 Change 3: signed-out stopped being a usable state. A device that has never onboarded
+    // still gets the first-run splash — its own front door, sign up or log in, unchanged (CAS-401). A
+    // RETURNING device (onboardingSeen()) is routed straight to this panel instead: it is the mandatory
+    // way back in, not an optional modal a "Cancel" can dismiss back onto a working app.
+    if(typeof window.onboardingSeen === 'function' && window.onboardingSeen()){
+      signedOutGate = true;
+      openAuth();
+    } else if(!gid('splash').classList.contains('open') && typeof window.showSplash === 'function'){
+      window.showSplash();
+    }
   };
   const setGuest = () => {
     api.enabled = false; api.user = null; api.session = null; api.status = 'guest';
