@@ -15,6 +15,12 @@
 --   film_watch    — one row per (user, film) carrying the set of windows the user's per-film
 --                   "Watch it" control has ticked. A real, independent notification source —
 --                   the daily job fires on it whether or not any agent's own bell is on. CAS-484.
+--                   Also carries `sources` — auto/manual per ticked window, mirroring the client's
+--                   winsSource, so provenance survives a reload on another device. CAS-726.
+--   agent_films   — one row per (user, cascade, film) an agent has admitted: the score/status it
+--                   was admitted under and the agent's own signature at that moment. Membership
+--                   itself stays derived until CAS-728 makes it sticky against this table; this
+--                   table is the storage CAS-727/728 write through. CAS-726.
 --   lists         — one row per user-curated collection (name only). Manual, not criteria-driven
 --                   — the opposite of a cascade. CAS-428.
 --   list_films    — one row per (user, film, list): a film can sit in several lists at once, so
@@ -206,6 +212,40 @@ alter table public.film_watch enable row level security;
 drop policy if exists film_watch_owner on public.film_watch;
 create policy film_watch_owner on public.film_watch
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- CAS-726: window key -> "auto" | "manual", mirroring the client's winsSource — which of `windows`
+-- an agent armed vs the account holder ticked by hand. A window absent here reads as source-unknown
+-- (no colour, no overwrite protection), exactly today's behaviour, until the user next sets it —
+-- so an old row migrates for free with the column's own default.
+alter table public.film_watch add column if not exists sources jsonb not null default '{}'::jsonb;
+
+-- ---------------------------------------------------------------------------
+-- agent_films — the admitted set, per agent (CAS-726)
+-- ---------------------------------------------------------------------------
+-- One row per (user, cascade, film) a cascade has admitted. Membership stays derived (recomputeFound)
+-- until CAS-728 makes it sticky by reading/writing this table; this ticket only adds the storage and
+-- the app's read/write paths. `agent_sig` is the cascSigOf(c) value in force when the row was written
+-- — the re-evaluation ticket compares it to the agent's CURRENT signature to know whether the row
+-- still reflects the agent's settings. A row with nothing to say (the film left the agent) is deleted
+-- rather than kept, same convention as film_picks/user_films/film_watch.
+create table if not exists public.agent_films (
+  user_id          uuid not null references auth.users(id) on delete cascade,
+  cascade_id       uuid not null references public.cascades(id) on delete cascade,
+  movie_id         text not null,
+  admitted_at      timestamptz not null default now(),
+  admission_score  int not null,
+  admission_status text not null,
+  agent_sig        text not null,
+  primary key (user_id, cascade_id, movie_id)
+);
+
+alter table public.agent_films enable row level security;
+
+drop policy if exists agent_films_owner on public.agent_films;
+create policy agent_films_owner on public.agent_films
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create index if not exists agent_films_cascade_id_idx on public.agent_films (cascade_id);
 
 -- ---------------------------------------------------------------------------
 -- lists — a user's own hand-picked collections (CAS-428)
