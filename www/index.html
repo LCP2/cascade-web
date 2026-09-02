@@ -2088,6 +2088,43 @@
   .vlabels.stag .vsnap.lo{top:27px}
   .vlabels .vsnap:hover{color:var(--ink)}
   .vlabels .vsnap:focus-visible{outline:2px solid var(--cyan);outline-offset:1px;border-radius:5px}
+  /* ---- CAS-729: the Mission screen — the score track and the requirement cards' scope chip ---- */
+  /* The bold value line every score/requirement card carries under its caption — "Cinema 88+ · Rental 72+ ·
+     Streaming 60+ · under 60, not listed" / "Studio · $39M+". Same violet a dial's own live readout used. */
+  .reqval{font-size:13px;font-weight:800;color:var(--selink);margin:8px 2px 2px;line-height:1.4}
+  /* The scope chip answers WHEN a requirement applies — accent (Budget: always) or muted (Awards/How far
+     back: once released) — never WHETHER, which is the REQUIREMENTS section header's job alone. */
+  .osdial .osdh .reqscope{margin-left:auto;font-size:9px;font-weight:800;letter-spacing:.05em;
+    text-transform:uppercase;border-radius:6px;padding:3px 7px;white-space:nowrap}
+  .reqscope.accent{background:rgba(124,92,255,.16);border:1px solid var(--accent);color:var(--selink)}
+  .reqscope.muted{background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--faint)}
+  /* The score track itself: a 50-100 span, painted grey up to the lowest marker and then each window's own
+     colour to the right of its marker (design record §7 item 3). .msntrackwrap carries generous top/bottom
+     margin for a marker's stacked value/handle/zone-name column to clear without the next card crowding it —
+     .msnline is the thin coloured bar alone, overflow:hidden for its rounded corners, so THAT clipping never
+     also eats the marks, which sit in the taller wrap around it. */
+  .msntrackwrap{position:relative;margin:34px 6px 40px}
+  .msnline{position:relative;height:5px;border-radius:3px;overflow:hidden;background:#2a303b}
+  .msnseg{position:absolute;top:0;bottom:0;transition:left .12s,width .12s}
+  .msnseg.grey{background:#2a303b}
+  /* A plain flex column, not absolutely-positioned children — value above, handle astride the track line
+     (top:50% on the marker itself), zone name below, letting the DOM order (val/handle/zone) be the whole
+     layout rather than three hand-placed offsets that could drift out of sync with each other. */
+  .msnmark{position:absolute;top:50%;display:flex;flex-direction:column;align-items:center;gap:3px;
+    transition:left .12s}
+  .msnval{font-size:12px;font-weight:800;color:var(--ink);white-space:nowrap}
+  .msnhandle{width:26px;height:26px;border-radius:50%;border:2px solid var(--panel2);display:grid;
+    place-items:center;font-size:13px;cursor:grab;box-shadow:0 2px 8px rgba(0,0,0,.55);padding:0;
+    touch-action:none}
+  .msnhandle:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .msnzone{background:none;border:0;font-size:9.5px;font-weight:800;
+    letter-spacing:.04em;padding:2px;white-space:nowrap;cursor:pointer}
+  .msnzone:hover{text-decoration:underline}
+  /* A window that's Where&When-enabled but currently Never — no marker on the track, just a way back on. */
+  .msnnever{display:flex;flex-wrap:wrap;gap:8px;margin:0 2px 4px}
+  .msnnvchip{background:var(--panel);border:1px dashed var(--line);color:var(--faint);border-radius:10px;
+    padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer}
+  .msnnvchip:hover{border-color:var(--accent);color:var(--ink)}
   .osmore{width:100%;text-align:center;background:var(--panel2);border:1px dashed var(--line);color:var(--dim);
     border-radius:12px;padding:15px 12px;font-size:12.5px;font-weight:700;cursor:pointer;margin-bottom:11px}
   .osmore:hover{border-color:var(--accent);color:var(--ink)}
@@ -5307,7 +5344,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 898, "commit": "ccfc9d5", "builtAt": "2026-09-02T06:16:53Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 899, "commit": "5cdd77a", "builtAt": "2026-09-02T06:46:47Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7006,6 +7043,9 @@ const WATCH_LEVEL_KEYS = ["in_cinema", "premium", "rent", "stream"];
 // CAS-716: short names for the Watch On chip — "the button should say what the Watch On setting is e.g.
 // Streaming say 'Stream'". The Watch panel's own rows keep their longer AGENT_WINDOWS labels; this is chip-only.
 const WATCH_LEVEL_SHORT_LABEL = {in_cinema:"Cinema", premium:"Premium", rent:"Rent", stream:"Stream"};
+// CAS-729: one glyph per window for the Mission score track's markers — the same four windows, matched to
+// the design record's icon choices (clapperboard/gem/popcorn/screen read at a glance without a legend).
+const WINDOW_ICON = {in_cinema:"🎬", premium:"💎", rent:"🍿", stream:"📺"};
 // CAS-727: which windows are live at all — the intersection of WATCH_LEVEL_KEYS with what's switched on in
 // Where & when you'll watch (watchPrefs). A window with neither List nor Notify on carries no marker.
 function windowEnabled(key){
@@ -7022,21 +7062,38 @@ function agentFloor(c){
   const marks=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k)).map(k=>c.watchMarkers[k]);
   return marks.length ? Math.min(...marks) : Infinity;
 }
-// Keeps markers in ladder order — Cinema ≥ Premium ≥ Rental ≥ Streaming — by pushing every OTHER marker past
-// the one just moved, so a configuration that can't be reached is impossible rather than silently inert.
-// Never (null) sits outside the comparison: moving it doesn't push anything, and nothing pushes into it.
+// CAS-729: the minimum score units between two adjacent markers — chosen so four markers still fit legibly
+// on the 50-unit (TRACK_MIN..TRACK_MAX) track without ever letting two collide. "Cannot stack" (design record
+// §7 item 4) means a gap, not merely no-crossing: the original push-to-`value` below let two markers land on
+// the identical score whenever a dragged marker passed a neighbour that was ALREADY sitting past it.
+const MARKER_MIN_GAP = 3;
+// Keeps markers in ladder order — Cinema ≥ Premium ≥ Rental ≥ Streaming, never equal — by cascading a push
+// outward from the one just moved: each earlier window is held at least MARKER_MIN_GAP above the one inside
+// it, each later window at least MARKER_MIN_GAP below, so a configuration that can't be reached (crossed or
+// stacked) is impossible rather than silently inert. Never (null) sits outside the comparison: moving it
+// doesn't push anything, and nothing pushes into it.
 function setWatchMarker(c, key, value){
   c.watchMarkers=c.watchMarkers||{};
+  if(value==null){ c.watchMarkers[key]=null; return; }
+  value=Math.round(value);
   c.watchMarkers[key]=value;
-  if(value==null) return;
   const i=WATCH_LEVEL_KEYS.indexOf(key);
-  WATCH_LEVEL_KEYS.forEach((k,j)=>{
-    if(k===key) return;
-    const v=c.watchMarkers[k];
-    if(v==null) return;
-    if(j<i && v<value) c.watchMarkers[k]=value;
-    if(j>i && v>value) c.watchMarkers[k]=value;
-  });
+  let ceilingAbove=value;
+  for(let j=i-1;j>=0;j--){
+    const k=WATCH_LEVEL_KEYS[j], v=c.watchMarkers[k];
+    if(v==null) continue;
+    ceilingAbove+=MARKER_MIN_GAP;
+    if(v<ceilingAbove) c.watchMarkers[k]=ceilingAbove;
+    else ceilingAbove=v;
+  }
+  let floorBelow=value;
+  for(let j=i+1;j<WATCH_LEVEL_KEYS.length;j++){
+    const k=WATCH_LEVEL_KEYS[j], v=c.watchMarkers[k];
+    if(v==null) continue;
+    floorBelow-=MARKER_MIN_GAP;
+    if(v>floorBelow) c.watchMarkers[k]=floorBelow;
+    else floorBelow=v;
+  }
 }
 // The rows the Watch panel offers for this film: every level the film is eligible for (in ladder order),
 // each carrying whether the film has already passed it. CAS-477: a level this cascade isn't configured to
@@ -10200,7 +10257,11 @@ function commitDraft(){
     // CAS-228: listStatus travels with status. Left out, the agent on disk would watch the right windows and
     // list all of them, so turning List off for one window would appear to work and then not survive a save.
     listStatus:draft.listStatus,
-    yearStop:draft.yearStop, yearsBack:draft.yearsBack, kind:draft.kind});
+    yearStop:draft.yearStop, yearsBack:draft.yearsBack, kind:draft.kind,
+    // CAS-729: watchMarkers, left out here since CAS-727 first added the field — there was no UI yet that
+    // could edit it, so the gap cost nothing. The Mission score track is that UI: without this the whole
+    // screen would silently discard every drag the moment Save is pressed.
+    watchMarkers:{...draft.watchMarkers}});
   normCascade(c);
   // CAS-424: a brand new agent joins the Agents order at the end (rightmost) rather than defaulting to 0
   // and jumping the queue ahead of every agent already reordered.
@@ -12560,7 +12621,20 @@ function stepCtaText(step, n){
 // ride along here (the floor is set directly now, not derived and restated) — the held-back aside survives.
 function stepCountLine(step, n){
   const base = `<b>${n}</b> film${n===1?"":"s"} match right now`;
-  return step===SHARP_STEPS.selectivity ? `${base}${scoreHeldBackLineHTML()}` : base;
+  return step===SHARP_STEPS.selectivity
+    ? `${base}${placementSplitHTML(onbFlow.draft||{})}${scoreHeldBackLineHTML()}` : base;
+}
+// CAS-729: "N films match right now" followed by the placement split (design record §7 item 7) — how many of
+// them sit in each armed window right now, read off the SAME listedBy() predicate the headline number itself
+// is built from (via onbShownCount/listedCount), so the parts can never fail to sum to the number they follow.
+const PLACEMENT_LABEL = {in_cinema:"Cinema", premium:"Premium", rent:"Rental", stream:"Streaming"};
+function placementSplitHTML(c){
+  const marks=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k)); if(!marks.length) return "";
+  const parts=marks.map(k=>{
+    const n=MOVIES.filter(m=>filmOptKeyForWindow(null, primaryStatus(m))===k && listedBy(m,c) && !taggedOut(m)).length;
+    return `${n} ${PLACEMENT_LABEL[k]}`;
+  });
+  return ` · ${parts.join(" · ")}`;
 }
 function stepCountHTML(step, n){
   if(n==null || step.topCount===false) return "";
@@ -12792,8 +12866,8 @@ const DIAL_DEFS = {
   buzz:  {em:"🔥", label:"Movie Buzz", how:"How much people are talking about it right now.", isNew:true,
           stops:BUZZ_STOPS, key:"buzzStop"},
 };
-let onbMoreOpen=false;
-window.onbShowMore=()=>{ onbMoreOpen=true; logEvent("onbbar_more"); renderOnbStep(onbStepKey); };
+// CAS-729: onbMoreOpen/onbShowMore ("More controls") retired with dialCardHTML above — the Mission screen
+// they expanded no longer has a primary/secondary dial split to expand.
 const edgeShift = (i,n) => i===0 ? "translateX(0)" : (i===n-1 ? "translateX(-100%)" : "translateX(-50%)");
 // CAS-166: the two continuous dials described in one shape, so Budget & scale gets the People's-vote
 // treatment (live header readout, markers you can tap) without a second copy of the slider.
@@ -12837,59 +12911,8 @@ const CONT_DIALS = {
                                       label:r.label, sub:r.d?money(r.d)+"+":null})),
   },
 };
-function dialCardHTML(k){
-  const d=DIAL_DEFS[k];
-  const cont=d.cont && CONT_DIALS[d.cont];
-  const curV=cont ? cont.get() : 0;
-  const head=`<div class="osdh"><span class="em">${d.em}</span><span class="dl">${esc(d.label)}</span>
-    ${d.isNew?`<span class="tagnew">NEW</span>`:""}
-    ${cont?`<span class="dval" id="onbVal_${d.cont}">${esc(cont.read(curV))}</span>`:""}</div>
-    <p class="oscap">${esc(d.how)}</p>`;
-  // CAS-249: a dial may carry a stepped companion under its slider — Critics & awards is one control made
-  // of two questions, and splitting it into two cards would have made the streaming Mission four bars deep
-  // the week CAS-248 cut it to three.
-  const alsoHTML = (()=>{
-    const a=d.also; if(!a) return "";
-    const cur=onbFlow[a.key]||0, n=a.stops.length, max=n-1;
-    return `<p class="oscap oscap2">${esc(a.cap)}</p>
-      <div class="vslider">
-        <div class="vtrack"><div class="vfillbar" style="width:${cur/max*100}%"></div></div>
-        <div class="vnotches">${a.stops.map((_,i)=>`<span class="vnotch ${i<=cur?"lit":""}" style="left:${i/max*100}%"></span>`).join("")}</div>
-        <input type="range" id="onbDial_${a.dial}" min="0" max="${max}" step="1" value="${cur}"
-               aria-label="Awards"></div>
-      <div class="vlabels">${a.stops.map((st,i)=>`<button type="button" class="vsnap ${i===cur?"on":""}" data-i="${i}"
-        style="left:${i/max*100}%;transform:${edgeShift(i,n)}">${esc(st.label)}${st.thr?`<small>${esc(st.thr)}</small>`:""}</button>`).join("")}</div>`;
-  })();
-  if(cont){
-    const marks=cont.marks(curV);
-    // CAS-390: "Mega" (was "Megabudget") is short enough that the budget dial's five stops fit one row,
-    // so it opts out of the stagger other 5-stop dials still use for longer labels.
-    const stag=marks.length>=5 && d.cont!=="scale";
-    // The marker labels are buttons: "the existing dots become snap points" (CAS-166) means the four sizes
-    // you used to pick from are still one tap away, they just no longer bound what you can choose.
-    return `<div class="osdial" data-dial="${d.cont}">${head}
-      <div class="vslider">
-        <div class="vtrack"><div class="vfillbar" style="width:${cont.pos(curV)}%"></div></div>
-        <div class="vnotches">${marks.map(mk=>`<span class="vnotch ${mk.lit?"lit":""}" style="left:${mk.pos}%"></span>`).join("")}</div>
-        <input type="range" id="onbDial_${d.cont}" min="${cont.min}" max="${cont.max}" step="${cont.step}"
-               value="${cont.rawOf(curV)}" aria-label="${escA(cont.aria)}">
-      </div>
-      <div class="vlabels${stag?" stag":""}">${marks.map((mk,i)=>`<button type="button" class="vsnap ${mk.lit?"on":""} ${stag&&i%2?"lo":""}" data-snap="${mk.snap}"
-        style="left:${mk.pos}%;transform:${mk.pos<=0?"translateX(0)":mk.pos>=100?"translateX(-100%)":"translateX(-50%)"}">${esc(mk.label)}${mk.sub?`<small>${esc(mk.sub)}</small>`:""}</button>`).join("")}</div>
-      ${alsoHTML}
-    </div>`;
-  }
-  const cur=onbFlow[d.key]||0, n=d.stops.length, max=n-1;
-  return `<div class="osdial" data-dial="${k}">${head}
-    <div class="vslider">
-      <div class="vtrack"><div class="vfillbar" style="width:${cur/max*100}%"></div></div>
-      <div class="vnotches">${d.stops.map((_,i)=>`<span class="vnotch ${i<=cur?"lit":""}" style="left:${i/max*100}%"></span>`).join("")}</div>
-      <input type="range" id="onbDial_${k}" min="0" max="${max}" step="1" value="${cur}" aria-label="${escA(d.label)}">
-    </div>
-    <div class="vlabels">${d.stops.map((s,i)=>`<button type="button" class="vsnap ${i===cur?"on":""}" data-i="${i}"
-      style="left:${i/max*100}%;transform:${edgeShift(i,n)}">${esc(s.label)}${s.thr?`<small>${esc(s.thr)}</small>`:""}</button>`).join("")}</div>
-  </div>`;
-}
+// CAS-729: dialCardHTML (the CAS-661 OR-block dial card renderer) retires here — the Mission screen it drew
+// for is replaced wholesale by the score-track + requirements cards below. Nothing else called it.
 // Repaint one dial in place rather than re-rendering the screen: a slider you are dragging must not be torn
 // out from under your finger.
 function paintDial(card, fillPct, litFn, onFn){ paintDialAt(card, 0, fillPct, litFn, onFn); }
@@ -12905,51 +12928,263 @@ function paintDialAt(card, nth, fillPct, litFn, onFn){
   // reaches whatever the row is made of rather than only spans.
   if(labelRows[nth]) labelRows[nth].querySelectorAll(":scope > *").forEach((l,i)=>l.classList.toggle("on", onFn(i)));
 }
-function wireDials(){
-  // CAS-166: both continuous dials down one path — the vote dial's behaviour, now shared.
-  Object.keys(CONT_DIALS).forEach(key=>{
-    const cont=CONT_DIALS[key], r=$("onbDial_"+key); if(!r) return;
+// ---- CAS-729: the Mission screen — one Cascade score card (drag markers) + REQUIREMENTS section ----------
+// Replaces the CAS-661 OR-block dial screen (dialCardHTML/wireDials, retired above) entirely. Design record
+// "Agents, admission and Watch On — the one-score model" §7.
+//
+// The track spans score 50-100, not 0-100 (do-not-re-raise: a 0-100 track crushes every usable marker into
+// the right-hand third, since nothing usably low ever sits under 50 in practice). Left-to-right on the track
+// is ascending score — the OPPOSITE of WATCH_LEVEL_KEYS' cinema-first ladder order — so every track/segment
+// builder below sorts its own copy rather than assuming the shared array's order.
+const TRACK_MIN=50, TRACK_MAX=100;
+const trackPct = v => Math.max(0, Math.min(100, (v-TRACK_MIN)/(TRACK_MAX-TRACK_MIN)*100));
+const WINDOW_COLOR = {in_cinema:"var(--amber)", premium:"var(--purple)", rent:"var(--blue)", stream:"var(--green)"};
+// The last score each window carried before being set to Never, so tapping a window back on restores where
+// it was rather than a hardcoded guess. Session-only (matches every other piece of in-flight editor state).
+const msnLastValue = {};
+// The Mission card's own value line, above the caption, e.g. "Cinema 88+ · Rental 72+ · Streaming 60+ ·
+// under 60, not listed" — ladder order (WATCH_LEVEL_KEYS), not the track's ascending left-to-right order.
+function msnValueLine(c){
+  const marks=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
+  if(!marks.length) return "No window is armed — nothing will ever qualify.";
+  const parts=marks.map(k=>`${WATCH_LEVEL_SHORT_LABEL[k]} ${c.watchMarkers[k]}+`);
+  const floor=Math.min(...marks.map(k=>c.watchMarkers[k]));
+  return `${parts.join(" · ")} · under ${floor}, not listed`;
+}
+// Every window switched on in Where & when you'll watch gets a spot: a live marker on the track if it isn't
+// Never, or a small "restore" chip below it if it is (design record §7 item 5 — Never removes it from the
+// track, it does not delete the window's ability to have a marker again).
+function msnTrackAreaHTML(c){
+  const usable=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
+  const neverEnabled=WATCH_LEVEL_KEYS.filter(k=>windowEnabled(k) && !usable.includes(k));
+  const byScore=[...usable].sort((a,b)=>c.watchMarkers[a]-c.watchMarkers[b]);
+  const segs=[`<div class="msnseg grey" style="left:0%;width:${byScore.length?trackPct(c.watchMarkers[byScore[0]]):100}%"></div>`];
+  byScore.forEach((k,i)=>{
+    const from=trackPct(c.watchMarkers[k]);
+    const to=i+1<byScore.length ? trackPct(c.watchMarkers[byScore[i+1]]) : 100;
+    segs.push(`<div class="msnseg" style="left:${from}%;width:${Math.max(0,to-from)}%;background:${WINDOW_COLOR[k]}"></div>`);
+  });
+  const marks=usable.map(k=>{
+    const v=c.watchMarkers[k], pct=trackPct(v);
+    const edge=pct<=0?"translate(0,-50%)":pct>=100?"translate(-100%,-50%)":"translate(-50%,-50%)";
+    return `<div class="msnmark" style="left:${pct}%;transform:${edge}" data-key="${k}">
+      <span class="msnval">${v}</span>
+      <button type="button" class="msnhandle" style="background:${WINDOW_COLOR[k]}" data-key="${k}"
+        aria-label="${escA(WATCH_LEVEL_SHORT_LABEL[k])} score, currently ${v}">${WINDOW_ICON[k]}</button>
+      <button type="button" class="msnzone" data-act="never" data-key="${k}" style="color:${WINDOW_COLOR[k]}"
+        title="Say Never for ${escA(WATCH_LEVEL_SHORT_LABEL[k])} — removes it from the track">${esc(WATCH_LEVEL_SHORT_LABEL[k].toUpperCase())}</button>
+    </div>`;
+  }).join("");
+  const neverRow=neverEnabled.length ? `<div class="msnnever">${neverEnabled.map(k=>
+    `<button type="button" class="msnnvchip" data-act="restore" data-key="${k}">+ ${esc(WATCH_LEVEL_SHORT_LABEL[k])} — Never</button>`).join("")}</div>` : "";
+  // id lives on the WRAP, not the thin .msnline bar, so paintMsnTrack()/wireMsnTrack() can reach both the
+  // segments and the marks (siblings) through one querySelectorAll root.
+  return `<div class="msntrackwrap" id="msnTrack"><div class="msnline">${segs.join("")}</div>${marks}</div>${neverRow}`;
+}
+function msnScoreCardHTML(){
+  const c=onbFlow.draft||{};
+  return `<div class="osdial msnscore">
+    <div class="osdh"><span class="em">🎯</span><span class="dl">Cascade score</span></div>
+    <p class="oscap">How good the film is. Drag a window to the score that earns it — the lowest one is the floor.</p>
+    <p class="reqval" id="msnValueLine">${esc(msnValueLine(c))}</p>
+    <div id="msnTrackArea">${msnTrackAreaHTML(c)}</div>
+    <p class="oscap oscap2">Before release the score reads how much a film is being talked about; once it's
+      out, what audiences and critics made of it. A film keeps the window it was given — it is never
+      re-scored on the way down.</p>
+  </div>`;
+}
+// A window just switched to Never has no marker left to read a "last score" off, so a restore falls back to
+// a ladder-respecting default (spread MARKER_MIN_GAP apart from the bottom) when it has never had one this
+// session, then clamps against whichever real neighbours are already on the track.
+function restoreWatchMarker(c, key){
+  const i=WATCH_LEVEL_KEYS.indexOf(key);
+  const above=WATCH_LEVEL_KEYS.slice(0,i).reverse().map(k=>c.watchMarkers[k]).find(v=>v!=null);
+  const below=WATCH_LEVEL_KEYS.slice(i+1).map(k=>c.watchMarkers[k]).find(v=>v!=null);
+  let v = msnLastValue[key]!=null ? msnLastValue[key]
+        : TRACK_MIN + MARKER_MIN_GAP*(WATCH_LEVEL_KEYS.length-1-i);
+  if(above!=null) v=Math.min(v, above-MARKER_MIN_GAP);
+  if(below!=null) v=Math.max(v, below+MARKER_MIN_GAP);
+  setWatchMarker(c, key, Math.max(TRACK_MIN, Math.min(TRACK_MAX, v)));
+}
+// Repaints marker positions/colours/value text in place — used on every drag pointermove, where tearing the
+// track out from under a finger (a full body() re-render) would be exactly the bug paintDial above exists to
+// avoid. Adding or removing a marker (Never/restore) changes how many DOM nodes exist, so those go through
+// msnRebuild() instead, which re-renders #msnTrackArea and re-wires it.
+function paintMsnTrack(){
+  const c=onbFlow.draft, track=$("msnTrack"); if(!c || !track) return;
+  const usable=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
+  const byScore=[...usable].sort((a,b)=>c.watchMarkers[a]-c.watchMarkers[b]);
+  const segEls=track.querySelectorAll(".msnseg");
+  if(segEls[0]) segEls[0].style.width=(byScore.length?trackPct(c.watchMarkers[byScore[0]]):100)+"%";
+  byScore.forEach((k,i)=>{
+    const el=segEls[i+1]; if(!el) return;
+    const from=trackPct(c.watchMarkers[k]);
+    const to=i+1<byScore.length ? trackPct(c.watchMarkers[byScore[i+1]]) : 100;
+    el.style.left=from+"%"; el.style.width=Math.max(0,to-from)+"%";
+  });
+  track.querySelectorAll(".msnmark").forEach(el=>{
+    const key=el.dataset.key, v=c.watchMarkers[key]; if(v==null) return;
+    const pct=trackPct(v);
+    el.style.left=pct+"%";
+    el.style.transform=pct<=0?"translate(0,-50%)":pct>=100?"translate(-100%,-50%)":"translate(-50%,-50%)";
+    const val=el.querySelector(".msnval"); if(val) val.textContent=v;
+  });
+  const vl=$("msnValueLine"); if(vl) vl.textContent=msnValueLine(c);
+}
+function wireMsnTrack(){
+  const area=$("msnTrackArea"), track=$("msnTrack"); if(!area || !track) return;
+  const c=onbFlow.draft;
+  area.querySelectorAll(".msnhandle").forEach(h=>{
+    const key=h.dataset.key;
+    let dragging=false;
+    const move=e=>{
+      if(!dragging) return;
+      const r=track.getBoundingClientRect();
+      const pct=Math.max(0, Math.min(1, (e.clientX-r.left)/Math.max(1,r.width)));
+      setWatchMarker(c, key, TRACK_MIN + pct*(TRACK_MAX-TRACK_MIN));
+      onbFlow.barTouched=true;
+      paintMsnTrack(); selRefresh();
+    };
+    h.addEventListener("pointerdown", e=>{
+      dragging=true;
+      try{ h.setPointerCapture(e.pointerId); }catch(_){}
+      move(e); e.preventDefault();
+    });
+    h.addEventListener("pointermove", move);
+    h.addEventListener("pointerup", ()=>{ dragging=false; });
+    h.addEventListener("pointercancel", ()=>{ dragging=false; });
+  });
+  area.querySelectorAll('[data-act="never"]').forEach(b=>{
+    b.onclick=()=>{
+      msnLastValue[b.dataset.key]=c.watchMarkers[b.dataset.key];
+      setWatchMarker(c, b.dataset.key, null);
+      onbFlow.barTouched=true;
+      msnRebuild();
+    };
+  });
+  area.querySelectorAll('[data-act="restore"]').forEach(b=>{
+    b.onclick=()=>{
+      restoreWatchMarker(c, b.dataset.key);
+      onbFlow.barTouched=true;
+      msnRebuild();
+    };
+  });
+}
+function msnRebuild(){
+  const area=$("msnTrackArea"); if(area) area.innerHTML=msnTrackAreaHTML(onbFlow.draft);
+  wireMsnTrack();
+  selRefresh();
+}
+// ---- The three requirement cards: Movie Budget, Awards, How far back --------------------------------------
+// One card shape for all three — icon/title/scope-chip header, caption, a bold value line, then a slider —
+// so REQUIREMENTS reads as one section rather than three differently-built controls. The chip answers WHEN a
+// requirement applies (design record §7 item 6): ALL WINDOWS on Budget (accent — it always applies), ONCE
+// RELEASED on Awards and How far back (muted — both wait for a release, per matchesCriteria's preRelease
+// exemption). Whether they apply AT ALL is the section header's job, not the chip's.
+function reqCardHTML(icon, title, chip, chipClass, caption, valueId, valueText, sliderHTML){
+  return `<div class="osdial reqcard">
+    <div class="osdh"><span class="em">${icon}</span><span class="dl">${esc(title)}</span>
+      <span class="reqscope ${chipClass}">${esc(chip)}</span></div>
+    <p class="oscap">${esc(caption)}</p>
+    <p class="reqval" id="${valueId}">${esc(valueText)}</p>
+    ${sliderHTML}
+  </div>`;
+}
+function budgetCardHTML(){
+  const cont=CONT_DIALS.scale, v=cont.get(), marks=cont.marks(v);
+  const slider=`<div class="vslider">
+      <div class="vtrack"><div class="vfillbar" style="width:${cont.pos(v)}%"></div></div>
+      <div class="vnotches">${marks.map(mk=>`<span class="vnotch ${mk.lit?"lit":""}" style="left:${mk.pos}%"></span>`).join("")}</div>
+      <input type="range" id="onbDial_scale" min="${cont.min}" max="${cont.max}" step="${cont.step}"
+             value="${cont.rawOf(v)}" aria-label="${escA(cont.aria)}">
+    </div>
+    <div class="vlabels stag">${marks.map((mk,i)=>`<button type="button" class="vsnap ${mk.lit?"on":""} ${i%2?"lo":""}" data-snap="${mk.snap}"
+      style="left:${mk.pos}%;transform:${mk.pos<=0?"translateX(0)":mk.pos>=100?"translateX(-100%)":"translateX(-50%)"}">${esc(mk.label)}${mk.sub?`<small>${esc(mk.sub)}</small>`:""}</button>`).join("")}</div>`;
+  return reqCardHTML("🎬","Movie Budget","ALL WINDOWS","accent",
+    "How big the film is. Budget or worldwide gross — known at every stage, so this one always applies.",
+    "reqBudgetVal", cont.read(v), slider);
+}
+// A stepped ladder shared by Awards and How far back — both are fixed-stop, tap-or-drag controls with no
+// continuous value in between, the exact shape STEP_DIALS used to wire generically before it retired above.
+function reqStepSliderHTML(id, stops, cur, ariaLabel){
+  const max=stops.length-1;
+  return `<div class="vslider">
+      <div class="vtrack"><div class="vfillbar" style="width:${cur/max*100}%"></div></div>
+      <div class="vnotches">${stops.map((_,i)=>`<span class="vnotch ${i<=cur?"lit":""}" style="left:${i/max*100}%"></span>`).join("")}</div>
+      <input type="range" id="${id}" min="0" max="${max}" step="1" value="${cur}" aria-label="${escA(ariaLabel)}">
+    </div>
+    <div class="vlabels">${stops.map((s,i)=>`<button type="button" class="vsnap ${i===cur?"on":""}" data-i="${i}"
+      style="left:${i/max*100}%;transform:${edgeShift(i,max+1)}">${esc(s.label)}</button>`).join("")}</div>`;
+}
+// Long-form readouts for the requirement cards' own bold value line — distinct from AWARD_STOPS' short tick
+// labels ("2+ noms"), which stay exactly as they were for the slider's own marks (still read by hubBarSummary
+// and the legacy "priority" onboarding hub's bar-door summary, untouched by this ticket).
+const AWARDS_CARD_LABEL = {0:"Off", 1:"1 nomination", 2:"2+ nominations", 3:"3+ nominations", 4:"Winner"};
+function awardsCardHTML(){
+  const v=onbFlow.awardStop||0;
+  return reqCardHTML("🏅","Awards","ONCE RELEASED","muted",
+    "How decorated it is. A winner clears every nomination rung.",
+    "reqAwardsVal", AWARDS_CARD_LABEL[v], reqStepSliderHTML("onbDial_awardsreq", AWARD_STOPS, v, "Awards"));
+}
+// CAS-729: the Mission requirement card's own 5-stop scale — 3/5/10/20/Any, tightest-to-loosest LEFT to
+// RIGHT (design record §7). That is the reverse of the taste baseline's Any-on-the-left YEARS_STOPS
+// (CAS-340), so it is its own small table and its own wiring rather than a reordering of that shared one.
+const YEARSREQ_STOPS = [{y:3,label:"3 yrs"}, {y:5,label:"5"}, {y:10,label:"10"}, {y:20,label:"20"}, {y:0,label:"Any"}];
+const yearsReqLabel = y => !y ? "Any" : `Last ${y} year${y===1?"":"s"}`;
+function yearsCardHTML(){
+  const y=(onbFlow.draft||{}).yearsBack||0;
+  const idx=Math.max(0, YEARSREQ_STOPS.findIndex(s=>s.y===y));
+  return reqCardHTML("📅","How far back","ONCE RELEASED","muted",
+    "How old a released film can be. Cinema and upcoming films are always recent, so this never touches them.",
+    "reqYearsVal", yearsReqLabel(YEARSREQ_STOPS[idx].y), reqStepSliderHTML("onbDial_yearsreq", YEARSREQ_STOPS, idx, "How far back"));
+}
+function wireReqCards(){
+  (()=>{
+    const cont=CONT_DIALS.scale, r=$("onbDial_scale"); if(!r) return;
     const card=r.closest(".osdial");
     const apply=v=>{
-      cont.set(v); onbFlow.barTouched=true;                 // CAS-158: from here the bar is theirs
+      cont.set(v); onbFlow.barTouched=true;
       const marks=cont.marks(v);
       paintDial(card, cont.pos(v), i=>marks[i].lit, i=>marks[i].lit);
-      const read=$("onbVal_"+key); if(read) read.textContent=cont.read(v);
+      const read=$("reqBudgetVal"); if(read) read.textContent=cont.read(v);
       selRefresh();
     };
     r.oninput=()=>apply(cont.value(+r.value));
-    // Tap a named stop to land exactly on it — the four old dots, still one tap away.
-    // CAS-249: [data-snap], not every .vsnap in the card. Critics & awards holds two ladders now, and the
-    // companion's buttons carry data-i instead — wiring them here would read undefined and set the slider
-    // to NaN on the first tap.
     card.querySelectorAll(".vsnap[data-snap]").forEach(b=>{
       b.onclick=()=>{ const v=+b.dataset.snap; r.value=cont.rawOf(v); apply(v); };
     });
-  });
-  // CAS-249: the stepped ladders. "awards" is the companion under the Critics slider, so it paints the
-  // SECOND .vslider in its card rather than the card's first — paintDial would otherwise repaint the score
-  // slider with the awards rung's numbers, which is the shape of bug that makes a dial appear to jump.
-  const STEP_DIALS = [{dial:"buzz", stops:BUZZ_STOPS, key:"buzzStop", nth:0},
-                      {dial:"awards", stops:AWARD_STOPS, key:"awardStop", nth:1}];
-  STEP_DIALS.forEach(d=>{
-    const k=d.dial;
-    const r=$("onbDial_"+k); if(!r) return;
-    const max=d.stops.length-1, card=r.closest(".osdial");
+  })();
+  (()=>{
+    const r=$("onbDial_awardsreq"); if(!r) return;
+    const card=r.closest(".osdial"), max=AWARD_STOPS.length-1;
     const apply=v=>{
-      onbFlow[d.key]=v; onbFlow.barTouched=true;   // CAS-158: from here the bar is theirs
-      paintDialAt(card, d.nth, v/max*100, i=>i<=v, i=>i===v);
+      onbFlow.awardStop=v; onbFlow.barTouched=true;
+      paintDial(card, v/max*100, i=>i<=v, i=>i===v);
+      const read=$("reqAwardsVal"); if(read) read.textContent=AWARDS_CARD_LABEL[v];
       selRefresh();
     };
     r.oninput=()=>apply(+r.value);
-    // CAS-192: a stepped dial's rungs are tappable too. They were labels beside a slider you had to drag
-    // to a named position you could already see — the target was right there and not a target.
     card.querySelectorAll(".vsnap[data-i]").forEach(b=>{
       b.onclick=()=>{ const v=+b.dataset.i; r.value=v; apply(v); };
     });
-  });
+  })();
+  (()=>{
+    const r=$("onbDial_yearsreq"); if(!r) return;
+    const card=r.closest(".osdial"), max=YEARSREQ_STOPS.length-1;
+    const apply=i=>{
+      onbFlow.draft.yearsBack=YEARSREQ_STOPS[i].y; onbFlow.barTouched=true;
+      paintDial(card, i/max*100, k=>k<=i, k=>k===i);
+      const read=$("reqYearsVal"); if(read) read.textContent=yearsReqLabel(YEARSREQ_STOPS[i].y);
+      selRefresh();
+    };
+    r.oninput=()=>apply(+r.value);
+    card.querySelectorAll(".vsnap[data-i]").forEach(b=>{
+      b.onclick=()=>{ const i=+b.dataset.i; r.value=i; apply(i); };
+    });
+  })();
 }
-// CAS-360: the streaming Mission's "Cinema Release" checkbox. Not a dial — it carries no card of its own,
-// so it is wired separately from wireDials rather than folded into the CONT_DIALS/STEP_DIALS loops above.
+// CAS-360/CAS-729: the "Had a cinema release" checkbox. Not a dial — it carries no card of its own, so it is
+// wired separately here rather than folded into the requirement cards' loop above.
 function wireCinemaReleaseToggle(){
   const cr=$("onbCinemaRelease"); if(!cr) return;
   const paint=()=>{
@@ -13295,46 +13530,32 @@ const SHARP_STEPS = {
     },
     wire(){ onbDonePulse=null; },   // the pulse is a one-time thing: it has now played
   },
-  // #4 Set your bar (CAS-114, reworked by CAS-145 to the R5 spec; CAS-661 makes the dials alternative routes
-  // in, combined with OR). Only the dials that define THIS agent are up front; the rest wait under "More
-  // controls" at their defaults, because a screen that opens with four bars asks a person to have an opinion
-  // about four things before they've seen anything.
+  // #4 Mission (CAS-114, reworked CAS-145/CAS-661; CAS-724 retired the OR block for one score floor plus AND
+  // requirements; CAS-729 replaces the whole dial screen with a single score-track card carrying the Watch On
+  // windows as draggable markers, plus this REQUIREMENTS section). Design record "Agents, admission and Watch
+  // On — the one-score model" §7.
   selectivity: {
     title: "Mission",
     progress: 70,
     noAgent: true,
     noSkip: true,     // inside the hub's door — the way out is Continue or Back, not a skip that means nothing
     body(){
-      // CAS-192: the dials up front follow the LANE, not the preset. Which standards matter is a property
-      // of where you watch — at a cinema you are choosing between films that are all being sold to you at
-      // once, so scale and noise are the axes; on a service the catalogue is enormous and old, so what
-      // people and critics made of a film is what narrows it. Reading them off the preset (as CAS-145 did)
-      // meant two agents in the same lane opened on different questions, and an agent opened from the
-      // Briefing — which has no preset — opened on a guess.
-      // CAS-220: `rest` is the lane's own secondary set (missionRest), not "the other three". For a
-      // cinema agent that is empty, so the "More controls" button doesn't render at all.
-      const primary = MISSION_DIALS[missionKind()] || MISSION_DIALS.cinema;
-      const rest = missionRest();
-      const dials = ks => ks.map(dialCardHTML).join("");
-      // CAS-360: streaming-only — release history, not a live "in cinemas now" status, so it has no place
-      // on a cinema agent's Mission (which already watches films on their way to a cinema). CAS-723 fixes
-      // missionKind() to "cinema" (its kind branch retires with the rest of this section's), so this reads
-      // as never-shown now — consistent with the dials above losing the same branch, and short-lived: CAS-724
-      // retires the whole Mission-dial screen next.
-      const cinemaOnly = missionKind()==="stream" ? `<div class="switch mini" id="onbCinemaRelease" role="switch">
+      return `<p class="ossub">One standard, and where a film that meets it is worth watching.</p>
+        ${msnScoreCardHTML()}
+        <div class="usec">REQUIREMENTS</div>
+        <p class="oscap" style="margin:2px 2px 11px">Every film must clear all of these, whatever its score.
+          Two of them can only be answered once a film is out — a film still upcoming or in cinemas has no
+          awards and no release year yet, so those wait rather than shutting it out.</p>
+        ${budgetCardHTML()}
+        ${awardsCardHTML()}
+        ${yearsCardHTML()}
+        <div class="switch mini" id="onbCinemaRelease" role="switch">
           <span>🎬 Had a cinema release
             <small style="color:var(--faint)">— an AU cinema (not limited) release, at any point</small></span>
-          <span class="knob"></span></div>` : "";
-      return `<p class="ossub">Set the standards a film has to meet.</p>
-        <p class="oshint" style="text-align:left;margin:0 0 10px">A film needs to clear at least one of these.</p>
-        ${dials(primary)}
-        ${rest.length ? (onbMoreOpen
-          ? dials(rest)
-          : `<button type="button" class="osmore" onclick="onbShowMore()">＋ More controls · ${
-               rest.map(k=>DIAL_DEFS[k].label).join(", ")}</button>`) : ""}
-        ${cinemaOnly}`;
+          <span class="knob"></span></div>`;
     },
-    wire(){ wireDials(); wireCinemaReleaseToggle(); },
+    refresh(){ paintMsnTrack(); },   // CAS-729: keeps the track's own DOM in step with onbRefresh()'s beat
+    wire(){ wireMsnTrack(); wireReqCards(); wireCinemaReleaseToggle(); },
   },
   // ---- Your taste baseline (CAS-146 / r5-prototype screenTaste) ------------------------------------
   // Four dimensions on ONE page, one open at a time. The old flow asked them as four separate screens,
@@ -13409,15 +13630,14 @@ const SHARP_STEPS = {
       // CAS-531: Mission and Style are promoted to the primary visual elements — big tinted doors carrying
       // every selection the agent's bar/style actually holds, not the old one-line "11 of 19" summary — so
       // the two things that most decide what an agent finds are the two things this page leads with. Rating
-      // and How far back stay reachable underneath, just smaller and flatter: real settings, lower stakes.
+      // stays reachable underneath, smaller and flatter: a real setting, lower stakes.
       // The name row is gone — CAS-531 #1 moved it into the page header (see renderOnbStep's key==="briefing"
       // branch), so a rename opens the identical "name" spoke this row used to.
-      // CAS-550: Style, Rating and How far back are back as doors — CAS-532 retired them "everywhere" as a
-      // deliberate call, not a bug, and this ticket reverses that part by a later decision.
-      // CAS-723: How far back used to stay off a cinema agent, since its year cutoff was a no-op there (AU
-      // theatrical releases are inherently recent) — c.kind retires as a scoping input, so the door is no
-      // longer conditional either. It sets nothing for a cinema-flavoured agent exactly as it always did;
-      // this just stops hiding a control that was never wrong to show.
+      // CAS-550: Style, Rating and How far back came back as doors — CAS-532 retired them "everywhere" as a
+      // deliberate call, not a bug, and this ticket reversed that part by a later decision.
+      // CAS-729: How far back's own door retires again — it moved into Mission's REQUIREMENTS section as its
+      // own card (design record §7's explicit "do not re-raise": it is a requirement, not a Style setting),
+      // so this hub goes back to two doors plus Rating rather than plus Rating-and-How-far-back.
       return `<p class="ossub">Reconfigure this agent here.${nNew ? ` <b>${nNew}</b> newly added film${nNew===1?"":"s"} in its list right now.` : ""}</p>
         <button type="button" class="eacard msn" onclick="briefGo('selectivity')">
           <span class="eachd"><span class="di">🎯</span><span class="dh">Mission</span></span>
@@ -13434,8 +13654,6 @@ const SHARP_STEPS = {
         <div class="easec">
           <button type="button" class="easub" onclick="briefGo('age')">
             <span class="eash">Rating</span><span class="easv">${esc(trailAge())}</span></button>
-          <button type="button" class="easub" onclick="briefGo('years')">
-            <span class="eash">How far back</span><span class="easv">${esc(yearsLabel(flowYearsBack()))}</span></button>
         </div>
         <!-- CAS-613: auto-notify — per-agent, arms a film's earliest acceptable notify window the moment
              the agent finds it (recomputeFound), mirroring toggleFilmOpt's manual tick. watchPrefs stays
@@ -16739,28 +16957,26 @@ function hubBarSummary(){
   if(uses.includes("buzz")  && onbFlow.buzzStop)  parts.push(BUZZ_STOPS[onbFlow.buzzStop].label+" buzz");
   return parts.length ? esc(parts.join(" · ")) : "No bar set — everything qualifies";
 }
-// CAS-531: the Briefing's Mission card wants every active dial spelled out as its own line, not folded into
-// one dotted sentence — same source state and the same dial order hubBarSummary reads, just not joined. The
-// first dial with a band name (People's vote, then Budget & scale) becomes the card's bold headline; every
-// active dial — including whichever one supplied the headline — still gets its own full-sentence line below,
-// so "Liked" up top doesn't leave "People's vote 6.7+" unsaid.
+// CAS-729: the Briefing's Mission card reads the markers, not the retired OR-block dials — design record §7
+// item 1's own examples ("Cinema at 88" / "Rental at 72 · Streaming at 60 · below that, not listed" /
+// "Requires: budget $39M+, 2+ nominations, last 20 years"). The marker line becomes the headline (it's the
+// one thing every configured agent has), and the AND requirements — when any are set — get their own line
+// below, same shift-into-headline fallback missionDetail always used.
 function missionDetail(){
-  const uses = MISSION_DIALS_USED[missionKind()] || MISSION_DIALS_USED.cinema;
-  const lines=[]; let headline="";
-  if(uses.includes("vote") && onbFlow.voteVal>=VOTE_OFF){
-    headline = voteBand(onbFlow.voteVal) || headline;
-    lines.push(`People's vote ${onbFlow.voteVal.toFixed(1)}+`);
-  }
-  if(uses.includes("crit")){
-    if(onbFlow.critScore) lines.push(`Critic score ${Math.round(onbFlow.critScore)}+`);
-    if(onbFlow.awardStop) lines.push(AWARD_STOPS[onbFlow.awardStop].label);
-  }
-  if(uses.includes("scale") && onbFlow.scaleVal){
-    if(!headline) headline = scaleBand(onbFlow.scaleVal)+" release";
-    lines.push(`Budget ${money(onbFlow.scaleVal)} or more`);
-  }
-  if(uses.includes("buzz") && onbFlow.buzzStop) lines.push(`${BUZZ_STOPS[onbFlow.buzzStop].label} buzz required`);
-  if(!headline && lines.length) headline=lines.shift();
+  const c=onbFlow.draft||{};
+  const marks=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
+  const markerLine = marks.length
+    ? (marks.length>1
+        ? `${marks.map(k=>`${WATCH_LEVEL_SHORT_LABEL[k]} at ${c.watchMarkers[k]}`).join(" · ")} · below that, not listed`
+        : `${WATCH_LEVEL_SHORT_LABEL[marks[0]]} at ${c.watchMarkers[marks[0]]}`)
+    : "No window is armed — nothing will ever qualify";
+  const lines=[markerLine];
+  const reqParts=[];
+  if(c.selScale) reqParts.push(`budget ${money(c.selScale)}+`);
+  if(c.selAwards) reqParts.push(AWARD_STOPS[c.selAwards].label.toLowerCase());
+  if(c.yearsBack) reqParts.push(yearsLabel(c.yearsBack).toLowerCase());
+  if(reqParts.length) lines.push(`Requires: ${reqParts.join(", ")}`);
+  const headline=lines.shift();
   return {headline, lines};
 }
 // CAS-550: the Briefing's Style card is Mission's equal now, so it wants the same headline+lines shape
