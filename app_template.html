@@ -12624,16 +12624,23 @@ function stepCountLine(step, n){
   return step===SHARP_STEPS.selectivity
     ? `${base}${placementSplitHTML(onbFlow.draft||{})}${scoreHeldBackLineHTML()}` : base;
 }
-// CAS-729: "N films match right now" followed by the placement split (design record §7 item 7) — how many of
-// them sit in each armed window right now, read off the SAME listedBy() predicate the headline number itself
-// is built from (via onbShownCount/listedCount), so the parts can never fail to sum to the number they follow.
+// CAS-729/CAS-731: "N films match right now" followed by the placement split (design record §7 item 7) — how
+// many of them the agent will send you to each window. That is Watch On (filmNotifyState's key, the same
+// value the Watch screen's tabs filter on), not the film's current availability status — a film can be
+// admitted from `upcoming` and placed at Cinema, which primaryStatus never sees. Every listed film lands
+// somewhere: one of this agent's own usable windows, or the trailing "unplaced" part for a film with no Watch
+// On value yet (or, in principle, one outside this agent's own marks) — so the parts always sum to the
+// listedBy()-built headline above them (CAS-680/CAS-682: a split that doesn't sum is the repeat bug here).
 const PLACEMENT_LABEL = {in_cinema:"Cinema", premium:"Premium", rent:"Rental", stream:"Streaming"};
 function placementSplitHTML(c){
   const marks=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k)); if(!marks.length) return "";
+  const listed=MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m));
   const parts=marks.map(k=>{
-    const n=MOVIES.filter(m=>filmOptKeyForWindow(null, primaryStatus(m))===k && listedBy(m,c) && !taggedOut(m)).length;
+    const n=listed.filter(m=>filmNotifyState(m.tmdb_id).key===k).length;
     return `${n} ${PLACEMENT_LABEL[k]}`;
   });
+  const unplaced=listed.filter(m=>!marks.includes(filmNotifyState(m.tmdb_id).key)).length;
+  if(unplaced) parts.push(`${unplaced} unplaced`);
   return ` · ${parts.join(" · ")}`;
 }
 function stepCountHTML(step, n){

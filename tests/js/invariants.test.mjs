@@ -1540,6 +1540,25 @@ function scoredUnwatchedFilm(status){
   }
   throw new Error("no unwatched film in the first 40 carries a real Cascade score under " + JSON.stringify(status));
 }
+// Same search, but hands back a restore() closing over the film's status as it stood BEFORE this pick — not
+// scoredUnwatchedFilm's own "savedStatus = film.status" convention, which captures the status AFTER it has
+// already been overwritten and so never actually undoes the mutation. That's harmless as long as no later
+// test's own unwatchedFilms() pick lands on the same film, which is what happened here: CAS-731's tests and
+// CAS-709/CAS-728's fixed unwatchedFilms(1) pick collided on the same first film once this file's own status
+// mutations accumulated. `listable` additionally demands !isEstimated(m) for tests that must clear
+// listWindowOK (CAS-731's placementSplitHTML tests, via listedBy) — an ESTIMATED "upcoming" is denied there
+// outright (CAS-481) — where the recomputeFound-only CAS-727 tests above don't need it.
+function pickScoredFilm(status, { listable = false } = {}){
+  const pool = unwatchedFilms(60);
+  for(const m of pool){
+    const original = m.status;
+    m.status = status;
+    const score = E.cascadeScore(m);
+    if(score !== -1 && (!listable || !E.isEstimated(m))) return { film: m, restore: () => { m.status = original; } };
+    m.status = original;
+  }
+  throw new Error(`no eligible unwatched film in the first 60 under ${JSON.stringify(status)} (listable=${listable})`);
+}
 
 test("CAS-727 AC2(a): upcoming, score above the Cinema marker, is placed at Cinema", () => {
   const film = scoredUnwatchedFilm(["upcoming"]);
@@ -1707,6 +1726,103 @@ test("CAS-727 AC5: app_template.html carries no trace of the retired autoNotifie
   const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
   const count = (src.match(/autoNotified/g) || []).length;
   assert.equal(count, 0, `expected 0 occurrences of "autoNotified", found ${count}`);
+});
+
+// ---- MISSION PLACEMENT SPLIT COUNTS WATCH ON, NOT AVAILABILITY (CAS-731) -----------------------------------
+// placementSplitHTML(c) used to bucket by primaryStatus(m) through filmOptKeyForWindow — the film's CURRENT
+// availability — which both answered the wrong question (CAS-729 §7 item 7 wants placement, what the agent
+// DECIDED) and silently dropped a film whenever that status mapped to a window outside the agent's own marks
+// (upcoming/pvod), so the parts didn't sum to the headline (the CAS-680/682 bug, again). It now buckets by
+// filmNotifyState(m.tmdb_id).key — Watch On, the same value the Watch screen's tabs filter on — and any
+// listed film without a bucket in `marks` (no Watch On value yet) falls into a trailing "unplaced" part
+// instead of vanishing.
+function sumPlacementParts(html){
+  if(!html) return 0;
+  const parts = [...html.matchAll(/(\d+) (?:Cinema|Premium|Rental|Streaming|unplaced)/g)];
+  return parts.reduce((sum, m) => sum + Number(m[1]), 0);
+}
+
+test("CAS-731 AC2: the placement split (including unplaced) sums to the listing headline, for every lane", () => {
+  for(const { kind, s, label } of CASES){
+    pickInLane(E, kind, s.key);
+    const d = E.onbApply();
+    const html = E.placementSplitHTML(d);
+    const sum = sumPlacementParts(html);
+    assert.equal(sum, E.listedCount(d), `${label}: placement split sums to ${sum}, the listing has ${E.listedCount(d)} (split: "${html}")`);
+  }
+});
+
+test("CAS-731 AC2: a listed film with no Watch On value is counted as unplaced, not dropped", () => {
+  const { film, restore } = pickScoredFilm(["upcoming"], { listable: true });
+  const id = film.tmdb_id;
+  // 101 is above the 0-100 scale on every axis cascadeScore can return, so the pinned film clears no marker
+  // and gets no Watch On value at all — the "no bucket" case this test exists to check.
+  const cId = seedMarkerCascade({ in_cinema: 101, rent: 101, stream: 101 });
+  try {
+    pinFilm(id, cId);
+    withWatchPrefs(PLACEMENT_WATCH_PREFS, () => {
+      E.recomputeFound();
+      assert.equal(E.filmNotifyState(id).key, null, "sanity: a score below every marker leaves no Watch On value");
+      const c = E.cascades.find(x => x.id === cId);
+      const html = E.placementSplitHTML(c);
+      assert.match(html, /\b1 unplaced\b/, `expected the unplaced film to surface, not vanish: "${html}"`);
+      assert.equal(sumPlacementParts(html), E.listedCount(c), `parts must still sum to the headline: "${html}"`);
+    });
+  } finally {
+    delete E.notify[id];
+    unseedCascade(cId);
+    restore();
+  }
+});
+
+test("CAS-731 AC3: a film admitted from upcoming and placed at Cinema is counted in the Cinema part, not dropped", () => {
+  const { film, restore } = pickScoredFilm(["upcoming"], { listable: true });
+  const id = film.tmdb_id;
+  const score = E.cascadeScore(film);
+  const cId = seedMarkerCascade({ in_cinema: score - 1, rent: score - 20, stream: score - 30 });
+  try {
+    pinFilm(id, cId);
+    withWatchPrefs(PLACEMENT_WATCH_PREFS, () => {
+      E.recomputeFound();
+      assert.equal(E.primaryStatus(film), "upcoming", "sanity: the film is still upcoming");
+      assert.equal(E.filmNotifyState(id).key, "in_cinema", "sanity: Watch On is Cinema");
+      const c = E.cascades.find(x => x.id === cId);
+      const html = E.placementSplitHTML(c);
+      const cinema = html.match(/(\d+) Cinema/);
+      assert.ok(cinema && Number(cinema[1]) >= 1, `expected the upcoming film in the Cinema part, not dropped: "${html}"`);
+      assert.equal(sumPlacementParts(html), E.listedCount(c), `parts must sum to the headline: "${html}"`);
+    });
+  } finally {
+    delete E.notify[id];
+    unseedCascade(cId);
+    restore();
+  }
+});
+
+test("CAS-731 AC4: a film whose Watch On is Streaming while standing at Rental is counted in Streaming, not Rental", () => {
+  const { film, restore } = pickScoredFilm(["rental"]);
+  const id = film.tmdb_id;
+  const score = E.cascadeScore(film);
+  const cId = seedMarkerCascade({ in_cinema: score + 50, rent: score + 20, stream: score - 1 });
+  try {
+    pinFilm(id, cId);
+    withWatchPrefs(PLACEMENT_WATCH_PREFS, () => {
+      E.recomputeFound();
+      assert.equal(E.primaryStatus(film), "rental", "sanity: the film is standing at Rental");
+      assert.equal(E.filmNotifyState(id).key, "stream", "sanity: Watch On is Streaming, following the score, not availability");
+      const c = E.cascades.find(x => x.id === cId);
+      const html = E.placementSplitHTML(c);
+      const streaming = html.match(/(\d+) Streaming/);
+      const rental = html.match(/(\d+) Rental/);
+      assert.ok(streaming && Number(streaming[1]) >= 1, `expected the film in Streaming: "${html}"`);
+      assert.equal(rental ? Number(rental[1]) : 0, 0, `the film must not also count under Rental: "${html}"`);
+      assert.equal(sumPlacementParts(html), E.listedCount(c), `parts must sum to the headline: "${html}"`);
+    });
+  } finally {
+    delete E.notify[id];
+    unseedCascade(cId);
+    restore();
+  }
 });
 
 test("CAS-613 AC5: recomputeFound() calls saveNotify() at most once per pass", () => {
