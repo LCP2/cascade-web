@@ -650,11 +650,13 @@ test("alerts: a saved agent from before this screen is never armed on its behalf
   assert.equal(now.upcoming.subs.opens_soon, false);
 });
 
-// ---- 3d. THE PAY-PER-FILM WINDOWS ARE TWO, NOT ONE (CAS-243) --------------------------------------------
-test("windows: a streaming agent is offered Premium, Standard Rent and Streaming, one status each", () => {
+// ---- 3d. THE PAY-PER-FILM WINDOWS ARE TWO, NOT ONE (CAS-243, CAS-723) -------------------------------------
+// CAS-723: AGENT_WINDOWS is the one list every agent reads now — there is no more per-kind array to pick
+// Premium/Rent/Streaming off, so this checks the tail of the one shared list instead.
+test("windows: every agent is offered Premium, Standard Rent and Streaming, one status each", () => {
   // Joined rather than deep-equalled: these arrays are built inside the vm realm, so their prototype is not
   // the host's and a strict deep-equal of two identical arrays fails (the same trap as the status order).
-  const wins = E.AGENT_WINDOWS.stream;
+  const wins = E.AGENT_WINDOWS.filter(w => ["premium", "rent", "stream"].includes(w.key));
   assert.equal(wins.map(w => w.key).join(","), "premium,rent,stream");
   assert.equal(wins.map(w => w.label).join(","), "Premium,Standard Rent,Streaming");
   // Each window owns its own status and its own bell — the split is only real if nothing overlaps.

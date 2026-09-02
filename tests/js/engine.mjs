@@ -112,6 +112,9 @@ if(typeof window.CascadeAuth === "undefined"){
   MOVIES, CASCADE, STATUS_LABEL, SHOWABLE_N,
   matchesCriteria, countCriteria, watchCount, watchesFilm, matchesTaste, listedBy, listWindowOK,
   listedCount, onbShownCount,
+  // CAS-723: inScope is the predicate the "one agent type" invariant is actually about — exported so a test
+  // can assert it directly rather than re-deriving it from watchesFilm's combination with matchesTaste.
+  inScope,
   // CAS-680: the list-editor's own predicates — ymFeedList (the list's own total, no inFindScope applied),
   // ymAgentListCount (an agent's contribution TO the active list), inFindScope and scope (the scope bar
   // that scopeRows() applies and ymFeedList() deliberately does not) — so a test can assert the two
