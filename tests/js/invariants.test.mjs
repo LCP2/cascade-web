@@ -176,20 +176,56 @@ test("language narrowing lives on tasteBase now, and still only ever narrows", (
   }
 });
 
-// ---- 5. THE LANE'S WINDOWS AND ITS LISTING (CAS-227 / CAS-228) ------------------------------------------
-// Two properties the v0.8.1 window model has to keep: a listed window is always a watched window (you cannot
-// list what the agent does not follow), and a cinema agent never watches a home window or vice versa.
-test("windows: everything listed is watched, and lanes keep to their own windows", () => {
-  const CINEMA_W = new Set(["upcoming", "opening_week", "in_cinema"]);
+// ---- 5. THE LANE'S WINDOWS AND ITS LISTING (CAS-227 / CAS-228, CAS-723) -----------------------------------
+// A listed window is always a watched window (you cannot list what the agent does not follow) — that
+// property survives. CAS-723 retires the other half this test used to assert: c.kind no longer scopes an
+// agent's windows, so a "cinema" preset and a "stream" preset now derive the exact same c.status from the
+// one shared watchPrefs answer, with no more lane-separation to check.
+test("windows: everything listed is watched", () => {
   for(const { kind, s, label } of CASES){
     pickInLane(E, kind, s.key);
     const d = E.onbApply();
     for(const w of d.listStatus) assert.ok(d.status.includes(w),
       `${label}: lists ${w} without watching it — the films could never arrive`);
-    const isCinema = [...d.status].some(w => CINEMA_W.has(w));
-    const isHome   = [...d.status].some(w => !CINEMA_W.has(w));
-    assert.ok(!(isCinema && isHome), `${label}: watches both cinema and home windows — ${d.status.join(",")}`);
-    assert.equal(isCinema, kind === "cinema", `${label}: a ${kind} agent watches ${d.status.join(",")}`);
+  }
+});
+
+// CAS-723: c.kind retires as a window-scoping input — every agent's c.status/c.listStatus now derive from
+// watchPrefs alone, so a cinema-flavoured preset and a stream-flavoured preset agree on both exactly.
+test("CAS-723: cinema and stream presets derive the identical window scope from watchPrefs", () => {
+  const byKind = {};
+  for(const { kind, s } of CASES){
+    pickInLane(E, kind, s.key);
+    const d = E.onbApply();
+    byKind[kind] = byKind[kind] || new Set();
+    d.status.forEach(w => byKind[kind].add(w));
+  }
+  assert.deepEqual([...byKind.cinema].sort(), [...byKind.stream].sort(),
+    `cinema presets watch ${[...byKind.cinema].sort()}, stream presets watch ${[...byKind.stream].sort()}`);
+});
+
+// ---- 5b. ONE AGENT TYPE — EVERY WINDOW ENABLED MEANS NOTHING LEAVES SCOPE (CAS-723 AC2) ------------------
+// With every window switched on, inScope(m,c) must hold for every showable film and every agent — there is
+// no longer a "cinema" agent whose c.status excludes home windows and therefore drops a film once it moves
+// past cinemas. Fails before CAS-723 on any released film against a cinema-preset agent (inScope depends on
+// c.status, which watchForKind used to narrow to upcoming/opening_week/in_cinema for that lane alone).
+test("CAS-723 AC2: with every window enabled, inScope holds for every film and every agent", () => {
+  const savedPrefs = E.watchPrefs;
+  try {
+    const allOn = {};
+    for(const w of E.AGENT_WINDOWS) allOn[w.key] = { list: true, notify: true };
+    E.setWatchPrefs(allOn);
+    for(const { kind, s, label } of CASES){
+      pickInLane(E, kind, s.key);
+      const d = E.onbApply();
+      for(const m of E.MOVIES){
+        if(!E.showable(m)) continue;
+        assert.ok(E.inScope(m, d),
+          `${label}: ${m.title} (${E.primaryStatus(m)}) is out of scope with every window enabled`);
+      }
+    }
+  } finally {
+    E.setWatchPrefs(savedPrefs);
   }
 });
 

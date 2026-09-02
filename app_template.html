@@ -6884,13 +6884,10 @@ function rowSpentFor(w, rung){
 // film has already passed describes a promise nobody can keep.
 function notifyOptionsFor(c, id){
   if(c===undefined) c=activeCascade();
-  // In the All view there is no agent to read, and a film there can be caught by any of them — so the
-  // panel offers every window rather than guessing at one type.
-  const kinds = (c && (c.kind==="cinema"||c.kind==="stream")) ? [c.kind] : Object.keys(AGENT_WINDOWS);
   const watch = c ? migrateWatch(c.watchWindows||{}) : {};
   const rung = id===undefined ? -1 : filmRung(id);
   const out=[];
-  kinds.forEach(k=>AGENT_WINDOWS[k].forEach(w=>{
+  AGENT_WINDOWS.forEach(w=>{
     if(rung>=0 && rowSpentFor(w, rung)) return;
     const f=watch[w.key]||{};
     out.push({key:w.key, label:w.label, say:w.notifySay, cd:w.cd, agentOn:!!f.notify, alerts:w.alerts||{}});
@@ -6898,15 +6895,14 @@ function notifyOptionsFor(c, id){
       key:`${w.key}.${sb.key}`, label:sb.label, say:sb.sub, cd:w.cd, sub:true,
       agentOn: !!(f.notify && (f.subs||{})[sb.key]), alerts:sb.alerts||{},
     }));
-  }));
+  });
   return out;
 }
 // Which of those options covers the window a film has just landed in — the bridge between a status the
 // poll produces and a row on this panel. past_opening is a moment rather than a window, so it is matched by
 // the bell it arms instead of by a status.
 function filmOptKeyForWindow(c, w){
-  const kinds = (c && (c.kind==="cinema"||c.kind==="stream")) ? [c.kind] : Object.keys(AGENT_WINDOWS);
-  for(const k of kinds) for(const win of AGENT_WINDOWS[k]){
+  for(const win of AGENT_WINDOWS){
     if((win.status||[]).includes(w) || (w==="past_opening" && (win.alerts||{}).past_opening)) return win.key;
   }
   return null;
@@ -6944,12 +6940,12 @@ const WATCH_LEVEL_SHORT_LABEL = {in_cinema:"Cinema", premium:"Premium", rent:"Re
 // AGENT_WINDOWS list has no `in_cinema` row at all — the same film's Watch it button showed set in a cinema
 // agent and unset in a stream agent, even though the tick it reads (filmOptOn) was always the same account-
 // wide value. The four rungs are a property of the FILM (WATCH_LEVEL_KEYS + how far it's travelled), never of
-// whichever agent happens to be on screen, so this reads the canonical cinema-kind definitions directly —
-// they carry all four keys (in_cinema plus the HOME_WINDOWS spread) — instead of branching on activeCascade().
+// whichever agent happens to be on screen, so this reads AGENT_WINDOWS directly instead of branching on
+// activeCascade(). CAS-723: AGENT_WINDOWS is the one list now, so there is no more kind to read it off.
 function watchLevelsFor(id){
   const rung = filmRung(id);
   return WATCH_LEVEL_KEYS.map(key=>{
-    const w=AGENT_WINDOWS.cinema.find(x=>x.key===key);
+    const w=AGENT_WINDOWS.find(x=>x.key===key);
     return {key, label:w.label, cd:w.cd, spent: WINDOW_RUNG[key]<rung};
   });
 }
@@ -11305,8 +11301,8 @@ function starterPreview(s, kind){
   d.selCritScore=s.crit.selCritScore||0; d.selAwards=s.crit.selAwards||0;
   d.selBuzz=s.crit.selBuzz||0; d.selOr=false;
   d.kind = kind || flowKind;
-  // CAS-532: kind-scoped, same as pickStarter/onbApply will apply — see watchForKind.
-  d.status=watchToStatuses(watchForKind(starterWatch(s, kind), d.kind));
+  // CAS-723: kind-free, same as pickStarter/onbApply will apply — see watchAllWindows.
+  d.status=watchToStatuses(watchAllWindows(starterWatch(s, kind)));
   // CAS-532: last 20 years, fixed, for every new agent — cinema releases are inherently recent so the
   // cutoff is a no-op there, but the default is one number now, not a per-kind branch.
   d.yearsBack = 20;
@@ -11775,8 +11771,8 @@ const onbFlow = {draft:null, name:ONB_DEFAULT_NAME, defaultName:ONB_DEFAULT_NAME
 // pay $30 on opening week. They are already separate windows in the data (pvod and rental, split on the
 // real price ceiling), so this splits the control to match rather than inventing a distinction.
 // CAS-474: also the set a Cinema agent's Notify reaches once its own theatrical run has passed — "catch it
-// at home" for a film you missed at the cinema. Defined once and shared into both kinds' arrays below, so
-// there is exactly one Premium/Rent/Streaming definition to drift, not two hand-kept copies.
+// at home" for a film you missed at the cinema. Defined once and shared into the one array below, so there
+// is exactly one Premium/Rent/Streaming definition to drift, not two hand-kept copies.
 const HOME_WINDOWS = [
   {key:"premium", label:"Premium", cd:"var(--purple)", status:["pvod"],
    sub:"Out early to buy or rent, around $30.", notifySay:"when it lands early on premium",
@@ -11787,50 +11783,38 @@ const HOME_WINDOWS = [
    sub:"Included on a subscription.", notifySay:"when it lands on streaming",
    alerts:{included_streaming:true}},
 ];
-const AGENT_WINDOWS = {
-  cinema: [
-    // CAS-242: Upcoming is grey everywhere else in the app, because an unreleased film is deliberately muted
-    // against the ones you can actually watch. On THIS screen the same grey is a different word: every other
-    // lane goes colour-when-on, so a lit Upcoming lane looked like a switched-off one. It gets the accent here
-    // and stays grey in the listing, because the two greys were never saying the same thing.
-    {key:"upcoming",  label:"Upcoming",  cd:"var(--accent)", status:["upcoming"],
-     sub:"Announced, not in cinemas yet.", notifySay:"when it reaches a cinema", alerts:{cinema:true},
-     // CAS-242: the two extra moments an UNRELEASED film can have. Both are computed from something real —
-     // one from the day a title first reaches Cascade, one from its own published opening date — and the
-     // monitor fires them. Neither is on by default for an agent that predates this screen: arming a new
-     // alert on an existing agent's behalf would be the app deciding to email someone who never asked.
-     subs:[
-       {key:"announced",  label:"When announced",
-        sub:"The day a new film that matches this agent first reaches Cascade — the earliest anyone can know.",
-        alerts:{announced:true}},
-       {key:"opens_soon", label:"Opening next week",
-        sub:`A week out from its published opening date${""}.`,
-        alerts:{opens_soon:true}},
-     ]},
-    {key:"in_cinema", label:"In cinema", cd:"var(--amber)", status:["opening_week","in_cinema"],
-     sub:"On the big screen right now.", notifySay:"once it's past its opening weekend",
-     alerts:{past_opening:true}},
-    // CAS-474: Notify-only — a Cinema agent's catalogue stays cinema-scoped (listWindowOK never sees these
-    // statuses because List is never offered for them below), but its Notify can still reach past the run.
-    ...HOME_WINDOWS.map(w=>({...w, notifyOnly:true})),
-  ],
-  stream: HOME_WINDOWS,
-};
-// Which set of windows the agent on screen has. Reads the draft's own kind first (an agent opened from the
-// Briefing has one and there may be no flow around it), then the flow's answer — the same order missionKind
-// uses, for the same reason.
-const agentWindowKind = () => {
-  const k=(onbFlow.draft||{}).kind;
-  return (k==="cinema"||k==="stream") ? k : (flowKind==="stream" ? "stream" : "cinema");
-};
-// CAS-532: in prefsWatchMode this is the Preferences screen's flat 5-window list — every window carries
-// both switches, none is notify-only, because there is no more per-agent-kind (cinema vs stream) split
-// left to restrict one of them. AGENT_WINDOWS.cinema already lists all five (CAS-474 spread Premium/Rent/
-// Streaming across from HOME_WINDOWS), so it is the one array both modes read from.
-const agentWindows = kind => prefsWatchMode
-  ? AGENT_WINDOWS.cinema.map(w => w.notifyOnly ? {...w, notifyOnly:false} : w)
-  : (AGENT_WINDOWS[kind || agentWindowKind()] || AGENT_WINDOWS.cinema);
-const agentWindow  = (key, kind) => agentWindows(kind).find(w=>w.key===key);
+// CAS-723: one list, not one per kind — c.kind retires as a window-scoping input, so there is no more
+// Cinema/Streaming split to carry two arrays for. Every agent watches every window enabled in Where & when
+// you'll watch; the old cinema-only array's notifyOnly flag on the HOME_WINDOWS spread (which forced Premium/
+// Rent/Streaming to Notify-only for a Cinema agent) goes with it — a window here can now always be Listed.
+const AGENT_WINDOWS = [
+  // CAS-242: Upcoming is grey everywhere else in the app, because an unreleased film is deliberately muted
+  // against the ones you can actually watch. On THIS screen the same grey is a different word: every other
+  // lane goes colour-when-on, so a lit Upcoming lane looked like a switched-off one. It gets the accent here
+  // and stays grey in the listing, because the two greys were never saying the same thing.
+  {key:"upcoming",  label:"Upcoming",  cd:"var(--accent)", status:["upcoming"],
+   sub:"Announced, not in cinemas yet.", notifySay:"when it reaches a cinema", alerts:{cinema:true},
+   // CAS-242: the two extra moments an UNRELEASED film can have. Both are computed from something real —
+   // one from the day a title first reaches Cascade, one from its own published opening date — and the
+   // monitor fires them. Neither is on by default for an agent that predates this screen: arming a new
+   // alert on an existing agent's behalf would be the app deciding to email someone who never asked.
+   subs:[
+     {key:"announced",  label:"When announced",
+      sub:"The day a new film that matches this agent first reaches Cascade — the earliest anyone can know.",
+      alerts:{announced:true}},
+     {key:"opens_soon", label:"Opening next week",
+      sub:`A week out from its published opening date${""}.`,
+      alerts:{opens_soon:true}},
+   ]},
+  {key:"in_cinema", label:"In cinema", cd:"var(--amber)", status:["opening_week","in_cinema"],
+   sub:"On the big screen right now.", notifySay:"once it's past its opening weekend",
+   alerts:{past_opening:true}},
+  ...HOME_WINDOWS,
+];
+// CAS-723: AGENT_WINDOWS is the one list every agent reads now, so there is no more kind to pick a set by —
+// agentWindowKind() (which used to answer that) and the kind param both go with it.
+const agentWindows = () => AGENT_WINDOWS;
+const agentWindow  = key => agentWindows().find(w=>w.key===key);
 // Sets don't survive JSON.stringify and this state rides to localStorage on the committed agent, so a window's
 // pair of switches is held as a plain object throughout: {list:bool, notify:bool}.
 const winFlags = key => activeWatch()[key] || {};
@@ -11881,23 +11865,20 @@ function migrateWatch(w){
 // doing both jobs. `listStatus`, when the agent has it, is the finer answer and wins.
 function watchFromStatus(status, listStatus){
   const st=new Set(status||[]), ls=listStatus&&listStatus.length ? new Set(listStatus) : null, w={};
-  Object.keys(AGENT_WINDOWS).forEach(kind=>AGENT_WINDOWS[kind].forEach(win=>{
+  AGENT_WINDOWS.forEach(win=>{
     if(w[win.key] || !win.status.some(s=>st.has(s))) return;
     w[win.key]={list: ls ? win.status.some(s=>ls.has(s)) : true, notify:true};
-  }));
+  });
   return w;
 }
-// CAS-532: watchPrefs is ONE shared answer across both lanes, but a cinema agent's catalogue still stays
-// cinema-scoped and a streaming agent's still stays home-scoped (CAS-474) — that restriction used to be
-// enforced for free because a cinema agent's own screen never rendered a List switch for a notifyOnly
-// window, so `list` could never become true for one. The Preferences screen shows Track on every window
-// for every lane, so the restriction has to be re-applied here instead, per the cascade's OWN kind, or a
-// cinema agent would start listing home-window films the moment Streaming's Track switch is on globally.
-function watchForKind(watch, kind){
+// CAS-723: the old per-kind reader retires — every agent now watches every window enabled in watchPrefs, so
+// there is no cinema/stream restriction left to re-apply here. Still restricted to the keys AGENT_WINDOWS
+// actually defines, so a stray/legacy key in a raw watch object cannot leak through.
+function watchAllWindows(watch){
   const w=migrateWatch(watch), out={};
-  (AGENT_WINDOWS[kind]||AGENT_WINDOWS.cinema).forEach(win=>{
+  AGENT_WINDOWS.forEach(win=>{
     const f=w[win.key]; if(!f) return;
-    out[win.key] = win.notifyOnly ? {list:false, notify:!!f.notify, ...(f.subs?{subs:f.subs}:{})} : {...f};
+    out[win.key] = {...f};
   });
   return out;
 }
@@ -11908,9 +11889,9 @@ function watchForKind(watch, kind){
 // CAS-221: the mapping is its own function so the pick-agent card can read the SAME one.
 function watchToStatuses(watch){
   const out=new Set(), w=migrateWatch(watch);
-  Object.keys(AGENT_WINDOWS).forEach(kind=>AGENT_WINDOWS[kind].forEach(win=>{
+  AGENT_WINDOWS.forEach(win=>{
     const f=w[win.key]; if(f && (f.list || f.notify)) win.status.forEach(s=>out.add(s));
-  }));
+  });
   return [...out];
 }
 // …and the LISTING scope is only the windows you asked to see. Empty means "no window was singled out", which
@@ -11918,14 +11899,14 @@ function watchToStatuses(watch){
 // agent that has never been through this screen.
 function listToStatuses(watch){
   const out=new Set(), w=migrateWatch(watch);
-  Object.keys(AGENT_WINDOWS).forEach(kind=>AGENT_WINDOWS[kind].forEach(win=>{
+  AGENT_WINDOWS.forEach(win=>{
     if(w[win.key] && w[win.key].list) win.status.forEach(s=>out.add(s));
-  }));
+  });
   return [...out];
 }
-// CAS-532: both read onbFlow.draft's own kind now, not the whole shared object — see watchForKind above.
-function watchStatuses(){ return watchToStatuses(watchForKind(onbFlow.watch, (onbFlow.draft||{}).kind)); }
-function listStatuses(){  return listToStatuses(watchForKind(onbFlow.watch, (onbFlow.draft||{}).kind)); }
+// CAS-723: no more per-agent kind to read — see watchAllWindows above.
+function watchStatuses(){ return watchToStatuses(watchAllWindows(onbFlow.watch)); }
+function listStatuses(){  return listToStatuses(watchAllWindows(onbFlow.watch)); }
 // Persisted per agent, so backing out to the shortlist and returning keeps your answer — but picking a
 // DIFFERENT agent gets that agent's own seed rather than the last one's leftovers.
 const WATCH_KEY="cascade_watchwins";
@@ -11965,9 +11946,11 @@ const activeWatch = () => prefsWatchMode ? watchPrefs : (onbFlow.watch || {});
 // own `status`/`listStatus`/`watchWindows` are a cached derivation of watchPrefs now, never an independent
 // answer, so this is the one place that writes them. Runs once at boot (belt-and-suspenders for a cascade
 // saved before this ticket) and again every time the Where & when screen changes a switch.
+// CAS-723: the same derived windows go to every agent regardless of c.kind now, so `w` is computed once
+// outside the loop rather than per agent.
 function syncWatchPrefsToCascades(){
+  const w=watchAllWindows(watchPrefs);
   cascades.forEach(c=>{
-    const w=watchForKind(watchPrefs, c.kind);   // CAS-532: kind-scoped, same restriction every other reader applies
     c.status=watchToStatuses(w); c.listStatus=listToStatuses(w); c.watchWindows=w;
   });
   saveCascades();
@@ -11980,9 +11963,7 @@ syncWatchPrefsToCascades();   // once at boot, so a cascade saved before CAS-532
 function drawWatchLanes(){
   const box=$("wwLanes"); if(!box) return;
   box.innerHTML = agentWindows().map(w=>{
-    // CAS-474: a notifyOnly window (Premium/Rent/Streaming, offered to a Cinema agent as "catch it at home")
-    // never gets a List switch — its catalogue stays cinema-scoped, so List can never be true for it.
-    const lst=w.notifyOnly ? false : winOn(w.key,"list"), nt=winOn(w.key,"notify");
+    const lst=winOn(w.key,"list"), nt=winOn(w.key,"notify");
     // CAS-532: List/Follow renamed Track/Alert — global now, so the hint no longer says "this agent".
     const sw=(which,label,on,hint)=>`<button type="button" class="agwt${on?" on":""}" aria-pressed="${on}"
         title="${escA(hint)}" onclick="wwToggleWin('${w.key}','${which}')"><span class="wwb">✓</span>${label}</button>`;
@@ -12000,7 +11981,7 @@ function drawWatchLanes(){
       <div class="wwhead"><span class="cd"></span><span class="wwn">${esc(w.label)}</span></div>
       <p class="agwsub">${esc(w.sub)}</p>
       <div class="agwrow">
-        ${w.notifyOnly ? "" : sw("list","Track", lst, `Include ${w.label.toLowerCase()} films in every agent's results`)}
+        ${sw("list","Track", lst, `Include ${w.label.toLowerCase()} films in every agent's results`)}
         ${sw("notify","Notify", nt, `Notify you ${w.notifySay}, even if you haven't chosen to track it`)}
       </div>${subs}</div>`;
   }).join("");
@@ -12195,7 +12176,7 @@ function onbApply(){
   // said List. One field could only ever answer one of those two questions.
   d.status = watchStatuses();
   d.listStatus = listStatuses();
-  d.watchWindows = watchForKind(onbFlow.watch, d.kind);   // CAS-532: the kind-scoped view, not the raw global one
+  d.watchWindows = watchAllWindows(onbFlow.watch);   // CAS-723: kind-free — see watchAllWindows above
   // CAS-244: the agent's own channel answer rides with it. Only the RESOLVED value is written — a channel
   // the account has switched off is false here rather than absent, so the monitor never has to know about
   // the account to read this, and the front end keeps the raw answer in `channels` so turning the account
@@ -12222,7 +12203,7 @@ function onbApply(){
   // also this ticket's stated default for each type.
   const off={}; Object.keys(ALERT_DEFAULTS).forEach(k=>{ off[k]=false; });
   d.alerts = off;
-  agentWindows(d.kind).forEach(w=>{
+  agentWindows().forEach(w=>{
     if(!winOn(w.key,"notify")) return;
     if(w.alerts) Object.assign(d.alerts, w.alerts);
     // CAS-242: and the finer moments, each only if it was actually asked for. subOn() already requires
@@ -12690,10 +12671,11 @@ function laneCrit(c, kind){
 // Awards is no longer offered in the cinema lane at all (its whole standard is the awards rung), and Date
 // Night's cinema card now says "A little buzz" instead of promising "Well-liked" it can no longer apply.
 // laneCrit stays the backstop so a future preset cannot re-open the gap by accident.
-const missionKind = () => {
-  const k=(onbFlow.draft||{}).kind;
-  return (k==="cinema"||k==="stream") ? k : flowKind;
-};
+// CAS-723: c.kind no longer distinguishes an agent's Mission dials either. MISSION_DIALS/MISSION_DIALS_USED
+// survive as data — CAS-724 retires the whole OR block and these tables with it — but missionKind() stops
+// branching on kind, so every agent reads the one cinema set (Scale, Buzz), which already carries no
+// secondary dials: "More controls" stops rendering for every agent, not only cinema's.
+const missionKind = () => "cinema";
 // The secondary dials for the lane you are in — the ones "More controls" reveals. One definition, read by
 // both the Mission screen and the auto-relax, so the relax can never loosen a dial the screen doesn't show.
 function missionRest(){
@@ -13237,7 +13219,10 @@ const SHARP_STEPS = {
       const rest = missionRest();
       const dials = ks => ks.map(dialCardHTML).join("");
       // CAS-360: streaming-only — release history, not a live "in cinemas now" status, so it has no place
-      // on a cinema agent's Mission (which already watches films on their way to a cinema).
+      // on a cinema agent's Mission (which already watches films on their way to a cinema). CAS-723 fixes
+      // missionKind() to "cinema" (its kind branch retires with the rest of this section's), so this reads
+      // as never-shown now — consistent with the dials above losing the same branch, and short-lived: CAS-724
+      // retires the whole Mission-dial screen next.
       const cinemaOnly = missionKind()==="stream" ? `<div class="switch mini" id="onbCinemaRelease" role="switch">
           <span>🎬 Had a cinema release
             <small style="color:var(--faint)">— an AU cinema (not limited) release, at any point</small></span>
@@ -13296,14 +13281,16 @@ const SHARP_STEPS = {
       // CAS-228: two switches per window, and the subtitle has to teach the difference in one line, because
       // "List" and "Notify" only read as independent if you are told they are. The old subtitle described a
       // screen that did both at once and is no longer true of this one.
-      const stream = agentWindowKind()==="stream";
+      // CAS-723: every agent watches every window now, so the home-window services hint is no longer
+      // conditional on a "stream" kind — it applies whenever Premium/Rent/Streaming can be in play, which is
+      // now always.
       return `<p class="ossub">Two separate choices per window: <b>List</b> puts those films in this agent's list, and
           <b>Follow</b> keeps the window counted in what this agent tracks — its found &amp; new totals — even if
           you don't list it. Neither implies the other.</p>
         <div id="wwLanes"></div>
         <div class="usec wwsec">Notify me by</div>
         <div id="wwChannels"></div>
-        ${stream ? `<p class="wwfoot"><span>ℹ️</span><span>To follow these windows fully we'll need to know your current rental and streaming services — we'll ask for this later.</span></p>` : ""}`;
+        <p class="wwfoot"><span>ℹ️</span><span>To follow these windows fully we'll need to know your current rental and streaming services — we'll ask for this later.</span></p>`;
     },
     wire(){ drawWatchLanes(); drawNotifyBy(); },
   },
@@ -13321,7 +13308,6 @@ const SHARP_STEPS = {
       const nNew = onbFlow.draft ? newlyAddedCount(onbApply()) : 0;
       const mission = missionDetail();
       const style = styleDetail();
-      const stream = missionKind()==="stream";
       // CAS-531: Mission and Style are promoted to the primary visual elements — big tinted doors carrying
       // every selection the agent's bar/style actually holds, not the old one-line "11 of 19" summary — so
       // the two things that most decide what an agent finds are the two things this page leads with. Rating
@@ -13329,9 +13315,11 @@ const SHARP_STEPS = {
       // The name row is gone — CAS-531 #1 moved it into the page header (see renderOnbStep's key==="briefing"
       // branch), so a rename opens the identical "name" spoke this row used to.
       // CAS-550: Style, Rating and How far back are back as doors — CAS-532 retired them "everywhere" as a
-      // deliberate call, not a bug, and this ticket reverses that part by a later decision. How far back
-      // stays off a cinema agent: its year cutoff is a no-op there (AU theatrical releases are inherently
-      // recent), so the door would set nothing.
+      // deliberate call, not a bug, and this ticket reverses that part by a later decision.
+      // CAS-723: How far back used to stay off a cinema agent, since its year cutoff was a no-op there (AU
+      // theatrical releases are inherently recent) — c.kind retires as a scoping input, so the door is no
+      // longer conditional either. It sets nothing for a cinema-flavoured agent exactly as it always did;
+      // this just stops hiding a control that was never wrong to show.
       return `<p class="ossub">Reconfigure this agent here.${nNew ? ` <b>${nNew}</b> newly added film${nNew===1?"":"s"} in its list right now.` : ""}</p>
         <button type="button" class="eacard msn" onclick="briefGo('selectivity')">
           <span class="eachd"><span class="di">🎯</span><span class="dh">Mission</span></span>
@@ -13348,8 +13336,8 @@ const SHARP_STEPS = {
         <div class="easec">
           <button type="button" class="easub" onclick="briefGo('age')">
             <span class="eash">Rating</span><span class="easv">${esc(trailAge())}</span></button>
-          ${stream ? `<button type="button" class="easub" onclick="briefGo('years')">
-            <span class="eash">How far back</span><span class="easv">${esc(yearsLabel(flowYearsBack()))}</span></button>` : ""}
+          <button type="button" class="easub" onclick="briefGo('years')">
+            <span class="eash">How far back</span><span class="easv">${esc(yearsLabel(flowYearsBack()))}</span></button>
         </div>
         <!-- CAS-613: auto-notify — per-agent, arms a film's earliest acceptable notify window the moment
              the agent finds it (recomputeFound), mirroring toggleFilmOpt's manual tick. watchPrefs stays

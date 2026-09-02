@@ -9,7 +9,7 @@
 // recommendations render, a film's Watched control works, and the my-services filter actually filters.
 import { test, expect } from "@playwright/test";
 import {
-  freshApp, toShortlist, shortlistCards, finishFlow, toListing, settleListing, ctaLocator,
+  freshApp, toShortlist, shortlistCards, finishFlow, toListing, settleListing, ctaLocator, sectionCounts,
 } from "./helpers.mjs";
 
 // Mirrors cas565.spec.mjs's addSecondAgent — a second agent made from the deck's "New Agent" card stops at
@@ -174,6 +174,30 @@ test("the Watch screen's tab strip follows the enabled watch windows", async ({ 
   await expect(premiumLane).not.toHaveClass(/on/);
   await page.locator("#wwScreen .osback").click();
   await expect(page.locator(".wtabbtn", { hasText: "Premium" })).toHaveCount(0);
+});
+
+// CAS-723: c.kind retires — every agent now watches every window enabled in Where & when, with no cinema/
+// stream narrowing, so a "cinema" preset's listing carries a film's whole journey rather than losing it the
+// moment it leaves cinemas. Premium is the only window off by default, so enabling it (the same path CAS-725's
+// test above already drives) is what "every window enabled" means here.
+test("an agent created with every window enabled lists films at rental or streaming too (CAS-723)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  await page.locator("#navMenuBtn").click();
+  await page.locator("#navMenu .navitem", { hasText: "Where & when you'll watch" }).click();
+  await expect(page.locator(".osh", { hasText: "Where & when you'll watch" })).toBeVisible();
+  const premiumLane = page.locator(".wwlane", { has: page.locator(".wwn", { hasText: "Premium" }) });
+  await premiumLane.locator(".agwt", { hasText: "Track" }).click();
+  await expect(premiumLane).toHaveClass(/on/);
+  await page.locator("#wwScreen .osback").click();
+  await expect(page.locator("#wwScreen")).not.toHaveClass(/open/);
+
+  await settleListing(page);
+  const groups = await sectionCounts(page);
+  expect(groups.some(g => (g.window === "rental" || g.window === "included_streaming") && g.count > 0),
+    `no rental/included_streaming group in ${JSON.stringify(groups)}`).toBe(true);
 });
 
 test("'Only show films on my services' changes what a new agent finds", async ({ page }) => {
