@@ -4746,6 +4746,52 @@ function recomputeFound(){
   const _t460recompute = performance.now();
   console.log('[CAS-460] recomputeFound start', _t460recompute);
   const hits=new Map();                             // film id -> the Cascades that chose it, THIS run
+  // CAS-728: sticky admission. An unpinned film's place in an agent is no longer re-tested every pass — once
+  // it is admitted, a row in agent_films (CAS-726) holds it, without re-testing, until the user watches or
+  // dismisses the film (reaped below) or the agent's OWN criteria move (cascSigOf drift, re-evaluated below).
+  // window.CascadePersistence is only unset for the very first boot paint (this function's first-ever call
+  // runs before that IIFE below it in this same script has executed) — everywhere else, including every test
+  // in this harness, it is there; the fallback keeps that one paint sane rather than throwing.
+  const CP = (typeof window!=="undefined") ? window.CascadePersistence : null;
+  const admitted = new Map();   // cascade id -> Set(movie_id) — agent_films' own keys, always strings
+  if(CP){
+    cascades.forEach(c=>{
+      const sig = cascSigOf(c);
+      CP.agentFilmsFor(c.id).forEach(r=>{
+        const mid = +r.movie_id;
+        const e = notify[r.movie_id];
+        // Point 2: watched or dismissed outranks admission itself — the row is deleted, not merely hidden.
+        if(watched.has(mid) || (e && e.removed)){ CP.clearAgentFilm(c.id, r.movie_id); return; }
+        if(c.paused || r.agent_sig===sig) return;   // point 5 / point 2: frozen while paused; unedited stays put
+        // Point 3: cascSigOf(c) has moved since this row was written — re-evaluate this one film now.
+        const m = MOVIES.find(x=>x.tmdb_id===mid);
+        if(!m){ CP.clearAgentFilm(c.id, r.movie_id); return; }   // the film itself is gone from the catalogue
+        const movedPast = STATUS_RUNG[primaryStatus(m)] > STATUS_RUNG[r.admission_status];
+        const stillIn = movedPast
+          // Past its admission window: "would I admit this under my new settings?" — the SCORE stays the
+          // figure recorded at admission (using today's would re-trigger the cinema/streaming basis cliff by
+          // an edit instead of by time), every other requirement is tested fresh against the film as it is now.
+          ? r.admission_score>=agentFloor(c) && matchesCriteria(m, {...c, status:[], myServices:false}, false, true)
+          // Still at or before it: nothing about the film's own journey has moved, so a normal live re-test
+          // (same test an arrival gets) is the honest one.
+          : watchesFilm(m,c);
+        if(stillIn){
+          CP.setAgentFilm(c.id, r.movie_id, { admitted_at:r.admitted_at, admission_score:r.admission_score,
+                                               admission_status:r.admission_status, agent_sig:sig });
+        } else {
+          CP.clearAgentFilm(c.id, r.movie_id);
+          // A film LEAVING an agent loses only the Watch On value THIS agent armed — a hand-ticked value is
+          // its own choice and outlives the agent that used to also be watching the film (CAS-469).
+          if(e){
+            e.wins=e.wins||{}; e.winsSource=e.winsSource||{};
+            WATCH_LEVEL_KEYS.forEach(k=>{ if(e.winsSource[k]==="auto"){ e.wins[k]=false; delete e.winsSource[k]; } });
+            e.watchEarned=undefined;
+          }
+        }
+      });
+      admitted.set(c.id, new Set(CP.agentFilmsFor(c.id).map(r=>r.movie_id)));
+    });
+  }
   MOVIES.forEach(m=>{
     const candidates = cascades.filter(c=>{
       if(c.paused) return false;                    // guest mode (CAS-79): a paused agent watches nothing, so
@@ -4764,7 +4810,19 @@ function recomputeFound(){
     if(pinned.length){
       ids = pinned.map(c=>c.id);
     } else {
-      const matched = candidates.filter(c=>watchesFilm(m,c));   // WATCHES, not shows — see matchesTaste
+      const mkey=String(m.tmdb_id);
+      // CAS-728 point 1/4: a film already in an agent's stored set stays, untested; a film that isn't yet is
+      // an arrival, tested exactly as before (watchesFilm — WATCHES, not shows, see matchesTaste) and, if it
+      // passes, written into the ledger right here so the next pass finds it already admitted.
+      const matched = candidates.filter(c=>{
+        if(!CP) return watchesFilm(m,c);
+        if(admitted.get(c.id).has(mkey)) return true;
+        if(!watchesFilm(m,c)) return false;
+        CP.setAgentFilm(c.id, m.tmdb_id, { admission_score:cascadeScore(m), admission_status:primaryStatus(m),
+                                            agent_sig:cascSigOf(c) });
+        admitted.get(c.id).add(mkey);
+        return true;
+      });
       if(!matched.length) return;
       // CAS-709: unpinned, a film belongs to exactly ONE agent — its highest-ranked (lowest .order) match.
       ids = [matched.reduce((best,c)=> c.order<best.order ? c : best).id];
@@ -19438,11 +19496,11 @@ else if(dedupedN)
   }
 
   // ==========================================================================
-  // CAS-726: the admitted-film ledger (agent_films) — storage + load/save only. Membership itself
-  // stays derived (recomputeFound, above) until CAS-728 makes it sticky by reading/writing this set
-  // on every pass; this is the seam that ticket writes through. Keyed by `cascade_id::movie_id`
-  // (a genuine three-column primary key, same shape as list_films) rather than nested under `notify`,
-  // since a row here says something about one AGENT's relationship to a film, not the film itself.
+  // CAS-726/CAS-728: the admitted-film ledger (agent_films) — storage here, read/written every pass by
+  // recomputeFound (above), which is what makes membership sticky rather than re-derived from scratch.
+  // Keyed by `cascade_id::movie_id` (a genuine three-column primary key, same shape as list_films) rather
+  // than nested under `notify`, since a row here says something about one AGENT's relationship to a film,
+  // not the film itself.
   // ==========================================================================
   let agentFilms={};   // "cascadeId::movieId" -> {admitted_at, admission_score, admission_status, agent_sig}
   const agentFilmKey=(cascadeId,movieId)=>cascadeId+"::"+movieId;

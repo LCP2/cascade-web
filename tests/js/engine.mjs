@@ -257,6 +257,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // seed and read the per-film arming state directly; watchPrefs is exposed through a getter/setter (like
   // flowKind) because the engine REASSIGNS the binding wholesale on load/sync, not just its contents.
   recomputeFound, notify, entryFor, watchLevelsFor, WATCH_LEVEL_KEYS,
+  // CAS-728: cascSigOf/agentFloor are what recomputeFound's own sticky-admission re-evaluation reads to
+  // decide whether an agent has changed and what its current floor is — exported so a test can compute the
+  // exact signature/floor a seeded agent_films row should carry, rather than guessing at internal state.
+  cascSigOf, agentFloor,
   // CAS-726: filmWatchSource is the provenance read the round-trip test asserts against directly;
   // toggleFilmOpt is wire code (window-assigned, like ymCascToggle above) — a test drives a manual
   // tick through the real function rather than poking notify[id].wins by hand.

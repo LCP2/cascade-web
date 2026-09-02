@@ -2675,3 +2675,148 @@ test("CAS-726: a locally-written agent_films row (setAgentFilm) survives a push-
   assert.equal(rows[0].admission_score, 91);
   assert.equal(rows[0].agent_sig, "sig-c");
 }));
+
+// ---- STICKY ADMISSION (CAS-728) -----------------------------------------------------------------------
+// Once an agent admits a film, agent_films (CAS-726) holds it — recomputeFound stops re-testing it every
+// pass — until the user watches/dismisses the film (out of scope for these) or the agent's OWN cascSigOf
+// moves. Rows are seeded directly via CascadePersistence.setAgentFilm, the same seam CAS-726's own tests
+// above use, rather than by hoping the live catalogue admits a chosen film through real dial values —
+// CAS-727's placement tests solve that with a pin instead, but a pin bypasses admission entirely, which
+// would prove nothing about IT. `withCas728State` mirrors withCas726State's own notify save/restore: the
+// permissive test agents below can incidentally admit other real films while they're alive (arrivals are
+// still tested normally), and restoring the whole of `E.notify` afterwards, not just the one id under test,
+// is what actually cleans that up rather than leaving stray provenance on unrelated films.
+function withCas728State(fn){
+  const savedNotify = { ...E.notify };
+  try { fn(); }
+  finally {
+    Object.keys(E.notify).forEach(k => delete E.notify[k]);
+    Object.assign(E.notify, savedNotify);
+  }
+}
+function pastCinemaUnwatchedFilm(excludeId){
+  const m = E.MOVIES.find(x => !E.watched.has(x.tmdb_id) && x.tmdb_id !== excludeId
+    && E.primaryStatus(x) === "rental");
+  if(!m) throw new Error("no unwatched 'rental' film in the harness catalogue — this test would prove nothing");
+  return m;
+}
+const STICKY_WATCH_PREFS = {
+  in_cinema: { list: true, notify: false }, premium: { list: false, notify: false },
+  rent: { list: true, notify: false }, stream: { list: true, notify: false },
+};
+// A near-impossible floor (99) keeps a freshly-seeded agent from also admitting half the catalogue as
+// "arrivals" the moment recomputeFound runs — the row under test is written directly, below, regardless.
+function stickyTestCascade(id, floor){
+  const c = E.normCascade({ kind: "stream", status: [] });
+  c.id = id; c.paused = false; c.order = 0;
+  c.watchMarkers = { in_cinema: floor, premium: null, rent: floor, stream: floor };
+  return c;
+}
+
+test("CAS-728 AC2: an unedited agent keeps a film admitted after it moves past its admission window", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const film = pastCinemaUnwatchedFilm();
+    const id = film.tmdb_id;
+    const c = stickyTestCascade("cas728-ac2", 99);
+    E.cascades.push(c);
+    const sig = E.cascSigOf(c);
+    try {
+      E.CascadePersistence.setAgentFilm(c.id, id,
+        { admission_score: 90, admission_status: "in_cinema", agent_sig: sig });
+      E.recomputeFound();
+      const row = E.CascadePersistence.agentFilmsFor(c.id).find(r => r.movie_id === String(id));
+      assert.ok(row, "an unedited agent must not drop a film whose status has simply moved on");
+      assert.equal(row.admission_score, 90, "the stored admission_score must survive untouched — no retest happened");
+    } finally { unseedCascade(c.id); }
+  });
+}));
+
+test("CAS-728 AC3: raising the floor past a film's stored admission_score drops it on re-evaluation", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const film = pastCinemaUnwatchedFilm();
+    const id = film.tmdb_id;
+    const c = stickyTestCascade("cas728-ac3", 99);
+    E.cascades.push(c);
+    const sigBefore = E.cascSigOf(c);
+    try {
+      E.CascadePersistence.setAgentFilm(c.id, id,
+        { admission_score: 90, admission_status: "in_cinema", agent_sig: sigBefore });
+      c.watchMarkers = { in_cinema: 95, premium: null, rent: 95, stream: 95 };   // new floor 95 > stored 90
+      assert.notEqual(E.cascSigOf(c), sigBefore, "this test's own edit must actually move cascSigOf(c)");
+      E.recomputeFound();
+      const row = E.CascadePersistence.agentFilmsFor(c.id).find(r => r.movie_id === String(id));
+      assert.ok(!row, "a floor raised past the stored admission_score must drop the film on re-evaluation");
+    } finally { unseedCascade(c.id); }
+  });
+}));
+
+test("CAS-728 AC4: a floor below the stored admission_score keeps the film — the stored score, not a live one", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const film = pastCinemaUnwatchedFilm();
+    const id = film.tmdb_id;
+    const saved = { rt_critic: film.rt_critic, metacritic: film.metacritic, imdb_votes: film.imdb_votes };
+    // Zero the film's LIVE cascadeScore to -1 — no review signal at all — so a re-test that wrongly read the
+    // live score would fail at ANY floor. Only a re-test against the stored admission_score of 90 can pass.
+    film.rt_critic = null; film.metacritic = null; film.imdb_votes = 0;
+    assert.equal(E.cascadeScore(film), -1, "this test's own setup must actually zero out the live score");
+    const c = stickyTestCascade("cas728-ac4", 99);
+    E.cascades.push(c);
+    const sigBefore = E.cascSigOf(c);
+    try {
+      E.CascadePersistence.setAgentFilm(c.id, id,
+        { admission_score: 90, admission_status: "in_cinema", agent_sig: sigBefore });
+      c.watchMarkers = { in_cinema: 80, premium: null, rent: 80, stream: 80 };   // 80 <= stored 90, > live (-1)
+      E.recomputeFound();
+      const row = E.CascadePersistence.agentFilmsFor(c.id).find(r => r.movie_id === String(id));
+      assert.ok(row, "a floor of 80 against a stored admission_score of 90 must keep the film — a live-score " +
+        "re-test would fail unconditionally here (-1), so this only passes off the stored score");
+    } finally { unseedCascade(c.id); Object.assign(film, saved); }
+  });
+}));
+
+test("CAS-728 AC5: a manual Watch On value survives a re-evaluation that removes the film from its agent", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const film = pastCinemaUnwatchedFilm();
+    const id = film.tmdb_id;
+    const c = stickyTestCascade("cas728-ac5", 99);
+    E.cascades.push(c);
+    const sigBefore = E.cascSigOf(c);
+    try {
+      E.CascadePersistence.setAgentFilm(c.id, id,
+        { admission_score: 90, admission_status: "in_cinema", agent_sig: sigBefore });
+      const level = E.watchLevelsFor(id).find(l => !l.spent);
+      assert.ok(level, "no un-spent Watch level on this film — the harness catalogue looks wrong");
+      E.toggleFilmOpt(id, level.key);
+      assert.equal(E.notify[id].wins[level.key], true, "setup: the manual tick must actually land");
+      c.watchMarkers = { in_cinema: 95, premium: null, rent: 95, stream: 95 };   // drops the film, as in AC3
+      E.recomputeFound();
+      const row = E.CascadePersistence.agentFilmsFor(c.id).find(r => r.movie_id === String(id));
+      assert.ok(!row, "setup: the film must actually leave the agent for this to test anything");
+      assert.equal(E.notify[id].wins[level.key], true, "AC5: a manual Watch On value must survive the removal");
+      assert.equal(E.notify[id].winsSource[level.key], "manual");
+    } finally { unseedCascade(c.id); }
+  });
+}));
+
+test("CAS-728 AC6: a cascSigOf change on one agent never re-evaluates another agent's rows", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const filmA = pastCinemaUnwatchedFilm();
+    const filmB = pastCinemaUnwatchedFilm(filmA.tmdb_id);
+    const idA = filmA.tmdb_id, idB = filmB.tmdb_id;
+    const a = stickyTestCascade("cas728-ac6-a", 99);
+    // B's floor already exceeds its own stored admission_score — if B were ever re-evaluated it would drop,
+    // so B surviving is proof its own re-evaluation branch never ran off agent A's edit.
+    const b = stickyTestCascade("cas728-ac6-b", 50);
+    E.cascades.push(a, b);
+    const sigA = E.cascSigOf(a), sigB = E.cascSigOf(b);
+    try {
+      E.CascadePersistence.setAgentFilm(a.id, idA, { admission_score: 90, admission_status: "in_cinema", agent_sig: sigA });
+      E.CascadePersistence.setAgentFilm(b.id, idB, { admission_score: 10, admission_status: "in_cinema", agent_sig: sigB });
+      a.watchMarkers = { in_cinema: 95, premium: null, rent: 95, stream: 95 };   // only A's own cascSigOf moves
+      E.recomputeFound();
+      const rowB = E.CascadePersistence.agentFilmsFor(b.id).find(r => r.movie_id === String(idB));
+      assert.ok(rowB, "B's row must survive untouched — only A's own cascSigOf changed");
+      assert.equal(rowB.agent_sig, sigB, "B's agent_sig must not be rewritten by an edit to a different agent");
+    } finally { unseedCascade(a.id); unseedCascade(b.id); }
+  });
+}));
