@@ -12964,7 +12964,8 @@ function msnValueLine(c){
 function msnTrackAreaHTML(c){
   const usable=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
   const neverEnabled=WATCH_LEVEL_KEYS.filter(k=>windowEnabled(k) && !usable.includes(k));
-  const byScore=[...usable].sort((a,b)=>c.watchMarkers[a]-c.watchMarkers[b]);
+  const byScore=[...usable].sort((a,b)=>(c.watchMarkers[a]-c.watchMarkers[b])
+    || (WATCH_LEVEL_KEYS.indexOf(b)-WATCH_LEVEL_KEYS.indexOf(a)));
   const segs=[`<div class="msnseg grey" style="left:0%;width:${byScore.length?trackPct(c.watchMarkers[byScore[0]]):100}%"></div>`];
   byScore.forEach((k,i)=>{
     const from=trackPct(c.watchMarkers[k]);
@@ -13020,7 +13021,8 @@ function restoreWatchMarker(c, key){
 function paintMsnTrack(){
   const c=onbFlow.draft, track=$("msnTrack"); if(!c || !track) return;
   const usable=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
-  const byScore=[...usable].sort((a,b)=>c.watchMarkers[a]-c.watchMarkers[b]);
+  const byScore=[...usable].sort((a,b)=>(c.watchMarkers[a]-c.watchMarkers[b])
+    || (WATCH_LEVEL_KEYS.indexOf(b)-WATCH_LEVEL_KEYS.indexOf(a)));
   const segEls=track.querySelectorAll(".msnseg");
   if(segEls[0]) segEls[0].style.width=(byScore.length?trackPct(c.watchMarkers[byScore[0]]):100)+"%";
   byScore.forEach((k,i)=>{
@@ -13028,6 +13030,7 @@ function paintMsnTrack(){
     const from=trackPct(c.watchMarkers[k]);
     const to=i+1<byScore.length ? trackPct(c.watchMarkers[byScore[i+1]]) : 100;
     el.style.left=from+"%"; el.style.width=Math.max(0,to-from)+"%";
+    el.style.background=WINDOW_COLOR[k];
   });
   track.querySelectorAll(".msnmark").forEach(el=>{
     const key=el.dataset.key, v=c.watchMarkers[key]; if(v==null) return;
