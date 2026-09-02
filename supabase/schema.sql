@@ -222,12 +222,12 @@ alter table public.film_watch add column if not exists sources jsonb not null de
 -- ---------------------------------------------------------------------------
 -- agent_films — the admitted set, per agent (CAS-726)
 -- ---------------------------------------------------------------------------
--- One row per (user, cascade, film) a cascade has admitted. Membership stays derived (recomputeFound)
--- until CAS-728 makes it sticky by reading/writing this table; this ticket only adds the storage and
--- the app's read/write paths. `agent_sig` is the cascSigOf(c) value in force when the row was written
--- — the re-evaluation ticket compares it to the agent's CURRENT signature to know whether the row
--- still reflects the agent's settings. A row with nothing to say (the film left the agent) is deleted
--- rather than kept, same convention as film_picks/user_films/film_watch.
+-- One row per (user, cascade, film) a cascade has admitted. Membership is sticky (CAS-728): recomputeFound
+-- reads and writes this table every pass instead of re-deriving membership from scratch. `agent_sig` is the
+-- cascSigOf(c) value in force when the row was written — CAS-728's re-evaluation compares it to the agent's
+-- CURRENT signature to know whether the row still reflects the agent's settings. A row with nothing to say
+-- (the film left the agent, or was watched/dismissed) is deleted rather than kept, same convention as
+-- film_picks/user_films/film_watch.
 create table if not exists public.agent_films (
   user_id          uuid not null references auth.users(id) on delete cascade,
   cascade_id       uuid not null references public.cascades(id) on delete cascade,
