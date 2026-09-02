@@ -306,6 +306,78 @@ test("Mission/hub: no Watch On door, marker values in the Mission card, requirem
   await expect(page.locator(".eacard", { hasText: "Watch On" })).toHaveCount(0);
 });
 
+// CAS-732: paintMsnTrack() (the in-place drag repaint) updated each segment's left/width from the sorted
+// marker order but never its background, so a segment kept whatever colour msnTrackAreaHTML() gave it at
+// build time even once dragging re-sorted it to a different window. The trigger is a tie with no
+// deterministic tie-break — exactly how CAS-727 migrated every pre-existing agent (watchMarkers[k] all
+// equal) — which built the segments in WATCH_LEVEL_KEYS order rather than ascending-score order.
+test("Mission screen: dragging repaints segment colours to match their windows; ties break stream-first (CAS-732 AC2/AC3)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFirstAgentMission(page);
+
+  // Flatten every window to the exact tie CAS-732 traces the bug to. Premium is switched on too so all
+  // four windows sit on the track (it's off by default, CAS-243).
+  await page.evaluate(() => {
+    watchPrefs.premium = { list: true, notify: false };
+    const c = onbFlow.draft;
+    WATCH_LEVEL_KEYS.forEach(k => { c.watchMarkers[k] = 75; });
+    msnRebuild();
+  });
+  await expect(page.locator(".msnmark")).toHaveCount(4);
+
+  // AC3: with all four markers tied, the leftmost coloured segment carries Stream's colour — the tie-break
+  // orders low-window-first, matching the direction the track is drawn in.
+  const leftmostBg = await page.locator(".msnseg").nth(1).evaluate(el => getComputedStyle(el).backgroundColor);
+  const streamBg = await page.evaluate(() => {
+    const d = document.createElement("div");
+    d.style.background = WINDOW_COLOR.stream;
+    document.body.appendChild(d);
+    const rgb = getComputedStyle(d).backgroundColor;
+    d.remove();
+    return rgb;
+  });
+  expect(leftmostBg).toBe(streamBg);
+
+  // AC2: drag Stream's own marker away from the still-tied trio above it via the real handle path (last in
+  // DOM among the overlapping tied handles, so it's the one that actually receives the pointer), then every
+  // .msnseg's computed background-color must match WINDOW_COLOR for the window whose marker begins that
+  // segment. Fails on the current code, which only repaints position/width on drag, never colour.
+  const trackBox = await page.locator(".msntrackwrap").boundingBox();
+  const handle = page.locator('.msnhandle[data-key="stream"]');
+  const handleBox = await handle.boundingBox();
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(trackBox.x + 2, handleBox.y + handleBox.height / 2, { steps: 8 });
+  await page.mouse.up();
+
+  const mismatches = await page.evaluate(() => {
+    const c = onbFlow.draft;
+    const usable = WATCH_LEVEL_KEYS.filter(k => windowUsable(c, k));
+    const byScore = [...usable].sort((a, b) => (c.watchMarkers[a] - c.watchMarkers[b])
+      || (WATCH_LEVEL_KEYS.indexOf(b) - WATCH_LEVEL_KEYS.indexOf(a)));
+    const segEls = document.querySelectorAll(".msnseg");
+    const resolve = v => {
+      const d = document.createElement("div");
+      d.style.background = v;
+      document.body.appendChild(d);
+      const rgb = getComputedStyle(d).backgroundColor;
+      d.remove();
+      return rgb;
+    };
+    const bad = [];
+    byScore.forEach((k, i) => {
+      const el = segEls[i + 1]; if(!el) return;
+      const got = getComputedStyle(el).backgroundColor;
+      const want = resolve(WINDOW_COLOR[k]);
+      if(got !== want) bad.push({ i, k, got, want });
+    });
+    return bad;
+  });
+  expect(mismatches, JSON.stringify(mismatches)).toEqual([]);
+});
+
 test("'Only show films on my services' changes what a new agent finds", async ({ page }) => {
   // Every window a streaming agent lists (Premium/Rent/Streaming) is service-scoped, so switching the
   // filter on with no services named must drop the count — this exercises the real mechanism the switch
