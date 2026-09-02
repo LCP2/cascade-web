@@ -162,10 +162,11 @@ if(typeof window.CascadeAuth === "undefined"){
   // rather than re-deriving them from qScore's output alone.
   qScore, critScore, qScoreSourcesText, missionScoreStats, sortMoviesBy, ratingOf, IMDB_MIN_VOTES, imdbReliable,
   // CAS-695: the Cascade score's own basis switch (cascadeScore/cascadeScoreSourcesText, dispatching on
-  // isPreRelease) and the cinema-side score it dispatches to (cinemaScore, over buzzPctlOf/budgetPctlOf and
-  // their shared sorted cohort arrays/rank lookup) — exported independently so a test can assert each stage
-  // rather than only the combined qScoreHTML output.
-  cascadeScore, cascadeScoreSourcesText, cinemaScore, isPreRelease, buzzPctlOf, budgetPctlOf, pctRankOf,
+  // isPreRelease) and the cinema-side score it dispatches to (cinemaScore, over buzzPctlOf and its sorted
+  // cohort array/rank lookup) — exported independently so a test can assert each stage rather than only the
+  // combined qScoreHTML output. CAS-722 retired budgetPctlOf itself (budget left the score); CINEMA_BUDGET_VALS/
+  // CINEMA_BUDGET_MIN survive only for missionScoreStats' cinema Mission Budget dial, still exported for that.
+  cascadeScore, cascadeScoreSourcesText, cinemaScore, isPreRelease, buzzPctlOf, pctRankOf,
   BUZZ_POP_VALS, CINEMA_BUDGET_VALS, CINEMA_BUDGET_MIN,
   // CAS-703: the Target score hard gate's own held-back count, so a test can assert it against the set it
   // claims to describe without re-deriving it from stepCountLine's HTML output.

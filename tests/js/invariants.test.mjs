@@ -551,7 +551,7 @@ test("CAS-703 AC3/AC4: unscored films are held back (and counted) only while a t
 // ---- 10b. THE CHOSEN SORT'S OWN COMPARATOR DECIDES THE ORDER (CAS-702) ------------------------------------
 // CAS-699 stopped two guards silently overriding a chosen sort with the release timeline in In Cinema and
 // Upcoming. That was not the whole defect: sortMoviesBy's own "cascade" case still read qScore, which is -1
-// for virtually every real pre-release film (CAS-695 scores them off buzz/budget, not People's
+// for virtually every real pre-release film (CAS-695 scores them off buzz, not People's
 // vote/Critics) — so once the override was lifted, the "order" it revealed was really a tie-break
 // (rating/popularity), not the Cascade score a person had just picked. Checked against ground truth built
 // independently of listingOrder/sortForKey/sortMoviesBy — cascadeScore itself for one section+sort,
@@ -2238,9 +2238,9 @@ test("CAS-686: condensedShowsScores agrees with the three-source rule, over fixt
 // ---- CAS-695: THE CINEMA (PRE-RELEASE) CASCADE SCORE -------------------------------------------------------
 // Before this, qScore (People's vote/Critics) was the only Cascade score, and it scores from reviews that a
 // pre-release film cannot have yet — 85% of Upcoming and 79% of In Cinema carried no score. cascadeScore picks
-// its basis by where the film is in its life: the cinema score (buzz + budget percentiles) pre-release, the
+// its basis by where the film is in its life: the cinema score (buzz percentile, CAS-722) pre-release, the
 // streaming score (qScore) once released. PVOD sits on the streaming side by decision (it is released).
-test("CAS-695 AC1: the score's basis switches on isPreRelease — cinema (buzz/budget) before release, streaming (qScore) after", () => {
+test("CAS-695 AC1: the score's basis switches on isPreRelease — cinema (buzz) before release, streaming (qScore) after", () => {
   const preReleaseFilm = E.MOVIES.find(m => isPreRelease(m) && E.cascadeScore(m) >= 0);
   assert.ok(preReleaseFilm, "no scored pre-release film found — this test would prove nothing");
   assert.equal(E.cascadeScore(preReleaseFilm), E.cinemaScore(preReleaseFilm),
@@ -2258,44 +2258,42 @@ test("CAS-695 AC1: the score's basis switches on isPreRelease — cinema (buzz/b
   }
 });
 
-// AC2: within the cohort, a film with popularity but no budget/gross scores on buzz alone; one with both
-// scores on their mean; one with neither shows the dash (-1).
-test("CAS-695 AC2: cinemaScore is the mean of whichever of buzz/budget percentile a cohort film has", () => {
+// ---- CAS-722: THE CINEMA SCORE'S BASIS NARROWS TO BUZZ ALONE -----------------------------------------------
+// Measured against the 5,750-film catalogue: of the 995 cohort films that carried both buzz and budget
+// terms, dropping budget changed cinemaScore by a median of 0, and only 60 (6%) moved by more than 10
+// points. Budget is becoming an admission REQUIREMENT on a separate ticket, and nothing which admits a film
+// is also a term in its score — so budget leaves cinemaScore entirely in this release (AC1).
+test("CAS-722 AC1: cinemaScore is exactly buzzPctlOf for a cohort film, -1 with no numeric popularity", () => {
   const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
-  const buzzOnly = cohort.find(m => E.buzzPctlOf(m) != null && E.budgetPctlOf(m) == null);
-  const both     = cohort.find(m => E.buzzPctlOf(m) != null && E.budgetPctlOf(m) != null);
-  const neither  = cohort.find(m => E.buzzPctlOf(m) == null && E.budgetPctlOf(m) == null);
-  assert.ok(buzzOnly, "no buzz-only cohort film found — this test would prove nothing");
-  assert.ok(both, "no both-axes cohort film found — this test would prove nothing");
-
-  assert.equal(E.cinemaScore(buzzOnly), E.buzzPctlOf(buzzOnly), `${buzzOnly.title}: buzz-only film should score as its buzz percentile alone`);
-  assert.equal(E.cinemaScore(both), Math.round((E.buzzPctlOf(both) + E.budgetPctlOf(both)) / 2),
-    `${both.title}: both-axes film should score as the mean of the two percentiles`);
-  if(neither) assert.equal(E.cinemaScore(neither), -1, `${neither.title}: a cohort film with neither axis should not score`);
-
-  // Whole cohort: cinemaScore is exactly the rounded mean of whichever percentile(s) a film carries.
-  for(const m of cohort){
-    const bz = E.buzzPctlOf(m), bd = E.budgetPctlOf(m);
-    const terms = [bz, bd].filter(v => v != null);
-    const expected = terms.length ? Math.round(terms.reduce((x, y) => x + y, 0) / terms.length) : -1;
-    assert.equal(E.cinemaScore(m), expected, `${m.title}: cinemaScore disagrees with the buzz/budget percentile mean`);
+  const scored = cohort.filter(m => typeof m.popularity === "number");
+  const unscored = cohort.filter(m => typeof m.popularity !== "number");
+  assert.ok(scored.length > 0, "no cohort film with numeric popularity found — this test would prove nothing");
+  assert.ok(unscored.length > 0, "no cohort film with no numeric popularity found — this test would prove nothing");
+  for(const m of scored){
+    assert.equal(E.cinemaScore(m), E.buzzPctlOf(m), `${m.title}: cinemaScore disagrees with buzzPctlOf`);
+  }
+  for(const m of unscored){
+    assert.equal(E.cinemaScore(m), -1, `${m.title}: a cohort film with no numeric popularity should not score`);
   }
 });
 
-// AC3: percentile makes the buzz axis agree with the ladder's own badges "for free" — BUZZ_PCTL is the same
-// scale buzzPctlOf reads, so a film clearing a badge always carries a buzz percentile at or above that badge's
-// cut. (The BLENDED score is not floored the same way — CAS-695 is explicit that averaging in a
-// lower budget percentile pulls a two-axis film toward the middle, e.g. Doomsday 100 buzz-alone vs Odyssey 99
-// with a budget term dragging it down; that is a known, accepted property, not a defect to guard against.)
-test("CAS-695 AC3: a badge-tier film's buzz percentile is always at or above that badge's floor", () => {
+// AC2: percentile makes the buzz axis agree with the ladder's own badges "for free" now that cinemaScore IS
+// buzzPctlOf — a film clearing a badge always carries a Cascade score at or above that badge's own cut. (The
+// converse — a score at or above a floor always implying that exact badge — does not hold: buzzStop's
+// BUZZ_CUTS cutoffs are looked up by raw popularity against a floor-indexed array value, while the score is
+// a rounded percentile RANK, so a film can round up to a threshold's score without its raw popularity having
+// crossed the value recorded at that index. Measured on the real catalogue: 15 of 995 cohort films sit in
+// that seam — a pre-existing property of the two lookups, not a defect this ticket introduces, so this only
+// asserts the direction that is actually guaranteed.)
+test("CAS-722 AC2: a badge-tier film's Cascade score is always at or above that badge's own floor", () => {
   const FLOOR = { anticipated: E.BUZZ_PCTL[1], blockbuster: E.BUZZ_PCTL[2], mustsee: E.BUZZ_PCTL[3] };
   let checked = 0;
   for(const m of E.MOVIES){
     const badge = E.scaleTier(m);
     if(!FLOOR[badge]) continue;
     checked++;
-    const bz = E.buzzPctlOf(m);
-    assert.ok(bz != null && bz >= FLOOR[badge], `${m.title}: badged ${badge} but buzz percentile is ${bz}, under the ${FLOOR[badge]} floor`);
+    const score = E.cinemaScore(m);
+    assert.ok(score >= FLOOR[badge], `${m.title}: badged ${badge} but Cascade score is ${score}, under the ${FLOOR[badge]} floor`);
   }
   assert.ok(checked > 0, "no badged film found — this test would prove nothing");
 });
@@ -2307,24 +2305,27 @@ test("CAS-695 AC4: the cohort's popularity and budget arrays are sorted once, no
   assert.ok(E.BUZZ_POP_VALS.length > 0 && E.CINEMA_BUDGET_VALS.length > 0, "the cohort arrays are empty — this test would prove nothing");
   for(let i = 1; i < E.BUZZ_POP_VALS.length; i++) assert.ok(E.BUZZ_POP_VALS[i] >= E.BUZZ_POP_VALS[i - 1], "BUZZ_POP_VALS is not sorted ascending");
   for(let i = 1; i < E.CINEMA_BUDGET_VALS.length; i++) assert.ok(E.CINEMA_BUDGET_VALS[i] >= E.CINEMA_BUDGET_VALS[i - 1], "CINEMA_BUDGET_VALS is not sorted ascending");
-  // Reading buzzPctlOf/budgetPctlOf a second time for the same films must not mutate or resize the arrays.
+  // Reading buzzPctlOf/pctRankOf a second time for the same films must not mutate or resize the arrays.
+  // CAS-722 retired budgetPctlOf itself (budget left the score); CINEMA_BUDGET_VALS survives only for
+  // missionScoreStats' cinema Budget dial, so this reads it the same way that call site does.
   const popLen = E.BUZZ_POP_VALS.length, budgetLen = E.CINEMA_BUDGET_VALS.length;
-  for(const m of E.MOVIES.filter(m => E.inLadderCohort(m)).slice(0, 20)){ E.buzzPctlOf(m); E.budgetPctlOf(m); }
+  for(const m of E.MOVIES.filter(m => E.inLadderCohort(m)).slice(0, 20)){
+    E.buzzPctlOf(m);
+    E.pctRankOf(E.CINEMA_BUDGET_VALS, m.budget || m.worldwide_gross || 0);
+  }
   assert.equal(E.BUZZ_POP_VALS.length, popLen, "BUZZ_POP_VALS changed size after scoring films");
   assert.equal(E.CINEMA_BUDGET_VALS.length, budgetLen, "CINEMA_BUDGET_VALS changed size after scoring films");
 });
 
-// AC5: the card's own tooltip text names the basis in play, so a viewer can tell a buzz/budget number from a
-// People's-vote/critics one — the same distinction qScoreSourcesText already draws for the streaming score.
-test("CAS-695 AC5: cascadeScoreSourcesText names the basis in play — Buzz/Budget pre-release, the qScore axes after", () => {
+// AC4 (CAS-722): the card's own tooltip must name only Buzz for a pre-release film now — never a budget term
+// that no longer exists — and keep naming the streaming axes exactly as qScoreSourcesText does once released.
+test("CAS-722 AC4: cascadeScoreSourcesText names only Buzz pre-release, never Budget", () => {
   const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
-  const buzzOnly = cohort.find(m => E.buzzPctlOf(m) != null && E.budgetPctlOf(m) == null);
-  const both     = cohort.find(m => E.buzzPctlOf(m) != null && E.budgetPctlOf(m) != null);
-  assert.ok(buzzOnly && both, "missing a buzz-only or both-axes cohort fixture — this test would prove nothing");
-  assert.equal(E.cascadeScoreSourcesText(buzzOnly), "Buzz only");
-  assert.equal(E.cascadeScoreSourcesText(both), "Buzz and Budget");
-  for(const name of ["People's vote", "Critics"]){
-    assert.ok(!E.cascadeScoreSourcesText(both).includes(name), `cascadeScoreSourcesText named a streaming axis (${name}) on a pre-release film`);
+  const buzzed = cohort.find(m => E.buzzPctlOf(m) != null);
+  assert.ok(buzzed, "no buzz-scored cohort film found — this test would prove nothing");
+  assert.equal(E.cascadeScoreSourcesText(buzzed), "Buzz");
+  for(const name of ["Budget", "People's vote", "Critics"]){
+    assert.ok(!E.cascadeScoreSourcesText(buzzed).includes(name), `cascadeScoreSourcesText named ${name} on a pre-release film`);
   }
 
   const releasedFilm = E.MOVIES.find(m => !isPreRelease(m) && E.qScore(m) >= 0);
@@ -2367,20 +2368,14 @@ test("CAS-697 AC1/AC2: the Buzz ladder moved to [0,65,85,95] and badges a materi
     `only ${badged.length} of ${cohort.length} cohort films are badged — the wider ladder does not appear to be in effect`);
 });
 
-test("CAS-697 AC3/AC6: CINEMA_BUDGET_VALS is floored at CINEMA_BUDGET_MIN, and a sub-floor film scores on buzz alone", () => {
+// CAS-722 retired the score-path half of this (budget never contributes to cinemaScore any more — covered
+// generally by the CAS-722 AC1 test above). CINEMA_BUDGET_VALS itself survives for missionScoreStats' cinema
+// Budget dial, so the floor property is still worth keeping as its own invariant.
+test("CAS-697 AC3: CINEMA_BUDGET_VALS is floored at CINEMA_BUDGET_MIN", () => {
   assert.ok(E.CINEMA_BUDGET_VALS.length > 0, "CINEMA_BUDGET_VALS is empty — this test would prove nothing");
   for(const v of E.CINEMA_BUDGET_VALS){
     assert.ok(v >= E.CINEMA_BUDGET_MIN, `CINEMA_BUDGET_VALS holds ${v}, below the CINEMA_BUDGET_MIN floor`);
   }
-  const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
-  const belowFloor = cohort.find(m => {
-    const v = m.budget || m.worldwide_gross || 0;
-    return v > 0 && v < E.CINEMA_BUDGET_MIN && E.buzzPctlOf(m) != null;
-  });
-  assert.ok(belowFloor, "no cohort film with a sub-floor budget and a buzz percentile found — this test would prove nothing");
-  assert.equal(E.budgetPctlOf(belowFloor), null, `${belowFloor.title}: below CINEMA_BUDGET_MIN but budgetPctlOf did not return null`);
-  assert.equal(E.cinemaScore(belowFloor), E.buzzPctlOf(belowFloor),
-    `${belowFloor.title}: a sub-floor budget contributed to the score instead of the film scoring on buzz alone`);
 });
 
 test("CAS-697 AC5: selScaleMatch (admission) reads every real budget with no CINEMA_BUDGET_MIN floor", () => {
