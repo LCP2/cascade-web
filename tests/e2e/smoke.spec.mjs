@@ -132,6 +132,50 @@ test("a cold load with onboarding seen shows the header, not just Moving", async
   await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
 });
 
+// CAS-725: the Watch screen's tab strip is derived from which windows are switched on in Where & when, not
+// a fixed three — this walks that path directly (enable Premium, place a film there, disable it again)
+// rather than asserting the derivation's internals.
+test("the Watch screen's tab strip follows the enabled watch windows", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  await expect(page.locator(".wtabbtn", { hasText: "Premium" })).toHaveCount(0);
+
+  await page.locator("#navMenuBtn").click();
+  await page.locator("#navMenu .navitem", { hasText: "Where & when you'll watch" }).click();
+  await expect(page.locator(".osh", { hasText: "Where & when you'll watch" })).toBeVisible();
+  const premiumLane = page.locator(".wwlane", { has: page.locator(".wwn", { hasText: "Premium" }) });
+  await premiumLane.locator(".agwt", { hasText: "Track" }).click();
+  await expect(premiumLane).toHaveClass(/on/);
+  await page.locator("#wwScreen .osback").click();
+  await expect(page.locator("#wwScreen")).not.toHaveClass(/open/);
+
+  const premiumTab = page.locator(".wtabbtn", { hasText: "Premium" });
+  await expect(premiumTab).toBeVisible();
+
+  // An upcoming film's Premium level can never already be spent (CAS-725's own WINDOW_RUNG says so), so
+  // ticking one there is a reliable way to place a film at Premium without hunting for an eligible row.
+  const card = page.locator('#groups .group[data-g="upcoming"] .card').first();
+  await expect(card).toBeVisible();
+  const cardId = await card.getAttribute("id");
+  await card.locator(".ctl.notify").click();
+  await page.locator('.nopt[data-wk="premium"]').click();
+  await page.keyboard.press("Escape");
+
+  await premiumTab.click();
+  await expect(page.locator(`#${cardId}`)).toBeVisible();
+  await page.locator(".wtabbtn", { hasText: "Streaming" }).click();
+  await expect(page.locator(`#${cardId}`)).toHaveCount(0);
+
+  await page.locator("#navMenuBtn").click();
+  await page.locator("#navMenu .navitem", { hasText: "Where & when you'll watch" }).click();
+  await premiumLane.locator(".agwt", { hasText: "Track" }).click();
+  await expect(premiumLane).not.toHaveClass(/on/);
+  await page.locator("#wwScreen .osback").click();
+  await expect(page.locator(".wtabbtn", { hasText: "Premium" })).toHaveCount(0);
+});
+
 test("'Only show films on my services' changes what a new agent finds", async ({ page }) => {
   // Every window a streaming agent lists (Premium/Rent/Streaming) is service-scoped, so switching the
   // filter on with no services named must drop the count — this exercises the real mechanism the switch

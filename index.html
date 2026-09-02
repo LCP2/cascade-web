@@ -2485,6 +2485,7 @@
      Watched. Same on-colour (--brand-blue) as the scope bar's own lit state, for the same reason. */
   .watchtabs{margin:9px 12px 0;display:flex;border:1px solid var(--line);border-radius:11px;
     overflow:hidden;background:var(--panel2)}
+  .watchtabs[hidden]{display:none}   /* CAS-725: no enabled window, no strip — not an empty one */
   .wtabbtn{flex:1;min-width:0;padding:8px 6px;background:transparent;border:0;border-right:1px solid var(--line);
     color:var(--dim);font-family:inherit;font-size:11.5px;font-weight:800;letter-spacing:.03em;
     text-transform:uppercase;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:.15s}
@@ -4286,32 +4287,31 @@ const STATUS_LABEL = {
   // and this is the label the alerts and the report print for it.
   past_opening:"Past opening weekend"
 };
-// CAS-713 — Cascade 9.7: Watch becomes three fixed sub-tabs instead of one combined listing. PVOD folds
-// into the Streaming tab — the brief names Cinema/Rental/Streaming and doesn't mention PVOD, and the
-// Scoring page already treats PVOD as the streaming side by decision (flagged in the ticket for Lee to
-// correct if that's wrong).
-const WATCH_TABS = [
-  {key:"cinema",    label:"Cinema"},
-  {key:"rental",    label:"Rental"},
-  {key:"streaming", label:"Streaming"}
-];
-// CAS-717 — Cascade 9.7 again: a tab now filters by each film's chosen WATCH ON level (filmNotifyState's
-// single-select `.key`, post CAS-716), not by its availability status — status stays as the section
-// grouping INSIDE a tab (listingGroups/render below, unchanged). Cinema alone carries a default bucket —
-// an undecided film (no Watch On pick at all) whose current status is still upcoming/in_cinema — so a
-// film nobody has chosen a level for isn't invisible everywhere; Rental/Streaming carry no such default,
-// per the ticket's own settled assumption.
+// CAS-725: the tab strip is derived, not fixed — one tab per WATCH_LEVEL_KEYS entry whose window is
+// switched on in watchPrefs (list or notify), in ladder order, so it can never disagree with the Watch On
+// placement work that puts one marker per enabled window on the score track. Replaces CAS-713's hardcoded
+// three-entry array (which folded Premium into Streaming) now that every rung gets its own named tab.
+const WATCH_TAB_LABEL = {in_cinema:"Cinema", premium:"Premium", rent:"Rental", stream:"Streaming"};
+function watchTabsNow(){
+  return WATCH_LEVEL_KEYS.filter(k=>{
+    const w=watchPrefs[k]||{};
+    return w.list===true || w.notify===true;
+  }).map(k=>({key:k, label:WATCH_TAB_LABEL[k]}));
+}
+// CAS-717/CAS-725 — a tab filters by each film's chosen WATCH ON level (filmNotifyState's single-select
+// `.key`, post CAS-716) matched straight to its own tab, not by its availability status — status stays as
+// the section grouping INSIDE a tab (listingGroups/render below, unchanged). Cinema alone carries a default
+// bucket — an undecided film (no Watch On pick at all) whose current status is still upcoming/in_cinema —
+// so a film nobody has chosen a level for isn't invisible everywhere; the other tabs carry no such default.
 function filmMatchesWatchTab(m, tab){
   const key = filmNotifyState(m.tmdb_id).key;
-  if(tab==="cinema"){
+  if(tab==="in_cinema"){
     if(key==="in_cinema") return true;
     if(key) return false;
     const ps=primaryStatus(m);
     return ps==="upcoming" || ps==="in_cinema";
   }
-  if(tab==="rental")    return key==="rent";
-  if(tab==="streaming") return key==="stream" || key==="premium";
-  return false;
+  return key===tab;
 }
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const FMT_RANK = {SD:1, HD:2, "4K":3};
@@ -5227,7 +5227,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 892, "commit": "6e50cdf", "builtAt": "2026-09-02T04:03:18Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 893, "commit": "0b4c138", "builtAt": "2026-09-02T04:16:08Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7939,10 +7939,16 @@ addEventListener("scroll", ()=>{ if(document.querySelector(".cpop.spop")) closeS
 // CAS-713: Watch's fixed top nav — three sub-tabs above the scope bar, each pre-setting which
 // availability statuses the listing below even considers. Session-only state, exactly like `scope`
 // above: never persisted, so a fresh load always starts on Cinema.
-let watchTab = "cinema";
+let watchTab = "in_cinema";
 // CAS-717: which status section a tab auto-scrolls to on opening — its own eponymous group, reusing
 // jumpToSection's existing delta/settle scroll logic rather than new scroll code.
-const WATCH_TAB_SCROLL_TARGET = {cinema:"in_cinema", rental:"rental", streaming:"included_streaming"};
+const WATCH_TAB_SCROLL_TARGET = {in_cinema:"in_cinema", premium:"pvod", rent:"rental", stream:"included_streaming"};
+// CAS-725: if the tab you were on just lost its window (disabled in Where & when), fall back to the first
+// still-enabled tab rather than keep filtering by a level the strip no longer shows.
+function ensureWatchTab(){
+  const tabs=watchTabsNow();
+  if(tabs.length && !tabs.some(t=>t.key===watchTab)) watchTab=tabs[0].key;
+}
 window.setWatchTab = key => {
   if(watchTab===key) return;
   watchTab=key;
@@ -7951,15 +7957,17 @@ window.setWatchTab = key => {
 };
 function renderWatchTabs(){
   const el=$("watchTabs"); if(!el) return;
-  el.innerHTML = WATCH_TABS.map(t=>`<button type="button" class="wtabbtn${watchTab===t.key?" on":""}"
+  const tabs=watchTabsNow();
+  el.hidden = !tabs.length;
+  el.innerHTML = tabs.map(t=>`<button type="button" class="wtabbtn${watchTab===t.key?" on":""}"
       role="tab" aria-selected="${watchTab===t.key}" onclick="setWatchTab('${t.key}')">${t.label}</button>`).join("");
 }
 // CAS-718: the search box's placeholder/value follow whichever tab is active — restoring the raw text you
 // left in THAT tab (not the lowercased match term, so casing/whitespace survive a tab switch) is the same
 // "leave and come back" rule the old per-list search always followed.
-const watchSearchRaw = {cinema:"", rental:"", streaming:""};
+const watchSearchRaw = {in_cinema:"", premium:"", rent:"", stream:""};
 function renderWatchCtl(){
-  const tab=WATCH_TABS.find(t=>t.key===watchTab);
+  const tab=watchTabsNow().find(t=>t.key===watchTab);
   const inp=$("watchSearchInput");
   if(inp){
     inp.placeholder = tab ? `Search ${tab.label}` : "Search";
@@ -7972,7 +7980,7 @@ function renderWatchCtl(){
 // Set per tab. Never persisted and never written back to any cascade's own stored c.genre: this only
 // narrows what a render puts on screen. Now rendered inside the Filters sheet's own Styles section
 // (renderWatchSheet below) rather than a standalone bar.
-const watchGenreOff = {cinema:new Set(), rental:new Set(), streaming:new Set()};
+const watchGenreOff = {in_cinema:new Set(), premium:new Set(), rent:new Set(), stream:new Set()};
 window.toggleWatchGenre = g => {
   const set=watchGenreOff[watchTab];
   set.has(g) ? set.delete(g) : set.add(g);
@@ -7980,7 +7988,7 @@ window.toggleWatchGenre = g => {
 };
 // CAS-718: the sheet's own genre candidate list, cached per tab from the last render() so
 // selectAllWatchStyles/clearAllWatchStyles don't have to recompute rows from scratch.
-const watchSheetGenres = {cinema:[], rental:[], streaming:[]};
+const watchSheetGenres = {in_cinema:[], premium:[], rent:[], stream:[]};
 window.selectAllWatchStyles = () => { watchGenreOff[watchTab].clear(); render(); };
 window.clearAllWatchStyles = () => {
   const off=watchGenreOff[watchTab]; off.clear();
@@ -7991,13 +7999,13 @@ window.clearAllWatchStyles = () => {
 // per-tab shape as watchGenreOff above. Replaces the old scope bar's WATCH ON/For review pills (CAS-717's
 // tabs already narrow by watch level, so no replacement is needed) and its WATCHED pill: an empty
 // selection hides tagged-out films entirely, exactly the old scope.watched=false default.
-const watchSearch = {cinema:"", rental:"", streaming:""};
-const watchWatchedSel = {cinema:new Set(), rental:new Set(), streaming:new Set()};
+const watchSearch = {in_cinema:"", premium:"", rent:"", stream:""};
+const watchWatchedSel = {in_cinema:new Set(), premium:new Set(), rent:new Set(), stream:new Set()};
 // CAS-719: who set the current tab's Watch On level — All/Agent (auto)/Me (manual)/Unset, single-select,
 // same per-tab session-only shape as watchGenreOff/watchWatchedSel above. Values other than "all" match
 // filmWatchSource(id)'s own return values directly ("auto"/"manual"), so there is no translation layer
 // between the control and the field it reads.
-const watchPickedBy = {cinema:"all", rental:"all", streaming:"all"};
+const watchPickedBy = {in_cinema:"all", premium:"all", rent:"all", stream:"all"};
 const PICKED_BY_OPTS = [
   {key:"all",    label:"All"},
   {key:"auto",   label:"Agent"},
@@ -8029,7 +8037,7 @@ const STATUS_TO_CURGROUP = {};
 CURRENT_STATUS_GROUPS.forEach(g=>g.statuses.forEach(s=>STATUS_TO_CURGROUP[s]=g.key));
 // Which of the four groups are toggled OFF (hidden) per tab — same per-tab, session-only, empty-means-
 // "nothing hidden" off-set shape as watchGenreOff.
-const watchStatusOff = {cinema:new Set(), rental:new Set(), streaming:new Set()};
+const watchStatusOff = {in_cinema:new Set(), premium:new Set(), rent:new Set(), stream:new Set()};
 window.toggleWatchStatus = key => {
   const set=watchStatusOff[watchTab];
   set.has(key) ? set.delete(key) : set.add(key);
@@ -8052,7 +8060,7 @@ function filmMatchesCurrentStatus(m){
 // state instead of the old activeIds/cascOff deck selection. Same per-tab, session-only, empty-means-
 // "nothing excluded" off-set shape as watchGenreOff/watchStatusOff — so a tab that's never had this
 // filter touched defaults to every agent included, with no separate "all on" bookkeeping needed.
-const watchAgentOff = {cinema:new Set(), rental:new Set(), streaming:new Set()};
+const watchAgentOff = {in_cinema:new Set(), premium:new Set(), rent:new Set(), stream:new Set()};
 window.toggleWatchAgent = id => {
   const set=watchAgentOff[watchTab];
   set.has(id) ? set.delete(id) : set.add(id);
@@ -8244,6 +8252,10 @@ function scopeRows(){
 // machinery stays as-is for its still-present ymFeedList()/ymAgentListCount()/leBuildCache() callers, but the
 // Watch screen — both the full render() and the single-card patch path (patchFindCounts) — reads this instead.
 function watchScopeRows(){
+  // CAS-725 AC4: no enabled window means no tab strip — and no listing to disagree with it, so the render()
+  // empty branch (already keyed off rows.length) shows its existing empty state rather than a live listing
+  // under a blank strip.
+  if(!watchTabsNow().length) return [];
   const agentOff=watchAgentOff[watchTab];
   const acs=agentOff.size ? cascades.filter(c=>!agentOff.has(c.id)) : cascades;
   if(!acs.length) return [];
@@ -12082,6 +12094,7 @@ function wwChanged(key){
     syncWatchPrefsToCascades();   // CAS-532: every agent's status/listStatus moves with it, immediately
     logEvent("watch_prefs_changed",{window:key, list:winOn(key,"list"), notify:winOn(key,"notify")});
     drawWatchLanes();
+    render();   // CAS-725 AC5: the Watch screen's tab strip follows the window you just switched, no reload
     return;
   }
   saveWatch();
@@ -17273,7 +17286,7 @@ function listingGroups(rows, ac){
   // CAS-713: the Cinema tab's own default is the release timeline, not the Cascade score every other tab
   // defaults to (Rental/Streaming keep DEFAULT_SORT, unchanged) — a user's own explicit pick (isUserSort)
   // still overrides either, exactly as it always has.
-  const tabDflt = watchTab==="cinema" ? "availability" : DEFAULT_SORT;
+  const tabDflt = watchTab==="in_cinema" ? "availability" : DEFAULT_SORT;
   return orderFor(ac)      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
     .map(g=>{
       const cmp=sortForKey(g, ymSort||tabDflt, ac && ac.kind==="cinema", isUserSort);
@@ -17293,6 +17306,7 @@ function render(){
   // picked, all land in the Found list immediately, and none of them can clobber an override. It's cheap
   // (Cascades × titles) and it means membership has exactly one definition, evaluated in exactly one place.
   recomputeFound();
+  ensureWatchTab();   // CAS-725: keep the active tab valid before it drives rows/scope-bar below
   // Two lists, one pass: `rows` is everything on screen, `shown` is everything that still gets a full card.
   // The difference is the films you tagged out — they stay on screen as stubs, and they don't count as
   // results, because you told us you didn't want them.
