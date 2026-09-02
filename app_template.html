@@ -8616,8 +8616,8 @@ const buzzBandOf = m => BUZZ_KEY[buzzStop(m)] || null;
 // score by a median of 0, and only 60 (6%) moved by more than 10 points. Budget is becoming an admission
 // REQUIREMENT on a separate ticket, and the Scoring page's standing rule is that nothing which admits a film
 // is also a term in its score — so budget leaves the score entirely in this release. CINEMA_BUDGET_MIN/
-// CINEMA_BUDGET_VALS below survive: missionScoreStats still reads them for the cinema Mission Budget dial's
-// own percentile reading, which is unrelated to the printed Cascade score now.
+// CINEMA_BUDGET_VALS below survive: CAS-724's legacyMissionFloorDefault still reads them for a cinema
+// agent's one-time scoreFloor migration, which is unrelated to the printed Cascade score now.
 const CINEMA_BUDGET_MIN = 1_000_000;
 const CINEMA_BUDGET_VALS = MOVIES.filter(inLadderCohort)
   .map(m=>m.budget||m.worldwide_gross||0).filter(v=>v>=CINEMA_BUDGET_MIN).sort((a,b)=>a-b);
@@ -8750,6 +8750,21 @@ const CURRENT_YEAR = ALL_YEARS[0];
 const EARLIER_YEARS = ALL_YEARS.slice(1);
 const yearCount = y => MOVIES.filter(m=>yearOf(m)===y).length;
 
+// CAS-724: the one-time default for an agent's admission floor, read from whichever Mission dials it had ON
+// at the moment it is first normalised under c.scoreFloor. This is the OLD Mission-dials-mean formula, kept
+// alive here ONLY as a migration source for an agent saved before this field existed — once c.scoreFloor is
+// set it is the sole, authoritative floor and this is never consulted for that agent again.
+function legacyMissionFloorDefault(c){
+  const on=[];
+  if(c.kind==="cinema"){
+    if(c.selBuzz) on.push(BUZZ_PCTL[c.selBuzz]);
+    if(c.selScale) on.push(pctRankOf(CINEMA_BUDGET_VALS, c.selScale));
+  } else {
+    if(c.selCrowd) on.push(c.selCrowd*10);
+    if(c.selCritScore) on.push(c.selCritScore);
+  }
+  return on.length ? Math.round(on.reduce((x,y)=>x+y,0)/on.length) : 0;
+}
 // CAS-261: `template:true` says "this is a preset's lane-NEUTRAL recipe, not an agent". A preset is a
 // standard offered in both lanes (CAS-160), so its stored criteria must keep every rung it was written with;
 // the lane rule is applied per lane, later, by starterPreview and by the flow's draft. Without the opt-out
@@ -8823,6 +8838,9 @@ function normCascade(c, opts){
   // band implied. Indie was a CEILING (<$15M) with no floor at all, so it maps to Any: the honest reading of
   // an agent that asked for small films is that it never asked for a minimum.
   if(c.selScale>0 && c.selScale<1000) c.selScale = [0, 0, 15e6, 100e6][Math.round(c.selScale)] || 0;
+  // CAS-724: the admission floor. An agent saved before this field existed inherits legacyMissionFloorDefault's
+  // one-time reading of its old Mission dials; an agent saved since keeps its own stored number, including 0.
+  if(typeof c.scoreFloor!=="number") c.scoreFloor = legacyMissionFloorDefault(c);
   // CAS-261: a lane only carries the dials it uses, and that has to be true of agents SAVED before the rule
   // as well as agents built after it — otherwise a cinema agent from last week goes on quietly filtering on
   // a People's-vote floor its Mission screen does not show and its auto-relax cannot loosen. laneCrit is the
@@ -8925,7 +8943,7 @@ cascades.forEach((c,i)=>{ if(typeof c.order!=="number") c.order=i; });
 const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.age, c.culture, c.year,
   c.imdb, c.rt, c.awards, c.budget, c.includeUnbudgeted, c.includeUnrated, c.tentpole,
   c.selCrowd||0, c.selCritScore||0, c.selAwards||0, c.selScale||0, c.selBuzz||0, !!c.selOr, c.yearsBack||0,
-  !!c.cinemaReleaseOnly,
+  !!c.cinemaReleaseOnly, c.scoreFloor||0,
   c.myServices, c.alerts, c.sort||DEFAULT_SORT, c.excludeWatched, c.excludeBlocked,
   // CAS-160: the viewing windows are part of "the alert moments" too. Three of them (announced / 1 month /
   // 1 week out) all resolve to the same `status`, so without this line two agents that differ only in when
@@ -9138,6 +9156,9 @@ function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   if(c.excludeBlocked!==false && !ignoreBlocked && blocked.has(m.tmdb_id)) return false;
   if(c.excludeWatched!==false && watched.has(m.tmdb_id)) return false;
   const ps=primaryStatus(m);
+  // CAS-724: released films only, computed once here — used by the "released since" cutoff below and by the
+  // Awards requirement further down.
+  const preRelease = ps==="upcoming" || ps==="in_cinema";
   if(scopeOf(c)[ps] && !matchesServices(m, ps)) return false;   // CAS-252/342: see passes()
   if(c.status.length && !c.status.includes(ps)) return false;
   if((c.exclude||[]).length && (m.genres||[]).some(g=>c.exclude.includes(g))) return false;   // skip beats match
@@ -9157,59 +9178,45 @@ function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   // CAS-250: and the rolling window, which is a different question from the Filters panel's year CHIPS above
   // — that one is "these exact years", this one is "the last N years from today". Both can be set; neither
   // is derived from the other.
-  if(c.yearsBack && !releasedSince(m, yearsCutoff(c.yearsBack))) return false;
+  // CAS-724: "released since" only makes sense once there is a release to date. An upcoming/in-cinema film's
+  // own future date always outran the cutoff anyway, so this was already a no-op pre-release — the exemption
+  // is now explicit rather than incidental.
+  if(c.yearsBack && !preRelease && !releasedSince(m, yearsCutoff(c.yearsBack))) return false;
   // CAS-560: the agent-level language filter is retired — passesTasteBase() above is the only language gate
   // an agent applies now.
   if((c.culture||[]).length && !c.culture.includes(m.culture)) return false;
   if(c.awards && !m.award) return false;
   if(!ratingOK(m, c.imdb||0, c.includeUnrated)) return false;
-  // Selectivity dials (CAS-114, reworked CAS-145; CAS-661 makes them alternative routes in). A film clears
-  // this block if it clears AT LEAST ONE dial that is SET — a dial left open (0/off) contributes no term, so
-  // with every dial open the block states no requirement and every film passes it, unchanged from before.
-  // selCritScore and selAwards still share selCriticsOK and stay ANDed inside it — "acclaimed AND nominated"
-  // is one OR term, not two. c.selOr is intentionally not read here: the OR below is unconditional now that
-  // it has shipped, and selOr stays stored (and in cascSigOf) only so an existing agent's signature does not
-  // change and re-fire the CAS-212 merge sheet.
-  // CAS-663: the quality dials (People's vote, Critics score, Awards) are a claim about how a film was
-  // received, which only exists once someone has had the chance to judge it. Before that — primaryStatus
-  // upcoming or in_cinema — an agent stating any one of them can never list the film, not because it is bad
-  // but because it is unrated. Budget and Cinema Release are facts known before release, so they keep gating
-  // in every window. CAS-678 moves Buzz out of this group: the popularity ladder it now reads is defined
-  // ONLY over the upcoming-and-in-cinema cohort (selBuzzOK's own inLadderCohort check), so gating it out of
-  // exactly that cohort would make the Buzz dial match nothing it was built to match.
-  const preRelease = ps==="upcoming" || ps==="in_cinema";
-  const missionOn = (!preRelease && (c.selCrowd || c.selCritScore || c.selAwards)) || c.selBuzz
-    || c.selScale || c.cinemaReleaseOnly;
-  if(missionOn){
-    const cleared =
-      (!preRelease && c.selCrowd && selCrowdOK(m,c)) ||
-      (!preRelease && (c.selCritScore||c.selAwards) && selCriticsOK(m,c)) ||
-      // CAS-674: under OR a route must be an AFFIRMATIVE match. selScaleMatch is tri-state (true/false/null);
-      // `!==false` let null (truly unknown scale) clear the route on its own, which was correct under AND
-      // ("never the reason a film is dropped") but means the opposite under OR ("an affirmative reason a
-      // film is admitted"). null now contributes no term, exactly like a dial left Off. The other OR routes
-      // (selCrowdOK, selCriticsOK, selBuzzOK, cinemaReleaseOnly) were audited for the same inversion and are
-      // all already strictly boolean — no tri-state to leak through.
-      (c.selScale && selScaleMatch(m,c)===true) ||
-      (c.selBuzz && selBuzzOK(m,c)) ||
-      // CAS-360: streaming Mission checkbox — an AU type-3 (general theatrical) release, release history
-      // rather than a live "in cinemas now" status. laneCrit keeps this false on every cinema agent.
-      (c.cinemaReleaseOnly && !!m.cinema_release);
-    if(!cleared) return false;
+  // CAS-724: admission is one score floor (below) plus these AND requirements — the CAS-661 Mission OR block
+  // is gone. selCrowd, selCritScore and selBuzz no longer gate anything here; they retire as admission routes.
+  // What survives, all ANDed, none optional:
+  //   · Movie Budget (selScale) — every window, tri-state preserved: `null` (no budget and no worldwide gross)
+  //     rides along and never denies, exactly as CAS-238/CAS-674 established for an AND-style gate. Only a
+  //     known, strictly-below-floor match (`false`) denies.
+  if(c.selScale && selScaleMatch(m,c)===false) return false;
+  //   · Awards (selAwards) — a claim about how a film was received, which only exists once someone has had
+  //     the chance to judge it. Exempt pre-release EXPLICITLY: selAwards is reachable today only inside this
+  //     branch, so promoting it to a standing requirement without carrying the exemption forward would exclude
+  //     every film currently in cinemas for having no awards yet.
+  if(!preRelease && c.selAwards){
+    const need=(AWARD_STOPS[c.selAwards]||{}).rank||0;
+    if(awardRank(m) < need) return false;
   }
+  //   · Had a cinema release (cinemaReleaseOnly) — unchanged: an AU type-3 (general theatrical) release,
+  //     release history rather than a live "in cinemas now" status. laneCrit keeps this false on every cinema
+  //     agent (CAS-360).
+  if(c.cinemaReleaseOnly && !m.cinema_release) return false;
   if(!budgetOK(m, c.budget||0)) return false;
   if((m.rt_critic||0) < (c.rt||0)) return false;
-  // CAS-703: the Mission dials' own mean (missionScoreStats, unchanged) is now a REQUIREMENT, not only the OR
-  // block's shared reading — a film has to clear at least one open door above AND meet the number those dials
-  // imply, so the "Target score" printed on screen is a promise the listing keeps rather than a number that
-  // happens to describe the OR block's loosest admitted title. Reads cascadeScore(m), the exact figure the
-  // card prints, so the gate can never disagree with what's shown. A film with no Cascade score (-1) can never
-  // be shown to meet a score requirement, so it is held back whenever a target is in force — ignoreScoreGate
-  // lets scoreHeldBackCount() below ask "would this have listed but for its missing score?" without
-  // duplicating every other gate in this function.
+  // CAS-724: the score floor. c.scoreFloor is the agent's admission floor — the lowest enabled Watch On marker
+  // once CAS-727 lands; until then a single stored number, defaulted in normCascade(). Reads cascadeScore(m),
+  // the exact figure the card prints, so the gate can never disagree with what's shown. A film with no Cascade
+  // score (-1) can never be shown to clear a floor, so it is held back unconditionally — ignoreScoreGate lets
+  // scoreHeldBackCount() below ask "would this have listed but for the score gate?" without duplicating every
+  // other gate in this function.
   if(!ignoreScoreGate){
-    const target = missionScoreStats(c).min;
-    if(target!==null && cascadeScore(m) < target) return false;
+    const score=cascadeScore(m);
+    if(score===-1 || score<c.scoreFloor) return false;
   }
   return true;
 }
@@ -12231,48 +12238,19 @@ const onbCount = () => watchCount(onbApply());
 function onbShownCount(){
   return listedCount(onbApply());
 }
-// CAS-694: the Mission step's own score reading is now the dials themselves, not a scan of the listed set —
-// the mean of whichever Mission dials are ON (People's vote x10, Critics), or the one dial's value if only
-// one is set. Replaces CAS-665's catalogue scan (the lowest qScore among listed, unwatched-out films), which
-// went stale the moment CAS-694 made the score itself two axes instead of three raw sources.
-// CAS-695: a cinema agent's Mission dials are Buzz and Movie Budget (laneCrit zeroes selCrowd/selCritScore
-// for it), so it needs the CINEMA score's own basis, on the same percentile scale as the card: the Buzz stop
-// is already a percentile (BUZZ_PCTL), and the Budget dial's dollar floor is converted to its percentile in
-// the same cohort array cinemaScore reads, so the two are on one scale before they're averaged.
-function missionScoreStats(c){
-  const on=[];
-  if(c.kind==="cinema"){
-    if(c.selBuzz) on.push(BUZZ_PCTL[c.selBuzz]);
-    if(c.selScale) on.push(pctRankOf(CINEMA_BUDGET_VALS, c.selScale));
-  } else {
-    if(c.selCrowd) on.push(c.selCrowd*10);
-    if(c.selCritScore) on.push(c.selCritScore);
-  }
-  if(!on.length) return {min:null};
-  return {min: Math.round(on.reduce((x,y)=>x+y,0)/on.length)};
-}
-// Suppressed at n===0 (AC3: no placeholder for zero matches) and when nothing matching carries a score
-// (CAS-675: no meaningful floor to state) rather than printing a meaningless floor.
-function missionScoreLineHTML(n){
-  if(!n) return "";
-  const {min}=missionScoreStats(onbApply());
-  if(min===null) return "";
-  return `<span class="oscountscore">Target score · <b>${min}</b></span>`;
-}
-// CAS-703 AC3: the hard score gate above can drop a film with no explanation on the card itself — a film
-// with no Cascade score cannot be shown to meet a score requirement, so it is held back whenever a target is
-// in force. Counts titles that would have listed (listedBy's other gates all clear) but for carrying no
-// score: not listed for real (!listedBy(m,c)) but WOULD be if the score gate alone were lifted
-// (listedBy(m,c,true)) — the same "how many did the dials silently drop" question selSetAside (CAS-164/675)
-// answers for the OR-route dials, now needed for a gate that can drop a title with zero score at all.
+// CAS-724: scoreHeldBackCount, restated against c.scoreFloor rather than the retired Mission-dials target.
+// A film with no Cascade score can never be shown to clear a floor, so it is held back
+// unconditionally now — even a floor of 0 still denies a scoreless film (matchesCriteria's own -1 check) —
+// not only while some Mission dial happened to be on. Counts titles that would have listed (listedBy's other
+// gates all clear) but for carrying no score: not listed for real (!listedBy(m,c)) but WOULD be if the score
+// gate alone were lifted (listedBy(m,c,true)).
 function scoreHeldBackCount(c){
-  if(missionScoreStats(c).min===null) return 0;
   return MOVIES.filter(m=>cascadeScore(m)===-1 && !taggedOut(m)
     && !listedBy(m,c) && listedBy(m,c,true)).length;
 }
-// Shown alongside the Target score line, in the same passive-note voice as selSayHtml's own "no score yet"
-// aside (CAS-675) — not suppressed at n===0 like missionScoreLineHTML, since this is often exactly the
-// explanation for why the count reads zero.
+// In the same passive-note voice as selSayHtml's own "no score yet" aside (CAS-675) — CAS-724 retires the
+// "Target score" line this used to sit alongside, but this one is not suppressed at n===0, since this is
+// often exactly the explanation for why the count reads zero.
 function scoreHeldBackLineHTML(){
   const held=scoreHeldBackCount(onbApply());
   if(!held) return "";
@@ -12458,11 +12436,11 @@ function stepCtaText(step, n){
 // Steps that already open with a count of their own (the hub's big number, the baseline's "in your world"
 // line) opt out with topCount:false rather than printing a second one.
 // CAS-665: the mirror's inner content is its own function now, so the initial paint (stepCountHTML) and the
-// live repaint (onbRefresh) print the identical string — the Mission score line rides along with the count
-// on every call, same "one source" rule CAS-164 set for n itself.
+// live repaint (onbRefresh) print the identical string. CAS-724 retires the "Target score" line that used to
+// ride along here (the floor is set directly now, not derived and restated) — the held-back aside survives.
 function stepCountLine(step, n){
   const base = `<b>${n}</b> film${n===1?"":"s"} match right now`;
-  return step===SHARP_STEPS.selectivity ? `${base}${missionScoreLineHTML(n)}${scoreHeldBackLineHTML()}` : base;
+  return step===SHARP_STEPS.selectivity ? `${base}${scoreHeldBackLineHTML()}` : base;
 }
 function stepCountHTML(step, n){
   if(n==null || step.topCount===false) return "";
@@ -15282,7 +15260,7 @@ function agentMetricsCompute(c){
   // CAS-674: this comment always claimed "same test the listing itself runs", but the code read watchesFilm
   // — the WATCH set (CAS-67: taste + a window still AHEAD), deliberately wider than what's actually shown —
   // so "Total listed" was quoting the watch-ahead figure, not the listing. listedBy (+ !taggedOut, the same
-  // rule listedCount/missionScoreStats already apply) is the real listing predicate, so the Agents row and
+  // rule listedCount already applies) is the real listing predicate, so the Agents row and
   // Mission's "N films match right now" can no longer disagree over what one agent has found.
   const films=MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m));   // Total listed — same test the listing itself runs
   let scoreMin=null;

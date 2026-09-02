@@ -375,17 +375,6 @@ test("critScore: the mean of Metacritic and RT where both are present, whichever
   }
 });
 
-// ---- 9c. THE MISSION MINIMUM IS THE DIALS' OWN MEAN, NOT A CATALOGUE SCAN (CAS-694) --------------------------
-// AC7: missionScoreStats used to scan MOVIES for the lowest qScore among listed, unwatched-out films. It is
-// now the mean of whichever Mission dials (People's vote x10, Critics) are ON, or the one dial's value if
-// only one is set — read straight off the criteria object.
-test("missionScoreStats: the mean of the ON Mission dials, not a scan of the listed set", () => {
-  assert.equal(E.missionScoreStats({ selCrowd: 0, selCritScore: 0 }).min, null, "no dial on should give no minimum");
-  assert.equal(E.missionScoreStats({ selCrowd: 7.5, selCritScore: 0 }).min, 75, "People's vote alone should read as its own value x10");
-  assert.equal(E.missionScoreStats({ selCrowd: 0, selCritScore: 60 }).min, 60, "Critics alone should read as its own value");
-  assert.equal(E.missionScoreStats({ selCrowd: 7.5, selCritScore: 61 }).min, Math.round((75+61)/2), "both dials on should read as their mean");
-});
-
 // ---- 9d. qScoreSourcesText NAMES THE THREE RAW SOURCES (CAS-706) -------------------------------------------
 // AC5: the card's own tooltip names People's vote, RT and Metacritic individually now that qScore is back to
 // three scale-matched terms rather than the CAS-694 two-axis (People's vote, Critics) collapse.
@@ -414,74 +403,29 @@ const missionCase = (overrides = {}) => E.normCascade({ ...overrides }, { templa
 // judged. isPreRelease mirrors matchesCriteria's own preRelease test.
 const isPreRelease = m => ["upcoming", "in_cinema"].includes(E.primaryStatus(m));
 
-test("mission OR AC1: with only People's vote set, the matching set is exactly what selCrowdOK admits, pre-release films aside", () => {
-  const open = missionCase();
-  const withCrowd = missionCase({ selCrowd: 7.5 });
-  const got = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, withCrowd)));
-  const expected = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, open)
-    && (isPreRelease(m) || E.selCrowdOK(m, withCrowd))));
-  assert.equal(got.size, expected.size, `expected ${expected.size} films clearing selCrowdOK, got ${got.size}`);
-  for(const m of got) assert.ok(expected.has(m), `${m.title} matched with only People's vote set but fails selCrowdOK`);
-  for(const m of expected) assert.ok(got.has(m), `${m.title} clears selCrowdOK (and the open block) but did not match`);
-});
-
-// CAS-663 AC1/AC2 (ticket's own wording): the quality dials never gate a pre-release film, and the same
-// recipe's behaviour within a released window (included_streaming) is unchanged.
-test("CAS-663: People's vote does not gate upcoming or in_cinema films, but still gates a released window", () => {
-  const open = missionCase();
-  const withCrowd = missionCase({ selCrowd: 7.5 });
-  const preReleaseMovies = E.MOVIES.filter(isPreRelease);
-  assert.ok(preReleaseMovies.length > 0, "no upcoming/in_cinema films in the fixture catalogue to exercise this on");
-  for(const m of preReleaseMovies){
-    if(!E.matchesCriteria(m, open)) continue;   // must clear the open block first
-    assert.ok(E.matchesCriteria(m, withCrowd),
-      `${m.title} (${E.primaryStatus(m)}) was excluded by People's vote despite being pre-release`);
-  }
-  const streamOnly = E.MOVIES.filter(m => E.primaryStatus(m) === "included_streaming");
-  for(const m of streamOnly){
-    if(!E.matchesCriteria(m, open)) continue;
-    assert.equal(E.matchesCriteria(m, withCrowd), E.selCrowdOK(m, withCrowd),
-      `${m.title}: included_streaming film's People's vote gating changed`);
-  }
-});
-
-test("mission OR AC2: two dials set is a strict superset of either dial alone", () => {
-  const crowdOnly   = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, missionCase({ selCrowd: 7.5 }))));
-  const criticsOnly = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, missionCase({ selCritScore: 60 }))));
-  const both        = new Set(E.MOVIES.filter(m =>
-    E.matchesCriteria(m, missionCase({ selCrowd: 7.5, selCritScore: 60 }))));
-  for(const m of crowdOnly) assert.ok(both.has(m), `${m.title} clears People's vote alone but not the OR of both`);
-  for(const m of criticsOnly) assert.ok(both.has(m), `${m.title} clears Critics score alone but not the OR of both`);
-  assert.ok(both.size > crowdOnly.size,
-    `combining should add films over People's vote alone: ${crowdOnly.size} → ${both.size}`);
-  assert.ok(both.size > criticsOnly.size,
-    `combining should add films over Critics score alone: ${criticsOnly.size} → ${both.size}`);
-});
-
-test("mission OR AC3: tightening the sole active dial only ever narrows", () => {
-  const sets = [6.0, 7.0, 7.5].map(v =>
-    new Set(E.MOVIES.filter(m => E.matchesCriteria(m, missionCase({ selCrowd: v })))));
-  for(let i = 1; i < sets.length; i++){
-    assert.ok(sets[i].size <= sets[i - 1].size,
-      `raising People's vote widened the set: ${sets[i - 1].size} → ${sets[i].size}`);
-    for(const m of sets[i]) assert.ok(sets[i - 1].has(m),
-      `${m.title} clears the higher People's-vote bar but not the lower one — the dial does not nest`);
-  }
-});
-
-test("mission OR AC4: with every dial off, the block is exactly as if it were not there", () => {
+// CAS-724: selCrowd and selCritScore retire as admission routes entirely — a film's inclusion must not move
+// at all when either is set, pre-release or not. (selAwards, the third former OR member, survives as its own
+// standing requirement and is covered separately below.)
+test("CAS-724: selCrowd and selCritScore no longer affect admission at all", () => {
   const open = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, missionCase())));
-  // Max out every dial and then reopen them all — if the block still leaked a restriction while every dial
-  // reads its own zero stop, this would come back smaller than `open`.
+  for(const overrides of [{ selCrowd: 7.5 }, { selCritScore: 80 }, { selCrowd: 7.5, selCritScore: 80 }]){
+    const got = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, missionCase(overrides))));
+    assert.equal(got.size, open.size,
+      `${JSON.stringify(overrides)}: setting a retired dial changed the matching set, ${open.size} → ${got.size}`);
+  }
+});
+
+test("with every requirement off, admission is exactly as if the block were not there", () => {
+  const open = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, missionCase())));
   const reopened = new Set(E.MOVIES.filter(m => E.matchesCriteria(m, missionCase({
-    selCrowd: 0, selCritScore: 0, selAwards: 0, selScale: 0, selBuzz: 0, cinemaReleaseOnly: false,
+    selCrowd: 0, selCritScore: 0, selAwards: 0, selScale: 0, selBuzz: 0, cinemaReleaseOnly: false, scoreFloor: 0,
   }))));
   assert.equal(reopened.size, open.size,
-    `every dial off should equal the open set (${open.size}), got ${reopened.size}`);
-  for(const m of open) assert.ok(reopened.has(m), `${m.title} is in the open set but not the all-dials-off set`);
+    `every requirement off should equal the open set (${open.size}), got ${reopened.size}`);
+  for(const m of open) assert.ok(reopened.has(m), `${m.title} is in the open set but not the all-off set`);
 });
 
-test("mission OR AC5: every zero stop reads Off, and the Cinema Release control drops \"Only\"", () => {
+test("every zero stop reads Off, and the Cinema Release control drops \"Only\"", () => {
   assert.equal(E.CRIT_MARKS[0].label, "Off", `Critics score's zero stop reads "${E.CRIT_MARKS[0].label}"`);
   assert.equal(E.AWARD_STOPS[0].label, "Off", `Awards' zero stop reads "${E.AWARD_STOPS[0].label}"`);
   assert.equal(E.SCALE_REF[0].label, "Off", `Budget's zero stop reads "${E.SCALE_REF[0].label}"`);
@@ -502,86 +446,104 @@ test("mission OR AC5: every zero stop reads Off, and the Cinema Release control 
     "the Cinema Release control does not read \"Had a cinema release\"");
 });
 
-// ---- 10b. THE BUDGET ROUTE UNDER OR REQUIRES AN AFFIRMATIVE MATCH (CAS-674) ------------------------------
-// CAS-661 made the Mission dials alternative OR routes in. selScaleMatch is tri-state (true/false/null), and
-// under the PREVIOUS `!==false` reading, a film with no budget or gross figure at all (null) cleared the
-// Budget route on its own — an unknown scale was an AFFIRMATIVE reason to admit a film, not merely "not a
-// reason to deny" it. The fix requires `===true`: a null result now contributes no term, exactly like a
-// dial left Off.
-test("mission OR AC6 (CAS-674): the Budget route only clears on an affirmative scale match", () => {
-  const unknown = E.MOVIES.find(m => !(m.budget > 0) && !(m.worldwide_gross > 0));
-  assert.ok(unknown, "no unknown-scale film in the catalogue — this test would prove nothing");
-  // AC2: a film with neither budget nor worldwide_gross does not clear the Budget route.
-  assert.equal(E.matchesCriteria(unknown, missionCase({ selScale: 100e6 })), false,
-    `${unknown.title} carries no budget or gross and still cleared the Budget route under OR`);
+// ---- 10b. ADMISSION IS ONE SCORE FLOOR PLUS AND REQUIREMENTS, NOT AN OR BLOCK (CAS-724) -------------------
+// CAS-724 deletes the CAS-661 Mission OR block. Admission is now cascadeScore(m) >= c.scoreFloor AND every
+// requirement below (Budget, Awards, How far back, Had a cinema release), all ANDed, none optional.
 
-  // AC3: a known budget at or above the floor still clears it, and one known and below it still does not.
-  const above = E.MOVIES.find(m => m.budget >= 100e6);
-  const below = E.MOVIES.find(m => m.budget > 0 && m.budget < 100e6);
-  assert.ok(above && below, "need both an above-floor and a below-floor budgeted film to test AC3");
-  assert.equal(E.matchesCriteria(above, missionCase({ selScale: 100e6 })), true,
-    `${above.title} at $${above.budget} (>= floor) did not clear the Budget route`);
-  assert.equal(E.matchesCriteria(below, missionCase({ selScale: 100e6 })), false,
-    `${below.title} at $${below.budget} (< floor) cleared the Budget route`);
+// AC4: the Budget requirement's tri-state survives exactly as CAS-238/CAS-674 established for an AND-style
+// gate — `null` (no budget AND no worldwide gross) rides along and never denies, at every rung. Only a KNOWN,
+// strictly-below-floor match denies.
+// scoreFloor:0 is pinned on every case below alongside selScale — otherwise normCascade's own one-time
+// migration (legacyMissionFloorDefault) would read the very selScale these cases are setting as a legacy
+// cinema Mission dial and derive a non-zero floor from it, contaminating a test about the Budget requirement
+// alone with the separate score-floor gate.
+test("CAS-724 AC4: the Budget requirement's tri-state survives — an unknown scale is never denied", () => {
+  const unknown = E.MOVIES.find(m => !(m.budget > 0) && !(m.worldwide_gross > 0)
+    && E.matchesCriteria(m, missionCase()));
+  assert.ok(unknown, "no unknown-scale film clearing the open baseline — this test would prove nothing");
+  for(const floor of E.SCALE_REF.map(r => r.d).filter(Boolean)){
+    assert.equal(E.matchesCriteria(unknown, missionCase({ selScale: floor, scoreFloor: 0 })), true,
+      `${unknown.title} carries no budget or gross and was still denied by a $${floor} Budget requirement`);
+  }
+  // and the requirement is real: a KNOWN below-floor budget still denies.
+  const above = E.MOVIES.find(m => m.budget >= 100e6 && E.matchesCriteria(m, missionCase()));
+  const below = E.MOVIES.find(m => m.budget > 0 && m.budget < 100e6 && E.matchesCriteria(m, missionCase()));
+  assert.ok(above && below, "need both an above-floor and a below-floor budgeted film to test the requirement is real");
+  assert.equal(E.matchesCriteria(above, missionCase({ selScale: 100e6, scoreFloor: 0 })), true,
+    `${above.title} at $${above.budget} (>= floor) did not clear the Budget requirement`);
+  assert.equal(E.matchesCriteria(below, missionCase({ selScale: 100e6, scoreFloor: 0 })), false,
+    `${below.title} at $${below.budget} (< floor) cleared the Budget requirement`);
 });
 
-// ---- 10c. THE TARGET SCORE IS A HARD GATE, NOT JUST THE OR BLOCK'S OWN READING (CAS-703) ------------------
-// Before this ticket, missionScoreStats' mean described the OR block's loosest admitted title rather than
-// binding it — an agent showing "Target score · 60" could still list a film scoring 49. AC2: every listed
-// film's printed score (cascadeScore, the exact figure the card shows) must now be >= the agent's own target,
-// for both lanes. AC5: the gate is applied AFTER the OR block, never as another OR route — a film that clears
-// the Budget or Buzz door but scores below the target is still excluded.
-test("CAS-703 AC1/AC2: no listed film's Cascade score is below the agent's own Mission target, cinema and streaming", () => {
-  const cinemaAgent = missionCase({ kind: "cinema", status: ["upcoming", "opening_week", "in_cinema"], selBuzz: 1 });
-  const streamAgent = missionCase({ kind: "stream", status: ["included_streaming", "pvod", "rental"], selCrowd: 7.5 });
-  for(const d of [cinemaAgent, streamAgent]){
-    const target = E.missionScoreStats(d).min;
-    assert.ok(target !== null, "test setup: expected a Mission target to be in force");
+// AC3: the Awards requirement is reachable today only inside matchesCriteria's !preRelease branch — the
+// ticket's own "trap". A pre-release, unawarded film clearing the open baseline must still list once Awards
+// is set; this fails the moment the exemption is dropped.
+test("CAS-724 AC3: the Awards requirement exempts a film that hasn't been judged yet (upcoming/in_cinema)", () => {
+  const open = missionCase();
+  const candidate = E.MOVIES.find(m => E.matchesCriteria(m, open) && isPreRelease(m) && E.awardRank(m) === 0);
+  assert.ok(candidate, "no pre-release, unawarded film clearing the open baseline — this test would prove nothing");
+  const withAwards = missionCase({ selAwards: 2 });
+  assert.equal(E.matchesCriteria(candidate, withAwards), true,
+    `${candidate.title}: pre-release, unawarded film was excluded by the Awards requirement, which must exempt pre-release`);
+  // and the requirement is real once released: a released, unawarded film IS denied by the same setting.
+  const released = E.MOVIES.find(m => E.matchesCriteria(m, open) && !isPreRelease(m) && E.awardRank(m) === 0);
+  if(released) assert.equal(E.matchesCriteria(released, withAwards), false,
+    `${released.title}: released, unawarded film cleared the Awards requirement`);
+});
+
+// AC2: for every agent and film, listedBy(m,c) implies cascadeScore(m) >= c.scoreFloor. No exceptions —
+// checked both across the real preset/lane matrix (CASES) and directly against matchesCriteria with a custom
+// floor, since listedBy narrows further (window/pin state) and must not be the only place this holds.
+test("CAS-724 AC2: no listed film's Cascade score is below its own agent's scoreFloor — no exceptions", () => {
+  for(const { kind, s, label } of CASES){
+    pickInLane(E, kind, s.key);
+    const d = E.onbApply();
     const listed = E.MOVIES.filter(m => E.listedBy(m, d));
-    assert.ok(listed.length > 0, "test setup: expected at least one film listed to exercise the gate");
-    for(const m of listed) assert.ok(E.cascadeScore(m) >= target,
-      `${d.kind}: ${m.title} lists at Cascade score ${E.cascadeScore(m)}, below its own agent's target ${target}`);
+    for(const m of listed) assert.ok(E.cascadeScore(m) >= d.scoreFloor,
+      `${label}: ${m.title} lists at Cascade score ${E.cascadeScore(m)}, below its own agent's floor ${d.scoreFloor}`);
+  }
+  const floored = missionCase({ scoreFloor: 70 });
+  const scoredBelow = E.MOVIES.filter(m => { const s = E.cascadeScore(m); return s >= 0 && s < 70; });
+  assert.ok(scoredBelow.length > 0, "no film scored below 70 in the fixture catalogue — this test would prove nothing");
+  for(const m of scoredBelow) assert.equal(E.matchesCriteria(m, floored), false,
+    `${m.title} scores ${E.cascadeScore(m)}, below the agent's floor of 70, but still matched`);
+  // and rule 4: a film with no Cascade score at all is never admitted, even at the most permissive floor (0).
+  const unscored = E.MOVIES.find(m => E.cascadeScore(m) === -1 && E.matchesCriteria(m, missionCase(), undefined, true));
+  if(unscored) assert.equal(E.matchesCriteria(unscored, missionCase({ scoreFloor: 0 })), false,
+    `${unscored.title} has no Cascade score but was admitted at a floor of 0`);
+});
+
+// AC6: raising any single requirement never increases what an agent lists — asserted over the live MOVIES
+// array (via listedBy, not just matchesCriteria) for a sweep of selScale stops, across the real preset/lane
+// matrix. This is a general property of AND-only admission, not something special-cased per dial.
+test("CAS-724 AC6: raising the Budget requirement never increases what an agent lists, for any agent", () => {
+  const stops = E.SCALE_REF.map(r => r.d);
+  for(const { kind, s, label } of CASES){
+    pickInLane(E, kind, s.key);
+    const base = E.onbApply();
+    let prev = null;
+    for(const floor of stops){
+      const d = E.normCascade({ ...base, selScale: floor });
+      const n = E.MOVIES.filter(m => E.listedBy(m, d)).length;
+      if(prev !== null) assert.ok(n <= prev,
+        `${label}: raising Budget to $${floor} took the listed count UP, ${prev} → ${n}`);
+      prev = n;
+    }
   }
 });
 
-// AC5: a film that clears an OR door (here, the Budget route) but scores below the target must still be
-// excluded — the gate is an AND on top of the OR block, never itself another way in.
-test("CAS-703 AC5: a film clearing an OR door but scoring below the target is still excluded", () => {
-  const d = missionCase({ kind: "cinema", status: ["upcoming", "opening_week", "in_cinema"], selScale: 1e6, selBuzz: 3 });
-  const target = E.missionScoreStats(d).min;
-  assert.ok(target !== null, "test setup: expected a Mission target to be in force");
-  const clearsOrDoor = E.MOVIES.filter(m => E.matchesCriteria(m, d, undefined, true)
-    && E.cascadeScore(m) >= 0 && E.cascadeScore(m) < target);
-  assert.ok(clearsOrDoor.length > 0,
-    "test setup: expected at least one film that clears the OR block but scores below the target");
-  for(const m of clearsOrDoor) assert.equal(E.matchesCriteria(m, d), false,
-    `${m.title} scores ${E.cascadeScore(m)} (below target ${target}) but still matched with the real gate on`);
-});
-
-// AC3: a film with no Cascade score is held back while a target is in force, and never silently dropped —
-// scoreHeldBackCount says how many. AC4: with no Mission dial set, the gate (and this count) does nothing.
-test("CAS-703 AC3/AC4: unscored films are held back (and counted) only while a target is in force", () => {
-  const noTarget = missionCase({ kind: "stream", status: ["included_streaming", "pvod", "rental"] });
-  assert.equal(E.missionScoreStats(noTarget).min, null, "test setup: expected no Mission dial set");
-  assert.equal(E.scoreHeldBackCount(noTarget), 0, "no target in force should hold nothing back");
-
-  // selCrowd sets the target; selScale opens an OR route an unscored film CAN clear (unlike selCrowd's own
-  // route, which needs a People's-vote rating to clear at all) — selScale doesn't feed a stream agent's own
-  // target (missionScoreStats only reads selCrowd/selCritScore for kind "stream"), so the target stays 75.
-  const withTarget = missionCase({ kind: "stream", status: ["included_streaming", "pvod", "rental"],
-    selCrowd: 7.5, selScale: 100e6 });
-  const target = E.missionScoreStats(withTarget).min;
-  assert.ok(target !== null, "test setup: expected a Mission target to be in force");
-  const held = E.scoreHeldBackCount(withTarget);
-  assert.ok(held > 0, "test setup: expected at least one unscored film held back to exercise the count");
-
-  // Every film the count claims to be holding back must really be unscored, not otherwise listed, and must
-  // have cleared every other gate (it would list if the score gate alone were lifted).
+// CAS-724 change item 6: scoreHeldBackCount is restated against c.scoreFloor rather than the retired
+// Mission-dials target — and, since rule 4 (no score, never admitted) is now unconditional rather than only
+// active "while a target is in force", the count is meaningful even at a floor of 0.
+test("CAS-724: scoreHeldBackCount agrees with its own set, at any floor including 0", () => {
+  const d = missionCase({ status: ["included_streaming", "pvod", "rental"], scoreFloor: 0 });
+  const held = E.scoreHeldBackCount(d);
   const heldFilms = E.MOVIES.filter(m => E.cascadeScore(m) === -1
-    && !E.listedBy(m, withTarget) && E.listedBy(m, withTarget, true));
+    && !E.listedBy(m, d) && E.listedBy(m, d, true));
   assert.equal(heldFilms.length, held, "scoreHeldBackCount disagrees with its own set");
-  for(const m of heldFilms) assert.equal(E.listedBy(m, withTarget), false,
-    `${m.title} has no score but is still listed while a target is in force`);
+  assert.ok(held > 0, "test setup: expected at least one unscored film held back to exercise the count");
+  for(const m of heldFilms) assert.equal(E.listedBy(m, d), false,
+    `${m.title} has no score but is still listed`);
 });
 
 // ---- 10b. THE CHOSEN SORT'S OWN COMPARATOR DECIDES THE ORDER (CAS-702) ------------------------------------
@@ -2370,22 +2332,28 @@ test("CAS-722 AC4: cascadeScoreSourcesText names only Buzz pre-release, never Bu
     `${releasedFilm.title}: released film's basis text should be exactly qScoreSourcesText's`);
 });
 
-// AC7 (ticket's "cinema mission minimum"): a cinema agent's Mission dials are Buzz and Movie Budget, on the
-// same percentile scale as the card, so missionScoreStats needs its own cinema-lane formula rather than the
-// streaming lane's selCrowd/selCritScore mean.
-test("CAS-695: missionScoreStats reads Buzz/Budget percentiles for a cinema agent, unchanged for a stream agent", () => {
-  assert.equal(E.missionScoreStats({ kind: "cinema", selBuzz: 0, selScale: 0 }).min, null, "no cinema dial on should give no minimum");
-  assert.equal(E.missionScoreStats({ kind: "cinema", selBuzz: 2, selScale: 0 }).min, E.BUZZ_PCTL[2], "Buzz alone should read as its own percentile");
-  const scaleFloor = E.CINEMA_BUDGET_VALS[Math.floor(E.CINEMA_BUDGET_VALS.length / 2)];
-  const scalePctl = E.pctRankOf(E.CINEMA_BUDGET_VALS, scaleFloor);
-  assert.equal(E.missionScoreStats({ kind: "cinema", selBuzz: 0, selScale: scaleFloor }).min, scalePctl,
-    "Budget alone should read as its dollar floor's own percentile");
-  assert.equal(E.missionScoreStats({ kind: "cinema", selBuzz: 2, selScale: scaleFloor }).min,
-    Math.round((E.BUZZ_PCTL[2] + scalePctl) / 2), "both cinema dials on should read as their mean");
+// CAS-724: an agent saved before c.scoreFloor existed migrates it, once, from whichever legacy Mission dials
+// it had ON — the same formula the retired missionScoreStats used, now a one-time normCascade migration
+// rather than a live admission input. Exercised through the public migration path, not a retired internal
+// function (removed with the OR block it served).
+test("CAS-724: an agent's scoreFloor migrates once from its legacy Mission dials' own mean", () => {
+  const migrate = overrides => E.normCascade({ ...overrides }, { template: true }).scoreFloor;
+  assert.equal(migrate({ kind: "cinema", selBuzz: 0, selScale: 0 }), 0, "no cinema dial on should migrate to a floor of 0");
+  assert.equal(migrate({ kind: "cinema", selBuzz: 2, selScale: 0 }), E.BUZZ_PCTL[2], "Buzz alone should migrate to its own percentile");
+  const scaleFloorD = E.CINEMA_BUDGET_VALS[Math.floor(E.CINEMA_BUDGET_VALS.length / 2)];
+  const scalePctl = E.pctRankOf(E.CINEMA_BUDGET_VALS, scaleFloorD);
+  assert.equal(migrate({ kind: "cinema", selBuzz: 0, selScale: scaleFloorD }), scalePctl,
+    "Budget alone should migrate to its dollar floor's own percentile");
+  assert.equal(migrate({ kind: "cinema", selBuzz: 2, selScale: scaleFloorD }),
+    Math.round((E.BUZZ_PCTL[2] + scalePctl) / 2), "both cinema dials on should migrate to their mean");
 
   // The stream lane keeps CAS-694's own formula exactly — a kind other than "cinema" must not be re-routed.
-  assert.equal(E.missionScoreStats({ kind: "stream", selCrowd: 7.5, selCritScore: 0, selBuzz: 0, selScale: 0 }).min, 75,
-    "a stream agent's minimum changed even though its own dials (People's vote/Critics) are untouched by this ticket");
+  assert.equal(migrate({ kind: "stream", selCrowd: 7.5, selCritScore: 0, selBuzz: 0, selScale: 0 }), 75,
+    "a stream agent's migrated floor changed even though its own dials (People's vote/Critics) are untouched by this ticket");
+
+  // Once set, scoreFloor is authoritative and is never recomputed from the dials again.
+  assert.equal(migrate({ kind: "cinema", selBuzz: 2, selScale: 0, scoreFloor: 40 }), 40,
+    "an agent that already carries scoreFloor had it overwritten by the legacy migration formula");
 });
 
 // ---- CAS-697: RECALIBRATED BUZZ LADDER + THE $1M CINEMA BUDGET FLOOR --------------------------------------
