@@ -200,6 +200,112 @@ test("an agent created with every window enabled lists films at rental or stream
     `no rental/included_streaming group in ${JSON.stringify(groups)}`).toBe(true);
 });
 
+// CAS-729: the Mission screen — one score track carrying the Watch On windows as draggable markers, plus
+// the REQUIREMENTS section. Reaches it the same way a real edit does: Agents screen -> Edit -> the Mission
+// door on the Briefing hub, on the FIRST agent onboarding's own roster already created (no extra "new agent"
+// detour needed for a screen that only reads/edits an existing one).
+async function openFirstAgentMission(page){
+  await page.locator("#agentsBtn").click();
+  await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
+  await page.locator(".ag-edit").first().click();
+  await expect(page.locator(".eacard.msn")).toBeVisible();
+  await page.locator(".eacard.msn").click();
+  await expect(page.locator(".osh", { hasText: "Mission" })).toBeVisible();
+}
+
+test("Mission screen: one score track, one marker per enabled window, Premium adds a fourth (CAS-729 AC2)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  await openFirstAgentMission(page);
+  await expect(page.locator(".msntrackwrap")).toHaveCount(1);
+  // Premium starts off (CAS-243/watchPrefsDefaults), so the default roster's marker count is the other three.
+  await expect(page.locator(".msnmark")).toHaveCount(3);
+
+  // Back out without saving, then switch Premium on for real through the actual Where & when screen — the
+  // same mechanism the CAS-725 tab-strip test above already drives.
+  await page.locator("#onbStep .osback").click();   // Mission -> the Briefing hub
+  await page.locator("#onbStep .osback").click();   // hub -> closes, discarding this (unsaved) visit
+  await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
+
+  await page.locator("#navMenuBtn").click();
+  await page.locator("#navMenu .navitem", { hasText: "Where & when you'll watch" }).click();
+  const premiumLane = page.locator(".wwlane", { has: page.locator(".wwn", { hasText: "Premium" }) });
+  await premiumLane.locator(".agwt", { hasText: "Track" }).click();
+  await expect(premiumLane).toHaveClass(/on/);
+  await page.locator("#wwScreen .osback").click();
+  await expect(page.locator("#wwScreen")).not.toHaveClass(/open/);
+
+  await openFirstAgentMission(page);
+  await expect(page.locator(".msnmark")).toHaveCount(4);
+});
+
+test("Mission screen: dragging Cinema below Rental pushes Rental down, never crossing or stacking (CAS-729 AC3)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFirstAgentMission(page);
+
+  // Arrange a known, staggered starting point — a fresh agent's four markers seed EQUAL (CAS-727's one-time
+  // scoreFloor migration), which is not itself what this AC is about. paintMsnTrack() is the same in-place
+  // repaint a real drag calls, so this only sets the scene; the drag itself still drives the real handle.
+  await page.evaluate(() => {
+    const c = onbFlow.draft;
+    c.watchMarkers.in_cinema = 90; c.watchMarkers.rent = 75; c.watchMarkers.stream = 60;
+    paintMsnTrack();
+  });
+  const before = await page.evaluate(() => ({ ...onbFlow.draft.watchMarkers }));
+
+  const trackBox = await page.locator(".msntrackwrap").boundingBox();
+  const handle = page.locator('.msnhandle[data-key="in_cinema"]');
+  const handleBox = await handle.boundingBox();
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(trackBox.x + 2, handleBox.y + handleBox.height / 2, { steps: 8 });
+  await page.mouse.up();
+
+  const after = await page.evaluate(() => ({ ...onbFlow.draft.watchMarkers }));
+  expect(after.in_cinema, JSON.stringify({ before, after })).toBeLessThan(before.in_cinema);
+  expect(after.rent, JSON.stringify({ before, after })).toBeLessThan(before.rent);        // Rental pushed down
+  expect(after.in_cinema).toBeGreaterThan(after.rent);                                    // never crossed
+  expect(after.rent).toBeGreaterThan(after.stream);                                       // never crossed
+  expect(after.in_cinema).not.toBe(after.rent);                                           // never stacked
+  expect(after.rent).not.toBe(after.stream);                                              // never stacked
+  await expect(page.locator(".msnmark")).toHaveCount(3);   // still three distinct markers, none merged away
+});
+
+test("Mission/hub: no Watch On door, marker values in the Mission card, requirement scope chips, no overflow (CAS-729 AC4/AC5/AC6)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFirstAgentMission(page);
+
+  // AC5: the three requirement cards' scope chips, in order.
+  const chips = await page.locator(".reqcard .reqscope").allTextContents();
+  expect(chips).toEqual(["ALL WINDOWS", "ONCE RELEASED", "ONCE RELEASED"]);
+
+  // AC6: the screen renders without horizontal overflow — this suite's own "ios" project is already the
+  // 390-wide iPhone 13 viewport (playwright.config.js), so no extra sizing is needed here.
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+
+  // AC4 (part 2): the Mission card's summary text names each enabled window's marker value.
+  const marks = await page.evaluate(() => {
+    const c = onbFlow.draft;
+    return WATCH_LEVEL_KEYS.filter(k => windowUsable(c, k)).map(k => c.watchMarkers[k]);
+  });
+  expect(marks.length).toBeGreaterThan(0);
+  const cardText = await page.locator("#onbStep .eacard.msn").innerText();
+  for(const v of marks) expect(cardText, cardText).toContain(String(v));
+
+  // AC4 (part 1): back out to the hub and confirm there is no Watch On door — two doors (Mission, Style)
+  // only, the windows now live on the score track instead.
+  await page.locator("#onbStep .osback").click();
+  await expect(page.locator(".eacard")).toHaveCount(2);
+  await expect(page.locator(".eacard", { hasText: "Watch On" })).toHaveCount(0);
+});
+
 test("'Only show films on my services' changes what a new agent finds", async ({ page }) => {
   // Every window a streaming agent lists (Premium/Rent/Streaming) is service-scoped, so switching the
   // filter on with no services named must drop the count — this exercises the real mechanism the switch
