@@ -1472,23 +1472,29 @@ test("CAS-662 AC2: the listing yields exactly E.listedBy's rows, for every group
   }
 });
 
-// ---- AUTO-NOTIFY ARMS A FILM'S EARLIEST WINDOW (CAS-613) --------------------------------------------------
-// recomputeFound() auto-ticks notify[id].wins for a film found by an autoNotify agent, mirroring
-// toggleFilmOpt's manual cascade-down tick, gated by watchPrefs and guarded by a once-ever `autoNotified`
-// flag. A synthetic cascade pinned onto one real film (pinnedInto, not criteria matching) keeps the film's
-// real catalogue status out of the assertions — except for `stream`, WINDOW_RUNG's last rung, which is
-// never spent for any film, so it is the one deterministic target these tests arm.
-function seedAutoNotifyCascade(on){
-  const id = "cas613-test-cascade";
+// ---- WATCH ON PLACEMENT — THE LATER-OF RULE (CAS-727) ------------------------------------------------------
+// recomputeFound() now computes every admitted film's Watch On itself, every pass: the later of `earned`
+// (the window its score clears, fixed once at admission and never re-thresholded) and `standing` (the
+// window it's in right now, which keeps moving). This replaces CAS-613's once-ever `autoNotify`-gated arm
+// outright — autoNotified is gone (AC5 below), and c.autoNotify no longer has anything to do with Watch On.
+function seedMarkerCascade(markers){
+  const id = "cas727-test-cascade";
   // A full normCascade(), not a bare object: watchesFilm/matchesCriteria run against EVERY film in
-  // MOVIES.forEach (recomputeFound loops the whole catalogue per cascade), and a bare {id,autoNotify}
-  // crashes on the first film that isn't the one this test pins in. imdb:10.1 is above the real 0-10
-  // scale, so criteria matching admits nothing — only pinFilm's pinnedInto override reaches this cascade.
+  // MOVIES.forEach (recomputeFound loops the whole catalogue per cascade), and a bare {id} crashes on the
+  // first film that isn't the one this test pins in. imdb:10.1 is above the real 0-10 scale, so criteria
+  // matching admits nothing — only pinFilm's pinnedInto override reaches this cascade.
   const c = E.normCascade({ kind: "stream", status: [], imdb: 10.1 });
-  c.id = id; c.paused = false; c.autoNotify = on;
+  c.id = id; c.paused = false;
+  c.watchMarkers = { in_cinema: null, premium: null, rent: null, stream: null, ...markers };
   E.cascades.push(c);
   return id;
 }
+// Cinema/Rental/Streaming on, Premium off — the default watchPrefsDefaults() shape, made explicit so these
+// tests don't depend on whatever an earlier test left the global watchPrefs pointing at.
+const PLACEMENT_WATCH_PREFS = {
+  in_cinema: { list: true, notify: false }, premium: { list: false, notify: false },
+  rent: { list: true, notify: false }, stream: { list: true, notify: false },
+};
 function unseedCascade(id){
   const i = E.cascades.findIndex(c => c.id === id);
   if(i >= 0) E.cascades.splice(i, 1);
@@ -1520,61 +1526,187 @@ test("CAS-613 AC1: autoNotify defaults false and round-trips true through normCa
   assert.equal(on.autoNotify, true, "an agent explicitly saved with autoNotify true must keep it");
 });
 
-test("CAS-613 AC2/AC3: autoNotify arms the earliest window with notify on, and nothing when none is", () => {
-  const [film] = unwatchedFilms(1);
+// Picks an unwatched film with a real (non -1) Cascade score under `status`, since the placement rule has
+// nothing to grade a scoreless film against. unwatchedFilms(n) already skips watched films; this just walks
+// forward until cascadeScore(m) is real, restoring nothing itself — status is the caller's to save/restore.
+function scoredUnwatchedFilm(status){
+  const pool = unwatchedFilms(40);
+  for(const m of pool){
+    const saved = m.status;
+    m.status = status;
+    const score = E.cascadeScore(m);
+    if(score !== -1) return m;
+    m.status = saved;
+  }
+  throw new Error("no unwatched film in the first 40 carries a real Cascade score under " + JSON.stringify(status));
+}
+
+test("CAS-727 AC2(a): upcoming, score above the Cinema marker, is placed at Cinema", () => {
+  const film = scoredUnwatchedFilm(["upcoming"]);
   const id = film.tmdb_id;
-  const cId = seedAutoNotifyCascade(true);
+  const savedStatus = film.status;
+  const score = E.cascadeScore(film);
+  const cId = seedMarkerCascade({ in_cinema: score - 1, rent: score - 20, stream: score - 30 });
   try {
     pinFilm(id, cId);
-    withWatchPrefs({ in_cinema: { list: true, notify: false }, rent: { list: true, notify: false },
-                     stream: { list: true, notify: false } }, () => {
-      E.recomputeFound();
-      const e = E.notify[id];
-      assert.ok(!e || !e.wins || !e.wins.stream, "AC3: nothing must be ticked when no window has notify on");
-      assert.ok(!e || !e.autoNotified, "AC3: the once-ever guard must not be set when nothing qualified");
-    });
-
-    withWatchPrefs({ in_cinema: { list: true, notify: false }, rent: { list: true, notify: false },
-                     stream: { list: true, notify: true } }, () => {
-      E.recomputeFound();
-      const e = E.notify[id];
-      assert.equal(e.wins.stream, true, "AC2: the qualifying window must be ticked");
-      assert.equal(e.autoNotified, true, "the once-ever guard must be set once armed");
-      assert.equal(e.streamTier, "must", "the cascade-down tick must set the same default tier toggleFilmOpt sets");
-      assert.equal(e.muted, false, "the cascade-down tick must unmute, same as toggleFilmOpt");
-    });
+    withWatchPrefs(PLACEMENT_WATCH_PREFS, () => { E.recomputeFound(); });
+    const e = E.notify[id];
+    assert.equal(e.wins.in_cinema, true, "an upcoming film clearing the Cinema marker is placed at Cinema");
+    assert.equal(e.winsSource.in_cinema, "auto");
   } finally {
     delete E.notify[id];
     unseedCascade(cId);
+    film.status = savedStatus;
   }
 });
 
-test("CAS-613 AC4/AC6: a once-armed film is never re-armed after a manual untick, or unticked when autoNotify goes off", () => {
-  const [film] = unwatchedFilms(1);
+test("CAS-727 AC2(b): in cinemas, a score between the Rental and Cinema markers is placed at Rental", () => {
+  const film = scoredUnwatchedFilm(["in_cinema"]);
   const id = film.tmdb_id;
-  const cId = seedAutoNotifyCascade(true);
+  const savedStatus = film.status;
+  const score = E.cascadeScore(film);
+  const cId = seedMarkerCascade({ in_cinema: score + 10, rent: score - 10, stream: score - 20 });
   try {
     pinFilm(id, cId);
-    withWatchPrefs({ stream: { list: true, notify: true } }, () => {
+    withWatchPrefs(PLACEMENT_WATCH_PREFS, () => { E.recomputeFound(); });
+    const e = E.notify[id];
+    assert.equal(e.wins.rent, true,
+      "the score doesn't clear Cinema but clears Rental, and the film is standing at Cinema — 'I'll wait for it'");
+    assert.equal(e.winsSource.rent, "auto");
+  } finally {
+    delete E.notify[id];
+    unseedCascade(cId);
+    film.status = savedStatus;
+  }
+});
+
+test("CAS-727 AC2(c)/(d)/AC3-in-miniature: earned is fixed at admission — a film travels forward with its status, and Never skips a window", () => {
+  const film = scoredUnwatchedFilm(["upcoming"]);
+  const id = film.tmdb_id;
+  const savedStatus = film.status;
+  const score = E.cascadeScore(film);   // taken while upcoming (cinema basis) — must survive the basis flip below
+  const cId = seedMarkerCascade({ in_cinema: score - 1, rent: score - 20, stream: score - 30 });
+  try {
+    pinFilm(id, cId);
+    withWatchPrefs(PLACEMENT_WATCH_PREFS, () => {
       E.recomputeFound();
-      assert.equal(E.notify[id].wins.stream, true, "sanity: the first pass arms it");
+      assert.equal(E.notify[id].wins.in_cinema, true, "AC2(a) sanity: armed at Cinema while upcoming");
 
-      E.notify[id].wins.stream = false;   // the user's manual untick
-      E.recomputeFound();                 // a second pass, same agent, same watchPrefs
-      assert.equal(E.notify[id].wins.stream, false,
-        "AC4: a manually-unticked auto-armed film must not be re-armed on a later pass");
+      // (c): the same film, unwatched, now rental — earned (Cinema, from the score at admission) never
+      // gets re-read even though released films score on a completely different basis (qScore, not cinema
+      // buzz); only standing moves, and it moves past earned.
+      film.status = ["rental"];
+      E.recomputeFound();
+      assert.equal(E.notify[id].wins.rent, true, "AC2(c): standing overtakes earned once the film reaches rental");
+      assert.equal(E.notify[id].wins.in_cinema, false);
 
+      // (d): same again, but this agent has set Rental to Never — standing must snap forward past it to
+      // the next enabled window (Streaming), not fall back to earned (Cinema).
       const c = E.cascades.find(x => x.id === cId);
-      c.autoNotify = false;               // AC6: turning the agent's switch off
-      E.notify[id].wins.stream = true;    // restore the armed state to isolate AC6 from AC4's untick
+      c.watchMarkers.rent = null;
       E.recomputeFound();
-      assert.equal(E.notify[id].wins.stream, true,
-        "AC6: turning autoNotify off must not untick a film already armed");
+      assert.equal(E.notify[id].wins.stream, true, "AC2(d): Rental set to Never snaps standing forward to Streaming");
+      assert.equal(E.notify[id].wins.in_cinema, false);
+      assert.equal(E.notify[id].wins.rent, false);
     });
   } finally {
     delete E.notify[id];
     unseedCascade(cId);
+    film.status = savedStatus;
   }
+});
+
+test("CAS-727 AC2(e): a score below every marker is admitted (via pin) but placed nowhere", () => {
+  const film = scoredUnwatchedFilm(["upcoming"]);
+  const id = film.tmdb_id;
+  const savedStatus = film.status;
+  // 101 is above the 0-100 scale on every axis cascadeScore can return, so no real score ever clears it —
+  // simpler than reasoning about the film's own score value, and just as much "below every marker".
+  const cId = seedMarkerCascade({ in_cinema: 101, rent: 101, stream: 101 });
+  try {
+    pinFilm(id, cId);
+    withWatchPrefs(PLACEMENT_WATCH_PREFS, () => { E.recomputeFound(); });
+    const e = E.notify[id];
+    const picked = !!(e && e.wins && Object.values(e.wins).some(Boolean));
+    assert.ok(!picked, "a film that clears no marker must get no Watch On value, even though the pin admits it");
+  } finally {
+    delete E.notify[id];
+    unseedCascade(cId);
+    film.status = savedStatus;
+  }
+});
+
+test("CAS-727 AC3: replaying a film's status forward never moves its Watch On backward on WINDOW_RUNG", () => {
+  const film = scoredUnwatchedFilm(["upcoming"]);
+  const id = film.tmdb_id;
+  const savedStatus = film.status;
+  const score = E.cascadeScore(film);
+  const cId = seedMarkerCascade({ in_cinema: score - 1, rent: score - 20, stream: score - 30 });
+  try {
+    pinFilm(id, cId);
+    withWatchPrefs(PLACEMENT_WATCH_PREFS, () => {
+      const journey = [["upcoming"], ["in_cinema"], ["rental"], ["included_streaming"]];
+      let prevRank = -1;
+      for(const status of journey){
+        film.status = status;
+        E.recomputeFound();
+        const e = E.notify[id];
+        const key = E.WATCH_LEVEL_KEYS.find(k => e.wins && e.wins[k]);
+        assert.ok(key, `a film clearing its Cinema marker at admission must still hold a Watch On value at ${status}`);
+        const rank = E.WATCH_LEVEL_KEYS.indexOf(key);
+        assert.ok(rank >= prevRank,
+          `Watch On moved backward at status=${status}: rank ${rank} < previous ${prevRank}`);
+        prevRank = rank;
+      }
+    });
+  } finally {
+    delete E.notify[id];
+    unseedCascade(cId);
+    film.status = savedStatus;
+  }
+});
+
+test("CAS-727 AC4: a manual Watch On value is byte-identical before and after recompute, for any marker combination", () => {
+  const film = scoredUnwatchedFilm(["in_cinema"]);
+  const id = film.tmdb_id;
+  const savedStatus = film.status;
+  const cId = seedMarkerCascade({});
+  try {
+    pinFilm(id, cId);
+    const e = E.entryFor(id);
+    e.wins = { in_cinema: false, premium: false, rent: true, stream: false };
+    e.winsSource = { rent: "manual" };
+    const before = JSON.stringify([e.wins, e.winsSource]);
+    const c = E.cascades.find(x => x.id === cId);
+    const score = E.cascadeScore(film) === -1 ? 50 : E.cascadeScore(film);
+    const combos = [
+      { in_cinema: score - 1, rent: score - 20, stream: score - 30 },
+      { in_cinema: null, rent: null, stream: null },
+      { in_cinema: 0, rent: 0, stream: 0 },
+      { in_cinema: score + 40, rent: score + 20, stream: score + 10 },
+    ];
+    withWatchPrefs(PLACEMENT_WATCH_PREFS, () => {
+      for(const markers of combos){
+        c.watchMarkers = { in_cinema: null, premium: null, rent: null, stream: null, ...markers };
+        for(const status of [["upcoming"], ["in_cinema"], ["rental"], ["included_streaming"]]){
+          film.status = status;
+          E.recomputeFound();
+          assert.equal(JSON.stringify([e.wins, e.winsSource]), before,
+            `a manual value must survive recompute: markers=${JSON.stringify(markers)} status=${status}`);
+        }
+      }
+    });
+  } finally {
+    delete E.notify[id];
+    unseedCascade(cId);
+    film.status = savedStatus;
+  }
+});
+
+test("CAS-727 AC5: app_template.html carries no trace of the retired autoNotified guard", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const count = (src.match(/autoNotified/g) || []).length;
+  assert.equal(count, 0, `expected 0 occurrences of "autoNotified", found ${count}`);
 });
 
 test("CAS-613 AC5: recomputeFound() calls saveNotify() at most once per pass", () => {

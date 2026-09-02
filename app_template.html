@@ -4774,28 +4774,50 @@ function recomputeFound(){
   found.clear();
   Object.keys(notify).forEach(id=>{ notify[id].cascadeIds=[]; });   // the auto half is rebuilt, never merged
   hits.forEach((ids,id)=>{ entryFor(id).cascadeIds=ids; });
-  // CAS-613: auto-notify arms a film's earliest acceptable notify window the first time it's found by a
-  // Cascade with autoNotify on, mirroring toggleFilmOpt's manual tick (CAS-716: single-select, so this arms
-  // ONLY that one rung, not a cascade). `autoNotified` is a
-  // once-ever guard — set the moment a rung is armed and never re-checked afterward, so a film the user
-  // later unticks by hand is never overruled on a later pass. This loop makes no persistence call of its
-  // own — the unconditional save at the end of this function already covers whatever it changed, once per pass.
+  // CAS-727: Watch On placement — replaces CAS-613's once-ever auto-arm. Every pass, an admitted film's
+  // Watch On is the later of `earned` (the window its score qualifies for, computed once at admission and
+  // never re-thresholded) and `standing` (the window it's CURRENTLY in, which keeps moving). That's what
+  // stops the cinema/streaming score-basis flip at release from demoting or dropping a film. A manual pick
+  // (CAS-716, e.winsSource[key]==="manual") is never read, written or cleared by this rule — the whole
+  // entry is skipped. This loop makes no persistence call of its own — the unconditional save at the end of
+  // this function already covers whatever it changed, once per pass.
   hits.forEach((ids,id)=>{
     const e=entryFor(id);
-    if(e.autoNotified) return;
-    if(!ids.some(cid=>{ const c=cascades.find(x=>x.id===cid); return c && c.autoNotify; })) return;
-    const levels=watchLevelsFor(id);
-    const idx=levels.findIndex(l=>!l.spent && (watchPrefs[l.key]||{}).notify===true);
-    if(idx<0) return;             // no qualifying rung yet — leave autoNotified unset, it may qualify later
     e.wins=e.wins||{};
     e.winsSource=e.winsSource||{};   // CAS-712: which of e.wins was armed by the agent vs ticked by hand
-    // CAS-716: single-select — arm only the earliest qualifying rung, not every rung from it to Streaming.
+    if(WATCH_LEVEL_KEYS.some(k=>e.wins[k] && e.winsSource[k]==="manual")) return;
+    const m=MOVIES.find(x=>x.tmdb_id===id);
+    if(!m) return;
+    // Unpinned, this is always the film's one admitting agent; pinned to more than one, the same highest-
+    // ranked (lowest .order) tie-break CAS-709 used above to pick a single owner for its markers.
+    const owner=ids.map(cid=>cascades.find(x=>x.id===cid)).filter(Boolean)
+      .reduce((best,c)=>(!best||c.order<best.order)?c:best, null);
+    if(!owner) return;
+    if(e.watchEarned===undefined){
+      e.watchEarned=null;
+      const score=cascadeScore(m);
+      for(const k of WATCH_LEVEL_KEYS){
+        if(!windowUsable(owner,k)) continue;
+        if(score>=owner.watchMarkers[k]){ e.watchEarned=k; break; }
+      }
+    }
+    if(e.watchEarned==null) return;             // below every marker at admission — no value written
+    // STATUS_RUNG numbers a film's current window on the exact same ladder WINDOW_RUNG numbers the four
+    // watch levels (CAS-280), so the film's rung IS its natural standing key — snapped forward past
+    // whichever windows are off or set to Never.
+    const rung=STATUS_RUNG[primaryStatus(m)];
+    let standing=null;
+    if(rung>0){
+      const si=WATCH_LEVEL_KEYS.findIndex(k=>WINDOW_RUNG[k]===rung);
+      for(let j=si; j>=0 && j<WATCH_LEVEL_KEYS.length; j++){
+        if(windowUsable(owner,WATCH_LEVEL_KEYS[j])){ standing=WATCH_LEVEL_KEYS[j]; break; }
+      }
+    }
+    const finalKey=(standing && WINDOW_RUNG[standing]>WINDOW_RUNG[e.watchEarned]) ? standing : e.watchEarned;
     WATCH_LEVEL_KEYS.forEach(k=>{ e.wins[k]=false; });
-    e.wins[levels[idx].key]=true;
-    e.winsSource[levels[idx].key]="auto";
+    e.wins[finalKey]=true;
+    e.winsSource[finalKey]="auto";
     if(!e.streamTier) e.streamTier="must";
-    e.muted=false;
-    e.autoNotified=true;
   });
   Object.entries(notify).forEach(([id,e])=>{
     const auto=e.cascadeIds.length>0, mine=e.source==="manual";
@@ -6926,6 +6948,38 @@ const WATCH_LEVEL_KEYS = ["in_cinema", "premium", "rent", "stream"];
 // CAS-716: short names for the Watch On chip — "the button should say what the Watch On setting is e.g.
 // Streaming say 'Stream'". The Watch panel's own rows keep their longer AGENT_WINDOWS labels; this is chip-only.
 const WATCH_LEVEL_SHORT_LABEL = {in_cinema:"Cinema", premium:"Premium", rent:"Rent", stream:"Stream"};
+// CAS-727: which windows are live at all — the intersection of WATCH_LEVEL_KEYS with what's switched on in
+// Where & when you'll watch (watchPrefs). A window with neither List nor Notify on carries no marker.
+function windowEnabled(key){
+  const w=watchPrefs[key]||{};
+  return w.list===true || w.notify===true;
+}
+// Usable for placement: switched on AND its own marker isn't Never (null) — the "removed from the track" case.
+function windowUsable(c, key){
+  return windowEnabled(key) && c.watchMarkers && c.watchMarkers[key]!=null;
+}
+// The admission floor is the lowest marker among an agent's usable windows — there is no separate floor
+// control any more (design record §5, CAS-727). No usable window at all means nothing can ever clear it.
+function agentFloor(c){
+  const marks=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k)).map(k=>c.watchMarkers[k]);
+  return marks.length ? Math.min(...marks) : Infinity;
+}
+// Keeps markers in ladder order — Cinema ≥ Premium ≥ Rental ≥ Streaming — by pushing every OTHER marker past
+// the one just moved, so a configuration that can't be reached is impossible rather than silently inert.
+// Never (null) sits outside the comparison: moving it doesn't push anything, and nothing pushes into it.
+function setWatchMarker(c, key, value){
+  c.watchMarkers=c.watchMarkers||{};
+  c.watchMarkers[key]=value;
+  if(value==null) return;
+  const i=WATCH_LEVEL_KEYS.indexOf(key);
+  WATCH_LEVEL_KEYS.forEach((k,j)=>{
+    if(k===key) return;
+    const v=c.watchMarkers[k];
+    if(v==null) return;
+    if(j<i && v<value) c.watchMarkers[k]=value;
+    if(j>i && v>value) c.watchMarkers[k]=value;
+  });
+}
 // The rows the Watch panel offers for this film: every level the film is eligible for (in ladder order),
 // each carrying whether the film has already passed it. CAS-477: a level this cascade isn't configured to
 // track is still shown, live and tickable — the film's Watch-it tick is account-wide (filmOptOn), so hiding
@@ -8841,6 +8895,15 @@ function normCascade(c, opts){
   // CAS-724: the admission floor. An agent saved before this field existed inherits legacyMissionFloorDefault's
   // one-time reading of its old Mission dials; an agent saved since keeps its own stored number, including 0.
   if(typeof c.scoreFloor!=="number") c.scoreFloor = legacyMissionFloorDefault(c);
+  // CAS-727: per-window score markers — one per WATCH_LEVEL_KEYS entry, a score 0-100 or null for Never.
+  // The agent's admission floor is the lowest of these among the windows Where & when has switched on
+  // (agentFloor); c.scoreFloor above stays only as the one-time migration source. An agent saved before this
+  // field existed gets every window seeded at its old scoreFloor, so nothing that already qualified stops
+  // qualifying.
+  if(!c.watchMarkers || typeof c.watchMarkers!=="object"){
+    c.watchMarkers={};
+    WATCH_LEVEL_KEYS.forEach(k=>{ c.watchMarkers[k]=c.scoreFloor; });
+  }
   // CAS-261: a lane only carries the dials it uses, and that has to be true of agents SAVED before the rule
   // as well as agents built after it — otherwise a cinema agent from last week goes on quietly filtering on
   // a People's-vote floor its Mission screen does not show and its auto-relax cannot loosen. laneCrit is the
@@ -8943,7 +9006,7 @@ cascades.forEach((c,i)=>{ if(typeof c.order!=="number") c.order=i; });
 const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.age, c.culture, c.year,
   c.imdb, c.rt, c.awards, c.budget, c.includeUnbudgeted, c.includeUnrated, c.tentpole,
   c.selCrowd||0, c.selCritScore||0, c.selAwards||0, c.selScale||0, c.selBuzz||0, !!c.selOr, c.yearsBack||0,
-  !!c.cinemaReleaseOnly, c.scoreFloor||0,
+  !!c.cinemaReleaseOnly, c.scoreFloor||0, c.watchMarkers||{},
   c.myServices, c.alerts, c.sort||DEFAULT_SORT, c.excludeWatched, c.excludeBlocked,
   // CAS-160: the viewing windows are part of "the alert moments" too. Three of them (announced / 1 month /
   // 1 week out) all resolve to the same `status`, so without this line two agents that differ only in when
@@ -9208,15 +9271,14 @@ function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   if(c.cinemaReleaseOnly && !m.cinema_release) return false;
   if(!budgetOK(m, c.budget||0)) return false;
   if((m.rt_critic||0) < (c.rt||0)) return false;
-  // CAS-724: the score floor. c.scoreFloor is the agent's admission floor — the lowest enabled Watch On marker
-  // once CAS-727 lands; until then a single stored number, defaulted in normCascade(). Reads cascadeScore(m),
-  // the exact figure the card prints, so the gate can never disagree with what's shown. A film with no Cascade
-  // score (-1) can never be shown to clear a floor, so it is held back unconditionally — ignoreScoreGate lets
-  // scoreHeldBackCount() below ask "would this have listed but for the score gate?" without duplicating every
-  // other gate in this function.
+  // CAS-724/CAS-727: the score floor. agentFloor(c) is the lowest marker among the agent's usable Watch On
+  // windows — there is no separate floor control. Reads cascadeScore(m), the exact figure the card prints, so
+  // the gate can never disagree with what's shown. A film with no Cascade score (-1) can never be shown to
+  // clear a floor, so it is held back unconditionally — ignoreScoreGate lets scoreHeldBackCount() below ask
+  // "would this have listed but for the score gate?" without duplicating every other gate in this function.
   if(!ignoreScoreGate){
     const score=cascadeScore(m);
-    if(score===-1 || score<c.scoreFloor) return false;
+    if(score===-1 || score<agentFloor(c)) return false;
   }
   return true;
 }
