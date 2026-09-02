@@ -2263,6 +2263,13 @@ test("CAS-691 neighbours: saveCascades also mirrors to the on-device cache immed
   E.cascades.length = before;
 }));
 
+test("CAS-733 AC7: CascadePersistence exposes no CAS-212 merge-sheet seam — signed-out is no longer a usable state to offer a merge away from", () => {
+  const keys = Object.keys(E.CascadePersistence);
+  assert.ok(!keys.includes("offerMerge"), "CascadePersistence must not expose offerMerge");
+  assert.ok(!keys.includes("pendingMerge"), "CascadePersistence must not expose pendingMerge");
+  assert.ok(!keys.includes("renderMigrate"), "CascadePersistence must not expose renderMigrate");
+});
+
 // ---- WATCH-LIST EDITS SURVIVE ACROSS DEVICES: DIRTY-ROW SYNC, VERSIONING, TOMBSTONES (CAS-692) -------------
 // CAS-691 made an edit durable on the device that made it; it did nothing for a SECOND device, because
 // syncWatchlistsToAccount pushed this device's entire watchLists set on every save and deletion was
