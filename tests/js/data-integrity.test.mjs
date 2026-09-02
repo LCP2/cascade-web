@@ -259,31 +259,30 @@ test("in cinema: the cinema lane leads with what is out, ends with Upcoming, old
 // Upcoming in release order. Three guards fired before the chosen key was ever consulted or honoured:
 // CAS-430's In Cinema override and Upcoming's stale pre-CAS-695 exclusion of "cascade" (both CAS-699), and
 // — still live after CAS-699 shipped — sortMoviesBy's own "cascade" case read qScore, which is -1 for
-// every pre-release film (In Cinema included: CAS-695 made it score off buzz/budget, not People's
-// vote/Critics), so the "fix" still produced no real ordering there (CAS-702). These fixtures carry
-// `budget` rather than `metacritic`, because that is what actually discriminates a pre-release film's
-// Cascade score now (cinemaScore's budget percentile) — deliberately not `popularity`, which byPopularity
-// also reads as qScore's OWN tie-break fallback, so a popularity-based fixture would pass even under the
-// old qScore bug for the wrong reason. Values are percentile-terms apart, so they stay ordered regardless
-// of how the real catalogue's budget cohort drifts day to day.
-const cinemaFilm = (title, cinema_date, budget) =>
-  ({ title, status: ["in_cinema"], cinema_date, budget, rt_critic: null, imdb_rating: null, imdb_votes: 0 });
-const upcomingFilm = (title, cinema_date, budget) =>
-  ({ title, status: ["upcoming"], cinema_date, budget, rt_critic: null, imdb_rating: null, imdb_votes: 0 });
+// every pre-release film (In Cinema included: CAS-695 made it score off buzz, not People's vote/Critics),
+// so the "fix" still produced no real ordering there (CAS-702). CAS-722 dropped budget out of the cinema
+// score entirely, so these fixtures carry `popularity` (buzzPctlOf's own source) rather than `metacritic` —
+// the one term cinemaScore now reads. Values are picked from measured BUZZ_POP_VALS percentile bands
+// (0.1/1/10 ≈ 19th/69th/98th), comfortably apart, so they stay ordered regardless of how the real
+// catalogue's cohort drifts day to day.
+const cinemaFilm = (title, cinema_date, popularity) =>
+  ({ title, status: ["in_cinema"], cinema_date, popularity, rt_critic: null, imdb_rating: null, imdb_votes: 0 });
+const upcomingFilm = (title, cinema_date, popularity) =>
+  ({ title, status: ["upcoming"], cinema_date, popularity, rt_critic: null, imdb_rating: null, imdb_votes: 0 });
 
 test("cascade score: In Cinema honours an explicit pick on a cinema cascade (CAS-699 AC2, CAS-702)", () => {
-  // Lee's own case, re-run against the real catalogue: cinema dates ascend 8 Jul / 23 Jul / 6 Aug while the
-  // real Cascade scores do not (Moana 98, Motor City 77, Spider-Man: Brand New Day 99 — verified against
-  // movies.json). Budget-percentile order here mirrors that same disagreement.
+  // Lee's own case, re-run against the real catalogue: cinema dates ascend 8 Jul / 23 Jul / 6 Aug, while
+  // Cascade score order does not. Buzz-percentile order here (Spider-Man > Moana > Motor City) mirrors that
+  // same disagreement.
   const films = [
-    cinemaFilm("Moana", "2026-07-08", 50000000),
-    cinemaFilm("Motor City", "2026-07-23", 1000000),
-    cinemaFilm("Spider-Man: Brand New Day", "2026-08-06", 300000000),
+    cinemaFilm("Moana", "2026-07-08", 1),
+    cinemaFilm("Motor City", "2026-07-23", 0.1),
+    cinemaFilm("Spider-Man: Brand New Day", "2026-08-06", 10),
   ];
   const cascadeC = { kind: "cinema" };
   const picked = [...E.listingOrder(films, "cascade", cascadeC, true)].map(m => m.title);
   assert.deepEqual(picked, ["Spider-Man: Brand New Day", "Moana", "Motor City"],
-    `an explicit Cascade score pick should read highest budget percentile first — got ${picked.join(", ")}`);
+    `an explicit Cascade score pick should read highest buzz percentile first — got ${picked.join(", ")}`);
   // …and CAS-430's own default is untouched when nobody has picked anything (isUserSort omitted).
   const byDefault = [...E.listingOrder(films, "cascade", cascadeC)].map(m => m.title);
   assert.deepEqual(byDefault, ["Moana", "Motor City", "Spider-Man: Brand New Day"],
@@ -291,24 +290,24 @@ test("cascade score: In Cinema honours an explicit pick on a cinema cascade (CAS
 });
 
 test("cascade score: Upcoming honours Cascade score, score order and release order in conflict (CAS-699 AC1, CAS-702)", () => {
-  // Release order ascends A, B, C; budget-percentile order is B (highest), C, A (lowest) — deliberately
+  // Release order ascends A, B, C; buzz-percentile order is B (highest), C, A (lowest) — deliberately
   // disagreeing so the test cannot pass on release order alone.
   const films = [
-    upcomingFilm("A", "2026-09-01", 1000000),
-    upcomingFilm("B", "2026-10-01", 300000000),
-    upcomingFilm("C", "2026-11-01", 50000000),
+    upcomingFilm("A", "2026-09-01", 0.1),
+    upcomingFilm("B", "2026-10-01", 10),
+    upcomingFilm("C", "2026-11-01", 1),
   ];
   const seq = [...E.listingOrder(films, "cascade", { kind: "stream" })].map(m => m.title);
-  assert.deepEqual(seq, ["B", "C", "A"], `Upcoming under Cascade score should read highest budget percentile first — got ${seq.join(", ")}`);
+  assert.deepEqual(seq, ["B", "C", "A"], `Upcoming under Cascade score should read highest buzz percentile first — got ${seq.join(", ")}`);
 });
 
 test("cascade score: a watch list's own live sort (ymSort) reaches In Cinema, same as listingOrder (CAS-699, CAS-702)", () => {
   // listingGroups is the function render() actually calls (CAS-662) — ymSort, not c.sort, is its sort key
   // (CAS-646) — so this is the exact path behind Lee's screenshot, not just the shared helper underneath it.
   const films = [
-    cinemaFilm("Moana", "2026-07-08", 50000000),
-    cinemaFilm("Motor City", "2026-07-23", 1000000),
-    cinemaFilm("Spider-Man: Brand New Day", "2026-08-06", 300000000),
+    cinemaFilm("Moana", "2026-07-08", 1),
+    cinemaFilm("Motor City", "2026-07-23", 0.1),
+    cinemaFilm("Spider-Man: Brand New Day", "2026-08-06", 10),
   ];
   const ac = { kind: "cinema" };
   try{
@@ -318,7 +317,7 @@ test("cascade score: a watch list's own live sort (ymSort) reaches In Cinema, sa
     E.setYmSort("cascade");
     const picked = [...E.listingGroups(films, ac).flatMap(({ items }) => [...items]).map(m => m.title)];
     assert.deepEqual(picked, ["Spider-Man: Brand New Day", "Moana", "Motor City"],
-      `with Cascade score picked from the list's own sort menu, In Cinema should read highest budget percentile first — got ${picked.join(", ")}`);
+      `with Cascade score picked from the list's own sort menu, In Cinema should read highest buzz percentile first — got ${picked.join(", ")}`);
   } finally {
     E.setYmSort(null);   // module-scope state — leave it as every other test found it
   }
@@ -333,8 +332,8 @@ test("cascade score: a watch list's own live sort (ymSort) reaches In Cinema, sa
 const RELEASED_GROUPS = ["opening_week", "in_cinema", "pvod", "rental", "included_streaming"];
 // "cascade" is its own test below — CAS-702 found it does not behave like the other four here. In_cinema
 // and Upcoming are pre-release for scoring purposes (CAS-695: cascadeScore routes them to cinemaScore's
-// buzz/budget, not qScore), so metacritic — what discriminates every OTHER released group under "cascade" —
-// discriminates nothing there.
+// buzz percentile, CAS-722, not qScore), so metacritic — what discriminates every OTHER released group
+// under "cascade" — discriminates nothing there.
 const SORT_TABLE = [
   // key, released-section [hi,lo] fields, upcoming-section [first,second] behaviour
   { key: "imdb", field: "imdb_rating", hi: 9, lo: 1, upcomingByScore: false },
@@ -376,7 +375,8 @@ test("sort keys: imdb/rt/gross/popularity each reach every section (CAS-699 AC5)
 // "cascade" on its own (CAS-702): every RELEASED_GROUPS member except in_cinema scores off qScore, exactly
 // like the table above, so metacritic still discriminates Hi from Lo there. in_cinema and upcoming are
 // pre-release for scoring purposes (CAS-695) — cascadeScore routes them to cinemaScore's buzz percentile
-// instead, so popularity is what has to discriminate Hi from Lo for those two.
+// instead (CAS-722: popularity is now that score's only term), so popularity is what has to discriminate
+// Hi from Lo for those two.
 const QSCORE_GROUPS = RELEASED_GROUPS.filter(g => g !== "in_cinema");
 test("sort keys: cascade reaches every section, buzz-driven pre-release and score-driven once released (CAS-699 AC5, CAS-702)", () => {
   for(const g of QSCORE_GROUPS){
@@ -390,20 +390,24 @@ test("sort keys: cascade reaches every section, buzz-driven pre-release and scor
     const seq = [...E.listingOrder(films, "cascade", { kind: "cinema" }, true)].map(m => m.title);
     assert.deepEqual(seq, ["Hi", "Lo"], `cascade in ${g}: expected the higher critic score first — got ${seq.join(", ")}`);
   }
-  // Budget, not popularity: byPopularity is also the eventual tie-break inside byRatingDesc, so a fixture
-  // that varied popularity would read the same whether cinemaScore's own budget term was ever consulted or
-  // not. Budget is read nowhere in that fallback chain, so only a real cinemaScore fix can pass this.
+  // CAS-722 dropped budget out of the cinema score entirely — buzzPctlOf(m) (popularity's own percentile
+  // rank in the same cohort BUZZ_CUTS reads) is the whole basis now, the same field byPopularity uses as its
+  // own eventual byRatingDesc tie-break fallback. Popularity values are picked from measured BUZZ_POP_VALS
+  // percentile bands, comfortably apart (0.1 / 10 ≈ 19th / 98th), and the cinemaScore check below confirms
+  // the two really do differ, so Hi and Lo cannot land in the same band or pass on the fallback by accident.
   // Cinema dates deliberately DISAGREE with the expected order too, so a stray date-based fallback can't
   // pass by accident either.
   for(const g of ["in_cinema", "upcoming"]){
     const films = [
-      { title: "Hi", status: [g], cinema_date: "2026-11-01", budget: 300000000,
+      { title: "Hi", status: [g], cinema_date: "2026-11-01", popularity: 10,
         rt_critic: null, imdb_rating: null, imdb_votes: 0 },
-      { title: "Lo", status: [g], cinema_date: "2026-07-01", budget: 1000000,
+      { title: "Lo", status: [g], cinema_date: "2026-07-01", popularity: 0.1,
         rt_critic: null, imdb_rating: null, imdb_votes: 0 },
     ];
+    assert.ok(E.cinemaScore(films[0]) > E.cinemaScore(films[1]),
+      `cascade in ${g}: test setup expected Hi's buzz percentile to exceed Lo's`);
     const seq = [...E.listingOrder(films, "cascade", { kind: "cinema" }, true)].map(m => m.title);
-    assert.deepEqual(seq, ["Hi", "Lo"], `cascade in ${g}: expected the higher budget percentile first, not release order — got ${seq.join(", ")}`);
+    assert.deepEqual(seq, ["Hi", "Lo"], `cascade in ${g}: expected the higher buzz percentile first, not release order — got ${seq.join(", ")}`);
   }
 });
 

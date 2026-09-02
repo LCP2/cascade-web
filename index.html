@@ -5227,7 +5227,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 891, "commit": "b209923", "builtAt": "2026-09-01T22:20:00Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 892, "commit": "6e50cdf", "builtAt": "2026-09-02T04:03:18Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6050,7 +6050,7 @@ const sortMovies = (a,b) => sortMoviesBy(a,b,filt.sort);
 // timeline is meaningful pre-release — it is the only order that is.
 // CAS-699: "cascade" joined this set too. It used to be noise here for the same reason IMDb/RT/gross still
 // are — an unreleased film carried none of the sources qScore reads. CAS-695 gave every pre-release film a
-// real cinema Cascade score (from buzz and budget), so ranking Upcoming by it is meaningful now, not noise.
+// real cinema Cascade score (from buzz, CAS-722), so ranking Upcoming by it is meaningful now, not noise.
 const PRE_RELEASE_SORTS=new Set(["availability","title","cinema","cascade"]);
 // CAS-148: the default is the availability timeline, and it ranks every group the same way, Upcoming
 // included. CAS-107's rating order is still there as an explicit choice: rated first, highest first, unrated
@@ -8597,21 +8597,19 @@ function buzzStop(m){
 }
 const buzzBandOf = m => BUZZ_KEY[buzzStop(m)] || null;
 
-// ---- CAS-695: the cinema (pre-release) Cascade score ----------------------------------------------------
+// ---- CAS-695: the cinema (pre-release) Cascade score, narrowed by CAS-722 to buzz alone -------------------
 // A pre-release film has no reviews yet, so the streaming score's two axes (People's vote, Critics) are
-// empty for nearly all of it — 85% of Upcoming and 79% of In Cinema carried no score before this. The two
-// signals that DO exist before release are how much a film is being talked about (buzz) and how big it is
-// (budget), each read as its own PERCENTILE RANK within the same upcoming-and-in-cinema cohort BUZZ_CUTS
-// uses, so the two are on one scale before they're averaged. The badge bands and the buzz axis of this score
-// are both percentile ranks in the same cohort array, so a film's BUZZ term equals its badge threshold — but
-// the Cascade score is the MEAN of buzz and budget, so the score and the badge are not the same number
-// whenever a film also carries a budget term.
-// CAS-697 (Lee, 2026-08-28): of the 271 upcoming/in-cinema films that report ANY budget figure, 57% report
-// under $100K and 45% under $10K — TMDB placeholder rows, not real budgets, and they are what put a $100K
-// film at the 57th percentile. CINEMA_BUDGET_MIN floors the array at $1M — the Budget dial's own first
-// labelled stop ("Indie $1M+") — so a film below it carries no budget term and scores on buzz alone, exactly
-// like a film with no budget figure at all. This floor is for the SCORE only, never for admission:
-// selScaleMatch keeps reading m.budget||m.worldwide_gross with no floor.
+// empty for nearly all of it — 85% of Upcoming and 79% of In Cinema carried no score before CAS-695. The one
+// signal that exists before release is how much a film is being talked about — buzz — read as its own
+// PERCENTILE RANK within the same upcoming-and-in-cinema cohort BUZZ_CUTS uses, so a film's Cascade score is
+// now exactly the same figure its Anticipated/Blockbuster/Must-see badge is built from.
+// CAS-722 (Lee, 2026-09-02): cinemaScore used to average buzz with a budget percentile too. Measured against
+// the 5,750-film catalogue: of the 995 cohort films that carried both terms, dropping budget changed the
+// score by a median of 0, and only 60 (6%) moved by more than 10 points. Budget is becoming an admission
+// REQUIREMENT on a separate ticket, and the Scoring page's standing rule is that nothing which admits a film
+// is also a term in its score — so budget leaves the score entirely in this release. CINEMA_BUDGET_MIN/
+// CINEMA_BUDGET_VALS below survive: missionScoreStats still reads them for the cinema Mission Budget dial's
+// own percentile reading, which is unrelated to the printed Cascade score now.
 const CINEMA_BUDGET_MIN = 1_000_000;
 const CINEMA_BUDGET_VALS = MOVIES.filter(inLadderCohort)
   .map(m=>m.budget||m.worldwide_gross||0).filter(v=>v>=CINEMA_BUDGET_MIN).sort((a,b)=>a-b);
@@ -8627,19 +8625,11 @@ function buzzPctlOf(m){
   if(!inLadderCohort(m) || typeof m.popularity!=="number") return null;
   return pctRankOf(BUZZ_POP_VALS, m.popularity);
 }
-function budgetPctlOf(m){
-  if(!inLadderCohort(m)) return null;
-  const v=m.budget||m.worldwide_gross||0;
-  if(v<CINEMA_BUDGET_MIN) return null;
-  return pctRankOf(CINEMA_BUDGET_VALS, v);
-}
+// The whole basis of the cinema Cascade score: the buzz percentile, or -1 (no score) with no popularity to
+// read one from. No averaging, no second term (CAS-722).
 function cinemaScore(m){
-  const p=[];
-  const bz=buzzPctlOf(m), bd=budgetPctlOf(m);
-  if(bz!=null) p.push(bz);
-  if(bd!=null) p.push(bd);
-  if(!p.length) return -1;
-  return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
+  const bz=buzzPctlOf(m);
+  return bz==null ? -1 : bz;
 }
 // The boundary reused verbatim from matchesCriteria's own preRelease check — quality signals (People's
 // vote, Critics) do not exist until a film has been judged, and this is the one place that judges it.
@@ -8652,11 +8642,7 @@ function cascadeScore(m){
 }
 function cascadeScoreSourcesText(m){
   if(!isPreRelease(m)) return qScoreSourcesText(m);
-  const names=[];
-  if(buzzPctlOf(m)!=null) names.push("Buzz");
-  if(budgetPctlOf(m)!=null) names.push("Budget");
-  if(names.length===2) return `${names[0]} and ${names[1]}`;
-  return names.length ? `${names[0]} only` : "";
+  return buzzPctlOf(m)!=null ? "Buzz" : "";
 }
 
 // One badge per film: Landmark is its own axis (kept, unchanged, AC5) and outranks the ladder, exactly as
