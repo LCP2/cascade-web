@@ -160,15 +160,15 @@ if(typeof window.CascadeAuth === "undefined"){
   agentWindow, winOn, subOn, winSubs, PRIORITY_WATCH, ALERT_DEFAULTS, ALERT_SHORT, ALERT_MOMENT,
   alertLive, reachableRows, liveAlerts, drawWatchLanes,
   selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK, voteReadout, critScoreReadout, scaleReadout,
-  // CAS-694: critScore (the one recorded critics figure) and qScore's own text (qScoreSourcesText) and the
-  // Mission step's dial-mean reading (missionScoreStats), so a test can assert all three independently
-  // rather than re-deriving them from qScore's output alone.
-  qScore, critScore, qScoreSourcesText, missionScoreStats, sortMoviesBy, ratingOf, IMDB_MIN_VOTES, imdbReliable,
+  // CAS-694: critScore (the one recorded critics figure) and qScore's own text (qScoreSourcesText), so a test
+  // can assert both independently rather than re-deriving them from qScore's output alone.
+  qScore, critScore, qScoreSourcesText, sortMoviesBy, ratingOf, IMDB_MIN_VOTES, imdbReliable,
   // CAS-695: the Cascade score's own basis switch (cascadeScore/cascadeScoreSourcesText, dispatching on
   // isPreRelease) and the cinema-side score it dispatches to (cinemaScore, over buzzPctlOf and its sorted
   // cohort array/rank lookup) — exported independently so a test can assert each stage rather than only the
   // combined qScoreHTML output. CAS-722 retired budgetPctlOf itself (budget left the score); CINEMA_BUDGET_VALS/
-  // CINEMA_BUDGET_MIN survive only for missionScoreStats' cinema Mission Budget dial, still exported for that.
+  // CINEMA_BUDGET_MIN survive — CAS-724's legacyMissionFloorDefault still reads them for a cinema agent's
+  // one-time scoreFloor migration.
   cascadeScore, cascadeScoreSourcesText, cinemaScore, isPreRelease, buzzPctlOf, pctRankOf,
   BUZZ_POP_VALS, CINEMA_BUDGET_VALS, CINEMA_BUDGET_MIN,
   // CAS-703: the Target score hard gate's own held-back count, so a test can assert it against the set it
