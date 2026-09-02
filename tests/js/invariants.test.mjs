@@ -2432,3 +2432,146 @@ test("CAS-697 AC5: selScaleMatch (admission) reads every real budget with no CIN
       `${m.title}: a $${v} film was not admitted by a Budget dial set at its own figure`);
   }
 });
+
+// ---- FILM_WATCH.SOURCES + AGENT_FILMS SURVIVE A RELOAD (CAS-726) ------------------------------------------
+// Two pieces of state the rest of the "one score model" epic needs do not survive a page load on another
+// device today: Watch On provenance (auto/manual per window) and the admitted set. These exercise the real
+// seam (window.CascadePersistence) against a minimal fake Supabase client — same style as the CAS-681
+// watch-list harness above (chainable enough for select()/upsert()/delete().eq().eq()…, no more), and reuse
+// that section's signInWithClient/signOut since a signed-in fake client is exactly what both need.
+function fakeCas726Supabase(seed){
+  const state = { film_watch: (seed.film_watch || []).map(r => ({ ...r })),
+                  agent_films: (seed.agent_films || []).map(r => ({ ...r })) };
+  const keyOf = { film_watch: r => `${r.user_id}:${r.movie_id}`,
+                  agent_films: r => `${r.user_id}:${r.cascade_id}:${r.movie_id}` };
+  function selectBuilder(rows){
+    return { then(resolve, reject){
+      return Promise.resolve({ data: rows.map(r => ({ ...r })), error: null }).then(resolve, reject);
+    } };
+  }
+  function deleteBuilder(table){
+    const conds = [];
+    const builder = {
+      eq(col, val){ conds.push([col, val]); return builder; },
+      then(resolve, reject){
+        state[table] = state[table].filter(r => !conds.every(([c, v]) => r[c] === v));
+        return Promise.resolve({ error: null }).then(resolve, reject);
+      },
+    };
+    return builder;
+  }
+  const client = {
+    from(table){
+      return {
+        select(){ return selectBuilder(state[table]); },
+        upsert(rows){
+          rows.forEach(row => {
+            const i = state[table].findIndex(x => keyOf[table](x) === keyOf[table](row));
+            if(i >= 0) state[table][i] = { ...state[table][i], ...row }; else state[table].push({ ...row });
+          });
+          return Promise.resolve({ error: null });
+        },
+        delete(){ return deleteBuilder(table); },
+      };
+    },
+  };
+  return { client, state };
+}
+function withCas726State(fn){
+  const savedNotify = { ...E.notify };
+  return (async () => {
+    try { await fn(); }
+    finally {
+      Object.keys(E.notify).forEach(k => delete E.notify[k]);
+      Object.assign(E.notify, savedNotify);
+      signOut();
+    }
+  })();
+}
+
+test("CAS-726 AC2: a manual Watch On tick round-trips through film_watch.sources as \"manual\"", () => withCas726State(async () => {
+  const m = E.MOVIES[0];
+  const level = E.watchLevelsFor(m.tmdb_id).find(l => !l.spent);
+  assert.ok(level, "no un-spent level to test on this film — the harness catalogue looks wrong");
+  const { client } = fakeCas726Supabase({});
+  signInWithClient(client);
+
+  E.toggleFilmOpt(m.tmdb_id, level.key);          // the real manual-tick wire code, not a direct field poke
+  await E.CascadePersistence.syncWatchesNow();
+  await E.CascadePersistence.loadFilmWatches();    // simulate a reload: refetch the account from scratch
+
+  assert.equal(E.filmWatchSource(m.tmdb_id), "manual",
+    "a hand-ticked Watch On value must read back as manual provenance after a reload");
+}));
+
+test("CAS-726 AC2: an agent-armed Watch On value round-trips through film_watch.sources as \"auto\"", () => withCas726State(async () => {
+  const m = E.MOVIES[1];
+  const level = E.watchLevelsFor(m.tmdb_id).find(l => !l.spent);
+  assert.ok(level, "no un-spent level to test on this film — the harness catalogue looks wrong");
+  const remoteRow = { user_id: "cas681-test-user", movie_id: String(m.tmdb_id),
+    windows: [level.key], sources: { [level.key]: "auto" } };
+  const { client } = fakeCas726Supabase({ film_watch: [remoteRow] });
+  signInWithClient(client);
+
+  await E.CascadePersistence.loadFilmWatches();
+
+  assert.equal(E.filmWatchSource(m.tmdb_id), "auto",
+    "a remote row whose stored source is auto must read back as auto provenance");
+}));
+
+test("CAS-726 AC3: an existing film_watch row with no sources entry loads without error and reads as unset", () => withCas726State(async () => {
+  const m = E.MOVIES[2];
+  const level = E.watchLevelsFor(m.tmdb_id).find(l => !l.spent);
+  assert.ok(level, "no un-spent level to test on this film — the harness catalogue looks wrong");
+  // A row exactly as it existed before this ticket: windows only, no sources column value at all.
+  const remoteRow = { user_id: "cas681-test-user", movie_id: String(m.tmdb_id), windows: [level.key] };
+  const { client } = fakeCas726Supabase({ film_watch: [remoteRow] });
+  signInWithClient(client);
+
+  await assert.doesNotReject(() => E.CascadePersistence.loadFilmWatches());
+  assert.equal(E.filmWatchSource(m.tmdb_id), null,
+    "a pre-CAS-726 row must read back as source-unknown, not throw or invent a provenance");
+}));
+
+test("CAS-726 AC4: agent_films rows survive a reload and are readable by cascade_id", () => withCas726State(async () => {
+  const cascadeIdA = "cas726-0000-4000-8000-000000000001";
+  const cascadeIdB = "cas726-0000-4000-8000-000000000002";
+  const filmA = E.MOVIES[3], filmB = E.MOVIES[4];
+  const remoteRows = [
+    { user_id: "cas681-test-user", cascade_id: cascadeIdA, movie_id: String(filmA.tmdb_id),
+      admitted_at: "2026-09-01T00:00:00.000Z", admission_score: 88, admission_status: "in_cinema", agent_sig: "sig-a" },
+    { user_id: "cas681-test-user", cascade_id: cascadeIdB, movie_id: String(filmB.tmdb_id),
+      admitted_at: "2026-09-01T00:00:00.000Z", admission_score: 70, admission_status: "rental", agent_sig: "sig-b" },
+  ];
+  const { client } = fakeCas726Supabase({ agent_films: remoteRows });
+  signInWithClient(client);
+
+  await E.CascadePersistence.loadAgentFilms();
+
+  const rowsA = E.CascadePersistence.agentFilmsFor(cascadeIdA);
+  assert.equal(rowsA.length, 1, "agentFilmsFor must be scoped to the cascade it was asked about");
+  assert.equal(rowsA[0].movie_id, String(filmA.tmdb_id));
+  assert.equal(rowsA[0].admission_score, 88);
+  assert.equal(rowsA[0].admission_status, "in_cinema");
+  assert.equal(rowsA[0].agent_sig, "sig-a");
+  assert.equal(E.CascadePersistence.agentFilmsFor(cascadeIdB).length, 1,
+    "the other cascade's own row must not leak into cascadeIdA's read");
+}));
+
+test("CAS-726: a locally-written agent_films row (setAgentFilm) survives a push-then-reload round trip", () => withCas726State(async () => {
+  const cascadeId = "cas726-0000-4000-8000-000000000003";
+  const m = E.MOVIES[5];
+  const { client } = fakeCas726Supabase({});
+  signInWithClient(client);
+
+  E.CascadePersistence.setAgentFilm(cascadeId, m.tmdb_id,
+    { admission_score: 91, admission_status: "upcoming", agent_sig: "sig-c" });
+  await E.CascadePersistence.syncAgentFilmsNow();
+  await E.CascadePersistence.loadAgentFilms();   // simulate a reload
+
+  const rows = E.CascadePersistence.agentFilmsFor(cascadeId);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].movie_id, String(m.tmdb_id));
+  assert.equal(rows[0].admission_score, 91);
+  assert.equal(rows[0].agent_sig, "sig-c");
+}));

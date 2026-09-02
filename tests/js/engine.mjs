@@ -257,6 +257,11 @@ if(typeof window.CascadeAuth === "undefined"){
   // seed and read the per-film arming state directly; watchPrefs is exposed through a getter/setter (like
   // flowKind) because the engine REASSIGNS the binding wholesale on load/sync, not just its contents.
   recomputeFound, notify, entryFor, watchLevelsFor, WATCH_LEVEL_KEYS,
+  // CAS-726: filmWatchSource is the provenance read the round-trip test asserts against directly;
+  // toggleFilmOpt is wire code (window-assigned, like ymCascToggle above) — a test drives a manual
+  // tick through the real function rather than poking notify[id].wins by hand.
+  filmWatchSource,
+  toggleFilmOpt: (id, key) => window.toggleFilmOpt(id, key),
   get watchPrefs(){ return watchPrefs; },
   setWatchPrefs(w){ watchPrefs = w; },
   // CAS-602: the bell's own moment-copy lookup, so a test can assert a monitor moment key can never

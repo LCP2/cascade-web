@@ -5227,7 +5227,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 894, "commit": "8afbad4", "builtAt": "2026-09-02T04:47:34Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 895, "commit": "facdeca", "builtAt": "2026-09-02T05:03:32Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -19015,6 +19015,7 @@ else if(dedupedN)
       console.log('[CAS-460] account fan-out end (' + label + ')', t1, 'elapsed_ms', (t1-_t460fanout).toFixed(1));
     });
     loadFilmWatches();
+    loadAgentFilms();
   }
   let currentUser = null;
   window.addEventListener("cascade-auth-change", () => {
@@ -19031,6 +19032,7 @@ else if(dedupedN)
       // Signed out → back to the on-device set, and the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); loadGuestLists(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
       cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
+      agentFilms={}; agentFilmsBaseline=null;
       watchlistKnown=new Map(); saveWatchlistKnown();
       // CAS-656: a guest has no account to be disconnected from — clear any failure this device carried
       // from its last signed-in session, or the banner would wrongly survive a sign-out.
@@ -19296,25 +19298,39 @@ else if(dedupedN)
   // Only the four Watch-panel rungs (WATCH_LEVEL_KEYS) are ever synced — the Watch control has
   // carried no sub-tiers since CAS-435, so `wins` never holds anything else.
   // ==========================================================================
+  // CAS-726: `sources` rides alongside `windows` — auto/manual per ticked rung, mirroring the film's
+  // own e.winsSource, filtered to the same keys `windows` carries (a level that isn't ticked has
+  // nothing to say about provenance either, same "absence, not a row saying so" convention).
   function watchRows(){
     const owner=uid(), out=[];
     for(const id in notify){
       const e=notify[id]||{};
       const windows=WATCH_LEVEL_KEYS.filter(k=>(e.wins||{})[k]);
-      if(windows.length) out.push({user_id:owner, movie_id:String(id), windows});
+      if(windows.length){
+        const sources={};
+        windows.forEach(k=>{ const src=(e.winsSource||{})[k]; if(src==="manual"||src==="auto") sources[k]=src; });
+        out.push({user_id:owner, movie_id:String(id), windows, sources});
+      }
     }
     return out;
   }
-  // Replaces exactly the four known rungs on each affected film's `wins` — every other field on
-  // the notify entry (source, cascadeIds, pinnedTo, muted, streamTier…) is untouched, and a film
-  // with no row in `rows` is left alone rather than cleared, so a tick this device hasn't pushed
-  // yet is never wiped out from under it.
+  // Replaces exactly the four known rungs on each affected film's `wins` (and their `winsSource`) —
+  // every other field on the notify entry (source, cascadeIds, pinnedTo, muted, streamTier…) is
+  // untouched, and a film with no row in `rows` is left alone rather than cleared, so a tick this
+  // device hasn't pushed yet is never wiped out from under it. A row that predates CAS-726 (or a
+  // rung whose stored source was never set) carries no entry in `sources` and reads back as
+  // source-unknown (filmWatchSource returns null), exactly the AC3 migration case.
   function applyWatchRows(rows){
     (rows||[]).forEach(r=>{
       const id=Number(r.movie_id); if(!isFinite(id)) return;
       const e=entryFor(id);
       e.wins=e.wins||{};
-      WATCH_LEVEL_KEYS.forEach(k=>{ e.wins[k]=(r.windows||[]).includes(k); });
+      e.winsSource=e.winsSource||{};
+      WATCH_LEVEL_KEYS.forEach(k=>{
+        e.wins[k]=(r.windows||[]).includes(k);
+        const src=e.wins[k] ? (r.sources||{})[k] : null;
+        if(src==="manual"||src==="auto") e.winsSource[k]=src; else delete e.winsSource[k];
+      });
     });
     recomputeFound();
     if(typeof render==="function") render();
@@ -19361,7 +19377,7 @@ else if(dedupedN)
   async function loadFilmWatches(){
     const c=client(); if(!c||!accountActive()) return;
     clearAccountNotify();
-    const { data, error } = await c.from("film_watch").select("movie_id,windows");
+    const { data, error } = await c.from("film_watch").select("movie_id,windows,sources");
     if(error){ console.warn("film_watch load", error); return; }
     const remote=data||[];
     applyWatchRows(remote);
@@ -19372,13 +19388,102 @@ else if(dedupedN)
   // is unioned back in as `localOnly` before applying.
   async function reconcileFilmWatches(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("film_watch").select("movie_id,windows");
+    const { data, error } = await c.from("film_watch").select("movie_id,windows,sources");
     if(error){ console.warn("film_watch reconcile", error); return; }
     const remote=data||[];
     const remoteIds=new Set(remote.map(r=>String(r.movie_id)));
     const localOnly=watchRows().filter(r=>!remoteIds.has(String(r.movie_id)));
     applyWatchRows([...remote, ...localOnly]);
     watchBaseline=remoteIds;
+  }
+
+  // ==========================================================================
+  // CAS-726: the admitted-film ledger (agent_films) — storage + load/save only. Membership itself
+  // stays derived (recomputeFound, above) until CAS-728 makes it sticky by reading/writing this set
+  // on every pass; this is the seam that ticket writes through. Keyed by `cascade_id::movie_id`
+  // (a genuine three-column primary key, same shape as list_films) rather than nested under `notify`,
+  // since a row here says something about one AGENT's relationship to a film, not the film itself.
+  // ==========================================================================
+  let agentFilms={};   // "cascadeId::movieId" -> {admitted_at, admission_score, admission_status, agent_sig}
+  const agentFilmKey=(cascadeId,movieId)=>cascadeId+"::"+movieId;
+  // AC4: "agent_films rows survive a reload and are readable by cascade_id" — this is that read.
+  function agentFilmsFor(cascadeId){
+    return Object.keys(agentFilms)
+      .filter(k=>k.startsWith(cascadeId+"::"))
+      .map(k=>({movie_id:k.slice(cascadeId.length+2), ...agentFilms[k]}));
+  }
+  function setAgentFilm(cascadeId, movieId, {admission_score, admission_status, agent_sig, admitted_at}={}){
+    agentFilms[agentFilmKey(cascadeId,String(movieId))]={
+      admitted_at: admitted_at || new Date().toISOString(), admission_score, admission_status, agent_sig,
+    };
+    if(accountActive()) scheduleAgentFilmsSync();
+  }
+  // "Nothing to say" (the film left the agent) is the absence of a row, not a row saying so — same
+  // convention as film_picks/user_films/film_watch.
+  function clearAgentFilm(cascadeId, movieId){
+    const key=agentFilmKey(cascadeId,String(movieId));
+    if(!(key in agentFilms)) return;
+    delete agentFilms[key];
+    if(accountActive()) scheduleAgentFilmsSync();
+  }
+  function agentFilmRows(){
+    const owner=uid();
+    return Object.keys(agentFilms).map(k=>{
+      const sep=k.indexOf("::"), r=agentFilms[k];
+      return {user_id:owner, cascade_id:k.slice(0,sep), movie_id:k.slice(sep+2),
+              admitted_at:r.admitted_at, admission_score:r.admission_score,
+              admission_status:r.admission_status, agent_sig:r.agent_sig};
+    });
+  }
+  function applyAgentFilmRows(rows){
+    const next={};
+    (rows||[]).forEach(r=>{
+      next[agentFilmKey(r.cascade_id,String(r.movie_id))]={
+        admitted_at:r.admitted_at, admission_score:r.admission_score,
+        admission_status:r.admission_status, agent_sig:r.agent_sig,
+      };
+    });
+    agentFilms=next;
+  }
+  let agentFilmsTimer=null, agentFilmsSyncing=false, agentFilmsAgain=false, agentFilmsBaseline=null;
+  function scheduleAgentFilmsSync(){ clearTimeout(agentFilmsTimer); agentFilmsTimer=setTimeout(runAgentFilmsSync, 500); }
+  async function runAgentFilmsSync(){
+    if(!accountActive()) return;
+    if(agentFilmsSyncing){ agentFilmsAgain=true; return; }
+    agentFilmsSyncing=true;
+    try{ await syncAgentFilmsToAccount(); }
+    catch(err){ console.warn("Cascade: agent_films sync failed", err); }
+    finally{ agentFilmsSyncing=false; if(agentFilmsAgain){ agentFilmsAgain=false; scheduleAgentFilmsSync(); } }
+  }
+  async function syncAgentFilmsToAccount(){
+    const c=client(), owner=uid(); if(!c||!owner) return;
+    const rows=agentFilmRows();
+    if(rows.length){
+      const { error } = await c.from("agent_films").upsert(rows, { onConflict:"user_id,cascade_id,movie_id" });
+      if(error){ console.warn("agent_films upsert", error); return; }
+    }
+    const keys=new Set(rows.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));
+    if(agentFilmsBaseline){
+      const gone=[...agentFilmsBaseline].filter(k=>!keys.has(k));
+      if(gone.length){
+        // No composite .in() over two columns in supabase-js — mirrors list_films' own per-row deletes.
+        await Promise.all(gone.map(k=>{
+          const sep=k.indexOf("::");
+          return c.from("agent_films").delete().eq("user_id",owner)
+            .eq("cascade_id",k.slice(0,sep)).eq("movie_id",k.slice(sep+2));
+        }));
+      }
+    }
+    agentFilmsBaseline=keys;
+  }
+  async function loadAgentFilms(){
+    const c=client(); if(!c||!accountActive()) return;
+    const { data, error } = await c.from("agent_films")
+      .select("cascade_id,movie_id,admitted_at,admission_score,admission_status,agent_sig");
+    if(error){ console.warn("agent_films load", error); return; }
+    const remote=data||[];
+    applyAgentFilmRows(remote);
+    agentFilmsBaseline=new Set(remote.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));
   }
 
   // The bell's real contents. Newest first, and capped: a list nobody can reach the bottom of is
@@ -19560,6 +19665,10 @@ else if(dedupedN)
                                 // CAS-484: the per-film Watch-it tick's own load/sync/reconcile seam.
                                 loadFilmWatches, syncWatchesNow: runWatchSync, watchRows, applyWatchRows,
                                 reconcileFilmWatches,
+                                // CAS-726: the admitted-film ledger's own load/sync seam, plus the
+                                // read/write helpers CAS-728 writes through to make membership sticky.
+                                loadAgentFilms, syncAgentFilmsNow: runAgentFilmsSync, agentFilmRows,
+                                applyAgentFilmRows, agentFilmsFor, setAgentFilm, clearAgentFilm,
                                 // CAS-487: the return-to-tab entry point itself, so the bell's own refresh
                                 // can be exercised the same way — without waiting on a real
                                 // focus/visibilitychange event.
