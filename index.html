@@ -5384,7 +5384,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 917, "commit": "724ba7d", "builtAt": "2026-09-03T07:51:28Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 918, "commit": "527fc21", "builtAt": "2026-09-03T08:00:46Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8925,16 +8925,35 @@ function cinemaScore(m){
 }
 // The boundary reused verbatim from matchesCriteria's own preRelease check — quality signals (People's
 // vote, Critics) do not exist until a film has been judged, and this is the one place that judges it.
+// Still used for that broader boundary (releasedScoreVals' cohort, matchesCriteria's own gates) — cascadeScore
+// itself no longer dispatches on it alone, see below.
 const isPreRelease = m => { const ps=primaryStatus(m); return ps==="upcoming" || ps==="in_cinema"; };
-// The Cascade score itself: the cinema score pre-release, the streaming (People's vote/Critics) score once
-// a film is released. PVOD sits on the streaming side by decision (Lee, 2026-08-28) — it is released, so
-// people can and have watched it, even though most PVOD titles in today's catalogue carry neither axis yet.
+// The Cascade score itself: buzz alone before a film has anything to be judged on, the streaming (People's
+// vote/Critics) score once a film is released. PVOD sits on the streaming side by decision (Lee, 2026-08-28)
+// — it is released, so people can and have watched it, even though most PVOD titles in today's catalogue
+// carry neither axis yet.
+// CAS-749: a film in cinemas (or its opening week) HAS been seen and reviewed, even though it isn't
+// "released" in the streaming sense — so once it carries a qScore, the Cascade score blends that evidence in
+// with the buzz figure rather than ignoring it. Both terms are already on the released-score scale once
+// CAS-748's quantile map has run (cinemaScore maps buzz onto the released distribution), so this mean is
+// like-for-like, not an average of a percentage against a percentile — do not "fix" it back into one.
 function cascadeScore(m){
-  return isPreRelease(m) ? cinemaScore(m) : qScore(m);
+  const ps=primaryStatus(m);
+  if(ps==="upcoming") return cinemaScore(m);
+  if(ps==="in_cinema" || ps==="opening_week"){
+    const buzz=cinemaScore(m), q=qScore(m);
+    return q>=0 ? Math.round((buzz+q)/2) : buzz;
+  }
+  return qScore(m);
 }
 function cascadeScoreSourcesText(m){
-  if(!isPreRelease(m)) return qScoreSourcesText(m);
-  return buzzPctlOf(m)!=null ? "Buzz" : "";
+  const ps=primaryStatus(m);
+  if(ps==="upcoming") return buzzPctlOf(m)!=null ? "Buzz" : "";
+  if(ps==="in_cinema" || ps==="opening_week"){
+    if(qScore(m)<0) return buzzPctlOf(m)!=null ? "Buzz" : "";
+    return `Buzz and ${qScoreSourcesText(m)}`;
+  }
+  return qScoreSourcesText(m);
 }
 
 // One badge per film: Landmark is its own axis (kept, unchanged, AC5) and outranks the ladder, exactly as
