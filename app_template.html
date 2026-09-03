@@ -4870,11 +4870,18 @@ function recomputeFound(){
   // (CAS-716, e.winsSource[key]==="manual") is never read, written or cleared by this rule — the whole
   // entry is skipped. This loop makes no persistence call of its own — the unconditional save at the end of
   // this function already covers whatever it changed, once per pass.
+  // CAS-735: a device's local `notify` can still be showing this SESSION's stale cache — the auto value it
+  // wrote before it ever asked the account what another device has since set by hand. Writing a placement
+  // off that stale state is exactly what re-armed `auto` over a manual pick and pushed it to `film_watch`
+  // before this device's own film_watch load had even resolved. `!CP` covers only the one paint before the
+  // persistence IIFE has run (nothing can reach the network yet at that point either), same fallback as above.
+  const placementReady = !CP || CP.filmWatchReady;
   hits.forEach((ids,id)=>{
     const e=entryFor(id);
     e.wins=e.wins||{};
     e.winsSource=e.winsSource||{};   // CAS-712: which of e.wins was armed by the agent vs ticked by hand
     if(WATCH_LEVEL_KEYS.some(k=>e.wins[k] && e.winsSource[k]==="manual")) return;
+    if(!placementReady) return;
     const m=MOVIES.find(x=>x.tmdb_id===id);
     if(!m) return;
     // Unpinned, this is always the film's one admitting agent; pinned to more than one, the same highest-
@@ -7372,7 +7379,10 @@ window.toggleFilmOpt=(id,key)=>{
   const wasOn=filmOptOn(id,row);
   // CAS-716: Watch On is single-select — ticking a level clears every other key first, so at most one is ever
   // true. Unticking the currently-ticked level is unchanged: it just clears back to no selection.
-  WATCH_LEVEL_KEYS.forEach(k=>{ e.wins[k]=false; });
+  // CAS-735: winsSource follows the same "absence, not false" convention wins itself doesn't — clearing only
+  // e.wins left every OTHER key's old winsSource entry sitting behind it unread but still there, so a stale
+  // "auto"/"manual" tag could be read back against a key toggleFilmOpt no longer has any opinion about.
+  WATCH_LEVEL_KEYS.forEach(k=>{ e.wins[k]=false; delete e.winsSource[k]; });
   if(!wasOn){
     e.wins[key]=true;
     e.winsSource[key]="manual";
@@ -18580,6 +18590,13 @@ else if(dedupedN)
   const client = () => { const a=acct(); return (a && a.enabled && a.client) ? a.client : null; };
   const uid = () => { const a=acct(); return (a && a.session && a.session.user) ? a.session.user.id : null; };
   const accountActive = () => !!(client() && uid());
+  // CAS-735: recomputeFound's placement-writing block must not act on a device's still-stale local `notify`
+  // cache before this session's own film_watch state has actually been fetched from the account — that race
+  // is what let a device re-arm `auto` over a manual pick another device had already made, and push the
+  // stale value to the account before this device's own load had resolved. Defaults ready (matches every
+  // existing guest/no-account code path); fireAccountFanout below flips it false for exactly the window
+  // between kicking off loadFilmWatches() and that load resolving.
+  let filmWatchReady = true;
 
   // ---- CAS-656: per-table load-failure tracking + the persistent "not connected" banner ---------------
   // A failed READ used to be silent (console.warn, or a toast that scrolled away in seconds) and left the
@@ -19404,7 +19421,10 @@ else if(dedupedN)
       const t1 = performance.now();
       console.log('[CAS-460] account fan-out end (' + label + ')', t1, 'elapsed_ms', (t1-_t460fanout).toFixed(1));
     });
-    loadFilmWatches();
+    // CAS-735: blocked for exactly the span of this device's own first film_watch fetch this session — win
+    // or lose, loadFilmWatches' own resolution (not a fixed delay) is what lifts it.
+    filmWatchReady=false;
+    loadFilmWatches().finally(()=>{ filmWatchReady=true; });
     loadAgentFilms();
   }
   let currentUser = null;
@@ -19426,6 +19446,7 @@ else if(dedupedN)
       filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
       agentFilms={}; agentFilmsBaseline=null;
       watchlistKnown=new Map(); saveWatchlistKnown();
+      watchKnown=new Map(); saveWatchKnown(); filmWatchReady=true;   // CAS-735: a guest has nothing to wait on
       // CAS-656: a guest has no account to be disconnected from — clear any failure this device carried
       // from its last signed-in session, or the banner would wrongly survive a sign-out.
       Object.keys(acctTableFail).forEach(t=>setAcctTableFail(t, false));
@@ -19688,6 +19709,22 @@ else if(dedupedN)
   // CAS-726: `sources` rides alongside `windows` — auto/manual per ticked rung, mirroring the film's
   // own e.winsSource, filtered to the same keys `windows` carries (a level that isn't ticked has
   // nothing to say about provenance either, same "absence, not a row saying so" convention).
+  // CAS-735: this device's own record of the film_watch row's `updated_at` it last actually APPLIED for a
+  // given film — the "have I already accounted for this remote state" baseline applyWatchRows needs to tell
+  // a genuinely newer remote manual pick from another device apart from an old row (an auto re-arm from a
+  // device that hasn't caught up yet) this device has already seen and moved past locally. Same shape and
+  // persistence as CAS-734's cascadeKnown, scoped to one timestamp per film instead of a full-row sig.
+  const WATCH_KNOWN_KEY = "cascade_watch_known";
+  function loadWatchKnown(){
+    try{
+      const arr = JSON.parse(localStorage.getItem(WATCH_KNOWN_KEY) || "[]");
+      return new Map(Array.isArray(arr) ? arr : []);
+    }catch(e){ return new Map(); }
+  }
+  function saveWatchKnown(){
+    try{ localStorage.setItem(WATCH_KNOWN_KEY, JSON.stringify([...watchKnown])); }catch(e){}
+  }
+  let watchKnown = loadWatchKnown();
   function watchRows(){
     const owner=uid(), out=[];
     for(const id in notify){
@@ -19707,18 +19744,30 @@ else if(dedupedN)
   // device hasn't pushed yet is never wiped out from under it. A row that predates CAS-726 (or a
   // rung whose stored source was never set) carries no entry in `sources` and reads back as
   // source-unknown (filmWatchSource returns null), exactly the AC3 migration case.
+  // CAS-735: manual outranks auto everywhere, including a remote row from another device. A local manual
+  // pick is only ever replaced by a remote row that ALSO claims manual on some rung — never by a bare auto
+  // re-arm from a device that hasn't caught up with the pick yet — and only when that remote manual is
+  // genuinely new to THIS device (watchKnown), not an old row it has already applied once before.
   function applyWatchRows(rows){
     (rows||[]).forEach(r=>{
       const id=Number(r.movie_id); if(!isFinite(id)) return;
       const e=entryFor(id);
       e.wins=e.wins||{};
       e.winsSource=e.winsSource||{};
+      const remoteWindows=r.windows||[], remoteSources=r.sources||{};
+      const localManualKey=WATCH_LEVEL_KEYS.find(k=>e.wins[k] && e.winsSource[k]==="manual");
+      const remoteManualKey=remoteWindows.find(k=>remoteSources[k]==="manual");
+      const knownAt=watchKnown.get(String(id)) || null;
+      const remoteIsNew=!knownAt || (r.updated_at && Date.parse(r.updated_at)>Date.parse(knownAt));
+      if(localManualKey && !(remoteManualKey && remoteIsNew)) return;   // local manual survives untouched
       WATCH_LEVEL_KEYS.forEach(k=>{
-        e.wins[k]=(r.windows||[]).includes(k);
-        const src=e.wins[k] ? (r.sources||{})[k] : null;
+        e.wins[k]=remoteWindows.includes(k);
+        const src=e.wins[k] ? remoteSources[k] : null;
         if(src==="manual"||src==="auto") e.winsSource[k]=src; else delete e.winsSource[k];
       });
+      if(r.updated_at) watchKnown.set(String(id), r.updated_at);
     });
+    saveWatchKnown();
     recomputeFound();
     if(typeof render==="function") render();
   }
@@ -19764,7 +19813,7 @@ else if(dedupedN)
   async function loadFilmWatches(){
     const c=client(); if(!c||!accountActive()) return;
     clearAccountNotify();
-    const { data, error } = await c.from("film_watch").select("movie_id,windows,sources");
+    const { data, error } = await c.from("film_watch").select("movie_id,windows,sources,updated_at");
     if(error){ console.warn("film_watch load", error); return; }
     const remote=data||[];
     applyWatchRows(remote);
@@ -19775,7 +19824,7 @@ else if(dedupedN)
   // is unioned back in as `localOnly` before applying.
   async function reconcileFilmWatches(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("film_watch").select("movie_id,windows,sources");
+    const { data, error } = await c.from("film_watch").select("movie_id,windows,sources,updated_at");
     if(error){ console.warn("film_watch reconcile", error); return; }
     const remote=data||[];
     const remoteIds=new Set(remote.map(r=>String(r.movie_id)));
@@ -20059,6 +20108,15 @@ else if(dedupedN)
                                 // CAS-484: the per-film Watch-it tick's own load/sync/reconcile seam.
                                 loadFilmWatches, syncWatchesNow: runWatchSync, watchRows, applyWatchRows,
                                 reconcileFilmWatches,
+                                // CAS-735: watchKnown (by reference, like cascadeKnown above) is the per-film
+                                // "have I already applied this remote state" baseline applyWatchRows uses to
+                                // tell a genuinely newer manual pick apart from a stale auto re-arm. filmWatchReady
+                                // is exposed read/write (not by reference — it's a primitive) so a test can drive
+                                // recomputeFound's "the account hasn't answered yet" gate directly, the same way
+                                // fireAccountFanout drives it for real against a live loadFilmWatches() call.
+                                get watchKnown(){ return watchKnown; },
+                                get filmWatchReady(){ return filmWatchReady; },
+                                set filmWatchReady(v){ filmWatchReady=!!v; },
                                 // CAS-726: the admitted-film ledger's own load/sync seam, plus the
                                 // read/write helpers CAS-728 writes through to make membership sticky.
                                 loadAgentFilms, syncAgentFilmsNow: runAgentFilmsSync, agentFilmRows,
