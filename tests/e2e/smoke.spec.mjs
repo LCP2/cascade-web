@@ -9,7 +9,7 @@
 // recommendations render, a film's Watched control works, and the my-services filter actually filters.
 import { test, expect } from "@playwright/test";
 import {
-  freshApp, toShortlist, shortlistCards, finishFlow, toListing, settleListing, ctaLocator, sectionCounts,
+  freshApp, gotoFresh, toShortlist, shortlistCards, finishFlow, toListing, settleListing, ctaLocator, sectionCounts,
 } from "./helpers.mjs";
 
 // Mirrors cas565.spec.mjs's addSecondAgent — a second agent made from the deck's "New Agent" card stops at
@@ -409,4 +409,70 @@ test("'Only show films on my services' changes what a new agent finds", async ({
   await addSecondAgent(page, "stream");
   const after = await settleListing(page);
   expect(after, `before=${before} after=${after}`).toBeLessThan(before);
+});
+
+// CAS-740 AC4: a signed-in user's account is the authority on whether they've onboarded, not whatever
+// screen this device happened to have open when the account answered. Mirrors the fake-config/fake-
+// supabase-js technique the retired cas317.spec.mjs used (CAS-317/CAS-385) — freshApp()/every other test
+// here blocks config.js and stays network-free, so this opts back in with its own routes, registered
+// before freshApp's block could apply, exactly like that file did.
+//
+// The classic boot script decides whether to show the splash before the (deferred, async) auth module has
+// had any chance to answer "is this device signed in" — that part is unavoidable and not what this tests.
+// What CAS-740 fixes is afterSignIn() leaving the wizard running when the account's answer lands AFTER the
+// splash's own "Sign up" tap already opened it. The fake's own getSession() is deliberately delayed so the
+// test can reproduce that exact ordering deterministically rather than racing a real clock.
+const CAS740_FAKE_SUPABASE_MODULE = `
+  const SEEDED_CASCADE = { id: "740aaaa1-0000-4000-8000-000000000001", user_id: "cas740-user",
+    name: "Existing agent", criteria: {}, created_at: "2020-01-01T00:00:00.000Z" };
+  function chain(){
+    return new Proxy(() => {}, {
+      get: (_t, prop) => prop === "then" ? (resolve) => resolve({ data: [], error: null }) : () => chain(),
+      apply: () => chain(),
+    });
+  }
+  export function createClient(){
+    return {
+      auth: {
+        getSession: () => new Promise(resolve => setTimeout(() => resolve({ data: { session: {
+          user: { id: "cas740-user", email: "cas740@example.com" }, access_token: "fake" } } }), 600)),
+        onAuthStateChange: () => ({ data: { subscription: { unsubscribe(){} } } }),
+        signInWithPassword: async () => ({ data: {}, error: null }),
+        signUp: async () => ({ data: {}, error: null }),
+        signOut: async () => ({ error: null }),
+      },
+      from: (table) => table === "cascades"
+        ? { select: () => ({ order: () => Promise.resolve({ data: [SEEDED_CASCADE], error: null }) }),
+            upsert: () => chain(), delete: () => chain() }
+        : chain(),
+    };
+  }
+`;
+
+test("CAS-740 AC4: a signed-in user whose account already holds agents is never left in the onboarding flow", async ({ page }) => {
+  await page.route("**/config.js", route => route.fulfill({
+    contentType: "application/javascript",
+    body: `window.CASCADE_CONFIG = { SUPABASE_URL: "https://fake-project.supabase.test", SUPABASE_ANON_KEY: "fake-anon-key-not-a-real-secret" };`,
+  }));
+  await page.route("https://esm.sh/@supabase/supabase-js@2", route => route.fulfill({
+    contentType: "application/javascript",
+    body: CAS740_FAKE_SUPABASE_MODULE,
+  }));
+  await gotoFresh(page);
+  // The module has imported supabase-js and created its client — about to call the delayed getSession()
+  // above, but hasn't yet. This is the instant to race against.
+  await page.waitForFunction(() => window.CascadeAuth && window.CascadeAuth.client);
+
+  await expect(page.locator("#splashCta")).toBeVisible();
+  await page.locator("#splashCta").click();
+  await expect(page.locator("#obWho")).toBeVisible();
+  expect(await page.evaluate(() => flowOn)).toBe(true);   // genuinely inside the wizard before the race resolves
+
+  // The delayed session restore now resolves to an account that already holds an agent.
+  await page.waitForFunction(() => window.CascadeAuth.status === "signed-in", null, { timeout: 5000 });
+  await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
+  const state = await page.evaluate(() => ({ flowOn, names: cascades.map(c => c.name) }));
+  expect(state.flowOn, "the wizard must be exited once the account is known to already have agents").toBe(false);
+  expect(state.names, "the account's own roster must be shown, not a second one built by the wizard")
+    .toEqual(["Existing agent"]);
 });

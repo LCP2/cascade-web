@@ -140,6 +140,20 @@ create table if not exists public.user_prefs (
 -- same debounced upsert path already carries `taste`.
 alter table public.user_prefs add column if not exists watch_windows jsonb not null default '{}'::jsonb;
 
+-- CAS-740: touched/never_show/onb_depth/framing carry account-level settings that used to be
+-- localStorage-only (prefs.touched, cascade_onb_answers' never/depth, cascade_ux). Left NULLABLE with no
+-- default, deliberately unlike sub_services/services_only above: a NOT NULL DEFAULT would make every
+-- pre-existing row read back as a real "false"/"[]"/"best" answer the moment this migration runs, which is
+-- indistinguishable from a device genuinely having answered that way — the app would adopt the default over
+-- whatever this device's own local value already was. NULL is the one value that unambiguously means "no
+-- device has saved this under the new column yet", so the front end can tell "unanswered" apart from a
+-- real answer and carry the local value up instead of overwriting it (same rule CAS-561 applied to taste/
+-- watch_windows above, extended here to scalars and an array that can legitimately be empty/false).
+alter table public.user_prefs add column if not exists touched boolean;
+alter table public.user_prefs add column if not exists never_show text[];
+alter table public.user_prefs add column if not exists onb_depth text;
+alter table public.user_prefs add column if not exists framing boolean;
+
 alter table public.user_prefs enable row level security;
 
 drop policy if exists user_prefs_owner on public.user_prefs;

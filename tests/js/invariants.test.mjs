@@ -3574,3 +3574,69 @@ test("CAS-739 AC4: a recomputeFound() pass never clears a pinnedTo value", () =>
     unseedCascade(cId);
   }
 }));
+
+// ---- ACCOUNT-LEVEL SETTINGS STAY ON ONE DEVICE (CAS-740) ---------------------------------------------------
+// userPrefsRow() didn't carry `touched` (has this device's owner answered the services question). A second
+// device loaded without it, read the scope as unanswered, silently re-enabled services-only, and pushed that
+// back over the account — so a setting the user had turned off returned and stuck. touched now rides the
+// same row/merge rule taste and watch_windows already do.
+function fakeCas740Supabase(row){
+  const state = { row: row ? { ...row } : null, upsertCalls: [] };
+  const client = {
+    from(table){
+      assert.equal(table, "user_prefs", "this fake only serves user_prefs");
+      return {
+        select(){ return { limit: async () => ({ data: state.row ? [{ ...state.row }] : [], error: null }) }; },
+        upsert(rows){
+          state.upsertCalls.push(rows.map(r => ({ ...r })));
+          rows.forEach(r => { state.row = { ...r }; });
+          return Promise.resolve({ data: rows, error: null });
+        },
+      };
+    },
+  };
+  return { client, state };
+}
+function withCas740State(fn){
+  const savedTouched = E.prefs.touched;
+  const savedOnb = E.localStorage.getItem("cascade_onb_answers");
+  const savedUx = E.localStorage.getItem("cascade_ux");
+  return (async () => {
+    try { await fn(); }
+    finally {
+      E.prefs.touched = savedTouched;
+      if(savedOnb === null) E.localStorage.removeItem("cascade_onb_answers"); else E.localStorage.setItem("cascade_onb_answers", savedOnb);
+      if(savedUx === null) E.localStorage.removeItem("cascade_ux"); else E.localStorage.setItem("cascade_ux", savedUx);
+      signOut();
+    }
+  })();
+}
+
+test("CAS-740 AC2: userPrefsRow() carries touched, and a save/load round trip preserves false", () => withCas740State(async () => {
+  E.prefs.touched = false;
+  assert.equal(E.CascadePersistence.userPrefsRow().touched, false, "userPrefsRow() must include touched");
+
+  const { client, state } = fakeCas740Supabase(null);
+  signInWithClient(client);
+  await E.CascadePersistence.syncUserPrefsNow();
+  assert.equal(state.row.touched, false, "a freshly-seeded row must carry touched:false, not drop it");
+
+  E.prefs.touched = true;   // corrupt local memory so the next assertion proves the LOAD, not a no-op
+  await E.CascadePersistence.loadUserPrefs();
+  assert.equal(E.prefs.touched, false, "loading the account's row back must read touched as false");
+}));
+
+test("CAS-740 AC3: an account that already answered touched=true is adopted on load, and this device's stale false is never pushed back", () => withCas740State(async () => {
+  E.prefs.touched = false;
+  const remoteRow = {
+    user_id: "cas740-test-user", sub_services: [], store_services: [], services_only: false,
+    taste: JSON.parse(JSON.stringify(E.tasteBase)), watch_windows: JSON.parse(JSON.stringify(E.watchPrefs)),
+    touched: true, never_show: [], onb_depth: "best", framing: true,
+  };
+  const { client, state } = fakeCas740Supabase(remoteRow);
+  signInWithClient(client);
+
+  await E.CascadePersistence.loadUserPrefs();
+  assert.equal(E.prefs.touched, true, "the account's real touched:true must win over this device's stale local false");
+  assert.equal(state.upsertCalls.length, 0, "a row that already answers everything must not trigger any write");
+}));
