@@ -3152,3 +3152,114 @@ test("CAS-734 AC3(d): an agent present only on this device, with an id the accou
   assert.ok(kept, "a genuinely new, never-synced local agent must survive a loadAccount call");
   assert.equal(kept.name, "Brand new, unsynced");
 }));
+
+// ---- MANUAL WATCH ON NEVER OVERWRITTEN, EVEN ACROSS DEVICES (CAS-735) -----------------------------------
+// Two independent gaps let an explicit manual Watch On pick get silently reverted to auto: applyWatchRows
+// carried no precedence rule at all (a remote row that simply didn't mention the ticked rung was enough to
+// wipe it), and recomputeFound could re-arm auto off a device's still-stale local cache before its own
+// film_watch load for the session had resolved — a device that hadn't yet heard about another device's
+// manual pick would re-write auto over it and push that stale value to the account. These exercise each
+// seam directly against the real functions.
+
+test("CAS-735 AC2: applyWatchRows never lets a remote row with no manual claim overwrite a local manual pick", () => {
+  const id = E.MOVIES[6].tmdb_id;
+  try {
+    const e = E.entryFor(id);
+    e.wins = { in_cinema: false, premium: false, rent: false, stream: true };
+    e.winsSource = { stream: "manual" };
+    E.CascadePersistence.applyWatchRows([
+      { movie_id: String(id), windows: ["in_cinema"], sources: { in_cinema: "auto" },
+        updated_at: "2026-09-03T00:00:00.000Z" },
+    ]);
+    const after = E.notify[id];
+    assert.equal(after.wins.stream, true,
+      "a local manual pick must survive a remote row claiming a different, auto rung");
+    assert.equal(after.winsSource.stream, "manual");
+  } finally {
+    delete E.notify[id];
+  }
+});
+
+test("CAS-735 AC3: a full recomputeFound() pass never changes an entry carrying a manual source on its currently-set key, for every window and marker configuration", () => {
+  const film = scoredUnwatchedFilm(["in_cinema"]);
+  const id = film.tmdb_id;
+  const savedStatus = film.status;
+  const cId = seedMarkerCascade({});
+  try {
+    pinFilm(id, cId);
+    const c = E.cascades.find(x => x.id === cId);
+    const score = E.cascadeScore(film) === -1 ? 50 : E.cascadeScore(film);
+    const combos = [
+      { in_cinema: score - 1, rent: score - 20, stream: score - 30 },
+      { in_cinema: null, rent: null, stream: null },
+      { in_cinema: 0, rent: 0, stream: 0 },
+      { in_cinema: score + 40, rent: score + 20, stream: score + 10 },
+    ];
+    withWatchPrefs(PLACEMENT_WATCH_PREFS, () => {
+      for (const manualKey of E.WATCH_LEVEL_KEYS) {
+        const e = E.entryFor(id);
+        e.wins = Object.fromEntries(E.WATCH_LEVEL_KEYS.map(k => [k, k === manualKey]));
+        e.winsSource = { [manualKey]: "manual" };
+        const before = JSON.stringify([e.wins, e.winsSource]);
+        for (const markers of combos) {
+          c.watchMarkers = { in_cinema: null, premium: null, rent: null, stream: null, ...markers };
+          for (const status of [["upcoming"], ["in_cinema"], ["rental"], ["included_streaming"]]) {
+            film.status = status;
+            E.recomputeFound();
+            assert.equal(JSON.stringify([e.wins, e.winsSource]), before,
+              `manualKey=${manualKey} must survive recompute: markers=${JSON.stringify(markers)} status=${status}`);
+          }
+        }
+      }
+    });
+  } finally {
+    delete E.notify[id];
+    unseedCascade(cId);
+    film.status = savedStatus;
+  }
+});
+
+test("CAS-735 AC4: toggleFilmOpt leaves exactly one key set in wins and exactly one entry in winsSource", () => {
+  const m = E.MOVIES.find(x => E.watchLevelsFor(x.tmdb_id).some(l => !l.spent));
+  assert.ok(m, "no film with an un-spent Watch level — the harness catalogue looks wrong");
+  const id = m.tmdb_id;
+  const level = E.watchLevelsFor(id).find(l => !l.spent);
+  try {
+    E.toggleFilmOpt(id, level.key);
+    const e = E.notify[id];
+    const onKeys = E.WATCH_LEVEL_KEYS.filter(k => e.wins[k]);
+    assert.equal(onKeys.length, 1, `expected exactly one key set in wins, found ${JSON.stringify(onKeys)}`);
+    assert.equal(onKeys[0], level.key);
+    assert.equal(Object.keys(e.winsSource).length, 1,
+      `expected exactly one entry in winsSource, found ${JSON.stringify(e.winsSource)}`);
+    assert.equal(e.winsSource[level.key], "manual");
+  } finally {
+    delete E.notify[id];
+  }
+});
+
+test("CAS-735 AC5: recomputeFound() writes no placement value before this session's first film_watch load has resolved", () => {
+  const film = scoredUnwatchedFilm(["upcoming"]);
+  const id = film.tmdb_id;
+  const savedStatus = film.status;
+  const score = E.cascadeScore(film);
+  const cId = seedMarkerCascade({ in_cinema: score - 1, rent: score - 20, stream: score - 30 });
+  const savedReady = E.CascadePersistence.filmWatchReady;
+  try {
+    pinFilm(id, cId);
+    E.CascadePersistence.filmWatchReady = false;
+    withWatchPrefs(PLACEMENT_WATCH_PREFS, () => { E.recomputeFound(); });
+    const e = E.notify[id];
+    const picked = !!(e && e.wins && Object.values(e.wins).some(Boolean));
+    assert.ok(!picked, "recomputeFound must write no placement value while filmWatchReady is false");
+
+    E.CascadePersistence.filmWatchReady = true;
+    withWatchPrefs(PLACEMENT_WATCH_PREFS, () => { E.recomputeFound(); });
+    assert.equal(E.notify[id].wins.in_cinema, true, "sanity: once ready, the same film places normally");
+  } finally {
+    delete E.notify[id];
+    unseedCascade(cId);
+    film.status = savedStatus;
+    E.CascadePersistence.filmWatchReady = savedReady;
+  }
+});
