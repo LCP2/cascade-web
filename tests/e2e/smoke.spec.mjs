@@ -449,6 +449,39 @@ const CAS740_FAKE_SUPABASE_MODULE = `
   }
 `;
 
+// CAS-745: the Agents-screen row's summary line dropped its genre restriction back in CAS-643 to stay
+// short, which left no way to see that a Style restriction — not just budget/buzz/rating — was why a film
+// was passed over. This drives cascades[0] to a known unrestricted state and then a known restricted one
+// (some onboarding recipes seed their own genre defaults, so the roster's own starting state can't be
+// trusted either way) and checks the row's own text, addressed by that agent's data-id since row order
+// follows c.order, not roster array position. Also checks that — since the row is a fixed-width, 2-line-
+// clamped card — restoring the line never forces the page wider (AC3).
+test("agent card summary names its Style restriction when set, and omits it when there is none (CAS-745)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  await page.locator("#agentsBtn").click();
+  await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
+  const targetId = await page.evaluate(() => cascades[0].id);
+  const summary = page.locator(`.agrow[data-id="${targetId}"] .agsum`);
+  await expect(summary).toBeVisible();
+
+  await page.evaluate(() => { cascades[0].genre = []; renderAgentsScreen(); });
+  await expect(summary).not.toContainText("styles");
+
+  const restricted = await page.evaluate(() => {
+    const genres = ALL_GENRES.slice(0, 7);
+    cascades[0].genre = genres;
+    renderAgentsScreen();
+    return { count: genres.length, total: ALL_GENRES.length };
+  });
+  await expect(summary).toContainText(`${restricted.count} of ${restricted.total} styles`);
+
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+});
+
 test("CAS-740 AC4: a signed-in user whose account already holds agents is never left in the onboarding flow", async ({ page }) => {
   await page.route("**/config.js", route => route.fulfill({
     contentType: "application/javascript",

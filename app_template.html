@@ -15725,11 +15725,16 @@ function agentBarSummary(c){
   if(c.budget) parts.push((BUDGET_BANDS[c.budget]||{}).hint||"");
   return parts.filter(Boolean).join(" · ");
 }
+// CAS-745: Style can filter harder than any other line this row shows (7 of 19 genres alone took one agent
+// from 25 films to 112), and CAS-643 dropping it left the row unable to explain why a film was passed over.
+// Kept to the same "N of total styles" shorthand trailGenres/styleDetail already use elsewhere in the app —
+// that stays shorter than naming every genre once there are more than a couple, which is what keeps this
+// restoring the line without pushing the row past its existing two-line clamp.
 function agentGenreSum(c){
-  if(c.genre===null) return "No genres";
+  if(c.genre===null) return "No styles";
   const ex=(c.exclude||[]).length ? ` except ${c.exclude.join(", ")}` : "";
-  if(!c.genre.length) return ex ? `Any genre${ex}` : "";
-  return (c.genre.length<=3 ? c.genre.join(", ") : `${c.genre.length} genres`)+ex;
+  if(!c.genre.length || c.genre.length>=ALL_GENRES.length) return ex ? `Any style${ex}` : "";
+  return (c.genre.length<=2 ? c.genre.join(", ") : `${c.genre.length} of ${ALL_GENRES.length} styles`)+ex;
 }
 function agentAgeSum(c){
   if(c.age===null) return "No ratings";
@@ -15740,11 +15745,12 @@ function agentEraSum(c){
   if((c.year||[]).length) return c.year.slice().sort().reverse().join(", ");
   return c.yearsBack ? yearsLabel(c.yearsBack) : "";
 }
-// The row names WHERE it looks and WHAT BAR it applies, and stops. Genre and era stay one tap away in
-// Edit — CAS-675 brings rating back (Lee: it was invisible), and a streaming agent's how-far-back with it,
-// since only a streaming agent's window can reach far enough back for that setting to matter.
+// The row names WHERE it looks and WHAT BAR it applies, and stops. Era stays one tap away in Edit —
+// CAS-675 brought rating back (Lee: it was invisible), and a streaming agent's how-far-back with it, since
+// only a streaming agent's window can reach far enough back for that setting to matter; CAS-745 brings
+// Style back too, for the reason in the comment on agentGenreSum above.
 function agentRowSummary(c){
-  const rest=[agentBarSummary(c), agentAgeSum(c)];
+  const rest=[agentBarSummary(c), agentGenreSum(c), agentAgeSum(c)];
   if(c.kind==="stream" && c.yearsBack) rest.push(yearsLabel(c.yearsBack));
   const restFiltered=rest.filter(Boolean);
   const bits=[agentWindowSum(c), ...restFiltered];
