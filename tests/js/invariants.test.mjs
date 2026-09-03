@@ -265,22 +265,56 @@ test("availability: every showable film is unreleased, offered, or in a cinema r
   }
 });
 
-// ---- 7. THE SCALE DIAL LEANS, IT DOES NOT CUT (CAS-166) -------------------------------------------------
-// A film whose scale we do not know rides along; only a film we KNOW is too small is dropped. If this ever
-// flips to a hard cut, every count quietly loses the large slice of the catalogue carrying no money figures.
-// "Unknown" means neither budget NOR worldwide gross — the dial reads gross as a fallback, so a film with a
-// gross has a known scale even with no budget on it (which is what a first failing run of this test showed).
-test("scale: an unknown scale is never the reason a film is dropped", () => {
-  const unknown = E.MOVIES.filter(m => !(m.budget > 0) && !(m.worldwide_gross > 0));
-  assert.ok(unknown.length > 0, "every film has a money figure — this test would prove nothing");
-  for(const m of unknown){
-    assert.notEqual(E.selScaleMatch(m, { selScale: 100e6 }), false,
-      `${m.title} has no budget or gross and was cut by the scale dial`);
+// ---- 7. THE SCALE DIAL: AN INFERENCE ANSWERS, ONLY TRUE ABSENCE RIDES ON THE OPT-IN (CAS-166/CAS-747) -----
+// CAS-166: a floor is a lower bound, not a band — a real figure at or above it passes, below it fails.
+// CAS-747 re-derives the unknown-scale cases for the AND-only admission path CAS-724 introduced: the CAS-238/
+// CAS-674 tri-state (`null` rides along and never denies) was correct only under the CAS-661 OR block, where
+// a term contributing nothing could not admit. Under AND the same value can no longer deny, so it silently
+// admits instead — the defect this ticket fixes. An inference is now a real answer either way, and only a
+// film with NEITHER a real figure NOR an inference is handed to c.includeUnbudgeted.
+// Every fixture below is additionally screened through matchesCriteria against the wide-open baseline
+// (selScale:0, so the budget gate is a no-op) — same technique as CAS-744's `unrated`/`outsider` fixtures —
+// so a failure at a real floor is provably the budget gate and not some unrelated gate the raw catalogue
+// entry happens to also fail.
+test("CAS-747 AC4: a real figure always clears a floor at or below it and never clears one above it, regardless of includeUnbudgeted", () => {
+  const openBase = missionCase({ scoreFloor: 0 });
+  const small = E.MOVIES.find(m => m.budget > 0 && m.budget < 1e6 && E.matchesCriteria(m, openBase));
+  assert.ok(small, "no known-small-budget film clearing the open baseline — this test would prove nothing");
+  for(const includeUnbudgeted of [true, false]){
+    assert.equal(E.selScaleMatch(small, { selScale: 100e6, includeUnbudgeted }), false,
+      `${small.title} at $${small.budget} passed a $100M floor (includeUnbudgeted: ${includeUnbudgeted})`);
+    assert.equal(E.selScaleMatch(small, { selScale: small.budget, includeUnbudgeted }), true,
+      `${small.title} at $${small.budget} failed a floor set at its own figure (includeUnbudgeted: ${includeUnbudgeted})`);
+    assert.equal(E.matchesCriteria(small, missionCase({ scoreFloor: 0, selScale: 100e6, includeUnbudgeted })), false,
+      `${small.title}: an agent's $100M floor listed it anyway (includeUnbudgeted: ${includeUnbudgeted})`);
+    assert.equal(E.matchesCriteria(small, missionCase({ scoreFloor: 0, selScale: small.budget, includeUnbudgeted })), true,
+      `${small.title}: an agent's floor set at its own figure did not list it (includeUnbudgeted: ${includeUnbudgeted})`);
   }
-  // …and the other half of "lean, not cut": a film we know is small IS dropped, or the dial does nothing.
-  const small = E.MOVIES.find(m => m.budget > 0 && m.budget < 1e6);
-  if(small) assert.equal(E.selScaleMatch(small, { selScale: 100e6 }), false,
-    `${small.title} at $${small.budget} passed a $100M floor`);
+});
+test("CAS-747 AC2: a film with no real figure and an inferred scale below the floor is not listed — fails on current code", () => {
+  const openBase = missionCase({ scoreFloor: 0 });
+  const inferred = E.MOVIES.find(m => !(m.budget > 0) && !(m.worldwide_gross > 0) && E.inferredScale(m)
+    && E.matchesCriteria(m, openBase));
+  assert.ok(inferred, "no film with an inferred (but no real) scale clearing the open baseline — this test would prove nothing");
+  const floor = E.inferredScale(inferred).d + 1;   // one dollar above what the inference actually clears
+  assert.equal(E.selScaleMatch(inferred, { selScale: floor }), false,
+    `${inferred.title}: a below-floor inference passed the scale dial`);
+  assert.equal(E.matchesCriteria(inferred, missionCase({ scoreFloor: 0, selScale: floor })), false,
+    `${inferred.title}: an agent with that floor listed a film whose inferred scale falls below it`);
+});
+test("CAS-747 AC3: a film with no figure and no inference at all is decided by includeUnbudgeted, not a default ride-along", () => {
+  const openBase = missionCase({ scoreFloor: 0 });
+  const unknown = E.MOVIES.find(m => !(m.budget > 0) && !(m.worldwide_gross > 0) && !E.inferredScale(m)
+    && E.matchesCriteria(m, openBase));
+  assert.ok(unknown, "no film with neither a real figure nor an inference clearing the open baseline — this test would prove nothing");
+  assert.equal(E.selScaleMatch(unknown, { selScale: 100e6, includeUnbudgeted: false }), false,
+    `${unknown.title}: a wholly unscaled film passed a floor with includeUnbudgeted false`);
+  assert.equal(E.selScaleMatch(unknown, { selScale: 100e6, includeUnbudgeted: true }), true,
+    `${unknown.title}: a wholly unscaled film failed a floor with includeUnbudgeted true`);
+  assert.equal(E.matchesCriteria(unknown, missionCase({ scoreFloor: 0, selScale: 100e6, includeUnbudgeted: false })), false,
+    `${unknown.title}: an agent listed a wholly unscaled film with includeUnbudgeted false`);
+  assert.equal(E.matchesCriteria(unknown, missionCase({ scoreFloor: 0, selScale: 100e6, includeUnbudgeted: true })), true,
+    `${unknown.title}: an agent did not list a wholly unscaled film with includeUnbudgeted true`);
 });
 
 // ---- 8. THE CASCADE SCORE (CAS-603) ---------------------------------------------------------------------
@@ -450,20 +484,22 @@ test("every zero stop reads Off, and the Cinema Release control drops \"Only\"",
 // CAS-724 deletes the CAS-661 Mission OR block. Admission is now cascadeScore(m) >= c.scoreFloor AND every
 // requirement below (Budget, Awards, How far back, Had a cinema release), all ANDed, none optional.
 
-// AC4: the Budget requirement's tri-state survives exactly as CAS-238/CAS-674 established for an AND-style
-// gate — `null` (no budget AND no worldwide gross) rides along and never denies, at every rung. Only a KNOWN,
-// strictly-below-floor match denies.
+// AC4: CAS-747 re-derives this — a `null` (no budget, no worldwide gross, no inference) scale no longer
+// rides along under this AND-only admission path; it is decided by c.includeUnbudgeted instead, at every
+// rung. A KNOWN, strictly-below-floor match still denies regardless of includeUnbudgeted.
 // scoreFloor:0 is pinned on every case below alongside selScale — otherwise normCascade's own one-time
 // migration (legacyMissionFloorDefault) would read the very selScale these cases are setting as a legacy
 // cinema Mission dial and derive a non-zero floor from it, contaminating a test about the Budget requirement
 // alone with the separate score-floor gate.
-test("CAS-724 AC4: the Budget requirement's tri-state survives — an unknown scale is never denied", () => {
-  const unknown = E.MOVIES.find(m => !(m.budget > 0) && !(m.worldwide_gross > 0)
+test("CAS-724 AC4 / CAS-747: the Budget requirement denies a genuinely unknown scale unless includeUnbudgeted opts back in", () => {
+  const unknown = E.MOVIES.find(m => !(m.budget > 0) && !(m.worldwide_gross > 0) && !E.inferredScale(m)
     && E.matchesCriteria(m, missionCase()));
-  assert.ok(unknown, "no unknown-scale film clearing the open baseline — this test would prove nothing");
+  assert.ok(unknown, "no wholly-unscaled film clearing the open baseline — this test would prove nothing");
   for(const floor of E.SCALE_REF.map(r => r.d).filter(Boolean)){
-    assert.equal(E.matchesCriteria(unknown, missionCase({ selScale: floor, scoreFloor: 0 })), true,
-      `${unknown.title} carries no budget or gross and was still denied by a $${floor} Budget requirement`);
+    assert.equal(E.matchesCriteria(unknown, missionCase({ selScale: floor, scoreFloor: 0, includeUnbudgeted: false })), false,
+      `${unknown.title} carries no budget, gross or inference and was listed by a $${floor} Budget requirement with includeUnbudgeted false`);
+    assert.equal(E.matchesCriteria(unknown, missionCase({ selScale: floor, scoreFloor: 0, includeUnbudgeted: true })), true,
+      `${unknown.title}: includeUnbudgeted true did not clear a $${floor} Budget requirement`);
   }
   // and the requirement is real: a KNOWN below-floor budget still denies.
   const above = E.MOVIES.find(m => m.budget >= 100e6 && E.matchesCriteria(m, missionCase()));

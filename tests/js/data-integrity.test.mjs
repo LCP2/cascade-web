@@ -485,44 +485,55 @@ test("dates: a film in a cinema window has an opening date, and knows which side
   }
 });
 
-// ---- 3. THE SCALE DIAL LEANS AT EVERY RUNG (CAS-238) ----------------------------------------------------
-// invariants.test.mjs checks the top rung. The defect Lee reported is about a specific film at a specific
-// setting, so the assertion has to hold at EVERY setting the dial can be left on: a film whose scale we do
-// not hold must survive all of them, or the dial is a filter on our own data gaps rather than on films.
-test("scale: no rung of the dial drops a film for having no money figure on it", () => {
-  const unknown = E.MOVIES.filter(m => !(m.budget > 0) && !(m.worldwide_gross > 0));
-  assert.ok(unknown.length > 0, "every film carries a money figure — this test would prove nothing");
-  for(const { d } of E.SCALE_REF.map(r => ({ d: r.d }))){
+// ---- 3. THE SCALE DIAL: A WHOLLY UNSCALED FILM IS GOVERNED BY INCLUDEUNBUDGETED, AT EVERY RUNG (CAS-238/
+// CAS-747) ----------------------------------------------------------------------------------------------
+// invariants.test.mjs checks one instance. This sweeps the same rule across every SCALE_REF rung and the
+// real catalogue: CAS-747 re-derives CAS-238's tri-state for the CAS-724 AND-only admission path — a film
+// with neither a real figure NOR an inference no longer rides along by default; it is decided by the
+// agent's own c.includeUnbudgeted, at every rung.
+test("scale: a wholly unscaled film (no figure, no inference) is governed by includeUnbudgeted at every rung", () => {
+  const unknown = E.MOVIES.filter(m => !(m.budget > 0) && !(m.worldwide_gross > 0) && !E.inferredScale(m));
+  assert.ok(unknown.length > 0, "every film carries a money figure or an inference — this test would prove nothing");
+  for(const { d } of E.SCALE_REF){
+    if(!d) continue;   // "Off": selScaleMatch(m,{selScale:0}) is always true by construction, no gate to test
     for(const m of unknown){
-      assert.notEqual(E.selScaleMatch(m, { selScale: d }), false,
-        `${m.title} has neither budget nor gross and was cut at the $${Math.round(d / 1e6)}M rung`);
+      assert.equal(E.selScaleMatch(m, { selScale: d, includeUnbudgeted: false }), false,
+        `${m.title} has neither figure nor inference and passed the $${Math.round(d / 1e6)}M rung with includeUnbudgeted false`);
+      assert.equal(E.selScaleMatch(m, { selScale: d, includeUnbudgeted: true }), true,
+        `${m.title} has neither figure nor inference and failed the $${Math.round(d / 1e6)}M rung with includeUnbudgeted true`);
     }
   }
 });
 
 // The same film, through the whole recipe rather than the one dial. CAS-724 retires the CAS-661 Mission OR
-// block and its CAS-703 target gate — Budget is a standing AND requirement now (design record §4), and its
-// tri-state was never in question: `null` (no budget, no gross) rides along and never denies, at every rung,
-// for every agent, unconditionally. There is no longer an "only if it's the sole route" or "unless it misses
-// a moving target" carve-out to test — raising the lean simply must never drop a money-unknown film, full stop.
-test("scale: raising the lean never drops a money-unknown film, for any agent", () => {
+// block — Budget is a standing AND requirement now (design record §4). CAS-747 re-derives the tri-state for
+// that AND shape: raising the lean now DOES drop a wholly-unscaled film once includeUnbudgeted is off — that
+// is the requirement finally applying, which is the whole point of the ticket — and never drops one when the
+// agent has opted back in.
+test("scale: raising the lean drops a wholly-unscaled film unless includeUnbudgeted opts it back in, for any agent", () => {
   for(const { kind, s, label } of CASES){
     pickInLane(E, kind, s.key);
     const base = E.onbApply();
-    const open = E.MOVIES.filter(m => E.watchesFilm(m, E.normCascade({ ...base, selScale: 0 })));
-    const blind = open.filter(m => !(m.budget > 0) && !(m.worldwide_gross > 0));
+    const open = E.MOVIES.filter(m => E.watchesFilm(m, E.normCascade({ ...base, selScale: 0, includeUnbudgeted: false })));
+    const blind = open.filter(m => !(m.budget > 0) && !(m.worldwide_gross > 0) && !E.inferredScale(m));
     if(!blind.length) continue;
     const top = E.SCALE_REF[E.SCALE_REF.length - 1].d;
-    const leaned = new Set(E.MOVIES.filter(m => E.watchesFilm(m, E.normCascade({ ...base, selScale: top }))));
-    for(const m of blind) assert.ok(leaned.has(m),
-      `${label}: ${m.title} (no money figure) fell out at the top scale rung — the Budget requirement must never deny an unknown scale`);
+    const leanedOff = new Set(E.MOVIES.filter(m => E.watchesFilm(m, E.normCascade({ ...base, selScale: top, includeUnbudgeted: false }))));
+    const leanedOn = new Set(E.MOVIES.filter(m => E.watchesFilm(m, E.normCascade({ ...base, selScale: top, includeUnbudgeted: true }))));
+    for(const m of blind){
+      assert.ok(!leanedOff.has(m),
+        `${label}: ${m.title} (no figure, no inference) survived the top scale rung with includeUnbudgeted false — the Budget requirement isn't denying anything`);
+      assert.ok(leanedOn.has(m),
+        `${label}: ${m.title} (no figure, no inference) was dropped at the top scale rung even with includeUnbudgeted true`);
+    }
   }
 });
 
-// ---- 3b. AN INFERRED SCALE AFFIRMS, AND NEVER DENIES (CAS-238) ------------------------------------------
+// ---- 3b. AN INFERRED SCALE IS A REAL ANSWER, NOT JUST AN AFFIRMATION (CAS-238/CAS-747) -------------------
 // The complaint was that a tentpole with no budget yet — Avengers: Doomsday carries none — reads as the
-// smallest thing in the catalogue. The inference has to do two jobs without doing a third: place the film
-// under a high lean, say so on its card, and never once become a reason to drop something.
+// smallest thing in the catalogue. The inference has to do two jobs: place the film under a high lean, and
+// say so on its card. CAS-747 removes the third thing it used to do — a floor beyond its reach now fails
+// like any other known-too-small figure, rather than riding along as an unanswered `null`.
 test("inferred scale: an anticipated film with no budget is placed, not left blank", () => {
   const inferred = E.MOVIES.filter(m => E.inferredScale(m));
   assert.ok(inferred.length > 0, "not one film has an inferred scale — the inference is dead");
@@ -534,9 +545,10 @@ test("inferred scale: an anticipated film with no budget is placed, not left bla
       `${m.title} was inferred to ${inf.label} $${inf.d}, which is not a stop on the scale track`);
     assert.equal(E.selScaleMatch(m, { selScale: inf.d }), true,
       `${m.title} is inferred ${inf.label} and does not clear its own band`);
-    // …and the inference is a LOWER bound, so a floor beyond it is unknown, never denied.
-    assert.equal(E.selScaleMatch(m, { selScale: inf.d * 10 }), null,
-      `${m.title} was DENIED by a floor its inference simply does not reach`);
+    // …and the inference is a genuine lower bound: a floor beyond it now fails outright (CAS-747), same as a
+    // known-too-small figure would — it no longer rides along as an unanswered `null`.
+    assert.equal(E.selScaleMatch(m, { selScale: inf.d * 10 }), false,
+      `${m.title}: a floor beyond its inference did not fail it (CAS-747: an inference is a real answer now)`);
   }
 });
 
