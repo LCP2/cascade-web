@@ -18535,7 +18535,14 @@ function afterSignIn(){
   const splashUp=$("splash").classList.contains("open");
   closeModal($("authModal"));
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
-  if(splashUp){ $("splash").classList.remove("open"); flowStop(); }
+  if(splashUp) $("splash").classList.remove("open");
+  // CAS-740: gated on the account (flowOn — is the wizard actually open right now), not on whether the
+  // splash happened to still be up. A signed-in session that finishes restoring AFTER the splash's own
+  // "Sign up" tap already opened the wizard used to leave onboarding running underneath, which walks the
+  // account straight into building a second starter roster on top of the one it already has. The splash and
+  // the wizard are never both up at once (splashGo closes the splash before opening the wizard), so this is
+  // the same flowStop() either way, just no longer conditioned on which of the two happened to be showing.
+  if(splashUp || flowOn) flowStop();
   document.body.style.overflow="";
   if(cascades.length){
     // CAS-420/CAS-409/CAS-566: arrival at an account with agents already made is arrival at the FIRST one.
@@ -18643,6 +18650,12 @@ else if(dedupedN)
   // its own admission_score) before its own load of the account's ledger had resolved, racing whatever
   // score another device already recorded for the same film.
   let agentFilmsReady = true;
+  // CAS-740: same reasoning again, for user_prefs — a save chokepoint firing (savePrefs, saveTasteBase, an
+  // onboarding answer) while this device's own loadUserPrefs() is still in flight would push whatever
+  // default this device booted with (prefs.touched, an empty onb answer) over a real value another device
+  // already wrote. runUserPrefsSync defers itself while this is false rather than skipping the write outright,
+  // so an edit made during the race still reaches the account once the load resolves.
+  let userPrefsReady = true;
 
   // ---- CAS-656: per-table load-failure tracking + the persistent "not connected" banner ---------------
   // A failed READ used to be silent (console.warn, or a toast that scrolled away in seconds) and left the
@@ -19487,7 +19500,7 @@ else if(dedupedN)
     const _t460fanout = performance.now();
     console.log('[CAS-460] account fan-out start (' + label + ')', _t460fanout);
     Promise.allSettled([
-      loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadUserPrefs(), loadRealAlerts(), loadListsAccount(),
+      loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadRealAlerts(), loadListsAccount(),
       loadWatchlistAccount(), loadFilmPicks()
     ]).then(()=>{
       const t1 = performance.now();
@@ -19497,6 +19510,10 @@ else if(dedupedN)
     // or lose, loadFilmWatches' own resolution (not a fixed delay) is what lifts it.
     filmWatchReady=false;
     loadFilmWatches().finally(()=>{ filmWatchReady=true; });
+    // CAS-740: blocked the same way, for user_prefs — a save chokepoint firing before this device's own
+    // load resolves must not push a stale local default over whatever the account actually holds.
+    userPrefsReady=false;
+    loadUserPrefs().finally(()=>{ userPrefsReady=true; });
     // CAS-736: blocked the same way, for the same reason — this device's own agent_films fetch must land
     // before recomputeFound trusts any admission it derives placement from.
     agentFilmsReady=false;
@@ -19522,6 +19539,7 @@ else if(dedupedN)
       agentFilms={}; agentFilmsBaseline=null; agentFilmsReady=true;   // CAS-736: a guest has nothing to wait on
       watchlistKnown=new Map(); saveWatchlistKnown();
       watchKnown=new Map(); saveWatchKnown(); filmWatchReady=true;   // CAS-735: a guest has nothing to wait on
+      userPrefsReady=true;   // CAS-740: a guest has nothing to wait on
       // CAS-656: a guest has no account to be disconnected from — clear any failure this device carried
       // from its last signed-in session, or the banner would wrongly survive a sign-out.
       Object.keys(acctTableFail).forEach(t=>setAcctTableFail(t, false));
@@ -20096,18 +20114,32 @@ else if(dedupedN)
   // and the other is a fact about the person. Same wrap-one-chokepoint shape as everything
   // else here, so there is still exactly one place each of these is written.
   function userPrefsRow(){
+    const onb=onbAnswersLoad();
     return { user_id:uid(),
              sub_services:[...prefs.sub], store_services:[...prefs.store],
              services_only:!!prefs.on,
+             // CAS-740: has this device's owner actually answered the services question, so a second
+             // device loading a fresh `false` default doesn't read the scope as unanswered and re-enable
+             // services-only over a real "off" another device already set.
+             touched:!!prefs.touched,
              taste:JSON.parse(JSON.stringify(tasteBase)),
              // CAS-561: rides the same row/upsert as taste — see that ticket for why it lives here
              // rather than a dedicated table.
-             watch_windows:JSON.parse(JSON.stringify(watchPrefs)) };
+             watch_windows:JSON.parse(JSON.stringify(watchPrefs)),
+             // CAS-740: the never-show genres and depth answer (read live by onbDepthFor on every agent,
+             // not just during onboarding) and the framing toggle — the other two account-level settings
+             // CAS-211/CAS-561 never carried, same row, same merge rule.
+             never_show:[...(onb.never||[])], onb_depth:onb.depth||null,
+             framing:!!ux.on };
   }
   let upTimer=null;
   function scheduleUserPrefsSync(){ clearTimeout(upTimer); upTimer=setTimeout(runUserPrefsSync, 500); }
   async function runUserPrefsSync(){
     const c=client(), owner=uid(); if(!c||!owner) return;
+    // CAS-740: this device's own load of the row (below) may still be in flight — pushing now would risk
+    // overwriting a real account value with whatever this device booted with. Defer rather than drop the
+    // write outright, so an edit made during the race still lands once the load resolves.
+    if(!userPrefsReady){ scheduleUserPrefsSync(); return; }
     const { error } = await c.from("user_prefs").upsert([userPrefsRow()], { onConflict:"user_id" });
     if(error) console.warn("user_prefs upsert", error);
   }
@@ -20141,6 +20173,20 @@ else if(dedupedN)
       saveWatchPrefsLocal();
       syncWatchPrefsToCascades();
     } else carryUp=true;
+    // CAS-740: `touched` has no legitimate value that means "unanswered" other than SQL null itself — false
+    // is a real answer ("hasn't touched the switch yet"), so a migrated row nobody has re-saved since this
+    // column existed must read back as null, not false, or every existing account would silently look
+    // freshly-unanswered on its next load. Same carry-up as taste/watch_windows above: adopt the account's
+    // explicit answer, or keep this device's own value and push it up.
+    if(row.touched===true || row.touched===false) prefs.touched = row.touched;
+    else carryUp=true;
+    const onb=onbAnswersLoad();
+    let onbChanged=false;
+    if(Array.isArray(row.never_show)){ onb.never=row.never_show; onbChanged=true; } else carryUp=true;
+    if(typeof row.onb_depth==="string" && row.onb_depth){ onb.depth=row.onb_depth; onbChanged=true; } else carryUp=true;
+    if(onbChanged) onbAnswersSaveLocal(onb);
+    if(row.framing===true || row.framing===false){ if(ux.on!==row.framing){ ux.on=row.framing; saveUxLocal(); } }
+    else carryUp=true;
     savePrefsLocal();
     syncServiceChips(); updatePrefSwitch(); updatePrefBtn();
     if(typeof render==="function") render();
@@ -20152,6 +20198,14 @@ else if(dedupedN)
   // CAS-561: same chokepoint shape as saveTasteBase above — Where & when you'll watch is the other
   // CAS-532 "system-wide, no per-agent override" setting, so it gets the same account round-trip.
   saveWatchPrefs = function(){ saveWatchPrefsLocal(); if(accountActive()) scheduleUserPrefsSync(); };
+  const onbAnswersSaveLocal = onbAnswersSave;
+  // CAS-740: the never-show genres and depth answer are read live by onbDepthFor on every agent, not just
+  // during onboarding, so — same chokepoint shape as saveTasteBase/saveWatchPrefs above — they get the
+  // same account round-trip.
+  onbAnswersSave = function(a){ onbAnswersSaveLocal(a); if(accountActive()) scheduleUserPrefsSync(); };
+  const saveUxLocal = saveUx;
+  // CAS-740: the framing toggle, same reasoning.
+  saveUx = function(){ saveUxLocal(); if(accountActive()) scheduleUserPrefsSync(); };
 
   const saveNotifyLocal = saveNotify;
   // CAS-484: `wins` lives on the same notify entries film_picks does, so the one save chokepoint
@@ -20173,6 +20227,11 @@ else if(dedupedN)
                                 loadNotifyPrefs, loadRealAlerts, syncNotifyNow: runNotifySync,
                                 prefsRow, pickRows, loadFilmPicks,
                                 loadUserPrefs, syncUserPrefsNow: runUserPrefsSync, userPrefsRow,
+                                // CAS-740: read/write, same shape as filmWatchReady/agentFilmsReady above —
+                                // so a test can drive user_prefs' own "the account hasn't answered yet" gate
+                                // directly, the same way fireAccountFanout drives it for real.
+                                get userPrefsReady(){ return userPrefsReady; },
+                                set userPrefsReady(v){ userPrefsReady=!!v; },
                                 // CAS-408: the live-reconcile seam, so the cross-device convergence story
                                 // can be exercised without waiting on a real focus/visibilitychange event.
                                 reconcileCascades, reconcileFilms,
