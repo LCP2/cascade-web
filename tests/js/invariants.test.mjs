@@ -2943,3 +2943,212 @@ test("CAS-728 AC6: a cascSigOf change on one agent never re-evaluates another ag
     } finally { unseedCascade(a.id); unseedCascade(b.id); }
   });
 }));
+
+// ---- CASCADES ACCOUNT CONVERGENCE (CAS-734) --------------------------------------------------------------
+// Two devices signed in to the same account held permanently different agent sets: loadAccount resolved
+// every conflict in favour of the local cache unconditionally (no comparison of anything), reconcileCascades
+// resolved every conflict the OPPOSITE way (remote always wins), and a single edit upserted the whole array
+// instead of just the changed row. These tests exercise the real seam (window.CascadePersistence) against a
+// minimal fake Supabase client, same style as the CAS-681/CAS-726 harnesses above.
+const uuidFor = n => `00000734-0000-4000-8000-${String(n).padStart(12, "0")}`;
+function fakeCascadesSupabase(seed){
+  const state = { rows: (seed || []).map(r => ({ ...r })), upsertCalls: [] };
+  function selectBuilder(){
+    const builder = {
+      order(){ return builder; },   // the real query's ORDER BY — the fake does its own client-side sort
+      then(resolve, reject){
+        return Promise.resolve({ data: state.rows.map(r => ({ ...r })), error: null }).then(resolve, reject);
+      },
+    };
+    return builder;
+  }
+  function deleteBuilder(){
+    const conds = [];
+    const builder = {
+      eq(col, val){ conds.push([col, v => v === val]); return builder; },
+      in(col, vals){ const set = new Set(vals); conds.push([col, v => set.has(v)]); return builder; },
+      then(resolve, reject){
+        state.rows = state.rows.filter(r => !conds.every(([c, test]) => test(r[c])));
+        return Promise.resolve({ error: null }).then(resolve, reject);
+      },
+    };
+    return builder;
+  }
+  const client = {
+    from(table){
+      assert.equal(table, "cascades", "the cascades persistence seam must only ever touch the cascades table");
+      return {
+        select: () => selectBuilder(),
+        upsert(rows){
+          state.upsertCalls.push(rows);
+          const nowIso = new Date().toISOString();
+          const written = rows.map(r => {
+            const i = state.rows.findIndex(x => x.id === r.id);
+            const createdAt = (i >= 0 && state.rows[i].created_at) || r.created_at || nowIso;
+            const stored = { ...r, created_at: createdAt, updated_at: nowIso };
+            if(i >= 0) state.rows[i] = stored; else state.rows.push(stored);
+            return stored;
+          });
+          const result = { data: written.map(r => ({ id: r.id, updated_at: r.updated_at })), error: null };
+          return { select: async () => result, then(resolve, reject){ return Promise.resolve(result).then(resolve, reject); } };
+        },
+        delete: () => deleteBuilder(),
+      };
+    },
+  };
+  return { client, state };
+}
+function withCas734State(fn){
+  const savedCascades = E.cascades.slice();
+  const savedKnown = new Map(E.CascadePersistence.cascadeKnown);
+  const savedEdited = new Map(E.CascadePersistence.cascadeEditedAt);
+  E.CascadePersistence.cascadeKnown.clear();
+  E.CascadePersistence.cascadeEditedAt.clear();
+  return (async () => {
+    try { await fn(); }
+    finally {
+      E.cascades.length = 0; savedCascades.forEach(c => E.cascades.push(c));
+      E.CascadePersistence.cascadeKnown.clear();
+      savedKnown.forEach((v, k) => E.CascadePersistence.cascadeKnown.set(k, v));
+      E.CascadePersistence.cascadeEditedAt.clear();
+      savedEdited.forEach((v, k) => E.CascadePersistence.cascadeEditedAt.set(k, v));
+      signOut();
+    }
+  })();
+}
+
+test("CAS-734 AC2: app_template.html no longer justifies any rule with \"the local copy is the newer state\"", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  assert.equal((src.match(/the local copy is the newer state/g) || []).length, 0);
+});
+
+test("CAS-734 AC5: both cascades account reads carry an explicit ORDER BY", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const matches = src.match(/\.order\("(created_at|updated_at)"/g) || [];
+  assert.ok(matches.length >= 2, `expected at least 2 explicit ORDER BY clauses on the cascades reads, found ${matches.length}`);
+});
+
+test("CAS-734 AC4: the order comparator is a total order — a tie on .order resolves via created_at then id, never 0", () => {
+  const cmp = E.CascadePersistence.cascadeOrderCmp;
+  const a = { id: "aaaaaaaa-0000-4000-8000-000000000001", order: 5, created_at: "2026-01-01T00:00:00.000Z" };
+  const b = { id: "bbbbbbbb-0000-4000-8000-000000000001", order: 5, created_at: "2026-02-01T00:00:00.000Z" };
+  assert.notEqual(cmp(a, b), 0, "a tie on .order must not resolve to 0");
+  assert.ok(cmp(a, b) < 0, "the earlier created_at must sort first");
+  assert.ok(cmp(b, a) > 0, "the comparator must be antisymmetric");
+  // A tie on BOTH .order and created_at too — id is the final tie-break, and it must still be non-zero and
+  // consistent both ways (never the "whatever arrived first" answer the old bare .order subtraction gave).
+  const c = { id: "aaaaaaaa-0000-4000-8000-000000000001", order: 5, created_at: "2026-01-01T00:00:00.000Z" };
+  const d = { id: "bbbbbbbb-0000-4000-8000-000000000001", order: 5, created_at: "2026-01-01T00:00:00.000Z" };
+  assert.notEqual(cmp(c, d), 0, "a tie on both .order and created_at must still resolve via id, never 0");
+  assert.equal(Math.sign(cmp(c, d)), -Math.sign(cmp(d, c)), "the comparator must be stable/antisymmetric on id too");
+});
+
+test("CAS-734 AC6: a single-agent rename upserts exactly one row, not the whole array", () => withCas734State(async () => {
+  const idA = uuidFor(1), idB = uuidFor(2);
+  const a = E.normCascade({ id: idA, name: "Agent A", order: 0 });
+  const b = E.normCascade({ id: idB, name: "Agent B", order: 1 });
+  E.cascades.length = 0; E.cascades.push(a, b);
+  const { client, state } = fakeCascadesSupabase([]);
+  signInWithClient(client);
+
+  // Establish both as already-confirmed by the account (this first push isn't what the AC is about).
+  await E.CascadePersistence.syncNow();
+  state.upsertCalls.length = 0;
+
+  a.name = "Agent A renamed";
+  E.CascadePersistence.saveCascades();
+  await E.CascadePersistence.syncNow();
+
+  const lastUpsert = state.upsertCalls[state.upsertCalls.length - 1] || [];
+  assert.equal(lastUpsert.length, 1, "a one-agent rename must upsert exactly one row");
+  assert.equal(lastUpsert[0].id, idA, "the one row upserted must be the agent that actually changed");
+}));
+
+test("CAS-734 AC3(a): a local edit older than the account's own row loses — the account row is what ends up in cascades", () => withCas734State(async () => {
+  const id = uuidFor(3);
+  const remoteRow = { id, user_id: "cas681-test-user", name: "Account version",
+    criteria: { order: 0 }, alert_moments: [], active: true,
+    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-06-01T00:00:00.000Z" };
+  const { client } = fakeCascadesSupabase([remoteRow]);
+  signInWithClient(client);
+
+  const local = E.normCascade({ id, name: "Local version (stale)", order: 0 });
+  E.cascades.length = 0; E.cascades.push(local);
+  // This device's own record of when IT last changed this agent — BEFORE the account row's own updated_at
+  // above, so the account is the newer copy even though the content genuinely differs.
+  E.CascadePersistence.cascadeEditedAt.set(id, "2026-03-01T00:00:00.000Z");
+
+  await E.CascadePersistence.loadAccount();
+
+  const kept = E.cascades.find(c => c.id === id);
+  assert.ok(kept, "the agent must still be present");
+  assert.equal(kept.name, "Account version", "the account's newer row must win when the local edit is older");
+}));
+
+test("CAS-734 AC3(b): a local edit newer than the account's own row wins and is pushed", () => withCas734State(async () => {
+  const id = uuidFor(4);
+  const remoteRow = { id, user_id: "cas681-test-user", name: "Account version",
+    criteria: { order: 0 }, alert_moments: [], active: true,
+    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-05T00:00:00.000Z" };
+  const { client, state } = fakeCascadesSupabase([remoteRow]);
+  signInWithClient(client);
+
+  const local = E.normCascade({ id, name: "Local version (newer)", order: 0 });
+  E.cascades.length = 0; E.cascades.push(local);
+  // This device changed it AFTER the account row's own updated_at above.
+  E.CascadePersistence.cascadeEditedAt.set(id, "2026-06-01T00:00:00.000Z");
+
+  await E.CascadePersistence.loadAccount();
+  const kept = E.cascades.find(c => c.id === id);
+  assert.equal(kept.name, "Local version (newer)", "the newer local edit must win");
+
+  await E.CascadePersistence.syncNow();
+  const lastUpsert = state.upsertCalls[state.upsertCalls.length - 1] || [];
+  assert.ok(lastUpsert.some(r => r.id === id && r.name === "Local version (newer)"),
+    "the winning local edit must actually be pushed back to the account");
+}));
+
+test("CAS-734 AC3(c): loadAccount and reconcileCascades resolve conflicts through the SAME function", () => withCas734State(async () => {
+  // Structural: one definition, exactly two call sites (loadAccount, reconcileCascades) — not two inline
+  // rules that happen to agree, which is exactly the shape that let them silently disagree before this fix.
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const iifeSrc = src.slice(src.indexOf("function cascadeToRow("), src.indexOf("window.CascadePersistence = {"));
+  const defCount = (iifeSrc.match(/function resolveCascadeConflict\(/g) || []).length;
+  const totalCount = (iifeSrc.match(/resolveCascadeConflict\(/g) || []).length;
+  assert.equal(defCount, 1, "resolveCascadeConflict must be defined exactly once");
+  assert.equal(totalCount, 3, "resolveCascadeConflict's one definition plus exactly two call sites (loadAccount, reconcileCascades)");
+
+  // Behavioural: the identical conflict resolves identically whichever path is called.
+  const id = uuidFor(5);
+  const remoteRow = { id, user_id: "cas681-test-user", name: "Account version",
+    criteria: { order: 0 }, alert_moments: [], active: true,
+    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-06-01T00:00:00.000Z" };
+  const { client } = fakeCascadesSupabase([remoteRow]);
+  signInWithClient(client);
+  const local = E.normCascade({ id, name: "Local version (stale)", order: 0 });
+  E.cascades.length = 0; E.cascades.push(local);
+  E.CascadePersistence.cascadeEditedAt.set(id, "2026-03-01T00:00:00.000Z");
+
+  await E.CascadePersistence.reconcileCascades();
+  const kept = E.cascades.find(c => c.id === id);
+  assert.equal(kept.name, "Account version", "reconcileCascades must resolve this exactly as loadAccount's own AC3(a) test does");
+}));
+
+test("CAS-734 AC3(d): an agent present only on this device, with an id the account has never confirmed, is left alone", () => withCas734State(async () => {
+  const otherId = uuidFor(6), localOnlyId = uuidFor(7);
+  const remoteRow = { id: otherId, user_id: "cas681-test-user", name: "Some other agent",
+    criteria: { order: 0 }, alert_moments: [], active: true,
+    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" };
+  const { client } = fakeCascadesSupabase([remoteRow]);
+  signInWithClient(client);
+
+  const localOnly = E.normCascade({ id: localOnlyId, name: "Brand new, unsynced", order: 1 });
+  E.cascades.length = 0; E.cascades.push(localOnly);
+  // Never confirmed by the account: withCas734State starts cascadeKnown empty, and this id isn't in it.
+
+  await E.CascadePersistence.loadAccount();
+
+  const kept = E.cascades.find(c => c.id === localOnlyId);
+  assert.ok(kept, "a genuinely new, never-synced local agent must survive a loadAccount call");
+  assert.equal(kept.name, "Brand new, unsynced");
+}));
