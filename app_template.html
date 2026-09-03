@@ -7327,6 +7327,7 @@ window.openAgentPanel=(id, btn)=>{
   positionPanel(pop, btn);   // CAS-304, CAS-439
   wirePanelSlide(pop, ".nopt[data-cid]", el=>pinFilmToCascadeAndRepaint(id, el.dataset.cid));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
+  document.addEventListener("pointerdown", watchPanelOutsideClose, true);   // CAS-751
   btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
   const first=pop.querySelector(".nopt"); if(first && first.tagName==="BUTTON") first.focus({preventScroll:true});
   snapToWatchPanelAnchor();   // CAS-647
@@ -7393,6 +7394,7 @@ window.openNotifyPanel=(id, btn)=>{
     else toggleFilmOpt(id, wk);
   });
   document.addEventListener("keydown", watchPanelKey, true);
+  document.addEventListener("pointerdown", watchPanelOutsideClose, true);   // CAS-751
   btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
   const first=pop.querySelector(".nopt:not(.spent)"); if(first) first.focus({preventScroll:true});
   snapToWatchPanelAnchor();   // CAS-647
@@ -7419,6 +7421,17 @@ window.toggleFilmOpt=(id,key)=>{
   e.wins=e.wins||{};
   e.winsSource=e.winsSource||{};   // CAS-712: a manual tap always wins provenance, even over a prior auto-arm
   const wasOn=filmOptOn(id,row);
+  // CAS-751: an already-on level an AGENT armed (winsSource "auto") is CLAIMED by a human re-tap, not
+  // cleared — the row stays ticked, only its provenance changes to "manual". This is the one gesture that
+  // trips the downstream "manual wins" rule (~4894), which already stops the agent re-deciding once it sees
+  // it. A level already "manual" (or with no recorded source) keeps the old toggle-off behaviour below.
+  if(wasOn && e.winsSource[key]==="auto"){
+    e.winsSource[key]="manual";
+    saveNotify();
+    logEvent("film_watch_claim",{level:key});
+    repaintWatchControl(id);
+    return;
+  }
   // CAS-716: Watch On is single-select — ticking a level clears every other key first, so at most one is ever
   // true. Unticking the currently-ticked level is unchanged: it just clears back to no selection.
   // CAS-735: winsSource follows the same "absence, not false" convention wins itself doesn't — clearing only
@@ -7539,8 +7552,23 @@ function closeWatchPanel(){
   document.querySelectorAll(".stub.ratingopen").forEach(s=>s.classList.remove("ratingopen"));
   document.querySelectorAll(".card.popopen").forEach(c=>c.classList.remove("popopen"));   // CAS-684
   document.removeEventListener("keydown", watchPanelKey, true);
+  document.removeEventListener("pointerdown", watchPanelOutsideClose, true);   // CAS-751
 }
 function watchPanelKey(e){ if(e.key==="Escape"){ e.stopPropagation(); closeWatchPanel(); } }
+// CAS-751: a press outside the open panel AND outside the chip that owns it closes the panel, same as
+// Escape. Checked against live DOM rather than a captured reference, since this is one listener shared by
+// every panel (Watch On/Agent/Watched) — whichever is open at press time is ".cpop", and the chip that
+// opened it still carries ".open" (set by closeWatchPanel's own caller, cleared by closeWatchPanel above).
+// A press that starts INSIDE the panel is deliberately left alone here even when it lands on the panel's
+// own background rather than a row — wirePanelSlide's press-drag-release (CAS-282) owns everything that
+// starts inside .cpop, and closing out from under it mid-gesture would abort a slide the finger is still on.
+function watchPanelOutsideClose(e){
+  const pop=document.querySelector(".cpop"); if(!pop) return;
+  if(pop.contains(e.target)) return;
+  const btn=document.querySelector(".ctl.open");
+  if(btn && btn.contains(e.target)) return;
+  closeWatchPanel();
+}
 // CAS-315: the scroll position when a watch panel opens on a card. `.card` is content-visibility:auto
 // (CAS-129, for windowing the ~2,000-card catalogue), and both focusing a button inside one and later
 // removing that button from the DOM make Chromium silently scroll the WINDOW to "reveal"/renegotiate it —
@@ -7589,6 +7617,7 @@ window.openWatchPanel=(id, btn)=>{
   positionPanel(pop);   // CAS-304
   wirePanelSlide(pop, ".cseg", el=>pickWatch(id, el.dataset.key));   // CAS-282
   document.addEventListener("keydown", watchPanelKey, true);
+  document.addEventListener("pointerdown", watchPanelOutsideClose, true);   // CAS-751
   btn.classList.add("open"); btn.setAttribute("aria-expanded","true");
   const first=pop.querySelector(".cseg"); if(first) first.focus({preventScroll:true});
   snapToWatchPanelAnchor();   // CAS-647
