@@ -223,6 +223,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // the ledger; CascadeAuth is exposed the same way so a test can flip a device between guest and signed-in
   // by setting .enabled/.client/.session, exactly as the real sign-in path does.
   movingData, realAlerts, firstFound, watched,
+  // CAS-738: the other five watched-film verdict sets, exposed by reference like watched above —
+  // a test needs to seed/restore all of them to exercise filmRows()/applyFilmRows() without leaking
+  // state into later tests, since applyFilmRows() rebuilds every one of them from scratch.
+  disliked, indifferent, blocked, wowed, enjoyed,
   get movingReady(){ return movingReady; },
   setMovingReady(v){ movingReady = v; },
   get CascadeAuth(){ return window.CascadeAuth; },

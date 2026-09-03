@@ -3352,3 +3352,61 @@ test("CAS-735 AC5: recomputeFound() writes no placement value before this sessio
     E.CascadePersistence.filmWatchReady = savedReady;
   }
 });
+
+// ---- WOW! AND ENJOYED SURVIVE FOR A SIGNED-IN ACCOUNT (CAS-738) --------------------------------------------
+// saveWatchStatus's accountActive() branch used to call scheduleFilmSync() ONLY, skipping the local
+// write-through every other set gets — and user_films (what scheduleFilmSync actually pushes) had no
+// status value for wow/enjoyed at all, so a signed-in Wow! or Enjoyed rating was written nowhere and
+// vanished on reload. Fixed by always running the local save first, and by widening filmRows()/
+// applyFilmRows() to carry the two verdicts through the same status column as the other four.
+function withFilmVerdictState(fn){
+  const snap = { watched: [...E.watched], disliked: [...E.disliked], blocked: [...E.blocked],
+    indifferent: [...E.indifferent], wowed: [...E.wowed], enjoyed: [...E.enjoyed] };
+  const restore = () => {
+    E.watched.clear(); snap.watched.forEach(id => E.watched.add(id));
+    E.disliked.clear(); snap.disliked.forEach(id => E.disliked.add(id));
+    E.blocked.clear(); snap.blocked.forEach(id => E.blocked.add(id));
+    E.indifferent.clear(); snap.indifferent.forEach(id => E.indifferent.add(id));
+    E.wowed.clear(); snap.wowed.forEach(id => E.wowed.add(id));
+    E.enjoyed.clear(); snap.enjoyed.forEach(id => E.enjoyed.add(id));
+  };
+  try { fn(); } finally { restore(); }
+}
+
+test("CAS-738 AC3: saveWatchStatus writes cascade_wow and cascade_enjoyed to localStorage while signed in", () => withCas681State(async () => withFilmVerdictState(() => {
+  signInWithClient(fakeWatchlistSupabase([]).client);
+  const wowId = 738001, enjoyedId = 738002;
+  E.watched.add(wowId); E.wowed.add(wowId);
+  E.watched.add(enjoyedId); E.enjoyed.add(enjoyedId);
+
+  E.CascadePersistence.saveWatchStatus();
+
+  const storedWow = JSON.parse(E.localStorage.getItem("cascade_wow") || "[]");
+  const storedEnjoyed = JSON.parse(E.localStorage.getItem("cascade_enjoyed") || "[]");
+  assert.ok(storedWow.includes(wowId),
+    "cascade_wow must reach localStorage the instant saveWatchStatus runs, not only be scheduled for the account");
+  assert.ok(storedEnjoyed.includes(enjoyedId),
+    "cascade_enjoyed must reach localStorage the instant saveWatchStatus runs, not only be scheduled for the account");
+})));
+
+test("CAS-738 AC4: filmRows() emits a row for every wowed/enjoyed id, and applyFilmRows() round-trips them back", () => withFilmVerdictState(() => {
+  const wowId = 738011, enjoyedId = 738012;
+  E.watched.add(wowId); E.wowed.add(wowId);
+  E.watched.add(enjoyedId); E.enjoyed.add(enjoyedId);
+
+  const rows = E.CascadePersistence.filmRows();
+  const wowRow = rows.find(r => r.movie_id === String(wowId));
+  const enjoyedRow = rows.find(r => r.movie_id === String(enjoyedId));
+  assert.ok(wowRow, "filmRows() must emit a row for a wowed film — fails on current code (no status value for it)");
+  assert.equal(wowRow.status, "wow");
+  assert.ok(enjoyedRow, "filmRows() must emit a row for an enjoyed film — fails on current code (no status value for it)");
+  assert.equal(enjoyedRow.status, "enjoyed");
+
+  // Simulate a fresh device loading the account: the loader must restore both verdicts from the rows alone.
+  const loaded = E.CascadePersistence.applyFilmRows;
+  loaded(rows);
+  assert.ok(E.wowed.has(wowId), "the loader must round-trip a wow row back into the wowed set");
+  assert.ok(E.enjoyed.has(enjoyedId), "the loader must round-trip an enjoyed row back into the enjoyed set");
+  assert.ok(!E.wowed.has(enjoyedId), "the round trip must not blur enjoyed into wowed");
+  assert.ok(!E.enjoyed.has(wowId), "the round trip must not blur wowed into enjoyed");
+}));
