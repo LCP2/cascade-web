@@ -5381,7 +5381,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 912, "commit": "84383b5", "builtAt": "2026-09-03T06:20:45Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 913, "commit": "a71c58e", "builtAt": "2026-09-03T07:05:55Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -9082,6 +9082,13 @@ function normCascade(c, opts){
   c.year = c.year||[];                       // [] = any year; mirrors filt.year, so the Filters panel shows it too
   c.imdb = c.imdb||0; c.rt = c.rt||0;
   c.ratingStop = (typeof c.ratingStop==="number") ? c.ratingStop : stopFor(c.imdb);
+  // CAS-744: NOT defaulting this to true for an upcoming/in_cinema agent, even though that is exactly where
+  // the missing-rating data is structural rather than exceptional. normCascade runs on every load — old
+  // agent and new alike, template and account row alike — with nothing here to tell "just created" apart
+  // from "loaded from storage". A window-conditional default belongs at agent-creation time, where that
+  // distinction actually exists (newCascade/draftFromTemplate); bolting it on here would recompute the
+  // default on every load and silently flip an existing cinema agent's effective behaviour the first time
+  // its windows changed, which is the one thing this ticket explicitly rules out.
   c.includeUnrated = !!c.includeUnrated;
   c.paused = !!c.paused;                      // guest mode (CAS-79): saved on-device but not watching/alerting
   c.budget = c.budget||0;                    // index into BUDGET_BANDS; 0 = Any
@@ -9485,7 +9492,14 @@ function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   // than quietly reverting to the whole catalogue behind a screen of switched-off chips.
   if(c.genre===null || c.age===null) return false;
   if(c.genre.length && !c.genre.includes((m.genres||[])[0])) return false;
-  if(!ageOpen(c) && !c.age.includes(m.age_rating)) return false;
+  // CAS-744: includeUnrated was wired to ratingOK (the IMDb bar) only — this gate never read it, so the
+  // escape hatch did nothing for a film with no age_rating at all (m.age_rating null/""), which is the
+  // norm for an unreleased film rather than the exception. Same shape as ratingOK just above: below/outside
+  // the bar is one thing, genuinely unknown is another, and includeUnrated is what decides the unknown case.
+  if(!ageOpen(c)){
+    if(!m.age_rating){ if(!c.includeUnrated) return false; }
+    else if(!c.age.includes(m.age_rating)) return false;
+  }
   if((c.year||[]).length && !c.year.includes(yearOf(m))) return false;
   // CAS-250: and the rolling window, which is a different question from the Filters panel's year CHIPS above
   // — that one is "these exact years", this one is "the last N years from today". Both can be set; neither

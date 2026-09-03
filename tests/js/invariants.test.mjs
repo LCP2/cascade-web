@@ -4020,3 +4020,49 @@ test("CAS-742: movingSeen persists through user_prefs — save/load round trip, 
     if(saved === undefined) delete E.movingSeen[fid]; else E.movingSeen[fid] = saved;
   }
 }));
+
+// ---- CAS-744: includeUnrated must gate the AGE filter too, not only the IMDb bar it already governed ------
+// ratingOK (CAS-171, above) already treats "no IMDb score" as its own case, decided by includeUnrated. The
+// age gate never made that same distinction — a film with no age_rating at all was simply absent from c.age's
+// list, same as a film whose real rating was outside it, and includeUnrated was never consulted. That matters
+// because a null age_rating is the NORM for an unreleased film, not the exception: CAS-744's own audit found
+// only 31.6% of upcoming/in_cinema films rated at all. scoreFloor:0 is pinned alongside every missionCase()
+// override below, per the CAS-724 gotcha noted earlier in this file — otherwise normCascade's legacy-floor
+// migration reads selScale/selAwards as old Mission dials and derives a non-zero floor, contaminating a test
+// about the age gate alone with the unrelated score gate.
+test("CAS-744 AC2: includeUnrated decides an unrated film's fate under a narrowed age list", () => {
+  const openAge = missionCase({ scoreFloor: 0 });   // age:[] here — open, so an unrated film clears on its own merits
+  const unrated = E.MOVIES.find(m => !m.age_rating && E.matchesCriteria(m, openAge));
+  assert.ok(unrated, "no unrated film clearing the open baseline — this test would prove nothing");
+  const allowed = E.AGE_LEVELS[0];
+
+  assert.equal(E.matchesCriteria(unrated, missionCase({ scoreFloor: 0, age: [allowed], includeUnrated: true })), true,
+    `${unrated.title}: unrated film was excluded from a narrowed age list even with includeUnrated true`);
+  assert.equal(E.matchesCriteria(unrated, missionCase({ scoreFloor: 0, age: [allowed], includeUnrated: false })), false,
+    `${unrated.title}: unrated film was listed by a narrowed age list with includeUnrated false`);
+});
+
+test("CAS-744 AC3: a rated film outside the agent's age list stays excluded regardless of includeUnrated", () => {
+  const allowed = E.AGE_LEVELS[0];
+  const open = missionCase({ scoreFloor: 0 });
+  const outsider = E.MOVIES.find(m => m.age_rating && m.age_rating !== allowed && E.matchesCriteria(m, open));
+  assert.ok(outsider, "no differently-rated film clearing the open baseline — this test would prove nothing");
+  for(const includeUnrated of [true, false]){
+    assert.equal(E.matchesCriteria(outsider, missionCase({ scoreFloor: 0, age: [allowed], includeUnrated })), false,
+      `${outsider.title} rated "${outsider.age_rating}" was listed against an age list of ["${allowed}"] (includeUnrated: ${includeUnrated})`);
+  }
+});
+
+test("CAS-744 AC4: includeUnrated strictly grows the count over the live catalogue whenever an unrated film would otherwise qualify", () => {
+  const allowed = E.AGE_LEVELS[0];
+  const openAge = missionCase({ scoreFloor: 0 });
+  const wouldQualify = E.MOVIES.some(m => !m.age_rating && E.matchesCriteria(m, openAge));
+  assert.ok(wouldQualify, "no unrated film would otherwise qualify at all — this test would prove nothing");
+
+  const off = missionCase({ scoreFloor: 0, age: [allowed], includeUnrated: false });
+  const on  = missionCase({ scoreFloor: 0, age: [allowed], includeUnrated: true });
+  const offCount = E.MOVIES.filter(m => E.matchesCriteria(m, off)).length;
+  const onCount  = E.MOVIES.filter(m => E.matchesCriteria(m, on)).length;
+  assert.ok(onCount > offCount,
+    `includeUnrated true did not grow the count over false, ${offCount} → ${onCount}`);
+});
