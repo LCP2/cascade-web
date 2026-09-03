@@ -3885,6 +3885,116 @@ test("CAS-742 AC3: isNewFound reads the account's real admission date, ignoring 
   });
 }));
 
+// ---- CAS-715: isnew is recency AND "the world moved, not the agent" -------------------------------------
+// The Watch On chip's old "Can Watch" glow (.recent) is gone; isnew (filmIsNew) replaces it, and it is NOT
+// just isNewFound — a film that only shows up because an agent's own criteria were just edited (or because
+// the agent is brand new and has no prior signature to compare against) is news about the AGENT, not the
+// FILM, and must not glow. recomputeFound is the only place that can still tell the two causes apart (see
+// its own cascadeDrift comment, and firstFound's — !firstFound[id] is what tells a fresh admission apart
+// from a mere re-confirmation of a film that's been sitting in `found` for days) — these three tests seed
+// each of the three scenarios directly, the same seam CAS-728's own sticky-admission tests use. All three
+// pick their film with the same bare pastCinemaUnwatchedFilm() CAS-728's own tests use, so each explicitly
+// saves/restores firstFound[id]/admitDrift[id] (like CAS-742 AC3 does) rather than assuming a clean slate.
+test("CAS-715 AC6a: a film admitted while its owning agent's signature is unchanged reads isnew true", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const film = pastCinemaUnwatchedFilm();
+    const id = film.tmdb_id;
+    const c = stickyTestCascade("cas715-ac6a", 99);
+    E.cascades.push(c);
+    const sig = E.cascSigOf(c);
+    const savedFirstFound = E.firstFound[id], savedDrift = E.admitDrift[id];
+    delete E.firstFound[id]; delete E.admitDrift[id];
+    try {
+      // Seeded as though a prior pass already admitted it under TODAY's signature — recomputeFound's own
+      // sticky fast path (r.agent_sig===sig) must skip it untouched, so this pass proves nothing about drift.
+      E.CascadePersistence.setAgentFilm(c.id, id, { admission_score: 90, admission_status: "in_cinema", agent_sig: sig });
+      E.recomputeFound();
+      assert.equal(E.filmIsNew(id), true,
+        "a film admitted under an unedited agent must read isnew — nothing here says an agent was widened");
+    } finally {
+      unseedCascade(c.id); delete E.notify[id];
+      if(savedFirstFound === undefined) delete E.firstFound[id]; else E.firstFound[id] = savedFirstFound;
+      if(savedDrift === undefined) delete E.admitDrift[id]; else E.admitDrift[id] = savedDrift;
+    }
+  });
+}));
+
+test("CAS-715 AC6b: the same film re-admitted in a pass where its owning agent's signature changed reads isnew false", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const film = pastCinemaUnwatchedFilm();
+    const id = film.tmdb_id;
+    const saved = { rt_critic: film.rt_critic, metacritic: film.metacritic, imdb_votes: film.imdb_votes };
+    // Zero the film's LIVE score so only the STORED admission_score (90) can keep it in — same recipe as
+    // CAS-728 AC4 — so this test's "stillIn" outcome cannot be an accident of the live catalogue.
+    film.rt_critic = null; film.metacritic = null; film.imdb_votes = 0;
+    const c = stickyTestCascade("cas715-ac6b", 99);
+    E.cascades.push(c);
+    const sigBefore = E.cascSigOf(c);
+    const savedFirstFound = E.firstFound[id], savedDrift = E.admitDrift[id];
+    delete E.firstFound[id]; delete E.admitDrift[id];
+    try {
+      E.CascadePersistence.setAgentFilm(c.id, id, { admission_score: 90, admission_status: "in_cinema", agent_sig: sigBefore });
+      c.watchMarkers = { in_cinema: 80, premium: null, rent: 80, stream: 80 };   // 80 <= stored 90; moves cascSigOf
+      assert.notEqual(E.cascSigOf(c), sigBefore, "setup: this edit must actually move cascSigOf(c)");
+      E.recomputeFound();
+      const row = E.CascadePersistence.agentFilmsFor(c.id).find(r => r.movie_id === String(id));
+      assert.ok(row, "setup: the film must still be admitted after the edit — a live-score retest would fail unconditionally here");
+      assert.equal(E.filmIsNew(id), false,
+        "a film re-confirmed under a just-changed agent signature must not read isnew");
+    } finally {
+      unseedCascade(c.id); delete E.notify[id]; Object.assign(film, saved);
+      if(savedFirstFound === undefined) delete E.firstFound[id]; else E.firstFound[id] = savedFirstFound;
+      if(savedDrift === undefined) delete E.admitDrift[id]; else E.admitDrift[id] = savedDrift;
+    }
+  });
+}));
+
+test("CAS-715 AC6c: a newly created agent's first intake reads isnew false", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const film = pastCinemaUnwatchedFilm();
+    const id = film.tmdb_id;
+    // Floor 0, deliberately permissive — unlike the CAS-728 tests' floor of 99, this one WANTS a real,
+    // unseeded arrival: the point under test is recomputeFound's own "no prior rows at all" reading.
+    const c = stickyTestCascade("cas715-ac6c", 0);
+    E.cascades.push(c);
+    const savedFirstFound = E.firstFound[id], savedDrift = E.admitDrift[id];
+    delete E.firstFound[id]; delete E.admitDrift[id];
+    try {
+      assert.equal(E.CascadePersistence.agentFilmsFor(c.id).length, 0,
+        "setup: a brand-new agent must start with no admitted films");
+      E.recomputeFound();
+      assert.ok(E.CascadePersistence.getAgentFilm(c.id, id),
+        "setup: this permissive brand-new agent must actually admit the chosen film");
+      assert.equal(E.admitDrift[id], true,
+        "a brand-new agent's very first intake must be flagged — it has no prior signature to compare against");
+      assert.equal(E.filmIsNew(id), false, "and must therefore not read isnew");
+    } finally {
+      unseedCascade(c.id); delete E.notify[id];
+      if(savedFirstFound === undefined) delete E.firstFound[id]; else E.firstFound[id] = savedFirstFound;
+      if(savedDrift === undefined) delete E.admitDrift[id]; else E.admitDrift[id] = savedDrift;
+    }
+  });
+}));
+
+// CAS-715 AC7: the "New" filter rides the same filt-registry seam the existing "recent" filter (CAS-468)
+// already uses — filtSnapshot's serialise list, the RELAXERS label/clear registry, and passes() itself —
+// so a test can assert it's really registered there, not just wired into one screen's own local state.
+test("CAS-715 AC7: the New filter is registered in the filt registry and clearing it restores the unfiltered count", () => {
+  const snap = E.filtSnapshot();
+  try {
+    const total = E.MOVIES.filter(E.passes).length;
+    const relaxer = E.RELAXERS.find(r => r.key === "newOnly");
+    assert.ok(relaxer, "no \"newOnly\" entry in RELAXERS — the New filter isn't registered the way \"recent\" is");
+    E.filt.newOnly = true;
+    const filteredCount = E.MOVIES.filter(E.passes).length;
+    assert.ok(filteredCount <= total, "turning the New filter on must never show MORE films than off");
+    relaxer.clear();
+    assert.equal(E.filt.newOnly, false, "the registry's own clear() must actually flip the flag off");
+    assert.equal(E.MOVIES.filter(E.passes).length, total,
+      "clearing the New filter must restore exactly the unfiltered count");
+  } finally { E.filtRestore(snap); }
+});
+
 // movingSeen (the Moving badge's own {filmId: lastSeenGroupKey}) was device-local — clearing the badge on one
 // device left it lit on every other. It now rides the same user_prefs row/merge rule as taste and
 // watch_windows (CAS-561), reusing the CAS-740 fake (that double serves "user_prefs" generically, not just

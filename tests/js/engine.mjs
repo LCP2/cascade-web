@@ -305,6 +305,12 @@ if(typeof window.CascadeAuth === "undefined"){
   // at the bottom of the account-sync IIFE — a live reference, so a test can stub CascadeAuth.client with
   // a fake Supabase and call e.g. CascadePersistence.loadWatchlistAccount() directly.
   get CascadePersistence(){ return window.CascadePersistence; },
+  // CAS-715: filmIsNew is the Watch On chip's combined "isnew" rule (isNewFound AND admitDrift — "the world
+  // moved, not the agent"); admitDrift is exposed by reference (mutated via property assignment inside
+  // recomputeFound, never reassigned) so a test can seed/read it the same way firstFound above is. filt/
+  // passes/RELAXERS are the Find screen's own filter registry — the "New" filter this ticket adds rides the
+  // same seam the existing "recent" filter does, so a test can assert it's registered there directly.
+  filmIsNew, admitDrift, filt, passes, RELAXERS, filtSnapshot, filtRestore,
 };
 `;
 
