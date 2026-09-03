@@ -12,7 +12,8 @@
 --   notify_prefs  — one row per user: how they want to be told, and which alert TYPES they
 --                   have muted everywhere. CAS-185.
 --   film_picks    — one row per (user, film) the user has hand-added or hand-removed from
---                   their Found list. An "off" here outranks their own Cascade. CAS-185.
+--                   their Found list. An "off" here outranks their own Cascade. CAS-185. Also
+--                   carries `pinned_to`/`not_in`, the CAS-279 hand-move override. CAS-739.
 --   film_watch    — one row per (user, film) carrying the set of windows the user's per-film
 --                   "Watch it" control has ticked. A real, independent notification source —
 --                   the daily job fires on it whether or not any agent's own bell is on. CAS-484.
@@ -172,17 +173,26 @@ create policy notify_prefs_owner on public.notify_prefs
 -- ---------------------------------------------------------------------------
 -- film_picks — the personal override on a Found list (CAS-100, stored CAS-185)
 -- ---------------------------------------------------------------------------
--- 'mine' = the user added this film by hand; 'off' = they took it off, and it stays off.
--- The monitor reads the 'off' rows and says nothing about those films, every run, until
--- the user changes their mind: your answer outranks your own Cascade. Held on the device
--- until now, which is why the monitor's --picks flag had no Supabase default.
+-- 'mine' = the user added this film by hand; 'off' = they took it off, and it stays off;
+-- null = the film carries neither, only a pin/move below. The monitor reads the 'off' rows
+-- and says nothing about those films, every run, until the user changes their mind: your
+-- answer outranks your own Cascade. Held on the device until CAS-185.
+-- CAS-739: pinned_to/not_in are CAS-279's hand-move override (which agent a film is forced
+-- IN to / OUT of, regardless of criteria) — the other class of per-film hand decision, added
+-- to this table rather than a new one since both key on the same (user_id, movie_id) and a
+-- film can carry a pick state and a pin/move at once.
 create table if not exists public.film_picks (
   user_id    uuid not null references auth.users(id) on delete cascade,
   movie_id   text not null,
-  state      text not null check (state in ('mine','off')),
+  state      text check (state in ('mine','off')),
+  pinned_to  text[] not null default '{}',
+  not_in     text[] not null default '{}',
   updated_at timestamptz not null default now(),
   primary key (user_id, movie_id)
 );
+alter table public.film_picks alter column state drop not null;
+alter table public.film_picks add column if not exists pinned_to text[] not null default '{}';
+alter table public.film_picks add column if not exists not_in text[] not null default '{}';
 
 alter table public.film_picks enable row level security;
 
