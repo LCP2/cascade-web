@@ -507,6 +507,35 @@ test("CAS-747 AC5: the Movie Budget card renders the includeUnbudgeted switch, a
   expect(after, `before=${before} after=${after}`).not.toBe(before);
 });
 
+// CAS-746: the CAS-717 agent-divider row used to skip a section with only one owner, so a reader couldn't
+// tell whether a bare section was unowned, single-owner, or just different. The row is unconditional now —
+// this checks every group carries at least one .grouphead.sub (on a listing that genuinely has a
+// single-agent section, since the onboarding roster owns films unevenly across sections), and that only the
+// first row in a group has its hairline suppressed.
+test("Watch listing: every group shows its agent divider, even a single-agent section (CAS-746)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  const groups = page.locator("#groups .group");
+  const groupCount = await groups.count();
+  expect(groupCount).toBeGreaterThan(0);
+
+  let sawSingleAgentSection = false;
+  for(let i = 0; i < groupCount; i++){
+    const subRows = groups.nth(i).locator(".grouphead.sub");
+    await expect(subRows.first()).toBeVisible();
+    const borderWidths = await subRows.evaluateAll(els => els.map(el => getComputedStyle(el).borderTopWidth));
+    if(borderWidths.length === 1) sawSingleAgentSection = true;
+    expect(borderWidths[0]).toBe("0px");
+    for(let j = 1; j < borderWidths.length; j++) expect(borderWidths[j]).not.toBe("0px");
+  }
+  expect(sawSingleAgentSection, "expected at least one section with a single agent's films").toBe(true);
+
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+});
+
 test("CAS-740 AC4: a signed-in user whose account already holds agents is never left in the onboarding flow", async ({ page }) => {
   await page.route("**/config.js", route => route.fulfill({
     contentType: "application/javascript",

@@ -431,6 +431,9 @@
   /* CAS-717: the second-level agent divider within a status section — same visual family as .grouphead,
      one size down, with a hairline above it to read as a seam rather than a second section. */
   .grouphead.sub{padding:10px 12px 6px;font-size:12px;font-weight:700;color:var(--dim);border-top:1px solid var(--line);margin-top:4px}
+  /* CAS-746: the row is unconditional now, so the first one in a group sits directly under the
+     section's own .grouphead — suppress its hairline there so it doesn't read as a double rule. */
+  .group > .grouphead + .grouphead.sub{border-top:0;margin-top:0}
   .gdot{width:9px;height:9px;border-radius:50%}
   .gdot.opening_week{background:var(--open)} .gdot.in_cinema{background:var(--amber)}
   .gdot.pvod{background:var(--purple)} .gdot.rental{background:var(--blue)}
@@ -17911,15 +17914,12 @@ function render(){
     grp.innerHTML=`<div class="grouphead"><span class="gdot ${g}"></span>${STATUS_LABEL[g]}
       <span class="gcount">${live}</span></div>`;
     wrap.appendChild(grp);
-    // A section with only one agent's films (or none owned) reads exactly as before — the divider only
-    // earns its keep once there's an actual seam to mark.
-    const multiAgent=blocks.length>1;
+    // The row is now unconditional — a section that names its agent every time can be read without
+    // inferring anything from the row's absence.
     blocks.forEach(block=>{
-      if(multiAgent){
-        const name=block.cascade ? `${block.cascade.icon} ${esc(block.cascade.name)}` : "Other";
-        const sub=document.createElement("div"); sub.className="grouphead sub"; sub.innerHTML=`<span>${name}</span>`;
-        grp.appendChild(sub);
-      }
+      const name=block.cascade ? `${block.cascade.icon} ${esc(block.cascade.name)}` : "Other";
+      const sub=document.createElement("div"); sub.className="grouphead sub"; sub.innerHTML=`<span>${name}</span>`;
+      grp.appendChild(sub);
       const listEl=document.createElement("div"); listEl.className="list";
       grp.appendChild(listEl);
       fillListChunked(listEl, block.items, renderGen, isFresh, oneListDone);
