@@ -4302,8 +4302,9 @@ const LISTING_ORDER = ["opening_week","in_cinema","pvod","rental","included_stre
 // agent's c.kind — a field CAS-723 retired as a window-scoping input, so it no longer means anything a new
 // agent carries. Order is a property of the TAB now, not the agent: the Cinema tab is where a trip gets
 // planned, so it leads with Upcoming — the one section that's still just a plan — reading down the same
-// journey order as CASCADE above. Every other tab is unchanged and keeps LISTING_ORDER.
-const orderFor = cinemaTab => cinemaTab ? CASCADE : LISTING_ORDER;
+// journey order as CASCADE above.
+// CAS-754: the Streaming tab leads with Upcoming too, same reasoning — Premium and Rental keep LISTING_ORDER.
+const orderFor = tab => (tab==="in_cinema" || tab==="stream") ? CASCADE : LISTING_ORDER;
 const STATUS_LABEL = {
   opening_week:"In Cinema · Opening week", in_cinema:"In Cinema",
   pvod:"Premium/Rent (~$30)", rental:"Rent (~$7)",
@@ -5395,7 +5396,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 922, "commit": "5c2568e", "builtAt": "2026-09-03T10:57:03Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 923, "commit": "d98db22", "builtAt": "2026-09-03T11:10:23Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -17920,7 +17921,7 @@ function listingGroups(rows, ac){
   // defaults to (Rental/Streaming keep DEFAULT_SORT, unchanged) — a user's own explicit pick (isUserSort)
   // still overrides either, exactly as it always has.
   const tabDflt = watchTab==="in_cinema" ? "availability" : DEFAULT_SORT;
-  return orderFor(watchTab==="in_cinema")      // CAS-750: order is the Cinema tab's own, not the agent's
+  return orderFor(watchTab)      // CAS-750/CAS-754: order is the tab's own, not the agent's
     .map(g=>{
       const cmp=sortForKey(g, ymSort||tabDflt, ac && ac.kind==="cinema", isUserSort);
       // CAS-713: agent rank comes first within a status section — a higher-ranked agent's films lead —
