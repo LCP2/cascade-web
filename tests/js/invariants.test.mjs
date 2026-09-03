@@ -2944,6 +2944,95 @@ test("CAS-728 AC6: a cascSigOf change on one agent never re-evaluates another ag
   });
 }));
 
+// ---- WATCH ON PLACEMENT IS DEVICE-INDEPENDENT (CAS-736) ------------------------------------------------
+// `e.watchEarned` used to be computed once and cached in `notify` — per-device local storage never synced
+// to the account. Two devices that first met a film at different moments (or under different marker
+// values) froze two different answers forever, and since earned is half of the "later of" placement rule
+// (CAS-727), that put the same film in different Watch tabs on different devices. Earned is now derived,
+// every pass, from the owner's stored agent_films admission_score (CAS-726) and its CURRENT watchMarkers —
+// never from a field cached on `notify` — so every device reads the identical answer off the same account
+// state. These tests seed the ledger directly via setAgentFilm, the same seam CAS-726/728's own tests
+// above use, rather than a pin — a pin bypasses the ledger entirely and is explicitly out of scope here
+// (see the comment at the derivation site in recomputeFound).
+test("CAS-736 AC2: earned derives from the stored admission_score and the owner's CURRENT watchMarkers, never a cached local field", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const film = pastCinemaUnwatchedFilm();
+    const id = film.tmdb_id;
+    const c = stickyTestCascade("cas736-ac2", 99);
+    E.cascades.push(c);
+    c.watchMarkers = { in_cinema: 95, premium: null, rent: 85, stream: 70 };
+    const sig = E.cascSigOf(c);
+    try {
+      E.CascadePersistence.setAgentFilm(c.id, id, { admission_score: 90, admission_status: "in_cinema", agent_sig: sig });
+      // A stale local cache, exactly what a pre-CAS-736 device could have frozen — must be ignored outright.
+      E.entryFor(id).watchEarned = "in_cinema";
+      E.recomputeFound();
+      assert.equal(E.notify[id].wins.rent, true,
+        "the stored admission_score (90) clears Rental's marker (85) but not Cinema's (95) — the stale local watchEarned must not win");
+
+      // Editing the OWNER's own markers (not the film) moves the derivation — only the stored SCORE is
+      // frozen at admission, per CAS-727 §5; the markers it's compared against are always read live.
+      c.watchMarkers.rent = 92;   // 90 no longer clears Rental
+      E.recomputeFound();
+      assert.equal(E.notify[id].wins.stream, true, "raising the Rental marker past the stored score must move earned to Streaming");
+    } finally { unseedCascade(c.id); delete E.notify[id]; }
+  });
+}));
+
+test("CAS-736 AC3: two devices with different local caches, same account state, converge on identical placement", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const film = pastCinemaUnwatchedFilm();
+    const id = film.tmdb_id;
+    const c = stickyTestCascade("cas736-ac3", 99);
+    E.cascades.push(c);
+    c.watchMarkers = { in_cinema: 95, premium: null, rent: 85, stream: 70 };
+    const sig = E.cascSigOf(c);
+    try {
+      E.CascadePersistence.setAgentFilm(c.id, id, { admission_score: 90, admission_status: "in_cinema", agent_sig: sig });
+
+      // "Device A": its local notify already carries a stale watchEarned from before this device ever
+      // re-read the account — a wrong value a pre-CAS-736 device could genuinely have been holding.
+      delete E.notify[id];
+      E.entryFor(id).watchEarned = "stream";
+      E.recomputeFound();
+      const winsA = { ...E.notify[id].wins };
+
+      // "Device B": nothing local at all — a completely fresh notify entry meeting the same account state.
+      delete E.notify[id];
+      E.recomputeFound();
+      const winsB = { ...E.notify[id].wins };
+
+      assert.deepEqual(winsA, winsB,
+        "both devices must derive the identical placement from the same stored admission_score and markers");
+      assert.equal(winsA.rent, true, "sanity: admission_score 90 against these markers places at Rental");
+    } finally { unseedCascade(c.id); delete E.notify[id]; }
+  });
+}));
+
+test("CAS-736 AC4: recomputeFound writes no placement value before this device's own agent_films load has resolved", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const film = pastCinemaUnwatchedFilm();
+    const id = film.tmdb_id;
+    const c = stickyTestCascade("cas736-ac4", 99);
+    E.cascades.push(c);
+    c.watchMarkers = { in_cinema: 95, premium: null, rent: 85, stream: 70 };
+    const sig = E.cascSigOf(c);
+    const savedReady = E.CascadePersistence.agentFilmsReady;
+    try {
+      E.CascadePersistence.setAgentFilm(c.id, id, { admission_score: 90, admission_status: "in_cinema", agent_sig: sig });
+      E.CascadePersistence.agentFilmsReady = false;
+      E.recomputeFound();
+      const e = E.notify[id];
+      const picked = !!(e && e.wins && Object.values(e.wins).some(Boolean));
+      assert.ok(!picked, "recomputeFound must write no placement value while agentFilmsReady is false");
+
+      E.CascadePersistence.agentFilmsReady = true;
+      E.recomputeFound();
+      assert.equal(E.notify[id].wins.rent, true, "sanity: once ready, the same film places normally");
+    } finally { unseedCascade(c.id); delete E.notify[id]; E.CascadePersistence.agentFilmsReady = savedReady; }
+  });
+}));
+
 // ---- CASCADES ACCOUNT CONVERGENCE (CAS-734) --------------------------------------------------------------
 // Two devices signed in to the same account held permanently different agent sets: loadAccount resolved
 // every conflict in favour of the local cache unconditionally (no comparison of anything), reconcileCascades
