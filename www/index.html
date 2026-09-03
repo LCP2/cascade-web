@@ -4939,8 +4939,13 @@ function recomputeFound(){
     // it must outlive the film falling out of every Cascade's auto-match (a status change, a criteria edit),
     // or the very next render's recompute wipes it out from under the user with no action of theirs to blame.
     const picked = !!(e.wins && Object.values(e.wins).some(Boolean));
+    // CAS-739: a pin/move (e.pinnedTo/e.notIn) is its own hand-made decision, same standing as `mine` or a
+    // Watch-it tick — it must survive even when the cascade it names isn't live on THIS device yet (a pin
+    // just loaded from the account, before that device's own cascades have synced), or this prune would be
+    // exactly the "recomputation overwrites a hand-made decision" case the pin exists to prevent.
+    const overridden = !!((e.pinnedTo && e.pinnedTo.length) || (e.notIn && e.notIn.length));
     // An entry that records neither an override nor a current match nor a watch pick is just noise — don't keep it.
-    if(!auto && !mine && !e.removed && !picked){ delete notify[id]; return; }
+    if(!auto && !mine && !e.removed && !picked && !overridden){ delete notify[id]; return; }
     // "I've seen it" / "not for me" outranks EVERY route onto the list, including your own pin. A Cascade's
     // auto set already honours those two tags (matchesCriteria excludes them), so this is what applies them to
     // a hand-added film — otherwise a film you pinned and then ticked as watched would sit in the Found group
@@ -5363,7 +5368,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 906, "commit": "5a58752", "builtAt": "2026-09-03T04:20:55Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 907, "commit": "538f381", "builtAt": "2026-09-03T04:33:37Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -19657,12 +19662,21 @@ else if(dedupedN)
   // Only the answers the USER gave travel. An auto entry is derivable from the Cascade that made
   // it, so uploading it would be storing a conclusion next to its own premise — and the two would
   // disagree the moment the Cascade changed.
+  // CAS-739: state's own comparison had drifted to a value ("mine") loadFilmPicks reads back but
+  // nothing ever wrote — e.source is only ever "manual" or "auto" (loadNotify), so a hand-added
+  // film never produced a row here. pinnedTo/notIn (CAS-279's hand-move override) ride the same
+  // row: they are the other class of per-film hand decision, and a film can carry either, both, or
+  // neither independently of its pick state, so the row goes out whenever ANY of the three is set.
   function pickRows(){
     const owner=uid(), out=[];
     for(const id in notify){
       const e=notify[id]||{};
-      const state = e.removed ? "off" : (e.source==="mine" ? "mine" : null);
-      if(state) out.push({user_id:owner, movie_id:String(id), state});
+      const state = e.removed ? "off" : (e.source==="manual" ? "mine" : null);
+      const pinnedTo = Array.isArray(e.pinnedTo) ? e.pinnedTo : [];
+      const notIn = Array.isArray(e.notIn) ? e.notIn : [];
+      if(state || pinnedTo.length || notIn.length){
+        out.push({user_id:owner, movie_id:String(id), state, pinned_to:pinnedTo, not_in:notIn});
+      }
     }
     return out;
   }
@@ -19715,7 +19729,7 @@ else if(dedupedN)
   // just emptied or created.
   async function loadFilmPicks(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("film_picks").select("movie_id,state");
+    const { data, error } = await c.from("film_picks").select("movie_id,state,pinned_to,not_in");
     if(error){ console.warn("film_picks load", error); return; }
     const remote=data||[];
     remote.forEach(r=>{
@@ -19723,6 +19737,10 @@ else if(dedupedN)
       const e=entryFor(id);
       if(r.state==="off") e.removed=true;
       else if(r.state==="mine") e.source="manual";
+      // CAS-739: the CAS-279 hand-move override, same replace-not-union rule as every other column
+      // here — the account is this device's only source for a pin/move it didn't just make itself.
+      if(Array.isArray(r.pinned_to)) e.pinnedTo = r.pinned_to.filter(x=>typeof x==="string");
+      if(Array.isArray(r.not_in)) e.notIn = r.not_in.filter(x=>typeof x==="string");
     });
     pickBaseline=new Set(remote.map(r=>String(r.movie_id)));
     recomputeFound();
@@ -20109,7 +20127,7 @@ else if(dedupedN)
   window.CascadePersistence = { loadAccount, syncNow: runSync, accountActive, isUuid,
                                 loadAccountFilms, syncFilmsNow: runFilmSync, filmRows, applyFilmRows,
                                 loadNotifyPrefs, loadRealAlerts, syncNotifyNow: runNotifySync,
-                                prefsRow, pickRows,
+                                prefsRow, pickRows, loadFilmPicks,
                                 loadUserPrefs, syncUserPrefsNow: runUserPrefsSync, userPrefsRow,
                                 // CAS-408: the live-reconcile seam, so the cross-device convergence story
                                 // can be exercised without waiting on a real focus/visibilitychange event.

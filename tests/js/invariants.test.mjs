@@ -3410,3 +3410,99 @@ test("CAS-738 AC4: filmRows() emits a row for every wowed/enjoyed id, and applyF
   assert.ok(!E.wowed.has(enjoyedId), "the round trip must not blur enjoyed into wowed");
   assert.ok(!E.enjoyed.has(wowId), "the round trip must not blur wowed into enjoyed");
 }));
+
+// ---- HAND-MADE PER-FILM DECISIONS REACH THE ACCOUNT (CAS-739) ---------------------------------------------
+// pickRows() tested e.source==="mine" for the "hand-added" row — a value loadNotify() never produces (it
+// normalises e.source to only "manual" or "auto"), so a hand-added film never produced a film_picks row at
+// all. pinnedTo/notIn (CAS-279's hand-move override) were never carried to the account in any form. Both are
+// per-device overrides, same class as a manual Watch On value, and must survive a reload on another device.
+function fakeCas739Supabase(seed){
+  const state = { film_picks: (seed.film_picks || []).map(r => ({ ...r })),
+                  notify_prefs: (seed.notify_prefs || []).map(r => ({ ...r })) };
+  const keyOf = { film_picks: r => `${r.user_id}:${r.movie_id}`, notify_prefs: r => r.user_id };
+  function selectBuilder(rows){
+    return { then(resolve, reject){
+      return Promise.resolve({ data: rows.map(r => ({ ...r })), error: null }).then(resolve, reject);
+    } };
+  }
+  function deleteBuilder(table){
+    const conds = [];
+    const builder = {
+      eq(col, val){ conds.push([col, v => v === val]); return builder; },
+      in(col, vals){ const set = new Set(vals); conds.push([col, v => set.has(v)]); return builder; },
+      then(resolve, reject){
+        state[table] = state[table].filter(r => !conds.every(([c, test]) => test(r[c])));
+        return Promise.resolve({ error: null }).then(resolve, reject);
+      },
+    };
+    return builder;
+  }
+  const client = {
+    from(table){
+      return {
+        select(){ return selectBuilder(state[table]); },
+        upsert(rows){
+          rows.forEach(row => {
+            const i = state[table].findIndex(x => keyOf[table](x) === keyOf[table](row));
+            if(i >= 0) state[table][i] = { ...state[table][i], ...row }; else state[table].push({ ...row });
+          });
+          return Promise.resolve({ error: null });
+        },
+        delete(){ return deleteBuilder(table); },
+      };
+    },
+  };
+  return { client, state };
+}
+function withCas739State(fn){
+  const savedNotify = { ...E.notify };
+  return (async () => {
+    try { await fn(); }
+    finally {
+      Object.keys(E.notify).forEach(k => delete E.notify[k]);
+      Object.assign(E.notify, savedNotify);
+      signOut();
+    }
+  })();
+}
+
+test("CAS-739 AC2: a film marked as the user's own produces a film_picks row from pickRows()", () => withCas739State(() => {
+  signInWithClient(fakeCas739Supabase({}).client);
+  const id = 739001;
+  const e = E.entryFor(id);
+  e.source = "manual";   // the value loadNotify() actually normalises a hand-added film to
+  const row = E.CascadePersistence.pickRows().find(r => r.movie_id === String(id));
+  assert.ok(row, "pickRows() must emit a row for a film whose source is \"manual\" — fails on current code");
+  assert.equal(row.state, "mine");
+}));
+
+test("CAS-739 AC3: pinnedTo and notIn survive a save/load round-trip through the account layer", () => withCas739State(async () => {
+  const pinnedId = 739002, movedId = 739003;
+  E.entryFor(pinnedId).pinnedTo = ["cas739-agent-a"];
+  E.entryFor(movedId).notIn = ["cas739-agent-b"];
+  const { client } = fakeCas739Supabase({});
+  signInWithClient(client);
+
+  await E.CascadePersistence.syncNotifyNow();     // push, through pickRows()
+  delete E.notify[pinnedId]; delete E.notify[movedId];   // simulate a fresh device: nothing local yet
+  await E.CascadePersistence.loadFilmPicks();      // load, back into notify
+
+  assert.deepEqual(E.entryFor(pinnedId).pinnedTo, ["cas739-agent-a"],
+    "pinnedTo must survive a push then a fresh load — fails on current code (never uploaded)");
+  assert.deepEqual(E.entryFor(movedId).notIn, ["cas739-agent-b"],
+    "notIn must survive a push then a fresh load — fails on current code (never uploaded)");
+}));
+
+test("CAS-739 AC4: a recomputeFound() pass never clears a pinnedTo value", () => withCas739State(() => {
+  const cId = seedMarkerCascade({});
+  const m = unwatchedFilms(1)[0];
+  try {
+    pinFilm(m.tmdb_id, cId);
+    E.recomputeFound();
+    assert.deepEqual(E.notify[m.tmdb_id].pinnedTo, [cId],
+      "recomputeFound() must never clear a hand-set pinnedTo value");
+  } finally {
+    delete E.notify[m.tmdb_id];
+    unseedCascade(cId);
+  }
+}));
