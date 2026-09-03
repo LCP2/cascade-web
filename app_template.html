@@ -7764,7 +7764,28 @@ function trackFirstFound(){
   try{ localStorage.setItem(FIRST_KEY, s); }catch(e){}
 }
 const daysSince = iso => Math.round((Date.parse(TODAY) - Date.parse(iso)) / 864e5);
-const isNewFound = id => { const d=firstFound[id]; return !!d && daysSince(d) < NEW_DAYS; };
+// CAS-742: the account's own answer to "when was this film found", read off agent_films.admitted_at
+// (CAS-726) — a device meeting the account for the first time already has the film's real admission date on
+// every one of its owning agents, so this is checked before ever trusting the device-local stamp below,
+// which a fresh device stamps with today's date regardless of how long the account has actually had the
+// film. A pinned film carries no agent_films row (a pin bypasses the ledger entirely — recomputeFound's own
+// CAS-736 comment) and a guest device has no CascadePersistence at all — both fall through to firstFound.
+function admittedAtFor(id){
+  const CP = (typeof window!=="undefined") ? window.CascadePersistence : null;
+  if(!CP) return null;
+  const cascadeIds = (notify[id] && notify[id].cascadeIds) || [];
+  let best = null;
+  cascadeIds.forEach(cid=>{
+    const row = CP.getAgentFilm(cid, id);
+    if(row && row.admitted_at && (!best || row.admitted_at < best)) best = row.admitted_at;
+  });
+  return best;
+}
+const isNewFound = id => {
+  const acctDate = admittedAtFor(id);
+  if(acctDate) return daysSince(acctDate) < NEW_DAYS;
+  const d=firstFound[id]; return !!d && daysSince(d) < NEW_DAYS;
+};
 
 // ---- "Recent" (CAS-468) — supersedes CAS-447's card-level badge -----------------
 // One rule for both a first listing and a later status change: the status pill (the capsule bandHTML draws
@@ -7833,6 +7854,10 @@ async function pollCatalogue(){
         if(payload && Array.isArray(payload.movies)){
           catalogueEtag = etag;
           MOVIES = payload.movies;
+          // CAS-742: _scaleInferCache/_awardRankCache are keyed off tmdb_id and read m.budget/m.award, both
+          // properties of the REPLACED array's own films — nothing else in the swap touches them, so this is
+          // the one point that must.
+          invalidateComputeCaches();
           // BUILD_DATE tracks the catalogue's own build stamp; the header's freshness-date label reads it
           // directly and isn't part of render()'s rebuild, so it's kept honest here — unconditionally, since
           // a one-line text write can never disturb an open modal/drawer/popup the way a full rebuild could.
@@ -9373,6 +9398,11 @@ function inferScaleWhy(m){
        + `It is the band its peers sit in, not a figure Cascade holds.`;
 }
 window.showScaleInfer=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(inferScaleWhy(m)); };
+// CAS-742: one invalidation point for both catalogue-derived compute-once caches above, called from the
+// catalogue swap (MOVIES=payload.movies) rather than a manual clear at each call site — a stale entry let a
+// budget/awards-gated agent admit a different set of films on a device left open across a refresh than on
+// one that just booted.
+function invalidateComputeCaches(){ _scaleInferCache.clear(); _awardRankCache.clear(); }
 // ---- Buzz (CAS-145, ladder replaced by CAS-678) --------------------------------
 // How much a film is being talked about right now, off the TMDB popularity figure the pipeline already
 // carries on every title. BUZZ_PCTL/BUZZ_CUTS/buzzStop are defined above (the Scale-tiers section) — the
@@ -11469,9 +11499,15 @@ const ONB_DEPTH = {
 // detected — if nothing new lands, the maximum stays old.
 function agentNewestDays(c){
   let best = null;
+  // CAS-742: this agent's own admission date (agent_films.admitted_at), not the device-local firstFound
+  // stamp — a device meeting the account for the first time has no local record for any of these films, and
+  // used to read every agent's newest film as "today", masking a genuinely dead agent. firstFound survives
+  // as the fallback for the one case with no agent_films row to read: a film pinned into this agent.
+  const CP = (typeof window!=="undefined") ? window.CascadePersistence : null;
   MOVIES.forEach(m => {
     if(!watchesFilm(m,c)) return;
-    const d = firstFound[m.tmdb_id];
+    const row = CP && CP.getAgentFilm(c.id, m.tmdb_id);
+    const d = (row && row.admitted_at) || firstFound[m.tmdb_id];
     if(!d) return;
     const n = daysSince(d);
     if(best === null || n < best) best = n;
@@ -20190,7 +20226,11 @@ else if(dedupedN)
              // not just during onboarding) and the framing toggle — the other two account-level settings
              // CAS-211/CAS-561 never carried, same row, same merge rule.
              never_show:[...(onb.never||[])], onb_depth:onb.depth||null,
-             framing:!!ux.on };
+             framing:!!ux.on,
+             // CAS-742: the Moving badge's own seen-state — same whole-object jsonb shape and merge rule as
+             // taste/watch_windows above, the cheapest home for a second front-end-owned object this row
+             // already carries whole.
+             moving_seen:JSON.parse(JSON.stringify(movingSeen)) };
   }
   let upTimer=null;
   function scheduleUserPrefsSync(){ clearTimeout(upTimer); upTimer=setTimeout(runUserPrefsSync, 500); }
@@ -20247,6 +20287,13 @@ else if(dedupedN)
     if(onbChanged) onbAnswersSaveLocal(onb);
     if(row.framing===true || row.framing===false){ if(ux.on!==row.framing){ ux.on=row.framing; saveUxLocal(); } }
     else carryUp=true;
+    // CAS-742: same carry-up as taste/watch_windows above — an empty/absent object reads as "no device has
+    // saved this under the new column yet", not "the account has decided nothing is seen".
+    if(row.moving_seen && typeof row.moving_seen==="object" && Object.keys(row.moving_seen).length){
+      Object.keys(movingSeen).forEach(k=>delete movingSeen[k]);
+      Object.assign(movingSeen, row.moving_seen);
+      saveMovingSeenLocal();
+    } else carryUp=true;
     savePrefsLocal();
     syncServiceChips(); updatePrefSwitch(); updatePrefBtn();
     if(typeof render==="function") render();
@@ -20263,6 +20310,10 @@ else if(dedupedN)
   // during onboarding, so — same chokepoint shape as saveTasteBase/saveWatchPrefs above — they get the
   // same account round-trip.
   onbAnswersSave = function(a){ onbAnswersSaveLocal(a); if(accountActive()) scheduleUserPrefsSync(); };
+  const saveMovingSeenLocal = saveMovingSeen;
+  // CAS-742: same chokepoint shape as saveTasteBase/saveWatchPrefs/onbAnswersSave above — the Moving badge's
+  // seen-state was the last front-end-owned object of this shape that still lived device-only.
+  saveMovingSeen = function(){ saveMovingSeenLocal(); if(accountActive()) scheduleUserPrefsSync(); };
   const saveUxLocal = saveUx;
   // CAS-740: the framing toggle, same reasoning.
   saveUx = function(){ saveUxLocal(); if(accountActive()) scheduleUserPrefsSync(); };

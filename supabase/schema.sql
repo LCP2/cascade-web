@@ -154,6 +154,13 @@ alter table public.user_prefs add column if not exists never_show text[];
 alter table public.user_prefs add column if not exists onb_depth text;
 alter table public.user_prefs add column if not exists framing boolean;
 
+-- CAS-742: the Moving screen's own seen-state ({filmId: lastSeenGroupKey}) was device-local — clearing the
+-- badge on one device left it lit on every other. Same whole-object jsonb shape and carry-up rule as taste/
+-- watch_windows above (an empty/absent object is read as "no device has saved this yet", not "the account
+-- has decided nothing is seen"), the cheapest home for a second front-end-owned object this table already
+-- carries whole.
+alter table public.user_prefs add column if not exists moving_seen jsonb;
+
 alter table public.user_prefs enable row level security;
 
 drop policy if exists user_prefs_owner on public.user_prefs;

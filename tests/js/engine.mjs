@@ -157,6 +157,10 @@ if(typeof window.CascadeAuth === "undefined"){
   DEFAULT_SORT, sortForKey,
   fmtDay, fmtDate, bandHTML, windowsLineHTML, savingsHTML,
   inferredScale, inferScaleWhy, budgetCell, moneyRowHTML, SCALE_INFER_MIN_PEERS, popOf, scaleTier,
+  // CAS-742: the two catalogue-derived compute-once caches, exposed by reference (Map, never reassigned) so
+  // a test can assert their .size directly, plus the one function that clears both — the real invalidation
+  // point wired into the catalogue swap.
+  _scaleInferCache, _awardRankCache, invalidateComputeCaches,
   agentWindow, winOn, subOn, winSubs, PRIORITY_WATCH, ALERT_DEFAULTS, ALERT_SHORT, ALERT_MOMENT,
   alertLive, reachableRows, liveAlerts, drawWatchLanes,
   selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK, voteReadout, critScoreReadout, scaleReadout,
@@ -223,6 +227,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // the ledger; CascadeAuth is exposed the same way so a test can flip a device between guest and signed-in
   // by setting .enabled/.client/.session, exactly as the real sign-in path does.
   movingData, realAlerts, firstFound, watched,
+  // CAS-742: isNewFound is the decision this ticket moved onto the account (admittedAtFor, read off
+  // agent_films.admitted_at) rather than the device-local firstFound stamp above — exported so a test can
+  // assert the derived answer directly instead of re-deriving daysSince/admittedAtFor by hand.
+  isNewFound, admittedAtFor,
   // CAS-738: the other five watched-film verdict sets, exposed by reference like watched above —
   // a test needs to seed/restore all of them to exercise filmRows()/applyFilmRows() without leaking
   // state into later tests, since applyFilmRows() rebuilds every one of them from scratch.
