@@ -7098,6 +7098,7 @@ const MARKER_MIN_GAP = 3;
 // doesn't push anything, and nothing pushes into it.
 function setWatchMarker(c, key, value){
   c.watchMarkers=c.watchMarkers||{};
+  delete c._watchMarkersDefaulted;   // CAS-743: this IS the user setting a real value — the guess is gone
   if(value==null){ c.watchMarkers[key]=null; return; }
   value=Math.round(value);
   c.watchMarkers[key]=value;
@@ -8961,6 +8962,13 @@ function legacyMissionFloorDefault(c){
   }
   return on.length ? Math.round(on.reduce((x,y)=>x+y,0)/on.length) : 0;
 }
+// CAS-743: criteria fields normCascade fills with a GUESS when a saved agent predates the field, rather than
+// leaving it unset — {key: the criteria field, flag: the *Defaulted marker normCascade sets alongside it}.
+// The account sync seam (resolveCascadeConflict, cascadeDirtyRows) reads these flags so a guess never
+// outranks a real value on read, and never gets pushed to overwrite one on write. Add a field here, and set
+// its flag next to the fill (as watchMarkers does below), to cover the next field this hazard applies to —
+// see the ticket's Change item 3 for why this stays a short list rather than general schema versioning.
+const DEFAULTABLE_CASCADE_FIELDS = [ { key:"watchMarkers", flag:"_watchMarkersDefaulted" } ];
 // CAS-261: `template:true` says "this is a preset's lane-NEUTRAL recipe, not an agent". A preset is a
 // standard offered in both lanes (CAS-160), so its stored criteria must keep every rung it was written with;
 // the lane rule is applied per lane, later, by starterPreview and by the flow's draft. Without the opt-out
@@ -9042,9 +9050,14 @@ function normCascade(c, opts){
   // (agentFloor); c.scoreFloor above stays only as the one-time migration source. An agent saved before this
   // field existed gets every window seeded at its old scoreFloor, so nothing that already qualified stops
   // qualifying.
+  // CAS-743: that seed is a GUESS, not something the user chose — flagged via *Defaulted (DEFAULTABLE_
+  // CASCADE_FIELDS) so the account sync seam can tell a guess from a real value and never let one overwrite
+  // or masquerade as the other. setWatchMarker clears the flag the moment the user actually drags a marker;
+  // nothing else does, so it survives untouched across reloads until a real edit happens.
   if(!c.watchMarkers || typeof c.watchMarkers!=="object"){
     c.watchMarkers={};
     WATCH_LEVEL_KEYS.forEach(k=>{ c.watchMarkers[k]=c.scoreFloor; });
+    c._watchMarkersDefaulted=true;
   }
   // CAS-261: a lane only carries the dials it uses, and that has to be true of agents SAVED before the rule
   // as well as agents built after it — otherwise a cinema agent from last week goes on quietly filtering on
@@ -10310,6 +10323,11 @@ function commitDraft(){
     // could edit it, so the gap cost nothing. The Mission score track is that UI: without this the whole
     // screen would silently discard every drag the moment Save is pressed.
     watchMarkers:{...draft.watchMarkers}});
+  // CAS-743: draft's own *Defaulted flag (set by normCascade's fill, cleared the moment setWatchMarker runs
+  // against the draft) is not one of the fields Object.assign above copies, and c can be the SAME object as
+  // an existing agent carrying a stale flag from before this edit — so it has to be synced explicitly rather
+  // than left to whatever normCascade decides below, which only ever SETS the flag, never clears it.
+  DEFAULTABLE_CASCADE_FIELDS.forEach(({flag})=>{ if(draft[flag]) c[flag]=true; else delete c[flag]; });
   normCascade(c);
   // CAS-424: a brand new agent joins the Agents order at the end (rightmost) rather than defaulting to 0
   // and jumping the queue ahead of every agent already reordered.
@@ -18686,10 +18704,14 @@ else if(dedupedN)
     for(const k in ALERT_TO_MOMENT) if(alertLive(c,k)) out.push(ALERT_TO_MOMENT[k]);
     return out;
   }
+  // CAS-743: the *Defaulted flags are this device's own bookkeeping about whether a field's value is a
+  // normCascade guess — never part of the criteria the account stores, or every row would carry stray
+  // internal keys the monitor and every other device have no use for.
+  const DEFAULTED_FLAG_KEYS = new Set(DEFAULTABLE_CASCADE_FIELDS.map(f=>f.flag));
   function cascadeToRow(c){
     // CAS-734: created_at is excluded the same way id/name/paused already are — it rides on the row itself
     // (rowToCascade below carries it back), never inside criteria, or it would live in two places at once.
-    const criteria={}; for(const k in c){ if(k!=="id"&&k!=="name"&&k!=="paused"&&k!=="created_at") criteria[k]=c[k]; }
+    const criteria={}; for(const k in c){ if(k!=="id"&&k!=="name"&&k!=="paused"&&k!=="created_at"&&!DEFAULTED_FLAG_KEYS.has(k)) criteria[k]=c[k]; }
     return { id:c.id, user_id:uid(), name:c.name||"My Cascade",
              criteria, alert_moments:momentsOf(c), active:!c.paused };
   }
@@ -18786,8 +18808,15 @@ else if(dedupedN)
   // Dirty rows to push and rows to delete are DERIVED by diffing the live `cascades` array against
   // cascadeKnown, rather than tracked by instrumenting every edit call site — the same reasoning CAS-692
   // gives watchlistDirtyRows/watchlistPendingDeleteIds.
+  // CAS-743: a row the account already knows (known is set) never pushes while it still carries a *Defaulted
+  // flag — a guessed value must never overwrite whatever the account already confirmed for that field, and a
+  // guess is also exactly what makes an old row's cascadeFullSigOf disagree with a known.sig recorded before
+  // the field existed, which would otherwise mark it dirty for a reason the user never caused. A row the
+  // account has never confirmed at all (known is unset) still always pushes, guess or not — there is nothing
+  // of the account's to protect on a genuinely new agent's first sync.
   const cascadeDirtyRows = () => cascades.filter(c=>{
     const known=cascadeKnown.get(c.id);
+    if(known && DEFAULTABLE_CASCADE_FIELDS.some(({flag})=>c[flag])) return false;
     return !known || known.sig!==cascadeFullSigOf(c);
   });
   const cascadePendingDeleteIds = () => {
@@ -18839,7 +18868,22 @@ else if(dedupedN)
   // when this device's own recorded edit time for that agent (cascadeEditedAt) is genuinely newer than the
   // account row's own updated_at; an id this device has never edited (no cascadeEditedAt entry) never
   // wins — there is no local edit here to prefer over the account's copy.
+  // CAS-743: a local copy still carrying normCascade's own guess for a field (its *Defaulted flag) is
+  // structurally OLDER than an account row that already holds a real value for that field — the account row
+  // can only hold one because some device once actually wrote it, which this local copy has simply never
+  // seen. No cascadeEditedAt timestamp can outrank that: a stale pre-upgrade cache can carry a plausible, even
+  // newer, edit time while still missing fields the account has moved past. Checked before the timestamp
+  // comparison so it overrides localWins outright rather than merely tie-breaking it.
+  function localGuessedFieldRemoteHasReal(localCascade, rawRemoteRow){
+    const remoteCriteria = rawRemoteRow.criteria||{};
+    return DEFAULTABLE_CASCADE_FIELDS.some(({key,flag})=>{
+      if(!localCascade[flag]) return false;
+      const rv=remoteCriteria[key];
+      return rv && typeof rv==="object" && Object.keys(rv).length>0;
+    });
+  }
   function resolveCascadeConflict(localCascade, rawRemoteRow){
+    if(localGuessedFieldRemoteHasReal(localCascade, rawRemoteRow)) return rowToCascade(rawRemoteRow);
     const editedIso = cascadeEditedAt.get(localCascade.id) || null;
     const localWins = !!editedIso && editedIso > (rawRemoteRow.updated_at || "");
     return localWins ? normCascade({...localCascade}) : rowToCascade(rawRemoteRow);
