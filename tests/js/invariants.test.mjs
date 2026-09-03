@@ -3823,3 +3823,90 @@ test("CAS-741 AC3(b): a rename made on another device survives a membership tick
   assert.equal(state.lists.find(r => r.id === listB).name, "List B renamed elsewhere",
     "an unrelated membership tick must never revert a rename made on another device — fails on current code");
 }));
+
+// ---- PER-DEVICE CACHES AND STAMPS MADE TWO DEVICES DISAGREE (CAS-742) --------------------------------------
+// _scaleInferCache/_awardRankCache were never cleared when MOVIES was replaced wholesale, so a device left
+// open across a catalogue refresh kept stale inferred budgets/award ranks — a budget/awards-gated agent
+// admitted a different set of films than a freshly-booted device. invalidateComputeCaches() is the fix's one
+// invalidation point, wired into the real catalogue swap (MOVIES=payload.movies) in pollCatalogue.
+test("CAS-742 AC2: invalidateComputeCaches empties both catalogue-derived caches, so a changed award rank reads fresh without a reload", () => {
+  const m = E.MOVIES.find(x => !x.award);
+  assert.ok(m, "need a film with no award to run this test");
+  const savedAward = m.award, savedAwardText = m.award_text;
+  try {
+    assert.equal(E.awardRank(m), 0, "sanity: an unawarded film starts at rank 0");
+    E.inferredScale(E.MOVIES[1]);   // populate _scaleInferCache too — a null result still caches (has() below proves it)
+    assert.ok(E._awardRankCache.has(m.tmdb_id), "sanity: awardRank populates its cache");
+    assert.ok(E._scaleInferCache.has(E.MOVIES[1].tmdb_id), "sanity: inferredScale populates its cache");
+
+    m.award = "won"; m.award_text = "Won 1 Oscar";
+    assert.equal(E.awardRank(m), 0,
+      "the cache must still answer the pre-change rank here — proves the read below is the cache, not a live recompute");
+
+    E.invalidateComputeCaches();
+    assert.equal(E._awardRankCache.size, 0, "invalidateComputeCaches must empty _awardRankCache");
+    assert.equal(E._scaleInferCache.size, 0, "invalidateComputeCaches must empty _scaleInferCache");
+    assert.ok(E.awardRank(m) > 0, "after invalidation, the newly-won award must be read, not the stale cached rank");
+  } finally {
+    m.award = savedAward; m.award_text = savedAwardText;
+    E.invalidateComputeCaches();
+  }
+});
+
+// firstFound was stamped with the device's own TODAY the moment a film entered `found` — a device meeting
+// the account for the first time (a reinstall, a new phone) has no local record for any of its films, so
+// every one of them read as newly found regardless of how long the account has actually had them. isNewFound
+// now checks the film's real admission date (agent_films.admitted_at, CAS-726) via admittedAtFor() first, and
+// only falls back to the device-local firstFound stamp when there is no account row to read (a pinned film,
+// or a guest device). Seeded directly via setAgentFilm, the same seam CAS-726/728/736's own tests use.
+test("CAS-742 AC3: isNewFound reads the account's real admission date, ignoring a device-local stamp of today", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const film = pastCinemaUnwatchedFilm();
+    const id = film.tmdb_id;
+    const c = stickyTestCascade("cas742-ac3", 99);
+    E.cascades.push(c);
+    const sig = E.cascSigOf(c);
+    const savedFirstFound = E.firstFound[id];
+    const oldIso = new Date(Date.now() - 30 * 864e5).toISOString();
+    try {
+      E.CascadePersistence.setAgentFilm(c.id, id,
+        { admission_score: 90, admission_status: "in_cinema", agent_sig: sig, admitted_at: oldIso });
+      E.recomputeFound();
+      // Exactly the pre-fix failure mode: this device's OWN local ledger says "found today" (trackFirstFound
+      // still stamps this unconditionally, as the pinned/guest fallback needs it to) — the account's real
+      // 30-day-old admission must win over it, not the device's own today-stamp.
+      E.firstFound[id] = new Date().toISOString();
+      assert.equal(E.isNewFound(id), false,
+        "a film admitted 30 days ago must not read as newly found just because this device's own local stamp says today");
+    } finally {
+      unseedCascade(c.id); delete E.notify[id];
+      if(savedFirstFound === undefined) delete E.firstFound[id]; else E.firstFound[id] = savedFirstFound;
+    }
+  });
+}));
+
+// movingSeen (the Moving badge's own {filmId: lastSeenGroupKey}) was device-local — clearing the badge on one
+// device left it lit on every other. It now rides the same user_prefs row/merge rule as taste and
+// watch_windows (CAS-561), reusing the CAS-740 fake (that double serves "user_prefs" generically, not just
+// the touched/never_show/onb_depth/framing fields it was written for).
+test("CAS-742: movingSeen persists through user_prefs — save/load round trip, same carry-up rule as taste", () => withCas740State(async () => {
+  const fid = String(E.MOVIES[0].tmdb_id);
+  const saved = E.movingSeen[fid];
+  try {
+    E.movingSeen[fid] = "new_agents";
+    assert.deepEqual(E.CascadePersistence.userPrefsRow().moving_seen, E.movingSeen,
+      "userPrefsRow() must include the live movingSeen object");
+
+    const { client, state } = fakeCas740Supabase(null);
+    signInWithClient(client);
+    await E.CascadePersistence.syncUserPrefsNow();
+    assert.deepEqual(state.row.moving_seen, E.movingSeen, "a freshly-seeded row must carry moving_seen");
+
+    delete E.movingSeen[fid];   // corrupt local memory so the next assertion proves the LOAD, not a no-op
+    await E.CascadePersistence.loadUserPrefs();
+    assert.equal(E.movingSeen[fid], "new_agents",
+      "loading the account's row back must restore this device's cleared badge state");
+  } finally {
+    if(saved === undefined) delete E.movingSeen[fid]; else E.movingSeen[fid] = saved;
+  }
+}));
