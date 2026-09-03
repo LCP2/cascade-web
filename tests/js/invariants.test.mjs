@@ -2529,20 +2529,30 @@ test("CAS-686: condensedShowsScores agrees with the three-source rule, over fixt
 // pre-release film cannot have yet — 85% of Upcoming and 79% of In Cinema carried no score. cascadeScore picks
 // its basis by where the film is in its life: the cinema score (buzz percentile, CAS-722) pre-release, the
 // streaming score (qScore) once released. PVOD sits on the streaming side by decision (it is released).
-test("CAS-695 AC1: the score's basis switches on isPreRelease — cinema (buzz) before release, streaming (qScore) after", () => {
-  const preReleaseFilm = E.MOVIES.find(m => isPreRelease(m) && E.cascadeScore(m) >= 0);
-  assert.ok(preReleaseFilm, "no scored pre-release film found — this test would prove nothing");
-  assert.equal(E.cascadeScore(preReleaseFilm), E.cinemaScore(preReleaseFilm),
-    `${preReleaseFilm.title}: pre-release film's Cascade score is not its cinema score`);
+// CAS-749 superseded the plain isPreRelease dispatch this test used to assert: an in_cinema/opening_week film
+// with a real qScore now blends it with the mapped buzz figure rather than reading pure buzz. This whole-
+// catalogue expectation is rewritten to that three-way rule; the upcoming-only and released-only spot checks
+// below are unaffected by CAS-749 (upcoming never had a qScore to blend, released never had buzz to blend).
+test("CAS-695 AC1: the score's basis switches on primaryStatus — cinema (buzz) before release, streaming (qScore) after", () => {
+  const upcomingFilm = E.MOVIES.find(m => E.primaryStatus(m) === "upcoming" && E.cascadeScore(m) >= 0);
+  assert.ok(upcomingFilm, "no scored upcoming film found — this test would prove nothing");
+  assert.equal(E.cascadeScore(upcomingFilm), E.cinemaScore(upcomingFilm),
+    `${upcomingFilm.title}: upcoming film's Cascade score is not its cinema score`);
 
   const releasedFilm = E.MOVIES.find(m => !isPreRelease(m) && E.qScore(m) >= 0);
   assert.ok(releasedFilm, "no scored released film found — this test would prove nothing");
   assert.equal(E.cascadeScore(releasedFilm), E.qScore(releasedFilm),
     `${releasedFilm.title}: released film's Cascade score is not its (streaming) qScore`);
 
-  // Whole catalogue: the same dispatch, never the other formula.
+  // Whole catalogue: the same three-way dispatch, never a fourth formula.
   for(const m of E.MOVIES){
-    const expected = isPreRelease(m) ? E.cinemaScore(m) : E.qScore(m);
+    const ps = E.primaryStatus(m);
+    let expected;
+    if(ps === "upcoming") expected = E.cinemaScore(m);
+    else if(ps === "in_cinema" || ps === "opening_week"){
+      const buzz = E.cinemaScore(m), q = E.qScore(m);
+      expected = q >= 0 ? Math.round((buzz + q) / 2) : buzz;
+    } else expected = E.qScore(m);
     assert.equal(E.cascadeScore(m), expected, `${m.title}: cascadeScore disagrees with the basis its own status picks`);
   }
 });
@@ -2655,6 +2665,66 @@ test("CAS-748 AC6: cinemaScore falls back to the raw percentile when the release
   }
 });
 
+// ---- CAS-749: AN IN-CINEMA FILM BLENDS IN ITS REVIEWS ONCE THEY EXIST -----------------------------------
+// isPreRelease(m) used to treat upcoming and in_cinema identically, scoring both on buzz alone even though
+// an in-cinema film has actually been seen and reviewed. cascadeScore's pre-release branch now splits:
+// upcoming stays buzz-only (nothing has been judged yet); in_cinema/opening_week blends the CAS-748-mapped
+// buzz figure with qScore once qScore is real, and falls back to buzz alone when it isn't.
+test("CAS-749 AC2: an in-cinema film with a buzz percentile of 100 and a qScore of 29 scores strictly between the two, near their mean", () => {
+  const film = E.MOVIES.find(m => E.primaryStatus(m) === "in_cinema");
+  assert.ok(film, "no in_cinema film found — this test would prove nothing");
+  const saved = { status: film.status, popularity: film.popularity, imdb_rating: film.imdb_rating,
+    imdb_votes: film.imdb_votes, rt_critic: film.rt_critic, metacritic: film.metacritic };
+  try {
+    film.status = ["in_cinema"];
+    film.popularity = 1e9;          // ranks above every other cohort film — buzzPctlOf must read 100
+    film.imdb_rating = null;        // isolate qScore to the RT term alone, so it lands on an exact value
+    film.metacritic = null;
+    film.rt_critic = 29 * 1.0873;   // RT_ADJ (app_template.html) — rt_critic/RT_ADJ rounds to exactly 29
+    assert.equal(E.buzzPctlOf(film), 100, "setup: buzz percentile should read 100");
+    assert.equal(E.qScore(film), 29, "setup: qScore should read 29");
+    const buzz = E.cinemaScore(film);
+    const score = E.cascadeScore(film);
+    // Fails on current (pre-CAS-749) code, which returns the buzz figure (`buzz`) alone, ignoring qScore.
+    assert.ok(score > 29 && score < 100,
+      `${film.title}: blended score ${score} is not strictly between qScore (29) and the raw ceiling (100)`);
+    assert.ok(Math.abs(score - (buzz + 29) / 2) <= 1,
+      `${film.title}: blended score ${score} is not within 1 of the mean of buzz (${buzz}) and qScore (29)`);
+  } finally {
+    Object.assign(film, saved);
+  }
+});
+test("CAS-749 AC3: an upcoming film's Cascade score is unaffected — still the mapped buzz figure alone", () => {
+  const film = E.MOVIES.find(m => E.primaryStatus(m) === "upcoming" && E.cinemaScore(m) >= 0);
+  assert.ok(film, "no scored upcoming film found — this test would prove nothing");
+  assert.equal(E.cascadeScore(film), E.cinemaScore(film),
+    `${film.title}: upcoming film's Cascade score should still be the mapped buzz figure alone`);
+});
+test("CAS-749 AC4: an in-cinema film with no published reviews still scores on mapped buzz alone", () => {
+  const film = E.MOVIES.find(m => E.primaryStatus(m) === "in_cinema" && E.qScore(m) === -1 && E.cinemaScore(m) >= 0);
+  assert.ok(film, "no in_cinema film with a real buzz figure and no qScore found — this test would prove nothing");
+  assert.equal(E.cascadeScore(film), E.cinemaScore(film),
+    `${film.title}: in-cinema film with no reviews should score on mapped buzz alone, not a blend with -1`);
+});
+test("CAS-749 AC5: pre-release and released score distributions still align within 2 points once reviews blend in", () => {
+  const preVals = E.MOVIES.filter(m => isPreRelease(m)).map(m => E.cascadeScore(m)).filter(v => v >= 0).sort((a, b) => a - b);
+  const relVals = E.MOVIES.filter(m => !isPreRelease(m)).map(m => E.cascadeScore(m)).filter(v => v >= 0).sort((a, b) => a - b);
+  assert.ok(preVals.length > 0 && relVals.length > 0, "one side of the cohort is empty — this test would prove nothing");
+  for(const p of [50, 75, 90, 95]){
+    const preP = percentileOf(preVals, p), relP = percentileOf(relVals, p);
+    assert.ok(Math.abs(preP - relP) <= 2, `p${p}: pre-release ${preP} vs released ${relP} — more than 2 points apart`);
+  }
+});
+// Change item 4: the tooltip must name both contributions once a film is no longer scoring on pure buzz.
+test("CAS-749: cascadeScoreSourcesText names both Buzz and the qScore sources for a blended in-cinema film", () => {
+  const film = E.MOVIES.find(m => E.primaryStatus(m) === "in_cinema" && E.qScore(m) >= 0 && E.buzzPctlOf(m) != null);
+  assert.ok(film, "no in-cinema film with both a buzz figure and a qScore found — this test would prove nothing");
+  const text = E.cascadeScoreSourcesText(film);
+  assert.ok(text.startsWith("Buzz and "), `${film.title}: "${text}" does not name Buzz as a contribution`);
+  assert.equal(text, `Buzz and ${E.qScoreSourcesText(film)}`,
+    `${film.title}: "${text}" does not also name the qScore contribution(s)`);
+});
+
 // AC4: the cohort's sorted popularity and budget arrays are module-level consts, built once at load — never
 // re-sorted per card. Asserted the same way CAS-678's own performance claim is: the same array reference
 // (by identity) comes back on repeat reads, and it is already sorted ascending.
@@ -2674,12 +2744,13 @@ test("CAS-695 AC4: the cohort's popularity and budget arrays are sorted once, no
   assert.equal(E.CINEMA_BUDGET_VALS.length, budgetLen, "CINEMA_BUDGET_VALS changed size after scoring films");
 });
 
-// AC4 (CAS-722): the card's own tooltip must name only Buzz for a pre-release film now — never a budget term
-// that no longer exists — and keep naming the streaming axes exactly as qScoreSourcesText does once released.
-test("CAS-722 AC4: cascadeScoreSourcesText names only Buzz pre-release, never Budget", () => {
-  const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
-  const buzzed = cohort.find(m => E.buzzPctlOf(m) != null);
-  assert.ok(buzzed, "no buzz-scored cohort film found — this test would prove nothing");
+// AC4 (CAS-722): the card's own tooltip must name only Buzz for a film that has nothing else to go on — never
+// a budget term that no longer exists — and keep naming the streaming axes exactly as qScoreSourcesText does
+// once released. Narrowed to an upcoming film by CAS-749: an in-cinema film with a real qScore now names both
+// contributions (see the CAS-749 test below), so it no longer demonstrates "Buzz only".
+test("CAS-722 AC4: cascadeScoreSourcesText names only Buzz for a film with nothing else to go on, never Budget", () => {
+  const buzzed = E.MOVIES.find(m => E.primaryStatus(m) === "upcoming" && E.buzzPctlOf(m) != null);
+  assert.ok(buzzed, "no buzz-scored upcoming film found — this test would prove nothing");
   assert.equal(E.cascadeScoreSourcesText(buzzed), "Buzz");
   for(const name of ["Budget", "People's vote", "Critics"]){
     assert.ok(!E.cascadeScoreSourcesText(buzzed).includes(name), `cascadeScoreSourcesText named ${name} on a pre-release film`);
