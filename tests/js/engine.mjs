@@ -261,6 +261,12 @@ if(typeof window.CascadeAuth === "undefined"){
   // seed and read the per-film arming state directly; watchPrefs is exposed through a getter/setter (like
   // flowKind) because the engine REASSIGNS the binding wholesale on load/sync, not just its contents.
   recomputeFound, notify, entryFor, watchLevelsFor, WATCH_LEVEL_KEYS,
+  // CAS-741: lists/listMembership (CAS-428's own two data structures — a list is mutated in place, never
+  // reassigned, exactly like cascades/watchLists above) plus notifyPrefs (reassigned wholesale on load, so
+  // exposed through a getter like watchPrefs/flowKind below) — so a test can seed/read the exact state the
+  // notify_prefs load-gate and the lists per-item push diff operate over.
+  lists, listMembership,
+  get notifyPrefs(){ return notifyPrefs; },
   // CAS-731: placementSplitHTML (the Mission mirror's placement split) and filmNotifyState (the Watch On
   // value it now counts by) — exported so a test can assert the parts sum to the headline directly, rather
   // than scraping the rendered string.

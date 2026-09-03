@@ -5368,7 +5368,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 909, "commit": "e0f6875", "builtAt": "2026-09-03T05:13:49Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 910, "commit": "f12de63", "builtAt": "2026-09-03T05:32:17Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -18656,6 +18656,15 @@ else if(dedupedN)
   // already wrote. runUserPrefsSync defers itself while this is false rather than skipping the write outright,
   // so an edit made during the race still reaches the account once the load resolves.
   let userPrefsReady = true;
+  // CAS-741: notify_prefs is a single whole-row-per-user table exactly like user_prefs above, and had NO
+  // gate at all — a save chokepoint firing before this device's own loadNotifyPrefs() resolved (or after
+  // it outright failed) pushed whatever this device booted with over a real account row, silently muting
+  // email alerts or erasing a real address. Deliberately NOT the same shape as userPrefsReady: that flag
+  // flips true in a blanket `.finally()` regardless of outcome, so a failed load still unblocks the write
+  // a moment later. notifyPrefsReady only ever flips true on loadNotifyPrefs' own SUCCESS path (see below)
+  // — a failed load leaves it false for the rest of the session, suppressing the push rather than falling
+  // through to defaults once the promise merely settles.
+  let notifyPrefsReady = true;
 
   // ---- CAS-656: per-table load-failure tracking + the persistent "not connected" banner ---------------
   // A failed READ used to be silent (console.warn, or a toast that scrolled away in seconds) and left the
@@ -19046,6 +19055,33 @@ else if(dedupedN)
   // ==========================================================================
   function listToRow(l){ return { id:l.id, user_id:uid(), name:l.name||"My list" }; }
   function rowToList(row){ return { id:row.id, name:row.name||"My list" }; }
+  // CAS-741: same Map<id,{sig,version}> shape CAS-734 gave cascadeKnown — this device's own record of what
+  // the account last confirmed for each list. A membership-only tick never touches `lists` at all, so
+  // diffing the push against this baseline (instead of pushing lists.map(listToRow) whole, every time) is
+  // what stops that tick from re-pushing every OTHER list's current in-memory name — including a stale one
+  // this device hasn't reloaded since another device renamed it there.
+  const listSigOf = l => l.name || "My list";
+  const LIST_KNOWN_KEY = "cascade_list_known";
+  function loadListKnown(){
+    try{
+      const raw=localStorage.getItem(LIST_KNOWN_KEY);
+      if(!raw) return new Map();
+      const parsed=JSON.parse(raw);
+      return new Map(Array.isArray(parsed) ? parsed : []);
+    }catch(e){ return new Map(); }
+  }
+  function saveListKnown(){
+    try{ localStorage.setItem(LIST_KNOWN_KEY, JSON.stringify([...listKnown])); }catch(e){}
+  }
+  let listKnown = loadListKnown();
+  const listDirtyRows = () => lists.filter(l=>{
+    const known=listKnown.get(l.id);
+    return !known || known.sig!==listSigOf(l);
+  });
+  const listPendingDeleteIds = () => {
+    const ids=new Set(lists.map(l=>l.id).filter(isUuid));
+    return [...listKnown.keys()].filter(id=>!ids.has(id));
+  };
   function listFilmRows(){
     const owner=uid(), out=[];
     for(const fid in listMembership){
@@ -19054,7 +19090,7 @@ else if(dedupedN)
     return out;
   }
   let listsTimer=null, listsSyncing=false, listsAgain=false;
-  let listsBaseline=null, listFilmBaseline=null;
+  let listFilmBaseline=null;
   function scheduleListsSync(){ clearTimeout(listsTimer); listsTimer=setTimeout(runListsSync, 400); }
   async function runListsSync(){
     if(!accountActive()) return;
@@ -19064,23 +19100,27 @@ else if(dedupedN)
     catch(err){ console.warn("Cascade: lists sync failed", err); }
     finally{ listsSyncing=false; if(listsAgain){ listsAgain=false; scheduleListsSync(); } }
   }
+  // CAS-741: pushes only the lists this device has actually changed (listDirtyRows, diffed against
+  // listKnown) — a membership-only tick (which never touches `lists`) now upserts nothing here at all,
+  // instead of re-pushing every list's current in-memory name. Mirrors syncToAccount (cascades) above.
   async function syncListsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
     if(acctTableFail.lists) return;   // CAS-656 AC2: a failed load must not push local state back over it
-    const rows=lists.map(listToRow);
-    if(rows.length){
-      const { error } = await c.from("lists").upsert(rows, { onConflict:"id" });
+    const dirty = listDirtyRows();
+    const deletes = listPendingDeleteIds();
+    if(dirty.length){
+      const rows = dirty.map(listToRow);
+      const { data, error } = await c.from("lists").upsert(rows, { onConflict:"id" }).select("id,updated_at");
       if(error){ console.warn("Lists upsert", error); return; }
+      const versionById = new Map((data||[]).map(r=>[r.id, r.updated_at]));
+      dirty.forEach(x=>{ listKnown.set(x.id, { sig: listSigOf(x), version: versionById.get(x.id)||null }); });
     }
-    const ids=new Set(lists.map(x=>x.id).filter(isUuid));
-    if(listsBaseline){
-      const gone=[...listsBaseline].filter(id=>!ids.has(id));
-      if(gone.length){
-        const { error } = await c.from("lists").delete().eq("user_id", owner).in("id", gone);
-        if(error){ console.warn("Lists delete", error); return; }
-      }
+    if(deletes.length){
+      const { error } = await c.from("lists").delete().eq("user_id", owner).in("id", deletes);
+      if(error){ console.warn("Lists delete", error); return; }
+      deletes.forEach(id=>listKnown.delete(id));
     }
-    listsBaseline=ids;
+    saveListKnown();
   }
   async function syncListFilmsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
@@ -19109,8 +19149,11 @@ else if(dedupedN)
     const { data, error } = await c.from("lists").select("*");
     if(error){ console.warn("Lists load", error); setAcctTableFail("lists", true); return; }
     setAcctTableFail("lists", false);
-    listsBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
-    const remote = (data||[]).map(rowToList);
+    const rawRows = data||[];
+    listKnown = new Map(rawRows.filter(r=>isUuid(r.id))
+      .map(r=>[r.id, { sig: listSigOf(rowToList(r)), version: r.updated_at||null }]));
+    saveListKnown();
+    const remote = rawRows.map(rowToList);
     lists.length=0; remote.forEach(l=>lists.push(l));
     await loadListMembershipAccount();
     if(typeof render==="function") render();
@@ -19135,19 +19178,21 @@ else if(dedupedN)
     const { data, error } = await c.from("lists").select("*");
     if(error){ console.warn("Lists reconcile", error); setAcctTableFail("lists", true); return; }
     setAcctTableFail("lists", false);
-    const remote=(data||[]).map(rowToList);
+    const rawRows = data||[];
+    const remote=rawRows.map(rowToList);
     const remoteIds=new Set(remote.map(x=>x.id));
+    const oldKnown=listKnown;   // this device's OWN last-confirmed state, from before this fetch
     remote.forEach(r=>{
       const i=lists.findIndex(x=>x.id===r.id);
       if(i>=0) lists[i]=r; else lists.push(r);
     });
-    if(listsBaseline){
-      for(let i=lists.length-1;i>=0;i--){
-        const id=lists[i].id;
-        if(listsBaseline.has(id) && !remoteIds.has(id)) lists.splice(i,1);
-      }
+    for(let i=lists.length-1;i>=0;i--){
+      const id=lists[i].id;
+      if(oldKnown.has(id) && !remoteIds.has(id)) lists.splice(i,1);
     }
-    listsBaseline=remoteIds;
+    listKnown = new Map(rawRows.filter(r=>isUuid(r.id))
+      .map(r=>[r.id, { sig: listSigOf(rowToList(r)), version: r.updated_at||null }]));
+    saveListKnown();
     if(typeof render==="function") render();
   }
   async function reconcileListMembership(){
@@ -19499,6 +19544,9 @@ else if(dedupedN)
   function fireAccountFanout(label){
     const _t460fanout = performance.now();
     console.log('[CAS-460] account fan-out start (' + label + ')', _t460fanout);
+    // CAS-741: set before loadNotifyPrefs() is invoked (inside the array below) — loadNotifyPrefs itself
+    // flips this true on its own success path only, never on a failed load.
+    notifyPrefsReady=false;
     Promise.allSettled([
       loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadRealAlerts(), loadListsAccount(),
       loadWatchlistAccount(), loadFilmPicks()
@@ -19535,11 +19583,13 @@ else if(dedupedN)
       // on-device set that no longer exists; the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); loadGuestLists(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
       cascadeKnown=new Map(); saveCascadeKnown(); cascadeEditedAt=new Map(); saveCascadeEditedAt();
-      filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
+      filmBaseline=null; pickBaseline=null; listFilmBaseline=null; watchBaseline=null;
       agentFilms={}; agentFilmsBaseline=null; agentFilmsReady=true;   // CAS-736: a guest has nothing to wait on
       watchlistKnown=new Map(); saveWatchlistKnown();
       watchKnown=new Map(); saveWatchKnown(); filmWatchReady=true;   // CAS-735: a guest has nothing to wait on
       userPrefsReady=true;   // CAS-740: a guest has nothing to wait on
+      notifyPrefsReady=true;   // CAS-741: a guest has nothing to wait on
+      listKnown=new Map(); saveListKnown();
       // CAS-656: a guest has no account to be disconnected from — clear any failure this device carried
       // from its last signed-in session, or the banner would wrongly survive a sign-out.
       Object.keys(acctTableFail).forEach(t=>setAcctTableFail(t, false));
@@ -19752,8 +19802,15 @@ else if(dedupedN)
   async function runNotifySync(){
     const c=client(), owner=uid(); if(!c||!owner) return;
     try{
-      const { error:pe } = await c.from("notify_prefs").upsert([prefsRow()], { onConflict:"user_id" });
-      if(pe) console.warn("notify_prefs upsert", pe);
+      // CAS-741: this device's own load of the row (loadNotifyPrefs, below) may still be in flight, or may
+      // already have failed — pushing now would risk overwriting a real account value (or erasing a real
+      // email address) with whatever this device booted with. notifyPrefsReady only ever flips true on that
+      // load's own SUCCESS path, so a failed load leaves the push suppressed rather than falling through to
+      // defaults; film_picks (below) carries no such default to protect and is unaffected.
+      if(notifyPrefsReady){
+        const { error:pe } = await c.from("notify_prefs").upsert([prefsRow()], { onConflict:"user_id" });
+        if(pe) console.warn("notify_prefs upsert", pe);
+      }
       const rows=pickRows();
       if(rows.length){
         const { error } = await c.from("film_picks").upsert(rows, { onConflict:"user_id,movie_id" });
@@ -19773,9 +19830,11 @@ else if(dedupedN)
   async function loadNotifyPrefs(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("notify_prefs").select("*").limit(1);   // RLS: only mine
+    // CAS-741: leave notifyPrefsReady false on a failed load — never fall through to letting a later push
+    // treat this device's local defaults as safe to send.
     if(error){ console.warn("notify_prefs load", error); return; }
     const row=(data||[])[0];
-    if(!row){ scheduleNotifySync(); return; }   // no row yet — seed it from this device's answer
+    if(!row){ notifyPrefsReady=true; scheduleNotifySync(); return; }   // no row yet — seed it from this device's answer
     notifyPrefs.inApp   = row.in_app!==false;
     notifyPrefs.emailOn = !!row.email_on;
     notifyPrefs.email   = row.email_address || "";
@@ -19784,6 +19843,7 @@ else if(dedupedN)
     // nothing read it back. Replace, not union, same as the three columns above.
     prefs.alertsOff = new Set(Array.isArray(row.excluded_moments) ? row.excluded_moments : []);
     savePrefs();
+    notifyPrefsReady=true;
   }
   // CAS-609: film_picks was push-only (upsert+delete, no select) — a manual "notify me"/"never
   // mention this" pick never came back down to a second device, and never got replaced on an account
@@ -20232,6 +20292,11 @@ else if(dedupedN)
                                 // directly, the same way fireAccountFanout drives it for real.
                                 get userPrefsReady(){ return userPrefsReady; },
                                 set userPrefsReady(v){ userPrefsReady=!!v; },
+                                // CAS-741: same read/write-primitive shape as userPrefsReady above, so a test
+                                // can drive notify_prefs' own "load hasn't resolved yet" gate directly, the
+                                // same way fireAccountFanout drives it for real against a live loadNotifyPrefs().
+                                get notifyPrefsReady(){ return notifyPrefsReady; },
+                                set notifyPrefsReady(v){ notifyPrefsReady=!!v; },
                                 // CAS-408: the live-reconcile seam, so the cross-device convergence story
                                 // can be exercised without waiting on a real focus/visibilitychange event.
                                 reconcileCascades, reconcileFilms,
@@ -20247,8 +20312,13 @@ else if(dedupedN)
                                 get cascadeKnown(){ return cascadeKnown; },
                                 get cascadeEditedAt(){ return cascadeEditedAt; },
                                 // CAS-428: Lists' own load/sync/reconcile seam, same shape as the above.
+                                // CAS-741: listKnown (by reference, like cascadeKnown above) plus
+                                // listDirtyRows/listPendingDeleteIds, so a test can assert the per-item push
+                                // diff directly rather than re-deriving it from upsert call arguments alone.
                                 loadListsAccount, syncListsNow: runListsSync, listToRow, rowToList, listFilmRows,
                                 reconcileLists, reconcileListMembership,
+                                get listKnown(){ return listKnown; },
+                                listDirtyRows, listPendingDeleteIds,
                                 // CAS-681: Watch Lists' own load/sync/reconcile seam, same shape as Lists above —
                                 // never wired up before, which is why the id-duplication bug here had no seam
                                 // a test could reach directly.
