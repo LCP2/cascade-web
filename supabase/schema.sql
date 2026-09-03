@@ -6,8 +6,9 @@
 --   cascades      — one row per saved agent, per user (the user owns their rows via RLS).
 --   user_prefs    — the account-level defaults a NEW agent starts from, plus the services the
 --                   user actually pays for. CAS-211.
---   user_films    — one row per (user, film) the user has said something about: liked,
---                   so-so, didn't like, or don't-want-to-watch. CAS-183.
+--   user_films    — one row per (user, film) the user has said something about: liked, so-so,
+--                   didn't like, don't-want-to-watch, watch-again ("wow"), or enjoyed-but-not-
+--                   watch-again. CAS-183, CAS-278/349 (wow/enjoyed), CAS-738 (persisted).
 --   notify_prefs  — one row per user: how they want to be told, and which alert TYPES they
 --                   have muted everywhere. CAS-185.
 --   film_picks    — one row per (user, film) the user has hand-added or hand-removed from
@@ -81,17 +82,19 @@ create index if not exists cascades_active_idx  on public.cascades (active) wher
 -- ---------------------------------------------------------------------------
 -- user_films — what the user has said about a film (CAS-183)
 -- ---------------------------------------------------------------------------
--- One row per (user, film), not one per answer: the four statuses are mutually
+-- One row per (user, film), not one per answer: the six statuses are mutually
 -- exclusive by definition — you cannot have both liked and disliked the same film —
 -- so the primary key enforces that rather than the application remembering to.
 -- Clearing an answer DELETES the row; "no opinion" is the absence of a row, which is
 -- also what makes the local sets and this table the same shape.
 -- movie_id is text to match notifications.movie_id (TMDB ids arrive as numbers from the
 -- catalogue and as strings from the monitor; one type across both tables, always).
+-- 'wow' and 'enjoyed' (CAS-738) ride the same row/CHECK as the original four — they are
+-- watched-film opinions like the rest, not a second concept needing their own column.
 create table if not exists public.user_films (
   user_id    uuid not null references auth.users(id) on delete cascade,
   movie_id   text not null,
-  status     text not null check (status in ('liked','soso','disliked','notfor')),
+  status     text not null check (status in ('liked','soso','disliked','notfor','wow','enjoyed')),
   updated_at timestamptz not null default now(),
   primary key (user_id, movie_id)
 );

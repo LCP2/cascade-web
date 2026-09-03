@@ -19539,18 +19539,21 @@ else if(dedupedN)
   const filmRows = () => {
     const out=[], owner=uid();
     watched.forEach(id => out.push({user_id:owner, movie_id:String(id),
-      status: disliked.has(id) ? "disliked" : indifferent.has(id) ? "soso" : "liked"}));
+      status: disliked.has(id) ? "disliked" : indifferent.has(id) ? "soso"
+            : wowed.has(id) ? "wow" : enjoyed.has(id) ? "enjoyed" : "liked"}));
     blocked.forEach(id => out.push({user_id:owner, movie_id:String(id), status:"notfor"}));
     return out;
   };
   function applyFilmRows(rows){
-    watched.clear(); disliked.clear(); blocked.clear(); indifferent.clear();
+    watched.clear(); disliked.clear(); blocked.clear(); indifferent.clear(); wowed.clear(); enjoyed.clear();
     (rows||[]).forEach(r=>{
       const id=Number(r.movie_id); if(!isFinite(id)) return;
       if(r.status==="notfor") return blocked.add(id);
       watched.add(id);
       if(r.status==="disliked") disliked.add(id);
       if(r.status==="soso")     indifferent.add(id);
+      if(r.status==="wow")      wowed.add(id);
+      if(r.status==="enjoyed")  enjoyed.add(id);
     });
     recomputeFound();
     if(typeof render==="function") render();
@@ -19612,6 +19615,8 @@ else if(dedupedN)
     disliked.clear();   loadSet("cascade_disliked").forEach(id=>disliked.add(id));
     blocked.clear();    loadSet("cascade_blocked").forEach(id=>blocked.add(id));
     indifferent.clear();loadSet("cascade_indifferent").forEach(id=>indifferent.add(id));
+    wowed.clear();       loadSet("cascade_wow").forEach(id=>wowed.add(id));
+    enjoyed.clear();     loadSet("cascade_enjoyed").forEach(id=>enjoyed.add(id));
     recomputeFound();
     if(typeof render==="function") render();
   }
@@ -19626,8 +19631,8 @@ else if(dedupedN)
   }
   const saveWatchStatusLocal = saveWatchStatus;
   saveWatchStatus = function(){
+    saveWatchStatusLocal();
     if(accountActive()) scheduleFilmSync();
-    else saveWatchStatusLocal();
   };
 
   // ==========================================================================
@@ -20135,7 +20140,7 @@ else if(dedupedN)
                                 // drive "edit, then reload" without a real page load and assert what the
                                 // banner would say without reaching into the DOM.
                                 loadGuestWatchlist, acctTableFail, acctTablePending, setAcctTableFail,
-                                saveWatchlists, saveCascades, saveLists, saveListMembership,
+                                saveWatchlists, saveCascades, saveLists, saveListMembership, saveWatchStatus,
                                 // CAS-484: the per-film Watch-it tick's own load/sync/reconcile seam.
                                 loadFilmWatches, syncWatchesNow: runWatchSync, watchRows, applyWatchRows,
                                 reconcileFilmWatches,
