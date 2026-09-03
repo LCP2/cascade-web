@@ -225,38 +225,46 @@ test("the listing leads with what is out and ends with what is not — on the ST
 // CAS-750: reverses CAS-394/CAS-471, and retires the "cinema lane" framing above with it. Section order is
 // a property of the WATCH TAB now, never of an agent's `kind` (CAS-723 already stopped kind deciding which
 // windows an agent scopes; this is the same retired field losing its last say). The Cinema tab is a
-// planning surface, so IT leads with Upcoming — the journey order, CASCADE — and every other tab keeps
-// LISTING_ORDER, unchanged.
-test("orderFor: the Cinema tab reads the journey order (CASCADE); every other tab keeps LISTING_ORDER", () => {
+// planning surface, so IT leads with Upcoming — the journey order, CASCADE.
+// CAS-754: the Streaming tab joins it for the same reason; Premium and Rental keep LISTING_ORDER.
+test("orderFor: Cinema and Streaming tabs read the journey order (CASCADE); Premium/Rental keep LISTING_ORDER", () => {
   // Spread into a LOCAL array first: the engine runs in a vm realm, so its Array has a different prototype
   // and deepStrictEqual compares that too. Every other array assertion in this file does the same.
-  assert.deepEqual([...E.orderFor(true)], [...E.CASCADE],
-    "the Cinema tab's order is not the journey order (CASCADE)");
-  assert.equal(E.orderFor(true)[0], "upcoming",
-    `the Cinema tab leads with ${E.orderFor(true)[0]}, not Upcoming`);
-  assert.deepEqual([...E.orderFor(false)], [...E.LISTING_ORDER],
-    "a non-Cinema tab is not using LISTING_ORDER");
+  for(const tab of ["in_cinema", "stream"]){
+    assert.deepEqual([...E.orderFor(tab)], [...E.CASCADE],
+      `the ${tab} tab's order is not the journey order (CASCADE)`);
+    assert.equal(E.orderFor(tab)[0], "upcoming",
+      `the ${tab} tab leads with ${E.orderFor(tab)[0]}, not Upcoming`);
+  }
+  for(const tab of ["premium", "rent"]){
+    assert.deepEqual([...E.orderFor(tab)], [...E.LISTING_ORDER],
+      `the ${tab} tab is not using LISTING_ORDER`);
+  }
 });
 
-test("listingGroups: only watchTab===\"in_cinema\" leads with Upcoming — an agent's own kind no longer decides it (CAS-750)", () => {
+test("listingGroups: watchTab===\"in_cinema\" or \"stream\" leads with Upcoming; \"premium\"/\"rent\" do not (CAS-750/CAS-754)", () => {
   const section = status => ({
     title: status, status: [status], cinema_date: "2026-07-01",
     popularity: 1, rt_critic: null, imdb_rating: null, imdb_votes: 0,
   });
   const rows = ["upcoming", "opening_week", "in_cinema", "pvod", "rental", "included_streaming"].map(section);
-  // A cinema-kind agent object is passed unchanged across both tabs below — its `kind` must not matter any
+  // A cinema-kind agent object is passed unchanged across every tab below — its `kind` must not matter any
   // more, only `watchTab` may.
   const ac = { kind: "cinema" };
   const savedTab = E.watchTab;
   try{
-    E.setWatchTab("in_cinema");
-    const cinemaGroups = E.listingGroups(rows, ac);
-    assert.equal(cinemaGroups[0].g, "upcoming",
-      `the Cinema tab's first group is ${cinemaGroups[0].g}, not upcoming`);
-    E.setWatchTab("stream");
-    const streamGroups = E.listingGroups(rows, ac);
-    assert.notEqual(streamGroups[0].g, "upcoming",
-      "a non-Cinema tab picked up the Cinema tab's order");
+    for(const tab of ["in_cinema", "stream"]){
+      E.setWatchTab(tab);
+      const groups = E.listingGroups(rows, ac);
+      assert.equal(groups[0].g, "upcoming",
+        `the ${tab} tab's first group is ${groups[0].g}, not upcoming`);
+    }
+    for(const tab of ["premium", "rent"]){
+      E.setWatchTab(tab);
+      const groups = E.listingGroups(rows, ac);
+      assert.notEqual(groups[0].g, "upcoming",
+        `the ${tab} tab picked up the Cinema/Streaming tabs' order`);
+    }
   } finally {
     E.setWatchTab(savedTab);   // module-scope state — leave it as every other test found it
   }
