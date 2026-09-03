@@ -269,6 +269,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // decide whether an agent has changed and what its current floor is — exported so a test can compute the
   // exact signature/floor a seeded agent_films row should carry, rather than guessing at internal state.
   cascSigOf, agentFloor,
+  // CAS-743: setWatchMarker is the one real mutator a user-driven marker edit goes through (it also clears
+  // the *Defaulted provenance flag normCascade's own guess sets) — exported so a test can drive a genuine
+  // edit through the real function rather than poking c.watchMarkers by hand.
+  setWatchMarker,
   // CAS-726: filmWatchSource is the provenance read the round-trip test asserts against directly;
   // toggleFilmOpt is wire code (window-assigned, like ymCascToggle above) — a test drives a manual
   // tick through the real function rather than poking notify[id].wins by hand.

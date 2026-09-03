@@ -3134,8 +3134,11 @@ test("CAS-734 AC4: the order comparator is a total order — a tie on .order res
 
 test("CAS-734 AC6: a single-agent rename upserts exactly one row, not the whole array", () => withCas734State(async () => {
   const idA = uuidFor(1), idB = uuidFor(2);
-  const a = E.normCascade({ id: idA, name: "Agent A", order: 0 });
-  const b = E.normCascade({ id: idB, name: "Agent B", order: 1 });
+  // CAS-743: real (user-set-shaped) watchMarkers, not normCascade's own guess — this test is about the rename
+  // dirty-row derivation, and a still-defaulted watchMarkers would itself hold the row out of every push.
+  const markers = { in_cinema: 90, premium: null, rent: 80, stream: 70 };
+  const a = E.normCascade({ id: idA, name: "Agent A", order: 0, watchMarkers: { ...markers } });
+  const b = E.normCascade({ id: idB, name: "Agent B", order: 1, watchMarkers: { ...markers } });
   E.cascades.length = 0; E.cascades.push(a, b);
   const { client, state } = fakeCascadesSupabase([]);
   signInWithClient(client);
@@ -3182,7 +3185,10 @@ test("CAS-734 AC3(b): a local edit newer than the account's own row wins and is 
   const { client, state } = fakeCascadesSupabase([remoteRow]);
   signInWithClient(client);
 
-  const local = E.normCascade({ id, name: "Local version (newer)", order: 0 });
+  // CAS-743: real (user-set-shaped) watchMarkers — this test is about a genuine local edit winning and
+  // pushing, and a still-defaulted watchMarkers would itself hold the row out of every push.
+  const local = E.normCascade({ id, name: "Local version (newer)", order: 0,
+    watchMarkers: { in_cinema: 90, premium: null, rent: 80, stream: 70 } });
   E.cascades.length = 0; E.cascades.push(local);
   // This device changed it AFTER the account row's own updated_at above.
   E.CascadePersistence.cascadeEditedAt.set(id, "2026-06-01T00:00:00.000Z");
@@ -3240,6 +3246,68 @@ test("CAS-734 AC3(d): an agent present only on this device, with an id the accou
   const kept = E.cascades.find(c => c.id === localOnlyId);
   assert.ok(kept, "a genuinely new, never-synced local agent must survive a loadAccount call");
   assert.equal(kept.name, "Brand new, unsynced");
+}));
+
+// ---- A PRE-v0.9.3 CACHED AGENT MUST NEVER FLATTEN AN ACCOUNT'S REAL watchMarkers (CAS-743) ----------------
+// CAS-734's per-row resolver compared timestamps alone, which assumed a local copy differing from the account
+// only because someone actually edited it. A device whose cache predates CAS-727/729 (v0.9.3) has no
+// watchMarkers at all; normCascade's own load-time fill then GUESSES one (every window flattened to the old
+// scoreFloor) rather than leaving the field unset. That guess can carry a plausible, even newer, local edit
+// timestamp while being structurally older than an account row some other device already gave real per-window
+// values — resolveCascadeConflict's timestamp-only rule let the guess win and destroyed the real values.
+
+test("CAS-743 AC2: a local agent with no watchMarkers key never overwrites an account row that has one, even when the local edit timestamp is the newer of the two", () => withCas734State(async () => {
+  const id = uuidFor(8);
+  const remoteRow = { id, user_id: "cas681-test-user", name: "Account version",
+    criteria: { order: 0, watchMarkers: { in_cinema: 90, premium: 75, rent: 60, stream: 50 } },
+    alert_moments: [], active: true,
+    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-05T00:00:00.000Z" };
+  const { client } = fakeCascadesSupabase([remoteRow]);
+  signInWithClient(client);
+
+  // The pre-v0.9.3 cache shape: no watchMarkers key at all. normCascade fills one in and flags it as a guess.
+  const local = E.normCascade({ id, name: "Local version (stale, pre-v0.9.3 cache)", order: 0 });
+  assert.ok(local._watchMarkersDefaulted, "harness check: normCascade must flag a filled-in watchMarkers as defaulted");
+  E.cascades.length = 0; E.cascades.push(local);
+  // This device's own edit time is NEWER than the account row's updated_at — under a plain timestamp rule
+  // this would win. It must not: the local value is a guess, not something the user actually set.
+  E.CascadePersistence.cascadeEditedAt.set(id, "2026-06-01T00:00:00.000Z");
+
+  await E.CascadePersistence.loadAccount();
+
+  const kept = E.cascades.find(c => c.id === id);
+  assert.ok(kept, "the agent must still be present");
+  assert.equal(kept.name, "Account version",
+    "the account's real watchMarkers must win over a defaulted local guess, whatever the timestamps say");
+  assert.deepEqual(kept.watchMarkers, { in_cinema: 90, premium: 75, rent: 60, stream: 50 });
+}));
+
+test("CAS-743 AC3: an agent whose watchMarkers is still normCascade's default guess is excluded from the rows handed to the upsert; an agent with a real, user-set marker is included", () => withCas734State(async () => {
+  const idA = uuidFor(9), idB = uuidFor(10);
+  const a = E.normCascade({ id: idA, name: "Agent A (never touched)", order: 0 });
+  const b = E.normCascade({ id: idB, name: "Agent B", order: 1 });
+  assert.ok(a._watchMarkersDefaulted, "harness check: A's watchMarkers must be normCascade's own guess");
+  E.cascades.length = 0; E.cascades.push(a, b);
+  const { client } = fakeCascadesSupabase([]);
+  signInWithClient(client);
+
+  // Confirm both to the account once — the normal first sync of a brand new agent, defaulted or not.
+  await E.CascadePersistence.syncNow();
+
+  // Reproduce the ticket's own root cause directly: a cascadeKnown record that predates the field (or is
+  // simply stale) makes A's CURRENT, still-untouched content look dirty for a reason the user never caused.
+  const knownA = E.CascadePersistence.cascadeKnown.get(idA);
+  E.CascadePersistence.cascadeKnown.set(idA, { ...knownA, sig: "pre-v0.9.3-stale-sig" });
+
+  // B gets a real, user-driven edit through the actual mutator — genuinely dirty for a real reason.
+  E.setWatchMarker(b, "in_cinema", 88);
+  assert.ok(!b._watchMarkersDefaulted, "harness check: setWatchMarker must clear B's defaulted flag");
+
+  const dirty = E.CascadePersistence.cascadeDirtyRows();
+  assert.ok(!dirty.some(c => c.id === idA),
+    "an agent whose watchMarkers is still the normCascade default guess must never reach the rows handed to the upsert");
+  assert.ok(dirty.some(c => c.id === idB),
+    "an agent with a real, user-set marker change must still reach the rows handed to the upsert");
 }));
 
 // ---- MANUAL WATCH ON NEVER OVERWRITTEN, EVEN ACROSS DEVICES (CAS-735) -----------------------------------
