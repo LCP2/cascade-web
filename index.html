@@ -5381,7 +5381,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 914, "commit": "52e9dc7", "builtAt": "2026-09-03T07:13:45Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 915, "commit": "e2b9a7f", "builtAt": "2026-09-03T07:38:47Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -9092,9 +9092,9 @@ function normCascade(c, opts){
   c.includeUnrated = !!c.includeUnrated;
   c.paused = !!c.paused;                      // guest mode (CAS-79): saved on-device but not watching/alerting
   c.budget = c.budget||0;                    // index into BUDGET_BANDS; 0 = Any
-  // CAS-288: nothing READS this any more — an unknown budget is excluded whenever a band is set, full stop.
-  // It is still normalised so that an agent saved before today loads without complaint, and still carried in
-  // the signature below so that flipping it does not silently look like "no change".
+  // CAS-288: the Watch-screen Budget FILTER (budgetOK, just above) never reads this — an unknown budget is
+  // excluded whenever a band is set, full stop. CAS-747: selScaleMatch (the Mission Movie Budget requirement)
+  // DOES read it now, for the one case that filter never had — a film with no figure and no inference at all.
   c.includeUnbudgeted = !!c.includeUnbudgeted;
   c.tentpole = c.tentpole||"any";
   c.awards = !!c.awards;
@@ -9380,13 +9380,19 @@ function selCriticsOK(m,c){
   if(rung){ const need=(AWARD_STOPS[rung]||{}).rank||0; if(awardRank(m) < need) return false; }
   return true;
 }
-// Scale match, tri-state: true (clears the floor) · false (known, below it) · null (no budget AND no revenue
-// → truly unknown scale). Budget is the primary signal, worldwide gross the real fallback — so an
-// unknown-budget film is still placed by what it earned, and only a film with neither reads as unknown.
-// CAS-674: `null` rides along (never DENIES a film) wherever this dial is read as an AND-style gate — the
-// dial has never had grounds to deny a film for a money figure we don't hold. It does NOT ride along in
-// matchesCriteria's OR block below: there, only an affirmative `true` clears the Budget route, or `null`
-// would be admitting every unknown-scale film instead of merely declining to deny it.
+// Scale match, boolean: true (clears the floor) · false (does not). Budget is the primary signal, worldwide
+// gross the real fallback — so an unknown-budget film is still placed by what it earned, and only a film
+// with neither is truly unknown.
+// CAS-747: this used to be tri-state — a film with neither figure read `null` and rode along, never denying
+// admission (CAS-238/CAS-674). That was correct under the CAS-661 OR block, where `null` contributing no
+// term was the only way an unknown scale could avoid being punished for being unknown. CAS-724 replaced the
+// OR block with this dial as a straight AND requirement, and under AND the same `null` means the opposite:
+// it can no longer deny, so it admits instead — 52 of 57 films in one real agent were listed without ever
+// meeting the floor they were set to require. There is no OR-block reader left for this function to serve,
+// so the rule is re-derived rather than kept "safe" for a caller that no longer exists: an inferred scale
+// below the floor now FAILS like any other known-too-small figure, and a film with no figure and no
+// inference at all is handed to the one control built to opt back in — c.includeUnbudgeted — rather than
+// silently admitted by default.
 // CAS-166: a floor, not a band. Four bands could only ever say "somewhere between these two numbers", which
 // is not how anyone thinks about how big a film they want — you want at least this big. It also fixes what
 // the bands got wrong at the edges: "Studio" excluded a $110M film for being too big, which no one asked for.
@@ -9394,12 +9400,14 @@ function selScaleMatch(m,c){
   const min=c.selScale||0; if(!min) return true;
   const dollars = m.budget || m.worldwide_gross || 0;
   if(dollars) return dollars >= min;
-  // CAS-238: an inferred floor may AFFIRM a film, never deny one. "Blockbuster scale" is a lower bound read
-  // off the films it is racing, so clearing $100M says this film is at least that big. FAILING $250M says
-  // only that the evidence does not reach that far, which is a different claim from the film being smaller —
-  // so that case stays null and rides along, exactly as an unknown scale always has (CAS-147).
+  // CAS-238: an inferred floor may still only AFFIRM or DENY on its own terms — "Blockbuster scale" is a
+  // lower bound read off the films it is racing, so clearing $100M says this film is at least that big, and
+  // failing to reach it says the evidence available does not put it there either (CAS-747: now a real fail,
+  // not a ride-along — see the function comment above).
   const inf = inferredScale(m);
-  return (inf && inf.d >= min) ? true : null;
+  if(inf) return inf.d >= min;
+  // No real figure and no inference at all: genuinely unknown, decided by the agent's own opt-in.
+  return !!c.includeUnbudgeted;
 }
 // ---- Inferred scale (CAS-238) --------------------------------------------------
 // A tentpole often carries no budget until close to release: Avengers: Doomsday has none today, and neither
@@ -9516,10 +9524,10 @@ function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   // CAS-724: admission is one score floor (below) plus these AND requirements — the CAS-661 Mission OR block
   // is gone. selCrowd, selCritScore and selBuzz no longer gate anything here; they retire as admission routes.
   // What survives, all ANDed, none optional:
-  //   · Movie Budget (selScale) — every window, tri-state preserved: `null` (no budget and no worldwide gross)
-  //     rides along and never denies, exactly as CAS-238/CAS-674 established for an AND-style gate. Only a
-  //     known, strictly-below-floor match (`false`) denies.
-  if(c.selScale && selScaleMatch(m,c)===false) return false;
+  //   · Movie Budget (selScale) — every window. CAS-747: selScaleMatch is boolean now, not tri-state — a
+  //     below-floor inference denies same as a known-too-small figure, and a truly unscaled film is decided
+  //     by c.includeUnbudgeted rather than riding along by default.
+  if(c.selScale && !selScaleMatch(m,c)) return false;
   //   · Awards (selAwards) — a claim about how a film was received, which only exists once someone has had
   //     the chance to judge it. Exempt pre-release EXPLICITLY: selAwards is reachable today only inside this
   //     branch, so promoting it to a standing requirement without carrying the exemption forward would exclude
@@ -13255,13 +13263,14 @@ function msnRebuild(){
 // requirement applies (design record §7 item 6): ALL WINDOWS on Budget (accent — it always applies), ONCE
 // RELEASED on Awards and How far back (muted — both wait for a release, per matchesCriteria's preRelease
 // exemption). Whether they apply AT ALL is the section header's job, not the chip's.
-function reqCardHTML(icon, title, chip, chipClass, caption, valueId, valueText, sliderHTML){
+function reqCardHTML(icon, title, chip, chipClass, caption, valueId, valueText, sliderHTML, extraHTML){
   return `<div class="osdial reqcard">
     <div class="osdh"><span class="em">${icon}</span><span class="dl">${esc(title)}</span>
       <span class="reqscope ${chipClass}">${esc(chip)}</span></div>
     <p class="oscap">${esc(caption)}</p>
     <p class="reqval" id="${valueId}">${esc(valueText)}</p>
     ${sliderHTML}
+    ${extraHTML||""}
   </div>`;
 }
 function budgetCardHTML(){
@@ -13274,9 +13283,13 @@ function budgetCardHTML(){
     </div>
     <div class="vlabels stag">${marks.map((mk,i)=>`<button type="button" class="vsnap ${mk.lit?"on":""} ${i%2?"lo":""}" data-snap="${mk.snap}"
       style="left:${mk.pos}%;transform:${mk.pos<=0?"translateX(0)":mk.pos>=100?"translateX(-100%)":"translateX(-50%)"}">${esc(mk.label)}${mk.sub?`<small>${esc(mk.sub)}</small>`:""}</button>`).join("")}</div>`;
+  // CAS-747: the opt-in for a film selScaleMatch cannot place at all — no real figure, no inference either.
+  const unbudgetedSwitch=`<div class="switch mini" id="onbIncludeUnbudgeted" role="switch">
+      <span>Include films whose budget isn't known yet</span>
+      <span class="knob"></span></div>`;
   return reqCardHTML("🎬","Movie Budget","ALL WINDOWS","accent",
     "How big the film is. Budget or worldwide gross — known at every stage, so this one always applies.",
-    "reqBudgetVal", cont.read(v), slider);
+    "reqBudgetVal", cont.read(v), slider, unbudgetedSwitch);
 }
 // A stepped ladder shared by Awards and How far back — both are fixed-stop, tap-or-drag controls with no
 // continuous value in between, the exact shape STEP_DIALS used to wire generically before it retired above.
@@ -13356,6 +13369,23 @@ function wireReqCards(){
       b.onclick=()=>{ const i=+b.dataset.i; r.value=i; apply(i); };
     });
   })();
+}
+// CAS-747: the Movie Budget card's own opt-in switch — a film selScaleMatch cannot place at all (no real
+// figure, no inference) is decided by this instead of riding along by default. Plain draft boolean, same
+// shape as wireCinemaReleaseToggle just below, but lives inside budgetCardHTML's own markup rather than
+// standing alone, since the ticket asks for it on the card itself.
+function wireIncludeUnbudgetedToggle(){
+  const sw=$("onbIncludeUnbudgeted"); if(!sw) return;
+  const paint=()=>{
+    const on=!!onbFlow.draft.includeUnbudgeted;
+    sw.classList.toggle("on", on);
+    sw.setAttribute("aria-checked", String(on));
+  };
+  paint();
+  sw.onclick=()=>{
+    onbFlow.draft.includeUnbudgeted=!onbFlow.draft.includeUnbudgeted;
+    onbFlow.barTouched=true; paint(); selRefresh();
+  };
 }
 // CAS-360/CAS-729: the "Had a cinema release" checkbox. Not a dial — it carries no card of its own, so it is
 // wired separately here rather than folded into the requirement cards' loop above.
@@ -13729,7 +13759,7 @@ const SHARP_STEPS = {
           <span class="knob"></span></div>`;
     },
     refresh(){ paintMsnTrack(); },   // CAS-729: keeps the track's own DOM in step with onbRefresh()'s beat
-    wire(){ wireMsnTrack(); wireReqCards(); wireCinemaReleaseToggle(); },
+    wire(){ wireMsnTrack(); wireReqCards(); wireCinemaReleaseToggle(); wireIncludeUnbudgetedToggle(); },
   },
   // ---- Your taste baseline (CAS-146 / r5-prototype screenTaste) ------------------------------------
   // Four dimensions on ONE page, one open at a time. The old flow asked them as four separate screens,

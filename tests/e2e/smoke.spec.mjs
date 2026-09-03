@@ -482,6 +482,31 @@ test("agent card summary names its Style restriction when set, and omits it when
   expect(overflow).toBeLessThanOrEqual(1);
 });
 
+// CAS-747 AC5: the Budget requirement's opt-in for a film selScaleMatch cannot place at all (no real
+// figure, no inference either — see the invariants for that split). With no floor set, selScaleMatch is a
+// no-op and the switch has nothing to move, so the floor is pinned to the lowest real stop ($1M, "Indie")
+// first — low enough that it only screens off the wholly-unscaled class the switch governs, not a film
+// carrying a real figure or an inference (both comfortably clear $1M), so a count change is attributable to
+// the switch itself.
+test("CAS-747 AC5: the Movie Budget card renders the includeUnbudgeted switch, and toggling it moves the live match count", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFirstAgentMission(page);
+
+  const sw = page.locator("#onbIncludeUnbudgeted");
+  await expect(sw).toBeVisible();
+  await expect(sw).not.toHaveClass(/on/);   // default stays off (item 3 of the ticket)
+
+  await page.locator('.vsnap[data-snap="1000000"]').click();
+  const before = await page.locator("#onbStepCount").innerText();
+
+  await sw.click();
+  await expect(sw).toHaveClass(/on/);
+  const after = await page.locator("#onbStepCount").innerText();
+  expect(after, `before=${before} after=${after}`).not.toBe(before);
+});
+
 test("CAS-740 AC4: a signed-in user whose account already holds agents is never left in the onboarding flow", async ({ page }) => {
   await page.route("**/config.js", route => route.fulfill({
     contentType: "application/javascript",
