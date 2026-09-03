@@ -4816,7 +4816,6 @@ function recomputeFound(){
           if(e){
             e.wins=e.wins||{}; e.winsSource=e.winsSource||{};
             WATCH_LEVEL_KEYS.forEach(k=>{ if(e.winsSource[k]==="auto"){ e.wins[k]=false; delete e.winsSource[k]; } });
-            e.watchEarned=undefined;
           }
         }
       });
@@ -4875,7 +4874,9 @@ function recomputeFound(){
   // off that stale state is exactly what re-armed `auto` over a manual pick and pushed it to `film_watch`
   // before this device's own film_watch load had even resolved. `!CP` covers only the one paint before the
   // persistence IIFE has run (nothing can reach the network yet at that point either), same fallback as above.
-  const placementReady = !CP || CP.filmWatchReady;
+  // CAS-736: agentFilmsReady joins the same gate — earned is now derived from this device's own agent_films
+  // read (below), so a placement written before that read resolves is exactly the same stale-write risk.
+  const placementReady = !CP || (CP.filmWatchReady && CP.agentFilmsReady);
   hits.forEach((ids,id)=>{
     const e=entryFor(id);
     e.wins=e.wins||{};
@@ -4889,15 +4890,32 @@ function recomputeFound(){
     const owner=ids.map(cid=>cascades.find(x=>x.id===cid)).filter(Boolean)
       .reduce((best,c)=>(!best||c.order<best.order)?c:best, null);
     if(!owner) return;
-    if(e.watchEarned===undefined){
-      e.watchEarned=null;
-      const score=cascadeScore(m);
+    // CAS-736: earned must read the same on every device, so it is derived fresh, every pass, from the
+    // owner's stored admission_score (agent_films) — never cached on `notify`, which is per-device local
+    // storage and was exactly what let two devices that first met a film at different moments (or under
+    // different marker values) freeze two different answers forever. A hand-pinned film carries no
+    // agent_films row — a pin bypasses the ledger entirely, by design (CAS-709/711) — so that one case
+    // keeps the pre-CAS-736 local-cache-once fallback; it was never part of the cross-device divergence
+    // this ticket fixes, since a pin is already a per-device manual override.
+    const admissionRow = CP && CP.getAgentFilm(owner.id, m.tmdb_id);
+    let earned=null;
+    if(admissionRow){
       for(const k of WATCH_LEVEL_KEYS){
         if(!windowUsable(owner,k)) continue;
-        if(score>=owner.watchMarkers[k]){ e.watchEarned=k; break; }
+        if(admissionRow.admission_score>=owner.watchMarkers[k]){ earned=k; break; }
       }
+    } else {
+      if(e.watchEarned===undefined){
+        e.watchEarned=null;
+        const score=cascadeScore(m);
+        for(const k of WATCH_LEVEL_KEYS){
+          if(!windowUsable(owner,k)) continue;
+          if(score>=owner.watchMarkers[k]){ e.watchEarned=k; break; }
+        }
+      }
+      earned=e.watchEarned;
     }
-    if(e.watchEarned==null) return;             // below every marker at admission — no value written
+    if(earned==null) return;                    // below every marker at admission — no value written
     // STATUS_RUNG numbers a film's current window on the exact same ladder WINDOW_RUNG numbers the four
     // watch levels (CAS-280), so the film's rung IS its natural standing key — snapped forward past
     // whichever windows are off or set to Never.
@@ -4909,7 +4927,7 @@ function recomputeFound(){
         if(windowUsable(owner,WATCH_LEVEL_KEYS[j])){ standing=WATCH_LEVEL_KEYS[j]; break; }
       }
     }
-    const finalKey=(standing && WINDOW_RUNG[standing]>WINDOW_RUNG[e.watchEarned]) ? standing : e.watchEarned;
+    const finalKey=(standing && WINDOW_RUNG[standing]>WINDOW_RUNG[earned]) ? standing : earned;
     WATCH_LEVEL_KEYS.forEach(k=>{ e.wins[k]=false; });
     e.wins[finalKey]=true;
     e.winsSource[finalKey]="auto";
@@ -18597,6 +18615,11 @@ else if(dedupedN)
   // existing guest/no-account code path); fireAccountFanout below flips it false for exactly the window
   // between kicking off loadFilmWatches() and that load resolving.
   let filmWatchReady = true;
+  // CAS-736: same reasoning as filmWatchReady above, for the OTHER table recomputeFound's placement block
+  // reads — agent_films. Without this, a device could locally admit a film (freshly computing and writing
+  // its own admission_score) before its own load of the account's ledger had resolved, racing whatever
+  // score another device already recorded for the same film.
+  let agentFilmsReady = true;
 
   // ---- CAS-656: per-table load-failure tracking + the persistent "not connected" banner ---------------
   // A failed READ used to be silent (console.warn, or a toast that scrolled away in seconds) and left the
@@ -19425,7 +19448,10 @@ else if(dedupedN)
     // or lose, loadFilmWatches' own resolution (not a fixed delay) is what lifts it.
     filmWatchReady=false;
     loadFilmWatches().finally(()=>{ filmWatchReady=true; });
-    loadAgentFilms();
+    // CAS-736: blocked the same way, for the same reason — this device's own agent_films fetch must land
+    // before recomputeFound trusts any admission it derives placement from.
+    agentFilmsReady=false;
+    loadAgentFilms().finally(()=>{ agentFilmsReady=true; });
   }
   let currentUser = null;
   window.addEventListener("cascade-auth-change", () => {
@@ -19444,7 +19470,7 @@ else if(dedupedN)
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); loadGuestLists(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
       cascadeKnown=new Map(); saveCascadeKnown(); cascadeEditedAt=new Map(); saveCascadeEditedAt();
       filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
-      agentFilms={}; agentFilmsBaseline=null;
+      agentFilms={}; agentFilmsBaseline=null; agentFilmsReady=true;   // CAS-736: a guest has nothing to wait on
       watchlistKnown=new Map(); saveWatchlistKnown();
       watchKnown=new Map(); saveWatchKnown(); filmWatchReady=true;   // CAS-735: a guest has nothing to wait on
       // CAS-656: a guest has no account to be disconnected from — clear any failure this device carried
@@ -19848,6 +19874,11 @@ else if(dedupedN)
       .filter(k=>k.startsWith(cascadeId+"::"))
       .map(k=>({movie_id:k.slice(cascadeId.length+2), ...agentFilms[k]}));
   }
+  // CAS-736: an O(1) single-row lookup, unlike agentFilmsFor's per-cascade scan of every known key — needed
+  // because recomputeFound's placement block calls this once per FILM, not once per cascade.
+  function getAgentFilm(cascadeId, movieId){
+    return agentFilms[agentFilmKey(cascadeId, String(movieId))];
+  }
   function setAgentFilm(cascadeId, movieId, {admission_score, admission_status, agent_sig, admitted_at}={}){
     agentFilms[agentFilmKey(cascadeId,String(movieId))]={
       admitted_at: admitted_at || new Date().toISOString(), admission_score, admission_status, agent_sig,
@@ -20120,7 +20151,12 @@ else if(dedupedN)
                                 // CAS-726: the admitted-film ledger's own load/sync seam, plus the
                                 // read/write helpers CAS-728 writes through to make membership sticky.
                                 loadAgentFilms, syncAgentFilmsNow: runAgentFilmsSync, agentFilmRows,
-                                applyAgentFilmRows, agentFilmsFor, setAgentFilm, clearAgentFilm,
+                                applyAgentFilmRows, agentFilmsFor, setAgentFilm, clearAgentFilm, getAgentFilm,
+                                // CAS-736: same read/write-primitive shape as filmWatchReady above, so a
+                                // test can drive recomputeFound's "this device's own ledger hasn't loaded
+                                // yet" gate directly.
+                                get agentFilmsReady(){ return agentFilmsReady; },
+                                set agentFilmsReady(v){ agentFilmsReady=!!v; },
                                 // CAS-487: the return-to-tab entry point itself, so the bell's own refresh
                                 // can be exercised the same way — without waiting on a real
                                 // focus/visibilitychange event.
