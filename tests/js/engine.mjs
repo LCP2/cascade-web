@@ -130,7 +130,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // the predicate render() filters through (filmMatchesWatchedFilter) — exported the same way watchGenreOff
   // et al. would be, so a test can drive a tab's Watched/Styles selection directly rather than only through
   // DOM clicks the stub absorbs.
+  // CAS-750: raw setter (unlike window.setWatchTab, it never calls render()/jumpToSection — those are wire
+  // code the stub absorbs anyway) so a test can drive listingGroups' tab-based order directly.
   get watchTab(){ return watchTab; },
+  setWatchTab(v){ watchTab = v; },
   watchWatchedSel, watchGenreOff, watchSearch, filmMatchesWatchedFilter, filmMatchesWatchTab,
   YM_SVC,
   // CAS-677: WATCH_STEPS (the watched-verdict ramp watchlistDefaults()'s permissive watchedOn is built
@@ -151,7 +154,7 @@ if(typeof window.CascadeAuth === "undefined"){
   prefs, servicesPicked, matchesServices, scopeOf, anyScope, HOME_KEYS,
   svcCanon, svcName, SVC_LEAD, myService,
   SUB_SERVICES, STORE_SERVICES, stageDate, curSlot, cinemaState, EST_OFFSET, TODAY,
-  inCinemaRun, CINEMA_RUN_DAYS, LISTING_ORDER, CINEMA_LISTING_ORDER, orderFor, listingOrder,
+  inCinemaRun, CINEMA_RUN_DAYS, LISTING_ORDER, orderFor, listingOrder,
   // CAS-702: the one default-sort constant, and the raw comparator dispatch, so a test can assert the
   // rendered order against an independently-run comparator rather than re-deriving sortForKey's branches.
   DEFAULT_SORT, sortForKey,

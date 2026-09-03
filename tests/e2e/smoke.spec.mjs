@@ -536,6 +536,47 @@ test("Watch listing: every group shows its agent divider, even a single-agent se
   expect(overflow).toBeLessThanOrEqual(1);
 });
 
+// CAS-750: order is a property of the Watch TAB now, not of an agent's retired `kind` — the Cinema tab
+// (the default tab a fresh listing lands on) leads with Upcoming, reading the same journey order as CASCADE;
+// every other tab is unchanged and still ends with Upcoming.
+test("Watch Cinema tab leads with Upcoming; the Streaming tab does not (CAS-750)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  const cinemaFirst = await page.locator("#groups .group").first().getAttribute("data-g");
+  expect(cinemaFirst).toBe("upcoming");
+
+  await page.locator(".wtabbtn", { hasText: "Streaming" }).click();
+  await settleListing(page);
+  const streamFirst = await page.locator("#groups .group").first().getAttribute("data-g");
+  expect(streamFirst).not.toBe("upcoming");
+});
+
+// CAS-750 AC3: the jump bar is built from the sections the DOM actually holds (renderJumpBar's own
+// long-standing rule), so it has to keep tracking the groups' own order even after this ticket makes that
+// order tab-dependent rather than fixed — checked on both tabs rather than assumed from the source.
+test("Watch jump bar entries follow the groups' own order, on both the Cinema and Streaming tabs (CAS-750)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  const readOrder = async () => ({
+    groupOrder: await page.locator("#groups .group").evaluateAll(gs => gs.map(g => g.dataset.g)),
+    jumpOrder: await page.locator("#jumpBar .jchip").evaluateAll(chips => chips.map(c => c.dataset.jump)),
+  });
+
+  const cinema = await readOrder();
+  expect(cinema.groupOrder.length).toBeGreaterThan(1);
+  expect(cinema.jumpOrder).toEqual(cinema.groupOrder);
+
+  await page.locator(".wtabbtn", { hasText: "Streaming" }).click();
+  await settleListing(page);
+  const stream = await readOrder();
+  expect(stream.groupOrder.length).toBeGreaterThan(1);
+  expect(stream.jumpOrder).toEqual(stream.groupOrder);
+});
+
 test("CAS-740 AC4: a signed-in user whose account already holds agents is never left in the onboarding flow", async ({ page }) => {
   await page.route("**/config.js", route => route.fulfill({
     contentType: "application/javascript",
