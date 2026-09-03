@@ -8386,6 +8386,15 @@ window.clearAllWatchAgents = () => {
 function filmMatchesWatchedFilter(m){
   return taggedOut(m) ? watchWatchedSel[watchTab].has(opinionOf(m.tmdb_id)) : true;
 }
+// CAS-752: a film given a verdict THIS VISIT stays a row — folded to its stub by the existing keepRowInPlace
+// animation — even though its own new verdict just made it fail filmMatchesWatchedFilter above. Session-only
+// and per-tab, same shape as heldOpen's hold for the Found view; settleWatchHeldOpen (called wherever
+// settleFoundView already is, plus on returning to the listing) drops it, so a film whose verdict predates
+// this visit is never held and a rebuilt listing loses it per the ordinary filters.
+const watchHeldOpen = {in_cinema:new Set(), premium:new Set(), rent:new Set(), stream:new Set()};
+function settleWatchHeldOpen(){
+  Object.keys(watchHeldOpen).forEach(k=>watchHeldOpen[k].clear());
+}
 let watchSearchRenderT = null;
 window.setWatchSearch = raw => {
   watchSearchRaw[watchTab]=raw;
@@ -9758,7 +9767,7 @@ window.openCascade=id=>{
   // still be riding alongside other agents in activeIds, and this is the single-select entry point (Manage
   // Agents, sign-in landing), so it always has to collapse back down to just this one.
   const c=cascades.find(x=>x.id===id); if(!c || (activeId===id && activeIds.length===1)) return;
-  setActive(id); settleFoundView(); applyCascade(c); restoreCascadeSearch();
+  setActive(id); settleFoundView(); settleWatchHeldOpen(); applyCascade(c); restoreCascadeSearch();
   $("groups").classList.add("listloading");     // CAS-421: held blurred till the new agent's list is ready
   closeFilterPanel(); restoreCascadeWatchTiers(); render();
   logEvent("cascade_opened", {key:c.template||"custom"});
@@ -16302,7 +16311,17 @@ window.showAgentsHome=()=>{
 // Where & when, Tags, About — and Your Movies itself, in the unlikely event it's ever reopened) is open.
 // Called from every .uscreen's own open/close pair.
 function syncWatchChip(){
-  $("moviesBtn").classList.toggle("active", !document.querySelector(".uscreen.open"));
+  const showing=!document.querySelector(".uscreen.open");
+  // CAS-752: this runs on every .uscreen's own open/close pair, so `showing` flips true exactly when a
+  // covering screen closes and the listing is what's visible again — "navigating away and back" in the
+  // ticket's own words. A held stub is session-of-the-listing only, so it drops here; re-render only if
+  // something was actually held, so every other close (nothing held) stays as cheap as it always was.
+  if(showing && !$("moviesBtn").classList.contains("active")){
+    const had=Object.values(watchHeldOpen).some(s=>s.size);
+    settleWatchHeldOpen();
+    if(had) render();
+  }
+  $("moviesBtn").classList.toggle("active", showing);
 }
 // CAS-501: the row's own central area (icon/name/summary/count) opens the agent, exactly like selecting its
 // deck card does. Delegated at the list in wireAgentsOpen() (CAS-638: was wireAgentsDrag() before reorder
@@ -17939,7 +17958,9 @@ function render(){
   const genreOff=watchGenreOff[watchTab];
   if(genreOff.size) rows=rows.filter(m=>!(m.genres||[]).some(g=>genreOff.has(g)));
   if(watchStatusOff[watchTab].size) rows=rows.filter(filmMatchesCurrentStatus);
-  rows=rows.filter(filmMatchesWatchedFilter);
+  // CAS-752: a held film (see watchHeldOpen above) stays a row despite failing its own new verdict's filter.
+  const heldThisTab=watchHeldOpen[watchTab];
+  rows=rows.filter(m=>filmMatchesWatchedFilter(m) || heldThisTab.has(m.tmdb_id));
   // CAS-753: "Show only available on my services" — gates only the three home-window sections
   // (HOME_KEYS, the same set the agent-level per-window scope already uses), never Cinema/Upcoming, which
   // carry no offers to test in the first place. `preMineOnlyRows` lets the empty branch below tell "the
@@ -18107,10 +18128,33 @@ function patchFindCounts(){
   });
   renderCascadeBar(shown.length);
 }
+// CAS-752: whether `m` would still be one of render()'s `rows` right now — the same chain render() applies
+// (agent scope, tab, search, styles, current-status, watched filter + hold, my-services), reusing its own
+// named predicates so the two can never disagree. fastPatchFindRow's whole point is answering this for ONE
+// film without re-deriving the ~2,000-film list a full render() would; the old check here tested the tapped
+// film against activeCascade() — a single-agent idea CAS-718/725 already retired from this listing — so it
+// bailed to a full render() (the very jump this ticket reports) far more often than the film had actually
+// left the list.
+function filmInWatchRows(m){
+  if(!watchTabsNow().length) return false;
+  const agentOff=watchAgentOff[watchTab];
+  const acs=agentOff.size ? cascades.filter(c=>!agentOff.has(c.id)) : cascades;
+  if(!acs.length || !acs.some(c=>listedBy(m,c))) return false;
+  if(!filmMatchesWatchTab(m, watchTab)) return false;
+  const wsearch=watchSearch[watchTab];
+  if(wsearch && !m.title.toLowerCase().includes(wsearch)) return false;
+  if(watchPickedBy[watchTab]!=="all" && !filmMatchesPickedBy(m)) return false;
+  const genreOff=watchGenreOff[watchTab];
+  if(genreOff.size && (m.genres||[]).some(g=>genreOff.has(g))) return false;
+  if(watchStatusOff[watchTab].size && !filmMatchesCurrentStatus(m)) return false;
+  if(!filmMatchesWatchedFilter(m) && !watchHeldOpen[watchTab].has(m.tmdb_id)) return false;
+  if(watchMineOnlyOn() && HOME_KEYS.includes(primaryStatus(m)) && !matchesServices(m, primaryStatus(m))) return false;
+  return true;
+}
 function fastPatchFindRow(id){
-  const m=MOVIES.find(x=>x.tmdb_id===id), row=rowFor(id), c=activeCascade();
+  const m=MOVIES.find(x=>x.tmdb_id===id), row=rowFor(id);
   // film left the list -> let render() handle it
-  if(!m || !row || !(c ? listedBy(m,c) : passesOrStub(m))) return false;
+  if(!m || !row || !filmInWatchRows(m)) return false;
   const t=document.createElement("template");
   t.innerHTML=(taggedOut(m)?stubHTML(m):cardHTML(m, isFresh(m))).trim();
   row.replaceWith(t.content.firstElementChild);
@@ -18259,7 +18303,10 @@ window.setOpinion=(id,kind)=>{
     // was never found would otherwise float it into "Found for you" — a list that means "the agent picked
     // these", and it didn't. In Find the stub holds its own place anyway, off the back of taggedOut.
     if(held) heldOpen.set(id, held);
-  } else heldOpen.delete(id);
+    // CAS-752: this verdict is being given THIS VISIT, on whichever tab is current — hold it there so the
+    // Watched filter's usual exclusion doesn't drop the row before the fold animation even runs.
+    watchHeldOpen[watchTab].add(id);
+  } else { heldOpen.delete(id); watchHeldOpen[watchTab].delete(id); }
   saveWatchStatus();
   logEvent("opinion",{key: on?kind:"cleared"});
   // FIRST — so the toast reports what actually happened, not what we assumed. The repaint runs inside
