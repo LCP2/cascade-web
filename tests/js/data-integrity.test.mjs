@@ -222,36 +222,44 @@ test("the listing leads with what is out and ends with what is not — on the ST
     `an Upcoming film sits at ${firstUpcoming}, above a released one at ${lastReleased}`);
 });
 
-// CAS-394: reverses CAS-295. The cinema lane now leads with what is out (same shape as the streaming lane
-// above) and ends with Upcoming, but the in-section timeline runs the other way: oldest cinema date first,
-// so a released film sits above one that opened more recently, and Upcoming's soonest release leads its
-// furthest-out one. This applies to the cinema lane only.
-test("in cinema: the cinema lane leads with what is out, ends with Upcoming, oldest cinema date first", () => {
+// CAS-750: reverses CAS-394/CAS-471, and retires the "cinema lane" framing above with it. Section order is
+// a property of the WATCH TAB now, never of an agent's `kind` (CAS-723 already stopped kind deciding which
+// windows an agent scopes; this is the same retired field losing its last say). The Cinema tab is a
+// planning surface, so IT leads with Upcoming — the journey order, CASCADE — and every other tab keeps
+// LISTING_ORDER, unchanged.
+test("orderFor: the Cinema tab reads the journey order (CASCADE); every other tab keeps LISTING_ORDER", () => {
   // Spread into a LOCAL array first: the engine runs in a vm realm, so its Array has a different prototype
   // and deepStrictEqual compares that too. Every other array assertion in this file does the same.
-  assert.equal(E.CINEMA_LISTING_ORDER[E.CINEMA_LISTING_ORDER.length - 1], "upcoming",
-    `the cinema lane ends with ${E.CINEMA_LISTING_ORDER[E.CINEMA_LISTING_ORDER.length - 1]}, not upcoming`);
-  assert.deepEqual([...E.CINEMA_LISTING_ORDER].sort(), [...E.CASCADE].sort(),
-    "the cinema order and the journey order are not the same six windows");
-  pickInLane(E, "cinema", "custom");
-  const d = E.onbApply();
-  assert.equal(E.orderFor(d), E.CINEMA_LISTING_ORDER, "a cinema agent is not using the cinema order");
-  const seq = E.listingOrder(E.MOVIES.filter(m => E.listedBy(m, d)), d.sort || "availability", d);
-  const lastReleased = seq.map(m => !E.isUpcoming(m)).lastIndexOf(true);
-  const firstUpcoming = seq.findIndex(m => E.isUpcoming(m));
-  if(lastReleased >= 0 && firstUpcoming >= 0) assert.ok(lastReleased < firstUpcoming,
-    `an Upcoming film sits at ${firstUpcoming}, above a released one at ${lastReleased}`);
-  // …and within any one section, the oldest cinema date leads — the opposite direction from the streaming
-  // lane's timeline.
-  const dated = seq.filter(m => m.cinema_date);
-  for(let i = 1; i < dated.length; i++){
-    if(E.primaryStatus(dated[i]) !== E.primaryStatus(dated[i - 1])) continue;   // only within one section
-    assert.ok(dated[i].cinema_date >= dated[i - 1].cinema_date,
-      `${dated[i - 1].title} (${dated[i - 1].cinema_date}) sits above ${dated[i].title} (${dated[i].cinema_date}) — the cinema lane should read oldest first`);
+  assert.deepEqual([...E.orderFor(true)], [...E.CASCADE],
+    "the Cinema tab's order is not the journey order (CASCADE)");
+  assert.equal(E.orderFor(true)[0], "upcoming",
+    `the Cinema tab leads with ${E.orderFor(true)[0]}, not Upcoming`);
+  assert.deepEqual([...E.orderFor(false)], [...E.LISTING_ORDER],
+    "a non-Cinema tab is not using LISTING_ORDER");
+});
+
+test("listingGroups: only watchTab===\"in_cinema\" leads with Upcoming — an agent's own kind no longer decides it (CAS-750)", () => {
+  const section = status => ({
+    title: status, status: [status], cinema_date: "2026-07-01",
+    popularity: 1, rt_critic: null, imdb_rating: null, imdb_votes: 0,
+  });
+  const rows = ["upcoming", "opening_week", "in_cinema", "pvod", "rental", "included_streaming"].map(section);
+  // A cinema-kind agent object is passed unchanged across both tabs below — its `kind` must not matter any
+  // more, only `watchTab` may.
+  const ac = { kind: "cinema" };
+  const savedTab = E.watchTab;
+  try{
+    E.setWatchTab("in_cinema");
+    const cinemaGroups = E.listingGroups(rows, ac);
+    assert.equal(cinemaGroups[0].g, "upcoming",
+      `the Cinema tab's first group is ${cinemaGroups[0].g}, not upcoming`);
+    E.setWatchTab("stream");
+    const streamGroups = E.listingGroups(rows, ac);
+    assert.notEqual(streamGroups[0].g, "upcoming",
+      "a non-Cinema tab picked up the Cinema tab's order");
+  } finally {
+    E.setWatchTab(savedTab);   // module-scope state — leave it as every other test found it
   }
-  // …and a streaming agent is untouched by it.
-  pickInLane(E, "stream", "custom");
-  assert.equal(E.orderFor(E.onbApply()), E.LISTING_ORDER, "the streaming lane picked up the cinema order");
 });
 
 // ---- 1b. AN EXPLICIT SORT REACHES EVERY SECTION (CAS-699, CAS-702) ----------------------------------------

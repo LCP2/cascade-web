@@ -4298,16 +4298,12 @@ const CASCADE = ["upcoming","opening_week","in_cinema","pvod","rental","included
 // 27 Upcoming above the one film actually on a screen. A listing answers "what can I watch", so it leads
 // with what is out and keeps Upcoming as the tail it is. Same six sections, same films, same counts.
 const LISTING_ORDER = ["opening_week","in_cinema","pvod","rental","included_streaming","upcoming"];
-// CAS-394: reverses CAS-295. A CINEMA agent now reads oldest cinema date first — In Cinema (already open)
-// leads and Upcoming (the least settled plan, furthest out) sits last — so the sections read as a timeline
-// you can actually act on tonight, working down toward what you can only still plan for.
-//
-// The default order everywhere else is unchanged and still ends with Upcoming, which is the right answer for
-// a streaming agent: there, an unreleased film really is the least actionable thing on the page.
-// CAS-471: In Cinema itself leads — it shipped after Opening week here, which never matched CAS-394's own
-// stated intent above (nor CAS-394's own commit message).
-const CINEMA_LISTING_ORDER = ["in_cinema","opening_week","pvod","rental","included_streaming","upcoming"];
-const orderFor = c => (c && c.kind==="cinema") ? CINEMA_LISTING_ORDER : LISTING_ORDER;
+// CAS-750: replaces CAS-394/CAS-471's dedicated cinema-order constant, which keyed section order off an
+// agent's c.kind — a field CAS-723 retired as a window-scoping input, so it no longer means anything a new
+// agent carries. Order is a property of the TAB now, not the agent: the Cinema tab is where a trip gets
+// planned, so it leads with Upcoming — the one section that's still just a plan — reading down the same
+// journey order as CASCADE above. Every other tab is unchanged and keeps LISTING_ORDER.
+const orderFor = cinemaTab => cinemaTab ? CASCADE : LISTING_ORDER;
 const STATUS_LABEL = {
   opening_week:"In Cinema · Opening week", in_cinema:"In Cinema",
   pvod:"Premium/Rent (~$30)", rental:"Rent (~$7)",
@@ -6259,7 +6255,9 @@ const sortFor = (g,c) => sortForKey(g, filt.sort, c && c.kind==="cinema");
 // person's own menu pick, not a default, passes true so CAS-430's In Cinema override stands down for it.
 function listingOrder(films, sortKey, c, isUserSort){
   const ordered=[], seen=new Set();
-  orderFor(c).forEach(g=>{
+  // CAS-750: this function's one caller (openMembership) runs before any Watch tab exists, so it always
+  // reads the shared default order — never the Cinema tab's.
+  orderFor(false).forEach(g=>{
     films.filter(m=>primaryStatus(m)===g).sort(sortForKey(g,sortKey,c && c.kind==="cinema",isUserSort))
          .forEach(m=>{ ordered.push(m); seen.add(m); });
   });
@@ -17838,7 +17836,7 @@ function listingGroups(rows, ac){
   // defaults to (Rental/Streaming keep DEFAULT_SORT, unchanged) — a user's own explicit pick (isUserSort)
   // still overrides either, exactly as it always has.
   const tabDflt = watchTab==="in_cinema" ? "availability" : DEFAULT_SORT;
-  return orderFor(ac)      // CAS-394: a cinema agent leads with In Cinema, Upcoming last
+  return orderFor(watchTab==="in_cinema")      // CAS-750: order is the Cinema tab's own, not the agent's
     .map(g=>{
       const cmp=sortForKey(g, ymSort||tabDflt, ac && ac.kind==="cinema", isUserSort);
       // CAS-713: agent rank comes first within a status section — a higher-ranked agent's films lead —
@@ -17960,8 +17958,8 @@ function render(){
 // section heading above the group (STATUS_LABEL) was, at the time, a separate "Premium Buy/Rent (~$30)"
 // string outside this ticket's scope. CAS-359 later dropped the redundant "Premium" from that heading too,
 // and the 2026-08-05 correction unified both back onto "Premium". Premium/Rent/Stream already fall in that
-// left-to-right order because pvod, rental and included_streaming do in LISTING_ORDER/CINEMA_LISTING_ORDER —
-// the chips just walk the groups the DOM holds.
+// left-to-right order because pvod, rental and included_streaming fall that way in LISTING_ORDER and the
+// Cinema tab's own order (CAS-750) alike — the chips just walk the groups the DOM holds.
 const SECTION_SHORT = {opening_week:"Opening", in_cinema:"Cinema", pvod:"Premium",
                        rental:"Rent", included_streaming:"Stream", upcoming:"Upcoming"};
 function renderJumpBar(){
