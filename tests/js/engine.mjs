@@ -175,6 +175,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // one-time scoreFloor migration.
   cascadeScore, cascadeScoreSourcesText, cinemaScore, isPreRelease, buzzPctlOf, pctRankOf,
   BUZZ_POP_VALS, CINEMA_BUDGET_VALS, CINEMA_BUDGET_MIN,
+  // CAS-748: the released-cohort quantile map's own lookup table, so a test can assert the mapping formula
+  // directly rather than only cinemaScore's output.
+  releasedScoreVals,
   // CAS-703: the Target score hard gate's own held-back count, so a test can assert it against the set it
   // claims to describe without re-deriving it from stepCountLine's HTML output.
   scoreHeldBackCount,

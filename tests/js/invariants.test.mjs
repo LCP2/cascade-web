@@ -2547,44 +2547,112 @@ test("CAS-695 AC1: the score's basis switches on isPreRelease — cinema (buzz) 
   }
 });
 
-// ---- CAS-722: THE CINEMA SCORE'S BASIS NARROWS TO BUZZ ALONE -----------------------------------------------
-// Measured against the 5,750-film catalogue: of the 995 cohort films that carried both buzz and budget
-// terms, dropping budget changed cinemaScore by a median of 0, and only 60 (6%) moved by more than 10
-// points. Budget is becoming an admission REQUIREMENT on a separate ticket, and nothing which admits a film
-// is also a term in its score — so budget leaves cinemaScore entirely in this release (AC1).
-test("CAS-722 AC1: cinemaScore is exactly buzzPctlOf for a cohort film, -1 with no numeric popularity", () => {
+// ---- CAS-748: THE CINEMA SCORE IS QUANTILE-MAPPED ONTO THE RELEASED DISTRIBUTION ----------------------------
+// CAS-722 made cinemaScore exactly buzzPctlOf — a raw, uniform-by-construction percentile rank. That put the
+// two sides of cascadeScore on different scales: the released side (qScore) is bell-shaped around 67 with a
+// 95th percentile of only 87, so a marker at 90 or 95 selected wildly different slices of each cohort (10.7%
+// of pre-release vs 2.9% of released scoring 90+, measured 2026-09-03). This retires that alignment (CAS-722
+// AC1/AC2 above) in favour of one where a marker means the same thing on both sides.
+test("CAS-748 AC1: cinemaScore is a quantile map — buzzPctlOf looked up against the released cohort's own score distribution", () => {
   const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
   const scored = cohort.filter(m => typeof m.popularity === "number");
   const unscored = cohort.filter(m => typeof m.popularity !== "number");
   assert.ok(scored.length > 0, "no cohort film with numeric popularity found — this test would prove nothing");
   assert.ok(unscored.length > 0, "no cohort film with no numeric popularity found — this test would prove nothing");
+  const vals = E.releasedScoreVals();
+  assert.ok(vals.length > 0, "the released cohort's score array is empty — this test would prove nothing");
   for(const m of scored){
-    assert.equal(E.cinemaScore(m), E.buzzPctlOf(m), `${m.title}: cinemaScore disagrees with buzzPctlOf`);
+    const p = E.buzzPctlOf(m);
+    const expected = Math.round(vals[Math.min(vals.length - 1, Math.floor(vals.length * p / 100))]);
+    assert.equal(E.cinemaScore(m), expected, `${m.title}: cinemaScore disagrees with the quantile-map lookup at p=${p}`);
   }
   for(const m of unscored){
     assert.equal(E.cinemaScore(m), -1, `${m.title}: a cohort film with no numeric popularity should not score`);
   }
 });
 
-// AC2: percentile makes the buzz axis agree with the ladder's own badges "for free" now that cinemaScore IS
-// buzzPctlOf — a film clearing a badge always carries a Cascade score at or above that badge's own cut. (The
-// converse — a score at or above a floor always implying that exact badge — does not hold: buzzStop's
-// BUZZ_CUTS cutoffs are looked up by raw popularity against a floor-indexed array value, while the score is
-// a rounded percentile RANK, so a film can round up to a threshold's score without its raw popularity having
-// crossed the value recorded at that index. Measured on the real catalogue: 15 of 995 cohort films sit in
-// that seam — a pre-existing property of the two lookups, not a defect this ticket introduces, so this only
-// asserts the direction that is actually guaranteed.)
-test("CAS-722 AC2: a badge-tier film's Cascade score is always at or above that badge's own floor", () => {
-  const FLOOR = { anticipated: E.BUZZ_PCTL[1], blockbuster: E.BUZZ_PCTL[2], mustsee: E.BUZZ_PCTL[3] };
+// AC5: CAS-722's own badge/score alignment is deliberately given up here (Lee's decision) — the badge
+// continues to come from buzzBandOf/BUZZ_CUTS, popularity-only, and must not move now that cinemaScore reads
+// a different scale. Reimplemented independently from BUZZ_CUTS/popularity rather than read back through
+// buzzStop, so this would actually catch cinemaScore leaking into the badge.
+test("CAS-748 AC5: buzzBandOf's badge stays independent of cinemaScore's quantile map", () => {
+  const badgeFromPopularity = m => {
+    if(!E.inLadderCohort(m) || typeof m.popularity !== "number") return null;
+    for(let s = E.BUZZ_KEY.length - 1; s >= 1; s--) if(m.popularity >= E.BUZZ_CUTS[s]) return E.BUZZ_KEY[s];
+    return null;
+  };
   let checked = 0;
   for(const m of E.MOVIES){
-    const badge = E.scaleTier(m);
-    if(!FLOOR[badge]) continue;
     checked++;
-    const score = E.cinemaScore(m);
-    assert.ok(score >= FLOOR[badge], `${m.title}: badged ${badge} but Cascade score is ${score}, under the ${FLOOR[badge]} floor`);
+    assert.equal(E.buzzBandOf(m), badgeFromPopularity(m), `${m.title}: buzzBandOf disagrees with a popularity-only badge`);
   }
-  assert.ok(checked > 0, "no badged film found — this test would prove nothing");
+  assert.ok(checked > 0, "no films found — this test would prove nothing");
+});
+
+// AC2/AC3: the whole point of the quantile map — read with the SAME cutoff convention cinemaScore itself
+// uses (percentileOf below === the production floor(len*p/100) lookup), against the live catalogue rather
+// than the canned 2026-09-03 measurement, so a normal catalogue refresh cannot make this stale.
+function percentileOf(sortedVals, p){
+  return sortedVals[Math.min(sortedVals.length - 1, Math.floor(sortedVals.length * p / 100))];
+}
+test("CAS-748 AC2: pre-release and released cascadeScore distributions align within 2 points at p50/p75/p90/p95", () => {
+  const preVals = E.MOVIES.filter(m => isPreRelease(m)).map(m => E.cascadeScore(m)).filter(v => v >= 0).sort((a, b) => a - b);
+  const relVals = E.MOVIES.filter(m => !isPreRelease(m)).map(m => E.cascadeScore(m)).filter(v => v >= 0).sort((a, b) => a - b);
+  assert.ok(preVals.length > 0 && relVals.length > 0, "one side of the cohort is empty — this test would prove nothing");
+  for(const p of [50, 75, 90, 95]){
+    const preP = percentileOf(preVals, p), relP = percentileOf(relVals, p);
+    assert.ok(Math.abs(preP - relP) <= 2, `p${p}: pre-release ${preP} vs released ${relP} — more than 2 points apart`);
+  }
+});
+test("CAS-748 AC3: the proportion of each side scoring 90+ is within 1.5 percentage points", () => {
+  const preVals = E.MOVIES.filter(m => isPreRelease(m)).map(m => E.cascadeScore(m)).filter(v => v >= 0);
+  const relVals = E.MOVIES.filter(m => !isPreRelease(m)).map(m => E.cascadeScore(m)).filter(v => v >= 0);
+  assert.ok(preVals.length > 0 && relVals.length > 0, "one side of the cohort is empty — this test would prove nothing");
+  const prePct = preVals.filter(v => v >= 90).length / preVals.length * 100;
+  const relPct = relVals.filter(v => v >= 90).length / relVals.length * 100;
+  assert.ok(Math.abs(prePct - relPct) <= 1.5,
+    `pre-release ${prePct.toFixed(1)}% vs released ${relPct.toFixed(1)}% scoring 90+ — more than 1.5pp apart`);
+});
+
+// AC4: the mapping is a rank lookup into a sorted array, so it must be monotonic by construction — a film
+// with strictly higher buzz can never score lower.
+test("CAS-748 AC4: cinemaScore is monotonic in buzzPctlOf", () => {
+  const cohort = E.MOVIES.filter(m => E.inLadderCohort(m) && typeof m.popularity === "number");
+  assert.ok(cohort.length > 1, "not enough cohort films to compare — this test would prove nothing");
+  const sorted = [...cohort].sort((a, b) => E.buzzPctlOf(a) - E.buzzPctlOf(b));
+  let compared = 0;
+  for(let i = 1; i < sorted.length; i++){
+    const a = sorted[i], b = sorted[i - 1];
+    if(E.buzzPctlOf(a) === E.buzzPctlOf(b)) continue;
+    compared++;
+    assert.ok(E.cinemaScore(a) >= E.cinemaScore(b),
+      `${b.title} (p=${E.buzzPctlOf(b)}) scores ${E.cinemaScore(b)} but ${a.title} (p=${E.buzzPctlOf(a)}), higher buzz, scores lower at ${E.cinemaScore(a)}`);
+  }
+  assert.ok(compared > 0, "no two cohort films with different buzz percentiles found — this test would prove nothing");
+});
+
+// AC6: the degenerate case — nothing to map onto when the released cohort is empty (a catalogue that hasn't
+// loaded). MOVIES is mutated in place and restored in `finally`, the same shared-state pattern CAS-742 AC2
+// above uses, since E.MOVIES and the engine's own internal MOVIES binding are the same array instance.
+test("CAS-748 AC6: cinemaScore falls back to the raw percentile when the released cohort is empty", () => {
+  const cohortFilm = E.MOVIES.find(m => E.buzzPctlOf(m) != null);
+  assert.ok(cohortFilm, "no scoreable cohort film found — this test would prove nothing");
+  const original = E.MOVIES.slice();
+  const onlyPreRelease = original.filter(m => isPreRelease(m));
+  assert.ok(onlyPreRelease.length > 0, "no pre-release film found — this test would prove nothing");
+  try {
+    E.MOVIES.length = 0;
+    E.MOVIES.push(...onlyPreRelease);
+    E.invalidateComputeCaches();
+    assert.equal(E.releasedScoreVals().length, 0, "sanity: the released cohort should now be empty");
+    assert.doesNotThrow(() => E.cinemaScore(cohortFilm));
+    assert.equal(E.cinemaScore(cohortFilm), E.buzzPctlOf(cohortFilm),
+      "with an empty released cohort, cinemaScore should fall back to the raw buzz percentile rather than divide by zero");
+  } finally {
+    E.MOVIES.length = 0;
+    E.MOVIES.push(...original);
+    E.invalidateComputeCaches();
+  }
 });
 
 // AC4: the cohort's sorted popularity and budget arrays are module-level consts, built once at load — never

@@ -5381,7 +5381,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 915, "commit": "e2b9a7f", "builtAt": "2026-09-03T07:38:47Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 916, "commit": "0b08d60", "builtAt": "2026-09-03T07:47:04Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8898,11 +8898,27 @@ function buzzPctlOf(m){
   if(!inLadderCohort(m) || typeof m.popularity!=="number") return null;
   return pctRankOf(BUZZ_POP_VALS, m.popularity);
 }
-// The whole basis of the cinema Cascade score: the buzz percentile, or -1 (no score) with no popularity to
-// read one from. No averaging, no second term (CAS-722).
+// CAS-748: the released cohort's own cascadeScore values, sorted once — the lookup table cinemaScore's
+// quantile map reads from. Lazily built (isPreRelease/qScore are defined further down this file) and cached
+// like _scaleInferCache/_awardRankCache, cleared by the same invalidateComputeCaches hook below rather than a
+// second clearing mechanism. Named so a second sort of the same data cannot appear.
+let _releasedScoreVals = null;
+function releasedScoreVals(){
+  if(_releasedScoreVals) return _releasedScoreVals;
+  return _releasedScoreVals = MOVIES.filter(m=>!isPreRelease(m)).map(qScore).filter(v=>v>=0).sort((a,b)=>a-b);
+}
+// CAS-748: cinemaScore is a QUANTILE MAP, not a raw percentile — a marker set on this score and one set on
+// qScore's released-side score now mean the same thing, because a film's buzz percentile p is looked up
+// against the RELEASED cohort's own score distribution rather than printed as-is. Rank lookup only, the same
+// cutoff convention BUZZ_CUTS already uses: p=0 reads the released cohort's lowest score, p=100 its highest,
+// everything between snaps to the value standing at floor(len*p/100) — never interpolated. Monotonic by
+// construction: floor() over an ascending index can only move up or hold as p rises, never fall.
 function cinemaScore(m){
-  const bz=buzzPctlOf(m);
-  return bz==null ? -1 : bz;
+  const p=buzzPctlOf(m);
+  if(p==null) return -1;
+  const vals=releasedScoreVals();
+  if(!vals.length) return p;   // catalogue not loaded yet — nothing to map onto, so fall back rather than divide by zero
+  return Math.round(vals[Math.min(vals.length-1, Math.floor(vals.length*p/100))]);
 }
 // The boundary reused verbatim from matchesCriteria's own preRelease check — quality signals (People's
 // vote, Critics) do not exist until a film has been judged, and this is the one place that judges it.
@@ -9456,11 +9472,12 @@ function inferScaleWhy(m){
        + `It is the band its peers sit in, not a figure Cascade holds.`;
 }
 window.showScaleInfer=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(inferScaleWhy(m)); };
-// CAS-742: one invalidation point for both catalogue-derived compute-once caches above, called from the
+// CAS-742: one invalidation point for the catalogue-derived compute-once caches above, called from the
 // catalogue swap (MOVIES=payload.movies) rather than a manual clear at each call site — a stale entry let a
 // budget/awards-gated agent admit a different set of films on a device left open across a refresh than on
-// one that just booted.
-function invalidateComputeCaches(){ _scaleInferCache.clear(); _awardRankCache.clear(); }
+// one that just booted. CAS-748 reuses this same hook for _releasedScoreVals rather than adding a second,
+// separate clearing mechanism.
+function invalidateComputeCaches(){ _scaleInferCache.clear(); _awardRankCache.clear(); _releasedScoreVals = null; }
 // ---- Buzz (CAS-145, ladder replaced by CAS-678) --------------------------------
 // How much a film is being talked about right now, off the TMDB popularity figure the pipeline already
 // carries on every title. BUZZ_PCTL/BUZZ_CUTS/buzzStop are defined above (the Scale-tiers section) — the
