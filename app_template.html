@@ -636,19 +636,14 @@
   .cmini .clab{position:relative;z-index:1;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cmini .clab.dim{color:var(--dim);font-weight:500}
   .ctl.on .cmini .cic{color:var(--cyan)}
-  /* CAS-485: Watch-it's own gold glow, reusing .cap.recent's (CAS-468) exact values rather than inventing a
-     second visual language — on when the film's current window is one you ticked here (st.current in
-     notifyChipHTML), no recency gate (unlike isRecent, which the availability capsule keeps). */
-  .ctl.notify.recent .cmini{border-color:#ffd54a;box-shadow:0 0 0 1px rgba(255,213,74,.4),0 0 9px 1px rgba(255,213,74,.55)}
-  /* CAS-712: provenance colour for the Watch On chip — same gold identity as .recent above for an
-     agent-armed level (border only, unless it's also the reached/current level, where .recent's own glow
-     already applies), Watch's own --brand-blue (CAS-705 precedent) for a human-ticked one. The 4-class
-     override below is what makes a reached+manual level read fully blue instead of inheriting .recent's
-     gold glow — equal-specificity rules would otherwise depend on source order. */
-  .ctl.notify.wsrc-auto .cmini{border-color:#ffd54a}
-  .ctl.notify.wsrc-manual .cmini{border-color:var(--brand-blue)}
-  .ctl.notify.recent.wsrc-manual .cmini{border-color:var(--brand-blue);
-    box-shadow:0 0 0 1px rgba(76,125,255,.4),0 0 9px 1px rgba(76,125,255,.55)}
+  /* CAS-715: the "Can Watch" glow (.recent) is gone — provenance (who set the level) is now the PERMANENT
+     colour, and recency ("isnew", filmIsNew()) is a separate glow layered on top of it, so the two questions
+     stop sharing one CSS hook. Gold = human-set (wsrc-manual), --brand-blue = agent-set (wsrc-auto) — this
+     REVERSES CAS-712's mapping, Lee's deliberate call, 2026-09-03: not a bug, do not revert it. */
+  .ctl.notify.wsrc-manual .cmini{border-color:#ffd54a}
+  .ctl.notify.wsrc-auto   .cmini{border-color:var(--brand-blue)}
+  .ctl.notify.wsrc-manual.isnew .cmini{box-shadow:0 0 0 1px rgba(255,213,74,.45),0 0 9px 1px rgba(255,213,74,.60)}
+  .ctl.notify.wsrc-auto.isnew   .cmini{box-shadow:0 0 0 1px rgba(76,125,255,.55),0 0 10px 2px rgba(76,125,255,.75)}
   /* CAS-374/CAS-439: the Watch/Watched chip is now the toggle for its own panel — this arrow is the only cue
      for open vs closed, since the separate collapse chevron inside the panel is gone. The panel opens ABOVE
      the button (CAS-304), so the chevron points UP when closed (that's the direction the list will open) and
@@ -4785,10 +4780,17 @@ function recomputeFound(){
   // in this harness, it is there; the fallback keeps that one paint sane rather than throwing.
   const CP = (typeof window!=="undefined") ? window.CascadePersistence : null;
   const admitted = new Map();   // cascade id -> Set(movie_id) — agent_films' own keys, always strings
+  // CAS-715: has THIS cascade's own cascSigOf moved since agent_films last agreed with it, or does it hold no
+  // admitted films at all yet (a brand-new agent has no prior signature to compare against, same reading)?
+  // Either way, anything that lands in this cascade's set during THIS pass is news about the AGENT, not about
+  // the film, and must not read as "new" — see admitDrift below, and filmIsNew's own comment.
+  const cascadeDrift = new Map();   // cascade id -> boolean
   if(CP){
     cascades.forEach(c=>{
       const sig = cascSigOf(c);
-      CP.agentFilmsFor(c.id).forEach(r=>{
+      const priorRows = CP.agentFilmsFor(c.id);           // read once, before anything below can touch it
+      cascadeDrift.set(c.id, priorRows.length===0 || priorRows.some(r=>r.agent_sig!==sig));
+      priorRows.forEach(r=>{
         const mid = +r.movie_id;
         const e = notify[r.movie_id];
         // Point 2: watched or dismissed outranks admission itself — the row is deleted, not merely hidden.
@@ -4809,6 +4811,12 @@ function recomputeFound(){
         if(stillIn){
           CP.setAgentFilm(c.id, r.movie_id, { admitted_at:r.admitted_at, admission_score:r.admission_score,
                                                admission_status:r.admission_status, agent_sig:sig });
+          // CAS-715: reaching here means r.agent_sig!==sig, i.e. this cascade drifted — but firstFound is
+          // only EVER stamped once, the first time a film enters `found` (trackFirstFound, below), so
+          // !firstFound[mid] is exactly "this pass is that first time" — a film that's been sitting in
+          // `found` for days keeps its own firstFound stamp and is merely being re-confirmed here, not
+          // freshly admitted, so an unrelated later edit to this same agent can't retroactively kill its glow.
+          if(!firstFound[mid]) admitDrift[mid]=true;
         } else {
           CP.clearAgentFilm(c.id, r.movie_id);
           // A film LEAVING an agent loses only the Watch On value THIS agent armed — a hand-ticked value is
@@ -4850,6 +4858,9 @@ function recomputeFound(){
         if(!watchesFilm(m,c)) return false;
         CP.setAgentFilm(c.id, m.tmdb_id, { admission_score:cascadeScore(m), admission_status:primaryStatus(m),
                                             agent_sig:cascSigOf(c) });
+        // CAS-715: a fresh arrival into a cascade that drifted this pass (edited, or brand new) is news about
+        // the agent, not the film — see cascadeDrift's own comment above and firstFound's just above.
+        if(cascadeDrift.get(c.id) && !firstFound[m.tmdb_id]) admitDrift[m.tmdb_id]=true;
         admitted.get(c.id).add(mkey);
         return true;
       });
@@ -4956,6 +4967,7 @@ function recomputeFound(){
   });
   saveNotify();
   trackFirstFound();   // the day each film was found is stamped here, the moment it lands (CAS-70 freshness)
+  trackAdmitDrift();   // CAS-715: gc's + persists admitDrift the same way, off the same freshly-rebuilt `found`
   console.log('[CAS-460] recomputeFound end', performance.now(), 'elapsed_ms', (performance.now()-_t460recompute).toFixed(1));
 }
 // What the megaphone's colour is claiming, in one word.
@@ -5002,6 +5014,7 @@ const filt={status:new Set(), year:new Set(), age:new Set(), culture:new Set(), 
   exclude:new Set(),       // genres you never want to see — the ONE criterion that subtracts (CAS-71)
   imdb:0, rt:0, gross:0, search:"", foundOnly:false, hideWatched:false, showHidden:false, awards:false,
   recent:false,             // CAS-468: only films whose status pill is currently glowing (isRecent)
+  newOnly:false,            // CAS-715: only films currently glowing "isnew" on the Watch On chip (filmIsNew)
   sort:DEFAULT_SORT,
   includeUnrated:false,    // set by the open Cascade's escape hatch; off by default = unrated titles drop out
   budget:0, includeUnbudgeted:false,
@@ -5840,7 +5853,7 @@ $("budgetBand").onchange=e=>{filt.budget=+e.target.value; if(!filt.budget) filt.
 function clearFilters(){
   ["status","year","age","culture","genre","exclude"].forEach(k=>filt[k].clear());
   filt.imdb=0;filt.rt=0;filt.gross=0;filt.foundOnly=false;filt.hideWatched=false;filt.showHidden=false;
-  filt.awards=false;filt.recent=false;filt.search="";filt.includeUnrated=false;
+  filt.awards=false;filt.recent=false;filt.newOnly=false;filt.search="";filt.includeUnrated=false;
   filt.budget=0;filt.includeUnbudgeted=false;
   filt.watchTiers.clear();
 }
@@ -6028,6 +6041,7 @@ function passes(m){
   if(filt.genre.size && !filt.genre.has((m.genres||[])[0])) return false;
   if(filt.awards && !m.award) return false;
   if(filt.recent && !isRecent(m)) return false;
+  if(filt.newOnly && !filmIsNew(m.tmdb_id)) return false;   // CAS-715
   if(!ratingOK(m, filt.imdb, filt.includeUnrated)) return false;
   if(!budgetOK(m, filt.budget)) return false;
   if((m.rt_critic||0) < filt.rt) return false;
@@ -7249,7 +7263,10 @@ function notifyChipHTML(id){
   // armed by an agent (CAS-613) or ticked by hand. null (a level ticked before this shipped, with no
   // recorded source) adds neither class and reads as plain, same as before this ticket.
   const wsrc=filmWatchSource(id);
-  return `<button type="button" class="ctl notify${st.current?" on recent":""}${wsrc?` wsrc-${wsrc}`:""}" data-nid="${id}"
+  // CAS-715: "Can Watch" (.recent) is retired from this chip outright — the film's own availability status
+  // pill (.cap.recent, untouched) already says that. isnew is the new, separate glow: filmIsNew() combines
+  // recency (isNewFound) with "this is news about the FILM, not about an agent you just edited" (admitDrift).
+  return `<button type="button" class="ctl notify${st.current?" on":""}${filmIsNew(id)?" isnew":""}${wsrc?` wsrc-${wsrc}`:""}" data-nid="${id}"
       onclick="openNotifyPanel(${id},this)" aria-haspopup="true" aria-expanded="false" aria-pressed="${!!st.on}"
       title="${escA(title)}" aria-label="${escA(title)}">
     <span class="cmini"><i class="cfill" style="width:${st.total?100*st.on/st.total:0}%;background:var(--green)"></i>
@@ -7763,6 +7780,27 @@ function trackFirstFound(){
   firstSaved=s;
   try{ localStorage.setItem(FIRST_KEY, s); }catch(e){}
 }
+// CAS-715: was this admission caused by the world moving, or by editing the agent? firstFound/isNewFound
+// only ever answer "is this film new to the list", with no opinion on WHY — the Watch On chip's glow needs
+// the second half: a film that only showed up because you just widened an agent isn't news about the FILM,
+// so it must not glow, even though it did just land on the list. recomputeFound is the one place that can
+// still tell the two apart (see its own cascadeDrift/wasFound comments) — it stamps the verdict here, once,
+// at the moment of admission. Device-local, same as firstFound (CAS-715 accepted that limitation rather than
+// wait on CAS-742-style account plumbing).
+const ADMIT_DRIFT_KEY = "cascade_admit_drift";
+function loadAdmitDrift(){
+  try{ const o=JSON.parse(localStorage.getItem(ADMIT_DRIFT_KEY)||"{}");
+    return (o && typeof o==="object" && !Array.isArray(o)) ? o : {}; }catch(e){ return {}; }
+}
+const admitDrift = loadAdmitDrift();
+let admitDriftSaved=null;
+function trackAdmitDrift(){
+  Object.keys(admitDrift).forEach(id=>{ if(!found.has(+id)) delete admitDrift[id]; });
+  const s=JSON.stringify(admitDrift);
+  if(s===admitDriftSaved) return;
+  admitDriftSaved=s;
+  try{ localStorage.setItem(ADMIT_DRIFT_KEY, s); }catch(e){}
+}
 const daysSince = iso => Math.round((Date.parse(TODAY) - Date.parse(iso)) / 864e5);
 // CAS-742: the account's own answer to "when was this film found", read off agent_films.admitted_at
 // (CAS-726) — a device meeting the account for the first time already has the film's real admission date on
@@ -7786,6 +7824,11 @@ const isNewFound = id => {
   if(acctDate) return daysSince(acctDate) < NEW_DAYS;
   const d=firstFound[id]; return !!d && daysSince(d) < NEW_DAYS;
 };
+// CAS-715: the Watch On chip's "isnew" glow + the New filter — isNewFound (recency) AND "the world moved,
+// not the agent" (admitDrift, stamped once at admission by recomputeFound). Kept separate from isNewFound
+// itself rather than folded in: isNewFound also drives the unrelated 🆕 badge (isFresh, CAS-70/CAS-742),
+// which has no opinion on why a film is new and must keep not having one.
+const filmIsNew = id => isNewFound(id) && !admitDrift[id];
 
 // ---- "Recent" (CAS-468) — supersedes CAS-447's card-level badge -----------------
 // One rule for both a first listing and a later status change: the status pill (the capsule bandHTML draws
@@ -8639,7 +8682,7 @@ function activeCount(){
   if(filt.imdb)n++; if(filt.rt)n++; if(filt.gross)n++; if(filt.foundOnly)n++;
   // hideWatched / showHidden are deliberately NOT counted (CAS-100): they no longer remove a row from any
   // list, so counting them would claim a filter is doing work that nothing is doing.
-  if(filt.search)n++; if(filt.awards)n++; if(filt.recent)n++;
+  if(filt.search)n++; if(filt.awards)n++; if(filt.recent)n++; if(filt.newOnly)n++;
   if(filt.budget)n++;
   return n;
 }
@@ -10143,7 +10186,7 @@ $("saveAsGo").onclick=()=>{
 function filtSnapshot(){
   const s={sets:{}};
   ["status","year","age","culture","genre","exclude"].forEach(k=>{ s.sets[k]=[...filt[k]]; });
-  ["imdb","rt","gross","awards","recent","budget","includeUnrated","includeUnbudgeted","foundOnly",
+  ["imdb","rt","gross","awards","recent","newOnly","budget","includeUnrated","includeUnbudgeted","foundOnly",
    "hideWatched","search"].forEach(k=>{ s[k]=filt[k]; });
   return s;
 }
@@ -10166,6 +10209,7 @@ const RELAXERS = [
    clear:()=>{ filt.budget=0; filt.includeUnbudgeted=false; }},
   {key:"awards",   label:()=>"awards-only",        on:()=>filt.awards,         clear:()=>{ filt.awards=false; }},
   {key:"recent",   label:()=>"recent-only",        on:()=>filt.recent,         clear:()=>{ filt.recent=false; }},
+  {key:"newOnly",  label:()=>"new-only",           on:()=>filt.newOnly,        clear:()=>{ filt.newOnly=false; }},
   {key:"rt",       label:()=>`the critics bar (${filt.rt}%+)`, on:()=>filt.rt>0, clear:()=>{ filt.rt=0; }},
   {key:"gross",    label:()=>"the box-office floor", on:()=>filt.gross>0,      clear:()=>{ filt.gross=0; }},
   {key:"search",   label:()=>`the search “${filt.search}”`, on:()=>!!filt.search, clear:()=>{ filt.search=""; }},
