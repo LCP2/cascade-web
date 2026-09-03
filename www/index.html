@@ -5090,7 +5090,9 @@ const WATCH_STEPS = [
 ];
 // CAS-677: watchedOn now defaults to every WATCH_STEPS key (permissive — excludes nothing) rather than [],
 // since the editor UI that could widen a narrower stored value is gone (see normWatchlist migration below).
-function watchlistDefaults(){ return {svcOn:["stream"], cascOff:[], watchedOn:WATCH_STEPS.map(s=>s.key), watchTiers:[], sort:null, excludeTags:[]}; }
+// CAS-753: mineOnly defaults ON (Lee's explicit call) — a stored record without the field (every list that
+// pre-dates this ticket) takes the default, which is what makes it on-by-default for existing users too.
+function watchlistDefaults(){ return {svcOn:["stream"], cascOff:[], watchedOn:WATCH_STEPS.map(s=>s.key), watchTiers:[], sort:null, excludeTags:[], mineOnly:true}; }
 function normWatchlist(o){
   const d=watchlistDefaults();
   if(!o || typeof o!=="object") return d;
@@ -5108,6 +5110,7 @@ function normWatchlist(o){
     sort:       typeof o.sort==="string" ? o.sort : null,
     // CAS-642: excludeTags moves here from the agent object — one tag-exclusion home per list, not per agent.
     excludeTags: arr(o.excludeTags) || d.excludeTags,
+    mineOnly:   typeof o.mineOnly==="boolean" ? o.mineOnly : d.mineOnly,
   };
 }
 // One list: id/name/icon/order (the deck-style identity fields) plus the five filter fields normWatchlist
@@ -5232,6 +5235,18 @@ const activeWatchlist = () => watchLists.find(l=>l.id===watchActiveId) || null;
 // execution. It self-invokes unconditionally at its own definition site, after this pointer is settled,
 // so the scratch state still ends up scoped to the right list before any render can read it.
 if(!activeWatchlist() && watchLists.length) setActiveWatchlist(firstWatchlistId());
+// CAS-753: "Show only available on my services" — a boolean on the ACTIVE watch list's own persisted
+// record (mirrors excludeTags just below: one gate, read from here, not re-expressed per call site).
+// Every entry in `watchLists` is already normWatchlistEntry()-shaped by the time it can be active, so
+// `.mineOnly` is always a real boolean here — no default-coalescing needed at the read site.
+const watchMineOnlyOn = () => { const l=activeWatchlist(); return l ? l.mineOnly : true; };
+function setWatchMineOnly(v){
+  const l=activeWatchlist(); if(!l) return;
+  l.mineOnly=!!v;
+  saveWatchlists();
+}
+window.toggleWatchMineOnly = () => { setWatchMineOnly(!watchMineOnlyOn()); render(); };
+window.enableWatchMineOnly = () => { setWatchMineOnly(true); render(); };   // the active-filter chip's clear
 // CAS-642 INDICATIVE: excludeTags moves from the agent to the watch list. An agent that carries one today
 // has its value copied onto every list that includes that agent (cascOff not listing it), once — keyed like
 // the CAS-148 sort migration (SORT_MIG_KEY above) so it cannot run twice. matchesCriteria's own excludeTags
@@ -5380,7 +5395,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 920, "commit": "2408654", "builtAt": "2026-09-03T09:57:41Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 921, "commit": "1293948", "builtAt": "2026-09-03T10:31:02Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8396,6 +8411,7 @@ window.clearAllWatchFilters = () => {
   watchGenreOff[watchTab].clear();
   watchStatusOff[watchTab].clear();
   watchAgentOff[watchTab].clear();
+  setWatchMineOnly(true);   // CAS-753: back to the default (on), same as every other field here
   render();
 };
 let watchSheetOpen=false;
@@ -8426,7 +8442,9 @@ function renderWatchSheet(rows, shownCount){
   const pickedBy=watchPickedBy[watchTab];
   const statusOff=watchStatusOff[watchTab];
   const agentOff=watchAgentOff[watchTab];
-  const activeCount=(pickedBy!=="all"?1:0)+(watchedSel.size?1:0)+(genreOff.size?1:0)+(statusOff.size?1:0)+(agentOff.size?1:0);
+  // CAS-753: default is ON, so — unlike every set/off field above — it counts as a deviation when it's OFF.
+  const mineOnly=watchMineOnlyOn();
+  const activeCount=(pickedBy!=="all"?1:0)+(watchedSel.size?1:0)+(genreOff.size?1:0)+(statusOff.size?1:0)+(agentOff.size?1:0)+(mineOnly?0:1);
   const badge=$("watchFilterBadge");
   if(badge){ badge.hidden=activeCount===0; badge.textContent=activeCount; }
   const filterBtn=$("watchFilterBtn"); if(filterBtn) filterBtn.classList.toggle("on", activeCount>0);
@@ -8465,6 +8483,13 @@ function renderWatchSheet(rows, shownCount){
   const body=$("watchSheetBody");
   if(body) body.innerHTML=`
     <div class="wsheetsec">
+      <div class="wsheethd"><span>Availability</span></div>
+      <div class="switch wsheetswitch${mineOnly?" on":""}" id="watchMineOnlySwitch" role="switch"
+        aria-checked="${mineOnly}" onclick="toggleWatchMineOnly()">
+        <span>Show only available on my services</span><span class="knob"></span>
+      </div>
+    </div>
+    <div class="wsheetsec">
       <div class="wsheethd"><span>Picked by</span></div>
       <div class="pickedbyseg">${pickedByHTML}</div>
     </div>
@@ -8497,6 +8522,7 @@ function renderWatchSheet(rows, shownCount){
   const showBtn=$("watchSheetShowBtn");
   if(showBtn) showBtn.textContent = shownCount ? `Show ${shownCount} film${shownCount===1?"":"s"}` : "No films match";
   const chips=[];
+  if(!mineOnly) chips.push({label:"All services", clear:"enableWatchMineOnly()"});
   if(pickedBy!=="all") chips.push({label:PICKED_BY_OPTS.find(o=>o.key===pickedBy).label,
     clear:"clearWatchPickedBy()"});
   if(watchedSel.size) chips.push({label:chipSummary(REVIEW_STEPS.filter(v=>watchedSel.has(v.key)).map(v=>v.lbl)),
@@ -10323,6 +10349,16 @@ window.relaxFilter=key=>{
   // CAS-287: the count on the card and the list itself both move — no banner needed to say so.
 };
 window.resetEverything=()=>{ setActive(null); clearFilters(); syncFilterUI(); render(); };
+// CAS-753 AC4: the honest-dead-end pattern (CAS-252) for the Watch list's own "my services" filter — same
+// tone as prefSwitch's own note, said as a full empty state rather than a note under a switch.
+function watchMineOnlyDeadEndHTML(){
+  return `<div class="empty">
+    <div class="emoji">📺</div>
+    <div class="eh">This scope is on and you haven't picked any services yet, so nothing qualifies.</div>
+    <div class="ep">Pick the ones you actually have, or turn off "Show only available on my services" in Filters.</div>
+    <div class="ebtns">${pickServicesCTA()}</div>
+  </div>`;
+}
 function scopeEmptyHTML(){
   return `<div class="empty">
     <div class="emoji">🍿</div>
@@ -17904,6 +17940,13 @@ function render(){
   if(genreOff.size) rows=rows.filter(m=>!(m.genres||[]).some(g=>genreOff.has(g)));
   if(watchStatusOff[watchTab].size) rows=rows.filter(filmMatchesCurrentStatus);
   rows=rows.filter(filmMatchesWatchedFilter);
+  // CAS-753: "Show only available on my services" — gates only the three home-window sections
+  // (HOME_KEYS, the same set the agent-level per-window scope already uses), never Cinema/Upcoming, which
+  // carry no offers to test in the first place. `preMineOnlyRows` lets the empty branch below tell "the
+  // catalogue genuinely has nothing" apart from "this scope, with nothing picked, ate everything".
+  const preMineOnlyRows=rows;
+  const mineOnly=watchMineOnlyOn();
+  if(mineOnly) rows=rows.filter(m=>!HOME_KEYS.includes(primaryStatus(m)) || matchesServices(m, primaryStatus(m)));
   const shown=rows.filter(m=>!taggedOut(m));
   const stubbed=rows.length-shown.length;
   renderWatchTabs();
@@ -17930,7 +17973,10 @@ function render(){
   if(!rows.length){
     // v0.9.4: two different empties. If the agent DID match films and the scope buttons emptied it, that is
     // not a criteria problem and the relax options would be a lie — say the discerning line instead.
-    wrap.innerHTML = (scopeRows.pool||[]).length ? scopeEmptyHTML() : emptyResultsHTML();
+    // CAS-753 AC4: a THIRD empty — mineOnly, on, with nothing picked, is a dead end this tab would
+    // otherwise have content for (preMineOnlyRows), so it gets its own honest explanation ahead of either.
+    wrap.innerHTML = (mineOnly && !servicesPicked() && preMineOnlyRows.length) ? watchMineOnlyDeadEndHTML()
+      : (scopeRows.pool||[]).length ? scopeEmptyHTML() : emptyResultsHTML();
     renderJumpBar();          // CAS-275: no sections, so no jump rail — and no stale one left behind
     markFoundSeen();
     listReady();
