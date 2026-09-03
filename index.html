@@ -5338,7 +5338,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 902, "commit": "a477355", "builtAt": "2026-09-02T23:42:48Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 903, "commit": "8c7a3c3", "builtAt": "2026-09-03T00:22:56Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7251,7 +7251,7 @@ function agentChipHTML(id){
 // hence the round .wwb tick, not the Lists checklist's square one — with the film's current owner pre-ticked.
 function agentPanelRowsHTML(id){
   const owner=cascadesFor(id)[0]||null;
-  const sorted=[...cascades].sort((a,b)=>(a.order??1e9)-(b.order??1e9));
+  const sorted=[...cascades].sort(cascadeOrderCmp);
   const rows=sorted.map(c=>{
     const on=!!owner && owner.id===c.id;
     return `<button type="button" class="nopt${on?" on":""}" data-cid="${c.id}" style="--wwc:var(--accent)"
@@ -8319,7 +8319,7 @@ function renderWatchSheet(rows, shownCount){
   }).join("");
   // CAS-720: leInnerHTML's Agents-to-include checklist (agent name + switch), in cascades rank order —
   // no per-agent count/Edit here, this list only ever narrows which agents this tab draws from.
-  const agentRowsSorted=[...cascades].sort((a,b)=>(a.order??1e9)-(b.order??1e9));
+  const agentRowsSorted=[...cascades].sort(cascadeOrderCmp);
   const agentRowsHTML=agentRowsSorted.map(c=>{
     const on=!agentOff.has(c.id);
     return `<div class="agrow ym-casc agent-${c.kind==="stream"?"str":"cin"}">
@@ -9103,7 +9103,28 @@ cascades.forEach(normCascade);   // saved Cascades are filled out here, not at l
 // had one — it keeps the position it already holds in the array (which IS the deck order), stamped once so
 // a later cross-device load has something to sort by. `saveCascades()` never runs from this default-fill
 // pass, so an account that has never opened the Agents screen is never written to just for loading.
-cascades.forEach((c,i)=>{ if(typeof c.order!=="number") c.order=i; });
+// CAS-734: filling from the array INDEX alone ignored values already taken by agents that DO carry an
+// explicit order, so a fresh load (whose array is shaped differently from another device's) could hand out
+// an order another agent already holds — observed live as two agents both landed on 0. Walk past every
+// value already in use, on either kind of agent, so no two can ever collide.
+(function(){
+  const used = new Set(cascades.filter(c=>typeof c.order==="number").map(c=>c.order));
+  let next = 0;
+  cascades.forEach(c=>{
+    if(typeof c.order==="number") return;
+    while(used.has(next)) next++;
+    c.order = next; used.add(next); next++;
+  });
+})();
+// CAS-734 Change 5: (a.order??1e9)-(b.order??1e9) alone returns 0 on a tie, and Array.sort then falls back
+// to whatever order the two rows happened to arrive in — arbitrary per device once two agents share an
+// `.order` value (the very duplicate the fill above now prevents going forward, but an already-synced
+// account can still hold one from before this fix). This makes the comparator a genuine TOTAL order:
+// created_at breaks the tie, id breaks that — the same pair of values on every device holding the same two
+// rows, so ties resolve identically everywhere instead of by arrival order.
+const cascadeOrderCmp = (a,b) => (a.order??1e9)-(b.order??1e9)
+  || String(a.created_at||"").localeCompare(String(b.created_at||""))
+  || String(a.id||"").localeCompare(String(b.id||""));
 
 // ---- No duplicate Cascades (CAS-72) --------------------------------------------
 // Tapping a template twice gave you two identical Cascades, and the demo state had accumulated four identical
@@ -15658,7 +15679,7 @@ function renderAgentsScreen(){
   const n=cascades.length;
   // CAS-708: rank is display/drag order, not array position — sort a local copy by .order so a stale
   // array position (e.g. mid-drag) never shows the wrong number.
-  const sorted=[...cascades].sort((a,b)=>(a.order??1e9)-(b.order??1e9));
+  const sorted=[...cascades].sort(cascadeOrderCmp);
   const rows=sorted.map((c,i)=>{
     const rank=i+1;
     const newest=agentNewestDays(c);
@@ -18621,14 +18642,26 @@ else if(dedupedN)
     return out;
   }
   function cascadeToRow(c){
-    const criteria={}; for(const k in c){ if(k!=="id"&&k!=="name"&&k!=="paused") criteria[k]=c[k]; }
+    // CAS-734: created_at is excluded the same way id/name/paused already are — it rides on the row itself
+    // (rowToCascade below carries it back), never inside criteria, or it would live in two places at once.
+    const criteria={}; for(const k in c){ if(k!=="id"&&k!=="name"&&k!=="paused"&&k!=="created_at") criteria[k]=c[k]; }
     return { id:c.id, user_id:uid(), name:c.name||"My Cascade",
              criteria, alert_moments:momentsOf(c), active:!c.paused };
   }
   function rowToCascade(row){
-    const c = Object.assign({}, row.criteria||{}, { id:row.id, name:row.name, paused:row.active===false });
+    // CAS-734: created_at rides along purely so cascadeOrderCmp has a real, device-independent tie-breaker
+    // for two agents sharing an `.order` — nothing else reads it, and it is never written back (see above).
+    const c = Object.assign({}, row.criteria||{},
+      { id:row.id, name:row.name, paused:row.active===false, created_at:row.created_at||null });
     return normCascade(c);
   }
+  // CAS-734: the FULL row shape — name, every criteria field including `order`, alert_moments,
+  // active/paused — unlike cascSigOf's narrower "are these two functionally the same radar" question
+  // (which deliberately excludes `order`: CAS-72's dedupe test is about matches found, not shelf position).
+  // This is the signature the per-row conflict/dirty tracking below diffs against: it has to catch every
+  // field an upsert would actually write, or a real change (a reorder) would never look dirty and would
+  // never sync.
+  const cascadeFullSigOf = c => { const r=cascadeToRow(c); return JSON.stringify([r.name, r.criteria, r.alert_moments, r.active]); };
   // expose the pure mappers for the monitor stories / tests to mirror
   window.CascadeShape = { cascadeToRow, rowToCascade, momentsOf };
 
@@ -18651,15 +18684,71 @@ else if(dedupedN)
   // signed-out transition below, so the account's agents simply stop being what's on screen.
   function loadGuest(){ replaceCascades([]); }
 
-  // ---- write path: upsert current, delete only what THIS device watched disappear -------------------
+  // ---- write path: upsert only what THIS device changed, delete only what it watched disappear ---------
   // CAS-408: the old prune deleted every account row "not on this device's screen" — which silently
   // swept up rows this device had simply never LOADED (created on another device, or not yet pulled),
-  // not only rows the user actually removed. `cascadeBaseline` is what this device last confirmed the
-  // account really holds (its own last successful load or push); a delete is computed against THAT
-  // private baseline, never against the live account, so this device can only ever delete an id it
-  // itself watched drop out of its own list — exactly what the Delete button (and nothing else) does.
+  // not only rows the user actually removed. CAS-734 replaces the bare-id `cascadeBaseline` Set this
+  // guarded with `cascadeKnown`, a Map<id,{sig,version}> — this device's own record of what the ACCOUNT
+  // last confirmed for each agent it has seen, the same shape CAS-692 gave `watchlistKnown`. A delete is
+  // still computed against THAT private record, never against the live account, so this device can only
+  // ever delete an id it itself watched drop out of its own list — exactly what the Delete button (and
+  // nothing else) does.
   let syncTimer=null, syncing=false, syncAgain=false;
-  let cascadeBaseline=null;   // null until the first load/sync — nothing is deleted before there's a baseline
+  const CASCADE_KNOWN_KEY = "cascade_cascade_known";
+  function loadCascadeKnown(){
+    try{
+      const raw=localStorage.getItem(CASCADE_KNOWN_KEY);
+      if(!raw) return new Map();
+      const parsed=JSON.parse(raw);
+      return new Map(Array.isArray(parsed) ? parsed : []);
+    }catch(e){ return new Map(); }
+  }
+  function saveCascadeKnown(){
+    try{ localStorage.setItem(CASCADE_KNOWN_KEY, JSON.stringify([...cascadeKnown])); }catch(e){}
+  }
+  let cascadeKnown = loadCascadeKnown();
+  // CAS-734: this device's own record of when it last actually CHANGED an agent's content — as opposed to
+  // cascadeKnown's version, which is merely when it last SAW the account's copy. Only an id this device has
+  // genuinely edited is ever in here, so an agent it only ever received can never win a conflict it was
+  // never a party to. Persisted for the same reason cascadeKnown is: an edit made just before the tab
+  // closes must still outrank a stale remote row on the very next load, not only within the same session.
+  const CASCADE_EDITED_KEY = "cascade_cascade_edited_at";
+  function loadCascadeEditedAt(){
+    try{
+      const raw=localStorage.getItem(CASCADE_EDITED_KEY);
+      if(!raw) return new Map();
+      const parsed=JSON.parse(raw);
+      return new Map(Array.isArray(parsed) ? parsed : []);
+    }catch(e){ return new Map(); }
+  }
+  function saveCascadeEditedAt(){
+    try{ localStorage.setItem(CASCADE_EDITED_KEY, JSON.stringify([...cascadeEditedAt])); }catch(e){}
+  }
+  let cascadeEditedAt = loadCascadeEditedAt();
+  // CAS-734: every cascade whose content no longer matches what this device last confirmed the account
+  // holds is, by definition, something THIS device just changed — stamp it now so a later load/reconcile
+  // has real evidence to weigh against the account row's own updated_at, rather than the old "local always
+  // wins" guess. Runs from the one save chokepoint (below), so every edit path — rename, toggle, delete,
+  // reorder — is covered without instrumenting each call site individually.
+  function markCascadesEditedNow(){
+    const nowIso = new Date().toISOString();
+    cascades.forEach(c=>{
+      const known = cascadeKnown.get(c.id);
+      if(!known || known.sig!==cascadeFullSigOf(c)) cascadeEditedAt.set(c.id, nowIso);
+    });
+    saveCascadeEditedAt();
+  }
+  // Dirty rows to push and rows to delete are DERIVED by diffing the live `cascades` array against
+  // cascadeKnown, rather than tracked by instrumenting every edit call site — the same reasoning CAS-692
+  // gives watchlistDirtyRows/watchlistPendingDeleteIds.
+  const cascadeDirtyRows = () => cascades.filter(c=>{
+    const known=cascadeKnown.get(c.id);
+    return !known || known.sig!==cascadeFullSigOf(c);
+  });
+  const cascadePendingDeleteIds = () => {
+    const ids=new Set(cascades.map(c=>c.id).filter(isUuid));
+    return [...cascadeKnown.keys()].filter(id=>!ids.has(id));
+  };
   function scheduleSync(){ clearTimeout(syncTimer); syncTimer=setTimeout(runSync, 400); }
   async function runSync(){
     if(!accountActive()) return;
@@ -18669,37 +18758,58 @@ else if(dedupedN)
     catch(err){ console.warn("Cascade: account sync failed", err); }
     finally{ syncing=false; if(syncAgain){ syncAgain=false; scheduleSync(); } }
   }
+  // CAS-734 Change 4: pushes only the agents this device has actually changed (cascadeDirtyRows, diffed
+  // against cascadeKnown) — a single-agent rename now upserts exactly one row, not the whole array. The old
+  // `cascades.map(cascadeToRow)` upserted every row on any single edit, which is why a rename used to leave
+  // every agent carrying an identical updated_at.
   async function syncToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
     if(acctTableFail.cascades) return;   // CAS-656 AC2: a failed load must not push local state back over it
-    const rows = cascades.map(cascadeToRow);
-    if(rows.length){
-      const { error } = await c.from("cascades").upsert(rows, { onConflict:"id" });
+    const dirty = cascadeDirtyRows();
+    const deletes = cascadePendingDeleteIds();
+    if(dirty.length){
+      const rows = dirty.map(cascadeToRow);
+      const { data, error } = await c.from("cascades").upsert(rows, { onConflict:"id" }).select("id,updated_at");
       if(error){ console.warn("Cascade upsert", error); return; }
+      const versionById = new Map((data||[]).map(r=>[r.id, r.updated_at]));
+      dirty.forEach(x=>{
+        cascadeKnown.set(x.id, { sig: cascadeFullSigOf(x), version: versionById.get(x.id)||null });
+        cascadeEditedAt.delete(x.id);   // pushed — the account now holds this device's edit
+      });
+      saveCascadeEditedAt();
     }
-    const ids = new Set(cascades.map(x=>x.id).filter(isUuid));
-    if(cascadeBaseline){
-      const gone=[...cascadeBaseline].filter(id=>!ids.has(id));
-      if(gone.length){
-        const { error } = await c.from("cascades").delete().eq("user_id", owner).in("id", gone);
-        if(error){ console.warn("Cascade delete", error); return; }
-      }
+    if(deletes.length){
+      const { error } = await c.from("cascades").delete().eq("user_id", owner).in("id", deletes);
+      if(error){ console.warn("Cascade delete", error); return; }
+      deletes.forEach(id=>{ cascadeKnown.delete(id); cascadeEditedAt.delete(id); });
+      saveCascadeEditedAt();
     }
-    cascadeBaseline = ids;
+    saveCascadeKnown();
   }
 
-  // ---- read path: adopt the account, and offer to bring this device's work with you ----
+  // ---- shared conflict resolver: loadAccount (full load) and reconcileCascades (background merge) BOTH
+  // call this, and only this. CAS-734 fault #2 was these two paths disagreeing about who wins — loadAccount
+  // was unconditionally local-wins, reconcileCascades unconditionally remote-wins — so which version a
+  // device showed depended only on whether the last event was a page load or a tab focus. Local wins only
+  // when this device's own recorded edit time for that agent (cascadeEditedAt) is genuinely newer than the
+  // account row's own updated_at; an id this device has never edited (no cascadeEditedAt entry) never
+  // wins — there is no local edit here to prefer over the account's copy.
+  function resolveCascadeConflict(localCascade, rawRemoteRow){
+    const editedIso = cascadeEditedAt.get(localCascade.id) || null;
+    const localWins = !!editedIso && editedIso > (rawRemoteRow.updated_at || "");
+    return localWins ? normCascade({...localCascade}) : rowToCascade(rawRemoteRow);
+  }
+
+  // ---- read path: adopt the account, and fold in what only this device has built ----
   // CAS-212 replaces two stacked native confirm()s — one for Cascades, one for watch statuses, each
   // firing ONLY when the account was empty — with one offer that covers everything and works when the
   // account already has rows. That second case is the one that mattered: with a non-empty account the
   // old code silently adopted the remote list and the agents on this device just vanished from view.
-  // MERGE, not replace. A Cascade is added only if the account has nothing matching it (cascSigOf, the
-  // same signature the duplicate guard uses), so signing in twice cannot give you two of everything.
-  // A watch status is added only for a film the account has said nothing about — the account is the
-  // record and this device is the newcomer, so the account wins every conflict.
+  // MERGE, not replace. A Cascade already known to the account by id resolves through resolveCascadeConflict
+  // above; one genuinely new to this device (the account has never confirmed it) is folded straight in.
   async function loadAccount(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("cascades").select("*");   // RLS: only mine
+    const { data, error } = await c.from("cascades").select("*").order("created_at");   // RLS: only mine
     if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); cascadesReady=true; setAcctTableFail("cascades", true); return; }
     setAcctTableFail("cascades", false);
     // CAS-733 Change 5: one-time legacy cleanup — a device carrying a pre-account guest agent set
@@ -18709,50 +18819,47 @@ else if(dedupedN)
     // once there is nothing left to clean — the mirror write below (saveCascadesLocal) repopulates the
     // same key with the authoritative account state a few lines down.
     try{ localStorage.removeItem("cascade_cascades"); }catch(e){}
-    cascadeBaseline = new Set((data||[]).map(r=>r.id).filter(isUuid));
+    const rawRows = data||[];
+    const oldKnown = cascadeKnown;   // this device's OWN last-confirmed state, from before this fetch
+    const rawById = new Map(rawRows.map(r=>[r.id, r]));
     // CAS-560: a pre-CAS-560 row can still carry a real lang array — rowToCascade (via normCascade) clears
     // it in memory either way, but flag it here so the corrected row gets pushed back rather than left
     // stale in the account until this device happens to touch the agent for some other reason.
-    const langDirty = (data||[]).some(r => ((r.criteria||{}).lang||[]).length);
+    const langDirty = rawRows.some(r => ((r.criteria||{}).lang||[]).length);
     // CAS-601: an agent saved while alertLive() was hardwired false carries a stale (empty)
     // alert_moments — flag it the same way so the corrected value gets pushed back rather than
     // left stale in the account until this device happens to touch the agent for some other reason.
-    const alertDirty = (data||[]).some(r => {
+    const alertDirty = rawRows.some(r => {
       const moments = momentsOf(rowToCascade(r)), stored = r.alert_moments||[];
       return moments.length!==stored.length || moments.some(k=>!stored.includes(k));
     });
-    let remote = (data||[]).map(rowToCascade);
+    let remote = rawRows.map(rowToCascade);
     const localOnes = cascades.slice();
-    const remoteIds = new Set(remote.map(x=>x.id));
-    // CAS-393/CAS-733: the membership step's own email gate (CAS-387) can create this account seconds
-    // after onboarding committed the agents just built — so the account this fetch reads back is,
-    // correctly, one that has never synced anything yet. Those agents live ONLY in memory while signed
-    // out (saveCascades is a no-op on that path, Change 1), so `cascades` is the one place to find them.
-    // Every agent this onboarding session actually built — the whole roster (buildOnbAgents), not just
-    // the single-agent wizard's membCascade — folds straight in, matched by id. No dialog, no prompt:
-    // CAS-212's merge sheet (and the guest agent store it existed to reconcile) is gone.
-    const builtIds = new Set([...(onbFlow.workingAgents||[]).map(x=>x.id), ...(membCascade ? [membCascade.id] : [])]);
-    const justOnboarded = localOnes.filter(x=>builtIds.has(x.id) && !remoteIds.has(x.id));
-    if(justOnboarded.length) remote=[...remote, ...justOnboarded];
-    // CAS-658: a local copy sharing an id with an account row is the SAME Cascade, not a new one — the
-    // account already has it. If its content has drifted (edits made here while account writes were
-    // failing), the local copy is the newer state and updates the existing row in place, keeping the id
-    // and the account row it maps to.
+    // CAS-393/CAS-733/CAS-734: an agent that exists only on this device, which the account has never
+    // confirmed (absent from rawById) AND this device has never confirmed either (absent from oldKnown, so
+    // this isn't a row another device deleted), is genuinely new — onboarding's own roster is the common
+    // case (the membership step's email gate, CAS-387, can create the account seconds after onboarding
+    // committed the agents just built), but the same rule covers any agent created here whose first push
+    // just hasn't landed yet. Folded straight in, matched by id. No dialog, no prompt: CAS-212's merge
+    // sheet (and the guest agent store it existed to reconcile) is gone.
+    const localOnly = localOnes.filter(x=>!rawById.has(x.id) && !oldKnown.has(x.id));
+    if(localOnly.length) remote=[...remote, ...localOnly];
+    // CAS-658/CAS-734: a local copy sharing an id with an account row is the SAME Cascade, not a new one —
+    // the account already has it. Which side wins is resolveCascadeConflict's call now, never an assumption
+    // in the local copy's favour with nothing to back it up — that unconditional assumption was this
+    // ticket's whole bug.
     const remoteById = new Map(remote.map(x=>[x.id, x]));
     let driftDirty = false;
     localOnes.forEach(x=>{
-      const match = remoteById.get(x.id);
-      if(match && cascSigOf(match)!==cascSigOf(x)){
-        const merged = normCascade({...x});
-        remote[remote.indexOf(match)] = merged;
-        remoteById.set(x.id, merged);
-        driftDirty = true;
-      }
+      const raw = rawById.get(x.id);
+      if(!raw) return;   // AC3d: no account counterpart at all — already handled by localOnly above
+      if(cascSigOf(rowToCascade(raw))===cascSigOf(x)) return;   // no actual drift, nothing to resolve
+      const resolved = resolveCascadeConflict(x, raw);
+      remote[remote.indexOf(remoteById.get(x.id))] = resolved;
+      remoteById.set(x.id, resolved);
+      if(cascSigOf(resolved)!==cascSigOf(rowToCascade(raw))) driftDirty = true;   // local won: push it back
     });
-    // CAS-424: `order` rides in `criteria` like every other field (cascadeToRow copies the whole object), so
-    // the Agents screen's reorder — done on any device — is what this sort restores here. Nothing to sort by
-    // (nobody has ever reordered) leaves the account's own row order alone.
-    remote.sort((a,b)=>(a.order??1e9)-(b.order??1e9));
+    remote.sort(cascadeOrderCmp);
     replaceCascades(remote);
     // CAS-516: saveCascades() is rewired below (once accountActive()) to sync to the account instead of
     // localStorage, so a signed-in device's local cache is otherwise never written and a cold start (the
@@ -18762,42 +18869,59 @@ else if(dedupedN)
     // account sync) purely so the NEXT cold start has something instant to show while this same fetch
     // revalidates in the background.
     saveCascadesLocal();
-    if(justOnboarded.length || langDirty || alertDirty || driftDirty) scheduleSync();
+    // CAS-734: cascadeKnown always reflects what the ACCOUNT holds right now, regardless of which side the
+    // merge above picked — a local win is then naturally "dirty" against this baseline (its content no
+    // longer matches what the account has) and the scheduleSync below pushes it, exactly like an ordinary
+    // edit would.
+    cascadeKnown = new Map(rawRows.filter(r=>isUuid(r.id))
+      .map(r=>[r.id, { sig: cascadeFullSigOf(rowToCascade(r)), version: r.updated_at||null }]));
+    saveCascadeKnown();
+    if(localOnly.length || langDirty || alertDirty || driftDirty) scheduleSync();
     if(typeof afterSignIn==="function") afterSignIn();
   }
   // ---- CAS-408: live reconciliation, so two devices converge without re-signing-in -------------------
   // loadAccount() REPLACES the screen and offers to bring stray local work up — right for a fresh
   // sign-in, wrong for a routine background refresh (it would re-fire afterSignIn()'s splash/modal
-  // side effects on every tab focus). This MERGES instead: a Cascade new or edited on another device is
-  // folded in by id; a Cascade this device knows was in the account (cascadeBaseline) but has now gone
-  // is dropped locally (another device deleted it); anything this device has created but not yet pushed
-  // (its id isn't in cascadeBaseline yet) is left alone, so a refresh landing mid-edit never undoes work
-  // still in flight.
+  // side effects on every tab focus). This MERGES instead: a Cascade new or edited on another device
+  // resolves through the SAME resolveCascadeConflict loadAccount uses; a Cascade this device knows was in
+  // the account (cascadeKnown) but has now gone is dropped locally (another device deleted it); anything
+  // this device has created but not yet pushed (its id isn't in cascadeKnown yet) is left alone, so a
+  // refresh landing mid-edit never undoes work still in flight.
   async function reconcileCascades(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("cascades").select("*");
+    const { data, error } = await c.from("cascades").select("*").order("created_at");
     if(error){ console.warn("Cascade reconcile", error); setAcctTableFail("cascades", true); return; }
     setAcctTableFail("cascades", false);
+    const rawRows = data||[];
     // CAS-560: same stale-lang push-back as loadAccount, for the background convergence path.
-    const langDirty = (data||[]).some(r => ((r.criteria||{}).lang||[]).length);
-    const remote=(data||[]).map(rowToCascade);
-    const remoteIds=new Set(remote.map(x=>x.id));
-    remote.forEach(r=>{
+    const langDirty = rawRows.some(r => ((r.criteria||{}).lang||[]).length);
+    const remoteIds = new Set(rawRows.map(r=>r.id));
+    const oldKnown = cascadeKnown;   // this device's OWN last-confirmed state, from before this fetch
+    rawRows.forEach(r=>{
       const i=cascades.findIndex(x=>x.id===r.id);
-      if(i>=0) cascades[i]=r; else cascades.push(r);
-    });
-    if(cascadeBaseline){
-      for(let i=cascades.length-1;i>=0;i--){
-        const id=cascades[i].id;
-        if(cascadeBaseline.has(id) && !remoteIds.has(id)) cascades.splice(i,1);
+      if(i<0){
+        // CAS-734 (mirrors CAS-692's watch-list fix): absent locally but this device previously confirmed
+        // the account held it — either this device deleted it and the push just hasn't landed, or another
+        // device did. A stale reconcile must not resurrect it. A truly unseen-before id is simply adopted.
+        if(!oldKnown.has(r.id)) cascades.push(rowToCascade(r));
+        return;
       }
+      if(cascSigOf(cascades[i])===cascSigOf(rowToCascade(r))){ cascades[i]=rowToCascade(r); return; }
+      cascades[i]=resolveCascadeConflict(cascades[i], r);
+    });
+    for(let i=cascades.length-1;i>=0;i--){
+      const id=cascades[i].id;
+      if(oldKnown.has(id) && !remoteIds.has(id)){ cascades.splice(i,1); cascadeEditedAt.delete(id); }
     }
     reconcileActiveIds();
     syncActiveIdsFromActiveList();   // CAS-642: re-derive from the active list now that cascades changed
-    cascadeBaseline=remoteIds;
+    cascadeKnown = new Map(rawRows.filter(r=>isUuid(r.id))
+      .map(r=>[r.id, { sig: cascadeFullSigOf(rowToCascade(r)), version: r.updated_at||null }]));
+    saveCascadeKnown();
+    saveCascadeEditedAt();
     // CAS-424: converge on whichever device last reordered — only once anyone actually has, so a background
     // reconcile never reshuffles an account nobody has touched the Agents screen on.
-    if(cascades.some(x=>typeof x.order==="number")) cascades.sort((a,b)=>(a.order??1e9)-(b.order??1e9));
+    if(cascades.some(x=>typeof x.order==="number")) cascades.sort(cascadeOrderCmp);
     // CAS-516: keep the cold-start cache (see loadAccount's own note) fresh across ordinary background
     // reconciles too, not just the first load — otherwise it drifts back out of date the longer a session
     // runs and a later cold start shows stale cards instead of the last-known-good state.
@@ -19249,7 +19373,7 @@ else if(dedupedN)
     // agents an account never saw. Onboarding holds its build in memory only until the account exists.
     if(acct() && acct().enabled && !accountActive()) return;
     saveCascadesLocal();
-    if(accountActive()) scheduleSync();
+    if(accountActive()){ markCascadesEditedNow(); scheduleSync(); }
   };
   const saveListsLocal = saveLists;
   saveLists = function(){
@@ -19298,7 +19422,8 @@ else if(dedupedN)
       // CAS-733: signed out → the agent list empties (loadGuest, above) rather than reverting to an
       // on-device set that no longer exists; the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); loadGuestLists(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
-      cascadeBaseline=null; filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
+      cascadeKnown=new Map(); saveCascadeKnown(); cascadeEditedAt=new Map(); saveCascadeEditedAt();
+      filmBaseline=null; pickBaseline=null; listsBaseline=null; listFilmBaseline=null; watchBaseline=null;
       agentFilms={}; agentFilmsBaseline=null;
       watchlistKnown=new Map(); saveWatchlistKnown();
       // CAS-656: a guest has no account to be disconnected from — clear any failure this device carried
@@ -19384,7 +19509,7 @@ else if(dedupedN)
     if(typeof render==="function") render();
   }
   let filmTimer=null, filmSyncing=false, filmAgain=false;
-  let filmBaseline=null;   // CAS-408: same private-baseline diff as cascadeBaseline above
+  let filmBaseline=null;   // CAS-408: same private-baseline diff cascadeKnown (CAS-734) uses above
   function scheduleFilmSync(){ clearTimeout(filmTimer); filmTimer=setTimeout(runFilmSync, 400); }
   async function runFilmSync(){
     if(!accountActive()) return;
@@ -19904,6 +20029,17 @@ else if(dedupedN)
                                 // CAS-408: the live-reconcile seam, so the cross-device convergence story
                                 // can be exercised without waiting on a real focus/visibilitychange event.
                                 reconcileCascades, reconcileFilms,
+                                // CAS-734: cascades' own per-row conflict resolver (the ONE function both
+                                // loadAccount and reconcileCascades call) plus the private timestamp maps it
+                                // reads — exposed by reference, like notify/realAlerts elsewhere in this
+                                // object, so a test can seed "this device edited agent X at time T" directly
+                                // rather than waiting on a real clock. cascadeOrderCmp/cascadeFullSigOf/
+                                // cascadeDirtyRows let a test assert the total-order tie-break and the
+                                // single-row-upsert behaviour directly.
+                                resolveCascadeConflict, cascadeOrderCmp, cascadeFullSigOf,
+                                cascadeDirtyRows, cascadePendingDeleteIds,
+                                get cascadeKnown(){ return cascadeKnown; },
+                                get cascadeEditedAt(){ return cascadeEditedAt; },
                                 // CAS-428: Lists' own load/sync/reconcile seam, same shape as the above.
                                 loadListsAccount, syncListsNow: runListsSync, listToRow, rowToList, listFilmRows,
                                 reconcileLists, reconcileListMembership,
