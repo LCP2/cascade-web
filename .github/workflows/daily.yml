@@ -82,9 +82,15 @@ jobs:
           attempt=1
           while [ "$attempt" -le 3 ]; do
             git fetch origin staging
-            if ! git rebase origin/staging; then
-              echo "::error::rebase conflict pushing to staging: $(git diff --name-only --diff-filter=U | tr '\n' ' ')"
-              git rebase --abort
+            rebase_output=$(git rebase --autostash origin/staging 2>&1)
+            rebase_status=$?
+            if [ "$rebase_status" -ne 0 ]; then
+              if [ -d "$(git rev-parse --git-path rebase-merge)" ] || [ -d "$(git rev-parse --git-path rebase-apply)" ]; then
+                echo "::error::rebase conflict pushing to staging: $(git diff --name-only --diff-filter=U | tr '\n' ' ')"
+                git rebase --abort
+              else
+                echo "::error::rebase onto origin/staging failed: $rebase_output"
+              fi
               exit 1
             fi
             git push origin HEAD:staging && break
@@ -112,9 +118,15 @@ jobs:
           attempt=1
           while [ "$attempt" -le 3 ]; do
             git fetch origin staging
-            if ! git rebase origin/staging; then
-              echo "::error::rebase conflict pushing to staging: $(git diff --name-only --diff-filter=U | tr '\n' ' ')"
-              git rebase --abort
+            rebase_output=$(git rebase --autostash origin/staging 2>&1)
+            rebase_status=$?
+            if [ "$rebase_status" -ne 0 ]; then
+              if [ -d "$(git rev-parse --git-path rebase-merge)" ] || [ -d "$(git rev-parse --git-path rebase-apply)" ]; then
+                echo "::error::rebase conflict pushing to staging: $(git diff --name-only --diff-filter=U | tr '\n' ' ')"
+                git rebase --abort
+              else
+                echo "::error::rebase onto origin/staging failed: $rebase_output"
+              fi
               exit 1
             fi
             git push origin HEAD:staging && break
