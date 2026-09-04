@@ -439,8 +439,19 @@
   .grouphead{display:flex;align-items:center;gap:8px;padding:12px 12px 8px;font-size:13px;font-weight:800;letter-spacing:.2px}
   /* CAS-717: the second-level agent divider within a status section — same visual family as .grouphead,
      one size down, with a hairline above it to read as a seam rather than a second section. This is also
-     the untinted fallback for a block with no owning cascade (the "Other" block, CAS-760). */
-  .grouphead.sub{padding:10px 12px 6px;font-size:12px;font-weight:700;color:var(--dim);border-top:1px solid var(--line);margin-top:4px}
+     the untinted fallback for a block with no owning cascade (the "Other" block, CAS-760).
+     CAS-761: pinned under the sticky chrome for as long as its own .list is on screen — consecutive
+     .grouphead.sub siblings are exactly the arrangement where sticky elements push each other out for
+     free. --stickyh is header+.cascbar's measured height (published alongside --hdrh, see syncHeaderHeight)
+     so this never has to guess the chrome's height itself. z-index:10 sits above the (unpositioned, so
+     z-index-blind) .card content it pins over, but below the chrome (.cascbar 20, header 30). background
+     is opaque so a card scrolling underneath is never visible through it — the tinted rank rule below
+     already is (color-mix onto --bg), this is only for the untinted "Other" case. The compositing-layer
+     promotion (CAS-543's note, hardened by CAS-519/526's WebKit sticky-resize fix) goes here too — on
+     whichever element is actually stuck, same convention as #ymSticky's own translateZ(0). */
+  .grouphead.sub{padding:10px 12px 6px;font-size:12px;font-weight:700;color:var(--dim);border-top:1px solid var(--line);margin-top:4px;
+    position:sticky;top:var(--stickyh,0px);z-index:10;background:var(--bg);
+    transform:translateZ(0);-webkit-transform:translateZ(0)}
   /* CAS-746: the row is unconditional now, so the first one in a group sits directly under the
      section's own .grouphead — suppress its hairline there so it doesn't read as a double rule. */
   .group > .grouphead + .grouphead.sub{border-top:0;margin-top:0}
@@ -5423,7 +5434,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 931, "commit": "f607a92", "builtAt": "2026-09-04T08:21:41Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 932, "commit": "62a14d4", "builtAt": "2026-09-04T08:35:55Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -10093,8 +10104,17 @@ deckMotion.addEventListener("change",()=>{ deckCentre(deckIdx,false); deckPaint(
 const phoneHeader = document.querySelector("header");
 // The header's height is not a constant — its contents change — so it is measured rather than assumed, and
 // published as --hdrh for the sticky offset to read.
+// CAS-761: --stickyh (header + #cascbar, the Watch listing's own sticky chrome — #ymSticky belongs to the
+// retired Your Movies screen, not this one) is published in the same place so .grouphead.sub's sticky
+// offset (CAS-717's per-agent divider) never has to compute it separately. Re-measured everywhere --hdrh
+// already is, plus everywhere #cascbar's own height can change (render()'s end, after tabs/filters/jump
+// bar are painted) — see the render() call below.
 function syncHeaderHeight(){
-  if(phoneHeader) document.documentElement.style.setProperty("--hdrh", phoneHeader.offsetHeight+"px");
+  if(!phoneHeader) return;
+  const hdrh=phoneHeader.offsetHeight;
+  document.documentElement.style.setProperty("--hdrh", hdrh+"px");
+  const bar=document.getElementById("cascbar");
+  document.documentElement.style.setProperty("--stickyh", (hdrh+(bar?bar.offsetHeight:0))+"px");
 }
 let cascResizeT=0;
 addEventListener("resize",()=>{ clearTimeout(cascResizeT); cascResizeT=setTimeout(syncHeaderHeight,140); });
@@ -18039,6 +18059,7 @@ function render(){
     wrap.innerHTML = (mineOnly && !servicesPicked() && preMineOnlyRows.length) ? watchMineOnlyDeadEndHTML()
       : (scopeRows.pool||[]).length ? scopeEmptyHTML() : emptyResultsHTML();
     renderJumpBar();          // CAS-275: no sections, so no jump rail — and no stale one left behind
+    syncHeaderHeight();       // CAS-761: the empty states above can still change #cascbar's height
     markFoundSeen();
     listReady();
     return;
@@ -18080,6 +18101,7 @@ function render(){
     });
   });
   renderJumpBar();     // after the groups exist — it is built FROM them, never from a fixed menu
+  syncHeaderHeight();  // CAS-761: tabs/filters/jump bar above are all part of #cascbar's measured height
   // You are looking at it — so the next visit's "since you last looked" counts from here.
   markFoundSeen();
 }
@@ -18118,6 +18140,8 @@ function renderJumpBar(){
 }
 // The bar is STICKY, so scrolling a section to y=0 hides its heading behind the bar. The offset is the
 // header plus the band, measured rather than guessed — both change height with their contents.
+// CAS-761: that measured offset is --stickyh (see syncHeaderHeight) — read here rather than re-measured,
+// so this and .grouphead.sub's own sticky `top` can never disagree about where the chrome ends.
 //
 // And it RE-AIMS, which is the part that took a bug to learn. The listing lays its cards out lazily, so a
 // long jump makes the page GROW underneath the scroll that is still in flight: measured on a cinema agent
@@ -18132,9 +18156,7 @@ window.jumpToSection = k => {
   // How far the section's heading still has to travel to sit just clear of the sticky chrome.
   const delta = () => {
     const g=document.querySelector(`#groups .group[data-g="${k}"]`); if(!g) return null;
-    const bar=$("cascbar");
-    const hdr=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hdrh"))||0;
-    const occluded=(bar ? bar.getBoundingClientRect().height : 0)+hdr;
+    const occluded=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--stickyh"))||0;
     return g.getBoundingClientRect().top - occluded - 8;
   };
   const first=delta(); if(first===null) return;
