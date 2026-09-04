@@ -64,6 +64,15 @@
        tokens so no use site hard-codes them. See the CAS-203 comment on .dcard.agent-cin for the full
        rationale reversal. */
     --lane-cin:#1E45C9; --lane-str:#4C9DFF;
+    /* CAS-760: agent-RANK tint for the Watch listing's per-agent sub-heading band, keyed to a cascade's
+       position among the account's cascades sorted by `order` (rank 1 = highest), not its identity — so
+       "who is rank 1" can change but the colour of rank 1 never does. Six hues, measured ≥6.9:1 against
+       --bg #0A0E1A as text; rank 1 is the violet the app already uses for agent identity (--accent).
+       Deliberately clear of the availability palette (--open/--amber/--purple/--blue/--green) and the
+       --lane-cin/--lane-str KIND colours — see the ticket's Observation for what was measured and
+       rejected (a monochrome ramp read too similar step-to-step to register while scrolling). */
+    --agrank-1:#A78BFF; --agrank-2:#22D3EE; --agrank-3:#F06FB0;
+    --agrank-4:#FFD166; --agrank-5:#7DD3A0; --agrank-6:#9BA5B5;
     /* CAS-258/CAS-286: Upcoming gets a colour of its own. It had been --grey, which in every other part
        of this UI means "off / nothing here" — the wrong thing to say about the films a person is most
        looking forward to. CAS-556 retuned the value off #7C5CFF, which was byte-identical to the brand
@@ -429,11 +438,28 @@
   .group{margin-top:6px}
   .grouphead{display:flex;align-items:center;gap:8px;padding:12px 12px 8px;font-size:13px;font-weight:800;letter-spacing:.2px}
   /* CAS-717: the second-level agent divider within a status section — same visual family as .grouphead,
-     one size down, with a hairline above it to read as a seam rather than a second section. */
+     one size down, with a hairline above it to read as a seam rather than a second section. This is also
+     the untinted fallback for a block with no owning cascade (the "Other" block, CAS-760). */
   .grouphead.sub{padding:10px 12px 6px;font-size:12px;font-weight:700;color:var(--dim);border-top:1px solid var(--line);margin-top:4px}
   /* CAS-746: the row is unconditional now, so the first one in a group sits directly under the
      section's own .grouphead — suppress its hairline there so it doesn't read as a double rule. */
   .group > .grouphead + .grouphead.sub{border-top:0;margin-top:0}
+  /* CAS-760: rank tint, applied to the sub-heading BAND only — never to .gdot/.cap/.wdot/the score chip/
+     the card's agent chip, which carry availability and provenance meanings and must stay rank-free.
+     --rt set per rank class (same `--dcc`-per-lane convention as .dcard.agent-cin/.agent-str above),
+     then one shared rule reads it: tinted label text, a 3px left bar (the .dc-in accent language), and a
+     low-alpha wash of the same hue as the divider band — replacing the hairline, not adding to it. */
+  .grouphead.sub.agrank-1{--rt:var(--agrank-1)}
+  .grouphead.sub.agrank-2{--rt:var(--agrank-2)}
+  .grouphead.sub.agrank-3{--rt:var(--agrank-3)}
+  .grouphead.sub.agrank-4{--rt:var(--agrank-4)}
+  .grouphead.sub.agrank-5{--rt:var(--agrank-5)}
+  .grouphead.sub.agrank-6{--rt:var(--agrank-6)}
+  .grouphead.sub.agrank-1,.grouphead.sub.agrank-2,.grouphead.sub.agrank-3,
+  .grouphead.sub.agrank-4,.grouphead.sub.agrank-5,.grouphead.sub.agrank-6{
+    color:var(--rt);border-top:0;border-left:3px solid var(--rt);
+    background:color-mix(in srgb, var(--rt) 10%, var(--bg));
+  }
   .gdot{width:9px;height:9px;border-radius:50%}
   .gdot.opening_week{background:var(--open)} .gdot.in_cinema{background:var(--amber)}
   .gdot.pvod{background:var(--purple)} .gdot.rental{background:var(--blue)}
@@ -5397,7 +5423,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 930, "commit": "38a2a6d", "builtAt": "2026-09-04T02:41:39Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 931, "commit": "f607a92", "builtAt": "2026-09-04T08:21:41Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -17900,6 +17926,18 @@ function filmOwnerCascade(m){
   });
   return best;
 }
+// CAS-760: which of the six rank tints a cascade's sub-heading band gets — its POSITION among the
+// account's cascades sorted by `order` (order values are sparse, so the position, not the raw number),
+// wrapping past the palette's length so a 7th agent reuses rank 1's tint. Null for no owning cascade (the
+// "Other" block), which keeps the untinted --dim treatment instead. Sorted with cascadeOrderCmp, the same
+// comparator the Agents screen's rank number and the agent panel's row order already use, so this band
+// never disagrees with what "rank 1" means anywhere else in the app.
+function cascadeRankTint(c){
+  if(!c) return null;
+  const sorted=[...cascades].sort(cascadeOrderCmp);
+  const idx=sorted.findIndex(x=>x.id===c.id);
+  return idx<0 ? null : (idx%6)+1;
+}
 // Splits a status section's already agent-sorted `items` (filmOwnerOrder is listingGroups' primary sort
 // key, so one agent's films already run contiguously) into per-owner runs, in the same order.
 function splitByOwner(items){
@@ -18033,7 +18071,8 @@ function render(){
     // inferring anything from the row's absence.
     blocks.forEach(block=>{
       const name=block.cascade ? `${block.cascade.icon} ${esc(block.cascade.name)}` : "Other";
-      const sub=document.createElement("div"); sub.className="grouphead sub"; sub.innerHTML=`<span>${name}</span>`;
+      const tint=cascadeRankTint(block.cascade);   // CAS-760: null keeps the untinted "Other" appearance
+      const sub=document.createElement("div"); sub.className="grouphead sub"+(tint?` agrank-${tint}`:""); sub.innerHTML=`<span>${name}</span>`;
       grp.appendChild(sub);
       const listEl=document.createElement("div"); listEl.className="list";
       grp.appendChild(listEl);
