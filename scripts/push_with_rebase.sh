@@ -25,10 +25,16 @@ while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
     echo "push_with_rebase: git fetch origin $BRANCH failed" >&2
     exit 1
   fi
-  if ! git rebase "origin/$BRANCH"; then
-    conflicts=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
-    echo "push_with_rebase: rebase onto origin/$BRANCH conflicted on: ${conflicts:-<unknown>}" >&2
-    git rebase --abort
+  rebase_output=$(git rebase --autostash "origin/$BRANCH" 2>&1)
+  rebase_status=$?
+  if [ "$rebase_status" -ne 0 ]; then
+    if [ -d "$(git rev-parse --git-path rebase-merge)" ] || [ -d "$(git rev-parse --git-path rebase-apply)" ]; then
+      conflicts=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
+      echo "push_with_rebase: rebase onto origin/$BRANCH conflicted on: ${conflicts:-<unknown>}" >&2
+      git rebase --abort
+    else
+      echo "push_with_rebase: rebase onto origin/$BRANCH failed: $rebase_output" >&2
+    fi
     exit 1
   fi
   if git push origin "HEAD:$BRANCH"; then

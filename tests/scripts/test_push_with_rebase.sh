@@ -118,6 +118,68 @@ else
   (cd "$CLONE_C" && git rebase --abort 2>/dev/null; git status --porcelain | grep -q . && fail "scenario 2: clone-c working tree left dirty after abort")
 fi
 
+# ---- scenario 3: committed change PLUS an unstaged modification to a tracked file, against a
+# remote advanced by an unrelated commit (CAS-755 — build residue like version.json/www/ left
+# unstaged every run). Must succeed via --autostash: exit 0, and the remote gains the commit. ---
+REMOTE3="$WORK/remote3.git"
+CLONE_E="$WORK/clone-e"
+CLONE_F="$WORK/clone-f"
+
+git init --bare -q -b main "$REMOTE3"
+
+git clone -q "$REMOTE3" "$CLONE_E"
+(
+  cd "$CLONE_E"
+  git config user.email test@example.com
+  git config user.name test
+  echo "base" > shared.txt
+  echo "stamp" > tracked-stamp.txt
+  git add shared.txt tracked-stamp.txt
+  git commit -qm base
+  git push -q origin main
+)
+
+git clone -q "$REMOTE3" "$CLONE_F"
+(
+  cd "$CLONE_F"
+  git config user.email test@example.com
+  git config user.name test
+  echo "f-change" >> only-f.txt
+  git add only-f.txt
+  git commit -qm "clone-f advances an unrelated file"
+  git push -q origin main
+)
+
+(
+  cd "$CLONE_E"
+  git config user.email test@example.com
+  git config user.name test
+  echo "e-change" >> shared.txt
+  git add shared.txt
+  git commit -qm "clone-e's own committed change, on a now-stale base"
+  # Regenerated-output residue left unstaged on a tracked file — the exact shape of
+  # version.json/www/ being rewritten by every build but only partially staged (CAS-755).
+  echo "regenerated stamp" > tracked-stamp.txt
+)
+
+if (cd "$CLONE_E" && bash "$SCRIPT" main) >"$WORK/scenario3.log" 2>&1; then
+  REMOTE_LOG=$(cd "$REMOTE3" && git log --oneline main | head -5)
+  if echo "$REMOTE_LOG" | grep -q "clone-e's own committed change"; then
+    if [ "$(cat "$CLONE_E/tracked-stamp.txt")" = "regenerated stamp" ]; then
+      pass "scenario 3: dirty tracked file (CAS-755 shape) recovered by autostash rebase + push"
+    else
+      fail "scenario 3: pushed, but the autostashed tracked-file residue was not restored"
+      cat "$WORK/scenario3.log" >&2
+    fi
+  else
+    fail "scenario 3: script exited 0 but clone-e's commit is not on remote main"
+    cat "$WORK/scenario3.log" >&2
+  fi
+else
+  fail "scenario 3: expected exit 0 (autostash should handle unstaged tracked-file residue), got non-zero"
+  cat "$WORK/scenario3.log" >&2
+fi
+
 if [ "$FAIL" -eq 0 ]; then
   echo "All push_with_rebase.sh tests passed."
   exit 0
