@@ -72,35 +72,37 @@ jobs:
         run: |
           git config user.name  "cascade-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add index.html movies.json state
-          git commit -m "Daily refresh $(date -u +%F)" || echo "nothing to commit"
-          # CAS-605: a bare push here silently swallowed a lost race against the CC-web worker
-          # pushing to staging mid-run (`|| echo "nothing to push"` ate a real rejection along
-          # with the harmless no-op case). Retry up to 3x, rebasing onto the remote each time; a
-          # genuine conflict fails the step rather than attempting a resolution (see
-          # scripts/push_with_rebase.sh for the same algorithm's standalone, tested form).
+          # CAS-758: a rebase-based retry here structurally conflicted whenever the CC-web worker
+          # pushed during the ~19-minute build (the normal case, not a rare race), since its own
+          # `npm run build` touches this exact same index.html. `git reset --soft` onto the
+          # current remote tip never conflicts: it just re-parents this commit onto whatever is
+          # there now. The non-owned-path sync (git checkout HEAD -- . ':!...') pulls in any
+          # template/source change the remote made, so the rebuild below is always against the
+          # CURRENT app_template.html, not a stale one — see scripts/reset_soft_and_push.sh for
+          # the same algorithm's standalone, tested form.
           attempt=1
+          pushed=0
           while [ "$attempt" -le 3 ]; do
             git fetch origin staging
-            rebase_output=$(git rebase --autostash origin/staging 2>&1)
-            rebase_status=$?
-            if [ "$rebase_status" -ne 0 ]; then
-              if [ -d "$(git rev-parse --git-path rebase-merge)" ] || [ -d "$(git rev-parse --git-path rebase-apply)" ]; then
-                echo "::error::rebase conflict pushing to staging: $(git diff --name-only --diff-filter=U | tr '\n' ' ')"
-                git rebase --abort
-              else
-                echo "::error::rebase onto origin/staging failed: $rebase_output"
-              fi
+            if ! git reset --soft origin/staging; then
+              echo "::error::git reset --soft onto origin/staging failed"
               exit 1
             fi
-            git push origin HEAD:staging && break
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::failed to push to staging after 3 attempts"
-              exit 1
+            git checkout HEAD -- . ':!index.html' ':!movies.json' ':!state'
+            python poc_pipeline.py --build-html
+            git add index.html movies.json state
+            git commit -m "Daily refresh $(date -u +%F)" || echo "nothing to commit"
+            if git push origin HEAD:staging; then
+              pushed=1
+              break
             fi
-            echo "push rejected (attempt $attempt/3), retrying after rebase"
+            echo "push rejected (attempt $attempt/3), retrying after reset + rebuild"
             attempt=$((attempt + 1))
           done
+          if [ "$pushed" -ne 1 ]; then
+            echo "::error::failed to push to staging after 3 attempts"
+            exit 1
+          fi
 
       - name: Live-size the catalogue (CAS-354 — TMDB discover total_results)
         # Current-scope vs widened-AU-watchable totals, straight from TMDB discover. The TMDB
@@ -112,31 +114,33 @@ jobs:
           python scripts/catalogue_sizing.py
           git config user.name  "cascade-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add docs/appraisals/cas-catalogue-sizing.md
-          git commit -m "CAS-354: catalogue sizing $(date -u +%F)" || echo "nothing to commit"
-          # CAS-605: same bounded retry as the "Commit refreshed app + data" step above.
+          # CAS-758: same reset-soft-and-rebuild retry as the "Commit refreshed app + data" step
+          # above — the rebuild here is defensive (this step's own diff is only the sizing
+          # report), keeping index.html perpetually rebuilt against whatever app_template.html is
+          # on staging by the time this step pushes.
           attempt=1
+          pushed=0
           while [ "$attempt" -le 3 ]; do
             git fetch origin staging
-            rebase_output=$(git rebase --autostash origin/staging 2>&1)
-            rebase_status=$?
-            if [ "$rebase_status" -ne 0 ]; then
-              if [ -d "$(git rev-parse --git-path rebase-merge)" ] || [ -d "$(git rev-parse --git-path rebase-apply)" ]; then
-                echo "::error::rebase conflict pushing to staging: $(git diff --name-only --diff-filter=U | tr '\n' ' ')"
-                git rebase --abort
-              else
-                echo "::error::rebase onto origin/staging failed: $rebase_output"
-              fi
+            if ! git reset --soft origin/staging; then
+              echo "::error::git reset --soft onto origin/staging failed"
               exit 1
             fi
-            git push origin HEAD:staging && break
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::failed to push to staging after 3 attempts"
-              exit 1
+            git checkout HEAD -- . ':!docs/appraisals/cas-catalogue-sizing.md'
+            python poc_pipeline.py --build-html
+            git add docs/appraisals/cas-catalogue-sizing.md
+            git commit -m "CAS-354: catalogue sizing $(date -u +%F)" || echo "nothing to commit"
+            if git push origin HEAD:staging; then
+              pushed=1
+              break
             fi
-            echo "push rejected (attempt $attempt/3), retrying after rebase"
+            echo "push rejected (attempt $attempt/3), retrying after reset + rebuild"
             attempt=$((attempt + 1))
           done
+          if [ "$pushed" -ne 1 ]; then
+            echo "::error::failed to push to staging after 3 attempts"
+            exit 1
+          fi
 
       - name: Run the Cascade monitor (diff → match → de-dupe → email)
         # Reads yesterday's catalogue from git history (last refresh on an earlier calendar day). With the Supabase +
