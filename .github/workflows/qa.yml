@@ -31,6 +31,15 @@
 # happened to carry the refresh commit along. `workflow_dispatch` lets daily.yml explicitly
 # trigger this workflow via the API (`gh workflow run qa.yml --ref staging`) at the end of its
 # run, which is not subject to that suppression.
+#
+# CAS-759: the same GITHUB_TOKEN suppression applies one hop later. This workflow's own
+# completion is a `workflow_run` event, which promote.yml listens for — but that event is not
+# emitted for a run that was itself started by a GITHUB_TOKEN-authenticated `workflow_dispatch`
+# call (the one CAS-523 added above). So a daily-refresh-only push made qa run, but never made
+# promote run, leaving main stale until an unrelated ticket push piggybacked the refresh commit
+# along. dispatch-promote (bottom of this file) closes that gap by explicitly dispatching
+# promote.yml when qa itself was started via workflow_dispatch — a normal push-triggered qa run
+# still promotes through promote.yml's own workflow_run trigger exactly as before.
 name: qa
 
 on:
@@ -323,6 +332,27 @@ jobs:
           RANGE_FROM: ${{ github.event.before }}
           RANGE_TO:   ${{ github.sha }}
         run: python ci/mark_on_staging.py
+
+  # CAS-759: promote.yml's `workflow_run` trigger never fires for a qa run that was itself
+  # started by a GITHUB_TOKEN-authenticated `workflow_dispatch` call (daily.yml's CAS-523 step) —
+  # GitHub's anti-recursion protection suppresses that event the same way it suppresses `push`.
+  # A daily-refresh-only push could reach `staging` and pass qa, but never reach `main`. This
+  # job dispatches promote.yml directly for exactly that case. The `workflow_dispatch` guard is
+  # the important half: a qa run triggered by a normal `push` still promotes through
+  # promote.yml's own `workflow_run` trigger as before — without the guard every push would
+  # dispatch promote twice.
+  dispatch-promote:
+    needs: [build-check, engine, data, monitor, e2e, lint]
+    if: success() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dispatch promote.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run promote.yml --ref main
 
   # CAS-482: the failure-path mirror of mark-on-staging above. `if: failure()` on a job whose
   # `needs` list is the same 5 QA jobs runs exactly when at least one of them went red — GitHub's
