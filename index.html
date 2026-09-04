@@ -440,36 +440,62 @@
   /* CAS-717: the second-level agent divider within a status section — same visual family as .grouphead,
      one size down, with a hairline above it to read as a seam rather than a second section. This is also
      the untinted fallback for a block with no owning cascade (the "Other" block, CAS-760).
-     CAS-761: pinned under the sticky chrome for as long as its own .list is on screen — consecutive
-     .grouphead.sub siblings are exactly the arrangement where sticky elements push each other out for
-     free. --stickyh is header+.cascbar's measured height (published alongside --hdrh, see syncHeaderHeight)
-     so this never has to guess the chrome's height itself. z-index:10 sits above the (unpositioned, so
-     z-index-blind) .card content it pins over, but below the chrome (.cascbar 20, header 30). background
-     is opaque so a card scrolling underneath is never visible through it — the tinted rank rule below
-     already is (color-mix onto --bg), this is only for the untinted "Other" case. The compositing-layer
-     promotion (CAS-543's note, hardened by CAS-519/526's WebKit sticky-resize fix) goes here too — on
-     whichever element is actually stuck, same convention as #ymSticky's own translateZ(0). */
+     CAS-763: the heading and its .list are now wrapped in one .ablock per agent block (see the render
+     loop), so a rank tint can paint the whole block as a lane rather than just this row — see .ablock
+     below. This rule still carries the heading's own layout/typography, and is the whole visual treatment
+     for the untinted "Other" case, which keeps exactly this look, wrapper or not.
+     CAS-761: pinned under the sticky chrome for as long as its own .list is on screen. Before CAS-763 this
+     relied on consecutive .grouphead.sub siblings pushing each other out; now that each heading lives
+     inside its own .ablock, the same release happens for a structural reason instead — a sticky element
+     can never stick past the end of its own containing block, so each heading pins within its .ablock and
+     lets go exactly at that block's bottom. Same visible behaviour, no JS, cleaner containment. --stickyh
+     is header+.cascbar's measured height (published alongside --hdrh, see syncHeaderHeight) so this never
+     has to guess the chrome's height itself. z-index:10 sits above the (unpositioned, so z-index-blind)
+     .card content it pins over, but below the chrome (.cascbar 20, header 30). background is opaque so a
+     card scrolling underneath is never visible through it — the tinted rank rule below already is
+     (color-mix onto --bg), this is only for the untinted "Other" case. The compositing-layer promotion
+     (CAS-543's note, hardened by CAS-519/526's WebKit sticky-resize fix) goes here too — on whichever
+     element is actually stuck, same convention as #ymSticky's own translateZ(0). */
   .grouphead.sub{padding:10px 12px 6px;font-size:12px;font-weight:700;color:var(--dim);border-top:1px solid var(--line);margin-top:4px;
     position:sticky;top:var(--stickyh,0px);z-index:10;background:var(--bg);
     transform:translateZ(0);-webkit-transform:translateZ(0)}
   /* CAS-746: the row is unconditional now, so the first one in a group sits directly under the
-     section's own .grouphead — suppress its hairline there so it doesn't read as a double rule. */
-  .group > .grouphead + .grouphead.sub{border-top:0;margin-top:0}
-  /* CAS-760: rank tint, applied to the sub-heading BAND only — never to .gdot/.cap/.wdot/the score chip/
-     the card's agent chip, which carry availability and provenance meanings and must stay rank-free.
-     --rt set per rank class (same `--dcc`-per-lane convention as .dcard.agent-cin/.agent-str above),
-     then one shared rule reads it: tinted label text, a 3px left bar (the .dc-in accent language), and a
-     low-alpha wash of the same hue as the divider band — replacing the hairline, not adding to it. */
-  .grouphead.sub.agrank-1{--rt:var(--agrank-1)}
-  .grouphead.sub.agrank-2{--rt:var(--agrank-2)}
-  .grouphead.sub.agrank-3{--rt:var(--agrank-3)}
-  .grouphead.sub.agrank-4{--rt:var(--agrank-4)}
-  .grouphead.sub.agrank-5{--rt:var(--agrank-5)}
-  .grouphead.sub.agrank-6{--rt:var(--agrank-6)}
-  .grouphead.sub.agrank-1,.grouphead.sub.agrank-2,.grouphead.sub.agrank-3,
-  .grouphead.sub.agrank-4,.grouphead.sub.agrank-5,.grouphead.sub.agrank-6{
-    color:var(--rt);border-top:0;border-left:3px solid var(--rt);
-    background:color-mix(in srgb, var(--rt) 10%, var(--bg));
+     section's own .grouphead — suppress its hairline there so it doesn't read as a double rule.
+     CAS-763: the heading is now .ablock's own first child, so the selector routes through the wrapper. */
+  .group > .grouphead + .ablock > .grouphead.sub{border-top:0;margin-top:0}
+  /* CAS-763: the per-agent block wrapper (heading + its .list — built in the render loop). Untinted (no
+     agrank-N class, the "Other" case) it is an unstyled box: today's neutral appearance, unchanged.
+     Tinted, it carries the rank wash and the full-height left strip that used to live on .grouphead.sub
+     alone (CAS-760) — Lee's reaction to that shipping as a hard rectangle sitting on the list rather than
+     reading as a lane behind it. Radius follows .card's 16px family so the lane reads as part of the same
+     card language rather than a harder-edged box. */
+  .ablock{border-radius:14px}
+  .ablock.agrank-1{--rt:var(--agrank-1)}
+  .ablock.agrank-2{--rt:var(--agrank-2)}
+  .ablock.agrank-3{--rt:var(--agrank-3)}
+  .ablock.agrank-4{--rt:var(--agrank-4)}
+  .ablock.agrank-5{--rt:var(--agrank-5)}
+  .ablock.agrank-6{--rt:var(--agrank-6)}
+  /* CAS-763: wash alpha drops to 6% (was CAS-760's 10% on the heading alone) — it now covers a whole
+     block of cards instead of one row, and has to stay clearly quieter than the .card panel it sits
+     behind. Never applied to .gdot/.cap/.wdot/the score chip/the card's agent chip — those carry
+     availability and provenance meanings and stay rank-free, same as CAS-760. */
+  .ablock.agrank-1,.ablock.agrank-2,.ablock.agrank-3,
+  .ablock.agrank-4,.ablock.agrank-5,.ablock.agrank-6{
+    border-left:3px solid var(--rt);
+    background:color-mix(in srgb, var(--rt) 6%, var(--bg));
+  }
+  /* CAS-763: the heading stops being its own box — no border-left, and a SOLID background (not an alpha
+     layer) identical to the wrapper's wash, so it reads as the top of the lane rather than a seam. Solid
+     because CAS-761 needs it opaque while pinned; color-mix of two opaque colours is itself opaque, so the
+     same expression that paints the wash also satisfies that. Top corners share the wrapper's radius so
+     the matching colour reads as one continuous rounded shape instead of a square nub sitting in the
+     lane's rounded corner. */
+  .ablock.agrank-1 > .grouphead.sub,.ablock.agrank-2 > .grouphead.sub,.ablock.agrank-3 > .grouphead.sub,
+  .ablock.agrank-4 > .grouphead.sub,.ablock.agrank-5 > .grouphead.sub,.ablock.agrank-6 > .grouphead.sub{
+    color:var(--rt);border-top:0;
+    background:color-mix(in srgb, var(--rt) 6%, var(--bg));
+    border-radius:14px 14px 0 0;
   }
   .gdot{width:9px;height:9px;border-radius:50%}
   .gdot.opening_week{background:var(--open)} .gdot.in_cinema{background:var(--amber)}
@@ -5434,7 +5460,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 932, "commit": "62a14d4", "builtAt": "2026-09-04T08:35:55Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 933, "commit": "f5212bc", "builtAt": "2026-09-04T08:50:31Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -18093,10 +18119,15 @@ function render(){
     blocks.forEach(block=>{
       const name=block.cascade ? `${block.cascade.icon} ${esc(block.cascade.name)}` : "Other";
       const tint=cascadeRankTint(block.cascade);   // CAS-760: null keeps the untinted "Other" appearance
-      const sub=document.createElement("div"); sub.className="grouphead sub"+(tint?` agrank-${tint}`:""); sub.innerHTML=`<span>${name}</span>`;
-      grp.appendChild(sub);
+      // CAS-763: heading + list share one wrapper so the rank tint can paint a continuous lane behind the
+      // whole block instead of just the heading row — the rank class moves here, .grouphead.sub itself no
+      // longer carries it (see the CSS comment on .ablock).
+      const ablock=document.createElement("div"); ablock.className="ablock"+(tint?` agrank-${tint}`:"");
+      const sub=document.createElement("div"); sub.className="grouphead sub"; sub.innerHTML=`<span>${name}</span>`;
+      ablock.appendChild(sub);
       const listEl=document.createElement("div"); listEl.className="list";
-      grp.appendChild(listEl);
+      ablock.appendChild(listEl);
+      grp.appendChild(ablock);
       fillListChunked(listEl, block.items, renderGen, isFresh, oneListDone);
     });
   });

@@ -64,9 +64,11 @@ async function toStreamTab(page){
   await page.waitForTimeout(300);   // stream is fillListChunked's own async paint, same as cas754's toTab
 }
 
+// CAS-763: the rank class moved from .grouphead.sub onto its .ablock wrapper (the sub-heading and its
+// .list now share one block so the tint can paint a lane behind both) — read it off the ancestor.
 const subHeadings = page => page.locator(".grouphead.sub").evaluateAll(els => els.map(el => ({
   text: el.textContent.trim(),
-  rankClass: [...el.classList].find(c => c.startsWith("agrank-")) || null,
+  rankClass: [...(el.closest(".ablock")?.classList || [])].find(c => c.startsWith("agrank-")) || null,
 })));
 
 test.afterEach(async ({ page }) => {
@@ -172,14 +174,17 @@ test("CAS-760: every rank tint's computed text colour clears 4.5:1 against --bg"
     const bgLum = relLum(getComputedStyle(document.documentElement).getPropertyValue("--bg").trim());
     const out = [];
     for(let i = 1; i <= 6; i++){
-      const el = document.createElement("div");
-      el.className = `grouphead sub agrank-${i}`;
-      document.body.appendChild(el);
+      // CAS-763: --rt (and so the tinted colour) now comes from the .ablock wrapper, not the heading
+      // itself — wrap it the same way the render loop does.
+      const wrap = document.createElement("div"); wrap.className = `ablock agrank-${i}`;
+      const el = document.createElement("div"); el.className = "grouphead sub";
+      wrap.appendChild(el);
+      document.body.appendChild(wrap);
       const hex = parseRgb(getComputedStyle(el).color);
       const lum = relLum(hex);
       const L1 = Math.max(lum, bgLum), L2 = Math.min(lum, bgLum);
       out.push((L1 + 0.05) / (L2 + 0.05));
-      el.remove();
+      wrap.remove();
     }
     return out;
   });
