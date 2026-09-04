@@ -1,9 +1,15 @@
 // CAS-761: the Watch listing's per-agent sub-heading (.grouphead.sub, CAS-717) pins under the sticky chrome
-// for as long as its own agent block is on screen, and is pushed up by the next agent's heading — the
-// classic "consecutive position:sticky siblings push each other out" arrangement, since .grouphead.sub and
-// .list pairs are flat siblings inside one .group (CAS-760's own structural note). The offset it pins to,
-// --stickyh (header + #cascbar's measured height), is published by syncHeaderHeight() the same place --hdrh
-// already is, and jumpToSection now reads that same value instead of re-measuring the chrome itself.
+// for as long as its own agent block is on screen, and releases (never overlapping the next block's own
+// heading in a stuck state) once that block scrolls past.
+// CAS-763: the mechanism this rests on changed. .grouphead.sub and .list used to be flat siblings inside
+// one .group, so the release came from the classic "consecutive position:sticky siblings push each other
+// out" arrangement. CAS-763 wraps each heading + its .list in one .ablock (so a rank tint can paint a
+// continuous lane behind the whole block) — the headings are no longer siblings, but the same release still
+// happens: a sticky element can never stick past the end of its own containing block, so each heading pins
+// within its .ablock and lets go exactly at that block's bottom. Same visible behaviour, cleaner
+// containment, no JS involved either way. The offset it pins to, --stickyh (header + #cascbar's measured
+// height), is published by syncHeaderHeight() the same place --hdrh already is, and jumpToSection now reads
+// that same value instead of re-measuring the chrome itself.
 //
 // Real onboarding roster (toShortlist/finishFlow, same technique cas751-754/760 use), films pinned in
 // (CAS-709: a pin always outranks criteria — cas753/754/760's technique) so there is no dependency on
