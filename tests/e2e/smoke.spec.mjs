@@ -420,9 +420,16 @@ test("'Only show films on my services' changes what a new agent finds", async ({
 // The classic boot script decides whether to show the splash before the (deferred, async) auth module has
 // had any chance to answer "is this device signed in" — that part is unavoidable and not what this tests.
 // What CAS-740 fixes is afterSignIn() leaving the wizard running when the account's answer lands AFTER the
-// splash's own "Sign up" tap already opened it. The fake's own getSession() is deliberately delayed so the
-// test can reproduce that exact ordering deterministically rather than racing a real clock.
-const CAS740_FAKE_SUPABASE_MODULE = `
+// splash's own "Sign up" tap already opened it. The fake's own getSession() deliberately doesn't resolve
+// until the test calls window.__cas740ResolveSession() explicitly, so the test can reproduce that exact
+// ordering deterministically instead of racing a fixed timer against however long a real page load takes.
+//
+// CAS-765: the real supabase-js.js is now a plain vendored <script> (window.supabase.createClient), not an
+// esm.sh `import()` — so the fake below is a global-assigning classic script too, routed at the local
+// bundle's own path instead of the retired esm.sh URL. A vendored ~200KB classic script blocking parse in
+// <head> also lengthened page-load time enough that a FIXED delay (the original 600ms) sometimes resolved
+// during gotoFresh()'s own navigation, before the test ever got to race it — hence the explicit trigger.
+const CAS740_FAKE_SUPABASE_GLOBAL = `
   const SEEDED_CASCADE = { id: "740aaaa1-0000-4000-8000-000000000001", user_id: "cas740-user",
     name: "Existing agent", criteria: {}, created_at: "2020-01-01T00:00:00.000Z" };
   function chain(){
@@ -431,11 +438,11 @@ const CAS740_FAKE_SUPABASE_MODULE = `
       apply: () => chain(),
     });
   }
-  export function createClient(){
+  window.supabase = { createClient(){
     return {
       auth: {
-        getSession: () => new Promise(resolve => setTimeout(() => resolve({ data: { session: {
-          user: { id: "cas740-user", email: "cas740@example.com" }, access_token: "fake" } } }), 600)),
+        getSession: () => new Promise(resolve => { window.__cas740ResolveSession = () => resolve({ data: { session: {
+          user: { id: "cas740-user", email: "cas740@example.com" }, access_token: "fake" } } }); }),
         onAuthStateChange: () => ({ data: { subscription: { unsubscribe(){} } } }),
         signInWithPassword: async () => ({ data: {}, error: null }),
         signUp: async () => ({ data: {}, error: null }),
@@ -446,7 +453,7 @@ const CAS740_FAKE_SUPABASE_MODULE = `
             upsert: () => chain(), delete: () => chain() }
         : chain(),
     };
-  }
+  } };
 `;
 
 // CAS-745: the Agents-screen row's summary line dropped its genre restriction back in CAS-643 to stay
@@ -582,13 +589,13 @@ test("CAS-740 AC4: a signed-in user whose account already holds agents is never 
     contentType: "application/javascript",
     body: `window.CASCADE_CONFIG = { SUPABASE_URL: "https://fake-project.supabase.test", SUPABASE_ANON_KEY: "fake-anon-key-not-a-real-secret" };`,
   }));
-  await page.route("https://esm.sh/@supabase/supabase-js@2", route => route.fulfill({
+  await page.route("**/supabase-js.js", route => route.fulfill({
     contentType: "application/javascript",
-    body: CAS740_FAKE_SUPABASE_MODULE,
+    body: CAS740_FAKE_SUPABASE_GLOBAL,
   }));
   await gotoFresh(page);
-  // The module has imported supabase-js and created its client — about to call the delayed getSession()
-  // above, but hasn't yet. This is the instant to race against.
+  // The module has imported supabase-js and created its client, whose getSession() is now pending on this
+  // test's own explicit trigger (see CAS740_FAKE_SUPABASE_GLOBAL above) — not on a timer.
   await page.waitForFunction(() => window.CascadeAuth && window.CascadeAuth.client);
 
   await expect(page.locator("#splashCta")).toBeVisible();
@@ -596,11 +603,56 @@ test("CAS-740 AC4: a signed-in user whose account already holds agents is never 
   await expect(page.locator("#obWho")).toBeVisible();
   expect(await page.evaluate(() => flowOn)).toBe(true);   // genuinely inside the wizard before the race resolves
 
-  // The delayed session restore now resolves to an account that already holds an agent.
+  // Now let the session restore resolve to an account that already holds an agent.
+  await page.evaluate(() => window.__cas740ResolveSession());
   await page.waitForFunction(() => window.CascadeAuth.status === "signed-in", null, { timeout: 5000 });
   await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
   const state = await page.evaluate(() => ({ flowOn, names: cascades.map(c => c.name) }));
   expect(state.flowOn, "the wizard must be exited once the account is known to already have agents").toBe(false);
   expect(state.names, "the account's own roster must be shown, not a second one built by the wizard")
     .toEqual(["Existing agent"]);
+});
+
+// CAS-765 AC5: the auth client must never depend on a third-party CDN being reachable — supabase-js is
+// vendored locally (supabase-js.js) instead of fetched from esm.sh at runtime. Blocks every request to any
+// host other than the app's own origin and the (fake) Supabase project host, and still expects a stored
+// session to resolve to signed-in, proving no third-party fetch is required to construct the client.
+test("CAS-765 AC5: reaches signed-in state for a stored session with every non-app, non-Supabase host blocked", async ({ page }) => {
+  const ALLOWED_HOSTS = new Set(["127.0.0.1", "fake-project.supabase.test"]);
+  await page.route("**/*", route => {
+    const reqUrl = new URL(route.request().url());
+    return ALLOWED_HOSTS.has(reqUrl.hostname) ? route.continue() : route.abort();
+  });
+  await page.route("**/config.js", route => route.fulfill({
+    contentType: "application/javascript",
+    body: `window.CASCADE_CONFIG = { SUPABASE_URL: "https://fake-project.supabase.test", SUPABASE_ANON_KEY: "fake-anon-key-not-a-real-secret" };`,
+  }));
+  await page.route("**/supabase-js.js", route => route.fulfill({
+    contentType: "application/javascript",
+    body: CAS740_FAKE_SUPABASE_GLOBAL,
+  }));
+  await gotoFresh(page);
+  await page.waitForFunction(() => window.CascadeAuth && window.CascadeAuth.client);
+  await page.evaluate(() => window.__cas740ResolveSession());
+  await page.waitForFunction(() => window.CascadeAuth.status === "signed-in", null, { timeout: 5000 });
+  expect(await page.evaluate(() => window.CascadeAuth.user && window.CascadeAuth.user.email)).toBe("cas740@example.com");
+});
+
+// CAS-765 AC7: the silent guest-mode drop is gone. If the vendored client library ever fails to define
+// window.supabase.createClient — forced here by serving a broken bundle in place of the real one — the
+// failure must be visible on screen, not just a console.warn no user will ever read.
+test("CAS-765 AC7: a forced client-construction failure shows a visible banner, not a silent guest-mode drop", async ({ page }) => {
+  await page.route("**/config.js", route => route.fulfill({
+    contentType: "application/javascript",
+    body: `window.CASCADE_CONFIG = { SUPABASE_URL: "https://fake-project.supabase.test", SUPABASE_ANON_KEY: "fake-anon-key-not-a-real-secret" };`,
+  }));
+  await page.route("**/supabase-js.js", route => route.fulfill({
+    contentType: "application/javascript",
+    body: "/* CAS-765 test double: deliberately does not define window.supabase */",
+  }));
+  await gotoFresh(page);
+  await page.waitForFunction(() => window.CascadeAuth && window.CascadeAuth.status === "guest");
+  const banner = page.locator("#acctBanner");
+  await expect(banner).toBeVisible();
+  await expect(banner).not.toHaveText("");
 });

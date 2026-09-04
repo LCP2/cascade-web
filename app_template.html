@@ -22,6 +22,11 @@
      Row-Level Security protects the data). If the file is ever absent this 404s harmlessly and
      the page loads in guest mode (localStorage) instead. See config.example.js for the template. -->
 <script src="config.js"></script>
+<!-- CAS-765: Supabase client vendored the same way as the Capacitor globals below (see supabase-js.js's
+     own header comment) — window.supabase.createClient, loaded as a plain global instead of a runtime
+     `import()` from a third-party CDN, so a shipped App Store binary never depends on that CDN being
+     reachable to construct the client that signs a user in. -->
+<script src="supabase-js.js"></script>
 <!-- CAS-463: Capacitor's core JS + the push-notifications plugin, vendored (see the files' own header
      comments — this repo has no bundler, so `Capacitor.Plugins.PushNotifications` needs both loaded as
      plain globals). Harmless on the web build too: outside the native shell isNativePlatform() is false
@@ -19060,6 +19065,25 @@ else if(dedupedN)
     acctTableFail[table]=failed;
     renderAcctBanner();
   }
+  // CAS-764: a single failed read used to latch acctTableFail (and the banner) immediately — right on a
+  // genuine disconnection, but wrong for the one-shot blip a phone produces routinely (backgrounded/resumed,
+  // wifi/cellular handoff, reconcileOnReturn's burst of reads on every foreground return). acctRead is the
+  // ONE place every one of the eight load/reconcile call sites now routes its read through, so the retry
+  // policy can't drift between them: up to 3 attempts, with a jittered backoff between attempts, before
+  // setAcctTableFail(table, true) fires. A read that succeeds — first try or on retry — clears the failure
+  // and returns normally; the caller sees nothing different about a retried read versus an instant success.
+  let ACCT_READ_DELAYS = [400, 1200];   // ms before attempt 2 and attempt 3; exposed so a test can zero it
+  function acctReadWait(ms){ return new Promise(res => setTimeout(res, ms + Math.random()*ms*0.3)); }
+  async function acctRead(table, fn){
+    let result;
+    for(let attempt=0; attempt<3; attempt++){
+      result = await fn();
+      if(!result.error){ setAcctTableFail(table, false); return result; }
+      if(attempt<2) await acctReadWait(ACCT_READ_DELAYS[attempt]);
+    }
+    setAcctTableFail(table, true);
+    return result;
+  }
   // CAS-691: the OTHER direction a save can fail to reach the account — not "we don't trust what we last
   // read" (acctTableFail, above) but "this device has an edit the account doesn't have yet", whether that
   // push is still in flight, still queued behind a debounce, or has already failed once and is retrying.
@@ -19071,22 +19095,38 @@ else if(dedupedN)
     acctTablePending[table]=pending;
     renderAcctBanner();
   }
-  function renderAcctBanner(){
-    const el=$("acctBanner"); if(!el) return;
+  // CAS-764: the DECISION half of the banner — what it should say, or null for "say nothing" — kept pure
+  // and DOM-free so a test can assert it directly. renderAcctBanner (below) is purely the WIRE half: paint
+  // whatever this returns.
+  function acctBannerText(){
+    // A user who already knows they're offline does not need to be told their account is unreachable —
+    // that's the same fact, restated as an alarm. The "online" listener below re-renders on reconnect, so
+    // a genuinely still-failing table reappears the moment connectivity returns.
+    if(typeof navigator!=="undefined" && navigator.onLine===false) return null;
     const down=new Set(), pending=new Set();
     Object.keys(acctTableFail).forEach(t=>{ if(acctTableFail[t]) down.add(ACCT_TABLE_SURFACE[t]); });
     // A table already flagged "not connected" gets that message, not also "not yet saved" — the reader
     // has already been told nothing from this device is reaching the account right now.
     Object.keys(acctTablePending).forEach(t=>{ if(acctTablePending[t] && !acctTableFail[t]) pending.add(ACCT_TABLE_SURFACE[t]); });
     const parts=[];
-    if(down.size) parts.push("Account not connected — showing on-device data for: "
-      + [...down].map(k=>ACCT_SURFACE_LABEL[k]).join(", ") + ".");
+    // CAS-764: softened copy — the account IS connected, one table's last read (after 3 retries) failed.
+    // Says what actually happened and what it means, not an overstated "disconnected" alarm.
+    if(down.size) parts.push("Couldn't refresh your account just now — showing what's on this device for: "
+      + [...down].map(k=>ACCT_SURFACE_LABEL[k]).join(", ") + ". Changes will save when it reconnects.");
     if(pending.size) parts.push("Not yet saved to your account — still on this device only: "
       + [...pending].map(k=>ACCT_SURFACE_LABEL[k]).join(", ") + ".");
-    if(!parts.length){ el.hidden=true; el.textContent=""; }
-    else{ el.textContent=parts.join(" "); el.hidden=false; }
+    return parts.length ? parts.join(" ") : null;
+  }
+  function renderAcctBanner(){
+    const el=$("acctBanner"); if(!el) return;
+    const text = acctBannerText();
+    if(!text){ el.hidden=true; el.textContent=""; }
+    else{ el.textContent=text; el.hidden=false; }
     syncHeaderHeight();   // the banner is part of the header's own measured height (see .acctbanner CSS)
   }
+  // CAS-764: connectivity coming back is the one event that can make the banner's answer change without
+  // any table's fail/pending state changing — reconnecting must re-show a genuinely still-failing table.
+  if(typeof window!=="undefined" && window.addEventListener) window.addEventListener("online", renderAcctBanner);
 
   // ---- shape mapping: local Cascade <-> table row --------------------------
   // criteria (jsonb) carries the whole local Cascade minus the columns stored on their own
@@ -19300,9 +19340,8 @@ else if(dedupedN)
   // above; one genuinely new to this device (the account has never confirmed it) is folded straight in.
   async function loadAccount(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("cascades").select("*").order("created_at");   // RLS: only mine
-    if(error){ console.warn("Cascade load", error); toast("⚠️ Couldn't reach your account — showing on-device Cascades."); cascadesReady=true; setAcctTableFail("cascades", true); return; }
-    setAcctTableFail("cascades", false);
+    const { data, error } = await acctRead("cascades", () => c.from("cascades").select("*").order("created_at"));   // RLS: only mine
+    if(error){ console.warn("Cascade load", error); cascadesReady=true; return; }
     // CAS-733 Change 5: one-time legacy cleanup — a device carrying a pre-account guest agent set
     // (built back when signed-out was still a usable state) stops carrying it the moment its account
     // load actually succeeds. Gated on the success branch above, never on a failed read (CAS-656): a
@@ -19380,9 +19419,8 @@ else if(dedupedN)
   // refresh landing mid-edit never undoes work still in flight.
   async function reconcileCascades(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("cascades").select("*").order("created_at");
-    if(error){ console.warn("Cascade reconcile", error); setAcctTableFail("cascades", true); return; }
-    setAcctTableFail("cascades", false);
+    const { data, error } = await acctRead("cascades", () => c.from("cascades").select("*").order("created_at"));
+    if(error){ console.warn("Cascade reconcile", error); return; }
     const rawRows = data||[];
     // CAS-560: same stale-lang push-back as loadAccount, for the background convergence path.
     const langDirty = rawRows.some(r => ((r.criteria||{}).lang||[]).length);
@@ -19526,9 +19564,8 @@ else if(dedupedN)
   }
   async function loadListsAccount(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("lists").select("*");
-    if(error){ console.warn("Lists load", error); setAcctTableFail("lists", true); return; }
-    setAcctTableFail("lists", false);
+    const { data, error } = await acctRead("lists", () => c.from("lists").select("*"));
+    if(error){ console.warn("Lists load", error); return; }
     const rawRows = data||[];
     listKnown = new Map(rawRows.filter(r=>isUuid(r.id))
       .map(r=>[r.id, { sig: listSigOf(rowToList(r)), version: r.updated_at||null }]));
@@ -19540,9 +19577,8 @@ else if(dedupedN)
   }
   async function loadListMembershipAccount(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("list_films").select("movie_id,list_id");
-    if(error){ console.warn("list_films load", error); setAcctTableFail("listFilms", true); return; }
-    setAcctTableFail("listFilms", false);
+    const { data, error } = await acctRead("listFilms", () => c.from("list_films").select("movie_id,list_id"));
+    if(error){ console.warn("list_films load", error); return; }
     const remote=data||[];
     listFilmBaseline=new Set(remote.map(r=>`${r.movie_id}:${r.list_id}`));
     Object.keys(listMembership).forEach(k=>delete listMembership[k]);
@@ -19555,9 +19591,8 @@ else if(dedupedN)
   // (merge) and a load (replace) are different operations.
   async function reconcileLists(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("lists").select("*");
-    if(error){ console.warn("Lists reconcile", error); setAcctTableFail("lists", true); return; }
-    setAcctTableFail("lists", false);
+    const { data, error } = await acctRead("lists", () => c.from("lists").select("*"));
+    if(error){ console.warn("Lists reconcile", error); return; }
     const rawRows = data||[];
     const remote=rawRows.map(rowToList);
     const remoteIds=new Set(remote.map(x=>x.id));
@@ -19577,9 +19612,8 @@ else if(dedupedN)
   }
   async function reconcileListMembership(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("list_films").select("movie_id,list_id");
-    if(error){ console.warn("list_films reconcile", error); setAcctTableFail("listFilms", true); return; }
-    setAcctTableFail("listFilms", false);
+    const { data, error } = await acctRead("listFilms", () => c.from("list_films").select("movie_id,list_id"));
+    if(error){ console.warn("list_films reconcile", error); return; }
     const remote=data||[];
     const remoteKeys=new Set(remote.map(r=>`${r.movie_id}:${r.list_id}`));
     const localOnly = listFilmBaseline
@@ -19773,9 +19807,8 @@ else if(dedupedN)
   async function loadWatchlistAccount(){
     const c=client(); if(!c||!accountActive()) return;
     // req3: a tombstoned row must never even reach this device's merge logic, let alone its screen.
-    const { data, error } = await c.from("watchlists").select("*").is("deleted_at", null);
-    if(error){ console.warn("Watchlist load", error); toast("⚠️ Couldn't reach your account — showing on-device watch lists."); ymReady=true; setAcctTableFail("watchlists", true); return; }
-    setAcctTableFail("watchlists", false);
+    const { data, error } = await acctRead("watchlists", () => c.from("watchlists").select("*").is("deleted_at", null));
+    if(error){ console.warn("Watchlist load", error); ymReady=true; return; }
     const oldKnown=watchlistKnown;   // this device's OWN last-confirmed state, from before this fetch
     const remoteRaw=(data||[]).map(rowToWatchlist);
     const remoteVersionById=new Map((data||[]).map(r=>[r.id, r.updated_at]));
@@ -19832,9 +19865,8 @@ else if(dedupedN)
   // CAS-408-style background convergence — id-based upsert/prune, exactly like reconcileCascades.
   async function reconcileWatchlists(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("watchlists").select("*").is("deleted_at", null);
-    if(error){ console.warn("Watchlist reconcile", error); setAcctTableFail("watchlists", true); return; }
-    setAcctTableFail("watchlists", false);
+    const { data, error } = await acctRead("watchlists", () => c.from("watchlists").select("*").is("deleted_at", null));
+    if(error){ console.warn("Watchlist reconcile", error); return; }
     const oldKnown=watchlistKnown;
     const remote=(data||[]).map(rowToWatchlist);
     const remoteVersionById=new Map((data||[]).map(r=>[r.id, r.updated_at]));
@@ -20726,6 +20758,14 @@ else if(dedupedN)
                                 // drive "edit, then reload" without a real page load and assert what the
                                 // banner would say without reaching into the DOM.
                                 loadGuestWatchlist, acctTableFail, acctTablePending, setAcctTableFail,
+                                // CAS-764: acctRead is the shared retry-before-latch helper every load/reconcile
+                                // call site now routes its read through — exposed so a test can drive it
+                                // directly with a stubbed reader. ACCT_READ_DELAYS is read/write (not by
+                                // reference — it's reassigned wholesale) so a test can zero the real backoff
+                                // delays rather than waiting on them.
+                                acctRead, renderAcctBanner, acctBannerText,
+                                get ACCT_READ_DELAYS(){ return ACCT_READ_DELAYS; },
+                                set ACCT_READ_DELAYS(v){ ACCT_READ_DELAYS=v; },
                                 saveWatchlists, saveCascades, saveLists, saveListMembership, saveWatchStatus,
                                 // CAS-484: the per-film Watch-it tick's own load/sync/reconcile seam.
                                 loadFilmWatches, syncWatchesNow: runWatchSync, watchRows, applyWatchRows,
@@ -20864,10 +20904,20 @@ else if(dedupedN)
     const msg = gid('authMsg');
     let supa;
     try {
-      const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
+      // CAS-765: vendored locally (supabase-js.js, loaded as a plain <script> in <head>) — no runtime
+      // fetch to a third-party CDN. A shipped App Store binary must not depend on that CDN being
+      // reachable to construct the client that signs a user in.
+      const createClient = window.supabase && window.supabase.createClient;
+      if (typeof createClient !== 'function') throw new Error('Supabase client library not loaded');
       supa = api.client = createClient(url, key);   // defaults: persistSession + detectSessionInUrl
     } catch(err){
       console.warn('Cascade: Supabase client unavailable — staying in guest mode.', err);
+      // CAS-765: this used to be a silent drop to guest mode — a paying user looking at an empty
+      // account with no explanation. The client library failing to construct is now vanishingly rare
+      // (it's vendored, not fetched), but if it ever happens, say so on screen rather than nothing —
+      // same banner slot CAS-656/CAS-764 use for a failed account read.
+      const banner = gid('acctBanner');
+      if(banner){ banner.textContent = "Couldn't connect to your account — showing on-device data only."; banner.hidden = false; }
       setGuest(); announce(); return;
     }
 
