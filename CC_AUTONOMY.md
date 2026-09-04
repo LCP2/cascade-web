@@ -149,8 +149,10 @@ Print exactly one outcome marker on the final line:
   scratch instead of resuming, which has already wasted real runs on this project.
 - Never write to `main`. Never `git checkout main`, merge to main, push main, or force-push anything.
   Only `promote.yml` writes `main` (it fires automatically on a green QA — recorded Cascade exemption).
-- Never edit CI / workflow / signing files — if a ticket needs that, set it `BLOCKED` and add the
-  `needs-lee` label. (The one exception ever granted was CAS-300, the ticket that installed this kit.)
+- Workflow, CI and signing files may be edited **only** when the ticket text explicitly names the exact
+  file, and then **only** on `staging`. Without that explicit naming, the existing behaviour stands: set
+  it `BLOCKED` and add the `needs-lee` label. See the Cascade method page — *QA and Deploy — how Cascade
+  actually ships*, section 2 "Who may do what" — for the governing rule.
 - Never enter credentials, accept store agreements, or run a deploy. Those stop at the human.
 - Never print or log a secret. The Supabase **anon** key may live in the front-end; `service_role` and
   `RESEND_API_KEY` are server-side only. Row-level security stays ON for every user table, and the monitor
