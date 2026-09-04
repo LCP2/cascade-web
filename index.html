@@ -22,6 +22,11 @@
      Row-Level Security protects the data). If the file is ever absent this 404s harmlessly and
      the page loads in guest mode (localStorage) instead. See config.example.js for the template. -->
 <script src="config.js"></script>
+<!-- CAS-765: Supabase client vendored the same way as the Capacitor globals below (see supabase-js.js's
+     own header comment) — window.supabase.createClient, loaded as a plain global instead of a runtime
+     `import()` from a third-party CDN, so a shipped App Store binary never depends on that CDN being
+     reachable to construct the client that signs a user in. -->
+<script src="supabase-js.js"></script>
 <!-- CAS-463: Capacitor's core JS + the push-notifications plugin, vendored (see the files' own header
      comments — this repo has no bundler, so `Capacitor.Plugins.PushNotifications` needs both loaded as
      plain globals). Harmless on the web build too: outside the native shell isNativePlatform() is false
@@ -5460,7 +5465,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 933, "commit": "f5212bc", "builtAt": "2026-09-04T08:50:31Z"};
+const BUILD_INFO = {"version": "0.9.3", "major": 0, "minor": 9, "patch": 3, "build": 934, "commit": "fe03209", "builtAt": "2026-09-04T12:39:12Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -20864,10 +20869,20 @@ else if(dedupedN)
     const msg = gid('authMsg');
     let supa;
     try {
-      const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
+      // CAS-765: vendored locally (supabase-js.js, loaded as a plain <script> in <head>) — no runtime
+      // fetch to a third-party CDN. A shipped App Store binary must not depend on that CDN being
+      // reachable to construct the client that signs a user in.
+      const createClient = window.supabase && window.supabase.createClient;
+      if (typeof createClient !== 'function') throw new Error('Supabase client library not loaded');
       supa = api.client = createClient(url, key);   // defaults: persistSession + detectSessionInUrl
     } catch(err){
       console.warn('Cascade: Supabase client unavailable — staying in guest mode.', err);
+      // CAS-765: this used to be a silent drop to guest mode — a paying user looking at an empty
+      // account with no explanation. The client library failing to construct is now vanishingly rare
+      // (it's vendored, not fetched), but if it ever happens, say so on screen rather than nothing —
+      // same banner slot CAS-656/CAS-764 use for a failed account read.
+      const banner = gid('acctBanner');
+      if(banner){ banner.textContent = "Couldn't connect to your account — showing on-device data only."; banner.hidden = false; }
       setGuest(); announce(); return;
     }
 

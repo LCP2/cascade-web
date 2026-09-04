@@ -87,6 +87,7 @@ VERSION_JSON  = os.path.join(os.path.dirname(__file__), "version.json")   # mach
 IOS_WWW_DIR   = os.path.join(os.path.dirname(__file__), "www")            # Capacitor webDir mirror (CAS-453)
 IOS_WWW_ASSETS = ("index.html", "config.js", "favicon.svg", "favicon.png",
                    "apple-touch-icon.png", "splash-logo.svg",
+                   "supabase-js.js",  # CAS-765
                    "capacitor-core.js", "capacitor-push-notifications.js",  # CAS-463
                    "capacitor-app.js")  # CAS-524
 
