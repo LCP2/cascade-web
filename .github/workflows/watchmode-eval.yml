@@ -14,6 +14,10 @@ on:
         description: 'CAS579_SAMPLE_END — field-coverage sample window end (YYYYMMDD, optional)'
         required: false
         type: string
+      trial_max_credits:
+        description: 'CAS767_MAX_CREDITS — trial-eval credit-spend guard (default 2000)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -50,3 +54,37 @@ jobs:
         run: |
           cat watchmode_eval_report.md >> "$GITHUB_STEP_SUMMARY"
           cat watchmode_eval_report.md
+
+  # CAS-767: separate job so it cannot collide with the CAS-579/766 free-key job above. Only
+  # meaningful once the Watchmode key has been switched to the Startup trial (a repository-
+  # settings change, not a code change) - see scripts/cas767_watchmode_trial_eval.py.
+  evaluate_trial:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run the trial evaluation
+        env:
+          WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
+          CASCADE_CATALOGUE: movies.json
+          CAS767_REPORT: watchmode_trial_eval_report.md
+          CAS767_MAX_CREDITS: ${{ inputs.trial_max_credits }}
+        run: python scripts/cas767_watchmode_trial_eval.py
+
+      - name: Publish the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchmode-trial-eval-report
+          path: watchmode_trial_eval_report.md
+          if-no-files-found: error
+
+      - name: Publish the report to the run summary
+        if: always()
+        run: |
+          cat watchmode_trial_eval_report.md >> "$GITHUB_STEP_SUMMARY"
+          cat watchmode_trial_eval_report.md
