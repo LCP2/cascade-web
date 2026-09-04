@@ -16,6 +16,9 @@ import { loadEngine, pickInLane } from "./engine.mjs";
 
 const E = loadEngine();
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+// CAS-764: acctRead's real backoff (~400ms/~1.2s) is a UX choice for a live device, not something this
+// suite should sit through on every retry-to-failure test below — zero it once, for every test in this file.
+E.CascadePersistence.ACCT_READ_DELAYS = [0, 0];
 
 // Every preset in every lane it is offered in — the real matrix a person can walk into.
 const LANES = ["cinema", "stream"];

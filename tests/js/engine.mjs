@@ -317,6 +317,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // passes/RELAXERS are the Find screen's own filter registry — the "New" filter this ticket adds rides the
   // same seam the existing "recent" filter does, so a test can assert it's registered there directly.
   filmIsNew, admitDrift, filt, passes, RELAXERS, filtSnapshot, filtRestore,
+  // CAS-764: the stub navigator, by reference — so a test can flip .onLine the same way a real device
+  // going offline would, and assert the acct banner (which reads navigator.onLine directly) responds.
+  navigator,
 };
 `;
 
