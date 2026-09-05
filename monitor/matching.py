@@ -252,6 +252,33 @@ def excluded_moments(prefs) -> dict:
     return out
 
 
+def _rank_key(cascade: dict):
+    """(order, created_at, id) sort key for one cascade, lower wins (CAS-784). The agent's rank
+    lives at `criteria.order` (there is no `order` column — the front end persists it inside the
+    jsonb, see app_template.html ~19074). A missing or non-numeric `order` never beats a numeric
+    one, so it sorts as +inf; remaining ties break on `created_at`, then `id`."""
+    order = (cascade.get("criteria") or {}).get("order")
+    numeric = isinstance(order, (int, float)) and not isinstance(order, bool)
+    return (order if numeric else float("inf"), str(cascade.get("created_at") or ""),
+            str(cascade.get("id") or ""))
+
+
+def _collapse_by_rank(hits: list, rank_of: dict) -> list:
+    """CAS-784: one film, one agent, one line. Two hits sharing (user_id, movie_id, moment) —
+    two active Cascades both catching the same film at the same moment — collapse to the single
+    hit whose cascade has the lowest `_rank_key`, mirroring the app's own unpinned-ownership rule
+    (CAS-709: a film belongs to its lowest-`.order` matching agent) so the email agrees with the
+    screen about which agent "owns" the film."""
+    best = {}
+    for h in hits:
+        key = (h.user_id, h.transition.movie_id, h.transition.moment)
+        cur = best.get(key)
+        if cur is None or rank_of.get(h.cascade_id, (float("inf"), "", "")) < \
+                rank_of.get(cur.cascade_id, (float("inf"), "", "")):
+            best[key] = h
+    return list(best.values())
+
+
 def match(cascades: list, transitions: list, already=None, catalogue=None, suppressed=None,
           excluded=None) -> dict:
     """Return {user_id: [Hit, ...]} — one entry per (cascade, transition) that fires and hasn't
@@ -270,11 +297,16 @@ def match(cascades: list, transitions: list, already=None, catalogue=None, suppr
                   Preferences (see ``excluded_moments``). Like `suppressed`, it outranks the
                   Cascade — a muted type never fires for that user, whatever their Cascades say.
                   Empty/None -> nothing is globally muted.
+
+    CAS-784: when two of a user's active Cascades both catch the same film at the same moment,
+    only the lowest-`criteria.order` one is kept — one film, one agent, one line, on email same
+    as on screen.
     """
     seen = set(already or ())
     off = {(str(u), str(m)) for u, m in (suppressed or ())}
     muted = excluded_moments(excluded)
     tiers = scale_tiers(catalogue) if catalogue else {}
+    rank_of = {c["id"]: _rank_key(c) for c in cascades}
     by_user: dict = {}
 
     for c in cascades:
@@ -302,7 +334,7 @@ def match(cascades: list, transitions: list, already=None, catalogue=None, suppr
                 Hit(user_id=c["user_id"], cascade_id=c["id"],
                     cascade_name=c.get("name", "My Cascade"), transition=t,
                     channels=agent_channels(criteria)))
-    return by_user
+    return {uid: _collapse_by_rank(hits, rank_of) for uid, hits in by_user.items()}
 
 
 # --------------------------------------------------------------------------- #
@@ -342,6 +374,8 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
 
     prev_movies / today_movies : lists of movie records (poc_pipeline shape).
     already, catalogue, suppressed, excluded : same meaning as in ``match()``.
+
+    CAS-784: same one-film-one-agent collapse as ``match()`` — see its docstring.
     """
     prev_by_id = {str(m.get("tmdb_id")): m for m in prev_movies}
     today_by_id = {str(m.get("tmdb_id")): m for m in today_movies}
@@ -349,6 +383,7 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
     off = {(str(u), str(m)) for u, m in (suppressed or ())}
     muted = excluded_moments(excluded)
     tiers = scale_tiers(catalogue) if catalogue else {}
+    rank_of = {c["id"]: _rank_key(c) for c in cascades}
     by_user: dict = {}
 
     for c in cascades:
@@ -388,7 +423,7 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
                 Hit(user_id=c["user_id"], cascade_id=c["id"],
                     cascade_name=c.get("name", "My Cascade"), transition=t,
                     channels=agent_channels(criteria)))
-    return by_user
+    return {uid: _collapse_by_rank(hits, rank_of) for uid, hits in by_user.items()}
 
 
 # --------------------------------------------------------------------------- #
