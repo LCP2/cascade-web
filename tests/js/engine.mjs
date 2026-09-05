@@ -110,6 +110,10 @@ if(typeof window.CascadeAuth === "undefined"){
 }
 ;globalThis.__ENGINE__ = {
   MOVIES, CASCADE, STATUS_LABEL, SHOWABLE_N,
+  // CAS-771: filmByMovieId is the exact lookup the bell (realAlertsHTML) and Moving (movingData) use to
+  // resolve a stored movie_id string to its catalogue record — exported so the tmdb_id guardrail test can
+  // drive the real comparison rather than re-implementing it.
+  filmByMovieId: mid => MOVIES.find(x => String(x.tmdb_id) === String(mid)),
   matchesCriteria, countCriteria, watchCount, watchesFilm, matchesTaste, listedBy, listWindowOK,
   listedCount, onbShownCount,
   // CAS-723: inScope is the predicate the "one agent type" invariant is actually about — exported so a test

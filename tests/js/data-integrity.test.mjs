@@ -1213,3 +1213,35 @@ test("my services: switching the scope on never adds a film", () => {
     }
   });
 });
+
+// ---- 4. tmdb_id IS THE JOIN KEY, AND MUST SURVIVE ANY DATA-SOURCE CHANGE (CAS-771) ------------------------
+// Six Supabase tables of live user data (user_films, film_picks, film_watch, the cascade film rows,
+// list_films, notifications) are keyed on movie_id, which is always a tmdb_id (supabase/schema.sql:91).
+// The v2 migration to Watchmode as the catalogue spine must not silently re-key those tables: if a future
+// ticket did, every account would lose its Watch-it ticks, seen marks, list membership, personal overrides
+// and its whole alert ledger at once. This writes the invariant down before any migration code exists to
+// break it. E.MOVIES is movies.json's own "movies" array, embedded verbatim at build time (poc_pipeline.py's
+// build_html reads catalogue["movies"] and inlines it as __MOVIES_JSON__) — asserting over E.MOVIES here is
+// asserting over movies.json itself, without a second multi-megabyte JSON parse in this suite.
+test("tmdb_id: every record in the catalogue carries one, and it is unique (CAS-771)", () => {
+  const missing = E.MOVIES.filter(m => m.tmdb_id == null);
+  assert.equal(missing.length, 0,
+    `${missing.length} record(s) carry no tmdb_id — the six Supabase tables joined on it ` +
+    `(user_films, film_picks, film_watch, cascade film rows, list_films, notifications) would silently ` +
+    `lose their match: ${missing.slice(0, 3).map(m => m.title).join(", ")}`);
+  const ids = E.MOVIES.map(m => m.tmdb_id);
+  assert.equal(new Set(ids).size, ids.length,
+    `tmdb_id is not unique across the catalogue — ${ids.length - new Set(ids).size} duplicate id(s)`);
+});
+
+// The claim from the app's side, not just the data's: a stored movie_id round-trips to its film through the
+// exact accessor the bell (realAlertsHTML) and Moving (movingData) use — filmByMovieId — rather than a
+// second, independently-written comparison that could quietly drift from what the app actually does.
+test("tmdb_id: a stored movie_id resolves to its film through the bell's own lookup (CAS-771)", () => {
+  const sample = E.MOVIES[0];
+  assert.ok(sample, "the built catalogue is empty — this test would prove nothing");
+  assert.equal(E.filmByMovieId(String(sample.tmdb_id)), sample,
+    `movie_id "${sample.tmdb_id}" did not resolve back to ${sample.title} through the bell's own accessor`);
+  assert.equal(E.filmByMovieId("no-such-tmdb-id-anywhere"), undefined,
+    "the bell's own lookup resolved a movie_id nothing in the catalogue holds");
+});

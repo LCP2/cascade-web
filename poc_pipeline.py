@@ -32,6 +32,15 @@ to compare against. Output for the app front-end is written to movies.json.
 from __future__ import annotations
 import os, sys, json, time, shutil, datetime, subprocess, urllib.parse, urllib.request, urllib.error
 
+# CAS-771 — GUARDRAIL, DO NOT BREAK: tmdb_id is the join key for six Supabase tables of live user data
+# (user_films, film_picks, film_watch, the cascade film rows, list_films, notifications — all keyed on a
+# `movie_id text` that is always a tmdb_id, per supabase/schema.sql). It must survive any change of data
+# provider, including the v2 migration to Watchmode as the catalogue spine. Watchmode returns tmdb_id on
+# every title and publishes a free daily ID-map CSV (Watchmode ID <-> IMDb ID <-> TMDB ID) precisely so this
+# never has to change. Re-keying these records on any other id would silently strip every account of its
+# Watch-it ticks, seen marks, list membership, personal overrides and its whole alert ledger. Enforced by
+# tests/js/data-integrity.test.mjs's tmdb_id tests.
+
 REGION = "AU"                      # the country this instance tracks
 CURRENCY = "AUD"
 
