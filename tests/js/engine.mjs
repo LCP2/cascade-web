@@ -247,6 +247,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // agent_films.admitted_at) rather than the device-local firstFound stamp above — exported so a test can
   // assert the derived answer directly instead of re-deriving daysSince/admittedAtFor by hand.
   isNewFound, admittedAtFor,
+  // CAS-783: NEW_DAYS (already used above by isNewFound) and FIRST_FOUND_PRUNE_DAYS (the date-based bound
+  // that replaced the old on-exit-from-found delete) — exported so a test can pick dates relative to the
+  // real horizon rather than hard-coding a day count that could silently drift from the engine's own.
+  NEW_DAYS, FIRST_FOUND_PRUNE_DAYS,
   // CAS-738: the other five watched-film verdict sets, exposed by reference like watched above —
   // a test needs to seed/restore all of them to exercise filmRows()/applyFilmRows() without leaking
   // state into later tests, since applyFilmRows() rebuilds every one of them from scratch.

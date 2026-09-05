@@ -5645,7 +5645,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 957, "commit": "6bf5172", "builtAt": "2026-09-05T22:57:35Z"};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 958, "commit": "a6e1412", "builtAt": "2026-09-05T23:11:37Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8059,8 +8059,12 @@ function mlRowHTML(m, groupKey){
 // ---- Freshness ----------------------------------------------------------------
 // "New this week" needs a first-found date per film, so we record one the moment a film enters the Found list.
 // It is NOT the film's release date and it is NOT a guess: it's the day Cascade actually picked it up for you.
-// An entry is dropped when the film leaves the list, so a film that is later found again is honestly new again.
+// CAS-783: a film is new to you once, ever — the stamp is NOT dropped when the film leaves the list, so
+// re-admission does not restamp it as new a second time. Growth is bounded instead by a date-based prune:
+// once a stamp is older than FIRST_FOUND_PRUNE_DAYS it can no longer affect isNewFound's own NEW_DAYS window
+// anyway, so forgetting it costs nothing.
 const NEW_DAYS = 7;                                     // what "this week" means. One dial, in one place.
+const FIRST_FOUND_PRUNE_DAYS = NEW_DAYS + 30;           // margin past NEW_DAYS before a stamp is forgotten
 const FIRST_KEY = "cascade_first_found";
 function loadFirstFound(){
   try{ const o=JSON.parse(localStorage.getItem(FIRST_KEY)||"{}");
@@ -8069,7 +8073,7 @@ function loadFirstFound(){
 const firstFound = loadFirstFound();
 let firstSaved=null;
 function trackFirstFound(){
-  Object.keys(firstFound).forEach(id=>{ if(!found.has(+id)) delete firstFound[id]; });
+  Object.keys(firstFound).forEach(id=>{ if(daysSince(firstFound[id]) > FIRST_FOUND_PRUNE_DAYS) delete firstFound[id]; });
   // CAS-503: used to stamp REAL_TODAY here — now that TODAY itself is always the device's live local date
   // (never the catalogue's build date), it IS "when YOU are looking", so the separate variable is gone.
   found.forEach(id=>{ if(!firstFound[id]) firstFound[id]=TODAY; });
