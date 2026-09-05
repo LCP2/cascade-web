@@ -30,7 +30,7 @@ to compare against. Output for the app front-end is written to movies.json.
 """
 
 from __future__ import annotations
-import os, sys, json, time, shutil, datetime, subprocess, urllib.parse, urllib.request, urllib.error
+import os, sys, csv, io, json, time, shutil, datetime, subprocess, urllib.parse, urllib.request, urllib.error
 
 # CAS-771 — GUARDRAIL, DO NOT BREAK: tmdb_id is the join key for six Supabase tables of live user data
 # (user_films, film_picks, film_watch, the cascade film rows, list_films, notifications — all keyed on a
@@ -104,6 +104,11 @@ TMDB_KEY      = os.environ.get("TMDB_API_KEY")
 OMDB_KEY      = os.environ.get("OMDB_API_KEY")
 WATCHMODE_KEY = os.environ.get("WATCHMODE_API_KEY")
 LIVE = bool(TMDB_KEY and OMDB_KEY and WATCHMODE_KEY)
+
+# CAS-773 — v2 phase 1: which vendor is the catalogue spine. Defaults to "tmdb" so an unset env
+# var is byte-identical to pre-v2 behaviour; only "watchmode" enters the new ingest path below,
+# and only once the free-key trial (CAS-579) is validated and Lee flips it — never on its own.
+CASCADE_SPINE = os.getenv("CASCADE_SPINE", "tmdb")
 
 # CAS-109 — poll-tiering + free-tier-capped scheduler (staging prototype).
 import poll_scheduler as ps
@@ -179,6 +184,23 @@ def get_json(url: str, retries: int = 4, headers: dict | None = None) -> dict:
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
                 return json.load(r)
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < retries:
+                wait = e.headers.get("Retry-After") if e.code == 429 else None
+                delay = float(wait) if (wait and str(wait).isdigit()) else min(30.0, 2.0 ** attempt)
+                time.sleep(delay)
+                continue
+            raise
+
+
+def get_text(url: str, retries: int = 4, headers: dict | None = None) -> str:
+    """GET + return raw text, same polite backoff as get_json. CAS-773: Watchmode's ID-map is a
+    CSV, not JSON, so it needs its own fetch — everything else about the retry behaviour matches."""
+    req = urllib.request.Request(url, headers={"User-Agent": "cascade-poc/0.1", **(headers or {})})
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 504) and attempt < retries:
                 wait = e.headers.get("Retry-After") if e.code == 429 else None
@@ -401,6 +423,98 @@ def ingest_tmdb_upcoming(seen: set) -> list[dict]:
     start = (today + datetime.timedelta(days=1)).isoformat()          # strictly future
     end   = (today + datetime.timedelta(days=UPCOMING_LOOKAHEAD_DAYS)).isoformat()
     return _discover_au_theatrical(start, end, MAX_UPCOMING, seen)
+
+
+# ---------------------------------------------------------------------------
+# 1b. INGEST (dormant) — CAS-773 v2 phase 1: Watchmode as the catalogue spine, ingest ONLY
+#     (which titles exist). Field mapping (ratings/dates/classifications) is phase 3, after the
+#     trial (CAS-579) reports — do not extend this to source those fields.
+#
+#     tmdb_id stays the join key (CAS-771 guardrail): Watchmode has no notion of it directly in
+#     its title listing, so every listed title is resolved against Watchmode's free daily bulk
+#     CSV (Watchmode id <-> IMDb id <-> TMDB id), fetched once per run and reused — never per
+#     title. A title with no tmdb_id in the map is skipped and counted, never given a synthetic
+#     id (Lee's call, not made here). Only entered when CASCADE_SPINE=watchmode.
+# ---------------------------------------------------------------------------
+WATCHMODE_BASE = "https://api.watchmode.com/v1"
+# Exact shape unverified against a live paid key (none exists yet, per the ticket) — Lee confirms
+# this against the real response before CASCADE_SPINE is ever flipped away from its "tmdb" default.
+WATCHMODE_IDMAP_URL = "https://api.watchmode.com/datasets/title_id_map.csv"
+
+
+def _parse_watchmode_idmap_csv(text: str) -> dict:
+    """Watchmode id (str) -> tmdb_id (int) for every row that actually carries a tmdb_id. Pure
+    and network-free so it's testable straight off a sample CSV string."""
+    idmap = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        wm_id = row.get("wm_id") or row.get("id")
+        tmdb_id = row.get("tmdb_id") or row.get("tmdbId")
+        if not wm_id or not tmdb_id:
+            continue
+        try:
+            idmap[str(wm_id)] = int(tmdb_id)
+        except (TypeError, ValueError):
+            continue
+    return idmap
+
+
+def _fetch_watchmode_idmap() -> dict:
+    """The one network call for the whole run's ID map — see the module docstring above."""
+    return _parse_watchmode_idmap_csv(get_text(f"{WATCHMODE_IDMAP_URL}?apiKey={WATCHMODE_KEY}"))
+
+
+def _list_watchmode_titles_page(page: int) -> dict:
+    return get_json(
+        f"{WATCHMODE_BASE}/list-titles/?apiKey={WATCHMODE_KEY}&types=movie"
+        f"&regions={REGION}&sort_by=popularity_desc&page={page}"
+    )
+
+
+def _watchmode_record(title: dict, tmdb_id: int) -> dict:
+    """The same record skeleton `_tmdb_record` produces, but only the fields ingest can actually
+    source from Watchmode's title listing — ratings/dates/classifications/etc are left absent,
+    not guessed. Phase 3 fills those in once the trial reports."""
+    return {
+        "tmdb_id": tmdb_id,
+        "cache_stamped_at": _RUN_DATE,
+        "imdb_id": title.get("imdb_id"),
+        "title": title.get("title"),
+        "year": str(title.get("year") or "----"),
+    }
+
+
+def ingest_watchmode(seen: set) -> list[dict]:
+    """List the AU title universe and resolve each to a tmdb_id via the ID-map (fetched once,
+    not per title). Every network call goes through `_api_call`'s budget/back-off wrapper, so a
+    bad day degrades rather than storms the API — same discipline as every enrichment pass."""
+    idmap, outcome = _api_call("Watchmode ID map", _fetch_watchmode_idmap)
+    if outcome != "ok" or not idmap:
+        return []
+
+    movies, skipped, page, keep_going = [], 0, 1, True
+    while len(movies) < MAX_TITLES and keep_going:
+        data, outcome = _api_call("Watchmode list-titles", _list_watchmode_titles_page, page)
+        if outcome != "ok":
+            break
+        titles = data.get("titles", [])
+        if not titles:
+            break
+        for t in titles:
+            tmdb_id = idmap.get(str(t.get("id")))
+            if not tmdb_id:
+                skipped += 1
+                continue
+            if tmdb_id in seen:
+                continue
+            seen.add(tmdb_id)
+            movies.append(_watchmode_record(t, tmdb_id))
+            if len(movies) >= MAX_TITLES:
+                break
+        keep_going = page < data.get("total_pages", page)
+        page += 1
+
+    print(f"[watchmode] ingested {len(movies)} title(s), skipped {skipped} with no tmdb_id")
+    return movies
 
 
 # ---------------------------------------------------------------------------
@@ -959,17 +1073,23 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     stay under one real per-key-per-day cap. No file IO here — run() loads/persists spend,
     same pattern as wm_cache below.
 
-    Deps (ingest_tmdb / ingest_tmdb_upcoming / enrich_omdb / poll_watchmode / tmdb_providers /
-    derive_from_providers / derive_status) are module functions so tests can monkeypatch them.
+    Deps (ingest_tmdb / ingest_tmdb_upcoming / ingest_tmdb_streaming / ingest_watchmode /
+    enrich_omdb / poll_watchmode / tmdb_providers / derive_from_providers / derive_status) are
+    module functions so tests can monkeypatch them.
     No file IO here — run() persists the result. Returns (catalogue_records, counts)."""
     offsets = offsets or ps.DEFAULT_OFFSETS
     base = {m["tmdb_id"]: m for m in base_records}
     seen = set(base)
 
-    # grow the catalogue with new titles TMDB surfaces that we don't already hold
+    # grow the catalogue with new titles the spine surfaces that we don't already hold.
+    # CAS-773: CASCADE_SPINE picks the vendor; "tmdb" (the default) is byte-identical to
+    # pre-v2 behaviour, and the watchmode path is never entered unless it's explicitly set.
     new = []
     if len(base) < CATALOGUE_TARGET:
-        new = ingest_tmdb(seen) + ingest_tmdb_upcoming(seen) + ingest_tmdb_streaming(seen)
+        if CASCADE_SPINE == "watchmode":
+            new = ingest_watchmode(seen)
+        else:
+            new = ingest_tmdb(seen) + ingest_tmdb_upcoming(seen) + ingest_tmdb_streaming(seen)
     catalogue = list(base.values()) + [m for m in new if m["tmdb_id"] not in base]
     catalogue = _dedupe_by_tmdb_id(catalogue)
     catalogue.sort(key=lambda m: m.get("popularity") or 0, reverse=True)
