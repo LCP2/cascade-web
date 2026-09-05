@@ -324,12 +324,22 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-764: the stub navigator, by reference — so a test can flip .onLine the same way a real device
   // going offline would, and assert the acct banner (which reads navigator.onLine directly) responds.
   navigator,
-  // CAS-768: dedupeCascades/cascDedupeSigOf and allOccasionNames are plain top-level functions, exported
-  // directly like cascSigOf above. briefToggleOccasion/commitCreateOccasionRow are window-assigned (they're
-  // Briefing wire code), wrapped the same way ymSvcToggle above is, so a test can drive the real multi-select
-  // and new-occasion-row logic rather than poking onbFlow.draft.occasions by hand.
-  dedupeCascades, cascDedupeSigOf, allOccasionNames,
-  briefToggleOccasion: name => window.briefToggleOccasion(name),
+  // CAS-768: dedupeCascades/cascDedupeSigOf are plain top-level functions, exported directly like cascSigOf
+  // above.
+  dedupeCascades, cascDedupeSigOf,
+  // CAS-775: the Occasions register replaces CAS-768's derived-from-agents allOccasionNames — occasionReg
+  // is exported by reference (mutated in place by create/rename/delete, never reassigned, exactly like
+  // lists/listMembership above) so a test can seed/read the exact register state. create/rename/delete/
+  // occasionAgentCount/occasionName/occasionRegSorted are plain top-level functions, exported directly.
+  // migrateOccasionNamesIfNeeded is exposed so a test can call the real one-time upgrade rather than
+  // re-deriving its legacy-name detection by hand. briefToggleOccasion/commitCreateOccasionRow are
+  // window-assigned Briefing wire code (same wrap shape as ymSvcToggle above) — both now operate on ids,
+  // not names.
+  occasionReg, createOccasion, renameOccasion, deleteOccasion, occasionAgentCount, occasionName,
+  occasionRegSorted, occasionsSummary, migrateOccasionNamesIfNeeded, pruneOccasionIds,
+  get watchOccasion(){ return watchOccasion; },
+  setWatchOccasion: id => window.setWatchOccasion(id),
+  briefToggleOccasion: id => window.briefToggleOccasion(id),
   commitCreateOccasionRow: inputEl => window.commitCreateOccasionRow(inputEl),
 };
 `;
