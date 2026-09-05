@@ -89,7 +89,9 @@ function makeContext(){
     performance,
     addEventListener(){}, removeEventListener(){}, dispatchEvent(){ return true; },
     fetch: () => Promise.reject(new Error("the engine must not need the network")),
-    alert(){}, scrollTo(){}, scrollBy(){}, open(){ return null; },
+    // CAS-782: deleteAgentAsk's own dialog — a test driving the real delete path needs it to always proceed,
+    // the same way alert()/scrollTo() below are stubbed rather than left to throw as "not a function".
+    alert(){}, confirm(){ return true; }, scrollTo(){}, scrollBy(){}, open(){ return null; },
     innerWidth: 390, innerHeight: 844, devicePixelRatio: 2, scrollY: 0,
   };
   ctx.window = ctx; ctx.self = ctx; ctx.globalThis = ctx; ctx.top = ctx;
@@ -337,6 +339,12 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-768: dedupeCascades/cascDedupeSigOf are plain top-level functions, exported directly like cascSigOf
   // above.
   dedupeCascades, cascDedupeSigOf,
+  // CAS-782: deleteAgentAsk is the one real delete path (confirm() dialog stubbed above to always proceed),
+  // so a test can drive an actual agent deletion — including the release of any pinnedTo/notIn it held —
+  // rather than re-deriving the removal by hand. pinFilmToCascadeAndRepaint is window-assigned wire code
+  // (wrapped the same way toggleFilmOpt above is) so a test can drive a real hand-placement the same way a
+  // person tapping a Watch panel row does.
+  deleteAgentAsk, pinFilmToCascadeAndRepaint: (id, cid) => window.pinFilmToCascadeAndRepaint(id, cid),
   // CAS-775: the Occasions register replaces CAS-768's derived-from-agents allOccasionNames — occasionReg
   // is exported by reference (mutated in place by create/rename/delete, never reassigned, exactly like
   // lists/listMembership above) so a test can seed/read the exact register state. create/rename/delete/

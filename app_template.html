@@ -11279,6 +11279,16 @@ function deleteAgentAsk(c){
             : "")
     + `Anything you added by hand stays, and your watched / not-interested marks aren't touched.`)) return false;
   cascades.splice(cascades.indexOf(c),1); saveCascades();
+  // CAS-782: a film pinned to (or moved out of) ONLY this agent must not go on pointing at an agent that no
+  // longer exists — scrub this agent's id out of every notify[*].pinnedTo/notIn, then let recomputeFound()
+  // re-derive ordinary membership and prune anything left holding no state at all (the `overridden` guard at
+  // ~4984 is what was keeping such an entry alive through the prune).
+  Object.keys(notify).forEach(id=>{
+    const e=notify[id];
+    if(e.pinnedTo && e.pinnedTo.length) e.pinnedTo=e.pinnedTo.filter(x=>x!==c.id);
+    if(e.notIn && e.notIn.length) e.notIn=e.notIn.filter(x=>x!==c.id);
+  });
+  recomputeFound();
   const wasSelected=activeIds.includes(c.id);
   if(wasSelected){
     activeIds=activeIds.filter(id=>id!==c.id);
