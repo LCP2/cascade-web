@@ -320,6 +320,13 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-764: the stub navigator, by reference — so a test can flip .onLine the same way a real device
   // going offline would, and assert the acct banner (which reads navigator.onLine directly) responds.
   navigator,
+  // CAS-768: dedupeCascades/cascDedupeSigOf and allOccasionNames are plain top-level functions, exported
+  // directly like cascSigOf above. briefToggleOccasion/commitCreateOccasionRow are window-assigned (they're
+  // Briefing wire code), wrapped the same way ymSvcToggle above is, so a test can drive the real multi-select
+  // and new-occasion-row logic rather than poking onbFlow.draft.occasions by hand.
+  dedupeCascades, cascDedupeSigOf, allOccasionNames,
+  briefToggleOccasion: name => window.briefToggleOccasion(name),
+  commitCreateOccasionRow: inputEl => window.commitCreateOccasionRow(inputEl),
 };
 `;
 

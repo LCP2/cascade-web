@@ -5465,7 +5465,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 941, "commit": "862f0f8", "builtAt": "2026-09-05T04:15:34Z"};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 942, "commit": "4de42fa", "builtAt": "2026-09-05T06:06:45Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -9222,6 +9222,10 @@ function normCascade(c, opts){
   // agent never singled any out and lists everything it watches — the behaviour every agent had before this
   // field existed, so an old agent needs no migration to keep looking the same.
   c.listStatus = c.listStatus||[];
+  // CAS-768: which named Occasions (Me, Family, ...) this agent belongs to. [] = untagged, the default for
+  // every agent that predates this field. Presentation metadata only — kept out of cascSigOf on purpose,
+  // see the note there.
+  c.occasions = Array.isArray(c.occasions) ? c.occasions.filter(x=>typeof x==="string") : [];
   // CAS-182: genre / age carry THREE states — null = explicitly none (nothing qualifies) · [] = the
   // filter is off · [a,b] = exactly those, the same three the taste-baseline rows have used since CAS-165.
   // `||[]` would flatten null back to "off", which is the bug CAS-165 fixed on the baseline: the user
@@ -9433,6 +9437,12 @@ const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.a
   // 1 week out) all resolve to the same `status`, so without this line two agents that differ only in when
   // they'd tell you would read as exact twins and the second would be silently collapsed into the first.
   c.watchWindows||{}]);
+// CAS-768: dedupe's OWN identity signature, distinct from cascSigOf. Occasions are presentation metadata
+// that must be completely inert to admission (cascSigOf drives CAS-728's re-review and CAS-715's admitDrift),
+// so they are deliberately left out of cascSigOf above. But two agents that differ ONLY by occasion —
+// "Blockbusters for Family" alongside "Blockbusters for Us" — are a legitimate pair, not a twin: dedupe needs
+// its own signature that DOES fold occasions in, so it never collapses that pair down to one.
+const cascDedupeSigOf = c => JSON.stringify([cascSigOf(c), [...(c.occasions||[])].sort()]);
 function dedupeCascades(){
   // CAS-658: belt-and-braces for an array that already holds two entries sharing an id (a merge that
   // ran before the load-time fix above, or any other path that ever double-pushes one). Same id is the
@@ -9442,7 +9452,7 @@ function dedupeCascades(){
   cascades.forEach(c=>{
     if(firstById.has(c.id)){ drop.push({c, keep:firstById.get(c.id)}); return; }
     firstById.set(c.id, c);
-    const sig=cascSigOf(c);
+    const sig=cascDedupeSigOf(c);
     if(firstBySig.has(sig)) drop.push({c, keep:firstBySig.get(sig)});
     else firstBySig.set(sig, c);
   });
@@ -14048,6 +14058,8 @@ const SHARP_STEPS = {
         <div class="easec">
           <button type="button" class="easub" onclick="briefGo('age')">
             <span class="eash">Rating</span><span class="easv">${esc(trailAge())}</span></button>
+          <button type="button" class="easub" onclick="briefGo('occasions')">
+            <span class="eash">Occasions</span><span class="easv">${esc(occasionsSummary(d))}</span></button>
         </div>
         <!-- CAS-613: auto-notify — per-agent, arms a film's earliest acceptable notify window the moment
              the agent finds it (recomputeFound), mirroring toggleFilmOpt's manual tick. watchPrefs stays
@@ -14456,6 +14468,37 @@ ${who.includes("kids") ? `
       const none = lists.length ? "" : `<div class="nopt nonone">You have no tags yet — tag a film first, then come back here to exclude it.</div>`;
       return `<p class="ossub">A film carrying a ticked tag is dropped from this agent's list.</p>
         <div class="nopts">${none}${rows}</div>`;
+    },
+  },
+  // ---- CAS-768: Occasions -----------------------------------------------------------------------------
+  // An Occasion is nothing but a named set of agents, so there is no separate master list of names —
+  // allOccasionNames() below IS the list, derived fresh from every agent's own tag. Multi-select, modelled
+  // directly on the extags spoke just above: ticking adds this agent to the set, unticking removes it.
+  occasions: {
+    title: "Occasions",
+    noAgent: true,
+    body(){
+      const d=onbFlow.draft||{};
+      const mine=new Set(d.occasions||[]);
+      const names=allOccasionNames();
+      const rows=names.map(name=>{
+        const on=mine.has(name);
+        return `<button type="button" class="nopt${on?" on":""}" data-name="${escA(name)}" style="--wwc:var(--accent)"
+          aria-pressed="${on}"
+          title="${escA(on?`Untag this agent as ${name}`:`Tag this agent as ${name}`)}">
+          <span class="wwb sq">✓</span><span class="nol">${esc(name)}</span></button>`;
+      }).join("");
+      const none = names.length ? "" : `<div class="nopt nonone">No occasions yet — add one below.</div>`;
+      return `<p class="ossub">Tag this agent with one or more occasions — Me, Family, Cinema night, whatever
+          groupings make sense for you. An agent can carry as many as you like.</p>
+        <div class="nopts" id="onbStepOccasions">${none}${rows}</div>
+        <button type="button" class="listnewbtn" id="occNewBtn" onclick="startCreateOccasionRow()">＋ New occasion</button>`;
+    },
+    wire(){
+      const box=$("onbStepOccasions"); if(!box) return;
+      [...box.querySelectorAll("[data-name]")].forEach(b=>{
+        b.onclick=()=>briefToggleOccasion(b.dataset.name);
+      });
     },
   },
   // ---- CAS-199: My streaming services ---------------------------------------------------------------
@@ -14973,6 +15016,50 @@ window.briefToggleExcludeTag=lid=>{
   const i=d.excludeTags.indexOf(lid);
   if(i>=0) d.excludeTags.splice(i,1); else d.excludeTags.push(lid);
   renderOnbStep("extags");
+};
+// CAS-768: there is no separate master list of occasion names — the set that exists is the union of
+// c.occasions across every saved agent, plus whatever the CURRENT draft already carries (so a name just
+// created in this same session offers itself immediately, before Save ever writes it to the deck). An
+// occasion exists exactly while at least one agent carries it; untagging the last one drops it from here.
+function allOccasionNames(){
+  const set=new Set();
+  cascades.forEach(c=>(c.occasions||[]).forEach(o=>set.add(o)));
+  if(onbFlow.draft) (onbFlow.draft.occasions||[]).forEach(o=>set.add(o));
+  return [...set].sort((a,b)=>a.localeCompare(b));
+}
+const occasionsSummary = d => (d.occasions&&d.occasions.length) ? d.occasions.join(", ") : "None yet";
+// Multi-select, same shape as briefToggleExcludeTag: ticking adds the name to this agent's occasions,
+// unticking removes it.
+window.briefToggleOccasion=name=>{
+  const d=onbFlow.draft; if(!d) return;
+  d.occasions = Array.isArray(d.occasions) ? d.occasions.slice() : [];
+  const i=d.occasions.indexOf(name);
+  if(i>=0) d.occasions.splice(i,1); else d.occasions.push(name);
+  renderOnbStep("occasions");
+};
+// "New occasion", modelled on startCreateListRow/commitCreateListRow: an inline input that, on Enter or
+// blur, trims and caps the name, then ticks it on for this agent in one step.
+window.startCreateOccasionRow=()=>{
+  const btn=$("occNewBtn"); if(!btn) return;
+  btn.outerHTML=`<div class="ucard" id="occNewRow" style="margin-top:8px"><div class="urow nodiv">
+    <span class="uic">🎉</span>
+    <input type="text" class="listnamein" id="occNewInput" maxlength="24" placeholder="Occasion name" autocomplete="off"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+      onblur="commitCreateOccasionRow(this)"></div></div>`;
+  const inp=$("occNewInput"); if(inp) inp.focus();
+};
+window.commitCreateOccasionRow=(inputEl)=>{
+  if(!inputEl || !inputEl.isConnected) return;
+  const raw=(inputEl.value||"").trim().slice(0,24);
+  const d=onbFlow.draft;
+  if(raw && d){
+    d.occasions = Array.isArray(d.occasions) ? d.occasions.slice() : [];
+    // CAS-768 AC7: case-insensitive de-dup — "family" ticks the existing "Family" rather than making a second.
+    const existing=allOccasionNames().find(n=>n.toLowerCase()===raw.toLowerCase());
+    const name=existing||raw;
+    if(!d.occasions.includes(name)) d.occasions.push(name);
+  }
+  renderOnbStep("occasions");
 };
 // CAS-246: hand the just-picked agent to the Briefing WITHOUT committing it. briefOpen() reads a SAVED
 // cascade off the deck; this agent has never been saved, and saving it here so the hub had something to read
