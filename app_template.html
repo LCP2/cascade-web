@@ -7069,7 +7069,7 @@ function pickBtnHTML(id, cls=""){
 // One card, the same in both views. The provenance block that used to sit between the synopsis and the badges
 // came out in CAS-100 — who picked the film is now said by the Pick button's own state and label, in the
 // action row, instead of by a paragraph repeating it above.
-function cardHTML(m, markNew=false, {hideDismiss=false}={}){
+function cardHTML(m, markNew=false, {hideDismiss=false, agentOwner}={}){
   const id=m.tmdb_id;
   // CAS-110: an estimated title shows no offers and no prices — see savingsHTML.
   let offers=isEstimated(m) ? [] : dedupOffers(m.offers);
@@ -7159,7 +7159,7 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
            told about it. -->
       <div class="actions">
         ${notifyChipHTML(id)}
-        ${agentChipHTML(id)}
+        ${agentChipHTML(id, agentOwner)}
         ${watchChipHTML(id)}
       </div>
     </div>
@@ -7529,8 +7529,11 @@ function notifyChipHTML(id){
 // the panel is a single-select move, not the old Lists checklist. The Lists/`lists` data model and its own
 // `listsScreen` nav entry are untouched — only this card control moved onto agents; see CAS-711 for the
 // follow-up flag on cleaning up the now-orphaned Lists feature itself.
-function agentChipHTML(id){
-  const owner=cascadesFor(id)[0]||null;
+// CAS-778: ownerOverride, when passed, is the Watch listing's own occasion-aware owner (filmOwnerCascade) —
+// the same agent the section heading above this card already names. Left undefined (every other caller —
+// the Watch List feed, Moving), this reads the CAS-709 global owner exactly as before.
+function agentChipHTML(id, ownerOverride){
+  const owner=ownerOverride!==undefined ? ownerOverride : (cascadesFor(id)[0]||null);
   const lbl = owner ? owner.name : "No agent";
   const title = owner
     ? `Owned by ${owner.icon} ${owner.name}. Tap to move to a different agent.`
@@ -18346,13 +18349,15 @@ let renderGen=0;
 // CAS-421: onDone fires exactly once per call — on the normal last batch AND on the early-abort branch
 // (a superseded render or a detached list), so a caller counting outstanding fills to know when the
 // whole list is ready never hangs waiting on a fill that stopped without finishing.
-function fillListChunked(listEl, items, gen, freshFn, onDone){
+// CAS-778: ownerOverride, when passed, names one agent (this block's own occasion-aware owner) for every
+// card this call streams in — see splitByOwner's caller, which already grouped `items` by that same owner.
+function fillListChunked(listEl, items, gen, freshFn, onDone, ownerOverride){
   let i=0; const BATCH=36;
   const step=()=>{
     if(gen!==renderGen || !listEl.isConnected){ onDone && onDone(); return; }
     let buf=""; const end=Math.min(items.length, i+BATCH);
     for(; i<end; i++){ const m=items[i];
-      buf += taggedOut(m) ? stubHTML(m) : cardHTML(m, freshFn?freshFn(m):false); }
+      buf += taggedOut(m) ? stubHTML(m) : cardHTML(m, freshFn?freshFn(m):false, {agentOwner:ownerOverride}); }
     listEl.insertAdjacentHTML("beforeend", buf);
     if(i<items.length) requestAnimationFrame(step);
     else onDone && onDone();
@@ -18364,14 +18369,32 @@ function fillListChunked(listEl, items, gen, freshFn, onDone){
 // unpinned, the film's highest-ranked/lowest-.order match; pinned, its pinned cascade(s) — the min of
 // those if more than one). A film recomputeFound never reached (should not happen for anything already in
 // `rows`, which only ever holds films some active agent already lists) sorts last rather than throwing.
+// CAS-778: with an occasion selected, that global owner may not even carry the occasion — see filmOwnerCascade.
 function filmOwnerOrder(m){
+  if(watchOccasion){ const c=filmOwnerCascade(m); return c ? (c.order??Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER; }
   const ids=(notify[m.tmdb_id]||{}).cascadeIds||[];
   if(!ids.length) return Number.MAX_SAFE_INTEGER;
   return Math.min(...ids.map(id=>{ const c=cascades.find(x=>x.id===id); return c ? (c.order??Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER; }));
 }
 // CAS-717: the same owner match as filmOwnerOrder, but returning the cascade itself (for its name/icon)
 // rather than just its rank — used to divide a status section into per-agent blocks below.
+// CAS-778: the CAS-709 global owner (below) is picked across the WHOLE roster and knows nothing about the
+// selected occasion — a film reaching this tab through a Sonya agent could still be globally owned by
+// Massive Movies, which isn't in the Sonya pool at all. While an occasion is selected, ownership for this
+// listing narrows instead to the lowest-order agent that BOTH carries the occasion AND lists the film
+// (listedBy, which already folds in movedOutOf/pinnedInto) — a hand-pin inside that pool still outranks
+// rank inside it, same precedence CAS-709 gives a pin over criteria globally. Every film watchScopeRows()
+// admits is listed by some occasion-carrying agent (that's how it got in), so this never returns null for
+// one of those films — unlike the unselected ("All") branch below, which can legitimately return null
+// (the untinted "Other" block) when the global owner isn't among the tab's included agents.
 function filmOwnerCascade(m){
+  if(watchOccasion){
+    const pool=cascades.filter(c=>(c.occasions||[]).includes(watchOccasion) && listedBy(m,c));
+    if(!pool.length) return null;
+    const pinned=pool.filter(c=>pinnedInto(m.tmdb_id,c));
+    const candidates=pinned.length ? pinned : pool;
+    return candidates.reduce((best,c)=>(!best||(c.order??Number.MAX_SAFE_INTEGER)<(best.order??Number.MAX_SAFE_INTEGER))?c:best, null);
+  }
   const ids=(notify[m.tmdb_id]||{}).cascadeIds||[];
   let best=null;
   ids.forEach(id=>{
@@ -18536,7 +18559,7 @@ function render(){
       const listEl=document.createElement("div"); listEl.className="list";
       ablock.appendChild(listEl);
       grp.appendChild(ablock);
-      fillListChunked(listEl, block.items, renderGen, isFresh, oneListDone);
+      fillListChunked(listEl, block.items, renderGen, isFresh, oneListDone, watchOccasion ? block.cascade : undefined);
     });
   });
   renderJumpBar();     // after the groups exist — it is built FROM them, never from a fixed menu
@@ -18659,7 +18682,8 @@ function fastPatchFindRow(id){
   // film left the list -> let render() handle it
   if(!m || !row || !filmInWatchRows(m)) return false;
   const t=document.createElement("template");
-  t.innerHTML=(taggedOut(m)?stubHTML(m):cardHTML(m, isFresh(m))).trim();
+  // CAS-778: same occasion-aware owner the full render() gives this card via fillListChunked's block.cascade.
+  t.innerHTML=(taggedOut(m)?stubHTML(m):cardHTML(m, isFresh(m), {agentOwner: watchOccasion ? filmOwnerCascade(m) : undefined})).trim();
   row.replaceWith(t.content.firstElementChild);
   patchFindCounts();
   return true;

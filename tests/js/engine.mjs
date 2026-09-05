@@ -272,6 +272,12 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-699: ymSort exposed by getter/setter (like watchPrefs/flowKind below) so a test can drive the list's
   // own sort pick the same way ymSortChange does, and assert listingGroups honours it over CAS-430's default.
   listingGroups,
+  // CAS-778: filmOwnerCascade/filmOwnerOrder/splitByOwner/watchScopeRows are all pure over cascades/notify/
+  // MOVIES, exactly like listingGroups above — exported so a test can drive the occasion-aware owner lookup
+  // directly rather than scraping rendered headings. agentChipHTML is the one DOM-free render helper worth
+  // exporting here too: it takes the same ownerOverride this ticket threads from a block's own owner, so a
+  // test can assert the chip names whatever owner it's handed, matching the heading above it.
+  filmOwnerCascade, filmOwnerOrder, splitByOwner, watchScopeRows, agentChipHTML,
   get ymSort(){ return ymSort; },
   setYmSort(v){ ymSort = v; },
   // CAS-613: auto-notify's own decision surface. recomputeFound is the wire-adjacent entry point (it reads
