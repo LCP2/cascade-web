@@ -2611,6 +2611,32 @@
   .watchsearchwrap{flex:1;min-width:0;position:relative;display:flex;align-items:center}
   .watchsearchwrap .search{padding:9px 32px 9px 12px;font-size:14px}
   .watchsearchwrap .searchclear{width:24px;height:24px}
+  /* CAS-769: OCCASION BAR — an occasion is a named set of agents; picking one narrows the
+     agent pool this tab draws from. Pills rather than a joined segmented control, so the row can
+     scroll and reads as a row of choices rather than a fourth fixed strip. The on-state deliberately
+     reuses .watchfilterbtn.on's tinted/bordered treatment, NOT .wtabbtn.on's solid fill — the active
+     availability tab sits directly above and two solid blues stacked read as one control. */
+  .occwrap{flex:1;min-width:0;position:relative;display:flex}
+  .occbar{flex:1;min-width:0;display:flex;align-items:center;gap:6px;overflow-x:auto;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .occbar::-webkit-scrollbar{display:none}
+  .occchip{flex:0 0 auto;display:flex;align-items:center;padding:0 11px;height:38px;
+    border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--dim);
+    font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;
+    -webkit-tap-highlight-color:transparent;transition:.15s}
+  .occchip.on{background:rgba(76,125,255,.16);border-color:var(--brand-blue);color:#cddcff}
+  .occchip:active{opacity:.75}
+  .occchip:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+  .watchiconbtn{flex:0 0 auto;width:40px;display:grid;place-items:center;border-radius:10px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--dim);cursor:pointer;padding:0}
+  .watchiconbtn svg{width:16px;height:16px;display:block}
+  .watchiconbtn:active{opacity:.75}
+  .watchiconbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+  /* CAS-769: same right-edge fade device as .jumpbar.overflowing::after, scoped to .occwrap (the
+     positioned ancestor) rather than .occbar itself, since .occbar is the scrolling element and the
+     fade must stay fixed in place while its content scrolls underneath it. */
+  .occwrap.overflowing::after{content:"";position:absolute;top:0;right:0;bottom:0;width:22px;
+    background:linear-gradient(to right,transparent,var(--bg));pointer-events:none}
   .watchfilterbtn{position:relative;flex:0 0 auto;display:flex;align-items:center;gap:6px;
     padding:0 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);
     color:var(--dim);font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;
@@ -3619,11 +3645,22 @@
          button (opens #watchSheet — Watched + Styles), and the sort control, unchanged, moved in from the
          retired deck. -->
     <div class="watchctl" id="watchCtl">
-      <div class="watchsearchwrap">
+      <!-- CAS-769: the occasion row is the FIRST child, taking the horizontal space the search box
+           gives up by collapsing to an icon — rendered only once two or more occasions exist across
+           the roster (renderWatchCtl below), so this costs nothing until the user has tagged something. -->
+      <div class="occwrap" id="occWrap" hidden>
+        <div class="occbar" id="occBar" role="tablist" aria-label="Occasion"></div>
+      </div>
+      <div class="watchsearchwrap" id="watchSearchWrap">
         <input id="watchSearchInput" class="search" type="text" inputmode="search" autocomplete="off"
                placeholder="Search" aria-label="Search this tab">
         <button class="searchclear" id="watchSearchClear" aria-label="Clear search" type="button" hidden>×</button>
       </div>
+      <button type="button" class="watchiconbtn" id="watchSearchBtn" aria-label="Search this tab" hidden
+              onclick="openWatchSearch()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+          stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.4"/><path d="M15.8 15.8 20 20"/></svg>
+      </button>
       <!-- Same funnel mark as ICON.filter (svgIcon()) — hardcoded here since this markup is static HTML,
            not a JS template string, so ${ICON.filter} could never have evaluated. -->
       <button type="button" class="watchfilterbtn" id="watchFilterBtn" aria-haspopup="dialog" aria-expanded="false"
@@ -8342,6 +8379,30 @@ function renderWatchTabs(){
 // left in THAT tab (not the lowercased match term, so casing/whitespace survive a tab switch) is the same
 // "leave and come back" rule the old per-list search always followed.
 const watchSearchRaw = {in_cinema:"", premium:"", rent:"", stream:""};
+// CAS-769: unlike every other Watch-tab control, the selected occasion is a MODE (which of your agents
+// you're watching for), not a per-tab filter — so it is a single value, sticky across tabs and reloads,
+// rather than one Set per tab. null means "All".
+let watchOccasion = null;
+try{ watchOccasion = localStorage.getItem("cascade_watch_occasion") || null; }catch(e){}
+window.setWatchOccasion = name => {
+  watchOccasion = name==="All" ? null : name;
+  try{ localStorage.setItem("cascade_watch_occasion", watchOccasion||""); }catch(e){}
+  render();
+};
+// CAS-769: whether the search box is expanded over the occasion row right now — never persisted, and
+// separate from `watchSearch`/`watchSearchRaw` (the actual typed term), which this never touches.
+let watchSearchOpen = false;
+window.openWatchSearch = () => {
+  watchSearchOpen = true;
+  renderWatchCtl();
+  const inp=$("watchSearchInput"); if(inp) inp.focus();
+};
+// A search left empty and then tapped away from collapses back to the icon — the same "dismiss" the
+// clear button gives you when there's text to clear.
+function closeWatchSearchIfEmpty(){
+  const inp=$("watchSearchInput");
+  if(watchSearchOpen && inp && !inp.value){ watchSearchOpen=false; renderWatchCtl(); }
+}
 function renderWatchCtl(){
   const tab=watchTabsNow().find(t=>t.key===watchTab);
   const inp=$("watchSearchInput");
@@ -8351,6 +8412,28 @@ function renderWatchCtl(){
     if(inp.value!==raw) inp.value=raw;
   }
   const clr=$("watchSearchClear"); if(clr) clr.hidden = !(inp && inp.value);
+  // CAS-769: the occasion row only earns its keep once there are at least two occasions to choose
+  // between — with none or one, it stays absent and the search box keeps its original full-width form.
+  const names=allOccasionNames();
+  const showOcc=names.length>=2;
+  const occWrap=$("occWrap"), searchWrap=$("watchSearchWrap"), searchBtn=$("watchSearchBtn");
+  if(occWrap) occWrap.hidden = !showOcc || watchSearchOpen;
+  if(searchBtn) searchBtn.hidden = !showOcc || watchSearchOpen;
+  if(searchWrap) searchWrap.hidden = showOcc && !watchSearchOpen;
+  if(showOcc && !watchSearchOpen) renderOccBar(names);
+}
+// CAS-769: one chip per occasion in use across the roster (allOccasionNames — already alphabetical),
+// plus "All", first. Selected state reuses .watchfilterbtn.on's tinted/bordered look, not .wtabbtn.on's
+// solid fill — see the CSS comment on .occchip.on for why.
+function renderOccBar(names){
+  const bar=$("occBar"), wrap=$("occWrap"); if(!bar||!wrap) return;
+  bar.innerHTML = ["All", ...names].map(n=>{
+    const val = n==="All" ? null : n;
+    const on = watchOccasion===val;
+    return `<button type="button" class="occchip${on?" on":""}" role="tab" aria-selected="${on}"
+      onclick="setWatchOccasion('${escA(n)}')">${esc(n)}</button>`;
+  }).join("");
+  wrap.classList.toggle("overflowing", bar.scrollWidth>bar.clientWidth+1);
 }
 // CAS-714/CAS-718: which genres are toggled OFF (hidden) in each Watch tab's own view — session-only, one
 // Set per tab. Never persisted and never written back to any cascade's own stored c.genre: this only
@@ -8476,6 +8559,7 @@ window.setWatchSearch = raw => {
 window.clearWatchSearch = () => {
   $("watchSearchInput").value="";
   setWatchSearch("");
+  watchSearchOpen=false;   // CAS-769: clearing collapses the expanded box back to the icon
   render();
 };
 window.toggleWatchWatched = key => {
@@ -8548,7 +8632,11 @@ function renderWatchSheet(rows, shownCount){
   }).join("");
   // CAS-720: leInnerHTML's Agents-to-include checklist (agent name + switch), in cascades rank order —
   // no per-agent count/Edit here, this list only ever narrows which agents this tab draws from.
-  const agentRowsSorted=[...cascades].sort(cascadeOrderCmp);
+  // CAS-769: narrowed to the currently selected occasion's own pool first — this checklist operates
+  // WITHIN that pool rather than replacing or being replaced by it.
+  const agentRowsSorted=[...cascades]
+    .filter(c=>!watchOccasion || (c.occasions||[]).includes(watchOccasion))
+    .sort(cascadeOrderCmp);
   const agentRowsHTML=agentRowsSorted.map(c=>{
     const on=!agentOff.has(c.id);
     return `<div class="agrow ym-casc agent-${c.kind==="stream"?"str":"cin"}">
@@ -8653,7 +8741,10 @@ function watchScopeRows(){
   // under a blank strip.
   if(!watchTabsNow().length) return [];
   const agentOff=watchAgentOff[watchTab];
-  const acs=agentOff.size ? cascades.filter(c=>!agentOff.has(c.id)) : cascades;
+  let acs=agentOff.size ? cascades.filter(c=>!agentOff.has(c.id)) : cascades;
+  // CAS-769: the selected occasion narrows the agent pool BEFORE "Agents to include" — an agent
+  // without the occasion never reaches this tab regardless of that per-tab checklist's own state.
+  if(watchOccasion) acs=acs.filter(c=>(c.occasions||[]).includes(watchOccasion));
   if(!acs.length) return [];
   return MOVIES.filter(m=>acs.some(c=>listedBy(m,c)) && filmMatchesWatchTab(m, watchTab));
 }
@@ -9222,6 +9313,10 @@ function normCascade(c, opts){
   // agent never singled any out and lists everything it watches — the behaviour every agent had before this
   // field existed, so an old agent needs no migration to keep looking the same.
   c.listStatus = c.listStatus||[];
+  // CAS-768: which named Occasions (Me, Family, ...) this agent belongs to. [] = untagged, the default for
+  // every agent that predates this field. Presentation metadata only — kept out of cascSigOf on purpose,
+  // see the note there.
+  c.occasions = Array.isArray(c.occasions) ? c.occasions.filter(x=>typeof x==="string") : [];
   // CAS-182: genre / age carry THREE states — null = explicitly none (nothing qualifies) · [] = the
   // filter is off · [a,b] = exactly those, the same three the taste-baseline rows have used since CAS-165.
   // `||[]` would flatten null back to "off", which is the bug CAS-165 fixed on the baseline: the user
@@ -9433,6 +9528,12 @@ const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.a
   // 1 week out) all resolve to the same `status`, so without this line two agents that differ only in when
   // they'd tell you would read as exact twins and the second would be silently collapsed into the first.
   c.watchWindows||{}]);
+// CAS-768: dedupe's OWN identity signature, distinct from cascSigOf. Occasions are presentation metadata
+// that must be completely inert to admission (cascSigOf drives CAS-728's re-review and CAS-715's admitDrift),
+// so they are deliberately left out of cascSigOf above. But two agents that differ ONLY by occasion —
+// "Blockbusters for Family" alongside "Blockbusters for Us" — are a legitimate pair, not a twin: dedupe needs
+// its own signature that DOES fold occasions in, so it never collapses that pair down to one.
+const cascDedupeSigOf = c => JSON.stringify([cascSigOf(c), [...(c.occasions||[])].sort()]);
 function dedupeCascades(){
   // CAS-658: belt-and-braces for an array that already holds two entries sharing an id (a merge that
   // ran before the load-time fix above, or any other path that ever double-pushes one). Same id is the
@@ -9442,7 +9543,7 @@ function dedupeCascades(){
   cascades.forEach(c=>{
     if(firstById.has(c.id)){ drop.push({c, keep:firstById.get(c.id)}); return; }
     firstById.set(c.id, c);
-    const sig=cascSigOf(c);
+    const sig=cascDedupeSigOf(c);
     if(firstBySig.has(sig)) drop.push({c, keep:firstBySig.get(sig)});
     else firstBySig.set(sig, c);
   });
@@ -10211,6 +10312,7 @@ $("cascSearchClose").onclick=()=>closeCascadeSearch();
 // Manage Agents' single-agent preview via openCascade()/restoreCascadeSearch()), so the two can never
 // compound on the live Watch screen.
 $("watchSearchInput").oninput=e=>setWatchSearch(e.target.value);
+$("watchSearchInput").onblur=closeWatchSearchIfEmpty;   // CAS-769: dismissing an empty box collapses it
 $("watchSearchClear").onclick=()=>clearWatchSearch();
 
 // ---- CAS-382/CAS-642: per-list Filter (watch-priority) -------------------------------------------------
@@ -14048,6 +14150,8 @@ const SHARP_STEPS = {
         <div class="easec">
           <button type="button" class="easub" onclick="briefGo('age')">
             <span class="eash">Rating</span><span class="easv">${esc(trailAge())}</span></button>
+          <button type="button" class="easub" onclick="briefGo('occasions')">
+            <span class="eash">Occasions</span><span class="easv">${esc(occasionsSummary(d))}</span></button>
         </div>
         <!-- CAS-613: auto-notify — per-agent, arms a film's earliest acceptable notify window the moment
              the agent finds it (recomputeFound), mirroring toggleFilmOpt's manual tick. watchPrefs stays
@@ -14456,6 +14560,37 @@ ${who.includes("kids") ? `
       const none = lists.length ? "" : `<div class="nopt nonone">You have no tags yet — tag a film first, then come back here to exclude it.</div>`;
       return `<p class="ossub">A film carrying a ticked tag is dropped from this agent's list.</p>
         <div class="nopts">${none}${rows}</div>`;
+    },
+  },
+  // ---- CAS-768: Occasions -----------------------------------------------------------------------------
+  // An Occasion is nothing but a named set of agents, so there is no separate master list of names —
+  // allOccasionNames() below IS the list, derived fresh from every agent's own tag. Multi-select, modelled
+  // directly on the extags spoke just above: ticking adds this agent to the set, unticking removes it.
+  occasions: {
+    title: "Occasions",
+    noAgent: true,
+    body(){
+      const d=onbFlow.draft||{};
+      const mine=new Set(d.occasions||[]);
+      const names=allOccasionNames();
+      const rows=names.map(name=>{
+        const on=mine.has(name);
+        return `<button type="button" class="nopt${on?" on":""}" data-name="${escA(name)}" style="--wwc:var(--accent)"
+          aria-pressed="${on}"
+          title="${escA(on?`Untag this agent as ${name}`:`Tag this agent as ${name}`)}">
+          <span class="wwb sq">✓</span><span class="nol">${esc(name)}</span></button>`;
+      }).join("");
+      const none = names.length ? "" : `<div class="nopt nonone">No occasions yet — add one below.</div>`;
+      return `<p class="ossub">Tag this agent with one or more occasions — Me, Family, Cinema night, whatever
+          groupings make sense for you. An agent can carry as many as you like.</p>
+        <div class="nopts" id="onbStepOccasions">${none}${rows}</div>
+        <button type="button" class="listnewbtn" id="occNewBtn" onclick="startCreateOccasionRow()">＋ New occasion</button>`;
+    },
+    wire(){
+      const box=$("onbStepOccasions"); if(!box) return;
+      [...box.querySelectorAll("[data-name]")].forEach(b=>{
+        b.onclick=()=>briefToggleOccasion(b.dataset.name);
+      });
     },
   },
   // ---- CAS-199: My streaming services ---------------------------------------------------------------
@@ -14973,6 +15108,50 @@ window.briefToggleExcludeTag=lid=>{
   const i=d.excludeTags.indexOf(lid);
   if(i>=0) d.excludeTags.splice(i,1); else d.excludeTags.push(lid);
   renderOnbStep("extags");
+};
+// CAS-768: there is no separate master list of occasion names — the set that exists is the union of
+// c.occasions across every saved agent, plus whatever the CURRENT draft already carries (so a name just
+// created in this same session offers itself immediately, before Save ever writes it to the deck). An
+// occasion exists exactly while at least one agent carries it; untagging the last one drops it from here.
+function allOccasionNames(){
+  const set=new Set();
+  cascades.forEach(c=>(c.occasions||[]).forEach(o=>set.add(o)));
+  if(onbFlow.draft) (onbFlow.draft.occasions||[]).forEach(o=>set.add(o));
+  return [...set].sort((a,b)=>a.localeCompare(b));
+}
+const occasionsSummary = d => (d.occasions&&d.occasions.length) ? d.occasions.join(", ") : "None yet";
+// Multi-select, same shape as briefToggleExcludeTag: ticking adds the name to this agent's occasions,
+// unticking removes it.
+window.briefToggleOccasion=name=>{
+  const d=onbFlow.draft; if(!d) return;
+  d.occasions = Array.isArray(d.occasions) ? d.occasions.slice() : [];
+  const i=d.occasions.indexOf(name);
+  if(i>=0) d.occasions.splice(i,1); else d.occasions.push(name);
+  renderOnbStep("occasions");
+};
+// "New occasion", modelled on startCreateListRow/commitCreateListRow: an inline input that, on Enter or
+// blur, trims and caps the name, then ticks it on for this agent in one step.
+window.startCreateOccasionRow=()=>{
+  const btn=$("occNewBtn"); if(!btn) return;
+  btn.outerHTML=`<div class="ucard" id="occNewRow" style="margin-top:8px"><div class="urow nodiv">
+    <span class="uic">🎉</span>
+    <input type="text" class="listnamein" id="occNewInput" maxlength="24" placeholder="Occasion name" autocomplete="off"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+      onblur="commitCreateOccasionRow(this)"></div></div>`;
+  const inp=$("occNewInput"); if(inp) inp.focus();
+};
+window.commitCreateOccasionRow=(inputEl)=>{
+  if(!inputEl || !inputEl.isConnected) return;
+  const raw=(inputEl.value||"").trim().slice(0,24);
+  const d=onbFlow.draft;
+  if(raw && d){
+    d.occasions = Array.isArray(d.occasions) ? d.occasions.slice() : [];
+    // CAS-768 AC7: case-insensitive de-dup — "family" ticks the existing "Family" rather than making a second.
+    const existing=allOccasionNames().find(n=>n.toLowerCase()===raw.toLowerCase());
+    const name=existing||raw;
+    if(!d.occasions.includes(name)) d.occasions.push(name);
+  }
+  renderOnbStep("occasions");
 };
 // CAS-246: hand the just-picked agent to the Briefing WITHOUT committing it. briefOpen() reads a SAVED
 // cascade off the deck; this agent has never been saved, and saving it here so the hub had something to read
@@ -18237,7 +18416,8 @@ function patchFindCounts(){
 function filmInWatchRows(m){
   if(!watchTabsNow().length) return false;
   const agentOff=watchAgentOff[watchTab];
-  const acs=agentOff.size ? cascades.filter(c=>!agentOff.has(c.id)) : cascades;
+  let acs=agentOff.size ? cascades.filter(c=>!agentOff.has(c.id)) : cascades;
+  if(watchOccasion) acs=acs.filter(c=>(c.occasions||[]).includes(watchOccasion));
   if(!acs.length || !acs.some(c=>listedBy(m,c))) return false;
   if(!filmMatchesWatchTab(m, watchTab)) return false;
   const wsearch=watchSearch[watchTab];

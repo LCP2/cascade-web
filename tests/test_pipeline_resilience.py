@@ -128,6 +128,10 @@ class BuildSurvivesAFailingOmdb(unittest.TestCase):
                                                                 "price": None, "format": "HD"}]),
             mock.patch.object(pp, "derive_from_providers", lambda m, p, t: ["included_streaming"]),
             mock.patch.object(pp, "TMDB_PACING", 0),
+            # CAS-772: these fixtures predate cache_stamped_at, so every title looks due for
+            # revalidation — turn the sweep off; it is not what this class is testing, and it
+            # must not make a real, unmocked network call in these tests.
+            mock.patch.object(pp, "REVALIDATION_DAILY_BUDGET", 0),
             # CAS-379: these titles predate cinema_release too, but this class is about OMDb
             # resilience — a no-op here keeps that backfill path from making its own network call.
             mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
@@ -288,6 +292,10 @@ class CinemaReleaseBackfillDuringBuild(unittest.TestCase):
             mock.patch.object(pp, "derive_from_providers", lambda m, p, t: ["included_streaming"]),
             mock.patch.object(pp, "enrich_omdb", lambda m: m),
             mock.patch.object(pp, "TMDB_PACING", 0),
+            # CAS-772: these fixtures predate cache_stamped_at, so every title looks due for
+            # revalidation — turn the sweep off; it is not what this class is testing, and it
+            # must not make a real, unmocked network call in these tests.
+            mock.patch.object(pp, "REVALIDATION_DAILY_BUDGET", 0),
         ]
         for p in patches:
             p.start(); self.addCleanup(p.stop)
@@ -394,6 +402,10 @@ class WikidataAwardBackfillDuringBuild(unittest.TestCase):
             mock.patch.object(pp, "enrich_omdb", lambda m: m),
             mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
             mock.patch.object(pp, "TMDB_PACING", 0),
+            # CAS-772: these fixtures predate cache_stamped_at, so every title looks due for
+            # revalidation — turn the sweep off; it is not what this class is testing, and it
+            # must not make a real, unmocked network call in these tests.
+            mock.patch.object(pp, "REVALIDATION_DAILY_BUDGET", 0),
             mock.patch.object(pp, "WIKIDATA_PACING", 0),
         ]
         for p in patches:
@@ -470,6 +482,10 @@ class OmdbBackfillIsPrioritised(unittest.TestCase):
             mock.patch.object(pp, "derive_from_providers", lambda m, p, t: ["included_streaming"]),
             mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
             mock.patch.object(pp, "TMDB_PACING", 0),
+            # CAS-772: these fixtures predate cache_stamped_at, so every title looks due for
+            # revalidation — turn the sweep off; it is not what this class is testing, and it
+            # must not make a real, unmocked network call in these tests.
+            mock.patch.object(pp, "REVALIDATION_DAILY_BUDGET", 0),
             mock.patch.object(pp, "OMDB_DAILY_BUDGET", 1),
             mock.patch.object(pp, "OMDB_REFRESH_BUDGET", 0),
         ]
@@ -541,6 +557,10 @@ class CrossRunDailySpendSharesOneCap(unittest.TestCase):
             mock.patch.object(pp, "derive_from_providers", lambda m, p, t: ["included_streaming"]),
             mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
             mock.patch.object(pp, "TMDB_PACING", 0),
+            # CAS-772: these fixtures predate cache_stamped_at, so every title looks due for
+            # revalidation — turn the sweep off; it is not what this class is testing, and it
+            # must not make a real, unmocked network call in these tests.
+            mock.patch.object(pp, "REVALIDATION_DAILY_BUDGET", 0),
         ]
         for p in patches:
             p.start(); self.addCleanup(p.stop)

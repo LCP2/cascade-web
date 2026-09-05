@@ -110,6 +110,10 @@ if(typeof window.CascadeAuth === "undefined"){
 }
 ;globalThis.__ENGINE__ = {
   MOVIES, CASCADE, STATUS_LABEL, SHOWABLE_N,
+  // CAS-771: filmByMovieId is the exact lookup the bell (realAlertsHTML) and Moving (movingData) use to
+  // resolve a stored movie_id string to its catalogue record — exported so the tmdb_id guardrail test can
+  // drive the real comparison rather than re-implementing it.
+  filmByMovieId: mid => MOVIES.find(x => String(x.tmdb_id) === String(mid)),
   matchesCriteria, countCriteria, watchCount, watchesFilm, matchesTaste, listedBy, listWindowOK,
   listedCount, onbShownCount,
   // CAS-723: inScope is the predicate the "one agent type" invariant is actually about — exported so a test
@@ -320,6 +324,13 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-764: the stub navigator, by reference — so a test can flip .onLine the same way a real device
   // going offline would, and assert the acct banner (which reads navigator.onLine directly) responds.
   navigator,
+  // CAS-768: dedupeCascades/cascDedupeSigOf and allOccasionNames are plain top-level functions, exported
+  // directly like cascSigOf above. briefToggleOccasion/commitCreateOccasionRow are window-assigned (they're
+  // Briefing wire code), wrapped the same way ymSvcToggle above is, so a test can drive the real multi-select
+  // and new-occasion-row logic rather than poking onbFlow.draft.occasions by hand.
+  dedupeCascades, cascDedupeSigOf, allOccasionNames,
+  briefToggleOccasion: name => window.briefToggleOccasion(name),
+  commitCreateOccasionRow: inputEl => window.commitCreateOccasionRow(inputEl),
 };
 `;
 

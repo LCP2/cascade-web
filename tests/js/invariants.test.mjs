@@ -4244,3 +4244,121 @@ test("CAS-744 AC4: includeUnrated strictly grows the count over the live catalog
   assert.ok(onCount > offCount,
     `includeUnrated true did not grow the count over false, ${offCount} → ${onCount}`);
 });
+
+// ---- CAS-768: Occasions --------------------------------------------------------------------------------
+// An Occasion is a tag on an agent (c.occasions), not a new admission criterion — the two traps named in the
+// ticket are that cascSigOf (CAS-728's admission signature) must stay completely inert to it, while
+// dedupeCascades' OWN identity signature must not. AC1/AC2 below are the plain data-shape checks; AC3-AC7
+// mirror the CAS-728/715 sticky-admission tests' own shape, since an occasion edit is exactly the kind of
+// edit those tests already prove is inert when it's the RIGHT kind of inert.
+test("CAS-768 AC1/AC2: occasions default to [] and an agent can carry two or more at once, surviving a reload", () => {
+  const fresh = E.normCascade({});
+  assert.deepEqual([...fresh.occasions], [], "an agent with no occasions must default to [] — the pre-existing-agent case");
+  fresh.occasions = ["Me", "Family"];
+  const reloaded = E.normCascade(fresh);   // normCascade runs on every load — this IS the reload path
+  assert.deepEqual([...reloaded.occasions], ["Me", "Family"], "two occasions must both survive a normCascade pass");
+});
+
+test("CAS-768 AC3: an occasion edit does not move cascSigOf(c)", () => {
+  const c = E.normCascade({ kind: "stream", status: [] });
+  const sigBefore = E.cascSigOf(c);
+  c.occasions = ["Family"];
+  assert.equal(E.cascSigOf(c), sigBefore, "tagging an agent with one occasion must not move its admission signature");
+  c.occasions = ["Family", "Cinema night"];
+  assert.equal(E.cascSigOf(c), sigBefore, "a second occasion must not move cascSigOf either");
+  c.occasions = [];
+  assert.equal(E.cascSigOf(c), sigBefore, "removing every occasion must not move cascSigOf either");
+});
+
+test("CAS-768 AC4: an occasion edit triggers no re-review — agent_films rows and admitDrift are untouched", () => withCas728State(() => {
+  withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const film = pastCinemaUnwatchedFilm();
+    const id = film.tmdb_id;
+    const c = stickyTestCascade("cas768-ac4", 99);
+    E.cascades.push(c);
+    const sig = E.cascSigOf(c);
+    const savedDrift = E.admitDrift[id];
+    delete E.admitDrift[id];
+    try {
+      E.CascadePersistence.setAgentFilm(c.id, id, { admission_score: 90, admission_status: "in_cinema", agent_sig: sig });
+      c.occasions = ["Family"];
+      assert.equal(E.cascSigOf(c), sig, "setup: an occasion edit must not move cascSigOf(c)");
+      E.recomputeFound();
+      const row = E.CascadePersistence.agentFilmsFor(c.id).find(r => r.movie_id === String(id));
+      assert.ok(row, "an occasion edit must not drop an already-admitted film");
+      assert.equal(row.admission_score, 90, "the stored admission_score must survive untouched — no re-review happened");
+      assert.equal(row.agent_sig, sig, "agent_sig must be unchanged by an occasion-only edit");
+      assert.ok(!E.admitDrift[id], "an occasion edit must not flag the film with admitDrift");
+    } finally {
+      unseedCascade(c.id);
+      if(savedDrift === undefined) delete E.admitDrift[id]; else E.admitDrift[id] = savedDrift;
+    }
+  });
+}));
+
+test("CAS-768 AC5: two agents identical except for occasions both survive dedupeCascades", () => {
+  const a = E.normCascade({ kind: "stream", status: [] });
+  a.id = "cas768-ac5-a"; a.order = 0; a.occasions = ["Us"];
+  const b = E.normCascade({ kind: "stream", status: [] });
+  b.id = "cas768-ac5-b"; b.order = 1; b.occasions = ["Family"];
+  assert.equal(E.cascSigOf(a), E.cascSigOf(b), "setup: these two agents must be exact admission twins");
+  assert.notEqual(E.cascDedupeSigOf(a), E.cascDedupeSigOf(b), "setup: dedupe's own signature must differ once occasions are folded in");
+  E.cascades.push(a, b);
+  try {
+    const dropped = E.dedupeCascades();
+    assert.equal(dropped, 0, "two agents differing only by occasion must not be deduped");
+    assert.ok(E.cascades.some(x => x.id === "cas768-ac5-a"), "agent A must survive");
+    assert.ok(E.cascades.some(x => x.id === "cas768-ac5-b"), "agent B must survive");
+  } finally { unseedCascade(a.id); unseedCascade(b.id); }
+});
+
+test("CAS-768 AC6: an occasion is offered once any agent carries it, and drops off once its last carrier is untagged", () => {
+  const a = E.normCascade({ kind: "stream", status: [] });
+  a.id = "cas768-ac6"; a.order = 0; a.occasions = [];
+  const uniqueName = "CAS768-ZZZ";
+  assert.ok(!E.allOccasionNames().includes(uniqueName), "setup: this made-up name must not already be in use");
+  E.cascades.push(a);
+  const savedDraft = E.onbFlow.draft;
+  E.onbFlow.draft = null;   // AC6 is about the offer across ALL agents, not the draft mid-edit
+  try {
+    a.occasions = [uniqueName];
+    assert.ok(E.allOccasionNames().includes(uniqueName), "an occasion must be offered as soon as one agent carries it");
+    a.occasions = [];
+    assert.ok(!E.allOccasionNames().includes(uniqueName), "an occasion must disappear once its last carrier is untagged");
+  } finally {
+    unseedCascade(a.id);
+    E.onbFlow.draft = savedDraft;
+  }
+});
+
+test("CAS-768 AC7: typing a name differing only in case ticks the existing occasion instead of creating a second", () => {
+  const a = E.normCascade({ kind: "stream", status: [] });
+  a.id = "cas768-ac7"; a.order = 0; a.occasions = ["Family"];
+  E.cascades.push(a);
+  const draft = E.normCascade({ kind: "stream", status: [] });
+  draft.occasions = [];
+  const savedDraft = E.onbFlow.draft;
+  E.onbFlow.draft = draft;
+  try {
+    E.commitCreateOccasionRow({ isConnected: true, value: "family" });
+    assert.deepEqual([...draft.occasions], ["Family"], "typing \"family\" must tick the existing \"Family\", not add a second entry");
+    assert.equal(E.allOccasionNames().filter(n => n.toLowerCase() === "family").length, 1,
+      "there must be exactly one occasion name spelled any-case \"family\" in use");
+  } finally {
+    unseedCascade(a.id);
+    E.onbFlow.draft = savedDraft;
+  }
+});
+
+test("CAS-768: a new occasion name is trimmed and capped at 24 characters", () => {
+  const draft = E.normCascade({ kind: "stream", status: [] });
+  draft.occasions = [];
+  const savedDraft = E.onbFlow.draft;
+  E.onbFlow.draft = draft;
+  try {
+    E.commitCreateOccasionRow({ isConnected: true, value: "   Movie Night Extravaganza Deluxe   " });
+    assert.equal(draft.occasions.length, 1, "a valid typed name must be ticked on");
+    assert.ok(draft.occasions[0].length <= 24, `occasion name exceeded the 24-character cap: "${draft.occasions[0]}"`);
+    assert.equal(draft.occasions[0], draft.occasions[0].trim(), "occasion name must be trimmed of surrounding whitespace");
+  } finally { E.onbFlow.draft = savedDraft; }
+});
