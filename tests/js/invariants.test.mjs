@@ -3075,7 +3075,10 @@ test("CAS-728 AC4: a floor below the stored admission_score keeps the film — t
   });
 }));
 
-test("CAS-728 AC5: a manual Watch On value survives a re-evaluation that removes the film from its agent", () => withCas728State(() => {
+// CAS-781 reverses this: a manual Watch On is a human selection and now holds the film's MEMBERSHIP of the
+// agent too, not only the wins/winsSource value — the agent_films row survives, re-stamped with the new
+// agent_sig, same as a pinnedTo film. See tests/js/agents-override.test.mjs for the fuller CAS-781 coverage.
+test("CAS-728 AC5 / CAS-781: a manual Watch On value keeps the film ON the agent through a re-evaluation that would otherwise drop it", () => withCas728State(() => {
   withWatchPrefs(STICKY_WATCH_PREFS, () => {
     const film = pastCinemaUnwatchedFilm();
     const id = film.tmdb_id;
@@ -3089,10 +3092,11 @@ test("CAS-728 AC5: a manual Watch On value survives a re-evaluation that removes
       assert.ok(level, "no un-spent Watch level on this film — the harness catalogue looks wrong");
       E.toggleFilmOpt(id, level.key);
       assert.equal(E.notify[id].wins[level.key], true, "setup: the manual tick must actually land");
-      c.watchMarkers = { in_cinema: 95, premium: null, rent: 95, stream: 95 };   // drops the film, as in AC3
+      c.watchMarkers = { in_cinema: 95, premium: null, rent: 95, stream: 95 };   // would drop the film per criteria alone, as in AC3
       E.recomputeFound();
       const row = E.CascadePersistence.agentFilmsFor(c.id).find(r => r.movie_id === String(id));
-      assert.ok(!row, "setup: the film must actually leave the agent for this to test anything");
+      assert.ok(row, "CAS-781: a manual Watch On must hold the film's membership of the agent, not just its value");
+      assert.equal(row.admission_score, 90, "the retained row must keep its ORIGINAL admission_score, not a re-test");
       assert.equal(E.notify[id].wins[level.key], true, "AC5: a manual Watch On value must survive the removal");
       assert.equal(E.notify[id].winsSource[level.key], "manual");
     } finally { unseedCascade(c.id); }

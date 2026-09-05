@@ -4926,7 +4926,10 @@ function recomputeFound(){
         const m = MOVIES.find(x=>x.tmdb_id===mid);
         if(!m){ CP.clearAgentFilm(c.id, r.movie_id); return; }   // the film itself is gone from the catalogue
         const movedPast = STATUS_RUNG[primaryStatus(m)] > STATUS_RUNG[r.admission_status];
-        const stillIn = movedPast
+        // CAS-781: a Watch On set by hand is a human selection (winsSource[k]==="manual") and outranks
+        // criteria the same way pinnedTo does — it holds the film's membership here, not just its value.
+        const manualHeld = !!(e && e.wins && e.winsSource && WATCH_LEVEL_KEYS.some(k=>e.wins[k] && e.winsSource[k]==="manual"));
+        const stillIn = manualHeld ? true : movedPast
           // Past its admission window: "would I admit this under my new settings?" — the SCORE stays the
           // figure recorded at admission (using today's would re-trigger the cinema/streaming basis cliff by
           // an edit instead of by time), every other requirement is tested fresh against the film as it is now.
