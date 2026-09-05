@@ -142,6 +142,10 @@ class TransientProviderDropEndToEnd(unittest.TestCase):
             mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
             mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
             mock.patch.object(pp, "TMDB_PACING", 0),
+            # CAS-772: these fixtures predate cache_stamped_at, so every title looks due for
+            # revalidation — turn the sweep off; it is orthogonal to this class and must not make
+            # a real, unmocked network call in these tests.
+            mock.patch.object(pp, "REVALIDATION_DAILY_BUDGET", 0),
             mock.patch.object(pp, "enrich_omdb", lambda m: m),
             # CAS-379: this fixture's titles predate cinema_release too; a no-op keeps that
             # back-fill path (orthogonal to what this class tests) from hitting the network.
@@ -210,6 +214,10 @@ class ZeroAuRowsNeverInventAPaidTier(unittest.TestCase):
             mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
             mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
             mock.patch.object(pp, "TMDB_PACING", 0),
+            # CAS-772: these fixtures predate cache_stamped_at, so every title looks due for
+            # revalidation — turn the sweep off; it is orthogonal to this class and must not make
+            # a real, unmocked network call in these tests.
+            mock.patch.object(pp, "REVALIDATION_DAILY_BUDGET", 0),
             mock.patch.object(pp, "enrich_omdb", lambda m: m),
             mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
             mock.patch.object(pp, "tmdb_providers", lambda tid: empty_prov),
@@ -291,6 +299,10 @@ class AFailedPollDoesNotFreezeAPhantomTierEither(unittest.TestCase):
             mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
             mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
             mock.patch.object(pp, "TMDB_PACING", 0),
+            # CAS-772: these fixtures predate cache_stamped_at, so every title looks due for
+            # revalidation — turn the sweep off; it is orthogonal to this class and must not make
+            # a real, unmocked network call in these tests.
+            mock.patch.object(pp, "REVALIDATION_DAILY_BUDGET", 0),
             mock.patch.object(pp, "enrich_omdb", lambda m: m),
             mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
             mock.patch.object(pp, "tmdb_providers",
@@ -356,6 +368,10 @@ class ALatchedUpcomingTitleSelfCorrectsOnTheNextRun(unittest.TestCase):
             mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
             mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
             mock.patch.object(pp, "TMDB_PACING", 0),
+            # CAS-772: these fixtures predate cache_stamped_at, so every title looks due for
+            # revalidation — turn the sweep off; it is orthogonal to this class and must not make
+            # a real, unmocked network call in these tests.
+            mock.patch.object(pp, "REVALIDATION_DAILY_BUDGET", 0),
             mock.patch.object(pp, "enrich_omdb", lambda m: m),
             mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
             mock.patch.object(pp, "tmdb_providers", lambda tid: streaming_prov),

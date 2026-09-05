@@ -155,6 +155,17 @@ WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
 WIKIDATA_BACKFILL_BUDGET = int(os.getenv("WIKIDATA_BACKFILL_BUDGET", "200"))
 WIKIDATA_PACING = float(os.getenv("WIKIDATA_PACING", "0.2"))
 
+# CAS-772: cache TTL — Watchmode's terms cap cached data at 30 days and require deleting it all
+# on cancellation; TMDB's terms cap it at 6 months and require the same on termination. One
+# mechanism, the SHORTER of the two applies, so it stays correct on whichever side of the v2
+# migration CASCADE_SPINE ends up.
+WATCHMODE_CACHE_TTL_DAYS = 30
+TMDB_CACHE_TTL_DAYS = 183   # ~6 months
+CACHE_TTL_DAYS = min(WATCHMODE_CACHE_TTL_DAYS, TMDB_CACHE_TTL_DAYS)
+# Spread revalidation of the whole catalogue across the TTL window (~200/day for 6,000 titles)
+# rather than one giant sweep — comfortably inside Watchmode's 40,000/month allowance.
+REVALIDATION_DAILY_BUDGET = int(os.getenv("REVALIDATION_DAILY_BUDGET", "200"))
+
 
 # ---------------------------------------------------------------------------
 # tiny HTTP helper
@@ -255,6 +266,7 @@ def _tmdb_record(detail: dict) -> dict:
                                       key=lambda c: c.get("order", 999))][:4]
     return {
         "tmdb_id": detail["id"],
+        "cache_stamped_at": _RUN_DATE,   # CAS-772: this fetch just confirmed every field below is fresh
         "imdb_id": detail.get("imdb_id"),
         "title": detail["title"],
         "year": (detail.get("release_date") or "----")[:4],
@@ -1121,16 +1133,33 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
         if WIKIDATA_PACING:
             time.sleep(WIKIDATA_PACING)
 
+    # CAS-772: revalidation sweep — keep every cached record inside the shorter applicable TTL,
+    # spread across the window (select_revalidation_candidates caps this run's share) rather than
+    # one giant sweep.
+    revalidation_open = True
+    revalidated = 0
+    for m in select_revalidation_candidates(catalogue, today, budget=REVALIDATION_DAILY_BUDGET):
+        if not revalidation_open:
+            break
+        _, outcome = _api_call("TMDB revalidate", revalidate_record, m, today)
+        if outcome == "stop":
+            revalidation_open = False
+        if outcome == "ok":
+            revalidated += 1
+        if TMDB_PACING:
+            time.sleep(TMDB_PACING)
+
     counts = dict(sched["counts"])
     counts.update(provider_calls=provider_calls, wm_calls=wm_calls, omdb_calls=omdb_calls,
-                  cinema_calls=cinema_calls, wikidata_calls=wikidata_calls,
+                  cinema_calls=cinema_calls, wikidata_calls=wikidata_calls, revalidated=revalidated,
                   ondemand=len(ondemand_set), catalogue=len(catalogue),
                   # CAS-161: a degraded run must SAY it was degraded. Silence here would let the catalogue
                   # quietly go stale for days while every run still reported success.
                   omdb_fails=omdb_fails, wm_fails=wm_fails, provider_fails=prov_fails, cinema_fails=cinema_fails,
                   wikidata_fails=wikidata_fails,
                   omdb_stopped=not omdb_open, wm_stopped=not wm_open, providers_stopped=not prov_open,
-                  cinema_stopped=not cinema_open, wikidata_stopped=not wikidata_open)
+                  cinema_stopped=not cinema_open, wikidata_stopped=not wikidata_open,
+                  revalidation_stopped=not revalidation_open)
     if omdb_fails or wm_fails or prov_fails or cinema_fails or wikidata_fails:
         print(f"[warn] degraded enrichment: {prov_fails} TMDB-provider, {omdb_fails} OMDb, {wm_fails} "
               f"Watchmode, {cinema_fails} TMDB-release_dates, {wikidata_fails} Wikidata title(s) kept "
@@ -1144,6 +1173,97 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
         print(f"[warn] OMDb budgets total {OMDB_DAILY_BUDGET + OMDB_REFRESH_BUDGET} against a "
               f"{OMDB_FREE_TIER_CAP}/day cap — a single run can exhaust the key.")
     return catalogue, counts
+
+
+# ---------------------------------------------------------------------------
+# CAS-772: cache age / revalidation / purge — the data-licensing precondition for paying for
+# Watchmode. A record's core vendor content (title/synopsis/cast/etc — as opposed to
+# `last_polled`, which only ever tracks the daily availability poll) is only as fresh as its own
+# `cache_stamped_at`; once that ages past CACHE_TTL_DAYS it is due for revalidation. Provider-
+# agnostic by design: age-tracking and selection below never reference a vendor by name, so they
+# stay correct whatever CASCADE_SPINE ends up being — only revalidate_record's own fetch is
+# spine-specific, since something has to actually go ask a vendor for fresh data.
+# ---------------------------------------------------------------------------
+def cache_age_days(m: dict, today: datetime.date) -> int | None:
+    """Days since `m`'s vendor content was last confirmed fresh, or None if it has never been
+    stamped (a base record from before this field existed) — unknown age, not zero age."""
+    stamp = m.get("cache_stamped_at")
+    if not stamp:
+        return None
+    try:
+        stamped = datetime.date.fromisoformat(stamp)
+    except ValueError:
+        return None
+    return (today - stamped).days
+
+
+def needs_revalidation(m: dict, today: datetime.date, ttl_days: int = CACHE_TTL_DAYS) -> bool:
+    """True once `m` is at or past the TTL. An unstamped record (age unknown) is always due —
+    unknown is never treated as fresh."""
+    age = cache_age_days(m, today)
+    return age is None or age >= ttl_days
+
+
+def select_revalidation_candidates(catalogue: list[dict], today: datetime.date,
+                                    budget: int = REVALIDATION_DAILY_BUDGET,
+                                    ttl_days: int = CACHE_TTL_DAYS) -> list[dict]:
+    """Every record at/past the TTL, least-recently-confirmed first (never-stamped records
+    first of all, since their real age is unknown and so at least as old as anything measured),
+    capped to `budget` so a big catalogue's revalidation is spread across the TTL window
+    (~200/day for 6,000 titles) rather than swept in one run. Pure — no file/network IO, so a
+    stubbed clock is enough to test it."""
+    aged = [(cache_age_days(m, today), m) for m in catalogue]
+    stale = [(age, m) for age, m in aged if age is None or age >= ttl_days]
+    stale.sort(key=lambda am: (am[0] is not None, -(am[0] or 0)))
+    return [m for _, m in stale[:budget]]
+
+
+def cache_health_stats(catalogue: list[dict], today: datetime.date,
+                        ttl_days: int = CACHE_TTL_DAYS) -> tuple[int | None, int]:
+    """(oldest_known_age_days, count_over_ttl) for the daily cache-health report (change item 4:
+    "a limit nobody can see is a limit nobody keeps"). A record with no stamp yet counts toward
+    `count_over_ttl` (unknown is never fresh) but is excluded from `oldest_known_age_days`, since
+    there is no date to measure its age from."""
+    known_ages = [a for a in (cache_age_days(m, today) for m in catalogue) if a is not None]
+    over_ttl = sum(1 for m in catalogue if needs_revalidation(m, today, ttl_days))
+    return (max(known_ages) if known_ages else None), over_ttl
+
+
+def revalidate_record(m: dict, today: datetime.date) -> dict:
+    """Re-fetch `m`'s vendor content fresh from today's live spine and re-stamp
+    `cache_stamped_at`. TMDB is the only live spine today (Watchmode ingest is CAS-773); when
+    that lands, swap what this fetches, not the age-tracking/selection above, which stay
+    provider-agnostic. Only touches the fields `_tmdb_record` maps — offers/status/last_polled
+    (availability, a separate daily poll) are left untouched, so this can never regress one."""
+    detail = get_json(
+        f"{TMDB_BASE}/movie/{m['tmdb_id']}?api_key={TMDB_KEY}&append_to_response=release_dates,videos,credits"
+    )
+    fresh = _tmdb_record(detail)
+    fresh["cache_stamped_at"] = today.isoformat()
+    m.update(fresh)
+    return m
+
+
+# CAS-772: every file that holds vendor-derived (TMDB/Watchmode) content — what both licences'
+# cancellation/termination clauses require deleting. `api_budget.json` (our own daily spend
+# counters) and `ondemand.json` (which titles USERS have engaged with — user data, not vendor
+# content) are deliberately excluded.
+VENDOR_CACHE_FILES = [OUTPUT_FILE, APP_FILE, SNAPSHOT_FILE, WM_CACHE_FILE, WINDOW_DATES_FILE,
+                      ALERTS_FILE, os.path.join(STATE_DIR, "last_run_events.json")]
+
+
+def purge_vendor_cache(files: list[str] | None = None) -> list[str]:
+    """CAS-772: delete every vendor-derived cached file — the purge path Watchmode's "must
+    delete stored data if they cancel" clause and TMDB's termination clause both require.
+    Explicit and irreversible-by-intent: reachable only via `--purge-vendor-cache` on the
+    command line, never from `run()` or any scheduled entry point. Returns the paths actually
+    removed."""
+    removed = []
+    for path in (VENDOR_CACHE_FILES if files is None else files):
+        if os.path.exists(path):
+            os.remove(path)
+            removed.append(path)
+    return removed
 
 
 # ---------------------------------------------------------------------------
@@ -1180,6 +1300,15 @@ def run(simulate_day: bool = False):
             _apply_scripted_change(records)
         for m in records:
             m["status"] = derive_status(m, m.get("offers", []), today)
+            m.setdefault("cache_stamped_at", today.isoformat())   # CAS-772: no real vendor stamp on sample data
+
+    # CAS-772: cache-health report (change item 4) — a limit nobody can see is a limit nobody
+    # keeps. Printed every run, live or sample, since the sample branch never touches build_live_
+    # catalogue's own revalidation sweep.
+    oldest_age, over_ttl = cache_health_stats(records, today)
+    revalidated_today = counts.get("revalidated", 0) if LIVE else 0
+    print(f"[cache] oldest record age: {oldest_age if oldest_age is not None else 'n/a'} day(s) | "
+          f"{over_ttl} over the {CACHE_TTL_DAYS}-day TTL | {revalidated_today} revalidated today")
 
     # CAS-578 R6: refuse to persist a run that would mass-stamp one window across the catalogue —
     # the guard that would have caught D1. Raises and keeps every existing state/*.json file
@@ -1317,7 +1446,17 @@ def _apply_scripted_change(records: list[dict]):
 
 
 if __name__ == "__main__":
-    if "--build-html" in sys.argv:
+    if "--purge-vendor-cache" in sys.argv:
+        # CAS-772: explicit, human-triggered only — the cancellation-path purge. Never call this
+        # from run() or wire it into a scheduled job.
+        removed = purge_vendor_cache()
+        if removed:
+            print("purged vendor-derived cache:")
+            for p in removed:
+                print(f"   • {p}")
+        else:
+            print("nothing to purge — no vendor-cache files present.")
+    elif "--build-html" in sys.argv:
         build_html()                          # rebuild index.html from existing movies.json only
         print("index.html rebuilt from movies.json — open it in any browser.")
     else:
