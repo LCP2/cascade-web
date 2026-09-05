@@ -5536,7 +5536,14 @@ const occasionRegSorted = () => [...occasionReg].sort((a,b)=>a.name.localeCompar
 // AC11: an id matching no register entry is dropped on save — the one choke point commitDraft's whitelist
 // (and any other future save path) filters an agent's occasions through, so "ignored on read" (occasionName/
 // occasionsSummary above already skip an unresolvable id) and "gone after the next save" share one rule.
-const pruneOccasionIds = ids => (ids||[]).filter(id=>occasionReg.some(o=>o.id===id));
+// CAS-779 defect 2: that rule is only safe once this device has actually SEEN the account's register — with
+// it still in flight (window.CascadePersistence.userPrefsReady false, same signal runUserPrefsSync itself
+// defers on), an empty local occasionReg is not evidence an id is stale, so nothing gets pruned yet.
+const pruneOccasionIds = ids => {
+  const cp = window.CascadePersistence;
+  if(cp && cp.userPrefsReady===false) return (ids||[]).slice();
+  return (ids||[]).filter(id=>occasionReg.some(o=>o.id===id));
+};
 // NAMING RULES (CAS-775): trim, cap at 24, case-insensitive de-dup against existing entries, empty rejected.
 function normOccasionName(name){ return (name||"").trim().slice(0,24); }
 function findOccasionByName(name){
@@ -5582,6 +5589,13 @@ function deleteOccasion(id){
   if(watchOccasion===id) window.setWatchOccasion(null);
   logEvent("occasion_deleted",{});
 }
+// CAS-779 defect 1: a v1.0.0 legacy name is a short human string; a register id is a UUID from
+// cascadeNewId(). A device whose register is empty because the ACCOUNT's copy hasn't synced yet (rather
+// than because this is a genuine v1.0.0 upgrade) still has agents carrying real ids, not names — without
+// this check every one of those ids reads as a "legacy name" and gets an id-named register entry invented
+// for it, which is the raw-UUID chip Lee saw.
+const OCCASION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isOccasionIdShape = s => typeof s==="string" && OCCASION_ID_RE.test(s);
 // MIGRATION (CAS-775): the shipped build stored occasion NAMES in c.occasions and in the
 // cascade_watch_occasion localStorage value. Runs once, gated on the register still being empty — once it
 // has any entry (from this migration or from a real createOccasion call) the gate never opens again, which
@@ -5589,7 +5603,7 @@ function deleteOccasion(id){
 function migrateOccasionNamesIfNeeded(){
   if(occasionReg.length) return;
   const legacyNames=new Set();
-  cascades.forEach(c=>(c.occasions||[]).forEach(o=>{ if(typeof o==="string") legacyNames.add(o); }));
+  cascades.forEach(c=>(c.occasions||[]).forEach(o=>{ if(typeof o==="string" && !isOccasionIdShape(o)) legacyNames.add(o); }));
   if(!legacyNames.size) return;
   const byName=new Map();
   [...legacyNames].forEach(name=>{
@@ -15258,7 +15272,12 @@ window.briefToggleExcludeTag=lid=>{
 // now the one list of occasions — see the Occasions register section for occasionRegSorted/occasionName.
 // occasionsSummary resolves each id through the register and drops any that no longer match one (an id an
 // agent still carries after its register entry was deleted elsewhere — "ignored on read", CAS-775 AC11).
+// CAS-779 defect 3: while this device hasn't yet seen the account's register, an id this device can't
+// resolve is not evidence there are no occasions — "None yet" would be stating that as settled when it
+// isn't. Same readiness signal as pruneOccasionIds above.
 const occasionsSummary = d => {
+  const cp = window.CascadePersistence;
+  if(cp && cp.userPrefsReady===false) return "Loading…";
   const names=(d.occasions||[]).map(occasionName).filter(Boolean);
   return names.length ? names.join(", ") : "None yet";
 };

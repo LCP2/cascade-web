@@ -4546,6 +4546,72 @@ test("CAS-768/CAS-775: a new occasion name is trimmed and capped at 24 character
   }
 });
 
+// ---- CAS-779: an unsynced register must not corrupt data, migrate ids as names, or render raw ids ----------
+// CAS-775 made the register account-level, riding user_prefs. Until the schema migration lands on the live
+// project — or on any device that boots before its own account row has come back — a device's local
+// occasionReg can be empty while its agents already carry real register ids (cascades sync over a different
+// table and can succeed independently). Treating "register empty" as "nothing has ever been set" rather than
+// "register not seen yet" is the one root cause behind all three defects below.
+test("CAS-779 AC1: a device holding only ids (no register) migrates nothing — cascades and register both survive untouched", () => {
+  const savedReg = [...E.occasionReg];
+  E.occasionReg.length = 0;
+  const fakeId1 = "319dc873-68ff-4e1a-9c2b-1a2b3c4d5e6f", fakeId2 = "aa11bb22-cc33-4d44-8e55-ff6677889900";
+  const a = seedOccCascade("cas779-ac1-a", 0, [fakeId1], "Massive Movies");
+  const b = seedOccCascade("cas779-ac1-b", 1, [fakeId1, fakeId2], "Weekend Streaming");
+  const before = { a: JSON.stringify([...a.occasions]), b: JSON.stringify([...b.occasions]) };
+  try {
+    E.migrateOccasionNamesIfNeeded();
+    assert.equal(E.occasionReg.length, 0, "an id-only device must invent no register entries");
+    assert.equal(JSON.stringify([...a.occasions]), before.a, "agent A's occasions array must be byte-identical after boot");
+    assert.equal(JSON.stringify([...b.occasions]), before.b, "agent B's occasions array must be byte-identical after boot");
+  } finally {
+    unseedCascade(a.id); unseedCascade(b.id);
+    E.occasionReg.length = 0; savedReg.forEach(o => E.occasionReg.push(o));
+  }
+});
+test("CAS-779: isOccasionIdShape recognises a cascadeNewId()-shaped UUID and rejects a short legacy name", () => {
+  assert.ok(E.isOccasionIdShape("319dc873-68ff-4e1a-9c2b-1a2b3c4d5e6f"), "a UUID must be recognised as an id shape");
+  assert.ok(!E.isOccasionIdShape("Family"), "a short legacy name must not be recognised as an id shape");
+  assert.ok(!E.isOccasionIdShape(""), "an empty string must not be recognised as an id shape");
+});
+test("CAS-779 AC2: an unresolved occasion id never prints as a label, on the Briefing summary or the Agents-to-include line", () => {
+  const rawId = "319dc873-68ff-4e1a-9c2b-1a2b3c4d5e6f";
+  assert.ok(!E.occasionReg.some(o => o.id === rawId), "setup: this id must not exist in the register");
+  assert.equal(E.occasionsSummary({ occasions: [rawId] }), "None yet", "an orphan id must read as untagged, never the raw id");
+  const c = seedOccCascade("cas779-ac2", 0, [rawId], "Orphan Agent");
+  try {
+    const line = E.agentOccasionsLine(c);
+    assert.equal(line, "No occasion", "an orphan id must never surface as a chip label");
+    assert.ok(!line.includes(rawId), "the raw id must never appear in the Agents-to-include occasions line");
+  } finally { unseedCascade(c.id); }
+});
+test("CAS-779 AC5: with the register not yet loaded, the Briefing's Occasions row shows a neutral loading state, not \"None yet\"", () => {
+  const cp = E.CascadePersistence;
+  const saved = cp.userPrefsReady;
+  cp.userPrefsReady = false;
+  try {
+    assert.equal(E.occasionsSummary({ occasions: [] }), "Loading…", "must not claim \"None yet\" while the register hasn't loaded");
+    assert.equal(E.occasionsSummary({ occasions: ["319dc873-68ff-4e1a-9c2b-1a2b3c4d5e6f"] }), "Loading…",
+      "an unresolved id while the register hasn't loaded must also read as loading, not \"None yet\" or the raw id");
+  } finally { cp.userPrefsReady = saved; }
+});
+test("CAS-779 AC3: with the register not yet loaded, pruneOccasionIds (commitDraft's own choke point) leaves ids untouched", () => {
+  const cp = E.CascadePersistence;
+  const saved = cp.userPrefsReady;
+  cp.userPrefsReady = false;
+  const ids = ["319dc873-68ff-4e1a-9c2b-1a2b3c4d5e6f", "aa11bb22-cc33-4d44-8e55-ff6677889900"];
+  try {
+    assert.deepEqual(E.pruneOccasionIds(ids), ids, "an id with no register entry must survive a save while the register hasn't loaded");
+  } finally { cp.userPrefsReady = saved; }
+});
+test("CAS-779 AC4: once the register has loaded, a genuinely stale id is still pruned on the next save — CAS-775 AC11 unchanged", () => {
+  const cp = E.CascadePersistence;
+  assert.notEqual(cp.userPrefsReady, false, "setup: this test must run with the register readiness flag in its normal (ready) state");
+  const ghostId = "319dc873-68ff-4e1a-9c2b-1a2b3c4d5e6f";
+  assert.ok(!E.occasionReg.some(o => o.id === ghostId), "setup: this id must not exist in the register");
+  assert.deepEqual(E.pruneOccasionIds([ghostId]), [], "a stale id must still be dropped once the register is known to be loaded");
+});
+
 // ---- CAS-778: WATCH LISTING OWNERSHIP GOES OCCASION-AWARE WHILE AN OCCASION IS SELECTED --------------------
 // filmOwnerCascade/filmOwnerOrder decide the Watch listing's section headings and per-agent block order from
 // notify[id].cascadeIds — the CAS-709 global owner, picked across the WHOLE roster with no idea which

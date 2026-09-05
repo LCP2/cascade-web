@@ -343,6 +343,11 @@ if(typeof window.CascadeAuth === "undefined"){
   // not names.
   occasionReg, createOccasion, renameOccasion, deleteOccasion, occasionAgentCount, occasionName,
   occasionRegSorted, occasionsSummary, migrateOccasionNamesIfNeeded, pruneOccasionIds,
+  // CAS-779: isOccasionIdShape is the UUID-shape test the migration now runs before treating a string as a
+  // legacy name — exported so a test can assert the shape check directly. agentOccasionsLine is the Watch
+  // "Agents to include" row's own occasion line (CAS-777) — a test can assert AC2 (never an unresolved id)
+  // against the real render helper rather than re-deriving occasionName's filter by hand.
+  isOccasionIdShape, agentOccasionsLine,
   get watchOccasion(){ return watchOccasion; },
   setWatchOccasion: id => window.setWatchOccasion(id),
   briefToggleOccasion: id => window.briefToggleOccasion(id),
