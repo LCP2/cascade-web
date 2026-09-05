@@ -4926,7 +4926,10 @@ function recomputeFound(){
         const m = MOVIES.find(x=>x.tmdb_id===mid);
         if(!m){ CP.clearAgentFilm(c.id, r.movie_id); return; }   // the film itself is gone from the catalogue
         const movedPast = STATUS_RUNG[primaryStatus(m)] > STATUS_RUNG[r.admission_status];
-        const stillIn = movedPast
+        // CAS-781: a Watch On set by hand is a human selection (winsSource[k]==="manual") and outranks
+        // criteria the same way pinnedTo does — it holds the film's membership here, not just its value.
+        const manualHeld = !!(e && e.wins && e.winsSource && WATCH_LEVEL_KEYS.some(k=>e.wins[k] && e.winsSource[k]==="manual"));
+        const stillIn = manualHeld ? true : movedPast
           // Past its admission window: "would I admit this under my new settings?" — the SCORE stays the
           // figure recorded at admission (using today's would re-trigger the cinema/streaming basis cliff by
           // an edit instead of by time), every other requirement is tested fresh against the film as it is now.
@@ -5536,7 +5539,14 @@ const occasionRegSorted = () => [...occasionReg].sort((a,b)=>a.name.localeCompar
 // AC11: an id matching no register entry is dropped on save — the one choke point commitDraft's whitelist
 // (and any other future save path) filters an agent's occasions through, so "ignored on read" (occasionName/
 // occasionsSummary above already skip an unresolvable id) and "gone after the next save" share one rule.
-const pruneOccasionIds = ids => (ids||[]).filter(id=>occasionReg.some(o=>o.id===id));
+// CAS-779 defect 2: that rule is only safe once this device has actually SEEN the account's register — with
+// it still in flight (window.CascadePersistence.userPrefsReady false, same signal runUserPrefsSync itself
+// defers on), an empty local occasionReg is not evidence an id is stale, so nothing gets pruned yet.
+const pruneOccasionIds = ids => {
+  const cp = window.CascadePersistence;
+  if(cp && cp.userPrefsReady===false) return (ids||[]).slice();
+  return (ids||[]).filter(id=>occasionReg.some(o=>o.id===id));
+};
 // NAMING RULES (CAS-775): trim, cap at 24, case-insensitive de-dup against existing entries, empty rejected.
 function normOccasionName(name){ return (name||"").trim().slice(0,24); }
 function findOccasionByName(name){
@@ -5582,6 +5592,13 @@ function deleteOccasion(id){
   if(watchOccasion===id) window.setWatchOccasion(null);
   logEvent("occasion_deleted",{});
 }
+// CAS-779 defect 1: a v1.0.0 legacy name is a short human string; a register id is a UUID from
+// cascadeNewId(). A device whose register is empty because the ACCOUNT's copy hasn't synced yet (rather
+// than because this is a genuine v1.0.0 upgrade) still has agents carrying real ids, not names — without
+// this check every one of those ids reads as a "legacy name" and gets an id-named register entry invented
+// for it, which is the raw-UUID chip Lee saw.
+const OCCASION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isOccasionIdShape = s => typeof s==="string" && OCCASION_ID_RE.test(s);
 // MIGRATION (CAS-775): the shipped build stored occasion NAMES in c.occasions and in the
 // cascade_watch_occasion localStorage value. Runs once, gated on the register still being empty — once it
 // has any entry (from this migration or from a real createOccasion call) the gate never opens again, which
@@ -5589,7 +5606,7 @@ function deleteOccasion(id){
 function migrateOccasionNamesIfNeeded(){
   if(occasionReg.length) return;
   const legacyNames=new Set();
-  cascades.forEach(c=>(c.occasions||[]).forEach(o=>{ if(typeof o==="string") legacyNames.add(o); }));
+  cascades.forEach(c=>(c.occasions||[]).forEach(o=>{ if(typeof o==="string" && !isOccasionIdShape(o)) legacyNames.add(o); }));
   if(!legacyNames.size) return;
   const byName=new Map();
   [...legacyNames].forEach(name=>{
@@ -8042,8 +8059,12 @@ function mlRowHTML(m, groupKey){
 // ---- Freshness ----------------------------------------------------------------
 // "New this week" needs a first-found date per film, so we record one the moment a film enters the Found list.
 // It is NOT the film's release date and it is NOT a guess: it's the day Cascade actually picked it up for you.
-// An entry is dropped when the film leaves the list, so a film that is later found again is honestly new again.
+// CAS-783: a film is new to you once, ever — the stamp is NOT dropped when the film leaves the list, so
+// re-admission does not restamp it as new a second time. Growth is bounded instead by a date-based prune:
+// once a stamp is older than FIRST_FOUND_PRUNE_DAYS it can no longer affect isNewFound's own NEW_DAYS window
+// anyway, so forgetting it costs nothing.
 const NEW_DAYS = 7;                                     // what "this week" means. One dial, in one place.
+const FIRST_FOUND_PRUNE_DAYS = NEW_DAYS + 30;           // margin past NEW_DAYS before a stamp is forgotten
 const FIRST_KEY = "cascade_first_found";
 function loadFirstFound(){
   try{ const o=JSON.parse(localStorage.getItem(FIRST_KEY)||"{}");
@@ -8052,7 +8073,7 @@ function loadFirstFound(){
 const firstFound = loadFirstFound();
 let firstSaved=null;
 function trackFirstFound(){
-  Object.keys(firstFound).forEach(id=>{ if(!found.has(+id)) delete firstFound[id]; });
+  Object.keys(firstFound).forEach(id=>{ if(daysSince(firstFound[id]) > FIRST_FOUND_PRUNE_DAYS) delete firstFound[id]; });
   // CAS-503: used to stamp REAL_TODAY here — now that TODAY itself is always the device's live local date
   // (never the catalogue's build date), it IS "when YOU are looking", so the separate variable is gone.
   found.forEach(id=>{ if(!firstFound[id]) firstFound[id]=TODAY; });
@@ -8351,11 +8372,19 @@ const listWindowOK = (m,c) => {
 // ROW survives, greyed and undoable, instead of disappearing.
 // CAS-703: ignoreScoreGate is threaded straight through to matchesCriteria so scoreHeldBackCount() can ask
 // "would this film have listed if it carried a score?" without a second copy of this predicate.
+// CAS-780: matchesCriteria's own Awards rung explicitly waives pre-release films — correct for WATCHES
+// (watchesFilm, below, keeps that waiver untouched) but wrong here: a listed card claims the film meets
+// the agent's standard TODAY. awardsListOK re-applies the same rung with no pre-release exemption.
+function awardsListOK(m,c){
+  if(!c.selAwards) return true;
+  const need=(AWARD_STOPS[c.selAwards]||{}).rank||0;
+  return awardRank(m) >= need;
+}
 const listedBy = (m,c,ignoreScoreGate) => !movedOutOf(m.tmdb_id,c)
   && (pinnedInto(m.tmdb_id,c)
         ? (inScope(m,c) && listWindowOK(m,c))
         : (matchesCriteria(m, {...c, status:[], excludeWatched:false, excludeBlocked:false}, undefined, ignoreScoreGate)
-             && inScope(m,c) && listWindowOK(m,c)));
+             && awardsListOK(m,c) && inScope(m,c) && listWindowOK(m,c)));
 // The number describing a cascade counts RESULTS, so it leaves the stubs out — the same rule the section
 // heads and the open card's own count already follow.
 const listedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m)).length;
@@ -11254,6 +11283,16 @@ function deleteAgentAsk(c){
             : "")
     + `Anything you added by hand stays, and your watched / not-interested marks aren't touched.`)) return false;
   cascades.splice(cascades.indexOf(c),1); saveCascades();
+  // CAS-782: a film pinned to (or moved out of) ONLY this agent must not go on pointing at an agent that no
+  // longer exists — scrub this agent's id out of every notify[*].pinnedTo/notIn, then let recomputeFound()
+  // re-derive ordinary membership and prune anything left holding no state at all (the `overridden` guard at
+  // ~4984 is what was keeping such an entry alive through the prune).
+  Object.keys(notify).forEach(id=>{
+    const e=notify[id];
+    if(e.pinnedTo && e.pinnedTo.length) e.pinnedTo=e.pinnedTo.filter(x=>x!==c.id);
+    if(e.notIn && e.notIn.length) e.notIn=e.notIn.filter(x=>x!==c.id);
+  });
+  recomputeFound();
   const wasSelected=activeIds.includes(c.id);
   if(wasSelected){
     activeIds=activeIds.filter(id=>id!==c.id);
@@ -11818,7 +11857,9 @@ const STARTERS = [
    blurb:"Award-worthy films of any era — must-sees.",
    frame:"collects the award nominees and winners worth seeing.",
    bar:"Award nominees & winners", cd:"var(--accent)", primary:["crit"],
-   crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
+   // CAS-780: "Streaming" is in the preset's NAME, not its criteria — crit.status:[] left it scoped to
+   // nothing, so it listed upcoming/in-cinema films too. HOME_KEYS is the stream lane's own windows.
+   crit:{status:[...HOME_KEYS], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:0, selCritScore:0, selAwards:1, selScale:0, selBuzz:0}},
   // The prototype's fourth card on both lists. It is a real agent, not a placeholder: everything open, so
   // it catches the whole catalogue and the very next screens are where you brief it. That is why its count
@@ -15258,7 +15299,12 @@ window.briefToggleExcludeTag=lid=>{
 // now the one list of occasions — see the Occasions register section for occasionRegSorted/occasionName.
 // occasionsSummary resolves each id through the register and drops any that no longer match one (an id an
 // agent still carries after its register entry was deleted elsewhere — "ignored on read", CAS-775 AC11).
+// CAS-779 defect 3: while this device hasn't yet seen the account's register, an id this device can't
+// resolve is not evidence there are no occasions — "None yet" would be stating that as settled when it
+// isn't. Same readiness signal as pruneOccasionIds above.
 const occasionsSummary = d => {
+  const cp = window.CascadePersistence;
+  if(cp && cp.userPrefsReady===false) return "Loading…";
   const names=(d.occasions||[]).map(occasionName).filter(Boolean);
   return names.length ? names.join(", ") : "None yet";
 };

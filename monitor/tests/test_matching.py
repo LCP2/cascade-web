@@ -213,6 +213,71 @@ class MatchTests(unittest.TestCase):
         self.assertTrue(service_ok(T(), {"services": ["Netflix"]}))   # rent moment: unconstrained
 
 
+class OneAgentPerFilmTests(unittest.TestCase):
+    """CAS-784: two of a user's active Cascades both catching the same film at the same moment
+    collapse to one hit — the single lowest-`criteria.order` cascade — on email same as on screen
+    (CAS-709's lowest-.order-wins rule)."""
+
+    def _transitions(self):
+        prev = [{"tmdb_id": 1, "title": "A", "status": ["in_cinema"], "cinema_date": "2026-01-01",
+                 "offers": []}]
+        today = [{"tmdb_id": 1, "title": "A", "status": ["rental"], "cinema_date": "2026-01-01",
+                  "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}]}]
+        return compute_transitions(prev, today, RUN_DATE)
+
+    def _cascades(self, order0, order1):
+        c0 = {"id": "c0", "user_id": "u1", "name": "Zero", "active": True,
+              "alert_moments": ["hits_rent"], "criteria": {}}
+        c1 = {"id": "c1", "user_id": "u1", "name": "One", "active": True,
+              "alert_moments": ["hits_rent"], "criteria": {}}
+        if order0 is not None:
+            c0["criteria"]["order"] = order0
+        if order1 is not None:
+            c1["criteria"]["order"] = order1
+        return [c0, c1]
+
+    def test_two_agents_matching_one_film_yield_one_hit_from_the_lower_order(self):
+        ts = self._transitions()
+        hits = match(self._cascades(0, 1), ts)["u1"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].cascade_id, "c0")
+
+    def test_order_is_read_regardless_of_which_cascade_comes_first(self):
+        ts = self._transitions()
+        cascades = self._cascades(0, 1)
+        cascades.reverse()             # "c1" (order 1) now appears before "c0" (order 0)
+        hits = match(cascades, ts)["u1"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].cascade_id, "c0")
+
+    def test_missing_order_never_beats_a_numeric_order(self):
+        ts = self._transitions()
+        hits = match(self._cascades(None, 0), ts)["u1"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].cascade_id, "c1")   # c1 carries order 0; c0 carries none
+
+    def test_a_film_watch_hit_with_no_matching_cascade_still_fires(self):
+        ts = self._transitions()
+        watches = [{"user_id": "u1", "movie_id": "1", "windows": ["rent"]}]
+        hits = match_film_watches(watches, ts, cascade_hits=set())
+        self.assertEqual(len(hits.get("u1", [])), 1)
+        self.assertIsNone(hits["u1"][0].cascade_id)
+
+    def test_two_users_each_matching_the_same_film_both_keep_their_own_hit(self):
+        # The collapse is per-user: two different users' Cascades catching the same film/moment
+        # are not duplicates of each other.
+        ts = self._transitions()
+        cascades = [
+            {"id": "c0", "user_id": "u1", "name": "Zero", "active": True,
+             "alert_moments": ["hits_rent"], "criteria": {"order": 0}},
+            {"id": "c1", "user_id": "u2", "name": "One", "active": True,
+             "alert_moments": ["hits_rent"], "criteria": {"order": 0}},
+        ]
+        by_user = match(cascades, ts)
+        self.assertEqual(len(by_user.get("u1", [])), 1)
+        self.assertEqual(len(by_user.get("u2", [])), 1)
+
+
 class PerAgentChannels(unittest.TestCase):
     """CAS-244: the account decides which channels EXIST; an agent decides which of them it uses.
 
@@ -458,6 +523,20 @@ class NewlyQualifiedTests(unittest.TestCase):
         cascades = self._cascade(imdb_bar=7.0)
         cascades[0]["active"] = False
         self.assertEqual(match_newly_qualified(cascades, prev, today), {})
+
+    def test_two_agents_newly_qualifying_for_one_film_collapse_to_the_lower_order(self):
+        # CAS-784: same one-film-one-agent rule applies here as in match().
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        cascades = [
+            {"id": "c0", "user_id": "u1", "name": "Zero", "active": True,
+             "alert_moments": ["hits_rent"], "criteria": {"genre": ["Drama"], "imdb": 7.0, "order": 1}},
+            {"id": "c1", "user_id": "u1", "name": "One", "active": True,
+             "alert_moments": ["hits_rent"], "criteria": {"genre": ["Drama"], "imdb": 7.0, "order": 0}},
+        ]
+        hits = match_newly_qualified(cascades, prev, today)["u1"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].cascade_id, "c1")
 
 
 if __name__ == "__main__":

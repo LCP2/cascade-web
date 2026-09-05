@@ -89,7 +89,9 @@ function makeContext(){
     performance,
     addEventListener(){}, removeEventListener(){}, dispatchEvent(){ return true; },
     fetch: () => Promise.reject(new Error("the engine must not need the network")),
-    alert(){}, scrollTo(){}, scrollBy(){}, open(){ return null; },
+    // CAS-782: deleteAgentAsk's own dialog — a test driving the real delete path needs it to always proceed,
+    // the same way alert()/scrollTo() below are stubbed rather than left to throw as "not a function".
+    alert(){}, confirm(){ return true; }, scrollTo(){}, scrollBy(){}, open(){ return null; },
     innerWidth: 390, innerHeight: 844, devicePixelRatio: 2, scrollY: 0,
   };
   ctx.window = ctx; ctx.self = ctx; ctx.globalThis = ctx; ctx.top = ctx;
@@ -116,6 +118,10 @@ if(typeof window.CascadeAuth === "undefined"){
   filmByMovieId: mid => MOVIES.find(x => String(x.tmdb_id) === String(mid)),
   matchesCriteria, countCriteria, watchCount, watchesFilm, matchesTaste, listedBy, listWindowOK,
   listedCount, onbShownCount,
+  // CAS-780: awardsListOK is listedBy's own extra Awards check (no pre-release exemption, unlike
+  // matchesCriteria's) — exported so a test can name it directly as the reason a followed pre-release film
+  // misses its listing, rather than re-deriving the same rank comparison inline.
+  awardsListOK,
   // CAS-723: inScope is the predicate the "one agent type" invariant is actually about — exported so a test
   // can assert it directly rather than re-deriving it from watchesFilm's combination with matchesTaste.
   inScope,
@@ -241,6 +247,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // agent_films.admitted_at) rather than the device-local firstFound stamp above — exported so a test can
   // assert the derived answer directly instead of re-deriving daysSince/admittedAtFor by hand.
   isNewFound, admittedAtFor,
+  // CAS-783: NEW_DAYS (already used above by isNewFound) and FIRST_FOUND_PRUNE_DAYS (the date-based bound
+  // that replaced the old on-exit-from-found delete) — exported so a test can pick dates relative to the
+  // real horizon rather than hard-coding a day count that could silently drift from the engine's own.
+  NEW_DAYS, FIRST_FOUND_PRUNE_DAYS,
   // CAS-738: the other five watched-film verdict sets, exposed by reference like watched above —
   // a test needs to seed/restore all of them to exercise filmRows()/applyFilmRows() without leaking
   // state into later tests, since applyFilmRows() rebuilds every one of them from scratch.
@@ -333,6 +343,12 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-768: dedupeCascades/cascDedupeSigOf are plain top-level functions, exported directly like cascSigOf
   // above.
   dedupeCascades, cascDedupeSigOf,
+  // CAS-782: deleteAgentAsk is the one real delete path (confirm() dialog stubbed above to always proceed),
+  // so a test can drive an actual agent deletion — including the release of any pinnedTo/notIn it held —
+  // rather than re-deriving the removal by hand. pinFilmToCascadeAndRepaint is window-assigned wire code
+  // (wrapped the same way toggleFilmOpt above is) so a test can drive a real hand-placement the same way a
+  // person tapping a Watch panel row does.
+  deleteAgentAsk, pinFilmToCascadeAndRepaint: (id, cid) => window.pinFilmToCascadeAndRepaint(id, cid),
   // CAS-775: the Occasions register replaces CAS-768's derived-from-agents allOccasionNames — occasionReg
   // is exported by reference (mutated in place by create/rename/delete, never reassigned, exactly like
   // lists/listMembership above) so a test can seed/read the exact register state. create/rename/delete/
@@ -343,6 +359,11 @@ if(typeof window.CascadeAuth === "undefined"){
   // not names.
   occasionReg, createOccasion, renameOccasion, deleteOccasion, occasionAgentCount, occasionName,
   occasionRegSorted, occasionsSummary, migrateOccasionNamesIfNeeded, pruneOccasionIds,
+  // CAS-779: isOccasionIdShape is the UUID-shape test the migration now runs before treating a string as a
+  // legacy name — exported so a test can assert the shape check directly. agentOccasionsLine is the Watch
+  // "Agents to include" row's own occasion line (CAS-777) — a test can assert AC2 (never an unresolved id)
+  // against the real render helper rather than re-deriving occasionName's filter by hand.
+  isOccasionIdShape, agentOccasionsLine,
   get watchOccasion(){ return watchOccasion; },
   setWatchOccasion: id => window.setWatchOccasion(id),
   briefToggleOccasion: id => window.briefToggleOccasion(id),
