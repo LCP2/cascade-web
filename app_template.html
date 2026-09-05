@@ -3134,6 +3134,11 @@
   .ymcasclist .agname{font-size:14px;line-height:1.3;flex:1 1 auto}
   .ymcasclist .agsum{font-size:11px;line-height:1.3;-webkit-line-clamp:1;flex:0 0 auto;white-space:nowrap;
     font-weight:700;color:var(--faint)}
+  /* CAS-777: Watch's own "Agents to include" row (ag-occ) stacks a second line for the agent's occasions.
+     leInnerHTML's ym-casc rows (Manage Lists) don't carry this class and keep the row-direction .agmain
+     above untouched. */
+  .ymcasclist .agrow.ag-occ .agmain{flex-direction:column;gap:1px}
+  .agocc{font-size:11px;line-height:1.3;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ymcasclist .ymcasctgl{width:22px;height:22px;font-size:11px}
   /* CAS-688: Edit sits between the name/count and the include tick, clearly distinct from either — same
      compact sizing as the row's other controls so a 3-control row still fits without wrapping. */
@@ -8717,6 +8722,12 @@ window.closeWatchSheet = () => {
 };
 document.addEventListener("keydown", e=>{ if(e.key==="Escape" && watchSheetOpen) closeWatchSheet(); });
 const chipSummary = labels => labels.length<=2 ? labels.join(", ") : `${labels.slice(0,2).join(", ")} +${labels.length-2}`;
+// CAS-777: alphabetical by name (occasionRegSorted's own order), escaped per name before chipSummary's
+// "first two, then +N" join so a special character in an occasion's name can't break the row's markup.
+const agentOccasionsLine = c => {
+  const names=(c.occasions||[]).map(occasionName).filter(Boolean).sort((a,b)=>a.localeCompare(b)).map(esc);
+  return names.length ? chipSummary(names) : "No occasion";
+};
 // CAS-718: builds the sheet's two sections (Watched, Styles) from `rows` BEFORE either narrows them — same
 // "a toggled-off option stays offerable" rule CAS-714's genre row always followed — plus the Filters
 // button's badge, the active-filter chip row, and the footer's live result count.
@@ -8762,9 +8773,9 @@ function renderWatchSheet(rows, shownCount){
     .sort(cascadeOrderCmp);
   const agentRowsHTML=agentRowsSorted.map(c=>{
     const on=!agentOff.has(c.id);
-    return `<div class="agrow ym-casc agent-${c.kind==="stream"?"str":"cin"}">
+    return `<div class="agrow ym-casc ag-occ agent-${c.kind==="stream"?"str":"cin"}">
       <span class="agicon" aria-hidden="true">${c.icon}</span>
-      <span class="agmain"><span class="agname">${esc(c.name)}</span></span>
+      <span class="agmain"><span class="agname">${esc(c.name)}</span><span class="agocc">${agentOccasionsLine(c)}</span></span>
       <button type="button" class="ymcasctgl${on?" on":""}" aria-pressed="${on}"
         aria-label="${escA((on?"Remove ":"Include ")+c.name+" in this tab")}"
         onclick="toggleWatchAgent('${escA(c.id)}')">✓</button>
