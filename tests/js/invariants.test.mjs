@@ -4245,33 +4245,55 @@ test("CAS-744 AC4: includeUnrated strictly grows the count over the live catalog
     `includeUnrated true did not grow the count over false, ${offCount} → ${onCount}`);
 });
 
-// ---- CAS-768: Occasions --------------------------------------------------------------------------------
-// An Occasion is a tag on an agent (c.occasions), not a new admission criterion — the two traps named in the
-// ticket are that cascSigOf (CAS-728's admission signature) must stay completely inert to it, while
-// dedupeCascades' OWN identity signature must not. AC1/AC2 below are the plain data-shape checks; AC3-AC7
-// mirror the CAS-728/715 sticky-admission tests' own shape, since an occasion edit is exactly the kind of
-// edit those tests already prove is inert when it's the RIGHT kind of inert.
-test("CAS-768 AC1/AC2: occasions default to [] and an agent can carry two or more at once, surviving a reload", () => {
+// ---- CAS-775: Occasions register ------------------------------------------------------------------------
+// CAS-768 shipped Occasions as a DERIVED set (the union of what agents happened to carry); CAS-775 replaces
+// it with a real register ([{id,name}] on occasionReg) — c.occasions on an agent now holds REGISTER IDS,
+// not names, so an occasion can exist with no carrier, be renamed with no agent rewritten, and be deleted.
+// The two traps CAS-768 named still hold unchanged: cascSigOf (CAS-728's admission signature) must stay
+// completely inert to occasions, while dedupeCascades' OWN identity signature must not.
+function unseedOccasion(id){
+  const i = E.occasionReg.findIndex(o => o.id === id);
+  if(i >= 0) E.occasionReg.splice(i, 1);
+}
+
+test("CAS-768 AC1/CAS-775: occasions default to [] and an agent can carry two or more ids at once, surviving a reload", () => {
   const fresh = E.normCascade({});
   assert.deepEqual([...fresh.occasions], [], "an agent with no occasions must default to [] — the pre-existing-agent case");
-  fresh.occasions = ["Me", "Family"];
+  fresh.occasions = ["occ-me", "occ-family"];
   const reloaded = E.normCascade(fresh);   // normCascade runs on every load — this IS the reload path
-  assert.deepEqual([...reloaded.occasions], ["Me", "Family"], "two occasions must both survive a normCascade pass");
+  assert.deepEqual([...reloaded.occasions], ["occ-me", "occ-family"], "two occasion ids must both survive a normCascade pass");
+});
+
+test("CAS-775 AC2: an occasion can exist in the register while no agent carries it, and survives a reload in that state", () => {
+  const o = E.createOccasion("CAS775-no-carrier");
+  try {
+    assert.equal(E.occasionAgentCount(o.id), 0, "setup: no agent may carry this freshly-created occasion");
+    // "Reload" for a register entry is just reading it back — there is no per-agent state to lose.
+    assert.ok(E.occasionRegSorted().some(x => x.id === o.id), "the register entry must still be there with nothing carrying it");
+    assert.equal(E.occasionName(o.id), "CAS775-no-carrier");
+  } finally { unseedOccasion(o.id); }
 });
 
 test("CAS-768 AC3: an occasion edit does not move cascSigOf(c)", () => {
-  const c = E.normCascade({ kind: "stream", status: [] });
-  const sigBefore = E.cascSigOf(c);
-  c.occasions = ["Family"];
-  assert.equal(E.cascSigOf(c), sigBefore, "tagging an agent with one occasion must not move its admission signature");
-  c.occasions = ["Family", "Cinema night"];
-  assert.equal(E.cascSigOf(c), sigBefore, "a second occasion must not move cascSigOf either");
-  c.occasions = [];
-  assert.equal(E.cascSigOf(c), sigBefore, "removing every occasion must not move cascSigOf either");
+  const o = E.createOccasion("CAS775-sig-test");
+  try {
+    const c = E.normCascade({ kind: "stream", status: [] });
+    const sigBefore = E.cascSigOf(c);
+    c.occasions = [o.id];
+    assert.equal(E.cascSigOf(c), sigBefore, "tagging an agent with one occasion must not move its admission signature");
+    const o2 = E.createOccasion("CAS775-sig-test-2");
+    try {
+      c.occasions = [o.id, o2.id];
+      assert.equal(E.cascSigOf(c), sigBefore, "a second occasion must not move cascSigOf either");
+    } finally { unseedOccasion(o2.id); }
+    c.occasions = [];
+    assert.equal(E.cascSigOf(c), sigBefore, "removing every occasion must not move cascSigOf either");
+  } finally { unseedOccasion(o.id); }
 });
 
-test("CAS-768 AC4: an occasion edit triggers no re-review — agent_films rows and admitDrift are untouched", () => withCas728State(() => {
+test("CAS-768 AC4/CAS-775 AC6: an occasion edit triggers no re-review — agent_films rows and admitDrift are untouched", () => withCas728State(() => {
   withWatchPrefs(STICKY_WATCH_PREFS, () => {
+    const o = E.createOccasion("CAS775-ac6-family");
     const film = pastCinemaUnwatchedFilm();
     const id = film.tmdb_id;
     const c = stickyTestCascade("cas768-ac4", 99);
@@ -4281,7 +4303,7 @@ test("CAS-768 AC4: an occasion edit triggers no re-review — agent_films rows a
     delete E.admitDrift[id];
     try {
       E.CascadePersistence.setAgentFilm(c.id, id, { admission_score: 90, admission_status: "in_cinema", agent_sig: sig });
-      c.occasions = ["Family"];
+      c.occasions = [o.id];
       assert.equal(E.cascSigOf(c), sig, "setup: an occasion edit must not move cascSigOf(c)");
       E.recomputeFound();
       const row = E.CascadePersistence.agentFilmsFor(c.id).find(r => r.movie_id === String(id));
@@ -4291,16 +4313,18 @@ test("CAS-768 AC4: an occasion edit triggers no re-review — agent_films rows a
       assert.ok(!E.admitDrift[id], "an occasion edit must not flag the film with admitDrift");
     } finally {
       unseedCascade(c.id);
+      unseedOccasion(o.id);
       if(savedDrift === undefined) delete E.admitDrift[id]; else E.admitDrift[id] = savedDrift;
     }
   });
 }));
 
-test("CAS-768 AC5: two agents identical except for occasions both survive dedupeCascades", () => {
+test("CAS-768 AC5/CAS-775 AC12: two agents identical except for occasions both survive dedupeCascades", () => {
+  const us = E.createOccasion("CAS775-dd-us"), family = E.createOccasion("CAS775-dd-family");
   const a = E.normCascade({ kind: "stream", status: [] });
-  a.id = "cas768-ac5-a"; a.order = 0; a.occasions = ["Us"];
+  a.id = "cas768-ac5-a"; a.order = 0; a.occasions = [us.id];
   const b = E.normCascade({ kind: "stream", status: [] });
-  b.id = "cas768-ac5-b"; b.order = 1; b.occasions = ["Family"];
+  b.id = "cas768-ac5-b"; b.order = 1; b.occasions = [family.id];
   assert.equal(E.cascSigOf(a), E.cascSigOf(b), "setup: these two agents must be exact admission twins");
   assert.notEqual(E.cascDedupeSigOf(a), E.cascDedupeSigOf(b), "setup: dedupe's own signature must differ once occasions are folded in");
   E.cascades.push(a, b);
@@ -4309,31 +4333,182 @@ test("CAS-768 AC5: two agents identical except for occasions both survive dedupe
     assert.equal(dropped, 0, "two agents differing only by occasion must not be deduped");
     assert.ok(E.cascades.some(x => x.id === "cas768-ac5-a"), "agent A must survive");
     assert.ok(E.cascades.some(x => x.id === "cas768-ac5-b"), "agent B must survive");
-  } finally { unseedCascade(a.id); unseedCascade(b.id); }
+  } finally { unseedCascade(a.id); unseedCascade(b.id); unseedOccasion(us.id); unseedOccasion(family.id); }
 });
 
-test("CAS-768 AC6: an occasion is offered once any agent carries it, and drops off once its last carrier is untagged", () => {
+test("CAS-775 AC3: deleting an occasion removes it from the register and from every agent that carried it", () => {
+  const o = E.createOccasion("CAS775-delete-me");
   const a = E.normCascade({ kind: "stream", status: [] });
-  a.id = "cas768-ac6"; a.order = 0; a.occasions = [];
-  const uniqueName = "CAS768-ZZZ";
-  assert.ok(!E.allOccasionNames().includes(uniqueName), "setup: this made-up name must not already be in use");
-  E.cascades.push(a);
-  const savedDraft = E.onbFlow.draft;
-  E.onbFlow.draft = null;   // AC6 is about the offer across ALL agents, not the draft mid-edit
+  a.id = "cas775-ac3-a"; a.order = 0; a.occasions = [o.id];
+  const b = E.normCascade({ kind: "stream", status: [] });
+  b.id = "cas775-ac3-b"; b.order = 1; b.occasions = [];
+  E.cascades.push(a, b);
   try {
-    a.occasions = [uniqueName];
-    assert.ok(E.allOccasionNames().includes(uniqueName), "an occasion must be offered as soon as one agent carries it");
-    a.occasions = [];
-    assert.ok(!E.allOccasionNames().includes(uniqueName), "an occasion must disappear once its last carrier is untagged");
+    assert.equal(E.occasionAgentCount(o.id), 1, "setup: exactly one agent carries this occasion");
+    E.deleteOccasion(o.id);
+    assert.ok(!E.occasionRegSorted().some(x => x.id === o.id), "the register entry must be gone");
+    assert.deepEqual([...a.occasions], [], "the carrying agent's own occasions array must have the id removed");
+    assert.deepEqual([...b.occasions], [], "an agent that never carried it must be untouched");
+  } finally { unseedCascade(a.id); unseedCascade(b.id); unseedOccasion(o.id); }
+});
+
+test("CAS-775 AC3: deleting the occasion selected on the Watch screen falls back to All", () => {
+  const o = E.createOccasion("CAS775-selected");
+  const savedWatchOccasion = E.watchOccasion;
+  E.setWatchOccasion(o.id);
+  try {
+    assert.equal(E.watchOccasion, o.id, "setup: the occasion must actually be selected first");
+    E.deleteOccasion(o.id);
+    assert.equal(E.watchOccasion, null, "deleting the selected occasion must fall back to All (null)");
   } finally {
-    unseedCascade(a.id);
-    E.onbFlow.draft = savedDraft;
+    unseedOccasion(o.id);
+    E.setWatchOccasion(savedWatchOccasion);
+  }
+});
+
+test("CAS-775 AC4: renaming an occasion updates it everywhere and rewrites no agent's stored occasions array", () => {
+  const o = E.createOccasion("CAS775-before-name");
+  const a = E.normCascade({ kind: "stream", status: [] });
+  a.id = "cas775-ac4-a"; a.order = 0; a.occasions = [o.id];
+  E.cascades.push(a);
+  const before = JSON.stringify([...a.occasions]);
+  try {
+    E.renameOccasion(o.id, "CAS775-after-name");
+    assert.equal(E.occasionName(o.id), "CAS775-after-name", "the register entry itself must show the new name");
+    assert.equal(JSON.stringify([...a.occasions]), before, "the carrying agent's occasions array (ids) must be byte-identical — a rename touches only the register");
+  } finally { unseedCascade(a.id); unseedOccasion(o.id); }
+});
+
+test("CAS-775 AC5: adding, removing, renaming and deleting an occasion never move any agent's cascSigOf", () => {
+  const a = E.normCascade({ kind: "stream", status: [] });
+  a.id = "cas775-ac5-a"; a.order = 0; a.occasions = [];
+  E.cascades.push(a);
+  let o;
+  try {
+    const sig0 = E.cascSigOf(a);
+    o = E.createOccasion("CAS775-ac5");
+    a.occasions = [o.id];                              // add
+    assert.equal(E.cascSigOf(a), sig0, "adding an occasion must not move cascSigOf");
+    E.renameOccasion(o.id, "CAS775-ac5-renamed");        // rename
+    assert.equal(E.cascSigOf(a), sig0, "renaming an occasion must not move cascSigOf");
+    a.occasions = [];                                   // remove
+    assert.equal(E.cascSigOf(a), sig0, "removing an occasion must not move cascSigOf");
+    a.occasions = [o.id];
+    E.deleteOccasion(o.id);                             // delete
+    assert.equal(E.cascSigOf(a), sig0, "deleting an occasion must not move cascSigOf");
+  } finally { unseedCascade(a.id); unseedOccasion(o.id); }
+});
+
+// ---- CAS-775 AC9/AC10: the register rides user_prefs (same fake as CAS-740/742 above) ---------------------
+function withCas775RegState(fn){
+  const savedReg = [...E.occasionReg];
+  return (async () => {
+    try { await fn(); }
+    finally {
+      E.occasionReg.length = 0; savedReg.forEach(o => E.occasionReg.push(o));
+      signOut();
+    }
+  })();
+}
+// Every comparison below spreads a vm-realm array into a fresh one first (`[...arr]`) — assert.deepEqual is
+// deepStrictEqual under node:assert/strict, which compares an Array's own prototype too, and occasionReg/
+// userPrefsRow()'s return both live inside the vm sandbox; the plain `[o]`/`[]` literal on the other side is
+// constructed in THIS file's realm. Comparing the two arrays directly fails on that prototype check alone,
+// independent of their contents (the same gotcha this suite has hit for chained .map()/.flatMap() results).
+test("CAS-775: userPrefsRow() carries the register, and a save/load round trip preserves it, including an empty array", () => withCas775RegState(async () => {
+  E.occasionReg.length = 0;
+  const o = E.createOccasion("CAS775-roundtrip");
+  assert.deepEqual([...E.CascadePersistence.userPrefsRow().occasions], [o], "userPrefsRow() must include the live register");
+
+  const { client, state } = fakeCas740Supabase(null);
+  signInWithClient(client);
+  await E.CascadePersistence.syncUserPrefsNow();
+  assert.deepEqual([...state.row.occasions], [o], "a freshly-seeded row must carry the register, not drop it");
+
+  E.occasionReg.length = 0;   // corrupt local memory so the next assertion proves the LOAD, not a no-op
+  await E.CascadePersistence.loadUserPrefs();
+  assert.deepEqual([...E.occasionReg], [o], "loading the account's row back must restore this device's register");
+
+  // AC2/AC10: the account can legitimately answer "empty" — that must be ADOPTED (last-write-wins, same
+  // rule as taste/watch_windows), not read as "unanswered".
+  state.row.occasions = [];
+  await E.CascadePersistence.loadUserPrefs();
+  assert.deepEqual([...E.occasionReg], [], "an account row with occasions:[] must overwrite this device's local register — an empty array is a real answer");
+}));
+
+test("CAS-775 AC9: a user_prefs row with no occasions column at all must not throw, and carries this device's register up", () => withCas775RegState(async () => {
+  const o = E.createOccasion("CAS775-ac9-local-only");
+  const remoteRow = {   // no `occasions` key — simulates the column not existing on the live project yet
+    user_id: "cas740-test-user", sub_services: [], store_services: [], services_only: false,
+    taste: JSON.parse(JSON.stringify(E.tasteBase)), watch_windows: JSON.parse(JSON.stringify(E.watchPrefs)),
+    touched: true, never_show: [], onb_depth: "best", framing: true, moving_seen: {},
+  };
+  const { client, state } = fakeCas740Supabase(remoteRow);
+  signInWithClient(client);
+  await assert.doesNotReject(() => E.CascadePersistence.loadUserPrefs(),
+    "a missing occasions column must read exactly like NULL, never throw");
+  assert.deepEqual([...E.occasionReg], [o], "this device's local register must survive untouched when the column doesn't exist yet");
+}));
+
+test("CAS-775 AC10: a user_prefs row with occasions:NULL carries this device's local register up, not an empty one", () => withCas775RegState(async () => {
+  const o = E.createOccasion("CAS775-ac10-local-only");
+  const remoteRow = {
+    user_id: "cas740-test-user", sub_services: [], store_services: [], services_only: false,
+    taste: JSON.parse(JSON.stringify(E.tasteBase)), watch_windows: JSON.parse(JSON.stringify(E.watchPrefs)),
+    touched: true, never_show: [], onb_depth: "best", framing: true, moving_seen: {}, occasions: null,
+  };
+  const { client, state } = fakeCas740Supabase(remoteRow);
+  signInWithClient(client);
+  await E.CascadePersistence.loadUserPrefs();
+  assert.deepEqual([...E.occasionReg], [o], "a NULL occasions column must carry this device's local register up, not overwrite it with an empty one");
+  // loadUserPrefs schedules the carry-up push on a debounce timer rather than firing it inline — force it
+  // via the same real sync function the timer would eventually call, and check what it actually pushes.
+  await E.CascadePersistence.syncUserPrefsNow();
+  assert.deepEqual([...state.row.occasions], [o], "the carried-up local register, not an empty one, must be what gets pushed back to the account");
+}));
+
+test("CAS-775 AC11: an occasion id matching no register entry is ignored on read and gone after the agent's next save", () => {
+  const ghostId = "cas775-ghost-id-does-not-exist";
+  assert.equal(E.occasionName(ghostId), "", "occasionName must not resolve an orphan id to any name");
+  assert.equal(E.occasionsSummary({ occasions: [ghostId] }), "None yet",
+    "an agent whose only occasion is an orphan id must read back as untagged, not throw or show a blank chip");
+  const o = E.createOccasion("CAS775-ac11-real");
+  try {
+    assert.deepEqual(E.pruneOccasionIds([ghostId, o.id]), [o.id],
+      "pruneOccasionIds (the one choke point commitDraft saves an agent's occasions through) must drop the orphan and keep the real id");
+  } finally { unseedOccasion(o.id); }
+});
+
+test("CAS-775 AC7/AC8: migrating legacy occasion NAMES builds the register once, rewrites every agent to ids, and is idempotent", () => {
+  const savedReg = [...E.occasionReg];
+  E.occasionReg.length = 0;   // the migration gate is "the register is still empty"
+  const a = E.normCascade({ kind: "stream", status: [] });
+  a.id = "cas775-mig-a"; a.order = 0; a.occasions = ["Family"];
+  const b = E.normCascade({ kind: "stream", status: [] });
+  b.id = "cas775-mig-b"; b.order = 1; b.occasions = ["Family", "Us"];
+  E.cascades.push(a, b);
+  try {
+    E.migrateOccasionNamesIfNeeded();
+    assert.equal(E.occasionReg.length, 2, "the register must hold one entry per distinct legacy name");
+    const familyId = E.occasionReg.find(o => o.name === "Family").id;
+    const usId = E.occasionReg.find(o => o.name === "Us").id;
+    assert.deepEqual([...a.occasions], [familyId], "agent A's occasions must be rewritten from names to the matching ids");
+    assert.deepEqual([...b.occasions], [familyId, usId], "agent B's two occasions must both be rewritten to ids, in order");
+    const regAfterFirstRun = JSON.stringify(E.occasionReg);
+    const aAfterFirstRun = JSON.stringify([...a.occasions]);
+    E.migrateOccasionNamesIfNeeded();   // AC8: running it again must be a no-op — the register is no longer empty
+    assert.equal(JSON.stringify(E.occasionReg), regAfterFirstRun, "a second migration run must not change the register");
+    assert.equal(JSON.stringify([...a.occasions]), aAfterFirstRun, "a second migration run must not touch an already-migrated agent's tags");
+  } finally {
+    unseedCascade(a.id); unseedCascade(b.id);
+    E.occasionReg.length = 0; savedReg.forEach(o => E.occasionReg.push(o));
   }
 });
 
 test("CAS-768 AC7: typing a name differing only in case ticks the existing occasion instead of creating a second", () => {
+  const o = E.createOccasion("Family");
   const a = E.normCascade({ kind: "stream", status: [] });
-  a.id = "cas768-ac7"; a.order = 0; a.occasions = ["Family"];
+  a.id = "cas768-ac7"; a.order = 0; a.occasions = [o.id];
   E.cascades.push(a);
   const draft = E.normCascade({ kind: "stream", status: [] });
   draft.occasions = [];
@@ -4341,24 +4516,32 @@ test("CAS-768 AC7: typing a name differing only in case ticks the existing occas
   E.onbFlow.draft = draft;
   try {
     E.commitCreateOccasionRow({ isConnected: true, value: "family" });
-    assert.deepEqual([...draft.occasions], ["Family"], "typing \"family\" must tick the existing \"Family\", not add a second entry");
-    assert.equal(E.allOccasionNames().filter(n => n.toLowerCase() === "family").length, 1,
-      "there must be exactly one occasion name spelled any-case \"family\" in use");
+    assert.deepEqual([...draft.occasions], [o.id], "typing \"family\" must tick the existing \"Family\" entry's id, not create a second");
+    assert.equal(E.occasionRegSorted().filter(x => x.name.toLowerCase() === "family").length, 1,
+      "there must be exactly one register entry spelled any-case \"family\"");
   } finally {
     unseedCascade(a.id);
+    unseedOccasion(o.id);
     E.onbFlow.draft = savedDraft;
   }
 });
 
-test("CAS-768: a new occasion name is trimmed and capped at 24 characters", () => {
+test("CAS-768/CAS-775: a new occasion name is trimmed and capped at 24 characters, and writes straight to the register", () => {
   const draft = E.normCascade({ kind: "stream", status: [] });
   draft.occasions = [];
   const savedDraft = E.onbFlow.draft;
   E.onbFlow.draft = draft;
+  const regBefore = E.occasionReg.length;
   try {
     E.commitCreateOccasionRow({ isConnected: true, value: "   Movie Night Extravaganza Deluxe   " });
     assert.equal(draft.occasions.length, 1, "a valid typed name must be ticked on");
-    assert.ok(draft.occasions[0].length <= 24, `occasion name exceeded the 24-character cap: "${draft.occasions[0]}"`);
-    assert.equal(draft.occasions[0], draft.occasions[0].trim(), "occasion name must be trimmed of surrounding whitespace");
-  } finally { E.onbFlow.draft = savedDraft; }
+    assert.equal(E.occasionReg.length, regBefore + 1, "the new occasion must land in the register immediately, not just the draft");
+    const created = E.occasionReg[E.occasionReg.length - 1];
+    assert.equal(draft.occasions[0], created.id, "the draft must carry the new entry's id, not its name");
+    assert.ok(created.name.length <= 24, `occasion name exceeded the 24-character cap: "${created.name}"`);
+    assert.equal(created.name, created.name.trim(), "occasion name must be trimmed of surrounding whitespace");
+  } finally {
+    unseedOccasion(draft.occasions[0]);
+    E.onbFlow.draft = savedDraft;
+  }
 });

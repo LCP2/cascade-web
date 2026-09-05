@@ -161,6 +161,12 @@ alter table public.user_prefs add column if not exists framing boolean;
 -- carries whole.
 alter table public.user_prefs add column if not exists moving_seen jsonb;
 
+-- CAS-775: the Occasions register ([{id,name}]) — an Occasion used to be purely derived (the union of what
+-- agents happened to carry, CAS-768), which could not hold one no agent yet carried, be renamed, or be
+-- deleted. Same whole-object jsonb shape and NULL carry-up rule as taste/watch_windows/moving_seen above:
+-- NULL means "no device has saved this yet"; an empty array is a real, distinct answer.
+alter table public.user_prefs add column if not exists occasions jsonb;
+
 alter table public.user_prefs enable row level security;
 
 drop policy if exists user_prefs_owner on public.user_prefs;
