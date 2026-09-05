@@ -10684,7 +10684,7 @@ function commitDraft(){
   // Saving a template you already have, unchanged, must not hand you a second identical radar (CAS-72). It
   // would find exactly the same films and cite itself twice on every one of them. Open the one you have.
   if(isNew){
-    const twin=cascades.find(x=>cascSigOf(x)===cascSigOf({...draft, name}));
+    const twin=cascades.find(x=>cascDedupeSigOf(x)===cascDedupeSigOf({...draft, name}));
     if(twin){
       saveCascades(); setActive(twin.id); applyCascade(twin);
       logEvent("cascade_duplicate_blocked",{key:twin.template||"custom"});
@@ -10702,6 +10702,10 @@ function commitDraft(){
     awards:draft.awards, cinemaReleaseOnly:draft.cinemaReleaseOnly, myServices:{...draft.myServices},
     excludeWatched:draft.excludeWatched, excludeBlocked:draft.excludeBlocked,
     excludeTags:[...(draft.excludeTags||[])],
+    // CAS-768: occasions travel with the agent. Left out of this whitelist, the Briefing's Occasions
+    // spoke appears to work and the tag is discarded the moment Save is pressed — the same failure
+    // listStatus (CAS-228) and watchMarkers (CAS-729) each had, for the same reason.
+    occasions:[...(draft.occasions||[])],
     sort:draft.sort||"cascade", alerts:draft.alerts, watchWindows:draft.watchWindows,
     // CAS-228: listStatus travels with status. Left out, the agent on disk would watch the right windows and
     // list all of them, so turning List off for one window would appear to work and then not survive a save.
