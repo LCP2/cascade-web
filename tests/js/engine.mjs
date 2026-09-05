@@ -116,6 +116,10 @@ if(typeof window.CascadeAuth === "undefined"){
   filmByMovieId: mid => MOVIES.find(x => String(x.tmdb_id) === String(mid)),
   matchesCriteria, countCriteria, watchCount, watchesFilm, matchesTaste, listedBy, listWindowOK,
   listedCount, onbShownCount,
+  // CAS-780: awardsListOK is listedBy's own extra Awards check (no pre-release exemption, unlike
+  // matchesCriteria's) — exported so a test can name it directly as the reason a followed pre-release film
+  // misses its listing, rather than re-deriving the same rank comparison inline.
+  awardsListOK,
   // CAS-723: inScope is the predicate the "one agent type" invariant is actually about — exported so a test
   // can assert it directly rather than re-deriving it from watchesFilm's combination with matchesTaste.
   inScope,

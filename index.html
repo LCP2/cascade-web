@@ -5642,7 +5642,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 955, "commit": "f5878c8", "builtAt": "2026-09-05T22:25:01Z"};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 955, "commit": "861c5d7", "builtAt": "2026-09-05T22:40:14Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8365,11 +8365,19 @@ const listWindowOK = (m,c) => {
 // ROW survives, greyed and undoable, instead of disappearing.
 // CAS-703: ignoreScoreGate is threaded straight through to matchesCriteria so scoreHeldBackCount() can ask
 // "would this film have listed if it carried a score?" without a second copy of this predicate.
+// CAS-780: matchesCriteria's own Awards rung explicitly waives pre-release films — correct for WATCHES
+// (watchesFilm, below, keeps that waiver untouched) but wrong here: a listed card claims the film meets
+// the agent's standard TODAY. awardsListOK re-applies the same rung with no pre-release exemption.
+function awardsListOK(m,c){
+  if(!c.selAwards) return true;
+  const need=(AWARD_STOPS[c.selAwards]||{}).rank||0;
+  return awardRank(m) >= need;
+}
 const listedBy = (m,c,ignoreScoreGate) => !movedOutOf(m.tmdb_id,c)
   && (pinnedInto(m.tmdb_id,c)
         ? (inScope(m,c) && listWindowOK(m,c))
         : (matchesCriteria(m, {...c, status:[], excludeWatched:false, excludeBlocked:false}, undefined, ignoreScoreGate)
-             && inScope(m,c) && listWindowOK(m,c)));
+             && awardsListOK(m,c) && inScope(m,c) && listWindowOK(m,c)));
 // The number describing a cascade counts RESULTS, so it leaves the stubs out — the same rule the section
 // heads and the open card's own count already follow.
 const listedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m)).length;
@@ -11832,7 +11840,9 @@ const STARTERS = [
    blurb:"Award-worthy films of any era — must-sees.",
    frame:"collects the award nominees and winners worth seeing.",
    bar:"Award nominees & winners", cd:"var(--accent)", primary:["crit"],
-   crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
+   // CAS-780: "Streaming" is in the preset's NAME, not its criteria — crit.status:[] left it scoped to
+   // nothing, so it listed upcoming/in-cinema films too. HOME_KEYS is the stream lane's own windows.
+   crit:{status:[...HOME_KEYS], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:0, selCritScore:0, selAwards:1, selScale:0, selBuzz:0}},
   // The prototype's fourth card on both lists. It is a real agent, not a placeholder: everything open, so
   // it catches the whole catalogue and the very next screens are where you brief it. That is why its count

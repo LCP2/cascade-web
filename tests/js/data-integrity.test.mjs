@@ -1028,7 +1028,11 @@ test("counts: every count in the wider matrix is still the size of its own set",
         // CAS-481: the other lawful reason a followed film sits in a listed window and still isn't listed —
         // an estimated "upcoming" claim the pipeline could never confirm and isn't still ahead of us, which
         // listWindowOK refuses the same way CAS-170 already refuses every other estimated non-cinema window.
-        || (E.primaryStatus(m) === "upcoming" && E.isEstimated(m)),
+        || (E.primaryStatus(m) === "upcoming" && E.isEstimated(m))
+        // CAS-780: a THIRD lawful reason — a pre-release film an Awards-gated agent is still WATCHING (the
+        // waiver matchesCriteria keeps for exactly this case) but has not yet cleared the same Awards rung a
+        // released film already has to, so listedBy's own no-waiver awardsListOK check holds it off the list.
+        || !E.awardsListOK(m, d),
         `${label} + ${what}: follows ${m.title}, which is sitting in the listed window ` +
         `${E.primaryStatus(m)} and still is not listed`);
     }
