@@ -386,6 +386,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // mutator and render helpers) and notifyChipHTML (the Watch On chip's own render, alongside agentChipHTML
   // above) — plain top-level functions, exported directly like the rest of this file.
   windowEnabled, restoreWatchMarker, msnTrackAreaHTML, msnValueLine, notifyChipHTML,
+  // CAS-791: found — the live membership Set recomputeFound rebuilds every pass, by reference like
+  // watched/blocked above — needed for the G/I checks' direct membership assertions.
+  found,
 };
 `;
 
