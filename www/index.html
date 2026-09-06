@@ -4943,10 +4943,24 @@ function recomputeFound(){
         // re-admitting itself unchanged below (admitted.get(c.id).has(mkey) short-circuits the
         // criteria re-test that would otherwise exclude it) and its Watch On never actually clears.
         if(watched.has(mid) || blocked.has(mid) || (e && e.removed)){ CP.clearAgentFilm(c.id, r.movie_id); return; }
+        const m = MOVIES.find(x=>x.tmdb_id===mid);
+        // CAS-795: the film itself is gone from the catalogue — clear the row for every agent on every
+        // pass, paused or unedited included. This must run before the paused/unedited early return below,
+        // or an agent nobody has touched (or one that's paused) keeps an agent_films row pointing at a
+        // film that no longer exists, which is exactly the orphan-membership bug class (CAS-680, CAS-682).
+        if(!m){
+          CP.clearAgentFilm(c.id, r.movie_id);
+          // Same auto-wins reap the drifted-agent branch below does when a film leaves it (CAS-469) — a
+          // vanished film's own leftover "auto" Watch On would otherwise keep its notify entry alive at
+          // the prune below (picked===true) even with cascadeIds already emptied for this pass.
+          if(e){
+            e.wins=e.wins||{}; e.winsSource=e.winsSource||{};
+            WATCH_LEVEL_KEYS.forEach(k=>{ if(e.winsSource[k]==="auto"){ e.wins[k]=false; delete e.winsSource[k]; } });
+          }
+          return;
+        }
         if(c.paused || r.agent_sig===sig) return;   // point 5 / point 2: frozen while paused; unedited stays put
         // Point 3: cascSigOf(c) has moved since this row was written — re-evaluate this one film now.
-        const m = MOVIES.find(x=>x.tmdb_id===mid);
-        if(!m){ CP.clearAgentFilm(c.id, r.movie_id); return; }   // the film itself is gone from the catalogue
         const movedPast = STATUS_RUNG[primaryStatus(m)] > STATUS_RUNG[r.admission_status];
         // CAS-781: a Watch On set by hand is a human selection (winsSource[k]==="manual") and outranks
         // criteria the same way pinnedTo does — it holds the film's membership here, not just its value.
@@ -5667,7 +5681,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 966, "commit": "ad42f68", "builtAt": "2026-09-06T06:54:59Z"};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 970, "commit": "1c87af5", "builtAt": "2026-09-06T21:07:25Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {

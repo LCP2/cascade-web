@@ -360,7 +360,7 @@ def _current_moment(record: dict) -> Optional[str]:
 
 
 def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list, already=None,
-                          catalogue=None, suppressed=None, excluded=None) -> dict:
+                          catalogue=None, suppressed=None, excluded=None, covered=None) -> dict:
     """Return {user_id: [Hit, ...]} for a film present in both catalogues whose own attributes
     changed so it now matches an active Cascade's criteria and did NOT match yesterday (Lee's rule,
     2026-08-24) — an IMDb rating crossing the bar, a metacritic score/award/gross arriving, a genre
@@ -375,6 +375,10 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
 
     prev_movies / today_movies : lists of movie records (poc_pipeline shape).
     already, catalogue, suppressed, excluded : same meaning as in ``match()``.
+    covered            : iterable of (cascade_id, movie_id) already alerted THIS run by ``match()``
+                         — a real window transition landing the same day as this film's own
+                         newly-qualifies wins; the newly-qualifies hit for that pair is dropped
+                         (CAS-796), the same shape ``match_new_to_agent``'s `covered` param uses.
 
     CAS-784: same one-film-one-agent collapse as ``match()`` — see its docstring.
     """
@@ -385,6 +389,7 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
     muted = excluded_moments(excluded)
     tiers = scale_tiers(catalogue) if catalogue else {}
     rank_of = {c["id"]: _rank_key(c) for c in cascades}
+    covered = set(covered or ())
     by_user: dict = {}
 
     for c in cascades:
@@ -401,6 +406,8 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
                 continue                       # a first sighting is `announced`'s job, not this one
             if (str(c["user_id"]), mid) in off:
                 continue                       # your answer outranks your Cascade
+            if (c["id"], mid) in covered:
+                continue                       # a real window transition this run wins (CAS-796)
             tier = tiers.get(mid)
             if matches_criteria(prev_record, criteria, tier=tier):
                 continue                       # already matched yesterday -> not a NEW qualification

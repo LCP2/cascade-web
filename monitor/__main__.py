@@ -168,10 +168,14 @@ def main(argv=None) -> int:
     # CAS-602: a film already held in both catalogues that newly qualifies for an agent because its
     # OWN attributes changed — no catalogue transition to hang this off, so its "newly_qualifies"
     # moment is computed straight from the prev/today records rather than from `transitions`.
-    # Folded into agent_hits before `agent_seen` is built below so a film that both newly qualifies
-    # and hits a real window on the same day alerts once, not twice.
+    # CAS-796: match()'s own hits are passed in as `covered` so a film that both newly qualifies and
+    # hits a real window on the same day resolves to the one window hit, not two — the same
+    # `covered` shape match_new_to_agent already uses below.
+    window_covered = {(h.cascade_id, h.transition.movie_id)
+                      for hits in agent_hits.values() for h in hits}
     newly_qualified_hits = match_newly_qualified(cascades, prev_movies, today_movies, already=already,
-                                                 catalogue=today_movies, excluded=muted)
+                                                 catalogue=today_movies, excluded=muted,
+                                                 covered=window_covered)
     for user_id, hits in newly_qualified_hits.items():
         agent_hits.setdefault(user_id, []).extend(hits)
 
