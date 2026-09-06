@@ -34,6 +34,13 @@ A *transition* is one movie crossing into one *moment*. The four moments mirror 
                             correction. NOT produced here — there is no catalogue transition to hang it
                             off, since the film was already held — it is agent-dependent and computed
                             during matching (see ``monitor.matching.match_newly_qualified``).
+    new_to_agent          — the same "matches today, did not match yesterday" test as newly_qualifies,
+                            but fired ONLY when the agent itself has been stable across the comparison
+                            (CAS-785): its `updated_at` predates the start of the previous run. An agent
+                            edited inside that window stays silent for this run (Lee's 2026-08-24 rule:
+                            an edit must never fire the user's whole list) rather than deferring the
+                            alert to later. NOT produced here for the same reason as newly_qualifies —
+                            see ``monitor.matching.match_new_to_agent``.
 
 Honesty guardrail: the three status moments only fire on a *genuine transition* — the film
 must have been in yesterday's catalogue and NOT already in that window. A film's very first
@@ -64,7 +71,7 @@ _STATUS_MOMENTS = (
     ("hits_stream", "included_streaming"),
 )
 MOMENTS = ("hits_cinema", "hits_pvod", "hits_rent", "hits_stream", "past_opening_weekend",
-           "announced", "opens_soon", "newly_qualifies")
+           "announced", "opens_soon", "newly_qualifies", "new_to_agent")
 
 
 @dataclass

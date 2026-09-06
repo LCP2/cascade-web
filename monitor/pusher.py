@@ -57,6 +57,7 @@ REAL_MOMENT_SAID = {
     "hits_rent": "dropped to a rental price",
     "hits_stream": "landed on streaming",
     "newly_qualifies": "now matches this agent",
+    "new_to_agent": "is new to this agent",
 }
 
 
