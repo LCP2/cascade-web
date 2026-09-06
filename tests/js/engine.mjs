@@ -378,6 +378,11 @@ if(typeof window.CascadeAuth === "undefined"){
   // per-target status-label helper (diagSyncStatusText) — plain top-level functions, exported directly so a
   // test can assert the panel/copy-button text without a real DOM or the 5-tap gesture.
   diagReport, diagReportText, diagSyncStatusText,
+  // CAS-789: rounding out the agent-behaviour suite's export surface — windowEnabled (the watchPrefs
+  // Where-and-when gate), restoreWatchMarker/msnTrackAreaHTML/msnValueLine (the Mission marker track's own
+  // mutator and render helpers) and notifyChipHTML (the Watch On chip's own render, alongside agentChipHTML
+  // above) — plain top-level functions, exported directly like the rest of this file.
+  windowEnabled, restoreWatchMarker, msnTrackAreaHTML, msnValueLine, notifyChipHTML,
 };
 `;
 
