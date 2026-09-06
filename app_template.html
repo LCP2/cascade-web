@@ -715,6 +715,12 @@
   .ctl.notify.wsrc-auto   .cmini{border-color:var(--brand-blue)}
   .ctl.notify.wsrc-manual.isnew .cmini{box-shadow:0 0 0 1px rgba(255,213,74,.45),0 0 9px 1px rgba(255,213,74,.60)}
   .ctl.notify.wsrc-auto.isnew   .cmini{box-shadow:0 0 0 1px rgba(76,125,255,.55),0 0 10px 2px rgba(76,125,255,.75)}
+  /* CAS-786: the same gold/blue provenance convention, extended to the agent chip — gold when a human hand-
+     placed the film's owner, blue when the owner came from rank. Does not touch .ctl.casc's own accent icon/fill. */
+  .ctl.casc.csrc-manual .cmini{border-color:#ffd54a}
+  .ctl.casc.csrc-auto   .cmini{border-color:var(--brand-blue)}
+  .ctl.casc.csrc-manual.isnew .cmini{box-shadow:0 0 0 1px rgba(255,213,74,.45),0 0 9px 1px rgba(255,213,74,.60)}
+  .ctl.casc.csrc-auto.isnew   .cmini{box-shadow:0 0 0 1px rgba(76,125,255,.55),0 0 10px 2px rgba(76,125,255,.75)}
   /* CAS-374/CAS-439: the Watch/Watched chip is now the toggle for its own panel — this arrow is the only cue
      for open vs closed, since the separate collapse chevron inside the panel is gone. The panel opens ABOVE
      the button (CAS-304), so the chevron points UP when closed (that's the direction the list will open) and
@@ -1110,6 +1116,18 @@
   .diagkv:last-child{border-bottom:none}
   .diagk{color:var(--faint);flex:0 0 auto;min-width:96px}
   .diagv{color:var(--ink);min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+  /* CAS-787: per-target account sync outcomes, same list-of-rows convention as .logrows below. */
+  .syncrows{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .syncrow{padding:7px 9px;font-size:11px;border-bottom:1px solid var(--line)}
+  .syncrow:last-child{border-bottom:none}
+  .syncrow:nth-child(odd){background:var(--panel2)}
+  .synchead{display:flex;gap:8px;align-items:baseline}
+  .syncname{font-weight:700;color:var(--ink);flex:1;min-width:0;overflow-wrap:anywhere}
+  .syncstatus{color:var(--faint);flex-shrink:0}
+  .syncrow.fail .syncstatus{color:var(--open);font-weight:700}
+  .syncrow.ok .syncstatus{color:var(--green)}
+  .synctime{color:var(--faint);flex-shrink:0;font-variant-numeric:tabular-nums}
+  .syncerr{color:#ffbdbd;margin-top:4px;overflow-wrap:anywhere}
   /* CAS-509: the drawer is a full-height panel starting at the true top:0 of the viewport (inside
      .overlay), same as the header — same env(safe-area-inset-top) clearance so its title/close never
      sit under the notch. */
@@ -5706,6 +5724,9 @@ function diagSafeAreaInsets(){
 function diagReport(){
   const b = BUILD_INFO || {}, vv = window.visualViewport, sa = diagSafeAreaInsets();
   const cap = !!window.Capacitor;
+  // CAS-787: the account WRITE side lives in CascadePersistence's own closure, not here — read it back
+  // through the seam it already exposes, the same way everything else in this file reaches that module.
+  const cp = window.CascadePersistence;
   return {
     identity: [
       ["Version", "v" + (b.version || "0.0.0")],
@@ -5726,13 +5747,30 @@ function diagReport(){
       ["devicePixelRatio", String(window.devicePixelRatio)],
       ["orientation", (screen.orientation && screen.orientation.type) || "unavailable"]
     ],
+    sync: (cp && typeof cp.syncOutcomeReport === "function") ? cp.syncOutcomeReport() : [],
     log: [...diagLog].reverse()
   };
+}
+// CAS-787: one line per sync target — "not yet attempted" if this device has never pushed it this
+// session, otherwise its last outcome and, for a failure, the verbatim error (AC1/AC2/AC3) with a
+// missing-column failure called out by name rather than read as an ordinary connectivity problem (AC4).
+function diagSyncStatusText(s){
+  if(s.when == null) return "not yet attempted";
+  if(s.ok) return "OK";
+  return s.schemaDrift ? "FAILED — missing column (schema drift)" : "FAILED";
 }
 function diagReportText(){
   const r = diagReport(), lines = ["=== Cascade diagnostics ===", ""];
   lines.push("-- Identity --"); r.identity.forEach(([k,v]) => lines.push(k + ": " + v));
   lines.push(""); lines.push("-- Geometry --"); r.geometry.forEach(([k,v]) => lines.push(k + ": " + v));
+  lines.push(""); lines.push("-- Account sync --");
+  if(!r.sync.length) lines.push("(not signed in)");
+  else r.sync.forEach(s => {
+    let line = s.target + ": " + diagSyncStatusText(s);
+    if(s.when != null) line += " (" + new Date(s.when).toISOString() + ")";
+    if(!s.ok && s.error) line += " — " + s.error;
+    lines.push(line);
+  });
   lines.push(""); lines.push("-- Log tail (" + r.log.length + ") --");
   if(!r.log.length) lines.push("(empty)");
   else r.log.forEach(e => lines.push("[" + new Date(e.t).toISOString() + "] " + e.kind + ": " + e.msg));
@@ -5741,9 +5779,18 @@ function diagReportText(){
 function renderDiagPanel(){
   const r = diagReport();
   const kv = rows => rows.map(([k,v]) => `<div class="diagkv"><span class="diagk">${esc(k)}</span><span class="diagv">${esc(v)}</span></div>`).join("");
+  const syncRows = r.sync.map(s => {
+    const cls = s.when == null ? "" : (s.ok ? "ok" : "fail");
+    return `<div class="syncrow ${cls}">
+      <div class="synchead"><span class="syncname">${esc(s.target)}</span><span class="syncstatus">${esc(diagSyncStatusText(s))}</span>${s.when != null ? `<span class="synctime">${fmtT(s.when)}</span>` : ""}</div>
+      ${(!s.ok && s.error) ? `<div class="syncerr">${esc(s.error)}</div>` : ""}
+    </div>`;
+  }).join("");
   $("diagBody").innerHTML = `
     <div class="flabel">Identity</div>${kv(r.identity)}
     <div class="flabel">Geometry</div>${kv(r.geometry)}
+    <div class="flabel">Account sync</div>
+    <div class="syncrows">${syncRows || `<div class="mlempty">Not signed in.</div>`}</div>
     <div class="flabel">Log tail (${r.log.length})</div>
     <div class="logrows">${r.log.length ? r.log.map(e => `<div class="logrow">
       <span class="logt">${fmtT(e.t)}</span><span class="logty">${esc(e.kind)}</span>
@@ -7549,15 +7596,21 @@ function notifyChipHTML(id){
 // CAS-778: ownerOverride, when passed, is the Watch listing's own occasion-aware owner (filmOwnerCascade) —
 // the same agent the section heading above this card already names. Left undefined (every other caller —
 // the Watch List feed, Moving), this reads the CAS-709 global owner exactly as before.
+// CAS-786: which colour the agent chip reads as — "manual" if the owner is a hand placement (pinnedInto),
+// "auto" if it was picked by rank, null if there's no owner. Mirrors filmWatchSource's wsrc-*/csrc-* pairing.
+function agentChipSource(id, owner){
+  return owner ? (pinnedInto(id,owner) ? "manual" : "auto") : null;
+}
 function agentChipHTML(id, ownerOverride){
   const owner=ownerOverride!==undefined ? ownerOverride : (cascadesFor(id)[0]||null);
   const lbl = owner ? owner.name : "No agent";
   const title = owner
     ? `Owned by ${owner.icon} ${owner.name}. Tap to move to a different agent.`
     : "No agent owns this film. Tap to pin one.";
+  const csrc=agentChipSource(id, owner);
   // DOM class stays `.ctl.casc` — see the CAS-427 comment above .actions for why this file keeps a control's
   // original class through a relabel rather than chasing every CSS selector each time the name changes.
-  return `<button type="button" class="ctl casc" data-kid="${id}" onclick="openAgentPanel(${id},this)"
+  return `<button type="button" class="ctl casc${csrc?` csrc-${csrc}`:""}${filmIsNew(id)?" isnew":""}" data-kid="${id}" onclick="openAgentPanel(${id},this)"
       aria-haspopup="true" aria-expanded="false" title="${escA(title)}" aria-label="${escA(title)}">
     <span class="cmini"><i class="cfill" style="width:${owner?100:0}%;background:var(--accent)"></i>
       <span class="cic">${owner?owner.icon:ICON.deck}</span>
@@ -19589,6 +19642,9 @@ else if(dedupedN)
       + [...down].map(k=>ACCT_SURFACE_LABEL[k]).join(", ") + ". Changes will save when it reconnects.");
     if(pending.size) parts.push("Not yet saved to your account — still on this device only: "
       + [...pending].map(k=>ACCT_SURFACE_LABEL[k]).join(", ") + ".");
+    // CAS-787 AC5/AC6: a WRITE that has now failed twice in a row for the same target — quiet, states the
+    // fact, offers no fix (the fix, an applied migration or similar, is never the user's to make).
+    if(anySyncTargetDegraded()) parts.push("Account sync isn't working right now — changes are only being saved on this device.");
     return parts.length ? parts.join(" ") : null;
   }
   function renderAcctBanner(){
@@ -19601,6 +19657,44 @@ else if(dedupedN)
   // CAS-764: connectivity coming back is the one event that can make the banner's answer change without
   // any table's fail/pending state changing — reconnecting must re-show a genuinely still-failing table.
   if(typeof window!=="undefined" && window.addEventListener) window.addEventListener("online", renderAcctBanner);
+
+  // ---- CAS-787: per-target account WRITE outcome tracking ------------------------------------------
+  // CAS-656/764 above cover a failed READ. A failed WRITE (this device's own push failing to reach the
+  // account) had no equivalent — every sync function below just `console.warn`'d the error and moved on,
+  // which is exactly how CAS-740's schema drift disabled user_prefs syncing, silently, for weeks. One
+  // record per target, overwritten on every attempt — no history, no persistence, just "what happened
+  // the last time this device tried."
+  const SYNC_TARGET_ORDER = ["cascades","lists","list_films","watchlists","user_films",
+                              "notify_prefs","film_picks","film_watch","agent_films","user_prefs"];
+  const syncOutcome = {};         // target -> {when, ok, error, schemaDrift} (absent = never attempted)
+  const syncTargetDegraded = {};  // target -> true once its latest failure was its SECOND IN A ROW
+  // PostgREST's exact shape for "the client sent a column this table doesn't have" — an unapplied
+  // migration, not a connectivity blip, and worth saying so plainly rather than as generic noise (AC4).
+  const SCHEMA_DRIFT_RE = /Could not find the '.+?' column of '.+?' in the schema cache/i;
+  function syncErrorMessage(err){
+    if(!err) return "Unknown error";
+    return (err.message!=null) ? String(err.message) : String(err);
+  }
+  // AC5: a single failure (no prior record, or the prior attempt succeeded) stays quiet, so a one-off
+  // offline blip never raises anything — only a SECOND consecutive failure on the same target does.
+  function recordSyncOutcome(target, ok, err){
+    const prevFailed = !!(syncOutcome[target] && syncOutcome[target].ok===false);
+    const msg = ok ? null : syncErrorMessage(err);
+    syncOutcome[target] = { when: Date.now(), ok: !!ok, error: msg,
+                             schemaDrift: ok ? false : SCHEMA_DRIFT_RE.test(msg) };
+    const degradedNow = !ok && prevFailed;
+    if(syncTargetDegraded[target] !== degradedNow){
+      syncTargetDegraded[target] = degradedNow;
+      renderAcctBanner();   // AC7: clears the moment a later attempt succeeds — no reload needed
+    }
+  }
+  function anySyncTargetDegraded(){ return Object.keys(syncTargetDegraded).some(t=>syncTargetDegraded[t]); }
+  // The diagnostics panel's own read of the above (AC1-AC4) — built here, next to the data, in a fixed
+  // order so the section reads the same way on every open.
+  function syncOutcomeReport(){
+    return SYNC_TARGET_ORDER.map(target => ({ target,
+      ...(syncOutcome[target] || { when:null, ok:null, error:null, schemaDrift:false }) }));
+  }
 
   // ---- shape mapping: local Cascade <-> table row --------------------------
   // criteria (jsonb) carries the whole local Cascade minus the columns stored on their own
@@ -19760,7 +19854,7 @@ else if(dedupedN)
     if(dirty.length){
       const rows = dirty.map(cascadeToRow);
       const { data, error } = await c.from("cascades").upsert(rows, { onConflict:"id" }).select("id,updated_at");
-      if(error){ console.warn("Cascade upsert", error); return; }
+      if(error){ console.warn("Cascade upsert", error); recordSyncOutcome("cascades", false, error); return; }
       const versionById = new Map((data||[]).map(r=>[r.id, r.updated_at]));
       dirty.forEach(x=>{
         cascadeKnown.set(x.id, { sig: cascadeFullSigOf(x), version: versionById.get(x.id)||null });
@@ -19770,11 +19864,12 @@ else if(dedupedN)
     }
     if(deletes.length){
       const { error } = await c.from("cascades").delete().eq("user_id", owner).in("id", deletes);
-      if(error){ console.warn("Cascade delete", error); return; }
+      if(error){ console.warn("Cascade delete", error); recordSyncOutcome("cascades", false, error); return; }
       deletes.forEach(id=>{ cascadeKnown.delete(id); cascadeEditedAt.delete(id); });
       saveCascadeEditedAt();
     }
     saveCascadeKnown();
+    recordSyncOutcome("cascades", true);
   }
 
   // ---- shared conflict resolver: loadAccount (full load) and reconcileCascades (background merge) BOTH
@@ -20003,16 +20098,17 @@ else if(dedupedN)
     if(dirty.length){
       const rows = dirty.map(listToRow);
       const { data, error } = await c.from("lists").upsert(rows, { onConflict:"id" }).select("id,updated_at");
-      if(error){ console.warn("Lists upsert", error); return; }
+      if(error){ console.warn("Lists upsert", error); recordSyncOutcome("lists", false, error); return; }
       const versionById = new Map((data||[]).map(r=>[r.id, r.updated_at]));
       dirty.forEach(x=>{ listKnown.set(x.id, { sig: listSigOf(x), version: versionById.get(x.id)||null }); });
     }
     if(deletes.length){
       const { error } = await c.from("lists").delete().eq("user_id", owner).in("id", deletes);
-      if(error){ console.warn("Lists delete", error); return; }
+      if(error){ console.warn("Lists delete", error); recordSyncOutcome("lists", false, error); return; }
       deletes.forEach(id=>listKnown.delete(id));
     }
     saveListKnown();
+    recordSyncOutcome("lists", true);
   }
   async function syncListFilmsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
@@ -20020,7 +20116,7 @@ else if(dedupedN)
     const rows=listFilmRows();
     if(rows.length){
       const { error } = await c.from("list_films").upsert(rows, { onConflict:"user_id,movie_id,list_id" });
-      if(error){ console.warn("list_films upsert", error); return; }
+      if(error){ console.warn("list_films upsert", error); recordSyncOutcome("list_films", false, error); return; }
     }
     const keys=new Set(rows.map(r=>`${r.movie_id}:${r.list_id}`));
     if(listFilmBaseline){
@@ -20035,6 +20131,7 @@ else if(dedupedN)
       }
     }
     listFilmBaseline=keys;
+    recordSyncOutcome("list_films", true);
   }
   async function loadListsAccount(){
     const c=client(); if(!c||!accountActive()) return;
@@ -20204,7 +20301,7 @@ else if(dedupedN)
     if(acctTableFail.watchlists) return false;   // CAS-656 AC2: a failed load must not push local state back over it
     const dirty=watchlistDirtyRows();
     const deletes=watchlistPendingDeleteIds();
-    if(!dirty.length && !deletes.length) return true;   // AC3: a device that changed nothing writes nothing
+    if(!dirty.length && !deletes.length){ recordSyncOutcome("watchlists", true); return true; }   // AC3: a device that changed nothing writes nothing
     // CAS-681: belt-and-braces — a payload upsert can't contain the same id twice (Postgres 21000, "ON
     // CONFLICT DO UPDATE command cannot affect row a second time"). loadWatchlistAccount above is the
     // known source, now fixed, but this guard is what surfaces the NEXT one instead of 500ing silently.
@@ -20222,7 +20319,7 @@ else if(dedupedN)
     if(candidates.length){
       const { data, error } = await c.from("watchlists").select("id,updated_at,deleted_at")
         .eq("user_id", owner).in("id", candidates.map(x=>x.id));
-      if(error){ console.warn("Watchlist version check", error); return false; }
+      if(error){ console.warn("Watchlist version check", error); recordSyncOutcome("watchlists", false, error); return false; }
       remoteState=data||[];
     }
     const remoteById=new Map(remoteState.map(r=>[r.id,r]));
@@ -20257,7 +20354,7 @@ else if(dedupedN)
     if(toWrite.length){
       const rows=toWrite.map(watchlistToRow);
       const { data, error } = await c.from("watchlists").upsert(rows, { onConflict:"id" }).select("id,updated_at");
-      if(error){ console.warn("Watchlist upsert", error); return false; }
+      if(error){ console.warn("Watchlist upsert", error); recordSyncOutcome("watchlists", false, error); return false; }
       const versionById=new Map((data||[]).map(r=>[r.id, r.updated_at]));
       toWrite.forEach(x=>{
         watchlistKnown.set(x.id, { sig: watchlistFullSigOf(x), version: versionById.get(x.id)||null });
@@ -20267,7 +20364,7 @@ else if(dedupedN)
       const nowIso=new Date().toISOString();
       const { error } = await c.from("watchlists").update({ deleted_at: nowIso })
         .eq("user_id", owner).in("id", deletes);
-      if(error){ console.warn("Watchlist tombstone", error); return false; }
+      if(error){ console.warn("Watchlist tombstone", error); recordSyncOutcome("watchlists", false, error); return false; }
       deletes.forEach(id=>watchlistKnown.delete(id));
     }
     saveWatchlistKnown();
@@ -20276,6 +20373,7 @@ else if(dedupedN)
       if(typeof render==="function") render();
       if(typeof renderYourMovies==="function") renderYourMovies();
     }
+    recordSyncOutcome("watchlists", true);
     return true;
   }
   async function loadWatchlistAccount(){
@@ -20577,7 +20675,7 @@ else if(dedupedN)
     const rows=filmRows();
     if(rows.length){
       const { error } = await c.from("user_films").upsert(rows, { onConflict:"user_id,movie_id" });
-      if(error){ console.warn("user_films upsert", error); return; }
+      if(error){ console.warn("user_films upsert", error); recordSyncOutcome("user_films", false, error); return; }
     }
     // CAS-408: delete only ids THIS device watched drop out of its own baseline (an opinion cleared
     // here) — never everything else the account has that isn't on this device's screen, which used to
@@ -20587,10 +20685,11 @@ else if(dedupedN)
       const gone=[...filmBaseline].filter(id=>!ids.has(id));
       if(gone.length){
         const { error } = await c.from("user_films").delete().eq("user_id", owner).in("movie_id", gone);
-        if(error){ console.warn("user_films delete", error); return; }
+        if(error){ console.warn("user_films delete", error); recordSyncOutcome("user_films", false, error); return; }
       }
     }
     filmBaseline=ids;
+    recordSyncOutcome("user_films", true);
   }
   async function loadAccountFilms(){
     const c=client(); if(!c||!accountActive()) return;
@@ -20696,21 +20795,24 @@ else if(dedupedN)
       if(notifyPrefsReady){
         const { error:pe } = await c.from("notify_prefs").upsert([prefsRow()], { onConflict:"user_id" });
         if(pe) console.warn("notify_prefs upsert", pe);
+        recordSyncOutcome("notify_prefs", !pe, pe);
       }
       const rows=pickRows();
+      let picksOk=true, picksErr=null;
       if(rows.length){
         const { error } = await c.from("film_picks").upsert(rows, { onConflict:"user_id,movie_id" });
-        if(error) console.warn("film_picks upsert", error);
+        if(error){ console.warn("film_picks upsert", error); picksOk=false; picksErr=error; }
       }
       const ids=new Set(rows.map(r=>r.movie_id));
       if(pickBaseline){
         const gone=[...pickBaseline].filter(id=>!ids.has(id));
         if(gone.length){
           const { error:de } = await c.from("film_picks").delete().eq("user_id", owner).in("movie_id", gone);
-          if(de) console.warn("film_picks delete", de);
+          if(de){ console.warn("film_picks delete", de); picksOk=false; picksErr=de; }
         }
       }
       pickBaseline=ids;
+      recordSyncOutcome("film_picks", picksOk, picksErr);
     }catch(err){ console.warn("Cascade: notify sync failed", err); }
   }
   async function loadNotifyPrefs(){
@@ -20844,7 +20946,7 @@ else if(dedupedN)
     const rows=watchRows();
     if(rows.length){
       const { error } = await c.from("film_watch").upsert(rows, { onConflict:"user_id,movie_id" });
-      if(error){ console.warn("film_watch upsert", error); return; }
+      if(error){ console.warn("film_watch upsert", error); recordSyncOutcome("film_watch", false, error); return; }
     }
     // CAS-408: delete only ids THIS device's watch ticks dropped out of its own baseline (every
     // window on that film untouched) — never every id the account has that this device hasn't
@@ -20854,10 +20956,11 @@ else if(dedupedN)
       const gone=[...watchBaseline].filter(id=>!ids.has(id));
       if(gone.length){
         const { error } = await c.from("film_watch").delete().eq("user_id", owner).in("movie_id", gone);
-        if(error){ console.warn("film_watch delete", error); return; }
+        if(error){ console.warn("film_watch delete", error); recordSyncOutcome("film_watch", false, error); return; }
       }
     }
     watchBaseline=ids;
+    recordSyncOutcome("film_watch", true);
   }
   // CAS-609: the account is the answer, not the union of it and whatever the previous account (or
   // guest session) left in `notify` — clear every key before either half of the account's notify
@@ -20958,7 +21061,7 @@ else if(dedupedN)
     const rows=agentFilmRows();
     if(rows.length){
       const { error } = await c.from("agent_films").upsert(rows, { onConflict:"user_id,cascade_id,movie_id" });
-      if(error){ console.warn("agent_films upsert", error); return; }
+      if(error){ console.warn("agent_films upsert", error); recordSyncOutcome("agent_films", false, error); return; }
     }
     const keys=new Set(rows.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));
     if(agentFilmsBaseline){
@@ -20973,6 +21076,7 @@ else if(dedupedN)
       }
     }
     agentFilmsBaseline=keys;
+    recordSyncOutcome("agent_films", true);
   }
   async function loadAgentFilms(){
     const c=client(); if(!c||!accountActive()) return;
@@ -21096,6 +21200,7 @@ else if(dedupedN)
     if(!userPrefsReady){ scheduleUserPrefsSync(); return; }
     const { error } = await c.from("user_prefs").upsert([userPrefsRow()], { onConflict:"user_id" });
     if(error) console.warn("user_prefs upsert", error);
+    recordSyncOutcome("user_prefs", !error, error);
   }
   // CAS-561 merge rule: user_prefs is one row per user holding whole-object fields (taste,
   // watch_windows) rather than an array of rows like cascades — there is nothing to diff or prune per
@@ -21255,6 +21360,13 @@ else if(dedupedN)
                                 // reference — it's reassigned wholesale) so a test can zero the real backoff
                                 // delays rather than waiting on them.
                                 acctRead, renderAcctBanner, acctBannerText,
+                                // CAS-787: the write-side counterpart to acctRead/acctTableFail above — one
+                                // outcome per sync target, overwritten each attempt, plus the derived
+                                // degraded flag the banner reads. Exposed by reference (get syncOutcome)
+                                // like cascadeKnown elsewhere, so a test can inspect state without reaching
+                                // into the DOM.
+                                get syncOutcome(){ return syncOutcome; },
+                                syncOutcomeReport, anySyncTargetDegraded,
                                 get ACCT_READ_DELAYS(){ return ACCT_READ_DELAYS; },
                                 set ACCT_READ_DELAYS(v){ ACCT_READ_DELAYS=v; },
                                 saveWatchlists, saveCascades, saveLists, saveListMembership, saveWatchStatus,
