@@ -321,6 +321,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // tick through the real function rather than poking notify[id].wins by hand.
   filmWatchSource,
   toggleFilmOpt: (id, key) => window.toggleFilmOpt(id, key),
+  // CAS-788: setOpinion is wire code too (window-assigned, same pattern as toggleFilmOpt above) — a
+  // test drives a real Watched/"not for me" verdict through it rather than poking watched/blocked by hand.
+  setOpinion: (id, kind) => window.setOpinion(id, kind),
   get watchPrefs(){ return watchPrefs; },
   setWatchPrefs(w){ watchPrefs = w; },
   // CAS-602: the bell's own moment-copy lookup, so a test can assert a monitor moment key can never
@@ -375,6 +378,11 @@ if(typeof window.CascadeAuth === "undefined"){
   // per-target status-label helper (diagSyncStatusText) — plain top-level functions, exported directly so a
   // test can assert the panel/copy-button text without a real DOM or the 5-tap gesture.
   diagReport, diagReportText, diagSyncStatusText,
+  // CAS-789: rounding out the agent-behaviour suite's export surface — windowEnabled (the watchPrefs
+  // Where-and-when gate), restoreWatchMarker/msnTrackAreaHTML/msnValueLine (the Mission marker track's own
+  // mutator and render helpers) and notifyChipHTML (the Watch On chip's own render, alongside agentChipHTML
+  // above) — plain top-level functions, exported directly like the rest of this file.
+  windowEnabled, restoreWatchMarker, msnTrackAreaHTML, msnValueLine, notifyChipHTML,
 };
 `;
 

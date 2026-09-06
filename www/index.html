@@ -4937,8 +4937,12 @@ function recomputeFound(){
       priorRows.forEach(r=>{
         const mid = +r.movie_id;
         const e = notify[r.movie_id];
-        // Point 2: watched or dismissed outranks admission itself — the row is deleted, not merely hidden.
-        if(watched.has(mid) || (e && e.removed)){ CP.clearAgentFilm(c.id, r.movie_id); return; }
+        // Point 2: watched, blocked or dismissed outranks admission itself — the row is deleted, not
+        // merely hidden. CAS-788: blocked joins watched here — "not for me" must reap a sticky
+        // admission exactly as watched does, or a film already admitted before being blocked keeps
+        // re-admitting itself unchanged below (admitted.get(c.id).has(mkey) short-circuits the
+        // criteria re-test that would otherwise exclude it) and its Watch On never actually clears.
+        if(watched.has(mid) || blocked.has(mid) || (e && e.removed)){ CP.clearAgentFilm(c.id, r.movie_id); return; }
         if(c.paused || r.agent_sig===sig) return;   // point 5 / point 2: frozen while paused; unedited stays put
         // Point 3: cascSigOf(c) has moved since this row was written — re-evaluate this one film now.
         const m = MOVIES.find(x=>x.tmdb_id===mid);
@@ -5663,7 +5667,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 962, "commit": "6998ff1", "builtAt": "2026-09-06T03:17:12Z"};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 964, "commit": "2cc4e80", "builtAt": "2026-09-06T05:06:59Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -18925,6 +18929,13 @@ window.setOpinion=(id,kind)=>{
            if(kind==="soso")     indifferent.add(id);
            if(kind==="wow")      wowed.add(id);      // CAS-278: rides alongside `watched`, like the others
            if(kind==="enjoyed")  enjoyed.add(id); }   // CAS-349: same pattern
+    // CAS-788: seeing the film (or ruling it out) spends the intent behind any Watch On — clear every
+    // rung and its provenance so the per-film alert path (film_watch) goes quiet with it, rather than
+    // going on alerting from a tick that predates the verdict. Un-marking clears nothing here; the next
+    // recomputeFound (below, via repaintAfterOpinion) re-arms one with winsSource "auto" on its own if
+    // an agent still matches the film.
+    const e=notify[id];
+    if(e && e.wins){ WATCH_LEVEL_KEYS.forEach(k=>{ e.wins[k]=false; if(e.winsSource) delete e.winsSource[k]; }); }
     // Only a film the agent was actually offering is held in the Found view. Answering something in Find that
     // was never found would otherwise float it into "Found for you" — a list that means "the agent picked
     // these", and it didn't. In Find the stub holds its own place anyway, off the back of taggedOut.

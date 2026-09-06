@@ -594,7 +594,8 @@ WINDOW_TO_MOMENT = {
 }
 
 
-def match_film_watches(watches, transitions, already=None, cascade_hits=None, excluded=None) -> dict:
+def match_film_watches(watches, transitions, already=None, cascade_hits=None, excluded=None,
+                       suppressed=None) -> dict:
     """Return {user_id: [Hit, ...]} for per-film Watch-it ticks (CAS-484) — hits that owe nothing
     to any Cascade's own criteria or bell. A tick arms an alert for THAT film reaching THAT window
     full stop, so unlike ``match()`` there is no taste/criteria/service test here at all.
@@ -609,10 +610,15 @@ def match_film_watches(watches, transitions, already=None, cascade_hits=None, ex
                  (CAS-484 AC3) — call match() first and pass its keys here.
     excluded   : the same {user_id: {moment, ...}} global mute match() takes — a muted alert TYPE
                  outranks a per-film tick exactly as it outranks a Cascade.
+    suppressed : the same {(user_id, movie_id)} personal-override set match() takes (see
+                 ``suppressed_pairs``) — CAS-788: a watched or blocked film clears its own tick on
+                 the way through the app, but a stale row from before that clear must not still
+                 fire here.
     """
     seen = set(already or ())
     covered = set(cascade_hits or ())
     muted = excluded_moments(excluded)
+    off = {(str(u), str(m)) for u, m in (suppressed or ())}
     by_movie: dict = {}
     for t in transitions:
         by_movie.setdefault(str(t.movie_id), []).append(t)
@@ -621,6 +627,8 @@ def match_film_watches(watches, transitions, already=None, cascade_hits=None, ex
     for w in watches or ():
         user_id = str(w.get("user_id"))
         movie_id = str(w.get("movie_id"))
+        if (user_id, movie_id) in off:
+            continue
         moments = {WINDOW_TO_MOMENT[k] for k in (w.get("windows") or ()) if k in WINDOW_TO_MOMENT}
         moments -= muted.get(user_id, set())
         if not moments:
