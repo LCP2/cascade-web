@@ -321,6 +321,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // tick through the real function rather than poking notify[id].wins by hand.
   filmWatchSource,
   toggleFilmOpt: (id, key) => window.toggleFilmOpt(id, key),
+  // CAS-788: setOpinion is wire code too (window-assigned, same pattern as toggleFilmOpt above) — a
+  // test drives a real Watched/"not for me" verdict through it rather than poking watched/blocked by hand.
+  setOpinion: (id, kind) => window.setOpinion(id, kind),
   get watchPrefs(){ return watchPrefs; },
   setWatchPrefs(w){ watchPrefs = w; },
   // CAS-602: the bell's own moment-copy lookup, so a test can assert a monitor moment key can never

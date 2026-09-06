@@ -32,7 +32,7 @@ import sys
 from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notification_rows,
                render_digest, send_via_resend, excluded_moments,
                prefs_for, excludes_from_prefs, delivery_plan, send_via_apns, push_copy,
-               match_film_watches, match_newly_qualified, match_new_to_agent)
+               match_film_watches, match_newly_qualified, match_new_to_agent, suppressed_pairs)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
 from .store import InMemoryStore, store_from_env
 
@@ -153,12 +153,17 @@ def main(argv=None) -> int:
         for u, ms in excluded_moments(_load_json(args.excluded)).items():
             muted.setdefault(u, set()).update(ms)
 
+    # CAS-788: the personal-override "off" answer (CAS-100/CAS-185's film_picks) outranks every
+    # Cascade and every per-film tick, same as it always has — wired in here for the first time.
+    picks = _load_json(args.picks) if args.picks else _store_call(store, "fetch_picks", [])
+    suppressed = suppressed_pairs(picks)
+
     # CAS-601: an agent's own Alert toggles are the control again (Lee's decision of 2026-08-24,
     # reversing CAS-502 AC1/widening CAS-506) — every moment a cascade's `alert_moments` names can
     # notify, not just `announced`. match() already gates on `alert_moments`/criteria/suppressed/
     # excluded, so feeding it every transition is the whole change; nothing in match() itself moves.
     agent_hits = match(cascades, transitions, already=already, catalogue=today_movies,
-                       excluded=muted)
+                       suppressed=suppressed, excluded=muted)
 
     # CAS-602: a film already held in both catalogues that newly qualifies for an agent because its
     # OWN attributes changed — no catalogue transition to hang this off, so its "newly_qualifies"
@@ -199,7 +204,7 @@ def main(argv=None) -> int:
     agent_seen = {(str(uid), h.transition.movie_id, h.transition.moment)
                   for uid, hits in agent_hits.items() for h in hits}
     watch_hits = match_film_watches(watches, transitions, already=watch_already,
-                                    cascade_hits=agent_seen, excluded=muted)
+                                    cascade_hits=agent_seen, excluded=muted, suppressed=suppressed)
     by_user: dict = {u: list(hits) for u, hits in agent_hits.items()}
     for user_id, hits in watch_hits.items():
         by_user.setdefault(user_id, []).extend(hits)
