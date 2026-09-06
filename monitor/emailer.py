@@ -67,6 +67,8 @@ def moment_phrase(transition) -> str:
         return "In cinemas next week"
     if m == "newly_qualifies":
         return "Now matches this agent"
+    if m == "new_to_agent":
+        return "New to this agent"
     return m
 
 
@@ -81,6 +83,7 @@ _MOMENT_NOTE = {
     # so this line says the thing we actually know instead of the thing it would be nicer to claim.
     "announced": "It has just reached Cascade, and it matches what you asked for.",
     "opens_soon": "Its published opening date is a week away.",
+    "new_to_agent": "It just started matching this agent.",
 }
 
 

@@ -18,6 +18,7 @@ Pure and side-effect free; the caller owns Supabase I/O (see store.py).
 """
 from __future__ import annotations
 
+import datetime as _dt
 from dataclasses import dataclass
 from typing import Optional
 
@@ -419,6 +420,93 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
             seen.add(key)
             t = Transition(mid, today_record.get("title", ""), "newly_qualifies",
                           services=services, price=price, movie=today_record)
+            by_user.setdefault(c["user_id"], []).append(
+                Hit(user_id=c["user_id"], cascade_id=c["id"],
+                    cascade_name=c.get("name", "My Cascade"), transition=t,
+                    channels=agent_channels(criteria)))
+    return {uid: _collapse_by_rank(hits, rank_of) for uid, hits in by_user.items()}
+
+
+# --------------------------------------------------------------------------- #
+# CAS-785: a film first appearing on an agent — unless the appearance was the user's own doing
+# --------------------------------------------------------------------------- #
+def _parse_dt(value):
+    """Parse a timestamp that may arrive as an ISO string (Supabase's `updated_at`) or an
+    already-a-datetime (fixtures/tests). None for anything missing or unparsable — never raises;
+    the caller treats "can't prove this agent is stable" the same as "it isn't"."""
+    if isinstance(value, _dt.datetime):
+        return value if value.tzinfo else value.replace(tzinfo=_dt.timezone.utc)
+    if not value:
+        return None
+    s = str(value)
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        parsed = _dt.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=_dt.timezone.utc)
+
+
+def match_new_to_agent(cascades: list, prev_movies: list, today_movies: list, previous_run_start,
+                       already=None, catalogue=None, suppressed=None, excluded=None,
+                       covered=None) -> dict:
+    """Return {user_id: [Hit, ...]} for CAS-785's first-appearance moment: a film present in both
+    catalogues that matches an active Cascade's criteria today and did NOT match it yesterday —
+    the same test ``match_newly_qualified`` makes — fired ONLY when the Cascade itself has been
+    stable across that comparison: its ``updated_at`` predates ``previous_run_start``. A Cascade
+    edited since then produces nothing here for this run (Lee's 2026-08-24 rule: an edit must
+    never fire the user's whole list); the alert is not deferred to a later run.
+
+    Unlike ``newly_qualifies``, this does not ride a window's own moment (``hits_rent`` etc.) — it
+    is its own moment, gated only by the global excluded-moments mute, so it can tell a user their
+    agent gained a film even when they have no window alerts switched on for it.
+
+    previous_run_start : datetime — the start of the run before this one. Missing/unparsable
+                         `updated_at` counts as "not proven stable" (fails closed, same caution as
+                         the edit-window check itself).
+    covered            : iterable of (cascade_id, movie_id) already alerted THIS run by match() /
+                         match_newly_qualified() — a real window transition landing the same day as
+                         a first appearance still produces ONE alert, not two (CAS-785 AC1c).
+    already, catalogue, suppressed, excluded : same meaning as match_newly_qualified.
+    """
+    prev_by_id = {str(m.get("tmdb_id")): m for m in prev_movies}
+    today_by_id = {str(m.get("tmdb_id")): m for m in today_movies}
+    seen = set(already or ())
+    off = {(str(u), str(m)) for u, m in (suppressed or ())}
+    muted = excluded_moments(excluded)
+    tiers = scale_tiers(catalogue) if catalogue else {}
+    rank_of = {c["id"]: _rank_key(c) for c in cascades}
+    covered = set(covered or ())
+    by_user: dict = {}
+
+    for c in cascades:
+        if not c.get("active", True):
+            continue
+        if "new_to_agent" in muted.get(str(c["user_id"]), set()):
+            continue
+        updated_at = _parse_dt(c.get("updated_at"))
+        if updated_at is None or updated_at >= previous_run_start:
+            continue                       # edited inside the window, or unprovable -> silent
+        criteria = c.get("criteria") or {}
+        for mid, today_record in today_by_id.items():
+            if (c["id"], mid) in covered:
+                continue                   # already alerted this run some other way
+            prev_record = prev_by_id.get(mid)
+            if prev_record is None:
+                continue                   # a first sighting is announced's job, not this one
+            if (str(c["user_id"]), mid) in off:
+                continue                   # your answer outranks your Cascade
+            tier = tiers.get(mid)
+            if matches_criteria(prev_record, criteria, tier=tier):
+                continue                   # already matched yesterday -> not a first appearance
+            if not matches_criteria(today_record, criteria, tier=tier):
+                continue                   # still doesn't match today
+            key = (c["id"], mid, "new_to_agent")
+            if key in seen:
+                continue
+            seen.add(key)
+            t = Transition(mid, today_record.get("title", ""), "new_to_agent", movie=today_record)
             by_user.setdefault(c["user_id"], []).append(
                 Hit(user_id=c["user_id"], cascade_id=c["id"],
                     cascade_name=c.get("name", "My Cascade"), transition=t,

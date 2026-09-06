@@ -32,7 +32,7 @@ import sys
 from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notification_rows,
                render_digest, send_via_resend, excluded_moments,
                prefs_for, excludes_from_prefs, delivery_plan, send_via_apns, push_copy,
-               match_film_watches, match_newly_qualified)
+               match_film_watches, match_newly_qualified, match_new_to_agent)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
 from .store import InMemoryStore, store_from_env
 
@@ -168,6 +168,24 @@ def main(argv=None) -> int:
     newly_qualified_hits = match_newly_qualified(cascades, prev_movies, today_movies, already=already,
                                                  catalogue=today_movies, excluded=muted)
     for user_id, hits in newly_qualified_hits.items():
+        agent_hits.setdefault(user_id, []).extend(hits)
+
+    # CAS-785: a film already held in both catalogues that starts matching an agent for the first
+    # time — fired only for an agent that has been stable (unedited) since before the previous
+    # run, so a fresh edit widening the criteria stays silent (Lee's 2026-08-24 rule) rather than
+    # spraying the agent's whole newly-widened list. `previous_run_start` is approximated as
+    # midnight UTC the day before this run, since no per-run timestamp is persisted (by design —
+    # the ticket explicitly rules out a new schema column). Folded in before `agent_seen` below,
+    # and de-duped against every hit already produced this run, so a first appearance landing on
+    # the same day as a real window transition still alerts once, not twice (CAS-785 AC1c).
+    previous_run_start = _dt.datetime.combine(
+        run_date - _dt.timedelta(days=1), _dt.time.min, tzinfo=_dt.timezone.utc)
+    covered_films = {(h.cascade_id, h.transition.movie_id)
+                     for hits in agent_hits.values() for h in hits}
+    new_to_agent_hits = match_new_to_agent(cascades, prev_movies, today_movies, previous_run_start,
+                                           already=already, catalogue=today_movies, excluded=muted,
+                                           covered=covered_films)
+    for user_id, hits in new_to_agent_hits.items():
         agent_hits.setdefault(user_id, []).extend(hits)
 
     # CAS-484: a per-film "Watch it" tick is the sole source for every OTHER moment. Run after the

@@ -9,7 +9,7 @@ import unittest
 
 from monitor import (compute_transitions, match, matches_criteria, service_ok,
                      notification_rows, suppressed_pairs, excluded_moments, match_film_watches,
-                     match_newly_qualified)
+                     match_newly_qualified, match_new_to_agent)
 from monitor.matching import Hit, agent_channels
 from monitor.catalogue import load_catalogue_file
 from monitor.store import InMemoryStore
@@ -535,6 +535,139 @@ class NewlyQualifiedTests(unittest.TestCase):
              "alert_moments": ["hits_rent"], "criteria": {"genre": ["Drama"], "imdb": 7.0, "order": 0}},
         ]
         hits = match_newly_qualified(cascades, prev, today)["u1"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].cascade_id, "c1")
+
+
+class NewToAgentTests(unittest.TestCase):
+    """CAS-785: a film already held in both catalogues that starts matching an agent for the first
+    time — the same day-over-day test as NewlyQualifiedTests, fired only when the agent itself has
+    been stable (unedited) since before the previous run, and independent of any window moment."""
+
+    PREV_RUN_START = _dt.datetime(2026, 7, 15, 20, 0, tzinfo=_dt.timezone.utc)
+    STABLE = "2026-07-10T00:00:00+00:00"
+
+    def _movie(self, imdb, status=("rental",), tmdb_id=9101, title="Quiet Riser", **extra):
+        m = {"tmdb_id": tmdb_id, "title": title, "genres": ["Drama"], "status": list(status),
+             "cinema_date": "2026-01-01",
+             "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}],
+             "imdb_rating": imdb}
+        m.update(extra)
+        return m
+
+    def _cascade(self, imdb_bar=7.0, updated_at=STABLE, user_id="u1", cascade_id="c1"):
+        return [{"id": cascade_id, "user_id": user_id, "name": "Drama radar", "active": True,
+                 "alert_moments": [], "criteria": {"genre": ["Drama"], "imdb": imdb_bar},
+                 "updated_at": updated_at}]
+
+    # ---- CAS-785 AC1(a) ----
+    def test_stable_agent_first_appearance_fires_once(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        hits = match_new_to_agent(self._cascade(imdb_bar=7.0), prev, today, self.PREV_RUN_START)
+        self.assertEqual(len(hits.get("u1", [])), 1)
+        h = hits["u1"][0]
+        self.assertEqual(h.transition.moment, "new_to_agent")
+        self.assertEqual(h.transition.movie_id, "9101")
+        self.assertEqual(h.cascade_id, "c1")
+
+    # ---- CAS-785 AC1(b) ----
+    def test_agent_edited_inside_the_window_stays_silent(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        recent = "2026-07-16T01:00:00+00:00"      # after previous_run_start -> inside the window
+        hits = match_new_to_agent(self._cascade(imdb_bar=7.0, updated_at=recent), prev, today,
+                                  self.PREV_RUN_START)
+        self.assertEqual(hits, {})
+
+    def test_edit_exactly_at_the_boundary_counts_as_inside_the_window(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        boundary = self.PREV_RUN_START.isoformat()
+        hits = match_new_to_agent(self._cascade(imdb_bar=7.0, updated_at=boundary), prev, today,
+                                  self.PREV_RUN_START)
+        self.assertEqual(hits, {})
+
+    def test_missing_updated_at_fails_closed(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        cascades = self._cascade(imdb_bar=7.0)
+        del cascades[0]["updated_at"]
+        self.assertEqual(match_new_to_agent(cascades, prev, today, self.PREV_RUN_START), {})
+
+    # ---- CAS-785 AC1(c) ----
+    def test_first_appearance_plus_a_window_transition_fires_once_not_twice(self):
+        prev = [{"tmdb_id": 9102, "title": "Double Mover", "genres": ["Drama"], "status": [],
+                 "cinema_date": "2026-07-16", "offers": [], "imdb_rating": 6.5}]
+        today = [{"tmdb_id": 9102, "title": "Double Mover", "genres": ["Drama"], "status": ["in_cinema"],
+                  "cinema_date": "2026-07-16", "offers": [], "imdb_rating": 7.5}]
+        transitions = compute_transitions(prev, today, _dt.date(2026, 7, 16))
+        cascade = {"id": "c1", "user_id": "u1", "name": "Drama radar", "active": True,
+                   "alert_moments": ["hits_cinema"], "criteria": {"genre": ["Drama"], "imdb": 7.0},
+                   "updated_at": self.STABLE}
+        window_hits = match([cascade], transitions)
+        covered = {(h.cascade_id, h.transition.movie_id)
+                   for hits in window_hits.values() for h in hits}
+        new_hits = match_new_to_agent([cascade], prev, today, self.PREV_RUN_START, covered=covered)
+        total = sum(len(v) for v in window_hits.values()) + sum(len(v) for v in new_hits.values())
+        self.assertEqual(total, 1)
+        self.assertEqual(window_hits["u1"][0].transition.moment, "hits_cinema")
+
+    # ---- CAS-785 AC1(d) ----
+    def test_second_run_with_the_same_ledger_is_silent(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        first = match_new_to_agent(self._cascade(imdb_bar=7.0), prev, today, self.PREV_RUN_START)
+        already = {(h.cascade_id, h.transition.movie_id, h.transition.moment)
+                   for hits in first.values() for h in hits}
+        second = match_new_to_agent(self._cascade(imdb_bar=7.0), prev, today, self.PREV_RUN_START,
+                                    already=already)
+        self.assertEqual(second, {})
+
+    # ---- supporting behaviour ----
+    def test_a_film_that_already_matched_yesterday_never_fires(self):
+        prev = [self._movie(8.0)]
+        today = [self._movie(9.0)]
+        hits = match_new_to_agent(self._cascade(imdb_bar=7.0), prev, today, self.PREV_RUN_START)
+        self.assertEqual(hits, {})
+
+    def test_a_film_absent_from_yesterday_never_fires(self):
+        today = [self._movie(9.0)]
+        hits = match_new_to_agent(self._cascade(imdb_bar=7.0), [], today, self.PREV_RUN_START)
+        self.assertEqual(hits, {})
+
+    def test_gate_honours_the_global_mute(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        hits = match_new_to_agent(self._cascade(imdb_bar=7.0), prev, today, self.PREV_RUN_START,
+                                  excluded={"u1": ["new_to_agent"]})
+        self.assertEqual(hits, {})
+
+    def test_suppressed_pair_outranks_the_qualification(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        hits = match_new_to_agent(self._cascade(imdb_bar=7.0), prev, today, self.PREV_RUN_START,
+                                  suppressed={("u1", "9101")})
+        self.assertEqual(hits, {})
+
+    def test_inactive_cascade_ignored(self):
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        cascades = self._cascade(imdb_bar=7.0)
+        cascades[0]["active"] = False
+        self.assertEqual(match_new_to_agent(cascades, prev, today, self.PREV_RUN_START), {})
+
+    def test_two_agents_first_appearance_collapse_to_the_lower_order(self):
+        # CAS-784: same one-film-one-agent rule applies here as in match()/match_newly_qualified.
+        prev = [self._movie(6.5)]
+        today = [self._movie(7.5)]
+        cascades = [
+            {"id": "c0", "user_id": "u1", "name": "Zero", "active": True, "alert_moments": [],
+             "criteria": {"genre": ["Drama"], "imdb": 7.0, "order": 1}, "updated_at": self.STABLE},
+            {"id": "c1", "user_id": "u1", "name": "One", "active": True, "alert_moments": [],
+             "criteria": {"genre": ["Drama"], "imdb": 7.0, "order": 0}, "updated_at": self.STABLE},
+        ]
+        hits = match_new_to_agent(cascades, prev, today, self.PREV_RUN_START)["u1"]
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].cascade_id, "c1")
 
