@@ -74,6 +74,9 @@ function makeContext(){
     requestAnimationFrame: fn => setTimeout(fn, 0),
     cancelAnimationFrame: clearTimeout,
     navigator: { userAgent: "node", language: "en-AU", vibrate(){}, onLine: true },
+    // CAS-787: diagReport() (the on-device diagnostics panel) reads screen.orientation for its geometry
+    // section — not needed by any decision under test before now, so nothing stubbed it.
+    screen: { orientation: { type: "portrait-primary" } },
     location: { href: "http://localhost/", search: "", hash: "", pathname: "/", origin: "http://localhost" },
     history: { replaceState(){}, pushState(){} },
     matchMedia: () => ({ matches: false, addEventListener(){}, removeEventListener(){}, addListener(){} }),
@@ -368,6 +371,10 @@ if(typeof window.CascadeAuth === "undefined"){
   setWatchOccasion: id => window.setWatchOccasion(id),
   briefToggleOccasion: id => window.briefToggleOccasion(id),
   commitCreateOccasionRow: inputEl => window.commitCreateOccasionRow(inputEl),
+  // CAS-787: the on-device diagnostics panel's own pure report builders (diagReport/diagReportText) and the
+  // per-target status-label helper (diagSyncStatusText) — plain top-level functions, exported directly so a
+  // test can assert the panel/copy-button text without a real DOM or the 5-tap gesture.
+  diagReport, diagReportText, diagSyncStatusText,
 };
 `;
 
