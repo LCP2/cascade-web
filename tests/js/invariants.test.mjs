@@ -4616,15 +4616,16 @@ test("CAS-779 AC4: once the register has loaded, a genuinely stale id is still p
   assert.deepEqual(E.pruneOccasionIds([ghostId]), [], "a stale id must still be dropped once the register is known to be loaded");
 });
 
-// ---- CAS-778: WATCH LISTING OWNERSHIP GOES OCCASION-AWARE WHILE AN OCCASION IS SELECTED --------------------
-// filmOwnerCascade/filmOwnerOrder decide the Watch listing's section headings and per-agent block order from
-// notify[id].cascadeIds — the CAS-709 global owner, picked across the WHOLE roster with no idea which
-// occasion (if any) is currently selected. That's exactly the bug Lee hit: a film reaching a Sonya tab
-// through a Sonya agent could still be headed with an agent that has never carried Sonya. While watchOccasion
-// is set, ownership for the listing narrows instead to the occasion's own pool (agents carrying that
-// occasion) intersected with listedBy — see the ticket. None of this needs recomputeFound to run: filmOwner-
-// Cascade/filmOwnerOrder/splitByOwner/watchScopeRows are pure over cascades/notify/MOVIES, so these tests
-// drive notify[id].pinnedTo directly (pinFilm, defined above) — the same synthetic-agent technique
+// ---- CAS-793: REVERT CAS-778 — ONE AGENT OWNS A FILM, ALWAYS; THE OCCASION FILTERS BY THAT OWNER ----------
+// CAS-778 made filmOwnerCascade/filmOwnerOrder occasion-aware — Lee's explicit call is that this was the
+// wrong fix: a film's owning agent is a property of the FILM (CAS-709's single global owner from
+// notify[id].cascadeIds), decided once, never by the current view/tab/occasion. These tests assert the
+// owner is IDENTICAL whichever occasion is selected or with All (the reversed AC1/AC2/AC6), and that
+// watchScopeRows'/filmInWatchRows' occasion filter now tests the film's OWNER's occasion membership, not
+// "some included agent's" (AC3/AC4) — the accepted consequence being a film can vanish from an occasion its
+// listing-but-non-owning agent carries. None of this needs recomputeFound to run except where noted:
+// filmOwnerCascade/filmOwnerOrder/splitByOwner/watchScopeRows are pure over cascades/notify/MOVIES, so most
+// tests drive notify[id].pinnedTo directly (pinFilm, defined above) — the same synthetic-agent technique
 // seedMarkerCascade already uses (imdb:10.1 admits nothing by criteria, so only a hand-pin lists the film).
 function seedOccCascade(id, order, occasions, name){
   const c = E.normCascade({ kind: "stream", status: [], imdb: 10.1 });
@@ -4632,7 +4633,7 @@ function seedOccCascade(id, order, occasions, name){
   c.name = name || id;
   return c;
 }
-function withCas778Cascades(cascadeList, fn){
+function withOwnerTestCascades(cascadeList, fn){
   const saved = E.cascades.slice();
   E.cascades.length = 0;
   cascadeList.forEach(c => E.cascades.push(c));
@@ -4647,33 +4648,39 @@ function pickPinnableFilm(pool = unwatchedFilms(80)){
   assert.ok(film, "no pinnable (non-estimated-upcoming) unwatched film found in the sample pool");
   return film;
 }
+// Shared by the two watchScopeRows tests below: an in_cinema/upcoming film with no Watch On pick yet reaches
+// the "in_cinema" tab's default bucket (CAS-713) with no manual wiring beyond the pin itself.
+function pickTabbedFilm(){
+  const film = unwatchedFilms(200).find(m => ["upcoming", "in_cinema"].includes(E.primaryStatus(m))
+    && !(E.primaryStatus(m) === "upcoming" && E.isEstimated(m)));
+  assert.ok(film, "no unwatched upcoming/in_cinema film found in the first 200 — this test proves nothing");
+  return film;
+}
 
-test("CAS-778 AC1/AC4/AC6: an occasion selection redirects the owner to a Sonya-carrying agent, leaving the global (CAS-709) owner untouched", () => {
-  const occ = E.createOccasion("CAS778-sonya");
-  const globalWinner = seedOccCascade("cas778-global", 0, [], "Massive Movies");   // lowest order, outside the occasion
-  const occAgent = seedOccCascade("cas778-occ", 5, [occ.id], "Streaming Nominees"); // higher order, carries the occasion
-  withCas778Cascades([globalWinner, occAgent], () => {
+test("CAS-793 AC1/AC2/AC6: the owner is the same agent under every occasion and All — CAS-778's redirect is gone", () => {
+  const occ = E.createOccasion("CAS793-sonya");
+  const globalWinner = seedOccCascade("cas793-global", 0, [], "Massive Movies");    // lowest order, outside the occasion
+  const occAgent = seedOccCascade("cas793-occ", 5, [occ.id], "Streaming Nominees"); // higher order, carries the occasion
+  withOwnerTestCascades([globalWinner, occAgent], () => {
     const film = pickPinnableFilm();
     const id = film.tmdb_id;
     pinFilm(id, globalWinner.id);
-    pinFilm(id, occAgent.id);   // both pinned — the film is genuinely listed by both, per the ticket's evidence table
+    pinFilm(id, occAgent.id);   // both pinned — the film is genuinely listed by both
     try {
-      // recomputeFound is what actually writes notify[id].cascadeIds (the CAS-709 global owner) — filmOwner-
-      // Cascade's unselected/All branch reads that field directly, so it needs a real pass here first.
-      E.recomputeFound();
-      // Sanity: with no occasion selected, the lowest-order pin still wins — today's CAS-709 rule, unchanged.
-      assert.equal(E.filmOwnerCascade(film).id, globalWinner.id, "setup: the unselected (All) owner must be the lowest-order pin");
-      assert.equal(E.filmOwnerOrder(film), globalWinner.order, "setup: filmOwnerOrder must agree with filmOwnerCascade before any occasion is selected");
+      E.recomputeFound();   // writes notify[id].cascadeIds, the field filmOwnerCascade now always reads
+      assert.equal(E.filmOwnerCascade(film).id, globalWinner.id, "setup: with All selected the lowest-order pin must own the film");
+      assert.equal(E.filmOwnerOrder(film), globalWinner.order, "filmOwnerOrder must agree with filmOwnerCascade");
       const cascadeIdsBefore = [...E.notify[id].cascadeIds];
 
       E.setWatchOccasion(occ.id);
-      const owner = E.filmOwnerCascade(film);
-      assert.ok(owner, "an occasion-selected owner must not be null when a pooled agent lists the film");
-      assert.equal(owner.id, occAgent.id, "the heading must name the Sonya-carrying agent, not the global (non-Sonya) owner");
-      assert.ok((owner.occasions || []).includes(occ.id), "the named owner must actually carry the selected occasion");
-      assert.equal(E.filmOwnerOrder(film), occAgent.order, "filmOwnerOrder must agree with filmOwnerCascade once an occasion is selected");
-      // AC6: recomputeFound's own global assignment is untouched by merely selecting an occasion.
-      assert.deepEqual([...E.notify[id].cascadeIds], cascadeIdsBefore, "notify[id].cascadeIds must not move when an occasion is selected");
+      // The reversal itself: selecting the occasion the OTHER (non-owning) pin carries must NOT redirect
+      // ownership to it — CAS-778's whole premise.
+      assert.equal(E.filmOwnerCascade(film).id, globalWinner.id, "selecting an occasion must not move ownership to an occasion-carrying agent");
+      assert.equal(E.filmOwnerOrder(film), globalWinner.order, "filmOwnerOrder must still agree with filmOwnerCascade once an occasion is selected");
+      // AC8: notify[id].cascadeIds itself is untouched by selecting or clearing an occasion.
+      assert.deepEqual([...E.notify[id].cascadeIds], cascadeIdsBefore, "cascadeIds must not move when an occasion is selected");
+      E.setWatchOccasion(null);
+      assert.deepEqual([...E.notify[id].cascadeIds], cascadeIdsBefore, "cascadeIds must not move when an occasion is cleared");
     } finally {
       E.setWatchOccasion(null);
       delete E.notify[id];
@@ -4682,78 +4689,62 @@ test("CAS-778 AC1/AC4/AC6: an occasion selection redirects the owner to a Sonya-
   unseedOccasion(occ.id);
 });
 
-test("CAS-778: a hand-pin still outranks rank inside the occasion pool, exactly as it does globally", () => {
-  const occ = E.createOccasion("CAS778-pin-priority");
-  const lowRankUnpinned = seedOccCascade("cas778-lowrank", 0, [occ.id], "Low Rank Unpinned");
-  const highRankPinned = seedOccCascade("cas778-highrank", 9, [occ.id], "High Rank Pinned");
-  withCas778Cascades([lowRankUnpinned, highRankPinned], () => {
-    const film = pickPinnableFilm();
-    const id = film.tmdb_id;
-    pinFilm(id, lowRankUnpinned.id);
-    pinFilm(id, highRankPinned.id);
-    try {
-      E.setWatchOccasion(occ.id);
-      // Both are pinned, so both are candidates purely on `listedBy` — the lower order (lowRankUnpinned)
-      // would win a plain rank comparison, but nothing here is unpinned, so this only proves ordering
-      // among a pinned set works; the real priority claim is the next assertion.
-      assert.equal(E.filmOwnerCascade(film).id, lowRankUnpinned.id, "sanity: among two PINNED candidates, the lower order still wins");
-    } finally {
-      E.setWatchOccasion(null);
-      delete E.notify[id];
-    }
-  });
-  unseedOccasion(occ.id);
-
-  // Now the priority claim itself: an agent that only ADMITS via a hand-pin must still beat a lower-order
-  // agent in the same pool that lists the film on criteria alone (no pin) — matching CAS-709's global rule,
-  // where `pinned.length` short-circuits straight past any criteria match, at any rank.
-  const occ2 = E.createOccasion("CAS778-pin-priority-2");
-  const wideOpen = missionCase({ scoreFloor: 0 });
-  wideOpen.id = "cas778-wideopen"; wideOpen.order = 0; wideOpen.occasions = [occ2.id]; wideOpen.paused = false;
-  const pinnedHigh = seedOccCascade("cas778-pinnedhigh", 9, [occ2.id], "Pinned High Rank");
-  withCas778Cascades([wideOpen, pinnedHigh], () => {
-    const film = unwatchedFilms(80).find(m => E.listedBy(m, wideOpen));
-    assert.ok(film, "no unwatched film in the first 80 matched the wide-open baseline — this test proves nothing");
-    const id = film.tmdb_id;
-    pinFilm(id, pinnedHigh.id);
-    try {
-      assert.ok(E.listedBy(film, wideOpen), "setup: the wide-open agent must genuinely list this film with no pin");
-      E.setWatchOccasion(occ2.id);
-      const owner = E.filmOwnerCascade(film);
-      assert.equal(owner.id, pinnedHigh.id, "a hand-pin must outrank an unpinned, lower-order criteria match inside the occasion pool");
-    } finally {
-      E.setWatchOccasion(null);
-      delete E.notify[id];
-    }
-  });
-  unseedOccasion(occ2.id);
-});
-
-test("CAS-778 AC2: every film watchScopeRows() admits under a selected occasion carries a non-null, occasion-carrying owner", () => {
-  const occ = E.createOccasion("CAS778-ac2");
-  const occAgent = seedOccCascade("cas778-ac2-agent", 0, [occ.id], "CAS778 AC2 Agent");
+test("CAS-793 AC3/AC4: watchScopeRows admits a film under an occasion only when its OWNER carries it, not merely a co-listing agent", () => {
+  const occMe = E.createOccasion("CAS793-me");
+  const occSonya = E.createOccasion("CAS793-sonya2");
+  // Massive Movies stand-in: lowest order (wins ownership), carries "Me" only.
+  const owner = seedOccCascade("cas793-owner", 0, [occMe.id], "Massive Movies");
+  // Partner Date Night stand-in: higher order, carries "Sonya" only, and lists the film too (both pinned) —
+  // but never owns it.
+  const nonOwner = seedOccCascade("cas793-nonowner", 5, [occSonya.id], "Partner Date Night");
   const savedTab = E.watchTab;
   withWatchPrefs(PLACEMENT_WATCH_PREFS, () => {
-    withCas778Cascades([occAgent], () => {
-      // filmMatchesWatchTab's in_cinema branch admits ANY film with no Watch On pick yet (key===null) whose
-      // own status is still upcoming/in_cinema — the tab's own default bucket (CAS-713) — so an untouched
-      // pin reaches the tab with no manual Watch On wiring needed at all.
-      const film = unwatchedFilms(200).find(m => ["upcoming", "in_cinema"].includes(E.primaryStatus(m))
-        && !(E.primaryStatus(m) === "upcoming" && E.isEstimated(m)));
-      assert.ok(film, "no unwatched upcoming/in_cinema film found in the first 200 — this test proves nothing");
+    withOwnerTestCascades([owner, nonOwner], () => {
+      const film = pickTabbedFilm();
       const id = film.tmdb_id;
-      pinFilm(id, occAgent.id);
+      pinFilm(id, owner.id);
+      pinFilm(id, nonOwner.id);
+      E.recomputeFound();
       E.setWatchTab("in_cinema");
       try {
-        E.setWatchOccasion(occ.id);
-        const rows = E.watchScopeRows();
-        assert.ok(rows.some(m => m.tmdb_id === id), "setup: the pinned film must actually reach the tab");
-        for(const m of rows){
-          const owner = E.filmOwnerCascade(m);
-          assert.ok(owner, `${m.title} reached watchScopeRows() with no occasion-aware owner — AC2's contradiction case`);
-          assert.ok((owner.occasions || []).includes(occ.id), `${m.title}'s owner ${owner.name} does not carry the selected occasion`);
-        }
+        assert.equal(E.filmOwnerCascade(film).id, owner.id, "setup: the lower-order pin must own the film");
+        E.setWatchOccasion(occMe.id);
+        assert.ok(E.watchScopeRows().some(m => m.tmdb_id === id), "the film must appear under the owner's own occasion (Me)");
+        E.setWatchOccasion(occSonya.id);
+        assert.ok(!E.watchScopeRows().some(m => m.tmdb_id === id),
+          "the film must NOT appear under Sonya even though Partner Date Night (Sonya) lists it — it isn't the owner (AC4's accepted consequence)");
       } finally {
+        E.setWatchOccasion(null);
+        E.setWatchTab(savedTab);
+        delete E.notify[id];
+      }
+    });
+  });
+  unseedOccasion(occMe.id);
+  unseedOccasion(occSonya.id);
+});
+
+test("CAS-793: unticking the owning agent in \"Agents to include\" removes the film even while another included agent still lists it", () => {
+  const occ = E.createOccasion("CAS793-agentoff");
+  const owner = seedOccCascade("cas793-ao-owner", 0, [occ.id], "Owner Agent");
+  const coLister = seedOccCascade("cas793-ao-colister", 5, [occ.id], "Co-Lister Agent");
+  const savedTab = E.watchTab;
+  withWatchPrefs(PLACEMENT_WATCH_PREFS, () => {
+    withOwnerTestCascades([owner, coLister], () => {
+      const film = pickTabbedFilm();
+      const id = film.tmdb_id;
+      pinFilm(id, owner.id);
+      pinFilm(id, coLister.id);
+      E.recomputeFound();
+      E.setWatchTab("in_cinema");
+      E.setWatchOccasion(occ.id);
+      try {
+        assert.equal(E.filmOwnerCascade(film).id, owner.id, "setup: the lower-order pin must own the film");
+        assert.ok(E.watchScopeRows().some(m => m.tmdb_id === id), "setup: the film must reach the tab before any agent is unticked");
+        E.toggleWatchAgent(owner.id);   // unticks the OWNER, not the co-lister
+        assert.ok(!E.watchScopeRows().some(m => m.tmdb_id === id), "unticking the OWNER must remove the film, even though the co-lister is still included");
+      } finally {
+        E.toggleWatchAgent(owner.id);   // re-tick, restoring watchAgentOff to its prior (empty) state
         E.setWatchOccasion(null);
         E.setWatchTab(savedTab);
         delete E.notify[id];
@@ -4763,31 +4754,21 @@ test("CAS-778 AC2: every film watchScopeRows() admits under a selected occasion 
   unseedOccasion(occ.id);
 });
 
-test("CAS-778 AC3: the card's agent chip names whichever owner it's handed, matching the heading's own occasion-aware pick", () => {
-  const occ = E.createOccasion("CAS778-chip");
-  const outOfOccasion = seedOccCascade("cas778-chip-out", 0, [], "Out Of Occasion Agent");
-  const inOccasion = seedOccCascade("cas778-chip-in", 5, [occ.id], "In Occasion Agent");
-  withCas778Cascades([outOfOccasion, inOccasion], () => {
+test("CAS-793 AC6/AC7: the card's agent chip (agentChipHTML has no ownerOverride any more) names the same agent as filmOwnerCascade, pinned or not", () => {
+  const owner = seedOccCascade("cas793-chip-owner", 0, [], "Owner Only");
+  withOwnerTestCascades([owner], () => {
     const film = pickPinnableFilm();
     const id = film.tmdb_id;
-    pinFilm(id, outOfOccasion.id);
-    pinFilm(id, inOccasion.id);
+    pinFilm(id, owner.id);
+    E.recomputeFound();
     try {
-      E.setWatchOccasion(occ.id);
-      const owner = E.filmOwnerCascade(film);
-      assert.equal(owner.id, inOccasion.id, "setup: the occasion-aware owner must be the in-occasion agent");
-      const chip = E.agentChipHTML(id, owner);
-      assert.ok(chip.includes(inOccasion.name), "the chip given the heading's own owner must print that same agent's name");
-      assert.ok(!chip.includes(outOfOccasion.name), "the chip must never fall back to naming the out-of-occasion agent while one is selected");
-      // No override passed (every non-Watch caller — the Watch List feed, Moving) must be untouched by this
-      // ticket: it still falls back to cascadesFor(id)[0], never reading watchOccasion at all.
-      const chipUnrelated = E.agentChipHTML(id);
-      assert.ok(chipUnrelated.includes(outOfOccasion.name) || chipUnrelated.includes(inOccasion.name),
-        "sanity: the default (no-override) chip must still resolve to one of this film's own pinned agents");
+      const heading = E.filmOwnerCascade(film);
+      assert.equal(heading.id, owner.id);
+      const chip = E.agentChipHTML(id);
+      assert.ok(chip.includes(owner.name), "the chip's only owner source (cascadesFor(id)[0]) must name the same agent as the heading");
+      assert.equal(E.agentChipHTML.length, 1, "agentChipHTML must take a single argument — no ownerOverride param left over from CAS-778");
     } finally {
-      E.setWatchOccasion(null);
       delete E.notify[id];
     }
   });
-  unseedOccasion(occ.id);
 });

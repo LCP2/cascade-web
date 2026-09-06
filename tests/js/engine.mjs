@@ -148,6 +148,10 @@ if(typeof window.CascadeAuth === "undefined"){
   get watchTab(){ return watchTab; },
   setWatchTab(v){ watchTab = v; },
   watchWatchedSel, watchGenreOff, watchSearch, filmMatchesWatchedFilter, filmMatchesWatchTab,
+  // CAS-793: watchAgentOff (CAS-720's own per-tab "Agents to include" state, by reference like watchGenreOff
+  // above) and toggleWatchAgent (its wire mutator, wrapped like toggleFilmOpt below) — so a test can drive a
+  // real untick through the real function and assert watchScopeRows' owner-based occasion filter honours it.
+  watchAgentOff, toggleWatchAgent: (id) => window.toggleWatchAgent(id),
   YM_SVC,
   // CAS-677: WATCH_STEPS (the watched-verdict ramp watchlistDefaults()'s permissive watchedOn is built
   // from), ymWatchedOn itself (by reference, like ymCascOff below, so a test can drive it directly the same
@@ -285,11 +289,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-699: ymSort exposed by getter/setter (like watchPrefs/flowKind below) so a test can drive the list's
   // own sort pick the same way ymSortChange does, and assert listingGroups honours it over CAS-430's default.
   listingGroups,
-  // CAS-778: filmOwnerCascade/filmOwnerOrder/splitByOwner/watchScopeRows are all pure over cascades/notify/
-  // MOVIES, exactly like listingGroups above — exported so a test can drive the occasion-aware owner lookup
-  // directly rather than scraping rendered headings. agentChipHTML is the one DOM-free render helper worth
-  // exporting here too: it takes the same ownerOverride this ticket threads from a block's own owner, so a
-  // test can assert the chip names whatever owner it's handed, matching the heading above it.
+  // CAS-793: filmOwnerCascade/filmOwnerOrder/splitByOwner/watchScopeRows are all pure over cascades/notify/
+  // MOVIES, exactly like listingGroups above — exported so a test can drive the single CAS-709 global-owner
+  // lookup and the occasion pool test directly rather than scraping rendered headings. agentChipHTML is the
+  // one DOM-free render helper worth exporting here too, so a test can assert the chip's own name/HTML.
   filmOwnerCascade, filmOwnerOrder, splitByOwner, watchScopeRows, agentChipHTML,
   get ymSort(){ return ymSort; },
   setYmSort(v){ ymSort = v; },
