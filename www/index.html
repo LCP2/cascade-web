@@ -715,6 +715,12 @@
   .ctl.notify.wsrc-auto   .cmini{border-color:var(--brand-blue)}
   .ctl.notify.wsrc-manual.isnew .cmini{box-shadow:0 0 0 1px rgba(255,213,74,.45),0 0 9px 1px rgba(255,213,74,.60)}
   .ctl.notify.wsrc-auto.isnew   .cmini{box-shadow:0 0 0 1px rgba(76,125,255,.55),0 0 10px 2px rgba(76,125,255,.75)}
+  /* CAS-786: the same gold/blue provenance convention, extended to the agent chip — gold when a human hand-
+     placed the film's owner, blue when the owner came from rank. Does not touch .ctl.casc's own accent icon/fill. */
+  .ctl.casc.csrc-manual .cmini{border-color:#ffd54a}
+  .ctl.casc.csrc-auto   .cmini{border-color:var(--brand-blue)}
+  .ctl.casc.csrc-manual.isnew .cmini{box-shadow:0 0 0 1px rgba(255,213,74,.45),0 0 9px 1px rgba(255,213,74,.60)}
+  .ctl.casc.csrc-auto.isnew   .cmini{box-shadow:0 0 0 1px rgba(76,125,255,.55),0 0 10px 2px rgba(76,125,255,.75)}
   /* CAS-374/CAS-439: the Watch/Watched chip is now the toggle for its own panel — this arrow is the only cue
      for open vs closed, since the separate collapse chevron inside the panel is gone. The panel opens ABOVE
      the button (CAS-304), so the chevron points UP when closed (that's the direction the list will open) and
@@ -5657,7 +5663,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 960, "commit": "edb5c94", "builtAt": "2026-09-06T02:53:39Z"};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 961, "commit": "b88ec34", "builtAt": "2026-09-06T03:01:46Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7590,15 +7596,21 @@ function notifyChipHTML(id){
 // CAS-778: ownerOverride, when passed, is the Watch listing's own occasion-aware owner (filmOwnerCascade) —
 // the same agent the section heading above this card already names. Left undefined (every other caller —
 // the Watch List feed, Moving), this reads the CAS-709 global owner exactly as before.
+// CAS-786: which colour the agent chip reads as — "manual" if the owner is a hand placement (pinnedInto),
+// "auto" if it was picked by rank, null if there's no owner. Mirrors filmWatchSource's wsrc-*/csrc-* pairing.
+function agentChipSource(id, owner){
+  return owner ? (pinnedInto(id,owner) ? "manual" : "auto") : null;
+}
 function agentChipHTML(id, ownerOverride){
   const owner=ownerOverride!==undefined ? ownerOverride : (cascadesFor(id)[0]||null);
   const lbl = owner ? owner.name : "No agent";
   const title = owner
     ? `Owned by ${owner.icon} ${owner.name}. Tap to move to a different agent.`
     : "No agent owns this film. Tap to pin one.";
+  const csrc=agentChipSource(id, owner);
   // DOM class stays `.ctl.casc` — see the CAS-427 comment above .actions for why this file keeps a control's
   // original class through a relabel rather than chasing every CSS selector each time the name changes.
-  return `<button type="button" class="ctl casc" data-kid="${id}" onclick="openAgentPanel(${id},this)"
+  return `<button type="button" class="ctl casc${csrc?` csrc-${csrc}`:""}${filmIsNew(id)?" isnew":""}" data-kid="${id}" onclick="openAgentPanel(${id},this)"
       aria-haspopup="true" aria-expanded="false" title="${escA(title)}" aria-label="${escA(title)}">
     <span class="cmini"><i class="cfill" style="width:${owner?100:0}%;background:var(--accent)"></i>
       <span class="cic">${owner?owner.icon:ICON.deck}</span>
