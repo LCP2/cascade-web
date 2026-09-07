@@ -2056,9 +2056,6 @@
   .osdh b{font-family:var(--font-display);font-size:14px;font-weight:600;color:var(--ink)}
   .osdset{font-size:11.5px;color:var(--accenttext);font-weight:600;flex:0 0 auto}
   .oscap{font-size:11px;color:var(--faint);margin:2px 2px 0}
-  /* CAS-249: the second question inside the Critics & awards card, set off from the slider above it
-     so the two ladders read as two controls rather than one with a stray row of labels. */
-  .oscap2{margin-top:18px}
   .osdial .osticks{font-size:9px;align-items:flex-start}
   .osdial .osticks span{flex:1;text-align:center}
   .osdial .osticks .thr{display:block;font-size:8px;font-weight:700;opacity:.7;margin-top:1px}
@@ -3336,14 +3333,6 @@
   .eapenc:hover{border-color:var(--accent);color:var(--ink)}
   .eapenc:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .eaempty{display:block;font-size:13.5px;color:var(--dim)}
-  .easec{display:flex;gap:8px;margin-bottom:14px}
-  .easub{flex:1;min-width:0;text-align:left;cursor:pointer;background:var(--panel2);border:1px solid var(--line);
-    border-radius:12px;padding:10px 12px;color:var(--ink)}
-  .easub:hover{border-color:#3a4150}
-  .easub:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  .eash{display:block;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
-    color:var(--faint);margin-bottom:4px}
-  .easv{display:block;font-size:13px;font-weight:700;color:var(--ink);line-height:1.35}
   /* ---- CAS-195: the ratings segmented control ----
      ONE gradient is painted across the whole bar, and each segment either lets it through or masks its own
      slice with the panel colour. That is what makes a run of chosen ratings read as a single continuous
@@ -5699,7 +5688,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 983, "commit": "5c1489f", "builtAt": "2026-09-07T09:36:54Z"};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 984, "commit": "0c5dec3", "builtAt": "2026-09-07T09:43:33Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -13704,14 +13693,20 @@ const WINDOW_COLOR = {in_cinema:"var(--amber)", premium:"var(--purple)", rent:"v
 // The last score each window carried before being set to Never, so tapping a window back on restores where
 // it was rather than a hardcoded guess. Session-only (matches every other piece of in-flight editor state).
 const msnLastValue = {};
-// The Mission card's own value line, above the caption, e.g. "Cinema 88+ · Rental 72+ · Streaming 60+ ·
-// under 60, not listed" — ladder order (WATCH_LEVEL_KEYS), not the track's ascending left-to-right order.
+// CAS-827: each armed window reads as its own sentence clause — "90+, watch it at the Cinema" — in
+// DESCENDING score order (not ladder order, not the track's ascending left-to-right order, since markers can
+// be dragged past each other), then the floor clause last, e.g. "90+, watch it at the Cinema · 60+, watch it
+// on Streaming · under 60, don't list". A window with no phrase below can never print "undefined".
+const WATCH_LEVEL_PHRASE = {in_cinema:"watch it at the Cinema", premium:"watch it on Premium", rent:"rent it",
+  stream:"watch it on Streaming"};
 function msnValueLine(c){
   const marks=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
   if(!marks.length) return "No window is armed — nothing will ever qualify.";
-  const parts=marks.map(k=>`${WATCH_LEVEL_SHORT_LABEL[k]} ${c.watchMarkers[k]}+`);
+  const byScore=[...marks].sort((a,b)=>c.watchMarkers[b]-c.watchMarkers[a]);
+  const phrase = k => WATCH_LEVEL_PHRASE[k] || `watch it on ${WATCH_LEVEL_SHORT_LABEL[k]}`;
+  const parts=byScore.map(k=>`${c.watchMarkers[k]}+, ${phrase(k)}`);
   const floor=Math.min(...marks.map(k=>c.watchMarkers[k]));
-  return `${parts.join(" · ")} · under ${floor}, not listed`;
+  return `${parts.join(" · ")} · under ${floor}, don't list`;
 }
 // CAS-817: every window switched on in Where & when you'll watch gets exactly one chip in the "On this
 // track" row below — solid with a ✕ if it has a marker, dashed with a ＋ if it's Never — so add/remove is
@@ -13759,12 +13754,8 @@ function msnScoreCardHTML(){
   const c=onbFlow.draft||{};
   return `<div class="osdial msnscore">
     <div class="osdh"><span class="em">🎯</span><span class="dl">Cascade score</span></div>
-    <p class="oscap">How good the film is. Drag a window to the score that earns it — the lowest one is the floor.</p>
     <p class="reqval" id="msnValueLine">${esc(msnValueLine(c))}</p>
     <div id="msnTrackArea">${msnTrackAreaHTML(c)}</div>
-    <p class="oscap oscap2">Before release the score reads how much a film is being talked about; once it's
-      out, what audiences and critics made of it. A film keeps the window it was given — it is never
-      re-scored on the way down.</p>
   </div>`;
 }
 // A window just switched to Never has no marker left to read a "last score" off, so a restore falls back to
@@ -13919,7 +13910,9 @@ function awardsCardHTML(){
 // than the 5-stop YEARSREQ_STOPS ladder CAS-729 gave it (two scales for one setting was the defect).
 function yearsCardHTML(){
   const val=(onbFlow.draft||{}).yearsBack||0;
-  const notch = y => `<span class="vnotch ${(val && y && y<=val) ? "lit":""}" style="left:${posForYears(y)}%"></span>`;
+  // CAS-827: a stop lights when its own position is at or left of the thumb's position — matching .vfillbar,
+  // which fills from the left — not when its raw YEAR value is <= val, which lit the wrong side of the track.
+  const notch = y => `<span class="vnotch ${(val && y && posForYears(y)<=posForYears(val)) ? "lit":""}" style="left:${posForYears(y)}%"></span>`;
   const slider=`<div class="vslider">
       <div class="vtrack"><div class="vfillbar" style="width:${posForYears(val)}%"></div></div>
       <div class="vnotches">${YEARS_STOPS.map(notch).join("")}</div>
@@ -13936,7 +13929,6 @@ function yearsCardHTML(){
 // CAS-816: Styles and Age rating join the one-page Edit Agent as tappable summary cards — a value line plus
 // the actual chips a picker would show, so each reads its current value without being opened (AC2), tapping
 // straight through to the same genres/age spokes the old doors and sub-row already opened.
-const STYLE_CARD_LEAD = 5;
 function stylesCardHTML(){
   const g=dT().genre, excl=dExcludeSet();
   const included = g===null ? [] : ONB_GENRES.filter(x=>dGenreSet().has(x) && !excl.has(x));
@@ -13944,9 +13936,7 @@ function stylesCardHTML(){
     : included.length===ONB_GENRES.length ? `All ${ONB_GENRES.length} styles`
     : !included.length ? "No styles match"
     : `${included.length} of ${ONB_GENRES.length} styles`;
-  const lead=included.slice(0,STYLE_CARD_LEAD), rest=included.length-lead.length;
-  const chips = lead.map(x=>`<span class="chip gen on">${esc(x)}</span>`).join("")
-    + (rest>0 ? `<span class="chip chipmore">+${rest} more</span>` : "");
+  const chips = included.map(x=>`<span class="chip gen on">${esc(x)}</span>`).join("");
   return `<button type="button" class="osdial cardbtn" onclick="briefGo('genres')">
     <span class="osdh"><span class="em">🎭</span><span class="dl">Styles</span></span>
     <p class="reqval">${esc(valueText)}</p>
@@ -13958,6 +13948,15 @@ function ageRatingCardHTML(){
     <span class="osdh"><span class="em">🔞</span><span class="dl">Age rating</span></span>
     <p class="reqval">${esc(trailAge())}</p>
     <div class="chips">${AGE_LEVELS.map((a,k)=>`<span class="chip gen${dAgeOn(k)?" on":""}">${esc(a)}</span>`).join("")}</div>
+    <span class="dc">›</span></button>`;
+}
+// CAS-827: Occasions moves to the top of the page as a summary card in the same shape as Styles/Age rating —
+// icon, title, value line, chevron — rather than the two-up .easub row it used to share with a second control.
+function occasionsCardHTML(){
+  const d=onbFlow.draft||{};
+  return `<button type="button" class="osdial cardbtn" onclick="briefGo('occasions')">
+    <span class="osdh"><span class="em">🎉</span><span class="dl">Occasions</span></span>
+    <p class="reqval">${esc(occasionsSummary(d))}</p>
     <span class="dc">›</span></button>`;
 }
 function wireReqCards(){
@@ -14199,10 +14198,11 @@ const TB_BODIES = {
   year(b, upd){
     // CAS-340: the same ten-stop non-linear track the agent's own how-far-back uses. The slider carries a
     // POSITION and the value is read off it, exactly as Budget & scale does — the years are not linear to
-    // the eye any more than money is. A notch lights up when its window is a SUBSET of the current pick
-    // (y && y<=val) — "Any" (y=0) never lights, since a finite window never includes the unbounded one.
+    // the eye any more than money is. A notch lights when its own POSITION is at or left of the thumb's
+    // (CAS-827 — matches .vfillbar, which fills from the left) — "Any" (y=0) never lights, since a finite
+    // window never includes the unbounded one.
     const val=baseYearsBack();
-    const notch = y => `<span class="vnotch ${(val && y && y<=val) ? "lit":""}" style="left:${posForYears(y)}%"></span>`;
+    const notch = y => `<span class="vnotch ${(val && y && posForYears(y)<=posForYears(val)) ? "lit":""}" style="left:${posForYears(y)}%"></span>`;
     b.innerHTML=`<p class="tbhint">Slide left for the whole back-catalogue, right for only the freshest.</p>
       <div class="vslider">
         <div class="vtrack"><div class="vfillbar" style="width:${posForYears(val)}%"></div></div>
@@ -14426,6 +14426,7 @@ const SHARP_STEPS = {
       // The name row is gone — CAS-531 #1 moved it into the page header (see renderOnbStep's key==="briefing"
       // branch), so a rename opens the identical "name" spoke this row used to.
       return `<p class="ossub">Reconfigure this agent here.${nNew ? ` <b>${nNew}</b> newly added film${nNew===1?"":"s"} in its list right now.` : ""}</p>
+        ${occasionsCardHTML()}
         <div class="usec">WHAT IT LOOKS FOR</div>
         ${stylesCardHTML()}
         ${msnScoreCardHTML()}
@@ -14438,10 +14439,6 @@ const SHARP_STEPS = {
           <span>🎬 Had a cinema release
             <small style="color:var(--faint)">— an AU cinema (not limited) release, at any point</small></span>
           <span class="knob"></span></div>
-        <div class="easec">
-          <button type="button" class="easub" onclick="briefGo('occasions')">
-            <span class="eash">Occasions</span><span class="easv">${esc(occasionsSummary(d))}</span></button>
-        </div>
         <!-- CAS-642 W2b: the service-status scope (CAS-635 N3a) and exclude-tags (CAS-635 N3b) spokes moved
              off this screen — both are a statement about a WATCH LIST, not about what this agent is allowed
              to find, and now live in a list's own Edit screen (leInnerHTML) instead. One home each, not two.
