@@ -1548,23 +1548,6 @@ function withWatchPrefs(overrides, fn){
   try{ fn(); } finally{ E.setWatchPrefs(saved); }
 }
 
-test("CAS-613 AC1: the briefing screen's autoNotify checkbox is unconditional (both cinema and streaming agents)", () => {
-  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
-  const anchor = src.indexOf("<!-- CAS-613: auto-notify");
-  assert.ok(anchor >= 0, "the CAS-613 checkbox block was not found in the briefing step");
-  const block = src.slice(anchor, anchor + 800);
-  assert.ok(block.includes('id="briefAutoNotify"'), "the autoNotify switch must render in the briefing step");
-  assert.ok(!block.trimStart().startsWith("${stream"),
-    "the checkbox must not be gated behind the streaming-only branch — it belongs to both lanes");
-});
-
-test("CAS-613 AC1: autoNotify defaults false and round-trips true through normCascade (the criteria jsonb shape)", () => {
-  const off = E.normCascade({ kind: "stream", status: [] });
-  assert.equal(off.autoNotify, false, "an agent saved before this ticket must read false, not undefined");
-  const on = E.normCascade({ kind: "stream", status: [], autoNotify: true });
-  assert.equal(on.autoNotify, true, "an agent explicitly saved with autoNotify true must keep it");
-});
-
 // Picks an unwatched film with a real (non -1) Cascade score under `status`, since the placement rule has
 // nothing to grade a scoreless film against. unwatchedFilms(n) already skips watched films; this just walks
 // forward until cascadeScore(m) is real, restoring nothing itself — status is the caller's to save/restore.

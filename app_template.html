@@ -2182,6 +2182,12 @@
     text-transform:uppercase;border-radius:6px;padding:3px 7px;white-space:nowrap}
   .reqscope.accent{background:rgba(124,92,255,.16);border:1px solid var(--accent);color:var(--selink)}
   .reqscope.muted{background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--faint)}
+  /* CAS-816: Styles and Age rating are tappable summary cards in the same osdial shape the score/requirement
+     cards use, rather than their own bespoke door style — a plain button reset plus a resting chevron. */
+  .osdial.cardbtn{display:block;width:100%;text-align:left;cursor:pointer;font:inherit;color:inherit;position:relative}
+  .osdial.cardbtn:hover{border-color:var(--accent)}
+  .osdial.cardbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .osdial.cardbtn .dc{position:absolute;top:14px;right:14px;color:var(--faint);font-size:16px}
   /* The score track itself: a 50-100 span, painted grey up to the lowest marker and then each window's own
      colour to the right of its marker (design record §7 item 3). .msntrackwrap carries generous top/bottom
      margin for a marker's stacked value/handle/zone-name column to clear without the next card crowding it —
@@ -2201,14 +2207,23 @@
     place-items:center;font-size:13px;cursor:grab;box-shadow:0 2px 8px rgba(0,0,0,.55);padding:0;
     touch-action:none}
   .msnhandle:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  .msnzone{background:none;border:0;font-size:9.5px;font-weight:800;
-    letter-spacing:.04em;padding:2px;white-space:nowrap;cursor:pointer}
-  .msnzone:hover{text-decoration:underline}
-  /* A window that's Where&When-enabled but currently Never — no marker on the track, just a way back on. */
-  .msnnever{display:flex;flex-wrap:wrap;gap:8px;margin:0 2px 4px}
-  .msnnvchip{background:var(--panel);border:1px dashed var(--line);color:var(--faint);border-radius:10px;
-    padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer}
-  .msnnvchip:hover{border-color:var(--accent);color:var(--ink)}
+  /* CAS-817: reverted to a plain label — it used to double as the "set to Never" button with no visible
+     sign of that, so removing a window was invisible. Never now lives only in the chip row below. */
+  .msnzone{font-size:9.5px;font-weight:800;letter-spacing:.04em;white-space:nowrap}
+  /* CAS-817: "On this track" replaces .msnnever/.msnnvchip — every Where&When-enabled window gets exactly
+     one chip here, whether it currently has a marker (solid, ✕ to remove) or is set to Never (dashed,
+     dimmed, ＋ to restore), so add/remove is an explicit visible control rather than a tap on a label. */
+  .msnchiphead{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--faint);margin:0 2px 8px}
+  .msnchips{display:flex;flex-wrap:wrap;gap:8px;margin:0 2px 4px}
+  .msnchip{display:inline-flex;align-items:center;gap:6px;border-radius:10px;padding:6px 8px 6px 10px;
+    font-size:12px;font-weight:700;color:var(--ink);background:var(--panel);border:1px solid var(--line)}
+  .msnchip.off{border-style:dashed;opacity:.6}
+  .msnchipx,.msnchipplus{width:18px;height:18px;border-radius:50%;border:0;display:grid;place-items:center;
+    background:rgba(255,255,255,.08);color:inherit;font:inherit;font-size:11px;line-height:1;cursor:pointer;
+    padding:0}
+  .msnchipx:hover,.msnchipplus:hover{background:rgba(255,255,255,.16)}
+  .msnchipx:focus-visible,.msnchipplus:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
   .osmore{width:100%;text-align:center;background:var(--panel2);border:1px dashed var(--line);color:var(--dim);
     border-radius:12px;padding:15px 12px;font-size:12.5px;font-weight:700;cursor:pointer;margin-bottom:11px}
   .osmore:hover{border-color:var(--accent);color:var(--ink)}
@@ -3010,8 +3025,14 @@
   .agrow{position:relative;display:flex;align-items:stretch;gap:8px;background:var(--panel);
     border:1px solid var(--line);border-left:3px solid var(--dcc,var(--accent));border-radius:14px;
     padding:10px 12px 11px;touch-action:pan-y}
-  .agrow.agent-cin{--dcc:var(--lane-cin)}
-  .agrow.agent-str{--dcc:var(--lane-str)}
+  /* CAS-814: the rail takes its colour from the row's RANK (--agrank-1..6, CAS-760's tokens), not the
+     retired cinema/streaming kind — a rank above 6 keeps reusing agrank-6. */
+  .agrow.agrank-1{--dcc:var(--agrank-1)}
+  .agrow.agrank-2{--dcc:var(--agrank-2)}
+  .agrow.agrank-3{--dcc:var(--agrank-3)}
+  .agrow.agrank-4{--dcc:var(--agrank-4)}
+  .agrow.agrank-5{--dcc:var(--agrank-5)}
+  .agrow.agrank-6{--dcc:var(--agrank-6)}
   .agrow.dragging{box-shadow:0 16px 32px rgba(0,0,0,.5);z-index:5;background:var(--panel2)}
   .aggrip{flex:0 0 auto;width:24px;align-self:stretch;display:grid;place-items:center;color:var(--dim);
     cursor:grab;touch-action:none;font-size:16px;border-radius:8px}
@@ -3026,8 +3047,8 @@
   .agranker .aggrip{flex:1;width:100%;align-self:auto}
   .agicon{flex:0 0 auto;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;
     font-size:17px;background:rgba(255,255,255,.06)}
-  .agrow.agent-cin .agicon{background:rgba(30,69,201,.16)}
-  .agrow.agent-str .agicon{background:rgba(76,157,255,.18)}
+  /* CAS-814: one neutral violet tint for every agent — the cinema/streaming kind no longer paints this. */
+  .agrow .agicon{background:rgba(124,92,255,.18)}
   /* CAS-565: the row is two full-width lines now, not one line with a tall middle column. .agmain used to
      be the column that decided the row height while the count and Edit floated at its centre — which is why
      the name ellipsised, the Learning pill wrapped to three lines and 76px of the 390px row was spent on
@@ -3039,19 +3060,21 @@
   /* CAS-565: kept — not orphaned. renderAgentsScreen()'s rows no longer use it (see .agbody above), but
      the list editor's ym-casc rows (CAS-592's leInnerHTML(), reusing this same .agrow shell) still do. */
   .agmain{flex:1;min-width:0;display:flex;flex-direction:column}
-  /* CAS-556: this label used to read the raw lane colour (var(--dcc)) as TEXT. --lane-cin is a deep
-     navy tuned to sit as a 3px edge/tint, not as small uppercase text — at that size it fails WCAG AA
-     against --panel. The deck's own type label (.dc-type) already carries this in --faint rather than
-     --dcc for the same reason; matching that convention here keeps the two surfaces consistent and
-     keeps the label legible for both lanes. Identity still reads from the border + icon tint.
-     CAS-565: the word "agent" came off the string — the screen is headed Agents and every row is one. */
-  .agtype{font-size:9.5px;text-transform:uppercase;letter-spacing:.7px;font-weight:700;color:var(--faint);
-    white-space:nowrap}
   .agname{font-size:15.5px;line-height:1.2;font-weight:800;color:var(--ink);overflow:hidden;
     text-overflow:ellipsis;white-space:nowrap}
   .agdetail{display:flex;align-items:baseline;gap:10px;min-width:0}
   .agsum{font-size:11.5px;color:var(--dim);margin-top:0;line-height:1.4;display:-webkit-box;
     -webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;flex:1;min-width:0}
+  /* CAS-814: the row's three-section card — identity (.agtop) already above, then this two-column
+     label/value settings grid, then .agmetrics (stats) below. Same label language as .credit/.clbl
+     (the film card's Director/Cast rows) — fixed uppercase label column, value takes the rest. */
+  .agsettings{display:flex;flex-direction:column;gap:5px;border-top:1px solid var(--line);
+    padding-top:8px;margin-top:1px}
+  .agsrow{display:flex;align-items:baseline;gap:8px;font-size:12px;color:var(--dim);line-height:1.4}
+  .agslbl{flex:0 0 74px;box-sizing:border-box;font-size:10px;text-transform:uppercase;
+    letter-spacing:.5px;font-weight:700;color:var(--faint)}
+  .agsval{flex:1;min-width:0}
+  .agdot{display:inline-block;width:7px;height:7px;border-radius:50%;margin:0 1px 0 0}
   /* Still used by watchlistRowHTML (Manage Lists, CAS-591) — the Agents row below stopped using it (CAS-643)
      but this is not a dead selector. */
   .agcount{flex:0 0 auto;display:flex;align-items:baseline;gap:3px;margin-left:auto;padding-left:4px}
@@ -3059,8 +3082,10 @@
   .agcount span{font-size:10.5px;color:var(--dim)}
   /* CAS-643: who-line and health/check-state, replacing the row's old right-hand film count. */
   .agwho{font-size:11px;color:var(--dim)}
-  /* CAS-664: the five real metrics, replacing the rate slider's own preview. */
-  .agmetrics{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--dim)}
+  /* CAS-664: the five real metrics, replacing the rate slider's own preview.
+     CAS-814: this is the row's Section 3 — its own top hairline separates it from the settings grid above. */
+  .agmetrics{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--dim);
+    border-top:1px solid var(--line);padding-top:7px;margin-top:1px}
   .agmrow{display:flex;align-items:baseline;gap:5px 9px;min-width:0;flex-wrap:wrap}
   .agmstat{white-space:nowrap;flex:0 0 auto}
   .agmstat.total{margin-left:auto;padding-left:8px}
@@ -3293,49 +3318,23 @@
   .ymcsearch{display:flex;align-items:center;gap:6px;margin-top:11px}
   .ymcsearch .search{flex:1;padding:9px 12px;font-size:15px}
   .ymcsearch .searchclear{position:static;transform:none;flex:0 0 auto}
-  /* ---- CAS-531: the Agent Briefing's rows, redesigned ----
-     Mission and Style are the primary visual elements now — big tinted doors carrying every selection, not
-     a one-line summary — so a glance at the page says what the agent actually does. Rating and How far back
-     stay reachable but drop to a flat two-up row underneath: real settings, just not the ones worth a full
-     card. The name row is gone from this list entirely — CAS-531 #1 moves it into the page header instead. */
+  /* ---- CAS-531/CAS-816: the Agent Briefing's rows ----
+     CAS-816 retired the Mission/Style tinted doors for a single scrolling page (SHARP_STEPS.briefing) — the
+     name row still lives in the page header rather than this list. */
   .ostop .osh.eahn{font-size:24px;font-weight:800;flex:0 1 auto}
   .eapenc{flex:0 0 auto;width:28px;height:28px;border-radius:9px;background:var(--panel);
     border:1px solid var(--line);color:var(--dim);font-size:13px;display:grid;place-items:center;cursor:pointer}
   .eapenc:hover{border-color:var(--accent);color:var(--ink)}
   .eapenc:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  .eacard{display:block;width:100%;text-align:left;cursor:pointer;position:relative;border-radius:16px;
-    padding:16px 15px;margin-bottom:10px;color:var(--ink);transition:border-color .16s}
-  /* Lee's call, 2026-08-23: Mission takes Style's cyan. The two doors are told apart by their icon and
-     heading, not by hue, and the purple/cyan pair made one screen carry two unrelated colour systems.
-     One rule for both, so a future edit cannot drift them apart. Applies to cinema and streaming alike —
-     the briefing hub emits the same markup for both kinds. */
-  .eacard.msn,.eacard.sty{background:linear-gradient(160deg,rgba(34,211,238,.14),rgba(34,211,238,.04));
-    border:1px solid rgba(34,211,238,.38)}
-  .eacard.msn:hover,.eacard.sty:hover{border-color:var(--cyan)}
-  .eacard .dc{position:absolute;top:16px;right:15px;color:var(--faint);font-size:16px}
-  .eachd{display:flex;align-items:center;gap:9px;margin-bottom:12px}
-  .eachd .di{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;font-size:16px;
-    flex:0 0 auto;background:var(--panel);border:1px solid var(--line)}
-  .eachd .dh{font-family:var(--font-display);font-size:11px;font-weight:700;letter-spacing:.06em;
-    text-transform:uppercase;color:var(--dim)}
-  .eamhead{display:block;font-family:var(--font-display);font-size:19px;font-weight:800;margin:0 0 6px}
-  .eamlines{display:flex;flex-direction:column;gap:2px}
-  .eamline{display:block;font-size:13.5px;color:var(--dim);line-height:1.5}
   .eaempty{display:block;font-size:13.5px;color:var(--dim)}
   .easec{display:flex;gap:8px;margin-bottom:14px}
   .easub{flex:1;min-width:0;text-align:left;cursor:pointer;background:var(--panel2);border:1px solid var(--line);
     border-radius:12px;padding:10px 12px;color:var(--ink)}
   .easub:hover{border-color:#3a4150}
-  .easub:focus-visible,.eacard:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .easub:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .eash{display:block;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
     color:var(--faint);margin-bottom:4px}
   .easv{display:block;font-size:13px;font-weight:700;color:var(--ink);line-height:1.35}
-  /* The pointer to Preferences (CAS-532) that replaces the removed Where & when row — dashed, not solid, so
-     it reads as a note rather than another door. */
-  .eaptr{display:flex;align-items:flex-start;gap:8px;background:rgba(255,107,107,.06);
-    border:1px dashed rgba(255,107,107,.32);border-radius:12px;padding:11px 12px;margin:0 0 14px;
-    color:var(--faint);font-size:12px;line-height:1.5}
-  .eaptr .ic{flex:0 0 auto}
   /* ---- CAS-195: the ratings segmented control ----
      ONE gradient is painted across the whole bar, and each segment either lets it through or masks its own
      slice with the panel colour. That is what makes a run of chosen ratings read as a single continuous
@@ -6163,6 +6162,12 @@ updatePrefSwitch(); updatePrefBtn(); updateUxSwitch();
 // Landing somewhere on purpose (the reveal, the membership start, onboarding) means landing on the agent's
 // own list — which is now simply the list, so this only settles the films you have already answered.
 function showFoundList(){ settleFoundView(); }
+// CAS-819: whether #sort's own value is a person's explicit pick, as opposed to filt.sort simply holding
+// whatever the active agent's own default sort happens to be (applyCascade lands that in filt.sort too,
+// on every agent apply, which is otherwise indistinguishable from a real pick). Set true only by #sort's
+// own onchange below, cleared wherever filt.sort is assigned from a stored cascade (applyCascade) — never
+// persisted, so a reload starts false same as filt.sort itself starts at DEFAULT_SORT.
+let sortPicked=false;
 // CAS-419: the invisible <select> is the only thing that changes filt.sort; this just repaints the icon
 // button around it — a tooltip naming the current order, and the active-dot for "you're off the default".
 function syncSortCtl(){
@@ -6172,9 +6177,11 @@ function syncSortCtl(){
   if(!sortCtl.isConnected) return;
   const opt=$("sort").querySelector(`option[value="${filt.sort}"]`);
   $("sortCtl").title="Order: "+(opt?opt.textContent:"");
-  $("sortDot").hidden=(filt.sort===DEFAULT_SORT);
+  $("sortDot").hidden=!sortPicked;   // CAS-819: dot reflects an explicit pick, not just "off DEFAULT_SORT"
 }
-$("sort").onchange=e=>{filt.sort=e.target.value;syncSortCtl();render();};
+// CAS-819: choosing "Cascade score" (DEFAULT_SORT's own option) is choosing the default back — anything
+// else is a genuine pick.
+$("sort").onchange=e=>{filt.sort=e.target.value;sortPicked=(filt.sort!==DEFAULT_SORT);syncSortCtl();render();};
 $("imdbMin").oninput=e=>{filt.imdb=+e.target.value;$("imdbVal").textContent=filt.imdb?filt.imdb.toFixed(1)+"+":"Any";render();};
 $("rtMin").oninput=e=>{filt.rt=+e.target.value;$("rtVal").textContent=filt.rt?filt.rt+"%+":"Any";render();};
 $("grossMin").onchange=e=>{filt.gross=+e.target.value;render();};
@@ -6790,7 +6797,11 @@ function bandHTML(m, svcLine){
       ? ` role="button" tabindex="0" aria-label="Show all services"
            onclick="this.closest('.card').querySelector('.wtw').classList.toggle('open');this.querySelector('.svcbtn').classList.toggle('open')"`
       : "";
-    return `${line}<div class="cap ${cls}${recentCls}${capTogClass}"${capTogAttrs}><span class="capwin"><span class="capicon">${icon}</span><b>${label}</b>${date}</span>${div}${svcLine||""}</div>`;
+    // CAS-820: where a service line exists it carries the fact the capsule is read for, and .capwin is
+    // flex:0 0 auto / nowrap inside an overflow:hidden .cap — so the window word was structurally
+    // guaranteed to push the service name out. The colour, the icon and the section heading all still
+    // say the window; the word only repeated them. Capsules with no service line keep it.
+    return `${line}<div class="cap ${cls}${recentCls}${capTogClass}"${capTogAttrs}><span class="capwin"><span class="capicon">${icon}</span>${svcLine?"":`<b>${label}</b>`}${date}</span>${div}${svcLine||""}</div>`;
   }).join("");
   // CAS-239: the row is NOT part of the tap-to-open region any more. It sits directly above the Watch
   // status and Notify chips, and a miss on either of those landed on it and opened the card — so the
@@ -9678,9 +9689,6 @@ function normCascade(c, opts){
   // CAS-643: who this agent is for. buildOnbAgents sets it from the recipe; an agent made by hand
   // has none, and the row prints no who-line for it — do not invent one.
   c.who = ["me","partner","kids","friends","everyone"].includes(c.who) ? c.who : undefined;
-  // CAS-613: per-agent auto-notify. A cascade saved before this ticket carries no such key and reads false,
-  // exactly what it already meant — nothing was ever auto-armed for it.
-  c.autoNotify = !!c.autoNotify;
   return c;
 }
 const CASCADE_TEMPLATES = [
@@ -10170,6 +10178,7 @@ function applyCascade(c){
   // The two Exclude toggles ARE the View chips — one state, two places to reach it.
   filt.hideWatched=c.excludeWatched!==false; filt.showHidden=c.excludeBlocked===false;
   filt.sort=c.sort||DEFAULT_SORT;
+  sortPicked=false;   // CAS-819: an agent's own default sort landing in filt.sort is never a person's pick
   syncFilterUI();
 }
 // Opening is idempotent: landing a card in the deck's centre IS selecting it, so this can be called
@@ -10814,9 +10823,7 @@ function emptyResultsHTML(){
   const scopeHides = prefsActive() ? countIf(()=>{ ignoreScope=true; }) : 0;
   let html=`<div class="empty">
     <div class="emoji">🔍</div>
-    <div class="eh">${c ? `“${esc(c.name)}” came back empty today.` : "Nothing matches all of that at once."}</div>
-    <div class="ep">Not a broken screen — a real answer: no title in the catalogue clears every bar you've set.
-      Drop one and it's back.</div>`;
+    <div class="eh">No titles match the current selections</div>`;
   if(opts.length){
     html+=`<div class="ebtns">`+opts.map(o=>
       `<button class="ebtn" onclick="relaxFilter('${o.key}')"><span>Drop ${o.label}</span>
@@ -10824,9 +10831,7 @@ function emptyResultsHTML(){
     if(scopeHides>0)
       html+=`<button class="ebtn" onclick="${c?"editCascade()":"openServices()"}"><span>Look beyond my services</span>
         <b>→ ${scopeHides} film${scopeHides===1?"":"s"}</b></button>`;
-    html+=`<button class="ebtn ghost" onclick="resetEverything()">Reset everything</button></div>`;
-  } else {
-    html+=`<div class="ebtns"><button class="ebtn ghost" onclick="resetEverything()">Reset everything</button></div>`;
+    html+=`</div>`;
   }
   return html+`</div>`;
 }
@@ -10906,7 +10911,7 @@ let draft=null;
 function newCascade(){
   draft=null;
   logEvent("new_agent_started");
-  flowStart("priority");   // CAS-629: this lane still opens on the old priority screen, not briefing1
+  flowStart("pickagent");  // CAS-815: no more cinema/streaming question — straight to picking an agent
   flowNewAgent=true;       // set AFTER flowStart, which resets the flow's own state
 }
 window.newCascade=newCascade;
@@ -12157,13 +12162,12 @@ function onbDepthFor(c){
 // One recommendation per lane, and it is the preset that answers the question they just asked rather than
 // a fixed favourite. RECOMMENDED is a badge on a card, so it has to move with the list the card is in.
 const RECOMMENDED_FOR = {cinema:"cinema", stream:"streaming"};
-// CAS-222: the name an agent is OFFERED — the channel it watches plus the standard it was built from. The
-// card's own label stays the standard alone ("Blockbusters", CAS-218), because the card is choosing a standard
-// and the standard is the same either side; it is the AGENT that belongs to one channel. Without the prefix,
-// building the same preset in both lanes gets you two agents with one name and nothing on the deck to tell
-// them apart.
+// CAS-222/CAS-815: the name an agent is OFFERED used to be the channel it watches plus the standard it was
+// built from, so that building the same preset in both lanes still got you two distinguishable agents. The
+// creation path no longer asks which channel, so the offered name is the standard alone — the card's own
+// label ("Blockbusters", CAS-218).
 const CHANNEL_WORD = {cinema:"Cinema", stream:"Streaming"};
-const starterAgentName = (s, kind) => `${CHANNEL_WORD[kind || flowKind] || CHANNEL_WORD.cinema} ${s.name}`;
+const starterAgentName = s => s.name;
 // CAS-372: the Name-your-Agent step drops this same channel word from what it prefills/saves — a prefilled
 // field reads as a decision already made, and "Streaming " in front of every offered name was that decision,
 // not the preset's. The channel word still disambiguates everywhere else this name is offered (the card,
@@ -12231,8 +12235,12 @@ const starterBar = (s, kind) => (s.barBy && s.barBy[kind || flowKind]) || s.bar;
 let pendingStarter = null;   // the agent the person chose
 // CAS-188: the cards are the body of the flow's `pickagent` step now, not a screen of their own — so this
 // returns the markup rather than writing it into an overlay that no longer exists.
+// CAS-815: this is the only caller of the card list at creation time, and there is no priority answer any
+// more to narrow it by — every starter is offered, in STARTERS' own order. startersFor() itself stays
+// untouched (the lane-consistency test suite calls it directly, per kind, for cinema/stream presets that
+// are NOT offered here).
 function starterCardsHTML(kind){
-  return startersFor(kind || flowKind).map(s=>{
+  return STARTERS.map(s=>{
     const recommended = s.key===RECOMMENDED_FOR[kind || flowKind];
     const n=starterCount(s, kind);
     // The count is REAL — countCriteria against today's catalogue, the same call the deck cards use. The
@@ -12264,9 +12272,8 @@ window.pickStarter=key=>{
   // / Ratings screens edit onbFlow.draft directly, so a preset that wants a standard of its own (CAS-307:
   // Family Movies' rating cap and genre exclude) has to seed it here, not just the bar dials below.
   // Commit is deferred to finishSharpSequence so the payoff shows the sharpened agent, not the raw card.
-  // CAS-222: the offered name is the CHANNEL plus the preset — "Cinema Blockbusters", not "Blockbusters".
-  // The card names a standard, and the same standard is a different agent in each lane, so the card's own
-  // label can't be the agent's name without two agents built from one preset ending up identically named.
+  // CAS-815: the offered name is the preset alone now — "Blockbusters", not "Cinema Blockbusters" — since
+  // there is no channel answer left to disambiguate it with.
   const dfltName = starterAgentName(s, flowKind);
   onbFlow.draft = normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:dfltName, crit:s.crit, alerts:s.alerts}));
   onbFlow.name = dfltName;
@@ -13684,12 +13691,26 @@ function msnValueLine(c){
   const floor=Math.min(...marks.map(k=>c.watchMarkers[k]));
   return `${parts.join(" · ")} · under ${floor}, not listed`;
 }
-// Every window switched on in Where & when you'll watch gets a spot: a live marker on the track if it isn't
-// Never, or a small "restore" chip below it if it is (design record §7 item 5 — Never removes it from the
-// track, it does not delete the window's ability to have a marker again).
+// CAS-817: every window switched on in Where & when you'll watch gets exactly one chip in the "On this
+// track" row below — solid with a ✕ if it has a marker, dashed with a ＋ if it's Never — so add/remove is
+// one explicit control instead of a tap on what reads as the marker's label.
+function msnChipsHTML(c){
+  const keys=WATCH_LEVEL_KEYS.filter(k=>windowEnabled(k));
+  if(!keys.length) return "";
+  const chips=keys.map(k=>{
+    const dot=`<span class="agdot" style="background:${WINDOW_COLOR[k]}"></span>`;
+    return windowUsable(c,k)
+      ? `<span class="msnchip on">${dot}<span class="msnchiplbl" data-key="${k}">${esc(WATCH_LEVEL_SHORT_LABEL[k])} ${c.watchMarkers[k]}+</span>
+          <button type="button" class="msnchipx" data-act="never" data-key="${k}"
+            aria-label="Set ${escA(WATCH_LEVEL_SHORT_LABEL[k])} to Never">✕</button></span>`
+      : `<span class="msnchip off">${dot}<span class="msnchiplbl">${esc(WATCH_LEVEL_SHORT_LABEL[k])} — never</span>
+          <button type="button" class="msnchipplus" data-act="restore" data-key="${k}"
+            aria-label="Restore ${escA(WATCH_LEVEL_SHORT_LABEL[k])}">＋</button></span>`;
+  }).join("");
+  return `<div class="msnchiphead">On this track</div><div class="msnchips">${chips}</div>`;
+}
 function msnTrackAreaHTML(c){
   const usable=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
-  const neverEnabled=WATCH_LEVEL_KEYS.filter(k=>windowEnabled(k) && !usable.includes(k));
   const byScore=[...usable].sort((a,b)=>(c.watchMarkers[a]-c.watchMarkers[b])
     || (WATCH_LEVEL_KEYS.indexOf(b)-WATCH_LEVEL_KEYS.indexOf(a)));
   const segs=[`<div class="msnseg grey" style="left:0%;width:${byScore.length?trackPct(c.watchMarkers[byScore[0]]):100}%"></div>`];
@@ -13705,15 +13726,12 @@ function msnTrackAreaHTML(c){
       <span class="msnval">${v}</span>
       <button type="button" class="msnhandle" style="background:${WINDOW_COLOR[k]}" data-key="${k}"
         aria-label="${escA(WATCH_LEVEL_SHORT_LABEL[k])} score, currently ${v}">${WINDOW_ICON[k]}</button>
-      <button type="button" class="msnzone" data-act="never" data-key="${k}" style="color:${WINDOW_COLOR[k]}"
-        title="Say Never for ${escA(WATCH_LEVEL_SHORT_LABEL[k])} — removes it from the track">${esc(WATCH_LEVEL_SHORT_LABEL[k].toUpperCase())}</button>
+      <span class="msnzone" style="color:${WINDOW_COLOR[k]}">${esc(WATCH_LEVEL_SHORT_LABEL[k].toUpperCase())}</span>
     </div>`;
   }).join("");
-  const neverRow=neverEnabled.length ? `<div class="msnnever">${neverEnabled.map(k=>
-    `<button type="button" class="msnnvchip" data-act="restore" data-key="${k}">+ ${esc(WATCH_LEVEL_SHORT_LABEL[k])} — Never</button>`).join("")}</div>` : "";
   // id lives on the WRAP, not the thin .msnline bar, so paintMsnTrack()/wireMsnTrack() can reach both the
   // segments and the marks (siblings) through one querySelectorAll root.
-  return `<div class="msntrackwrap" id="msnTrack"><div class="msnline">${segs.join("")}</div>${marks}</div>${neverRow}`;
+  return `<div class="msntrackwrap" id="msnTrack"><div class="msnline">${segs.join("")}</div>${marks}</div>${msnChipsHTML(c)}`;
 }
 function msnScoreCardHTML(){
   const c=onbFlow.draft||{};
@@ -13764,6 +13782,13 @@ function paintMsnTrack(){
     el.style.left=pct+"%";
     el.style.transform=pct<=0?"translate(0,-50%)":pct>=100?"translate(-100%,-50%)":"translate(-50%,-50%)";
     const val=el.querySelector(".msnval"); if(val) val.textContent=v;
+  });
+  // CAS-817: the "On this track" chip repeats each window's score, so a drag has to keep it in step too —
+  // in place, same as the marker's own .msnval, never through msnRebuild (that would tear the drag).
+  const area=$("msnTrackArea");
+  if(area) area.querySelectorAll(".msnchiplbl[data-key]").forEach(el=>{
+    const key=el.dataset.key, v=c.watchMarkers[key]; if(v==null) return;
+    el.textContent=`${WATCH_LEVEL_SHORT_LABEL[key]} ${v}+`;
   });
   const vl=$("msnValueLine"); if(vl) vl.textContent=msnValueLine(c);
 }
@@ -13867,17 +13892,51 @@ function awardsCardHTML(){
     "How decorated it is. A winner clears every nomination rung.",
     "reqAwardsVal", AWARDS_CARD_LABEL[v], reqStepSliderHTML("onbDial_awardsreq", AWARD_STOPS, v, "Awards"));
 }
-// CAS-729: the Mission requirement card's own 5-stop scale — 3/5/10/20/Any, tightest-to-loosest LEFT to
-// RIGHT (design record §7). That is the reverse of the taste baseline's Any-on-the-left YEARS_STOPS
-// (CAS-340), so it is its own small table and its own wiring rather than a reordering of that shared one.
-const YEARSREQ_STOPS = [{y:3,label:"3 yrs"}, {y:5,label:"5"}, {y:10,label:"10"}, {y:20,label:"20"}, {y:0,label:"Any"}];
-const yearsReqLabel = y => !y ? "Any" : `Last ${y} year${y===1?"":"s"}`;
+// CAS-818: the Mission requirement card asks the exact same question the taste baseline's own How far back
+// row does, so it uses the same CAS-340 ten-stop track — YEARS_STOPS / posForYears / yearsForPos — rather
+// than the 5-stop YEARSREQ_STOPS ladder CAS-729 gave it (two scales for one setting was the defect).
 function yearsCardHTML(){
-  const y=(onbFlow.draft||{}).yearsBack||0;
-  const idx=Math.max(0, YEARSREQ_STOPS.findIndex(s=>s.y===y));
+  const val=(onbFlow.draft||{}).yearsBack||0;
+  const notch = y => `<span class="vnotch ${(val && y && y<=val) ? "lit":""}" style="left:${posForYears(y)}%"></span>`;
+  const slider=`<div class="vslider">
+      <div class="vtrack"><div class="vfillbar" style="width:${posForYears(val)}%"></div></div>
+      <div class="vnotches">${YEARS_STOPS.map(notch).join("")}</div>
+      <input type="range" id="onbDial_yearsreq" min="0" max="100" step="1" value="${posForYears(val)}"
+             aria-label="How far back">
+    </div>
+    <div class="vlabels">${YEARS_STOPS.map(y=>`<button type="button" class="vsnap ${y===val?"on":""}"
+      data-y="${y}" style="left:${posForYears(y)}%;transform:${posForYears(y)<=0?"translateX(0)":posForYears(y)>=100?"translateX(-100%)":"translateX(-50%)"}"
+      >${esc(yearsShort(y))}</button>`).join("")}</div>`;
   return reqCardHTML("📅","How far back","ONCE RELEASED","muted",
     "How old a released film can be. Cinema and upcoming films are always recent, so this never touches them.",
-    "reqYearsVal", yearsReqLabel(YEARSREQ_STOPS[idx].y), reqStepSliderHTML("onbDial_yearsreq", YEARSREQ_STOPS, idx, "How far back"));
+    "reqYearsVal", yearsLabel(val), slider);
+}
+// CAS-816: Styles and Age rating join the one-page Edit Agent as tappable summary cards — a value line plus
+// the actual chips a picker would show, so each reads its current value without being opened (AC2), tapping
+// straight through to the same genres/age spokes the old doors and sub-row already opened.
+const STYLE_CARD_LEAD = 5;
+function stylesCardHTML(){
+  const g=dT().genre, excl=dExcludeSet();
+  const included = g===null ? [] : ONB_GENRES.filter(x=>dGenreSet().has(x) && !excl.has(x));
+  const valueText = g===null ? "No styles selected"
+    : included.length===ONB_GENRES.length ? `All ${ONB_GENRES.length} styles`
+    : !included.length ? "No styles match"
+    : `${included.length} of ${ONB_GENRES.length} styles`;
+  const lead=included.slice(0,STYLE_CARD_LEAD), rest=included.length-lead.length;
+  const chips = lead.map(x=>`<span class="chip gen on">${esc(x)}</span>`).join("")
+    + (rest>0 ? `<span class="chip chipmore">+${rest} more</span>` : "");
+  return `<button type="button" class="osdial cardbtn" onclick="briefGo('genres')">
+    <span class="osdh"><span class="em">🎭</span><span class="dl">Styles</span></span>
+    <p class="reqval">${esc(valueText)}</p>
+    <div class="chips">${chips || `<span class="eaempty">Nothing qualifies — pick at least one</span>`}</div>
+    <span class="dc">›</span></button>`;
+}
+function ageRatingCardHTML(){
+  return `<button type="button" class="osdial cardbtn" onclick="briefGo('age')">
+    <span class="osdh"><span class="em">🔞</span><span class="dl">Age rating</span></span>
+    <p class="reqval">${esc(trailAge())}</p>
+    <div class="chips">${AGE_LEVELS.map((a,k)=>`<span class="chip gen${dAgeOn(k)?" on":""}">${esc(a)}</span>`).join("")}</div>
+    <span class="dc">›</span></button>`;
 }
 function wireReqCards(){
   (()=>{
@@ -13911,16 +13970,16 @@ function wireReqCards(){
   })();
   (()=>{
     const r=$("onbDial_yearsreq"); if(!r) return;
-    const card=r.closest(".osdial"), max=YEARSREQ_STOPS.length-1;
-    const apply=i=>{
-      onbFlow.draft.yearsBack=YEARSREQ_STOPS[i].y; onbFlow.barTouched=true;
-      paintDial(card, i/max*100, k=>k<=i, k=>k===i);
-      const read=$("reqYearsVal"); if(read) read.textContent=yearsReqLabel(YEARSREQ_STOPS[i].y);
+    const card=r.closest(".osdial");
+    const apply=y=>{
+      onbFlow.draft.yearsBack=y; onbFlow.barTouched=true;
+      paintDial(card, posForYears(y), i=>y && YEARS_STOPS[i] && YEARS_STOPS[i]<=y, i=>YEARS_STOPS[i]===y);
+      const read=$("reqYearsVal"); if(read) read.textContent=yearsLabel(y);
       selRefresh();
     };
-    r.oninput=()=>apply(+r.value);
-    card.querySelectorAll(".vsnap[data-i]").forEach(b=>{
-      b.onclick=()=>{ const i=+b.dataset.i; r.value=i; apply(i); };
+    r.oninput=()=>apply(yearsForPos(+r.value));
+    card.querySelectorAll(".vsnap[data-y]").forEach(b=>{
+      b.onclick=()=>{ const y=+b.dataset.y; r.value=posForYears(y); apply(y); };
     });
   })();
 }
@@ -13954,21 +14013,6 @@ function wireCinemaReleaseToggle(){
   cr.onclick=()=>{
     onbFlow.draft.cinemaReleaseOnly=!onbFlow.draft.cinemaReleaseOnly;
     onbFlow.barTouched=true; paint(); selRefresh();
-  };
-}
-// CAS-613: the Briefing hub's own "Notify me about what this agent finds" switch — a plain draft boolean,
-// persisted by the same briefSave() path as everything else on this screen, no separate save.
-function wireAutoNotifyToggle(){
-  const sw=$("briefAutoNotify"); if(!sw) return;
-  const paint=()=>{
-    const on=!!onbFlow.draft.autoNotify;
-    sw.classList.toggle("on", on);
-    sw.setAttribute("aria-checked", String(on));
-  };
-  paint();
-  sw.onclick=()=>{
-    onbFlow.draft.autoNotify=!onbFlow.draft.autoNotify;
-    paint();
   };
 }
 // ---- Taste-baseline accordion (CAS-146) -----------------------------------------------------------
@@ -14288,33 +14332,6 @@ const SHARP_STEPS = {
     },
     wire(){ onbDonePulse=null; },   // the pulse is a one-time thing: it has now played
   },
-  // #4 Mission (CAS-114, reworked CAS-145/CAS-661; CAS-724 retired the OR block for one score floor plus AND
-  // requirements; CAS-729 replaces the whole dial screen with a single score-track card carrying the Watch On
-  // windows as draggable markers, plus this REQUIREMENTS section). Design record "Agents, admission and Watch
-  // On — the one-score model" §7.
-  selectivity: {
-    title: "Mission",
-    progress: 70,
-    noAgent: true,
-    noSkip: true,     // inside the hub's door — the way out is Continue or Back, not a skip that means nothing
-    body(){
-      return `<p class="ossub">One standard, and where a film that meets it is worth watching.</p>
-        ${msnScoreCardHTML()}
-        <div class="usec">REQUIREMENTS</div>
-        <p class="oscap" style="margin:2px 2px 11px">Every film must clear all of these, whatever its score.
-          Two of them can only be answered once a film is out — a film still upcoming or in cinemas has no
-          awards and no release year yet, so those wait rather than shutting it out.</p>
-        ${budgetCardHTML()}
-        ${awardsCardHTML()}
-        ${yearsCardHTML()}
-        <div class="switch mini" id="onbCinemaRelease" role="switch">
-          <span>🎬 Had a cinema release
-            <small style="color:var(--faint)">— an AU cinema (not limited) release, at any point</small></span>
-          <span class="knob"></span></div>`;
-    },
-    refresh(){ paintMsnTrack(); },   // CAS-729: keeps the track's own DOM in step with onbRefresh()'s beat
-    wire(){ wireMsnTrack(); wireReqCards(); wireCinemaReleaseToggle(); wireIncludeUnbudgetedToggle(); },
-  },
   // ---- Your taste baseline (CAS-146 / r5-prototype screenTaste) ------------------------------------
   // Four dimensions on ONE page, one open at a time. The old flow asked them as four separate screens,
   // which made them feel like four decisions to get through rather than one thing you own and can come
@@ -14372,9 +14389,10 @@ const SHARP_STEPS = {
     wire(){ drawWatchLanes(); drawNotifyBy(); },
   },
   // ---- CAS-182 / CAS-208: the Agent Briefing ---------------------------------------------------------
-  // The edit screen is a HUB — one titled row per setting, each carrying that setting's current value read
-  // off the agent itself, each opening the very screen the flow used to set it. One set of controls serves
-  // first-run and edit, so the two can never drift into saying different things about the same setting.
+  // CAS-816: one scrolling page, not a hub of doors to other screens — the six things that decide what an
+  // agent finds (Styles, Cascade score, Budget, Awards, Age rating, How far back) render here directly, in
+  // that order, each already showing its current value. Mission's own screen (SHARP_STEPS.selectivity) is
+  // retired along with it: its cards live here now instead.
   briefing: {
     title: "Edit Agent",
     hub: true, noAgent: true,
@@ -14383,59 +14401,31 @@ const SHARP_STEPS = {
       // CAS-447: the same "N new" count the deck card carries, read off the SAME live draft this screen's
       // own doors edit (onbApply()) — an unsaved agent (no draft yet) simply has nothing to count.
       const nNew = onbFlow.draft ? newlyAddedCount(onbApply()) : 0;
-      const mission = missionDetail();
-      const style = styleDetail();
-      // CAS-531: Mission and Style are promoted to the primary visual elements — big tinted doors carrying
-      // every selection the agent's bar/style actually holds, not the old one-line "11 of 19" summary — so
-      // the two things that most decide what an agent finds are the two things this page leads with. Rating
-      // stays reachable underneath, smaller and flatter: a real setting, lower stakes.
       // The name row is gone — CAS-531 #1 moved it into the page header (see renderOnbStep's key==="briefing"
       // branch), so a rename opens the identical "name" spoke this row used to.
-      // CAS-550: Style, Rating and How far back came back as doors — CAS-532 retired them "everywhere" as a
-      // deliberate call, not a bug, and this ticket reversed that part by a later decision.
-      // CAS-729: How far back's own door retires again — it moved into Mission's REQUIREMENTS section as its
-      // own card (design record §7's explicit "do not re-raise": it is a requirement, not a Style setting),
-      // so this hub goes back to two doors plus Rating rather than plus Rating-and-How-far-back.
       return `<p class="ossub">Reconfigure this agent here.${nNew ? ` <b>${nNew}</b> newly added film${nNew===1?"":"s"} in its list right now.` : ""}</p>
-        <button type="button" class="eacard msn" onclick="briefGo('selectivity')">
-          <span class="eachd"><span class="di">🎯</span><span class="dh">Mission</span></span>
-          ${mission.headline ? `<span class="eamhead">${esc(mission.headline)}</span>` : ""}
-          <span class="eamlines">${mission.lines.length
-            ? mission.lines.map(l=>`<span class="eamline">${esc(l)}</span>`).join("")
-            : `<span class="eamline">No bar set — everything qualifies</span>`}</span>
-          <span class="dc">›</span></button>
-        <button type="button" class="eacard sty" onclick="briefGo('genres')">
-          <span class="eachd"><span class="di">🎭</span><span class="dh">Style</span></span>
-          ${style.headline ? `<span class="eamhead">${esc(style.headline)}</span>` : ""}
-          <span class="eamlines">${style.lines.map(l=>`<span class="eamline">${esc(l)}</span>`).join("")}</span>
-          <span class="dc">›</span></button>
+        <div class="usec">WHAT IT LOOKS FOR</div>
+        ${stylesCardHTML()}
+        ${msnScoreCardHTML()}
+        <div class="usec">REQUIREMENTS — EVERY FILM MUST CLEAR ALL OF THESE</div>
+        ${budgetCardHTML()}
+        ${awardsCardHTML()}
+        ${ageRatingCardHTML()}
+        ${yearsCardHTML()}
+        <div class="switch mini" id="onbCinemaRelease" role="switch">
+          <span>🎬 Had a cinema release
+            <small style="color:var(--faint)">— an AU cinema (not limited) release, at any point</small></span>
+          <span class="knob"></span></div>
         <div class="easec">
-          <button type="button" class="easub" onclick="briefGo('age')">
-            <span class="eash">Rating</span><span class="easv">${esc(trailAge())}</span></button>
           <button type="button" class="easub" onclick="briefGo('occasions')">
             <span class="eash">Occasions</span><span class="easv">${esc(occasionsSummary(d))}</span></button>
         </div>
-        <!-- CAS-613: auto-notify — per-agent, arms a film's earliest acceptable notify window the moment
-             the agent finds it (recomputeFound), mirroring toggleFilmOpt's manual tick. watchPrefs stays
-             the gate: if no window is switched on to notify, the honesty note says so instead of the
-             checkbox silently doing nothing. -->
-        <div class="switch mini" id="briefAutoNotify" role="switch">
-          <span>Notify me about what this agent finds
-            <small style="color:var(--faint)">— New films get your earliest notify window ticked automatically.</small></span>
-          <span class="knob"></span></div>
-        ${WATCH_LEVEL_KEYS.some(k=>(watchPrefs[k]||{}).notify===true) ? "" :
-          `<p class="eaptr"><span class="ic">↗</span><span>No notify windows are switched on yet — set one in Where &amp; when you'll watch and this will start working.</span></p>`}
         <!-- CAS-642 W2b: the service-status scope (CAS-635 N3a) and exclude-tags (CAS-635 N3b) spokes moved
              off this screen — both are a statement about a WATCH LIST, not about what this agent is allowed
              to find, and now live in a list's own Edit screen (leInnerHTML) instead. One home each, not two.
              briefToggleSvc/briefToggleExcludeTag and the 'extags' step stay defined: onboarding's own S3/S4
              sequence (CAS-628/629) still routes a new agent's draft through them before this screen ever
              opens. -->
-        <!-- CAS-531 #4: "Where & when you'll watch" is gone from this page — it's a system-wide setting now
-             (CAS-532), one place for every agent instead of a per-agent door. CAS-562 split that single
-             Preferences destination into Languages and Where & when you'll watch, so this note names both
-             top-menu rows directly rather than a page that no longer exists. -->
-        <p class="eaptr"><span class="ic">↗</span><span>Where &amp; when you'll watch and Language now live in the top menu — Languages and Where &amp; when you'll watch — and apply to every agent.</span></p>
         <!-- CAS-268: Delete only appears for an agent that EXISTS. A brand-new agent reaching this screen
              from New Cascade (CAS-246) has never been saved, so there is nothing to delete — offering the
              button there would either do nothing or claim to have removed something that was never on the
@@ -14444,7 +14434,8 @@ const SHARP_STEPS = {
           ${d.id ? `<button class="osdel" type="button" onclick="briefDelete()">Delete agent</button>` : ""}
         </div>`;
     },
-    wire(){ wireAutoNotifyToggle(); },
+    refresh(){ paintMsnTrack(); },   // CAS-729: keeps the track's own DOM in step with onbRefresh()'s beat
+    wire(){ wireMsnTrack(); wireReqCards(); wireCinemaReleaseToggle(); wireIncludeUnbudgetedToggle(); },
   },
   // ---- CAS-626 Onboarding S1: the briefing screen that creates the roster ---------------------------
   // Step 2 of the new A→B→C→D→E briefing sequence (CAS-626). All three questions here create agents, so
@@ -14655,28 +14646,6 @@ ${who.includes("kids") ? `
       if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, companionKeys, `<b>${n}</b> AGENTS TAKE THIS BRIEF`));
     },
   },
-  // ---- CAS-188 #1: what are you here for? -----------------------------------------------------------
-  // The one question that has to come first, because it is the only one that changes what the rest of the
-  // flow asks. It is a starting point, not a commitment — said out loud on the screen, because a fork this
-  // early reads as permanent unless you promise otherwise.
-  priority: {
-    noAgent: true, hub: true,        // the two answers ARE the continue — there is nothing to press after
-    backTo: "splash",
-    body(){
-      return `<h2 class="osh prioh">What matters most right now?</h2>
-        <div class="prioopts">
-          <button class="priobtn cin" type="button" onclick="flowPriority('cinema')">
-            <span class="prioictile"><span class="prioic">🎬</span></span>
-            <span class="priotx">Never miss a great film on the big screen.</span>
-            <span class="priochev">›</span></button>
-          <button class="priobtn str" type="button" onclick="flowPriority('stream')">
-            <span class="prioictile"><span class="prioic">📺</span></span>
-            <span class="priotx">Always know what to stream next.</span>
-            <span class="priochev">›</span></button>
-        </div>
-        <p class="priostmt">Just a starting point — add as many Cascade Agents as you like.</p>`;
-    },
-  },
   // ---- CAS-188 #2: pick an agent --------------------------------------------------------------------
   // The same cards, the same live counts, in the flow's own frame rather than an overlay of their own.
   pickagent: {
@@ -14687,7 +14656,7 @@ ${who.includes("kids") ? `
              you are choosing. What an agent does is the previous screen's job; this one is "pick from these,
              or build your own", which is exactly what the last card offers. Copy is the ticket's, verbatim. -->
         <p class="ossub">Choose a pre configured Agent or go totally custom.</p>
-        <div class="scards${flowKind==="stream"?" str":""}">${starterCardsHTML()}</div>`;
+        <div class="scards">${starterCardsHTML()}</div>`;
     },
   },
   // ---- Style (genres) -------------------------------------------------------------------------------
@@ -15218,8 +15187,9 @@ let onbStepKey=null;
 // own S5/S6, above). There is no "membership" entry: membership is reached by falling past the end of
 // flowList(), exactly as the old flow's reveal was. Both lanes are identical now (no priority screen to
 // tell them apart), so `flowKind` is set directly by flowStart() below instead. The "+ New Cascade"
-// (flowNewAgent) path still walks the OLD priority → pickagent → Briefing hop — see flowNext/flowBack —
-// since that path is deliberately untouched by this ticket (CAS-246).
+// (flowNewAgent) path still walks its own pickagent → Briefing hop — see flowNext/flowBack — since that
+// path is deliberately untouched by this ticket (CAS-246). CAS-815 dropped the priority question that
+// used to precede pickagent on that path.
 const FLOWS = {
   cinema: ["briefing1","briefing2","together","services","working","report"],
   stream: ["briefing1","briefing2","together","services","working","report"],
@@ -15264,9 +15234,9 @@ let flowOn=false;              // inside the wired flow (vs a standalone ?step= 
 // picked and hands over to the Briefing rather than walking the linear sharpening screens and finishing on
 // the membership page. Cleared by flowStart/flowStop, so it can never leak into a first run.
 let flowNewAgent=false;
-// CAS-629: no priority screen sets this on the first run any more — flowStart() below sets it directly
-// so every lane-dependent read (starterCardsHTML's ".str" class, PRIORITY_WATCH, etc.) still has a
-// defined value. The "+ New Cascade" path (flowNewAgent) still answers it via window.flowPriority.
+// CAS-629/CAS-815: no priority screen sets this on any run any more — flowStart() below sets it directly
+// so every lane-dependent read (startersFor/starterBar/starterWatch/starterCardsHTML, PRIORITY_WATCH,
+// etc.) still has a defined value, with nothing left that lets a user set it.
 let flowKind="cinema";
 let flowSlideT=null;
 const flowChromed = key => flowOn && flowCounted().includes(key);
@@ -15276,8 +15246,8 @@ const flowChromed = key => flowOn && flowCounted().includes(key);
 // since there is no Briefing hub to return to here.
 let menuStepOn=false;
 const stepSpoke = key => menuStepOn || (briefOn && key!=="briefing");
-// CAS-629: `startKey` is the "+ New Cascade" escape hatch (newCascade() passes "priority") — the first
-// run itself always opens on briefing1, the new sequence's own first screen.
+// CAS-629/CAS-815: `startKey` is the "+ New Cascade" escape hatch (newCascade() passes "pickagent") —
+// the first run itself always opens on briefing1, the new sequence's own first screen.
 function flowStart(startKey){
   flowOn=true; flowNewAgent=false;
   flowKind="stream";            // no priority screen to set it on the first run — see the declaration above
@@ -15295,10 +15265,10 @@ function flowStop(){
   $("stepHdr").hidden=true; $("stepNav").hidden=true;
 }
 function flowNext(){
-  // CAS-629: "+ New Cascade" (flowNewAgent) still walks the old priority → pickagent hop, independent of
-  // FLOWS now that FLOWS itself no longer contains either step (see the FLOWS declaration above).
+  // CAS-629/CAS-815: "+ New Cascade" (flowNewAgent) still walks its own pickagent hop, independent of
+  // FLOWS now that FLOWS itself no longer contains that step (see the FLOWS declaration above). pickagent
+  // is the first step of this lane now — no priority question precedes it any more.
   if(flowNewAgent){
-    if(onbStepKey==="priority") return gotoStep("pickagent","fwd");
     if(onbStepKey==="pickagent"){ flowNewAgent=false; return briefNewAgent(); }
   }
   const list=flowList(); let i=list.indexOf(onbStepKey);
@@ -15308,10 +15278,10 @@ function flowNext(){
   flowOn=false; finishSharpSequence();       // past the last step → S7 membership (Change E4)
 }
 function flowBack(){
-  // CAS-629: symmetric with flowNext's own flowNewAgent branch above.
+  // CAS-629/CAS-815: symmetric with flowNext's own flowNewAgent branch above — pickagent is the front of
+  // this lane now, so backing off it just closes the flow (CAS-347: off the front of the flow).
   if(flowNewAgent){
-    if(onbStepKey==="pickagent") return gotoStep("priority","back");
-    return flowStop();   // back off the front of "priority" — see the CAS-347 note this used to sit on
+    return flowStop();
   }
   const list=flowList(); let i=list.indexOf(onbStepKey)-1;
   while(i>=0 && stepSkipped(list[i])) i--;   // CAS-628: symmetric with flowNext — a skipped step is never landed on
@@ -15320,6 +15290,10 @@ function flowBack(){
   // splash underneath to back out to.
   flowStop(); showSplash();                  // off the front of the flow → back out to the splash
 }
+// CAS-815: no screen calls this any more — the cinema/streaming question is gone from the creation path,
+// so nothing in the app sets flowKind. It stays as a plain setter (not tied to any UI) because laneCrit
+// and the rest of the lane machinery are untouched by this ticket and still need a way to be exercised
+// per-lane — the test suite's pickInLane() calls this directly, with no screen behind it.
 window.flowPriority=kind=>{ flowKind=kind; logEvent("flow_priority",{kind}); flowNext(); };
 // ================= CAS-182 / CAS-208: the Agent Briefing =============================================
 // Editing an agent is the same set of screens the flow used to build it, hung off a hub instead of a line.
@@ -16356,72 +16330,56 @@ window.closeYourMovies=()=>{
 // so a drag lands in the carousel the moment it's committed. Type, name and film count are read straight off
 // c.kind / c.name / listedCount(c) — the same fields the deck card shows — so the two can never disagree.
 
-// ---- the row's "summary statement of the selections" (availability/channel, quality bar, genres, ratings,
-// services, era) — composed from the agent's own saved criteria, reusing the same phrase-builders the
-// editor and the deck's own sub-line already use (voteBand/critScoreReadout/scaleReadout/BUZZ_STOPS from the
-// Mission screen, scopeSummary/anyScope/allScoped from the deck's dc-sub, yearsLabel from the taste baseline).
-// Every segment is dropped when it is at its default — a bar of "everything qualifies" for every dimension
-// would not help tell two agents apart, which is the whole point of this line.
-const AGENT_LANE_WINDOWS = {cinema:["upcoming","opening_week","in_cinema"], stream:["pvod","rental","included_streaming"]};
-function agentWindowSum(c){
-  if(c.kind==="stream")
-    return anyScope(c) ? (allScoped(c) ? "On my services" : `My services on ${scopeSummary(c)}`) : "Any service";
-  const all=AGENT_LANE_WINDOWS.cinema;
-  const list=(c.listStatus&&c.listStatus.length) ? c.listStatus : (c.status&&c.status.length) ? c.status : all;
-  const hasUpcoming=list.includes("upcoming");
-  const hasInCinema=list.includes("opening_week")||list.includes("in_cinema");
-  if(hasInCinema&&hasUpcoming) return "Upcoming & in cinema";
-  if(hasInCinema) return "In cinema now";
-  if(hasUpcoming) return "Upcoming";
-  return "In cinema";
-}
-function agentBarSummary(c){
-  const uses=MISSION_DIALS_USED[c.kind]||MISSION_DIALS_USED.cinema;
-  const parts=[];
-  if(uses.includes("vote") && c.selCrowd>=VOTE_OFF) parts.push(voteBand(c.selCrowd)||c.selCrowd.toFixed(1)+"+");
-  if(uses.includes("crit")){
-    if(c.selCritScore) parts.push(critScoreReadout(c.selCritScore));
-    if(c.selAwards)    parts.push(AWARD_STOPS[c.selAwards].label);
-  }
-  if(uses.includes("scale") && c.selScale) parts.push(scaleReadout(c.selScale));
-  if(uses.includes("buzz")  && c.selBuzz)  parts.push(BUZZ_STOPS[c.selBuzz].label+" buzz");
-  if(c.awards) parts.push("award winners only");
-  if(c.imdb)   parts.push(`rated ${c.imdb.toFixed(1)}+`);
-  if(c.rt)     parts.push(`critics ${c.rt}%+`);
-  if(c.budget) parts.push((BUDGET_BANDS[c.budget]||{}).hint||"");
-  return parts.filter(Boolean).join(" · ");
-}
+// ---- CAS-814: the row's settings grid (Styles/Cascade/Budget/Awards/Audience) — one function per labelled
+// value, each reading straight off the agent's own saved criteria. The one-score model (CAS-723 to CAS-729)
+// retired the cinema/streaming distinction this row used to lead with (agentWindowSum/agentBarSummary/
+// agentRowSummary, CAS-643/CAS-745, gone).
+const joinAnd = arr => arr.length<=1 ? arr.join("")
+  : arr.length===2 ? arr.join(" and ")
+  : `${arr.slice(0,-1).join(", ")} and ${arr[arr.length-1]}`;
 // CAS-745: Style can filter harder than any other line this row shows (7 of 19 genres alone took one agent
-// from 25 films to 112), and CAS-643 dropping it left the row unable to explain why a film was passed over.
-// Kept to the same "N of total styles" shorthand trailGenres/styleDetail already use elsewhere in the app —
-// that stays shorter than naming every genre once there are more than a couple, which is what keeps this
-// restoring the line without pushing the row past its existing two-line clamp.
-function agentGenreSum(c){
+// from 25 films to 112) — named in full now (up to three styles, then "and N more") rather than the old
+// "N of total styles" shorthand, since this row has its own line to itself instead of sharing a clamped one.
+function agentStylesSum(c){
   if(c.genre===null) return "No styles";
   const ex=(c.exclude||[]).length ? ` except ${c.exclude.join(", ")}` : "";
-  if(!c.genre.length || c.genre.length>=ALL_GENRES.length) return ex ? `Any style${ex}` : "";
-  return (c.genre.length<=2 ? c.genre.join(", ") : `${c.genre.length} of ${ALL_GENRES.length} styles`)+ex;
+  if(!c.genre.length || c.genre.length>=ALL_GENRES.length) return `Any style${ex}`;
+  if(c.genre.length<=3) return joinAnd(c.genre)+ex;
+  return `${c.genre.slice(0,3).join(", ")} and ${c.genre.length-3} more`+ex;
 }
-function agentAgeSum(c){
-  if(c.age===null) return "No ratings";
-  if(!c.age.length || c.age.length>=AGE_LEVELS.length) return "";
-  return c.age.join(", ");
+// CAS-814: the agent's watch markers, ladder order (WATCH_LEVEL_KEYS) — a coloured dot (WINDOW_COLOR) +
+// score + window name per usable window; a window set to Never (windowUsable false) is simply absent.
+const AGROW_WINDOW_WORD = {in_cinema:"in cinema", premium:"premium", rent:"rent", stream:"streaming"};
+function agentCascadeSumHTML(c){
+  const marks=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
+  if(!marks.length) return "No windows set";
+  return marks.map(k=>
+    `<span class="agdot" style="background:${WINDOW_COLOR[k]}"></span>${c.watchMarkers[k]}+ ${AGROW_WINDOW_WORD[k]}`
+  ).join(" · ");
 }
-function agentEraSum(c){
-  if((c.year||[]).length) return c.year.slice().sort().reverse().join(", ");
-  return c.yearsBack ? yearsLabel(c.yearsBack) : "";
+// CAS-814: the Mission "Movie Budget" requirement — a dollar floor (c.selScale), same readout the Mission
+// score-bar and requirement card already use (scaleReadout: "Studio · $39M+"), 0 = off.
+function agentBudgetSum(c){
+  return c.selScale ? scaleReadout(c.selScale) : "Any — not required";
 }
-// The row names WHERE it looks and WHAT BAR it applies, and stops. Era stays one tap away in Edit —
-// CAS-675 brought rating back (Lee: it was invisible), and a streaming agent's how-far-back with it, since
-// only a streaming agent's window can reach far enough back for that setting to matter; CAS-745 brings
-// Style back too, for the reason in the comment on agentGenreSum above.
-function agentRowSummary(c){
-  const rest=[agentBarSummary(c), agentGenreSum(c), agentAgeSum(c)];
-  if(c.kind==="stream" && c.yearsBack) rest.push(yearsLabel(c.yearsBack));
-  const restFiltered=rest.filter(Boolean);
-  const bits=[agentWindowSum(c), ...restFiltered];
-  if(!restFiltered.length) bits.push("Nothing else narrowed");
-  return bits.join(" · ");
+// CAS-814: the Mission Awards requirement (c.selAwards, AWARD_STOPS' rung), restated in full sentence form
+// rather than AWARD_STOPS' own short tick labels ("2+ noms").
+const AGROW_AWARDS_LABEL = {1:"Nominated or better", 2:"2+ nominations or better",
+                            3:"3+ nominations or better", 4:"Winner only"};
+function agentAwardsSum(c){
+  return c.selAwards ? (AGROW_AWARDS_LABEL[c.selAwards] || AWARD_STOPS[c.selAwards].label) : "Any — not required";
+}
+// CAS-814: age ratings + how-far-back as one sentence. c.year (an explicit year list, set via the Filters
+// panel's "Save As") wins over c.yearsBack when present — the same priority agentEraSum used before this
+// ticket folded it in here, so a Cascade carrying that legacy field still reports it correctly.
+function agentAudienceSum(c){
+  const ageText = c.age===null ? "no ratings admitted"
+    : (!c.age.length || c.age.length>=AGE_LEVELS.length) ? "any rating"
+    : joinAnd(c.age);
+  const eraText=(c.year||[]).length
+    ? `released in ${joinAnd(c.year.slice().sort().reverse())}`
+    : (c.yearsBack ? `released in the last ${c.yearsBack} year${c.yearsBack===1?"":"s"}` : "any year");
+  return `${ageText}, ${eraText}`;
 }
 
 // CAS-643: who-line labels, keyed on c.who. "kids" is a normCascade-valid value no recipe emits
@@ -16502,7 +16460,7 @@ function renderAgentsScreen(){
     const newest=agentNewestDays(c);
     const stale=(newest===null || newest>AGENT_STALE_DAYS);
     return `
-    <div class="agrow agent-${c.kind==="stream"?"str":"cin"}" data-id="${escA(c.id)}">
+    <div class="agrow agrank-${Math.min(rank,6)}" data-id="${escA(c.id)}">
       <span class="agranker">
         <span class="agrank" aria-hidden="true">${rank}</span>
         <span class="aggrip" data-role="grip" role="button" tabindex="0"
@@ -16512,16 +16470,19 @@ function renderAgentsScreen(){
         <span class="agtop">
           <span class="agicon" aria-hidden="true">${c.icon}</span>
           <span class="agnamewrap">
-            <span class="agtype">${c.kind==="stream"?"Streaming":"Cinema"}</span>
             <span class="agname">${esc(c.name)}</span>
+            ${c.who ? `<span class="agwho">${esc(WHO_LABELS[c.who])}</span>` : ""}
           </span>
           <button type="button" class="ag-edit ca-btn" onclick="editAgentRow('${escA(c.id)}')"
               aria-label="Edit ${escA(c.name)}" title="Edit ${escA(c.name)}">Edit</button>
         </span>
-        <span class="agdetail">
-          <span class="agsum">${esc(agentRowSummary(c))}</span>
+        <span class="agsettings">
+          <span class="agsrow"><span class="agslbl">Styles</span><span class="agsval">${esc(agentStylesSum(c))}</span></span>
+          <span class="agsrow"><span class="agslbl">Cascade</span><span class="agsval">${agentCascadeSumHTML(c)}</span></span>
+          <span class="agsrow"><span class="agslbl">Budget</span><span class="agsval">${esc(agentBudgetSum(c))}</span></span>
+          <span class="agsrow"><span class="agslbl">Awards</span><span class="agsval">${esc(agentAwardsSum(c))}</span></span>
+          <span class="agsrow"><span class="agslbl">Audience</span><span class="agsval">${esc(agentAudienceSum(c))}</span></span>
         </span>
-        ${c.who ? `<span class="agwho">${esc(WHO_LABELS[c.who])}</span>` : ""}
         <span class="agmetrics">${agentMetricsHTML(c)}</span>
         ${stale
           ? `<span class="agwarn">⚠ nothing newer than 3 weeks — constraints may be too narrow
@@ -16539,17 +16500,6 @@ function renderAgentsScreen(){
     </div>`;
   wireAgentsDrag();
   console.log('[CAS-664] renderAgentsScreen took', (performance.now()-_t664).toFixed(1), 'ms for', n, 'agents');
-}
-// CAS-638: the grip/drag wiring wireAgentsDrag used to provide is gone from this screen (reorder moved off
-// it — c.order stays the deck's sort key, it just stops being editable here), but tapping a row still has to
-// open it, same as before. This is that leftover half of wireAgentsDrag's click delegation, on its own.
-function wireAgentsOpen(){
-  const list=$("agList"); if(!list) return;
-  list.addEventListener("click", e=>{
-    if(e.target.closest(".ag-learn,.ag-edit,.ag-review")) return;
-    const row=e.target.closest(".agrow"); if(!row) return;
-    openAgentRow(row.dataset.id);
-  });
 }
 // ================= CAS-636: Moving — the alert feed made visible =================
 // CAS-650: every row is a dated event now, not a standing-state snapshot. With an account, all three
@@ -16848,11 +16798,6 @@ function syncWatchChip(){
   }
   $("moviesBtn").classList.toggle("active", showing);
 }
-// CAS-501: the row's own central area (icon/name/summary/count) opens the agent, exactly like selecting its
-// deck card does. Delegated at the list in wireAgentsOpen() (CAS-638: was wireAgentsDrag() before reorder
-// left this screen), and the Learning-chip/Edit button opt out of it — a press on either must never be read
-// as a row tap.
-function openAgentRow(id){ closeAgentsScreen(); openCascade(id); }
 // CAS-A2: do NOT close the Agents screen here. It is where the user came from, and closing it
 // means Back and Save have nothing to return to — they fall through to the Watch listing.
 // briefFrom records the origin; briefReturn() puts them back on it.
@@ -16860,8 +16805,8 @@ window.editAgentRow=id=>{ briefOpen(id, "agents"); };
 // CAS-688: same rule as editAgentRow above — do NOT close #leScreen here. It is where the user came from,
 // and closing it would leave Back/Save/Delete with nowhere to return to. briefReturn() puts them back on it.
 window.editListCascRow=id=>{ briefOpen(id, "listEditor"); };
-// CAS-636: tapping an agent name on a Moving row lands on Watch with that agent selected — same idiom as
-// openAgentRow above, off the agent's NAME rather than id, since that's all the notifications ledger carries.
+// CAS-636: tapping an agent name on a Moving row lands on Watch with that agent selected — reads off the
+// agent's NAME rather than id, since that's all the notifications ledger carries.
 window.openMovingAgent=name=>{
   const c=cascades.find(x=>x.name===name); if(!c) return;
   closeMovingScreen(); openCascade(c.id);
@@ -17235,11 +17180,8 @@ function wireAgentsDrag(){
   };
   list.addEventListener("pointerup", endDrag);
   list.addEventListener("pointercancel", endDrag);
-  list.addEventListener("click", e=>{
-    if(e.target.closest(".aggrip,.ag-learn,.ag-edit")) return;
-    const row=e.target.closest(".agrow"); if(!row) return;
-    openAgentRow(row.dataset.id);
-  });
+  // CAS-814: tapping a row's body no longer opens the agent's watch list — Edit is the only action on the
+  // card, so there is nothing left for a body click to do.
 }
 
 // ================= CAS-591: Manage Lists screen =======================================================
@@ -17896,45 +17838,10 @@ function hubBarSummary(){
   if(uses.includes("buzz")  && onbFlow.buzzStop)  parts.push(BUZZ_STOPS[onbFlow.buzzStop].label+" buzz");
   return parts.length ? esc(parts.join(" · ")) : "No bar set — everything qualifies";
 }
-// CAS-729: the Briefing's Mission card reads the markers, not the retired OR-block dials — design record §7
-// item 1's own examples ("Cinema at 88" / "Rental at 72 · Streaming at 60 · below that, not listed" /
-// "Requires: budget $39M+, 2+ nominations, last 20 years"). The marker line becomes the headline (it's the
-// one thing every configured agent has), and the AND requirements — when any are set — get their own line
-// below, same shift-into-headline fallback missionDetail always used.
-function missionDetail(){
-  const c=onbFlow.draft||{};
-  const marks=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
-  const markerLine = marks.length
-    ? (marks.length>1
-        ? `${marks.map(k=>`${WATCH_LEVEL_SHORT_LABEL[k]} at ${c.watchMarkers[k]}`).join(" · ")} · below that, not listed`
-        : `${WATCH_LEVEL_SHORT_LABEL[marks[0]]} at ${c.watchMarkers[marks[0]]}`)
-    : "No window is armed — nothing will ever qualify";
-  const lines=[markerLine];
-  const reqParts=[];
-  if(c.selScale) reqParts.push(`budget ${money(c.selScale)}+`);
-  if(c.selAwards) reqParts.push(AWARD_STOPS[c.selAwards].label.toLowerCase());
-  if(c.yearsBack) reqParts.push(yearsLabel(c.yearsBack).toLowerCase());
-  if(reqParts.length) lines.push(`Requires: ${reqParts.join(", ")}`);
-  const headline=lines.shift();
-  return {headline, lines};
-}
-// CAS-550: the Briefing's Style card is Mission's equal now, so it wants the same headline+lines shape
-// missionDetail() gives Mission, not CAS-531's chip-pill styleChipsHTML() (retired by CAS-532 along with
-// the rest of this row, never revived). Reads the same on/exclude state the genres screen's chips do.
-function styleDetail(){
-  const g=dT().genre, excl=dExcludeSet();
-  if(g===null) return {headline:"No styles selected", lines:["Nothing qualifies — pick at least one"]};
-  const included=ONB_GENRES.filter(x=>dGenreSet().has(x) && !excl.has(x));
-  if(included.length===ONB_GENRES.length)
-    return {headline:"All styles", lines:["Nothing excluded — every genre qualifies"]};
-  if(!included.length) return {headline:"No styles match", lines:["Every choice is currently excluded"]};
-  const lines=[included.join(" · ")];
-  if(excl.size) lines.push(`Skipping: ${[...excl].join(", ")}`);
-  return {headline:`${included.length} of ${ONB_GENRES.length} styles`, lines};
-}
 // CAS-532: styleChipsHTML/ratingFullText/hubTasteSummary were retired along with this row and the hub's
-// "taste" door. CAS-550 restores the row but not those two helpers — trailAge() and styleDetail() (above)
-// cover Rating and Style instead, and hubTasteSummary's only caller (the "taste" door) is still gone.
+// "taste" door. CAS-550 restored the row with trailAge() covering Rating; CAS-816 replaced Style's own
+// headline+lines summary with stylesCardHTML()'s chip readout on the one-page Edit Agent. hubTasteSummary's
+// only caller (the "taste" door) is still gone.
 window.onbOpenDoor=key=>{
   const steps=HUB_DOORS[key]; if(!steps) return;
   logEvent("onbhub_door",{key, wired:flowOn});
@@ -18532,22 +18439,24 @@ function splitByOwner(items){
 // CAS-662: the listing's own group partition, decided up front — pure over `rows` and the active agent's
 // order, no depth cap or floor any more (selectivity is the agent's own Mission criteria now).
 function listingGroups(rows, ac){
-  // CAS-699: ymSort is null exactly when nothing has been picked from the list's own sort menu (see its
-  // declaration above) — that already says whether "cascade" here is the fallback default or a person's
-  // explicit pick, so it doubles as isUserSort with no new state of its own.
-  const isUserSort = ymSort!==null;
+  // CAS-819: sortPicked (declared above syncSortCtl) is set only by the Watch bar's own #sort control —
+  // reading ymSort here (CAS-699's original wiring) meant this listing was actually driven by Your Movies'
+  // unrelated control, so #sort changing anything on the Watch screen was closer to coincidence than design.
+  const isUserSort = sortPicked;
   // CAS-713: the Cinema tab's own default is the release timeline, not the Cascade score every other tab
   // defaults to (Rental/Streaming keep DEFAULT_SORT, unchanged) — a user's own explicit pick (isUserSort)
   // still overrides either, exactly as it always has.
   const tabDflt = watchTab==="in_cinema" ? "availability" : DEFAULT_SORT;
+  const sortKey = isUserSort ? filt.sort : tabDflt;
   return orderFor(watchTab)      // CAS-750/CAS-754: order is the tab's own, not the agent's
     .map(g=>{
-      const cmp=sortForKey(g, ymSort||tabDflt, ac && ac.kind==="cinema", isUserSort);
-      // CAS-713: agent rank comes first within a status section — a higher-ranked agent's films lead —
-      // and the tab's own sort (still ymSort||tabDflt, via DEFAULT_SORT above) only breaks ties inside one
-      // agent's own films, same order it read across the whole section before tabs existed.
+      const cmp=sortForKey(g, sortKey, ac && ac.kind==="cinema", isUserSort);
+      // CAS-819: an explicit pick sorts across every agent within a status section — the chosen key leads,
+      // agent rank only breaks a tie. With no pick, agent rank still leads and the tab's own sort only
+      // breaks ties inside one agent's own films, same order it read before this ticket.
       return {g, items: rows.filter(m=>primaryStatus(m)===g)
-        .sort((a,b)=>filmOwnerOrder(a)-filmOwnerOrder(b) || cmp(a,b))};
+        .sort(isUserSort ? (a,b)=>cmp(a,b) || filmOwnerOrder(a)-filmOwnerOrder(b)
+                          : (a,b)=>filmOwnerOrder(a)-filmOwnerOrder(b) || cmp(a,b))};
     })
     .filter(x=>x.items.length);
 }
@@ -18637,8 +18546,11 @@ function render(){
   // CAS-717: each status section further splits into per-agent blocks (owner rank order, already how
   // `items` sorts) — `pending` now counts those blocks, not the sections, since each gets its own
   // fillListChunked call.
-  const sections=groups.map(({g,items})=>({g, items, blocks:splitByOwner(items)}));
-  let pending=sections.reduce((n,s)=>n+Math.max(s.blocks.length,1), 0);
+  // CAS-819: an explicit sort spans every agent within a section (splitByOwner would only fragment that
+  // one run back into per-agent blocks), so a user pick skips the split entirely — `blocks` null means
+  // "one flat run" below. With no pick this is unchanged from before this ticket.
+  const sections=groups.map(({g,items})=>({g, items, blocks: sortPicked ? null : splitByOwner(items)}));
+  let pending=sections.reduce((n,s)=>n+Math.max(s.blocks?s.blocks.length:1,1), 0);
   const oneListDone=()=>{ if(--pending<=0) listReady(); };
   sections.forEach(({g,items,blocks})=>{
     // CAS-682: a tagged-out film still renders here, as a stub — a row you can see and count, not a hidden
@@ -18648,6 +18560,13 @@ function render(){
     grp.innerHTML=`<div class="grouphead"><span class="gdot ${g}"></span>${STATUS_LABEL[g]}
       <span class="gcount">${live}</span></div>`;
     wrap.appendChild(grp);
+    if(!blocks){
+      // CAS-819: no per-agent sub-heading under an explicit pick — each card already names its own agent.
+      const listEl=document.createElement("div"); listEl.className="list";
+      grp.appendChild(listEl);
+      fillListChunked(listEl, items, renderGen, isFresh, oneListDone);
+      return;
+    }
     // The row is now unconditional — a section that names its agent every time can be read without
     // inferring anything from the row's absence.
     blocks.forEach(block=>{
