@@ -142,10 +142,18 @@ jobs:
             exit 1
           fi
 
+      - name: Set up Node (CAS-825 — the monitor calls the shipped engine via admit_shim.mjs)
+        if: ${{ github.event.inputs.probe_title == '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Run the Cascade monitor (diff → match → de-dupe → email)
         # Reads yesterday's catalogue from git history (last refresh on an earlier calendar day). With the Supabase +
         # Resend secrets present it does the real thing; without them it runs --dry-run so the
-        # workflow still passes (no writes, no email).
+        # workflow still passes (no writes, no email). CAS-825: matching now shells out once to
+        # admit_shim.mjs, which loads index.html (already rebuilt above) via tests/js/engine.mjs —
+        # Node must be on PATH before this step runs.
         if: ${{ github.event.inputs.probe_title == '' }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

@@ -32,7 +32,8 @@ import sys
 from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notification_rows,
                render_digest, send_via_resend, excluded_moments,
                prefs_for, excludes_from_prefs, delivery_plan, send_via_apns, push_copy,
-               match_film_watches, match_newly_qualified, match_new_to_agent, suppressed_pairs)
+               match_film_watches, match_newly_qualified, match_new_to_agent, suppressed_pairs,
+               compute_admission)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
 from .store import InMemoryStore, store_from_env
 
@@ -63,6 +64,12 @@ def _parse_args(argv):
     p.add_argument("--watches", metavar="PATH",
                    help="Per-film Watch-it ticks JSON: [{user_id, movie_id, windows}] (CAS-484). "
                         "Overrides the `film_watch` table, which is the default source.")
+    p.add_argument("--user-prefs", metavar="PATH",
+                   help="Account services/taste JSON: {user_id: {sub_services, store_services, "
+                        "taste}} (CAS-825). Overrides the `user_prefs` table.")
+    p.add_argument("--user-films", metavar="PATH",
+                   help="Watched-film opinions JSON: [{user_id, movie_id, status}] (CAS-825). "
+                        "Overrides the `user_films` table.")
     p.add_argument("--excluded", metavar="PATH",
                    help="Global alert-type excludes JSON: {user_id: [moment, ...]} (or a list of "
                         "{user_id, excluded_moments}). A muted TYPE never fires for that user, "
@@ -158,11 +165,41 @@ def main(argv=None) -> int:
     picks = _load_json(args.picks) if args.picks else _store_call(store, "fetch_picks", [])
     suppressed = suppressed_pairs(picks)
 
+    # CAS-825: the account facts the real engine's matchesCriteria reads beyond an agent's own
+    # criteria — CAS-146's language taste baseline and CAS-211's services from `user_prefs`, CAS-183's
+    # watched/blocked opinions from `user_films`. A user absent from either source gets the engine's
+    # own permissive "never touched this" defaults (see admit_shim.mjs).
+    user_prefs_rows = (_load_json(args.user_prefs) if args.user_prefs
+                       else _store_call(store, "fetch_user_prefs", {}))
+    user_films_rows = (_load_json(args.user_films) if args.user_films
+                       else _store_call(store, "fetch_user_films", []))
+    film_statuses_by_user: dict = {}
+    for r in user_films_rows:
+        film_statuses_by_user.setdefault(str(r.get("user_id")), []).append(
+            {"movie_id": r.get("movie_id"), "status": r.get("status")})
+    account_prefs = {}
+    for uid in set(user_prefs_rows) | set(film_statuses_by_user):
+        row = user_prefs_rows.get(uid) or {}
+        taste = row.get("taste") or {}
+        account_prefs[uid] = {
+            "langs": taste.get("langs"),
+            "subServices": row.get("sub_services") or [],
+            "storeServices": row.get("store_services") or [],
+            "filmStatuses": film_statuses_by_user.get(uid, []),
+        }
+
+    # CAS-825: ONE call to the shipped engine for the whole run — never once per film, never once
+    # per agent (see compute_admission()'s own docstring). Both catalogue snapshots are included
+    # since match_newly_qualified/match_new_to_agent below need to ask "admitted today, but not in
+    # yesterday's own record of this film" — a question match() itself never asks.
+    admission = compute_admission(cascades, {"today": today_movies, "yesterday": prev_movies},
+                                  account_prefs=account_prefs)
+
     # CAS-601: an agent's own Alert toggles are the control again (Lee's decision of 2026-08-24,
     # reversing CAS-502 AC1/widening CAS-506) — every moment a cascade's `alert_moments` names can
-    # notify, not just `announced`. match() already gates on `alert_moments`/criteria/suppressed/
+    # notify, not just `announced`. match() already gates on `alert_moments`/admission/suppressed/
     # excluded, so feeding it every transition is the whole change; nothing in match() itself moves.
-    agent_hits = match(cascades, transitions, already=already, catalogue=today_movies,
+    agent_hits = match(cascades, transitions, already=already, admission=admission,
                        suppressed=suppressed, excluded=muted)
 
     # CAS-602: a film already held in both catalogues that newly qualifies for an agent because its
@@ -174,7 +211,7 @@ def main(argv=None) -> int:
     window_covered = {(h.cascade_id, h.transition.movie_id)
                       for hits in agent_hits.values() for h in hits}
     newly_qualified_hits = match_newly_qualified(cascades, prev_movies, today_movies, already=already,
-                                                 catalogue=today_movies, excluded=muted,
+                                                 admission=admission, excluded=muted,
                                                  covered=window_covered)
     for user_id, hits in newly_qualified_hits.items():
         agent_hits.setdefault(user_id, []).extend(hits)
@@ -192,7 +229,7 @@ def main(argv=None) -> int:
     covered_films = {(h.cascade_id, h.transition.movie_id)
                      for hits in agent_hits.values() for h in hits}
     new_to_agent_hits = match_new_to_agent(cascades, prev_movies, today_movies, previous_run_start,
-                                           already=already, catalogue=today_movies, excluded=muted,
+                                           already=already, admission=admission, excluded=muted,
                                            covered=covered_films)
     for user_id, hits in new_to_agent_hits.items():
         agent_hits.setdefault(user_id, []).extend(hits)
@@ -219,10 +256,17 @@ def main(argv=None) -> int:
     if args.target_user:
         by_user = {u: hits for u, hits in by_user.items() if str(u) == args.target_user}
 
+    total_hits = sum(len(v) for v in by_user.values())
     print(f"[monitor] matching against {len(cascades)} active cascade(s) from {source} "
           f"and {len(watches)} per-film Watch-it row(s); "
           f"{sum(len(v) for v in muted.values())} global alert-type exclude(s) across "
-          f"{len(muted)} user(s); {sum(len(v) for v in by_user.values())} new alert(s).")
+          f"{len(muted)} user(s); {total_hits} new alert(s).")
+    if args.dry_run:
+        # CAS-825 AC4: the pre/post-change hit count against the committed catalogue, for the
+        # ticket's own before/after comparison — written even when it's zero, so a dry-run always
+        # leaves a real answer rather than only a log line a caller has to scrape.
+        with open("monitor-dryrun-hits.txt", "w", encoding="utf-8") as fh:
+            fh.write(f"{total_hits}\n")
     if not by_user:
         print("[monitor] no new alerts for anyone — no email will be sent.")
         return 0

@@ -4,6 +4,14 @@ BUILD MODE: INDICATIVE. Deliberately outside monitor/tests/ so `npm run qa` (pyt
 unittest discover -s monitor/tests) never picks these up - see QA-AGENTS.md. Run on request
 via `npm run test:agents`.
 
+CAS-825: match()/match_newly_qualified() now take `admission` (a precomputed real-engine answer,
+see matching.compute_admission) instead of `catalogue` - the `catalogue=` calls below will raise a
+TypeError, and the fixture cascades/movies throughout this file predate the fields the real engine
+needs to admit anything (watchMarkers, language, a scoreable rt_critic/imdb). Left as-is rather
+than reworked here - this file sits outside npm run qa on purpose, so nothing here gates a ship,
+but it does need the same fixture treatment monitor/tests/test_matching.py got before
+`npm run test:agents` is next run for real. Flagged on the ticket rather than fixed in this diff.
+
 Every check drives the real exported functions (compute_transitions, match,
 match_newly_qualified, match_film_watches, delivery_plan, monitor.__main__.main) against
 inputs shaped like a real two-day catalogue diff - nothing here re-implements matching.py's

@@ -3,23 +3,28 @@
 A transition (from ``transitions.py``) fires an alert for a Cascade when ALL hold:
 
   1. the transition's ``moment`` is one the Cascade asked for (``alert_moments``);
-  2. the transition's movie matches the Cascade's **taste** criteria
-     (genre / exclude / age / language / culture / awards / imdb / rt / budget / tentpole);
+  2. the transition's movie is one the Cascade ADMITS — CAS-825: this is now a lookup into the
+     SHIPPED engine's own answer (compute_admission(), via admit_shim.mjs), not a second, hand-
+     ported field-by-field matcher;
   3. for a streaming moment, the service is one the Cascade cares about (when it names any);
   4. it hasn't been sent before — ``(cascade_id, movie_id, moment)`` not already in the
      ``notifications`` ledger.
 
-The taste matcher mirrors ``matchesCriteria`` in the front-end (app_template.html) with the
-window/status test removed — the transition already establishes the window, so matching is
-purely about whether the user cares about *this film*. Keeping the two in lock-step means an
-email only ever fires for a film the user's Cascade would also surface in the app.
+Admission is asked of app_template.html's real ``matchesCriteria`` (loaded, unmodified, out of the
+BUILT index.html — see tests/js/engine.mjs's CAS-231 harness) so an email only ever fires for a
+film the user's Cascade would also surface in the app; the two can no longer drift apart the way
+the old hand-port did (CAS-825 observation: 89% of Moving-screen films belonged to no agent).
 
-Pure and side-effect free; the caller owns Supabase I/O (see store.py).
+Pure and side-effect free; the caller owns Supabase I/O (see store.py) and the one
+``admit_shim.mjs`` subprocess call (see compute_admission() below).
 """
 from __future__ import annotations
 
 import datetime as _dt
+import json
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 # tier_rank is the same monotonic-progress test transitions.py already imports; reused here (CAS-602)
@@ -28,21 +33,8 @@ from poc_pipeline import tier_rank
 
 from .transitions import Transition, _STATUS_MOMENTS, _detail_for
 
-# --- catalogue-scale constants, ported verbatim from app_template.html (CAS-64) ---
-_ANTICIPATED_TOP = 20      # top N% of UPCOMING titles by popularity
-_BLOCKBUSTER_TOP = 15      # top N% of the whole catalogue by popularity
-_BIG_BUDGET = 120e6        # the "Huge" band
-_LANDMARK_RT = 85
-_LANDMARK_META = 75
-
-# BUDGET_BANDS index -> (min, max); mirrors app_template.html. Index 0 = "Any".
-_BUDGET_BANDS = [
-    (None, None),          # Any
-    (0, 15e6),             # Small
-    (15e6, 50e6),          # Average
-    (50e6, 120e6),         # Big
-    (120e6, None),         # Huge
-]
+# CAS-825: admit_shim.mjs, invoked once per monitor run by compute_admission() below.
+_SHIM_PATH = Path(__file__).resolve().parent / "admit_shim.mjs"
 
 
 @dataclass
@@ -88,112 +80,64 @@ class Hit:
 
 
 # --------------------------------------------------------------------------- #
-# taste matching — mirrors matchesCriteria() minus the window/status + local sets
+# taste matching — CAS-825: a lookup into the REAL engine's own admission answer, not a second port
 # --------------------------------------------------------------------------- #
-def _year_of(movie: dict) -> str:
-    return str(movie.get("cinema_date") or movie.get("year") or "")[:4]
+def compute_admission(cascades: list, catalogues: dict, account_prefs: dict = None) -> dict:
+    """Ask the shipped engine, ONCE, which films each active Cascade admits — the exact question
+    app_template.html's own matchesCriteria answers, via admit_shim.mjs (which loads the built
+    index.html through tests/js/engine.mjs's loadEngine(), CAS-231's proven no-browser harness).
+    Replaces the old hand-ported field-by-field matcher, which had drifted from the app's real one
+    and was admitting ~89% more films than the app itself would ever show (CAS-825 observation).
 
+    cascades      : rows {id, user_id, criteria, ...} — same shape `match()` etc. already take.
+    catalogues    : {snapshot_label: [movie dict, ...]} — e.g. {"today": [...], "yesterday": [...]}.
+                    Every snapshot a caller will later ask about must be included; matches_criteria()
+                    below can only answer for what was asked here.
+    account_prefs : {user_id: {langs, subServices, storeServices, filmStatuses}} — the account-level
+                    facts matchesCriteria reads beyond an agent's own criteria (CAS-146 taste
+                    baseline, CAS-211 services, CAS-183 watched/blocked opinions). A user absent here
+                    gets the engine's own permissive "never touched this" defaults, same as a device
+                    that has never opened those screens.
 
-def _rating_ok(movie: dict, minimum, include_unrated) -> bool:
-    if not minimum:
-        return True
-    if not movie.get("imdb_rating"):
-        return bool(include_unrated)
-    return movie["imdb_rating"] >= minimum
+    Returns {cascade_id: {snapshot_label: {movie_id str, ...}}}.
+    """
+    account_prefs = account_prefs or {}
+    by_user: dict = {}
+    for c in cascades:
+        by_user.setdefault(str(c.get("user_id")), []).append(
+            {"id": c["id"], "criteria": c.get("criteria") or {}})
 
+    users = []
+    for uid, agents in by_user.items():
+        p = account_prefs.get(uid) or {}
+        users.append({
+            "userId": uid,
+            "langs": p.get("langs"),
+            "subServices": p.get("subServices") or [],
+            "storeServices": p.get("storeServices") or [],
+            "filmStatuses": p.get("filmStatuses") or [],
+            "agents": agents,
+        })
 
-def _budget_ok(movie: dict, band, include_unbudgeted) -> bool:
-    if not band:
-        return True
+    request = {"users": users, "catalogues": catalogues}
+    proc = subprocess.run(
+        ["node", str(_SHIM_PATH)], input=json.dumps(request), capture_output=True, text=True,
+        encoding="utf-8", timeout=120,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"admit_shim.mjs failed (exit {proc.returncode}): {proc.stderr.strip()}")
     try:
-        lo, hi = _BUDGET_BANDS[band]
-    except (IndexError, TypeError):
-        return True
-    b = movie.get("budget")
-    if not b:
-        return bool(include_unbudgeted)
-    return b >= lo and (hi is None or b < hi)
+        result = json.loads(proc.stdout)
+    except json.JSONDecodeError as err:
+        raise RuntimeError(f"admit_shim.mjs produced invalid JSON: {err}\n{proc.stdout[:500]}") from err
+    return {cid: {snap: set(ids) for snap, ids in snapshots.items()} for cid, snapshots in result.items()}
 
 
-def _pop(m: dict):
-    return m.get("popularity") or 0
-
-
-def _is_upcoming(m: dict) -> bool:
-    return "upcoming" in (m.get("status") or [])
-
-
-def _pop_bar(values, top_pct) -> float:
-    """The popularity at the top-N% cut of a distribution — mirrors popBar() incl. JS rounding."""
-    if not values:
-        return float("inf")
-    arr = sorted(values)
-    idx = int((100 - top_pct) / 100 * (len(arr) - 1) + 0.5)   # JS Math.round for non-negative
-    idx = min(len(arr) - 1, idx)
-    return arr[idx]
-
-
-def scale_tiers(catalogue: list) -> dict:
-    """movie_id -> tentpole tier (landmark|blockbuster|anticipated|bigbudget|None), read off the
-    catalogue's real popularity distribution. Mirrors scaleTier() in the front-end."""
-    ant_bar = _pop_bar([_pop(m) for m in catalogue if _is_upcoming(m)], _ANTICIPATED_TOP)
-    blk_bar = _pop_bar([_pop(m) for m in catalogue], _BLOCKBUSTER_TOP)
-    tiers = {}
-    for m in catalogue:
-        big = (m.get("budget") or 0) >= _BIG_BUDGET
-        hicrit = (m.get("rt_critic") or 0) >= _LANDMARK_RT or (m.get("metacritic") or 0) >= _LANDMARK_META
-        hipop = _pop(m) >= blk_bar
-        up = _is_upcoming(m)
-        if m.get("award") and hicrit and (big or hipop):
-            tier = "landmark"
-        elif (not up) and hipop:
-            tier = "blockbuster"
-        elif up and _pop(m) >= ant_bar:
-            tier = "anticipated"
-        elif big:
-            tier = "bigbudget"
-        else:
-            tier = None
-        tiers[str(m.get("tmdb_id"))] = tier
-    return tiers
-
-
-def matches_criteria(movie: dict, criteria: dict, tier=None) -> bool:
-    """Taste-only match (no window/status, no device-local watched/blocked). `tier` is the movie's
-    precomputed scale tier (from scale_tiers) — required only if the Cascade sets a tentpole filter."""
-    criteria = criteria or {}
-    genres = movie.get("genres") or []
-
-    exclude = criteria.get("exclude") or []
-    if exclude and any(g in exclude for g in genres):
-        return False                                    # skip beats match
-    genre = criteria.get("genre") or []
-    if genre and not any(g in genre for g in genres):
-        return False
-    age = criteria.get("age") or []
-    if age and movie.get("age_rating") not in age:
-        return False
-    year = criteria.get("year") or []
-    if year and _year_of(movie) not in year:
-        return False
-    lang = criteria.get("lang") or []
-    if lang and movie.get("language") not in lang:
-        return False
-    culture = criteria.get("culture") or []
-    if culture and movie.get("culture") not in culture:
-        return False
-    if criteria.get("awards") and not movie.get("award"):
-        return False
-    if not _rating_ok(movie, criteria.get("imdb") or 0, criteria.get("includeUnrated")):
-        return False
-    if not _budget_ok(movie, criteria.get("budget") or 0, criteria.get("includeUnbudgeted")):
-        return False
-    if (movie.get("rt_critic") or 0) < (criteria.get("rt") or 0):
-        return False
-    tent = criteria.get("tentpole") or "any"
-    if tent != "any" and tier != tent:
-        return False
-    return True
+def matches_criteria(movie_id, cascade_id, snapshot: str, admission: dict) -> bool:
+    """A lookup, not a recomputation (CAS-825): does `cascade_id` admit `movie_id` in `snapshot`,
+    per the admission map compute_admission() already built for this run?"""
+    return str(movie_id) in ((admission.get(cascade_id) or {}).get(snapshot) or ())
 
 
 def service_ok(transition, criteria: dict) -> bool:
@@ -280,7 +224,7 @@ def _collapse_by_rank(hits: list, rank_of: dict) -> list:
     return list(best.values())
 
 
-def match(cascades: list, transitions: list, already=None, catalogue=None, suppressed=None,
+def match(cascades: list, transitions: list, already=None, admission=None, suppressed=None,
           excluded=None) -> dict:
     """Return {user_id: [Hit, ...]} — one entry per (cascade, transition) that fires and hasn't
     been sent before.
@@ -288,8 +232,9 @@ def match(cascades: list, transitions: list, already=None, catalogue=None, suppr
     cascades    : rows {id, user_id, name, criteria, alert_moments, active}
     transitions : list of Transition (from compute_transitions)
     already     : iterable of (cascade_id, movie_id, moment) already in the notifications ledger
-    catalogue   : today's movie list, for the tentpole tiers (optional; only needed if a Cascade
-                  uses a tentpole filter)
+    admission   : {cascade_id: {"today": {movie_id, ...}}} from compute_admission() (CAS-825) —
+                  transitions describe today's catalogue, so only the "today" snapshot is read here.
+                  None/missing admits nothing (fails closed, same as an unrecognised cascade_id).
     suppressed  : iterable of (user_id, movie_id) the user has turned OFF by hand (see
                   ``suppressed_pairs``). The personal override outranks the Cascade: it goes on
                   matching the film and we go on saying nothing about it, every run, until the user
@@ -306,7 +251,7 @@ def match(cascades: list, transitions: list, already=None, catalogue=None, suppr
     seen = set(already or ())
     off = {(str(u), str(m)) for u, m in (suppressed or ())}
     muted = excluded_moments(excluded)
-    tiers = scale_tiers(catalogue) if catalogue else {}
+    admission = admission or {}
     rank_of = {c["id"]: _rank_key(c) for c in cascades}
     by_user: dict = {}
 
@@ -323,7 +268,7 @@ def match(cascades: list, transitions: list, already=None, catalogue=None, suppr
                 continue
             if (str(c["user_id"]), str(t.movie_id)) in off:
                 continue                                    # your answer outranks your Cascade
-            if not matches_criteria(t.movie, criteria, tier=tiers.get(t.movie_id)):
+            if not matches_criteria(t.movie_id, c["id"], "today", admission):
                 continue
             if not service_ok(t, criteria):
                 continue
@@ -360,7 +305,7 @@ def _current_moment(record: dict) -> Optional[str]:
 
 
 def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list, already=None,
-                          catalogue=None, suppressed=None, excluded=None, covered=None) -> dict:
+                          admission=None, suppressed=None, excluded=None, covered=None) -> dict:
     """Return {user_id: [Hit, ...]} for a film present in both catalogues whose own attributes
     changed so it now matches an active Cascade's criteria and did NOT match yesterday (Lee's rule,
     2026-08-24) — an IMDb rating crossing the bar, a metacritic score/award/gross arriving, a genre
@@ -374,7 +319,10 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
     de-dupe key are distinct from a window transition for the same film.
 
     prev_movies / today_movies : lists of movie records (poc_pipeline shape).
-    already, catalogue, suppressed, excluded : same meaning as in ``match()``.
+    already, suppressed, excluded : same meaning as in ``match()``.
+    admission           : {cascade_id: {"today": {...}, "yesterday": {...}}} from compute_admission()
+                          (CAS-825) — both snapshots are read here, since "newly" means "admitted
+                          today, was not admitted in this same film's yesterday record".
     covered            : iterable of (cascade_id, movie_id) already alerted THIS run by ``match()``
                          — a real window transition landing the same day as this film's own
                          newly-qualifies wins; the newly-qualifies hit for that pair is dropped
@@ -387,7 +335,7 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
     seen = set(already or ())
     off = {(str(u), str(m)) for u, m in (suppressed or ())}
     muted = excluded_moments(excluded)
-    tiers = scale_tiers(catalogue) if catalogue else {}
+    admission = admission or {}
     rank_of = {c["id"]: _rank_key(c) for c in cascades}
     covered = set(covered or ())
     by_user: dict = {}
@@ -408,10 +356,9 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
                 continue                       # your answer outranks your Cascade
             if (c["id"], mid) in covered:
                 continue                       # a real window transition this run wins (CAS-796)
-            tier = tiers.get(mid)
-            if matches_criteria(prev_record, criteria, tier=tier):
+            if matches_criteria(mid, c["id"], "yesterday", admission):
                 continue                       # already matched yesterday -> not a NEW qualification
-            if not matches_criteria(today_record, criteria, tier=tier):
+            if not matches_criteria(mid, c["id"], "today", admission):
                 continue                       # still doesn't match today
             moment = _current_moment(today_record)
             if moment is None or moment not in moments:
@@ -456,7 +403,7 @@ def _parse_dt(value):
 
 
 def match_new_to_agent(cascades: list, prev_movies: list, today_movies: list, previous_run_start,
-                       already=None, catalogue=None, suppressed=None, excluded=None,
+                       already=None, admission=None, suppressed=None, excluded=None,
                        covered=None) -> dict:
     """Return {user_id: [Hit, ...]} for CAS-785's first-appearance moment: a film present in both
     catalogues that matches an active Cascade's criteria today and did NOT match it yesterday —
@@ -475,14 +422,16 @@ def match_new_to_agent(cascades: list, prev_movies: list, today_movies: list, pr
     covered            : iterable of (cascade_id, movie_id) already alerted THIS run by match() /
                          match_newly_qualified() — a real window transition landing the same day as
                          a first appearance still produces ONE alert, not two (CAS-785 AC1c).
-    already, catalogue, suppressed, excluded : same meaning as match_newly_qualified.
+    already, suppressed, excluded : same meaning as match_newly_qualified.
+    admission          : same {cascade_id: {"today": {...}, "yesterday": {...}}} shape as
+                         match_newly_qualified takes (CAS-825) — both snapshots are read here too.
     """
     prev_by_id = {str(m.get("tmdb_id")): m for m in prev_movies}
     today_by_id = {str(m.get("tmdb_id")): m for m in today_movies}
     seen = set(already or ())
     off = {(str(u), str(m)) for u, m in (suppressed or ())}
     muted = excluded_moments(excluded)
-    tiers = scale_tiers(catalogue) if catalogue else {}
+    admission = admission or {}
     rank_of = {c["id"]: _rank_key(c) for c in cascades}
     covered = set(covered or ())
     by_user: dict = {}
@@ -504,10 +453,9 @@ def match_new_to_agent(cascades: list, prev_movies: list, today_movies: list, pr
                 continue                   # a first sighting is announced's job, not this one
             if (str(c["user_id"]), mid) in off:
                 continue                   # your answer outranks your Cascade
-            tier = tiers.get(mid)
-            if matches_criteria(prev_record, criteria, tier=tier):
+            if matches_criteria(mid, c["id"], "yesterday", admission):
                 continue                   # already matched yesterday -> not a first appearance
-            if not matches_criteria(today_record, criteria, tier=tier):
+            if not matches_criteria(mid, c["id"], "today", admission):
                 continue                   # still doesn't match today
             key = (c["id"], mid, "new_to_agent")
             if key in seen:

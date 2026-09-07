@@ -7,14 +7,21 @@ here rather than left to the run's own output.
 """
 import unittest
 
-from monitor import (PREFS_DEFAULT, delivery_plan, excludes_from_prefs, match, prefs_for)
+from monitor import (PREFS_DEFAULT, compute_admission, delivery_plan, excludes_from_prefs, match,
+                     prefs_for)
 from monitor.store import InMemoryStore
 from monitor.transitions import Transition
+
+# CAS-825: admission is asked of the real engine now, so every fixture cascade needs a usable
+# (0-floor) watchMarkers window and every fixture movie needs enough of a quality signal
+# (rt_critic here) to clear the score gate — see monitor/tests/test_matching.py's own header note.
+_OPEN_MARKERS = {"in_cinema": 0, "rent": 0, "stream": 0}
 
 
 def _movie(mid="9001", title="Fixture Film", **over):
     m = {"tmdb_id": int(mid), "title": title, "genres": ["Drama"], "language": "en",
-         "age_rating": "M", "status": ["rental"], "popularity": 10}
+         "age_rating": "M", "status": ["rental"], "popularity": 10, "rt_critic": 70,
+         "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}]}
     m.update(over)
     return m
 
@@ -26,8 +33,14 @@ def _transition(moment="hits_rent", movie=None, services=("AppleTV",)):
 
 
 def _cascade(cid="c1", user="user-A", moments=("hits_rent",), criteria=None):
+    crit = {**(criteria or {}), "watchMarkers": dict(_OPEN_MARKERS)}
     return {"id": cid, "user_id": user, "name": "Drama rentals", "active": True,
-            "criteria": criteria or {}, "alert_moments": list(moments)}
+            "criteria": crit, "alert_moments": list(moments)}
+
+
+def _match(cascades, transitions, **kw):
+    admission = compute_admission(cascades, {"today": [t.movie for t in transitions]})
+    return match(cascades, transitions, admission=admission, **kw)
 
 
 class PrefsDefaults(unittest.TestCase):
@@ -70,12 +83,12 @@ class DeliveryPlan(unittest.TestCase):
 class GlobalMutes(unittest.TestCase):
     def test_a_muted_moment_never_fires_for_that_user(self):
         prefs = {"user-A": {"excluded_moments": ["hits_rent"]}}
-        got = match([_cascade()], [_transition()], excluded=excludes_from_prefs(prefs))
+        got = _match([_cascade()], [_transition()], excluded=excludes_from_prefs(prefs))
         self.assertEqual(got, {})
 
     def test_a_mute_is_per_user_and_does_not_leak(self):
         prefs = {"user-B": {"excluded_moments": ["hits_rent"]}}
-        got = match([_cascade()], [_transition()], excluded=excludes_from_prefs(prefs))
+        got = _match([_cascade()], [_transition()], excluded=excludes_from_prefs(prefs))
         self.assertEqual(len(got["user-A"]), 1)
 
 
@@ -83,7 +96,7 @@ class LedgerRow(unittest.TestCase):
     def test_the_row_carries_what_the_bell_needs_to_draw_itself(self):
         # The in-app surface must not have to re-derive the film from today's catalogue: a film
         # that has since left it would blank a row about something that really did happen.
-        hits = match([_cascade()], [_transition()])["user-A"]
+        hits = _match([_cascade()], [_transition()])["user-A"]
         row = hits[0].notification_row()
         self.assertEqual(row["user_id"], "user-A")
         self.assertEqual(row["cascade_id"], "c1")
@@ -95,11 +108,11 @@ class LedgerRow(unittest.TestCase):
         # CAS-185 AC3, without waiting for a real window change: the transition fires once, and
         # a second run over the same ledger says nothing.
         cascades, trans = [_cascade()], [_transition()]
-        first = match(cascades, trans)
+        first = _match(cascades, trans)
         self.assertEqual(len(first["user-A"]), 1)
         already = {(h.cascade_id, h.transition.movie_id, h.transition.moment)
                    for h in first["user-A"]}
-        self.assertEqual(match(cascades, trans, already=already), {})
+        self.assertEqual(_match(cascades, trans, already=already), {})
 
 
 class StoreSources(unittest.TestCase):

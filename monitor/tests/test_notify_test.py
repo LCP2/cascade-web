@@ -119,8 +119,11 @@ class DeliverySourceProof(unittest.TestCase):
         self.target = next(f for f in films if f["scenario"] == "hits_stream")
         # This cascade would have caught the fixture film under the pre-CAS-502 rule — present in
         # BOTH scenarios below, so the only variable between them is the Watch-it tick.
+        # CAS-825: watchMarkers gives agentFloor() a usable 0-floor window — without one, admission
+        # (now asked of the real engine) holds every film back regardless of anything else here.
         self.cascades = [{"id": "cascade-fixture", "user_id": self.TARGET_USER, "name": "Everything",
-                           "active": True, "alert_moments": ["hits_stream"], "criteria": {}}]
+                           "active": True, "alert_moments": ["hits_stream"],
+                           "criteria": {"watchMarkers": {"in_cinema": 0, "rent": 0, "stream": 0}}}]
 
     def _run(self, watches):
         with tempfile.TemporaryDirectory() as d:
@@ -182,9 +185,11 @@ class AnnouncedDeliveryProof(unittest.TestCase):
         self.yesterday, self.today = build_catalogues(films, "announced", self.DATE)
         self.target = next(f for f in films if f["scenario"] == "announced")
         # Matches the fixture film's own genre (Drama) so the agent's taste criteria really fires,
-        # not just its alert_moments membership.
+        # not just its alert_moments membership. CAS-825: watchMarkers as above.
         self.cascades = [{"id": "cascade-fixture", "user_id": self.TARGET_USER, "name": "Drama radar",
-                           "active": True, "alert_moments": ["announced"], "criteria": {"genre": ["Drama"]}}]
+                           "active": True, "alert_moments": ["announced"],
+                           "criteria": {"genre": ["Drama"],
+                                       "watchMarkers": {"in_cinema": 0, "rent": 0, "stream": 0}}}]
 
     def _run(self, watches):
         with tempfile.TemporaryDirectory() as d:
