@@ -2190,7 +2190,13 @@
      margin for a marker's stacked value/handle/zone-name column to clear without the next card crowding it —
      .msnline is the thin coloured bar alone, overflow:hidden for its rounded corners, so THAT clipping never
      also eats the marks, which sit in the taller wrap around it. */
-  .msntrackwrap{position:relative;margin:34px 6px 40px}
+  /* CAS-762: the Off stop is a fixed label to the left of the numeric line, in a flex row with it — an Off
+     marker (msnmark.off) renders inside .msntrackwrap at a negative offset over that label, not inside it, so
+     dragging never has to move the handle to a different parent mid-gesture (see msnMarkStyle/OFF_STOP_PX). */
+  .msntrackouter{display:flex;align-items:center;gap:10px;margin:34px 6px 40px}
+  .msnoffstop{flex:0 0 26px;text-align:center;font-size:9px;font-weight:800;letter-spacing:.04em;
+    color:var(--faint)}
+  .msntrackwrap{position:relative;flex:1}
   .msnline{position:relative;height:5px;border-radius:3px;overflow:hidden;background:#2a303b}
   .msnseg{position:absolute;top:0;bottom:0;transition:left .12s,width .12s}
   .msnseg.grey{background:#2a303b}
@@ -2204,6 +2210,9 @@
     place-items:center;font-size:13px;cursor:grab;box-shadow:0 2px 8px rgba(0,0,0,.55);padding:0;
     touch-action:none}
   .msnhandle:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* CAS-762: an Off handle carries no score requirement — a dashed ring says "armed, but nothing to clear",
+     the same visual language .msnchip.off already uses for a Never chip. */
+  .msnmark.off .msnhandle{border-style:dashed}
   /* CAS-817: reverted to a plain label — it used to double as the "set to Never" button with no visible
      sign of that, so removing a window was invisible. Never now lives only in the chip row below. */
   .msnzone{font-size:9.5px;font-weight:800;letter-spacing:.04em;white-space:nowrap}
@@ -4980,7 +4989,8 @@ function recomputeFound(){
           // Past its admission window: "would I admit this under my new settings?" — the SCORE stays the
           // figure recorded at admission (using today's would re-trigger the cinema/streaming basis cliff by
           // an edit instead of by time), every other requirement is tested fresh against the film as it is now.
-          ? r.admission_score>=agentFloor(c) && matchesCriteria(m, {...c, status:[], myServices:false}, false, true)
+          // CAS-762: a floor of 0 (Off) has no score requirement, so an unscored admission (-1) still clears it.
+          ? (agentFloor(c)===0 || r.admission_score>=agentFloor(c)) && matchesCriteria(m, {...c, status:[], myServices:false}, false, true)
           // Still at or before it: nothing about the film's own journey has moved, so a normal live re-test
           // (same test an arrival gets) is the honest one.
           : watchesFilm(m,c);
@@ -5089,7 +5099,9 @@ function recomputeFound(){
     if(admissionRow){
       for(const k of WATCH_LEVEL_KEYS){
         if(!windowUsable(owner,k)) continue;
-        if(admissionRow.admission_score>=owner.watchMarkers[k]){ earned=k; break; }
+        // CAS-762: a window at Off (0) carries no score requirement, so it earns regardless of admission_score
+        // — including an unscored film's -1, which must still arm a Watch On rather than landing in no tab.
+        if(owner.watchMarkers[k]===0 || admissionRow.admission_score>=owner.watchMarkers[k]){ earned=k; break; }
       }
     } else {
       if(e.watchEarned===undefined){
@@ -5097,7 +5109,7 @@ function recomputeFound(){
         const score=cascadeScore(m);
         for(const k of WATCH_LEVEL_KEYS){
           if(!windowUsable(owner,k)) continue;
-          if(score>=owner.watchMarkers[k]){ e.watchEarned=k; break; }
+          if(owner.watchMarkers[k]===0 || score>=owner.watchMarkers[k]){ e.watchEarned=k; break; }
         }
       }
       earned=e.watchEarned;
@@ -7463,18 +7475,21 @@ const MARKER_MIN_GAP = 3;
 // outward from the one just moved: each earlier window is held at least MARKER_MIN_GAP above the one inside
 // it, each later window at least MARKER_MIN_GAP below, so a configuration that can't be reached (crossed or
 // stacked) is impossible rather than silently inert. Never (null) sits outside the comparison: moving it
-// doesn't push anything, and nothing pushes into it.
+// doesn't push anything, and nothing pushes into it. CAS-762: Off (0) sits outside it too — two windows may
+// both be Off at once (neither carries a requirement, so there is nothing to collide), so setting a marker TO
+// 0 pushes no neighbour, and a neighbour already at 0 is skipped exactly like a Never neighbour is.
 function setWatchMarker(c, key, value){
   c.watchMarkers=c.watchMarkers||{};
   delete c._watchMarkersDefaulted;   // CAS-743: this IS the user setting a real value — the guess is gone
   if(value==null){ c.watchMarkers[key]=null; return; }
   value=Math.round(value);
   c.watchMarkers[key]=value;
+  if(value===0) return;   // Off — armed, but nothing to push and nothing pushes into it
   const i=WATCH_LEVEL_KEYS.indexOf(key);
   let ceilingAbove=value;
   for(let j=i-1;j>=0;j--){
     const k=WATCH_LEVEL_KEYS[j], v=c.watchMarkers[k];
-    if(v==null) continue;
+    if(v==null || v===0) continue;
     ceilingAbove+=MARKER_MIN_GAP;
     if(v<ceilingAbove) c.watchMarkers[k]=ceilingAbove;
     else ceilingAbove=v;
@@ -7482,7 +7497,7 @@ function setWatchMarker(c, key, value){
   let floorBelow=value;
   for(let j=i+1;j<WATCH_LEVEL_KEYS.length;j++){
     const k=WATCH_LEVEL_KEYS[j], v=c.watchMarkers[k];
-    if(v==null) continue;
+    if(v==null || v===0) continue;
     floorBelow-=MARKER_MIN_GAP;
     if(v>floorBelow) c.watchMarkers[k]=floorBelow;
     else floorBelow=v;
@@ -10109,9 +10124,12 @@ function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   // the gate can never disagree with what's shown. A film with no Cascade score (-1) can never be shown to
   // clear a floor, so it is held back unconditionally — ignoreScoreGate lets scoreHeldBackCount() below ask
   // "would this have listed but for the score gate?" without duplicating every other gate in this function.
+  // CAS-762: a floor of 0 (Off) is no score requirement at all, so an unscored film clears it too — the -1
+  // rejection only fires once there is an actual floor to fail.
   if(!ignoreScoreGate){
     const score=cascadeScore(m);
-    if(score===-1 || score<agentFloor(c)) return false;
+    if(score===-1){ if(agentFloor(c)>0) return false; }
+    else if(score<agentFloor(c)) return false;
   }
   return true;
 }
@@ -13192,11 +13210,13 @@ function onbShownCount(){
   return listedCount(onbApply());
 }
 // CAS-724: scoreHeldBackCount, restated against c.scoreFloor rather than the retired Mission-dials target.
-// A film with no Cascade score can never be shown to clear a floor, so it is held back
-// unconditionally now — even a floor of 0 still denies a scoreless film (matchesCriteria's own -1 check) —
-// not only while some Mission dial happened to be on. Counts titles that would have listed (listedBy's other
-// gates all clear) but for carrying no score: not listed for real (!listedBy(m,c)) but WOULD be if the score
-// gate alone were lifted (listedBy(m,c,true)).
+// A film with no Cascade score can never be shown to clear a floor, so it is held back unconditionally
+// while any floor is in force — not only while some Mission dial happened to be on. Counts titles that would
+// have listed (listedBy's other gates all clear) but for carrying no score: not listed for real
+// (!listedBy(m,c)) but WOULD be if the score gate alone were lifted (listedBy(m,c,true)).
+// CAS-762: a floor of 0 (Off) is no score requirement at all, so matchesCriteria's own -1 check no longer
+// fires there — !listedBy(m,c) is already false for a scoreless film once its agent's floor is Off, since it
+// now lists for real, so this naturally returns 0 for an Off-floor agent with no extra check needed here.
 function scoreHeldBackCount(c){
   return MOVIES.filter(m=>cascadeScore(m)===-1 && !taggedOut(m)
     && !listedBy(m,c) && listedBy(m,c,true)).length;
@@ -13717,6 +13737,32 @@ function paintDialAt(card, nth, fillPct, litFn, onFn){
 // builder below sorts its own copy rather than assuming the shared array's order.
 const TRACK_MIN=50, TRACK_MAX=100;
 const trackPct = v => Math.max(0, Math.min(100, (v-TRACK_MIN)/(TRACK_MAX-TRACK_MIN)*100));
+// CAS-762: Off is a third marker state (0) — no score requirement, any score qualifies, including a film
+// Cascade hasn't scored at all. It is a discrete stop to the LEFT of the 50-100 track, never mapped through
+// trackPct (trackPct(0) clamps to 0%, landing exactly on top of 50) — it gets its own fixed position instead.
+const OFF_STOP_PX = 34;
+// Shared by the HTML builder and the in-place drag repaint so the two can never drift apart. Off windows
+// (value 0) always sort first (lowest) and always render 0-width — their "territory" is the Off stop, not the
+// 50-100 line — so the segment DOM-node COUNT stays fixed at usable.length+1 for as long as a drag keeps a
+// window switched on, whichever side of 0 its value is currently on (no add/remove mid-drag needed).
+function msnSegments(c, usable){
+  const byScore=[...usable].sort((a,b)=>(c.watchMarkers[a]-c.watchMarkers[b])
+    || (WATCH_LEVEL_KEYS.indexOf(b)-WATCH_LEVEL_KEYS.indexOf(a)));
+  const floor=agentFloor(c);
+  // No usable window at all (floor Infinity) is unchanged from before this ticket — the whole line reads grey,
+  // nothing is watched. A real floor greys up to it, same as before. Only a floor of 0 (an Off window is
+  // present) is new — CAS-762 item 11 — and that draws no grey segment at all, not even at the wrapper's edge.
+  const leadWidth = floor===Infinity ? 100 : (floor>0 ? trackPct(c.watchMarkers[byScore[0]]) : 0);
+  const segs=[{width: leadWidth, color:null}];
+  byScore.forEach((k,i)=>{
+    const v=c.watchMarkers[k];
+    if(v===0){ segs.push({left:0, width:0, color:WINDOW_COLOR[k]}); return; }
+    const from=trackPct(v);
+    const to=i+1<byScore.length ? trackPct(c.watchMarkers[byScore[i+1]]) : 100;
+    segs.push({left:from, width:Math.max(0,to-from), color:WINDOW_COLOR[k]});
+  });
+  return segs;
+}
 const WINDOW_COLOR = {in_cinema:"var(--amber)", premium:"var(--purple)", rent:"var(--blue)", stream:"var(--green)"};
 // The last score each window carried before being set to Never, so tapping a window back on restores where
 // it was rather than a hardcoded guess. Session-only (matches every other piece of in-flight editor state).
@@ -13732,9 +13778,13 @@ function msnValueLine(c){
   if(!marks.length) return "No window is armed — nothing will ever qualify.";
   const byScore=[...marks].sort((a,b)=>c.watchMarkers[b]-c.watchMarkers[a]);
   const phrase = k => WATCH_LEVEL_PHRASE[k] || `watch it on ${WATCH_LEVEL_SHORT_LABEL[k]}`;
-  const parts=byScore.map(k=>`${c.watchMarkers[k]}+, ${phrase(k)}`);
+  // CAS-762: an Off window reads as its own label plus "Off — any score" rather than a numeric floor.
+  const parts=byScore.map(k=>c.watchMarkers[k]===0
+    ? `${WATCH_LEVEL_SHORT_LABEL[k]} Off — any score`
+    : `${c.watchMarkers[k]}+, ${phrase(k)}`);
   const floor=Math.min(...marks.map(k=>c.watchMarkers[k]));
-  return `${parts.join(" · ")} · under ${floor}, don't list`;
+  // CAS-762: a floor of 0 excludes nothing by score, so the trailing floor clause is dropped, not printed as 0.
+  return floor>0 ? `${parts.join(" · ")} · under ${floor}, don't list` : parts.join(" · ");
 }
 // CAS-817: every window switched on in Where & when you'll watch gets exactly one chip in the "On this
 // track" row below — solid with a ✕ if it has a marker, dashed with a ＋ if it's Never — so add/remove is
@@ -13744,8 +13794,9 @@ function msnChipsHTML(c){
   if(!keys.length) return "";
   const chips=keys.map(k=>{
     const dot=`<span class="agdot" style="background:${WINDOW_COLOR[k]}"></span>`;
+    const onVal = c.watchMarkers[k]===0 ? "Off" : `${c.watchMarkers[k]}+`;   // CAS-762: never a literal "0+"
     return windowUsable(c,k)
-      ? `<span class="msnchip on">${dot}<span class="msnchiplbl" data-key="${k}">${esc(WATCH_LEVEL_SHORT_LABEL[k])} ${c.watchMarkers[k]}+</span>
+      ? `<span class="msnchip on">${dot}<span class="msnchiplbl" data-key="${k}">${esc(WATCH_LEVEL_SHORT_LABEL[k])} ${onVal}</span>
           <button type="button" class="msnchipx" data-act="never" data-key="${k}"
             aria-label="Set ${escA(WATCH_LEVEL_SHORT_LABEL[k])} to Never">✕</button></span>`
       : `<span class="msnchip off">${dot}<span class="msnchiplbl">${esc(WATCH_LEVEL_SHORT_LABEL[k])} — never</span>
@@ -13754,29 +13805,40 @@ function msnChipsHTML(c){
   }).join("");
   return `<div class="msnchiphead">On this track</div><div class="msnchips">${chips}</div>`;
 }
+// A window's mark position: Off (0) sits at a fixed spot OFF_STOP_PX to the left of the track's own 0% edge
+// (never trackPct(0), which clamps onto 50's own position) — everything else is unchanged, on the 50-100 line.
+function msnMarkStyle(c, key, offKeys){
+  const v=c.watchMarkers[key];
+  if(v===0){
+    // CAS-762 AC7: two windows may both sit at Off at once — stack them instead of drawing one on top of
+    // the other. A single Off window is dead centre on the stop, same as any other mark on the line.
+    const n=offKeys.length, idx=offKeys.indexOf(key);
+    const stack = n>1 ? (idx-(n-1)/2)*20 : 0;
+    return {left:`-${OFF_STOP_PX}px`, transform:`translate(0,calc(-50% + ${stack}px))`};
+  }
+  const pct=trackPct(v);
+  const edge=pct<=0?"translate(0,-50%)":pct>=100?"translate(-100%,-50%)":"translate(-50%,-50%)";
+  return {left:`${pct}%`, transform:edge};
+}
 function msnTrackAreaHTML(c){
   const usable=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
-  const byScore=[...usable].sort((a,b)=>(c.watchMarkers[a]-c.watchMarkers[b])
-    || (WATCH_LEVEL_KEYS.indexOf(b)-WATCH_LEVEL_KEYS.indexOf(a)));
-  const segs=[`<div class="msnseg grey" style="left:0%;width:${byScore.length?trackPct(c.watchMarkers[byScore[0]]):100}%"></div>`];
-  byScore.forEach((k,i)=>{
-    const from=trackPct(c.watchMarkers[k]);
-    const to=i+1<byScore.length ? trackPct(c.watchMarkers[byScore[i+1]]) : 100;
-    segs.push(`<div class="msnseg" style="left:${from}%;width:${Math.max(0,to-from)}%;background:${WINDOW_COLOR[k]}"></div>`);
-  });
+  const offKeys=usable.filter(k=>c.watchMarkers[k]===0);
+  const segs=msnSegments(c, usable).map(s=>
+    `<div class="msnseg${s.color?"":" grey"}" style="left:${s.left||0}%;width:${s.width}%${s.color?`;background:${s.color}`:""}"></div>`);
   const marks=usable.map(k=>{
-    const v=c.watchMarkers[k], pct=trackPct(v);
-    const edge=pct<=0?"translate(0,-50%)":pct>=100?"translate(-100%,-50%)":"translate(-50%,-50%)";
-    return `<div class="msnmark" style="left:${pct}%;transform:${edge}" data-key="${k}">
-      <span class="msnval">${v}</span>
+    const v=c.watchMarkers[k], isOff=v===0, style=msnMarkStyle(c,k,offKeys);
+    return `<div class="msnmark${isOff?" off":""}" style="left:${style.left};transform:${style.transform}" data-key="${k}">
+      <span class="msnval">${isOff?"Off":v}</span>
       <button type="button" class="msnhandle" style="background:${WINDOW_COLOR[k]}" data-key="${k}"
-        aria-label="${escA(WATCH_LEVEL_SHORT_LABEL[k])} score, currently ${v}">${WINDOW_ICON[k]}</button>
+        aria-label="${escA(WATCH_LEVEL_SHORT_LABEL[k])} score, currently ${isOff?"Off":v}">${WINDOW_ICON[k]}</button>
       <span class="msnzone" style="color:${WINDOW_COLOR[k]}">${esc(WATCH_LEVEL_SHORT_LABEL[k].toUpperCase())}</span>
     </div>`;
   }).join("");
   // id lives on the WRAP, not the thin .msnline bar, so paintMsnTrack()/wireMsnTrack() can reach both the
-  // segments and the marks (siblings) through one querySelectorAll root.
-  return `<div class="msntrackwrap" id="msnTrack"><div class="msnline">${segs.join("")}</div>${marks}</div>${msnChipsHTML(c)}`;
+  // segments and the marks (siblings) through one querySelectorAll root. The Off stop is a fixed label to the
+  // left of the wrap, outside it — an Off mark renders inside the wrap at a negative offset over that label
+  // (msntrackwrap has no overflow clipping), so a drag never has to move the handle to a different parent.
+  return `<div class="msntrackouter"><div class="msnoffstop">OFF</div><div class="msntrackwrap" id="msnTrack"><div class="msnline">${segs.join("")}</div>${marks}</div></div>${msnChipsHTML(c)}`;
 }
 function msnScoreCardHTML(){
   const c=onbFlow.draft||{};
@@ -13788,11 +13850,14 @@ function msnScoreCardHTML(){
 }
 // A window just switched to Never has no marker left to read a "last score" off, so a restore falls back to
 // a ladder-respecting default (spread MARKER_MIN_GAP apart from the bottom) when it has never had one this
-// session, then clamps against whichever real neighbours are already on the track.
+// session, then clamps against whichever real neighbours are already on the track. CAS-762: if the window
+// was AT Off when it was switched to Never, msnLastValue holds 0 — that restores straight back to Off, outside
+// the ladder clamp entirely (0 is a real, valid target now, not something to be squeezed up to 50).
 function restoreWatchMarker(c, key){
+  if(msnLastValue[key]===0){ setWatchMarker(c, key, 0); return; }
   const i=WATCH_LEVEL_KEYS.indexOf(key);
-  const above=WATCH_LEVEL_KEYS.slice(0,i).reverse().map(k=>c.watchMarkers[k]).find(v=>v!=null);
-  const below=WATCH_LEVEL_KEYS.slice(i+1).map(k=>c.watchMarkers[k]).find(v=>v!=null);
+  const above=WATCH_LEVEL_KEYS.slice(0,i).reverse().map(k=>c.watchMarkers[k]).find(v=>v!=null && v!==0);
+  const below=WATCH_LEVEL_KEYS.slice(i+1).map(k=>c.watchMarkers[k]).find(v=>v!=null && v!==0);
   let v = msnLastValue[key]!=null ? msnLastValue[key]
         : TRACK_MIN + MARKER_MIN_GAP*(WATCH_LEVEL_KEYS.length-1-i);
   if(above!=null) v=Math.min(v, above-MARKER_MIN_GAP);
@@ -13806,30 +13871,30 @@ function restoreWatchMarker(c, key){
 function paintMsnTrack(){
   const c=onbFlow.draft, track=$("msnTrack"); if(!c || !track) return;
   const usable=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
-  const byScore=[...usable].sort((a,b)=>(c.watchMarkers[a]-c.watchMarkers[b])
-    || (WATCH_LEVEL_KEYS.indexOf(b)-WATCH_LEVEL_KEYS.indexOf(a)));
+  const offKeys=usable.filter(k=>c.watchMarkers[k]===0);
+  // CAS-762: msnSegments always yields usable.length+1 slots (an Off window's own slot just paints 0-width),
+  // so the DOM node count here never has to change mid-drag as a value crosses in or out of Off.
   const segEls=track.querySelectorAll(".msnseg");
-  if(segEls[0]) segEls[0].style.width=(byScore.length?trackPct(c.watchMarkers[byScore[0]]):100)+"%";
-  byScore.forEach((k,i)=>{
-    const el=segEls[i+1]; if(!el) return;
-    const from=trackPct(c.watchMarkers[k]);
-    const to=i+1<byScore.length ? trackPct(c.watchMarkers[byScore[i+1]]) : 100;
-    el.style.left=from+"%"; el.style.width=Math.max(0,to-from)+"%";
-    el.style.background=WINDOW_COLOR[k];
+  msnSegments(c, usable).forEach((s,i)=>{
+    const el=segEls[i]; if(!el) return;
+    el.style.left=(s.left||0)+"%"; el.style.width=s.width+"%";
+    if(s.color) el.style.background=s.color;
   });
   track.querySelectorAll(".msnmark").forEach(el=>{
     const key=el.dataset.key, v=c.watchMarkers[key]; if(v==null) return;
-    const pct=trackPct(v);
-    el.style.left=pct+"%";
-    el.style.transform=pct<=0?"translate(0,-50%)":pct>=100?"translate(-100%,-50%)":"translate(-50%,-50%)";
-    const val=el.querySelector(".msnval"); if(val) val.textContent=v;
+    const isOff=v===0, style=msnMarkStyle(c,key,offKeys);
+    el.classList.toggle("off", isOff);
+    el.style.left=style.left; el.style.transform=style.transform;
+    const val=el.querySelector(".msnval"); if(val) val.textContent=isOff?"Off":v;
+    const handle=el.querySelector(".msnhandle");
+    if(handle) handle.setAttribute("aria-label", `${WATCH_LEVEL_SHORT_LABEL[key]} score, currently ${isOff?"Off":v}`);
   });
   // CAS-817: the "On this track" chip repeats each window's score, so a drag has to keep it in step too —
   // in place, same as the marker's own .msnval, never through msnRebuild (that would tear the drag).
   const area=$("msnTrackArea");
   if(area) area.querySelectorAll(".msnchiplbl[data-key]").forEach(el=>{
     const key=el.dataset.key, v=c.watchMarkers[key]; if(v==null) return;
-    el.textContent=`${WATCH_LEVEL_SHORT_LABEL[key]} ${v}+`;
+    el.textContent=`${WATCH_LEVEL_SHORT_LABEL[key]} ${v===0?"Off":`${v}+`}`;
   });
   const vl=$("msnValueLine"); if(vl) vl.textContent=msnValueLine(c);
 }
@@ -13842,8 +13907,14 @@ function wireMsnTrack(){
     const move=e=>{
       if(!dragging) return;
       const r=track.getBoundingClientRect();
-      const pct=Math.max(0, Math.min(1, (e.clientX-r.left)/Math.max(1,r.width)));
-      setWatchMarker(c, key, TRACK_MIN + pct*(TRACK_MAX-TRACK_MIN));
+      // CAS-762 AC1: past the track's own left edge is Off — a snap, not a squeeze into 0..50. Coming back
+      // right of that edge resumes the ordinary mapping, whose own floor is exactly 50, so "right of Off" is
+      // always 50, never a value in between.
+      if(e.clientX < r.left){ setWatchMarker(c, key, 0); }
+      else{
+        const pct=Math.max(0, Math.min(1, (e.clientX-r.left)/Math.max(1,r.width)));
+        setWatchMarker(c, key, TRACK_MIN + pct*(TRACK_MAX-TRACK_MIN));
+      }
       onbFlow.barTouched=true;
       paintMsnTrack(); selRefresh();
     };

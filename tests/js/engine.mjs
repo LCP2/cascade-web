@@ -390,6 +390,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // mutator and render helpers) and notifyChipHTML (the Watch On chip's own render, alongside agentChipHTML
   // above) — plain top-level functions, exported directly like the rest of this file.
   windowEnabled, restoreWatchMarker, msnTrackAreaHTML, msnValueLine, notifyChipHTML,
+  // CAS-762: msnLastValue — the module-level "value a window carried before Never" map — exported by
+  // reference (like watched/blocked/found above) so a test can seed the exact Off-round-trip restoreWatchMarker
+  // now has to handle without driving the real click handlers.
+  msnLastValue,
   // CAS-790/791: found — the live membership Set recomputeFound rebuilds every pass, by reference like
   // watched/blocked above — needed for the A-F and G/I checks' direct membership assertions.
   // (watchRows/applyWatchRows already reach a test through CascadePersistence, same as the rest of the

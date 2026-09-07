@@ -533,12 +533,13 @@ test("CAS-724 AC3: the Awards requirement exempts a film that hasn't been judged
 // AC2: for every agent and film, listedBy(m,c) implies cascadeScore(m) >= c.scoreFloor. No exceptions —
 // checked both across the real preset/lane matrix (CASES) and directly against matchesCriteria with a custom
 // floor, since listedBy narrows further (window/pin state) and must not be the only place this holds.
-test("CAS-724 AC2: no listed film's Cascade score is below its own agent's scoreFloor — no exceptions", () => {
+test("CAS-724 AC2: no listed film's Cascade score is below its own agent's scoreFloor — no exceptions but Off (CAS-762)", () => {
   for(const { kind, s, label } of CASES){
     pickInLane(E, kind, s.key);
     const d = E.onbApply();
     const listed = E.MOVIES.filter(m => E.listedBy(m, d));
-    for(const m of listed) assert.ok(E.cascadeScore(m) >= d.scoreFloor,
+    // CAS-762: a floor of 0 is Off — no score requirement, so an unscored film (-1) legitimately lists there.
+    for(const m of listed) assert.ok(d.scoreFloor === 0 || E.cascadeScore(m) >= d.scoreFloor,
       `${label}: ${m.title} lists at Cascade score ${E.cascadeScore(m)}, below its own agent's floor ${d.scoreFloor}`);
   }
   const floored = missionCase({ scoreFloor: 70 });
@@ -546,10 +547,15 @@ test("CAS-724 AC2: no listed film's Cascade score is below its own agent's score
   assert.ok(scoredBelow.length > 0, "no film scored below 70 in the fixture catalogue — this test would prove nothing");
   for(const m of scoredBelow) assert.equal(E.matchesCriteria(m, floored), false,
     `${m.title} scores ${E.cascadeScore(m)}, below the agent's floor of 70, but still matched`);
-  // and rule 4: a film with no Cascade score at all is never admitted, even at the most permissive floor (0).
+  // CAS-762 supersedes rule 4 at a floor of 0 (Off): that floor is now no score requirement at all, so an
+  // unscored film DOES clear it — a floor of 0 is exactly the case AC2's own >= check above can never see,
+  // since cascadeScore(m) >= d.scoreFloor is -1 >= 0 (false) for a film this rule now legitimately admits.
   const unscored = E.MOVIES.find(m => E.cascadeScore(m) === -1 && E.matchesCriteria(m, missionCase(), undefined, true));
-  if(unscored) assert.equal(E.matchesCriteria(unscored, missionCase({ scoreFloor: 0 })), false,
-    `${unscored.title} has no Cascade score but was admitted at a floor of 0`);
+  if(unscored) assert.equal(E.matchesCriteria(unscored, missionCase({ scoreFloor: 0 })), true,
+    `${unscored.title} has no Cascade score and its agent's floor is Off (0) — CAS-762 says that admits it`);
+  // and rule 4 still holds wherever there IS a real floor: any positive floor keeps denying a scoreless film.
+  if(unscored) assert.equal(E.matchesCriteria(unscored, missionCase({ scoreFloor: 50 })), false,
+    `${unscored.title} has no Cascade score but was admitted at a real floor of 50`);
 });
 
 // AC6: raising any single requirement never increases what an agent lists — asserted over the live MOVIES
@@ -572,10 +578,10 @@ test("CAS-724 AC6: raising the Budget requirement never increases what an agent 
 });
 
 // CAS-724 change item 6: scoreHeldBackCount is restated against c.scoreFloor rather than the retired
-// Mission-dials target — and, since rule 4 (no score, never admitted) is now unconditional rather than only
-// active "while a target is in force", the count is meaningful even at a floor of 0.
-test("CAS-724: scoreHeldBackCount agrees with its own set, at any floor including 0", () => {
-  const d = missionCase({ status: ["included_streaming", "pvod", "rental"], scoreFloor: 0 });
+// Mission-dials target, so the count is meaningful at any real floor. CAS-762 changes what "at a floor of 0"
+// means: 0 is now Off, no score requirement at all, so nothing is held back for score there any more.
+test("CAS-724: scoreHeldBackCount agrees with its own set, at a real floor", () => {
+  const d = missionCase({ status: ["included_streaming", "pvod", "rental"], scoreFloor: 50 });
   const held = E.scoreHeldBackCount(d);
   const heldFilms = E.MOVIES.filter(m => E.cascadeScore(m) === -1
     && !E.listedBy(m, d) && E.listedBy(m, d, true));
@@ -583,6 +589,11 @@ test("CAS-724: scoreHeldBackCount agrees with its own set, at any floor includin
   assert.ok(held > 0, "test setup: expected at least one unscored film held back to exercise the count");
   for(const m of heldFilms) assert.equal(E.listedBy(m, d), false,
     `${m.title} has no score but is still listed`);
+});
+// CAS-762: at a floor of 0 (Off) scoreHeldBackCount must read 0 — nothing is excluded by score any more.
+test("CAS-762: scoreHeldBackCount is 0 for an agent whose floor is Off", () => {
+  const d = missionCase({ status: ["included_streaming", "pvod", "rental"], scoreFloor: 0 });
+  assert.equal(E.scoreHeldBackCount(d), 0, "an Off-floor agent must hold nothing back for having no score");
 });
 
 // ---- 10b. THE CHOSEN SORT'S OWN COMPARATOR DECIDES THE ORDER (CAS-702) ------------------------------------
