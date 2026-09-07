@@ -1224,6 +1224,36 @@ function setSignedIn(signedIn){
   E.localStorage.setItem("cascade_had_account", signedIn ? "1" : "0");
 }
 
+// CAS-829: movingData() now drops any film with no single owning agent (filmOwnerCascade returns null).
+// These CAS-667/668/670/671 checks are about ledger-readiness/window/badge plumbing, not ownership itself
+// (that's tests/js/moving-owner.test.mjs's job), so every film they expect a row for gets one shared
+// "mover" cascade as its real owner.
+function seedMovingOwner(){
+  const c = E.normCascade({ kind: "stream", status: [] });
+  c.id = "cas829-moving-owner"; c.paused = false; c.order = 0;
+  E.cascades.push(c);
+  return c;
+}
+function ownFilms(owner, films){
+  films.forEach(m => { E.notify[m.tmdb_id] = { cascadeIds: [owner.id] }; });
+}
+function disownFilms(films){
+  films.forEach(m => { delete E.notify[m.tmdb_id]; });
+}
+function unseedMovingOwner(owner){
+  const i = E.cascades.findIndex(c => c.id === owner.id);
+  if(i >= 0) E.cascades.splice(i, 1);
+}
+// Not a real check — `MOVING_OWNER` must not exist in E.cascades for any test outside this block (CAS-673's
+// active-set assertions, among others, would see it as a stray extra agent). node:test runs a file's test()
+// bodies in registration order, but ALL module-level code — including a bare `const X = seedMovingOwner()`
+// here — runs at import time, before ANY test() body, which would leak it into every earlier test too. So
+// the seed has to be a test of its own, immediately before the block that needs it.
+let MOVING_OWNER;
+test("CAS-829: moving-owner test fixture setup", () => {
+  MOVING_OWNER = seedMovingOwner();
+});
+
 test("CAS-667 AC1: a signed-in device with the alerts ledger unresolved renders nothing, never the guest ledger", () => {
   const film = E.MOVIES[0];
   E.realAlerts.length = 0;
@@ -1243,6 +1273,7 @@ test("CAS-667 AC1: a signed-in device with the alerts ledger unresolved renders 
 
 test("CAS-667 AC2: opening Moving before and after the ledger resolves ends on the same row set", () => {
   const film = E.MOVIES[0];
+  ownFilms(MOVING_OWNER, [film]);
   setSignedIn(true);
   E.realAlerts.length = 0;
   E.realAlerts.push({ id: 1, movie_id: film.tmdb_id, moment: "announced_stream", title: film.title,
@@ -1267,11 +1298,13 @@ test("CAS-667 AC2: opening Moving before and after the ledger resolves ends on t
   assert.deepEqual(reopenedIds, afterIds, "reopening Moving must produce the same row set as the prior open");
 
   E.realAlerts.length = 0;
+  disownFilms([film]);
   setSignedIn(false);
 });
 
 test("CAS-667 AC3: a genuine guest device still gets firstFound rows regardless of movingReady", () => {
   const film = E.MOVIES[0];
+  ownFilms(MOVING_OWNER, [film]);
   setSignedIn(false);
   E.firstFound[String(film.tmdb_id)] = new Date().toISOString();
   E.setMovingReady(false);   // a guest has nothing to wait for — must be unaffected by this flag
@@ -1283,6 +1316,7 @@ test("CAS-667 AC3: a genuine guest device still gets firstFound rows regardless 
 
   delete E.firstFound[String(film.tmdb_id)];
   E.setMovingReady(true);
+  disownFilms([film]);
 });
 
 // ---- THE GUEST BRANCH KEYS OFF cascade_had_account, NOT THE LIVE accountActive() ANSWER (CAS-670) --------
@@ -1328,6 +1362,7 @@ test("CAS-670 AC2: cascade_had_account=1 makes renderMovingScreen show its loadi
 
 test("CAS-670 AC3: cascade_had_account absent is a genuine guest device and still gets firstFound rows", () => {
   const film = E.MOVIES[0];
+  ownFilms(MOVING_OWNER, [film]);
   E.localStorage.removeItem("cascade_had_account");
   E.CascadeAuth.enabled = false; E.CascadeAuth.client = null; E.CascadeAuth.session = null;
   E.firstFound[String(film.tmdb_id)] = new Date().toISOString();
@@ -1340,11 +1375,13 @@ test("CAS-670 AC3: cascade_had_account absent is a genuine guest device and stil
 
   delete E.firstFound[String(film.tmdb_id)];
   E.setMovingReady(true);
+  disownFilms([film]);
 });
 
 test("CAS-670 AC4: a hard reload on a signed-in device never surfaces a firstFound-sourced row during boot", () => {
   const film = E.MOVIES[0];
   const fid = String(film.tmdb_id);
+  ownFilms(MOVING_OWNER, [film]);
   E.CascadeAuth.enabled = false; E.CascadeAuth.client = null; E.CascadeAuth.session = null; // still resolving
   E.localStorage.setItem("cascade_had_account", "1");
   E.firstFound[fid] = new Date().toISOString();   // a stale guest-era ledger this device happens to carry
@@ -1364,6 +1401,7 @@ test("CAS-670 AC4: a hard reload on a signed-in device never surfaces a firstFou
 
   delete E.firstFound[fid];
   E.localStorage.removeItem("cascade_had_account");
+  disownFilms([film]);
 });
 
 // ---- MOVING OPENS ON THE FULLEST WINDOW (CAS-671), AND THE BADGE COUNTS THE SAME WINDOW THE SCREEN SHOWS
@@ -1378,9 +1416,11 @@ function unwatchedFilms(n){
 }
 function seedFirstFound(films, daysAgo){
   films.forEach(m => { E.firstFound[String(m.tmdb_id)] = daysAgoISO(daysAgo); delete E.movingSeen[String(m.tmdb_id)]; });
+  ownFilms(MOVING_OWNER, films);   // CAS-829: movingData() drops any film with no single owner
 }
 function unseedFirstFound(films){
   films.forEach(m => { delete E.firstFound[String(m.tmdb_id)]; delete E.movingSeen[String(m.tmdb_id)]; });
+  disownFilms(films);
 }
 
 test("CAS-671 AC1: app_template.html contains no since_last or movingVisitCutoff", () => {
@@ -1475,6 +1515,15 @@ test("CAS-668: an empty window's badge reads 0, not a count borrowed from a diff
   E.closeMovingScreen();
 
   unseedFirstFound([film]);
+});
+
+// Not a real check — node:test runs a file's test() bodies in registration order, so this is where the
+// CAS-829 shared owner cascade (module-level, pushed once above) actually gets removed. Top-level code runs
+// at module-load time, before any test body executes, so the removal has to be a test of its own rather
+// than a bare statement here.
+test("CAS-829: moving-owner test fixture cleanup", () => {
+  unseedMovingOwner(MOVING_OWNER);
+  assert.ok(!E.cascades.some(c => c.id === MOVING_OWNER.id), "the shared moving-owner fixture must be removed");
 });
 
 // ---- THE LISTING APPLIES NO DEPTH CAP OR SCORE FLOOR (CAS-662) --------------------------------------------
