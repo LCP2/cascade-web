@@ -317,25 +317,30 @@ test("cascade score: Upcoming honours Cascade score, score order and release ord
   assert.deepEqual(seq, ["B", "C", "A"], `Upcoming under Cascade score should read highest buzz percentile first — got ${seq.join(", ")}`);
 });
 
-test("cascade score: a watch list's own live sort (ymSort) reaches In Cinema, same as listingOrder (CAS-699, CAS-702)", () => {
-  // listingGroups is the function render() actually calls (CAS-662) — ymSort, not c.sort, is its sort key
-  // (CAS-646) — so this is the exact path behind Lee's screenshot, not just the shared helper underneath it.
+test("cascade score: the Watch bar's own pick (#sort) reaches In Cinema via listingGroups, same as listingOrder (CAS-819, CAS-702)", () => {
+  // listingGroups is the function render() actually calls (CAS-662) — filt.sort + sortPicked (the Watch
+  // bar's own #sort control, CAS-819) is its sort key now, not ymSort (Your Movies' unrelated control,
+  // CAS-699's original mis-wiring) — so this is the exact path behind the ticket's screenshot, not just the
+  // shared helper underneath it.
   const films = [
     cinemaFilm("Moana", "2026-07-08", 1),
     cinemaFilm("Motor City", "2026-07-23", 0.1),
     cinemaFilm("Spider-Man: Brand New Day", "2026-08-06", 10),
   ];
   const ac = { kind: "cinema" };
+  const sortBefore = E.filt.sort;
   try{
     const byDefault = [...E.listingGroups(films, ac).flatMap(({ items }) => [...items]).map(m => m.title)];
     assert.deepEqual(byDefault, ["Moana", "Motor City", "Spider-Man: Brand New Day"],
       `with nothing picked, the list should still read oldest cinema date first — got ${byDefault.join(", ")}`);
-    E.setYmSort("cascade");
+    E.filt.sort = "cascade";
+    E.setSortPicked(true);
     const picked = [...E.listingGroups(films, ac).flatMap(({ items }) => [...items]).map(m => m.title)];
     assert.deepEqual(picked, ["Spider-Man: Brand New Day", "Moana", "Motor City"],
-      `with Cascade score picked from the list's own sort menu, In Cinema should read highest buzz percentile first — got ${picked.join(", ")}`);
+      `with Cascade score picked from the Watch bar's own sort menu, In Cinema should read highest buzz percentile first — got ${picked.join(", ")}`);
   } finally {
-    E.setYmSort(null);   // module-scope state — leave it as every other test found it
+    E.filt.sort = sortBefore;   // module-scope state — leave it as every other test found it
+    E.setSortPicked(false);
   }
 });
 

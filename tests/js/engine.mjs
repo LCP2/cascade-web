@@ -296,6 +296,10 @@ if(typeof window.CascadeAuth === "undefined"){
   filmOwnerCascade, filmOwnerOrder, splitByOwner, watchScopeRows, agentChipHTML,
   get ymSort(){ return ymSort; },
   setYmSort(v){ ymSort = v; },
+  // CAS-819: listingGroups now reads sortPicked (the Watch bar's own #sort control), not ymSort — exposed
+  // the same get/set-over-a-let shape so a test can drive it the way #sort's own onchange does.
+  get sortPicked(){ return sortPicked; },
+  setSortPicked(v){ sortPicked = v; },
   // CAS-613: auto-notify's own decision surface. recomputeFound is the wire-adjacent entry point (it reads
   // cascades/MOVIES and writes notify), exposed the same way movingData is above; notify/entryFor let a test
   // seed and read the per-film arming state directly; watchPrefs is exposed through a getter/setter (like
