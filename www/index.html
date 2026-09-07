@@ -5680,7 +5680,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 976, "commit": "7f245dc", "builtAt": "2026-09-07T07:46:09Z"};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 977, "commit": "83062d9", "builtAt": "2026-09-07T07:51:07Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -13883,17 +13883,24 @@ function awardsCardHTML(){
     "How decorated it is. A winner clears every nomination rung.",
     "reqAwardsVal", AWARDS_CARD_LABEL[v], reqStepSliderHTML("onbDial_awardsreq", AWARD_STOPS, v, "Awards"));
 }
-// CAS-729: the Mission requirement card's own 5-stop scale — 3/5/10/20/Any, tightest-to-loosest LEFT to
-// RIGHT (design record §7). That is the reverse of the taste baseline's Any-on-the-left YEARS_STOPS
-// (CAS-340), so it is its own small table and its own wiring rather than a reordering of that shared one.
-const YEARSREQ_STOPS = [{y:3,label:"3 yrs"}, {y:5,label:"5"}, {y:10,label:"10"}, {y:20,label:"20"}, {y:0,label:"Any"}];
-const yearsReqLabel = y => !y ? "Any" : `Last ${y} year${y===1?"":"s"}`;
+// CAS-818: the Mission requirement card asks the exact same question the taste baseline's own How far back
+// row does, so it uses the same CAS-340 ten-stop track — YEARS_STOPS / posForYears / yearsForPos — rather
+// than the 5-stop YEARSREQ_STOPS ladder CAS-729 gave it (two scales for one setting was the defect).
 function yearsCardHTML(){
-  const y=(onbFlow.draft||{}).yearsBack||0;
-  const idx=Math.max(0, YEARSREQ_STOPS.findIndex(s=>s.y===y));
+  const val=(onbFlow.draft||{}).yearsBack||0;
+  const notch = y => `<span class="vnotch ${(val && y && y<=val) ? "lit":""}" style="left:${posForYears(y)}%"></span>`;
+  const slider=`<div class="vslider">
+      <div class="vtrack"><div class="vfillbar" style="width:${posForYears(val)}%"></div></div>
+      <div class="vnotches">${YEARS_STOPS.map(notch).join("")}</div>
+      <input type="range" id="onbDial_yearsreq" min="0" max="100" step="1" value="${posForYears(val)}"
+             aria-label="How far back">
+    </div>
+    <div class="vlabels">${YEARS_STOPS.map(y=>`<button type="button" class="vsnap ${y===val?"on":""}"
+      data-y="${y}" style="left:${posForYears(y)}%;transform:${posForYears(y)<=0?"translateX(0)":posForYears(y)>=100?"translateX(-100%)":"translateX(-50%)"}"
+      >${esc(yearsShort(y))}</button>`).join("")}</div>`;
   return reqCardHTML("📅","How far back","ONCE RELEASED","muted",
     "How old a released film can be. Cinema and upcoming films are always recent, so this never touches them.",
-    "reqYearsVal", yearsReqLabel(YEARSREQ_STOPS[idx].y), reqStepSliderHTML("onbDial_yearsreq", YEARSREQ_STOPS, idx, "How far back"));
+    "reqYearsVal", yearsLabel(val), slider);
 }
 // CAS-816: Styles and Age rating join the one-page Edit Agent as tappable summary cards — a value line plus
 // the actual chips a picker would show, so each reads its current value without being opened (AC2), tapping
@@ -13954,16 +13961,16 @@ function wireReqCards(){
   })();
   (()=>{
     const r=$("onbDial_yearsreq"); if(!r) return;
-    const card=r.closest(".osdial"), max=YEARSREQ_STOPS.length-1;
-    const apply=i=>{
-      onbFlow.draft.yearsBack=YEARSREQ_STOPS[i].y; onbFlow.barTouched=true;
-      paintDial(card, i/max*100, k=>k<=i, k=>k===i);
-      const read=$("reqYearsVal"); if(read) read.textContent=yearsReqLabel(YEARSREQ_STOPS[i].y);
+    const card=r.closest(".osdial");
+    const apply=y=>{
+      onbFlow.draft.yearsBack=y; onbFlow.barTouched=true;
+      paintDial(card, posForYears(y), i=>y && YEARS_STOPS[i] && YEARS_STOPS[i]<=y, i=>YEARS_STOPS[i]===y);
+      const read=$("reqYearsVal"); if(read) read.textContent=yearsLabel(y);
       selRefresh();
     };
-    r.oninput=()=>apply(+r.value);
-    card.querySelectorAll(".vsnap[data-i]").forEach(b=>{
-      b.onclick=()=>{ const i=+b.dataset.i; r.value=i; apply(i); };
+    r.oninput=()=>apply(yearsForPos(+r.value));
+    card.querySelectorAll(".vsnap[data-y]").forEach(b=>{
+      b.onclick=()=>{ const y=+b.dataset.y; r.value=posForYears(y); apply(y); };
     });
   })();
 }
