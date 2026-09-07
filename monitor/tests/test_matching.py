@@ -1,13 +1,22 @@
 """Unit tests for match + de-dupe (CAS-85 / spec 26771457 §5).
 
 Run:  python -m unittest monitor.tests.test_matching   (from the repo root)
+
+CAS-825: admission (which film a Cascade admits) is now asked of the real shipped engine via
+compute_admission() -> admit_shim.mjs, not recomputed field-by-field in Python. Every fixture
+Cascade below carries `watchMarkers` (so app_template.html's agentFloor() has a usable, 0-floor
+window rather than Infinity) and every fixture movie carries enough of a quality signal
+(imdb_rating + imdb_votes>=1000, or rt_critic) and a `language` for the taste baseline to clear —
+without them the real engine holds a film back exactly as it would in the app, which is the whole
+point of this ticket, but makes an under-specified fixture film look unmatched for the wrong
+reason. `_admit()` below is the one place every test asks the engine for its answer.
 """
 import datetime as _dt
 import json
 import os
 import unittest
 
-from monitor import (compute_transitions, match, matches_criteria, service_ok,
+from monitor import (compute_transitions, match, matches_criteria, compute_admission, service_ok,
                      notification_rows, suppressed_pairs, excluded_moments, match_film_watches,
                      match_newly_qualified, match_new_to_agent)
 from monitor.matching import Hit, agent_channels
@@ -18,14 +27,31 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _FIX = os.path.join(os.path.dirname(_HERE), "fixtures")
 RUN_DATE = _dt.date(2026, 7, 16)
 
+# CAS-825: every fixture agent below gets this floor-clearing block merged into its own criteria,
+# so agentFloor() always has a usable window at 0 rather than Infinity (no watchMarkers -> nothing
+# can ever clear the real engine's score gate). Genre/imdb/etc. still do the actual narrowing these
+# tests are about; this only keeps the score floor out of their way.
+_OPEN_MARKERS = {"in_cinema": 0, "rent": 0, "stream": 0}
+
+
+def _criteria(**extra):
+    return {**extra, "watchMarkers": dict(_OPEN_MARKERS)}
+
 
 def _load(name):
     with open(os.path.join(_FIX, name), encoding="utf-8") as fh:
         return json.load(fh)
 
 
-class _Movie(dict):
-    """dict with attribute-free helper; matches use plain dicts anyway."""
+def _admit(cascades, today=None, yesterday=None, account_prefs=None):
+    """The one call site every test below uses to ask the real engine what these cascades admit —
+    see compute_admission()'s own docstring for the shape."""
+    catalogues = {}
+    if today is not None:
+        catalogues["today"] = today
+    if yesterday is not None:
+        catalogues["yesterday"] = yesterday
+    return compute_admission(cascades, catalogues, account_prefs=account_prefs or {})
 
 
 class MatchTests(unittest.TestCase):
@@ -36,8 +62,10 @@ class MatchTests(unittest.TestCase):
         cls.transitions = compute_transitions(cls.prev, cls.today, RUN_DATE)
         cls.cascades = _load("cascades.json")
 
-    def _match(self, already=None):
-        return match(self.cascades, self.transitions, already=already, catalogue=self.today)
+    def _match(self, already=None, cascades=None):
+        cascades = self.cascades if cascades is None else cascades
+        admission = _admit(cascades, today=self.today)
+        return match(cascades, self.transitions, already=already, admission=admission)
 
     def _keys(self, by_user):
         return {(h.cascade_id, h.transition.movie_id, h.transition.moment)
@@ -60,7 +88,8 @@ class MatchTests(unittest.TestCase):
     # The preference outranks the Cascade: a muted TYPE never fires for that user, however their
     # own Cascades are set, and it must not leak across to anyone else.
     def test_global_exclude_mutes_that_type_for_that_user(self):
-        by_user = match(self.cascades, self.transitions, catalogue=self.today,
+        admission = _admit(self.cascades, today=self.today)
+        by_user = match(self.cascades, self.transitions, admission=admission,
                         excluded={"user-A": ["hits_rent"]})
         keys = self._keys(by_user)
         self.assertNotIn(("cascade-A1", "5001", "hits_rent"), keys)
@@ -68,13 +97,15 @@ class MatchTests(unittest.TestCase):
         self.assertIn(("cascade-B1", "5002", "hits_stream"), keys)      # B is unaffected
 
     def test_global_exclude_can_silence_a_user_entirely(self):
-        by_user = match(self.cascades, self.transitions, catalogue=self.today,
+        admission = _admit(self.cascades, today=self.today)
+        by_user = match(self.cascades, self.transitions, admission=admission,
                         excluded={"user-A": ["hits_rent", "hits_cinema"]})
         self.assertNotIn("user-A", by_user)
         self.assertIn("user-B", by_user)
 
     def test_global_exclude_absent_changes_nothing(self):
-        self.assertEqual(self._keys(match(self.cascades, self.transitions, catalogue=self.today,
+        admission = _admit(self.cascades, today=self.today)
+        self.assertEqual(self._keys(match(self.cascades, self.transitions, admission=admission,
                                           excluded={})),
                          self._keys(self._match()))
 
@@ -133,14 +164,16 @@ class MatchTests(unittest.TestCase):
     # ---- personal Pick overrides outrank the Cascade (CAS-100 AC5) ----
     def test_pick_off_suppresses_that_users_alert(self):
         # user-A took 5001 off by hand. cascade-A1 goes on matching it; we go on saying nothing.
-        keys = self._keys(match(self.cascades, self.transitions, catalogue=self.today,
+        admission = _admit(self.cascades, today=self.today)
+        keys = self._keys(match(self.cascades, self.transitions, admission=admission,
                                 suppressed={("user-A", "5001")}))
         self.assertNotIn(("cascade-A1", "5001", "hits_rent"), keys)
         self.assertIn(("cascade-A2", "5003", "hits_cinema"), keys)     # user-A's other alerts stand
 
     def test_pick_off_is_per_user_not_global(self):
         # user-B turning 5001 off must not silence user-A's alert for the same film.
-        keys = self._keys(match(self.cascades, self.transitions, catalogue=self.today,
+        admission = _admit(self.cascades, today=self.today)
+        keys = self._keys(match(self.cascades, self.transitions, admission=admission,
                                 suppressed={("user-B", "5001")}))
         self.assertIn(("cascade-A1", "5001", "hits_rent"), keys)
 
@@ -158,7 +191,8 @@ class MatchTests(unittest.TestCase):
             suppressed_pairs({"user-A": "5001"})
 
     def test_no_overrides_changes_nothing(self):
-        self.assertEqual(self._keys(match(self.cascades, self.transitions, catalogue=self.today,
+        admission = _admit(self.cascades, today=self.today)
+        self.assertEqual(self._keys(match(self.cascades, self.transitions, admission=admission,
                                           suppressed=None)),
                          self._keys(self._match()))
 
@@ -180,31 +214,23 @@ class MatchTests(unittest.TestCase):
         store = InMemoryStore(cascades=self.cascades, notifications=[])
         active = store.fetch_active_cascades()
         self.assertTrue(all(c.get("active", True) for c in active))
-        first = match(active, self.transitions, already=store.fetch_notification_keys(), catalogue=self.today)
+        admission = _admit(active, today=self.today)
+        first = match(active, self.transitions, already=store.fetch_notification_keys(),
+                     admission=admission)
         store.insert_notifications(notification_rows(first))
-        second = match(active, self.transitions, already=store.fetch_notification_keys(), catalogue=self.today)
+        second = match(active, self.transitions, already=store.fetch_notification_keys(),
+                       admission=admission)
         self.assertEqual(second, {})
 
-    # ---- matches_criteria unit cases ----
-    def test_matches_criteria_units(self):
-        m = {"tmdb_id": 1, "genres": ["Comedy", "Drama"], "age_rating": "PG",
-             "language": "en", "imdb_rating": 7.5, "rt_critic": 80, "award": "Won 1 Oscar"}
-        self.assertTrue(matches_criteria(m, {"genre": ["Drama"]}))
-        self.assertFalse(matches_criteria(m, {"genre": ["Horror"]}))
-        self.assertFalse(matches_criteria(m, {"exclude": ["Comedy"]}))       # skip beats match
-        self.assertFalse(matches_criteria(m, {"age": ["G"]}))
-        self.assertTrue(matches_criteria(m, {"age": ["PG", "M"]}))
-        self.assertFalse(matches_criteria(m, {"lang": ["fr"]}))
-        self.assertFalse(matches_criteria(m, {"imdb": 8}))
-        self.assertTrue(matches_criteria(m, {"imdb": 7}))
-        self.assertFalse(matches_criteria(m, {"rt": 90}))
-        self.assertTrue(matches_criteria(m, {"awards": True}))
-        self.assertFalse(matches_criteria({"tmdb_id": 2, "genres": []}, {"awards": True}))
-
-    def test_include_unrated(self):
-        unrated = {"tmdb_id": 3, "genres": ["Drama"], "imdb_rating": 0}
-        self.assertFalse(matches_criteria(unrated, {"imdb": 6}))
-        self.assertTrue(matches_criteria(unrated, {"imdb": 6, "includeUnrated": True}))
+    # ---- matches_criteria is now a lookup (CAS-825) ----
+    def test_matches_criteria_is_a_lookup_not_a_recomputation(self):
+        admission = {"c1": {"today": {"5001", "5003"}}}
+        self.assertTrue(matches_criteria("5001", "c1", "today", admission))
+        self.assertTrue(matches_criteria(5003, "c1", "today", admission))   # str()-coerced
+        self.assertFalse(matches_criteria("5002", "c1", "today", admission))
+        self.assertFalse(matches_criteria("5001", "c1", "yesterday", admission))  # wrong snapshot
+        self.assertFalse(matches_criteria("5001", "unknown-cascade", "today", admission))
+        self.assertFalse(matches_criteria("5001", "c1", "today", {}))       # no admission at all
 
     def test_service_ok_only_constrains_stream(self):
         class T:  # minimal stand-in
@@ -222,23 +248,29 @@ class OneAgentPerFilmTests(unittest.TestCase):
         prev = [{"tmdb_id": 1, "title": "A", "status": ["in_cinema"], "cinema_date": "2026-01-01",
                  "offers": []}]
         today = [{"tmdb_id": 1, "title": "A", "status": ["rental"], "cinema_date": "2026-01-01",
+                  "genres": [], "language": "en", "imdb_rating": 7.0, "imdb_votes": 5000,
+                  "rt_critic": 70,
                   "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}]}]
         return compute_transitions(prev, today, RUN_DATE)
 
     def _cascades(self, order0, order1):
         c0 = {"id": "c0", "user_id": "u1", "name": "Zero", "active": True,
-              "alert_moments": ["hits_rent"], "criteria": {}}
+              "alert_moments": ["hits_rent"], "criteria": _criteria()}
         c1 = {"id": "c1", "user_id": "u1", "name": "One", "active": True,
-              "alert_moments": ["hits_rent"], "criteria": {}}
+              "alert_moments": ["hits_rent"], "criteria": _criteria()}
         if order0 is not None:
             c0["criteria"]["order"] = order0
         if order1 is not None:
             c1["criteria"]["order"] = order1
         return [c0, c1]
 
+    def _match(self, cascades, ts):
+        admission = _admit(cascades, today=[t.movie for t in ts])
+        return match(cascades, ts, admission=admission)
+
     def test_two_agents_matching_one_film_yield_one_hit_from_the_lower_order(self):
         ts = self._transitions()
-        hits = match(self._cascades(0, 1), ts)["u1"]
+        hits = self._match(self._cascades(0, 1), ts)["u1"]
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].cascade_id, "c0")
 
@@ -246,13 +278,13 @@ class OneAgentPerFilmTests(unittest.TestCase):
         ts = self._transitions()
         cascades = self._cascades(0, 1)
         cascades.reverse()             # "c1" (order 1) now appears before "c0" (order 0)
-        hits = match(cascades, ts)["u1"]
+        hits = self._match(cascades, ts)["u1"]
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].cascade_id, "c0")
 
     def test_missing_order_never_beats_a_numeric_order(self):
         ts = self._transitions()
-        hits = match(self._cascades(None, 0), ts)["u1"]
+        hits = self._match(self._cascades(None, 0), ts)["u1"]
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].cascade_id, "c1")   # c1 carries order 0; c0 carries none
 
@@ -269,11 +301,11 @@ class OneAgentPerFilmTests(unittest.TestCase):
         ts = self._transitions()
         cascades = [
             {"id": "c0", "user_id": "u1", "name": "Zero", "active": True,
-             "alert_moments": ["hits_rent"], "criteria": {"order": 0}},
+             "alert_moments": ["hits_rent"], "criteria": _criteria(order=0)},
             {"id": "c1", "user_id": "u2", "name": "One", "active": True,
-             "alert_moments": ["hits_rent"], "criteria": {"order": 0}},
+             "alert_moments": ["hits_rent"], "criteria": _criteria(order=0)},
         ]
-        by_user = match(cascades, ts)
+        by_user = self._match(cascades, ts)
         self.assertEqual(len(by_user.get("u1", [])), 1)
         self.assertEqual(len(by_user.get("u2", [])), 1)
 
@@ -323,12 +355,15 @@ class PerAgentChannels(unittest.TestCase):
         prev = [{"tmdb_id": 1, "title": "A", "status": ["in_cinema"], "cinema_date": "2026-01-01",
                  "offers": []}]
         today = [{"tmdb_id": 1, "title": "A", "status": ["rental"], "cinema_date": "2026-01-01",
+                  "genres": [], "language": "en", "imdb_rating": 7.0, "imdb_votes": 5000,
+                  "rt_critic": 70,
                   "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}]}]
         ts = compute_transitions(prev, today, RUN_DATE)
         cascades = [{"id": "c1", "user_id": "u1", "name": "Quiet one", "active": True,
                      "alert_moments": ["hits_rent"],
-                     "criteria": {"channelsLive": {"inApp": True, "email": False}}}]
-        hits = match(cascades, ts)["u1"]
+                     "criteria": _criteria(channelsLive={"inApp": True, "email": False})}]
+        admission = _admit(cascades, today=[t.movie for t in ts])
+        hits = match(cascades, ts, admission=admission)["u1"]
         self.assertEqual(len(hits), 1)
         self.assertFalse(hits[0].wants("email"))
         self.assertTrue(hits[0].wants("in_app"))
@@ -345,12 +380,18 @@ class FilmWatchTests(unittest.TestCase):
         prev = [{"tmdb_id": 1, "title": "A", "status": ["in_cinema"] if moment != "hits_cinema" else [],
                  "cinema_date": "2026-01-01", "offers": []}]
         today = [{"tmdb_id": 1, "title": "A", "status": [status], "cinema_date": "2026-01-01",
+                  "genres": [], "language": "en", "imdb_rating": 7.0, "imdb_votes": 5000,
+                  "rt_critic": 70, "popularity": 50,
                   "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}]}]
         return compute_transitions(prev, today, RUN_DATE)
 
     def _cascade(self, moment="hits_stream"):
         return [{"id": "c1", "user_id": "u1", "name": "Streaming agent", "active": True,
-                 "alert_moments": [moment], "criteria": {}}]
+                 "alert_moments": [moment], "criteria": _criteria()}]
+
+    def _match(self, cascades, ts):
+        admission = _admit(cascades, today=[t.movie for t in ts])
+        return match(cascades, ts, admission=admission)
 
     # ---- the four scenarios the ticket's AC calls out by name ----
     def test_per_film_tick_alone_fires(self):
@@ -366,7 +407,7 @@ class FilmWatchTests(unittest.TestCase):
 
     def test_agent_bell_alone_fires(self):
         ts = self._transitions("hits_stream")
-        by_user = match(self._cascade(), ts)
+        by_user = self._match(self._cascade(), ts)
         self.assertEqual(len(by_user.get("u1", [])), 1)
         cascade_seen = {("u1", h.transition.movie_id, h.transition.moment) for h in by_user["u1"]}
         # No film_watch row at all -> the per-film path contributes nothing.
@@ -374,7 +415,7 @@ class FilmWatchTests(unittest.TestCase):
 
     def test_both_together_fire_once(self):
         ts = self._transitions("hits_stream")
-        by_user = match(self._cascade(), ts)
+        by_user = self._match(self._cascade(), ts)
         cascade_seen = {("u1", h.transition.movie_id, h.transition.moment) for h in by_user["u1"]}
         watches = [{"user_id": "u1", "movie_id": "1", "windows": ["stream"]}]
         watch_hits = match_film_watches(watches, ts, cascade_hits=cascade_seen)
@@ -384,7 +425,7 @@ class FilmWatchTests(unittest.TestCase):
 
     def test_neither_fires_nothing(self):
         ts = self._transitions("hits_stream")
-        self.assertEqual(match([], ts), {})
+        self.assertEqual(self._match([], ts), {})
         self.assertEqual(match_film_watches([], ts), {})
 
     # ---- supporting behaviour ----
@@ -426,22 +467,26 @@ class NewlyQualifiedTests(unittest.TestCase):
 
     def _movie(self, imdb, status=("rental",), tmdb_id=9001, title="Rising Star", **extra):
         m = {"tmdb_id": tmdb_id, "title": title, "genres": ["Drama"], "status": list(status),
-             "cinema_date": "2026-01-01",
+             "cinema_date": "2026-01-01", "language": "en", "rt_critic": 70,
              "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}],
-             "imdb_rating": imdb}
+             "imdb_rating": imdb, "imdb_votes": 5000 if imdb else 0}
         m.update(extra)
         return m
 
     def _cascade(self, imdb_bar=7.0, moments=("hits_rent",), user_id="u1", cascade_id="c1"):
         return [{"id": cascade_id, "user_id": user_id, "name": "Drama radar", "active": True,
                  "alert_moments": list(moments),
-                 "criteria": {"genre": ["Drama"], "imdb": imdb_bar}}]
+                 "criteria": _criteria(genre=["Drama"], imdb=imdb_bar)}]
+
+    def _match(self, cascades, prev, today, **kw):
+        admission = _admit(cascades, today=today, yesterday=prev)
+        return match_newly_qualified(cascades, prev, today, admission=admission, **kw)
 
     # ---- the five named scenarios (CAS-602 change item 5) ----
     def test_rising_rating_crosses_the_bar_fires_exactly_once(self):
         prev = [self._movie(6.5)]
         today = [self._movie(7.5)]
-        hits = match_newly_qualified(self._cascade(imdb_bar=7.0), prev, today)
+        hits = self._match(self._cascade(imdb_bar=7.0), prev, today)
         self.assertEqual(len(hits.get("u1", [])), 1)
         h = hits["u1"][0]
         self.assertEqual(h.transition.moment, "newly_qualifies")
@@ -452,20 +497,20 @@ class NewlyQualifiedTests(unittest.TestCase):
         # Yesterday's run already lifted it above the bar; today it holds at the same rating.
         prev = [self._movie(7.5)]
         today = [self._movie(7.5)]
-        hits = match_newly_qualified(self._cascade(imdb_bar=7.0), prev, today)
+        hits = self._match(self._cascade(imdb_bar=7.0), prev, today)
         self.assertEqual(hits, {})
 
     def test_a_film_that_already_matched_yesterday_never_fires(self):
         # Already above the bar yesterday; a further rise today changes nothing about "newly".
         prev = [self._movie(8.0)]
         today = [self._movie(9.0)]
-        hits = match_newly_qualified(self._cascade(imdb_bar=7.0), prev, today)
+        hits = self._match(self._cascade(imdb_bar=7.0), prev, today)
         self.assertEqual(hits, {})
 
     def test_a_film_absent_from_yesterday_never_fires(self):
         # That is `announced`'s job, not this one's.
         today = [self._movie(9.0)]
-        hits = match_newly_qualified(self._cascade(imdb_bar=7.0), [], today)
+        hits = self._match(self._cascade(imdb_bar=7.0), [], today)
         self.assertEqual(hits, {})
 
     def test_gate_honours_alert_moments(self):
@@ -473,38 +518,38 @@ class NewlyQualifiedTests(unittest.TestCase):
         # hits_cinema — the mapped moment must be one the cascade actually asks for.
         prev = [self._movie(6.5)]
         today = [self._movie(7.5)]
-        hits = match_newly_qualified(self._cascade(imdb_bar=7.0, moments=("hits_cinema",)), prev, today)
+        hits = self._match(self._cascade(imdb_bar=7.0, moments=("hits_cinema",)), prev, today)
         self.assertEqual(hits, {})
 
     def test_gate_honours_the_global_mute(self):
         prev = [self._movie(6.5)]
         today = [self._movie(7.5)]
-        hits = match_newly_qualified(self._cascade(imdb_bar=7.0, moments=("hits_rent",)), prev, today,
-                                     excluded={"u1": ["hits_rent"]})
+        hits = self._match(self._cascade(imdb_bar=7.0, moments=("hits_rent",)), prev, today,
+                           excluded={"u1": ["hits_rent"]})
         self.assertEqual(hits, {})
 
     # ---- supporting behaviour ----
     def test_upcoming_film_maps_to_announced(self):
         prev = [self._movie(6.5, status=("upcoming",))]
-        today = [self._movie(7.5, status=("upcoming",))]
-        hits = match_newly_qualified(self._cascade(imdb_bar=7.0, moments=("announced",)), prev, today)
+        today = [self._movie(7.5, status=("upcoming",), popularity=50)]
+        hits = self._match(self._cascade(imdb_bar=7.0, moments=("announced",)), prev, today)
         self.assertEqual(len(hits.get("u1", [])), 1)
         self.assertEqual(hits["u1"][0].transition.moment, "newly_qualifies")
 
     def test_second_run_with_the_same_ledger_is_silent(self):
         prev = [self._movie(6.5)]
         today = [self._movie(7.5)]
-        first = match_newly_qualified(self._cascade(imdb_bar=7.0), prev, today)
+        first = self._match(self._cascade(imdb_bar=7.0), prev, today)
         already = {(h.cascade_id, h.transition.movie_id, h.transition.moment)
                    for hits in first.values() for h in hits}
-        second = match_newly_qualified(self._cascade(imdb_bar=7.0), prev, today, already=already)
+        second = self._match(self._cascade(imdb_bar=7.0), prev, today, already=already)
         self.assertEqual(second, {})
 
     def test_suppressed_pair_outranks_the_qualification(self):
         prev = [self._movie(6.5)]
         today = [self._movie(7.5)]
-        hits = match_newly_qualified(self._cascade(imdb_bar=7.0), prev, today,
-                                     suppressed={("u1", "9001")})
+        hits = self._match(self._cascade(imdb_bar=7.0), prev, today,
+                           suppressed={("u1", "9001")})
         self.assertEqual(hits, {})
 
     def test_service_filter_applies_to_a_streaming_qualification(self):
@@ -513,8 +558,8 @@ class NewlyQualifiedTests(unittest.TestCase):
                              offers=[{"service": "Netflix", "type": "sub"}])]
         cascades = [{"id": "c1", "user_id": "u1", "name": "Drama radar", "active": True,
                      "alert_moments": ["hits_stream"],
-                     "criteria": {"genre": ["Drama"], "imdb": 7.0, "services": ["Stan"]}}]
-        hits = match_newly_qualified(cascades, prev, today)
+                     "criteria": _criteria(genre=["Drama"], imdb=7.0, services=["Stan"])}]
+        hits = self._match(cascades, prev, today)
         self.assertEqual(hits, {})   # Netflix isn't Stan -> filtered out
 
     def test_inactive_cascade_ignored(self):
@@ -522,7 +567,7 @@ class NewlyQualifiedTests(unittest.TestCase):
         today = [self._movie(7.5)]
         cascades = self._cascade(imdb_bar=7.0)
         cascades[0]["active"] = False
-        self.assertEqual(match_newly_qualified(cascades, prev, today), {})
+        self.assertEqual(self._match(cascades, prev, today), {})
 
     def test_two_agents_newly_qualifying_for_one_film_collapse_to_the_lower_order(self):
         # CAS-784: same one-film-one-agent rule applies here as in match().
@@ -530,11 +575,13 @@ class NewlyQualifiedTests(unittest.TestCase):
         today = [self._movie(7.5)]
         cascades = [
             {"id": "c0", "user_id": "u1", "name": "Zero", "active": True,
-             "alert_moments": ["hits_rent"], "criteria": {"genre": ["Drama"], "imdb": 7.0, "order": 1}},
+             "alert_moments": ["hits_rent"],
+             "criteria": _criteria(genre=["Drama"], imdb=7.0, order=1)},
             {"id": "c1", "user_id": "u1", "name": "One", "active": True,
-             "alert_moments": ["hits_rent"], "criteria": {"genre": ["Drama"], "imdb": 7.0, "order": 0}},
+             "alert_moments": ["hits_rent"],
+             "criteria": _criteria(genre=["Drama"], imdb=7.0, order=0)},
         ]
-        hits = match_newly_qualified(cascades, prev, today)["u1"]
+        hits = self._match(cascades, prev, today)["u1"]
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].cascade_id, "c1")
 
@@ -549,22 +596,27 @@ class NewToAgentTests(unittest.TestCase):
 
     def _movie(self, imdb, status=("rental",), tmdb_id=9101, title="Quiet Riser", **extra):
         m = {"tmdb_id": tmdb_id, "title": title, "genres": ["Drama"], "status": list(status),
-             "cinema_date": "2026-01-01",
+             "cinema_date": "2026-01-01", "language": "en", "rt_critic": 70,
              "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}],
-             "imdb_rating": imdb}
+             "imdb_rating": imdb, "imdb_votes": 5000 if imdb else 0}
         m.update(extra)
         return m
 
     def _cascade(self, imdb_bar=7.0, updated_at=STABLE, user_id="u1", cascade_id="c1"):
         return [{"id": cascade_id, "user_id": user_id, "name": "Drama radar", "active": True,
-                 "alert_moments": [], "criteria": {"genre": ["Drama"], "imdb": imdb_bar},
+                 "alert_moments": [], "criteria": _criteria(genre=["Drama"], imdb=imdb_bar),
                  "updated_at": updated_at}]
+
+    def _match(self, cascades, prev, today, previous_run_start=PREV_RUN_START, **kw):
+        admission = _admit(cascades, today=today, yesterday=prev)
+        return match_new_to_agent(cascades, prev, today, previous_run_start,
+                                  admission=admission, **kw)
 
     # ---- CAS-785 AC1(a) ----
     def test_stable_agent_first_appearance_fires_once(self):
         prev = [self._movie(6.5)]
         today = [self._movie(7.5)]
-        hits = match_new_to_agent(self._cascade(imdb_bar=7.0), prev, today, self.PREV_RUN_START)
+        hits = self._match(self._cascade(imdb_bar=7.0), prev, today)
         self.assertEqual(len(hits.get("u1", [])), 1)
         h = hits["u1"][0]
         self.assertEqual(h.transition.moment, "new_to_agent")
@@ -576,16 +628,14 @@ class NewToAgentTests(unittest.TestCase):
         prev = [self._movie(6.5)]
         today = [self._movie(7.5)]
         recent = "2026-07-16T01:00:00+00:00"      # after previous_run_start -> inside the window
-        hits = match_new_to_agent(self._cascade(imdb_bar=7.0, updated_at=recent), prev, today,
-                                  self.PREV_RUN_START)
+        hits = self._match(self._cascade(imdb_bar=7.0, updated_at=recent), prev, today)
         self.assertEqual(hits, {})
 
     def test_edit_exactly_at_the_boundary_counts_as_inside_the_window(self):
         prev = [self._movie(6.5)]
         today = [self._movie(7.5)]
         boundary = self.PREV_RUN_START.isoformat()
-        hits = match_new_to_agent(self._cascade(imdb_bar=7.0, updated_at=boundary), prev, today,
-                                  self.PREV_RUN_START)
+        hits = self._match(self._cascade(imdb_bar=7.0, updated_at=boundary), prev, today)
         self.assertEqual(hits, {})
 
     def test_missing_updated_at_fails_closed(self):
@@ -593,22 +643,26 @@ class NewToAgentTests(unittest.TestCase):
         today = [self._movie(7.5)]
         cascades = self._cascade(imdb_bar=7.0)
         del cascades[0]["updated_at"]
-        self.assertEqual(match_new_to_agent(cascades, prev, today, self.PREV_RUN_START), {})
+        self.assertEqual(self._match(cascades, prev, today), {})
 
     # ---- CAS-785 AC1(c) ----
     def test_first_appearance_plus_a_window_transition_fires_once_not_twice(self):
         prev = [{"tmdb_id": 9102, "title": "Double Mover", "genres": ["Drama"], "status": [],
                  "cinema_date": "2026-07-16", "offers": [], "imdb_rating": 6.5}]
         today = [{"tmdb_id": 9102, "title": "Double Mover", "genres": ["Drama"], "status": ["in_cinema"],
-                  "cinema_date": "2026-07-16", "offers": [], "imdb_rating": 7.5}]
+                  "cinema_date": "2026-07-16", "offers": [], "language": "en", "rt_critic": 70,
+                  "popularity": 50, "imdb_rating": 7.5, "imdb_votes": 5000}]
         transitions = compute_transitions(prev, today, _dt.date(2026, 7, 16))
         cascade = {"id": "c1", "user_id": "u1", "name": "Drama radar", "active": True,
-                   "alert_moments": ["hits_cinema"], "criteria": {"genre": ["Drama"], "imdb": 7.0},
+                   "alert_moments": ["hits_cinema"], "criteria": _criteria(genre=["Drama"], imdb=7.0),
                    "updated_at": self.STABLE}
-        window_hits = match([cascade], transitions)
+        window_admission = _admit([cascade], today=[t.movie for t in transitions])
+        window_hits = match([cascade], transitions, admission=window_admission)
         covered = {(h.cascade_id, h.transition.movie_id)
                    for hits in window_hits.values() for h in hits}
-        new_hits = match_new_to_agent([cascade], prev, today, self.PREV_RUN_START, covered=covered)
+        new_admission = _admit([cascade], today=today, yesterday=prev)
+        new_hits = match_new_to_agent([cascade], prev, today, self.PREV_RUN_START,
+                                      admission=new_admission, covered=covered)
         total = sum(len(v) for v in window_hits.values()) + sum(len(v) for v in new_hits.values())
         self.assertEqual(total, 1)
         self.assertEqual(window_hits["u1"][0].transition.moment, "hits_cinema")
@@ -617,37 +671,36 @@ class NewToAgentTests(unittest.TestCase):
     def test_second_run_with_the_same_ledger_is_silent(self):
         prev = [self._movie(6.5)]
         today = [self._movie(7.5)]
-        first = match_new_to_agent(self._cascade(imdb_bar=7.0), prev, today, self.PREV_RUN_START)
+        first = self._match(self._cascade(imdb_bar=7.0), prev, today)
         already = {(h.cascade_id, h.transition.movie_id, h.transition.moment)
                    for hits in first.values() for h in hits}
-        second = match_new_to_agent(self._cascade(imdb_bar=7.0), prev, today, self.PREV_RUN_START,
-                                    already=already)
+        second = self._match(self._cascade(imdb_bar=7.0), prev, today, already=already)
         self.assertEqual(second, {})
 
     # ---- supporting behaviour ----
     def test_a_film_that_already_matched_yesterday_never_fires(self):
         prev = [self._movie(8.0)]
         today = [self._movie(9.0)]
-        hits = match_new_to_agent(self._cascade(imdb_bar=7.0), prev, today, self.PREV_RUN_START)
+        hits = self._match(self._cascade(imdb_bar=7.0), prev, today)
         self.assertEqual(hits, {})
 
     def test_a_film_absent_from_yesterday_never_fires(self):
         today = [self._movie(9.0)]
-        hits = match_new_to_agent(self._cascade(imdb_bar=7.0), [], today, self.PREV_RUN_START)
+        hits = self._match(self._cascade(imdb_bar=7.0), [], today)
         self.assertEqual(hits, {})
 
     def test_gate_honours_the_global_mute(self):
         prev = [self._movie(6.5)]
         today = [self._movie(7.5)]
-        hits = match_new_to_agent(self._cascade(imdb_bar=7.0), prev, today, self.PREV_RUN_START,
-                                  excluded={"u1": ["new_to_agent"]})
+        hits = self._match(self._cascade(imdb_bar=7.0), prev, today,
+                           excluded={"u1": ["new_to_agent"]})
         self.assertEqual(hits, {})
 
     def test_suppressed_pair_outranks_the_qualification(self):
         prev = [self._movie(6.5)]
         today = [self._movie(7.5)]
-        hits = match_new_to_agent(self._cascade(imdb_bar=7.0), prev, today, self.PREV_RUN_START,
-                                  suppressed={("u1", "9101")})
+        hits = self._match(self._cascade(imdb_bar=7.0), prev, today,
+                           suppressed={("u1", "9101")})
         self.assertEqual(hits, {})
 
     def test_inactive_cascade_ignored(self):
@@ -655,7 +708,7 @@ class NewToAgentTests(unittest.TestCase):
         today = [self._movie(7.5)]
         cascades = self._cascade(imdb_bar=7.0)
         cascades[0]["active"] = False
-        self.assertEqual(match_new_to_agent(cascades, prev, today, self.PREV_RUN_START), {})
+        self.assertEqual(self._match(cascades, prev, today), {})
 
     def test_two_agents_first_appearance_collapse_to_the_lower_order(self):
         # CAS-784: same one-film-one-agent rule applies here as in match()/match_newly_qualified.
@@ -663,11 +716,11 @@ class NewToAgentTests(unittest.TestCase):
         today = [self._movie(7.5)]
         cascades = [
             {"id": "c0", "user_id": "u1", "name": "Zero", "active": True, "alert_moments": [],
-             "criteria": {"genre": ["Drama"], "imdb": 7.0, "order": 1}, "updated_at": self.STABLE},
+             "criteria": _criteria(genre=["Drama"], imdb=7.0, order=1), "updated_at": self.STABLE},
             {"id": "c1", "user_id": "u1", "name": "One", "active": True, "alert_moments": [],
-             "criteria": {"genre": ["Drama"], "imdb": 7.0, "order": 0}, "updated_at": self.STABLE},
+             "criteria": _criteria(genre=["Drama"], imdb=7.0, order=0), "updated_at": self.STABLE},
         ]
-        hits = match_new_to_agent(cascades, prev, today, self.PREV_RUN_START)["u1"]
+        hits = self._match(cascades, prev, today)["u1"]
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].cascade_id, "c1")
 

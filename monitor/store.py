@@ -20,6 +20,8 @@ Interface:
   fetch_film_watches() -> [{user_id, movie_id, windows}]                                  # CAS-484
   fetch_watch_notification_keys() -> set[(user_id, movie_id, moment)]  # de-dupe, null-cascade rows
   delete_notifications_for_movie_ids(ids) -> int          # CAS-486: fixture-range-only, for notify-test
+  fetch_user_prefs() -> {user_id: {sub_services, store_services, taste}}                   # CAS-825
+  fetch_user_films() -> [{user_id, movie_id, status}]                                      # CAS-825
 """
 from __future__ import annotations
 
@@ -56,7 +58,7 @@ class InMemoryStore:
     """A store backed by plain Python lists — used for dry-run and tests."""
 
     def __init__(self, cascades=None, notifications=None, emails=None, prefs=None, picks=None,
-                 push_tokens=None, watches=None):
+                 push_tokens=None, watches=None, user_prefs=None, user_films=None):
         self._cascades = list(cascades or [])
         self._notifications = list(notifications or [])
         self._emails = dict(emails or {})
@@ -64,6 +66,8 @@ class InMemoryStore:
         self._picks = list(picks or [])
         self._push_tokens = list(push_tokens or [])
         self._watches = list(watches or [])
+        self._user_prefs = dict(user_prefs or {})
+        self._user_films = list(user_films or [])
 
     def fetch_active_cascades(self) -> list:
         return [c for c in self._cascades if c.get("active", True)]
@@ -119,6 +123,12 @@ class InMemoryStore:
         before = len(self._notifications)
         self._notifications = [n for n in self._notifications if str(n.get("movie_id")) not in ids]
         return before - len(self._notifications)
+
+    def fetch_user_prefs(self) -> dict:
+        return dict(self._user_prefs)
+
+    def fetch_user_films(self) -> list:
+        return list(self._user_films)
 
 
 class SupabaseStore:
@@ -192,6 +202,23 @@ class SupabaseStore:
         matching.match_film_watches)."""
         rows = self._get("/notifications?cascade_id=is.null&select=user_id,movie_id,moment")
         return {(str(r.get("user_id")), str(r.get("movie_id")), r.get("moment")) for r in rows}
+
+    def fetch_user_prefs(self) -> dict:
+        """user_id -> {sub_services, store_services, taste} (CAS-825): the account facts the real
+        engine's matchesCriteria reads beyond an agent's own criteria — CAS-211's services (the
+        my-services scope's own comparison set) and CAS-146's taste baseline (only `.langs`
+        survives there today, see app_template.html's passesTasteBase). A user with no row here has
+        never opened those screens, and compute_admission() reads that as the engine's own
+        permissive default, not as "answered empty"."""
+        rows = self._get("/user_prefs?select=user_id,sub_services,store_services,taste")
+        return {str(r.get("user_id")): r for r in rows if r.get("user_id")}
+
+    def fetch_user_films(self) -> list:
+        """Every user's watched-film opinions (CAS-183): [{user_id, movie_id, status}]. Fed straight
+        into the engine's own applyFilmRows() by admit_shim.mjs (CAS-825) — the same rebuild the app
+        runs on sign-in — so a blocked/disliked film is excluded from admission the same way the app
+        excludes it, not by a second exclusion rule guessed at in Python."""
+        return self._get("/user_films?select=user_id,movie_id,status")
 
     def fetch_user_email(self, user_id: str):
         """Resolve a user_id to their email via the Auth admin API (service_role only).
