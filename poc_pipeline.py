@@ -1469,6 +1469,123 @@ def purge_vendor_cache(files: list[str] | None = None) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# CAS-832: provider credential probe. The observed failure was silent and indefinite: TMDB
+# rejected our key with a plain 401 "Invalid API key", and CAS-161's per-call defensive bail
+# (correct for one bad call) then quietly kept whatever every enriched record already had —
+# forever, since a rejected key never fixes itself the way a quota does. One cheap probe per
+# provider, made up front, tells "wrong key" (rejected) apart from "over quota / rate limited"
+# (throttled — expected on a free tier, self-healing) before any real work happens.
+# ---------------------------------------------------------------------------
+PROVIDERS = ("TMDB", "OMDb", "Watchmode", "Wikidata")
+
+# Named in the hard-failure message so it is obvious what is about to go missing from the
+# catalogue if the key is not rotated (Lee's step — never this pipeline's).
+PROVIDER_FIELDS = {
+    "TMDB":      "cinema_date / age_rating (release_dates)",
+    "OMDb":      "imdb_rating",
+    "Watchmode": "wm_user_rating / wm_critic_score / wm_popularity_percentile",
+    "Wikidata":  "oscar_detail",
+}
+
+# Wording that marks a QUOTA/rate-limit answer rather than a bad key. Deliberately separate from
+# `_LIMIT_MARKERS` above, which folds "invalid api key" in too — correctly, for that guard's own
+# job of "stop calling this API for the rest of the run" either way.
+_QUOTA_MARKERS = ("limit reached", "request limit", "too many requests", "rate limit", "limited", "quota")
+
+
+def _classify_probe_error(e: urllib.error.HTTPError, has_credential: bool) -> str:
+    """'throttled' or 'rejected'. A provider with no credential of its own (Wikidata's public
+    SPARQL endpoint) can never be 'rejected' — there is no key to be wrong, so any 401/403 there
+    is that endpoint's own rate limiting, not something rotating a key could fix."""
+    if not has_credential or e.code == 429:
+        return "throttled"
+    if e.code in (401, 403):
+        body = ""
+        try:
+            body = (e.read() or b"").decode("utf-8", "replace")[:200].lower()
+        except Exception:
+            pass
+        return "throttled" if any(k in body for k in _QUOTA_MARKERS) else "rejected"
+    return "throttled"   # a transient 5xx etc. during the probe — not a credential fault either
+
+
+def probe_tmdb() -> str:
+    try:
+        get_json(f"{TMDB_BASE}/configuration?api_key={TMDB_KEY}", retries=0)
+        return "ok"
+    except urllib.error.HTTPError as e:
+        return _classify_probe_error(e, has_credential=True)
+    except Exception:
+        return "throttled"
+
+
+def probe_omdb() -> str:
+    try:
+        data = get_json(f"https://www.omdbapi.com/?i=tt0111161&apikey={OMDB_KEY}", retries=0)
+        if str(data.get("Response", "True")).lower() == "false" and \
+                any(k in (data.get("Error") or "").lower() for k in _QUOTA_MARKERS):
+            return "throttled"
+        return "ok"
+    except urllib.error.HTTPError as e:
+        return _classify_probe_error(e, has_credential=True)
+    except Exception:
+        return "throttled"
+
+
+def probe_watchmode() -> str:
+    try:
+        get_json(f"{WATCHMODE_BASE}/regions/?apiKey={WATCHMODE_KEY}", retries=0)
+        return "ok"
+    except urllib.error.HTTPError as e:
+        return _classify_probe_error(e, has_credential=True)
+    except Exception:
+        return "throttled"
+
+
+def probe_wikidata() -> str:
+    try:
+        query = "SELECT * WHERE { ?s ?p ?o } LIMIT 1"
+        get_json(WIKIDATA_ENDPOINT + "?query=" + urllib.parse.quote(query) + "&format=json", retries=0)
+        return "ok"
+    except urllib.error.HTTPError as e:
+        return _classify_probe_error(e, has_credential=False)
+    except Exception:
+        return "throttled"
+
+
+def probe_providers() -> dict:
+    """One cheap authenticated call per provider — but only when the pipeline would actually use
+    them this run. Without all three keys (`LIVE`), nothing below ever calls any of them today
+    (Wikidata rides the same gate: `enrich_wikidata_awards` is only reachable from the LIVE
+    branch of `build_live_catalogue`), so a dev machine or a CI job with no keys set must not
+    gain a brand-new real network call just because this exists. Returns {provider: outcome},
+    outcome in {'ok', 'throttled', 'rejected', 'unconfigured'}."""
+    if not LIVE:
+        return {name: "unconfigured" for name in PROVIDERS}
+    return {"TMDB": probe_tmdb(), "OMDb": probe_omdb(), "Watchmode": probe_watchmode(),
+            "Wikidata": probe_wikidata()}
+
+
+def check_provider_health(outcomes: dict) -> int:
+    """A rejected provider is a hard failure (CAS-832): the credential is wrong, revoked or
+    expired, and — unlike a quota — will not fix itself. Returns 1 so the caller can refuse to
+    build rather than commit a catalogue that would keep silently degrading. A throttled
+    provider only warns and returns 0; the run continues exactly as it did before this ticket."""
+    for name, outcome in outcomes.items():
+        if outcome == "throttled":
+            print(f"[warn] {name}: throttled (quota or rate limit) — expected on a free tier, "
+                  f"continuing.")
+    rejected = sorted(name for name, outcome in outcomes.items() if outcome == "rejected")
+    if not rejected:
+        return 0
+    for name in rejected:
+        print(f"[error] {name}: credential rejected (401/403, not a quota) — feeds "
+              f"{PROVIDER_FIELDS[name]}. Refusing to build a degraded catalogue; rotate the key "
+              f"(Lee's step) and re-run.")
+    return 1
+
+
+# ---------------------------------------------------------------------------
 # orchestration
 # ---------------------------------------------------------------------------
 def run(simulate_day: bool = False):
@@ -1569,11 +1686,14 @@ def _git(*args) -> str:
         return ""
 
 
-def build_version_info() -> dict:
+def build_version_info(provider_status: dict | None = None) -> dict:
     """Assemble the release + build stamp (CAS-124).
     version              — hand-bumped SemVer from the committed VERSION file (the only manual step).
     major/minor/patch    — parsed from version.
     build/commit/builtAt — derived automatically from git at build time; never hand-edited.
+    providers            — CAS-832: this build's provider probe outcomes, when one was made
+                            (omitted, not a placeholder dict, when none was — e.g. `run()`'s own
+                            internal rebuild, which already made real enrichment calls this run).
 
     No "env" field here (CAS-324): version.json is mirrored byte-for-byte from staging to main by
     promote.yml's pure merge, so a value baked in at build time (necessarily on staging) would still
@@ -1589,15 +1709,18 @@ def build_version_info() -> dict:
         try:    return int(x)
         except Exception: return 0
     major, minor, patch = ([_int(p) for p in version.split(".")] + [0, 0, 0])[:3]
-    return {
+    info = {
         "version": version, "major": major, "minor": minor, "patch": patch,
         "build":   _int(_git("rev-list", "--count", "HEAD")),
         "commit":  _git("rev-parse", "--short", "HEAD") or "unknown",
         "builtAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    if provider_status is not None:
+        info["providers"] = provider_status
+    return info
 
 
-def build_html(records: list[dict] | None = None):
+def build_html(records: list[dict] | None = None, provider_status: dict | None = None):
     """Inject the latest movies + date into app_template.html -> index.html.
     Keeps the app a single double-clickable file (no server, no CORS).
     Also stamps the release/build version (CAS-124) into the app and /version.json."""
@@ -1608,7 +1731,7 @@ def build_html(records: list[dict] | None = None):
         catalogue_date = catalogue.get("generated", catalogue_date)
     if not os.path.exists(TEMPLATE_FILE):
         print("! app_template.html not found — cannot build index.html"); return
-    info = build_version_info()
+    info = build_version_info(provider_status)
     html = open(TEMPLATE_FILE, encoding="utf-8").read()
     html = html.replace("__MOVIES_JSON__", json.dumps(records))
     # CAS-503 follow-up: __TODAY__ only feeds the baked BUILD_DATE stamp now (the app's live
@@ -1637,6 +1760,21 @@ def _sync_ios_www():
             shutil.copyfile(src, os.path.join(IOS_WWW_DIR, name))
 
 
+def run_build_html() -> int:
+    """`python poc_pipeline.py --build-html` (CAS-832): probe every provider's credential
+    before touching any file. This is the exact command CI's build-check/engine jobs and the
+    daily-refresh commit-retry loop all run (see daily.yml), so catching a rejected key here —
+    before `build_html` ever writes index.html/version.json — is what stops a degraded
+    catalogue from reaching a commit. Returns the process exit code."""
+    outcomes = probe_providers()
+    exit_code = check_provider_health(outcomes)
+    if exit_code:
+        return exit_code
+    build_html(provider_status=outcomes)
+    print("index.html rebuilt from movies.json — open it in any browser.")
+    return 0
+
+
 def _apply_scripted_change(records: list[dict]):
     """Demo only: nudge a couple of titles into their next window so the diff fires."""
     for m in records:
@@ -1659,7 +1797,6 @@ if __name__ == "__main__":
         else:
             print("nothing to purge — no vendor-cache files present.")
     elif "--build-html" in sys.argv:
-        build_html()                          # rebuild index.html from existing movies.json only
-        print("index.html rebuilt from movies.json — open it in any browser.")
+        sys.exit(run_build_html())
     else:
         run(simulate_day="--simulate-day" in sys.argv)

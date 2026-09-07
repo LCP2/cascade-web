@@ -1,0 +1,173 @@
+"""CAS-832 — a provider whose key is REJECTED (401/403, not a quota) degrades the catalogue
+silently and indefinitely: CAS-161's per-call defensive bail correctly keeps a title's existing
+data on one bad call, but a key that is wrong for good means every enrichment call this run (and
+every run after it) hits the same bail, forever, with nothing louder than a warning line in the
+log. One cheap probe per provider up front tells "wrong key" (rejected — will not fix itself)
+apart from "over quota / rate limited" (throttled — expected on a free tier, self-healing), and
+`--build-html` — the exact command CI's build-check/engine jobs and the daily-refresh
+commit-retry loop all run — refuses to build at all when a provider is rejected.
+
+Every test here mocks the network. Nothing reaches TMDB, OMDb, Watchmode or Wikidata.
+"""
+import io
+import unittest
+import urllib.error
+from unittest import mock
+
+import poc_pipeline as pp
+
+
+def _http_error(code, body=b""):
+    return urllib.error.HTTPError("https://example.invalid/", code, "err", {}, io.BytesIO(body))
+
+
+class ProviderProbeClassification(unittest.TestCase):
+    """Each probe_* makes one call and returns 'ok' | 'throttled' | 'rejected'."""
+
+    def setUp(self):
+        for p in (mock.patch.object(pp, "TMDB_KEY", "x"),
+                  mock.patch.object(pp, "OMDB_KEY", "x"),
+                  mock.patch.object(pp, "WATCHMODE_KEY", "x")):
+            p.start(); self.addCleanup(p.stop)
+
+    def test_tmdb_401_invalid_key_is_rejected(self):
+        # The real event this ticket is about: TMDB's exact observed response.
+        with mock.patch.object(pp, "get_json",
+                               side_effect=lambda *a, **kw: (_ for _ in ()).throw(
+                                   _http_error(401, b'{"status_message":"Invalid API key"}'))):
+            self.assertEqual(pp.probe_tmdb(), "rejected")
+
+    def test_tmdb_success_is_ok(self):
+        with mock.patch.object(pp, "get_json", return_value={"images": {}}):
+            self.assertEqual(pp.probe_tmdb(), "ok")
+
+    def test_omdb_401_request_limit_reached_is_throttled(self):
+        # The real event this ticket is about: OMDb's exact observed response.
+        def boom(*a, **kw):
+            raise _http_error(401, b'{"Response":"False","Error":"Request limit reached!"}')
+        with mock.patch.object(pp, "get_json", side_effect=boom):
+            self.assertEqual(pp.probe_omdb(), "throttled")
+
+    def test_omdb_success_is_ok(self):
+        with mock.patch.object(pp, "get_json", return_value={"Response": "True"}):
+            self.assertEqual(pp.probe_omdb(), "ok")
+
+    def test_omdb_soft_false_with_no_quota_wording_is_still_ok(self):
+        # An HTTP-200 Response:False that ISN'T quota wording (e.g. an unknown probe id) proves
+        # the key itself works — it must not read as a credential fault.
+        with mock.patch.object(pp, "get_json",
+                               return_value={"Response": "False", "Error": "Incorrect IMDb ID."}):
+            self.assertEqual(pp.probe_omdb(), "ok")
+
+    def test_watchmode_403_with_no_quota_wording_is_rejected(self):
+        def boom(*a, **kw):
+            raise _http_error(403, b'{"error":"invalid api key"}')
+        with mock.patch.object(pp, "get_json", side_effect=boom):
+            self.assertEqual(pp.probe_watchmode(), "rejected")
+
+    def test_watchmode_429_is_throttled(self):
+        def boom(*a, **kw):
+            raise _http_error(429)
+        with mock.patch.object(pp, "get_json", side_effect=boom):
+            self.assertEqual(pp.probe_watchmode(), "throttled")
+
+    def test_wikidata_401_is_always_throttled_never_rejected(self):
+        # The real event this ticket is about: Wikidata's exact observed response. Wikidata's
+        # public SPARQL endpoint carries no credential of its own — there is no key to be wrong,
+        # so this must never classify as 'rejected' even though it looks like one at a glance.
+        def boom(*a, **kw):
+            raise _http_error(401, b'{"error":"limited"}')
+        with mock.patch.object(pp, "get_json", side_effect=boom):
+            self.assertEqual(pp.probe_wikidata(), "throttled")
+
+    def test_wikidata_success_is_ok(self):
+        with mock.patch.object(pp, "get_json", return_value={"results": {"bindings": []}}):
+            self.assertEqual(pp.probe_wikidata(), "ok")
+
+
+class ProbeProvidersIsGatedOnLive(unittest.TestCase):
+    """Without all three keys (LIVE), nothing in the pipeline ever calls any provider today —
+    Wikidata included, since `enrich_wikidata_awards` is only reachable from the LIVE branch of
+    `build_live_catalogue`. A dev machine or a CI job with no keys set must not gain a brand-new
+    real network call just because this probe exists."""
+
+    def test_not_live_never_touches_the_network(self):
+        with mock.patch.object(pp, "LIVE", False), \
+             mock.patch.object(pp, "get_json",
+                               side_effect=AssertionError("must not call the network")):
+            outcomes = pp.probe_providers()
+        self.assertEqual(outcomes, {name: "unconfigured" for name in pp.PROVIDERS})
+
+    def test_live_probes_every_provider(self):
+        with mock.patch.object(pp, "LIVE", True), \
+             mock.patch.object(pp, "probe_tmdb", return_value="ok"), \
+             mock.patch.object(pp, "probe_omdb", return_value="throttled"), \
+             mock.patch.object(pp, "probe_watchmode", return_value="rejected"), \
+             mock.patch.object(pp, "probe_wikidata", return_value="ok"):
+            outcomes = pp.probe_providers()
+        self.assertEqual(outcomes, {"TMDB": "ok", "OMDb": "throttled",
+                                     "Watchmode": "rejected", "Wikidata": "ok"})
+
+
+class CheckProviderHealth(unittest.TestCase):
+    def test_all_ok_returns_zero_silently(self):
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            code = pp.check_provider_health({"TMDB": "ok", "OMDb": "ok",
+                                              "Watchmode": "ok", "Wikidata": "ok"})
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue(), "")
+
+    def test_a_throttled_provider_warns_and_returns_zero(self):
+        # AC2: unchanged from today's behaviour — a warning, run continues.
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            code = pp.check_provider_health({"TMDB": "ok", "OMDb": "throttled",
+                                              "Watchmode": "ok", "Wikidata": "ok"})
+        self.assertEqual(code, 0)
+        self.assertIn("OMDb", out.getvalue())
+
+    def test_a_rejected_provider_returns_nonzero_and_names_it(self):
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            code = pp.check_provider_health({"TMDB": "rejected", "OMDb": "ok",
+                                              "Watchmode": "ok", "Wikidata": "ok"})
+        self.assertNotEqual(code, 0)
+        self.assertIn("TMDB", out.getvalue())
+
+
+class BuildVersionInfoCarriesProviderStatus(unittest.TestCase):
+    """AC3: the build stamp carries a per-provider status field."""
+
+    def test_provider_status_is_included_when_given(self):
+        status = {"TMDB": "ok", "OMDb": "throttled", "Watchmode": "unconfigured", "Wikidata": "ok"}
+        info = pp.build_version_info(status)
+        self.assertEqual(info["providers"], status)
+
+    def test_provider_status_is_absent_when_not_given(self):
+        info = pp.build_version_info()
+        self.assertNotIn("providers", info)
+
+
+class RunBuildHtmlEntrypoint(unittest.TestCase):
+    """AC1 + AC2, end to end through the actual `--build-html` entry point (`run_build_html`,
+    called from `python poc_pipeline.py --build-html`)."""
+
+    def test_a_rejected_provider_exits_non_zero_and_never_builds(self):
+        outcomes = {"TMDB": "rejected", "OMDb": "ok", "Watchmode": "ok", "Wikidata": "ok"}
+        with mock.patch.object(pp, "probe_providers", return_value=outcomes), \
+             mock.patch.object(pp, "build_html") as build_html_mock, \
+             mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            code = pp.run_build_html()
+        self.assertNotEqual(code, 0)
+        self.assertIn("TMDB", out.getvalue())
+        build_html_mock.assert_not_called()   # never writes index.html/version.json
+
+    def test_a_throttled_provider_exits_zero_and_still_builds(self):
+        outcomes = {"TMDB": "ok", "OMDb": "throttled", "Watchmode": "ok", "Wikidata": "ok"}
+        with mock.patch.object(pp, "probe_providers", return_value=outcomes), \
+             mock.patch.object(pp, "build_html") as build_html_mock:
+            code = pp.run_build_html()
+        self.assertEqual(code, 0)
+        build_html_mock.assert_called_once_with(provider_status=outcomes)
+
+
+if __name__ == "__main__":
+    unittest.main()
