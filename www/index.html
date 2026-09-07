@@ -2715,6 +2715,13 @@
      uses for the same six values); Styles chips don't set --wwc, so the accent fallback applies to them. */
   .wsheetsec .chip.on{background:color-mix(in srgb, var(--wwc, var(--accent)) 22%, var(--panel2));
     border-color:var(--wwc, var(--accent))}
+  /* CAS-823: "Also show" — same --wwc-tinted .chip.on above, plus a status dot (matching the section's own
+     .gdot), a live count, and — for the tab's own, non-switchable window — an "always" tag instead of a dot
+     colour change, so it reads as permanently on rather than merely selected. */
+  .alsochip{display:inline-flex;align-items:center;gap:6px}
+  .alsochip .jn{font-weight:800;opacity:.85}
+  .alsochip .alwaystag{font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;opacity:.7}
+  .alsochip:disabled{cursor:default;opacity:1}
   /* CAS-719: "Picked by" — same joined-pill segmented shape as .watchtabs (CAS-713), single-select same
      as the tab bar itself, reused rather than duplicated since it is the same kind of control. */
   .pickedbyseg{display:flex;border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--panel2)}
@@ -2739,23 +2746,23 @@
      rounded panel, sitting just under the pill it belongs to, says the same thing without the artefact. */
   .cpop.spop{padding:5px 4px 4px;border-color:rgba(76,125,255,.5)}
   .listctl{display:flex;align-items:stretch;gap:8px;margin:8px 12px 0}
-  /* CAS-275: the jump rail scrolls horizontally rather than wrapping — a control row that grows a second
-     line changes the height of a STICKY bar, which moves the listing under the reader's thumb. Six sections
-     will not fit across 390px and are not meant to; the rail is a thing you flick, like the deck above it. */
-  .jumpbar{flex:1;min-width:0;position:relative;display:flex;align-items:center;gap:6px;
-    overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
-  .jumpbar::-webkit-scrollbar{display:none}
-  /* CAS-321: a subtle fade at the scrollable edge, shown only while there is more to scroll to (see the
-     .overflowing toggle in renderJumpBar) — the sort button is OUTSIDE this rail, so the fade never covers it. */
-  .jumpbar.overflowing::after{content:"";position:absolute;top:0;right:0;bottom:0;width:22px;
-    background:linear-gradient(to right,transparent,var(--bg));pointer-events:none}
-  .jchip{flex:none;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;
-    border:1px solid var(--line);background:var(--panel2);color:var(--dim);font-size:11.5px;font-weight:700;
-    cursor:pointer;white-space:nowrap;font-family:inherit}
-  .jchip:hover{color:var(--ink);border-color:#3a4150}
-  .jchip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  .jchip .jn{color:var(--faint);font-weight:700}
-  /* CAS-321: within this row only, the Buy (pvod) dot reads amber rather than the section heading's purple —
+  /* CAS-823: replaces the CAS-275 scrolling rail — at real width the chips overflowed and landed mid-scroll,
+     cut at both edges, so the first section was unreachable without a flick. This version never scrolls: a
+     short "Now" label, then one stop per section actually on screen, spaced across the width it has. */
+  .jumpbar{flex:1;min-width:0;display:flex;align-items:flex-start;gap:10px}
+  .jumpbar .nowlbl{flex:none;font-size:10.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--faint);padding-top:15px}
+  .jumpbar .nowtrack{flex:1;min-width:0;position:relative;display:flex;justify-content:space-between}
+  .jumpbar .nowtrack::before{content:"";position:absolute;left:0;right:0;top:15px;height:1px;background:var(--line)}
+  .nowstop{flex:0 1 auto;min-width:0;position:relative;display:flex;flex-direction:column;align-items:center;
+    gap:3px;background:none;border:0;padding:0;color:var(--dim);font-family:inherit;cursor:pointer}
+  .nowstop .nowcount{font-size:12px;font-weight:800;color:var(--ink);line-height:1}
+  .nowstop .gdot{flex:none}
+  .nowstop.own .gdot{box-shadow:0 0 0 3px rgba(255,255,255,.18)}
+  .nowstop .nowword{font-size:9.5px;font-weight:700;white-space:nowrap;color:var(--dim)}
+  .nowstop:hover .nowword,.nowstop:focus-visible .nowword{color:var(--ink)}
+  .nowstop:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
+  /* CAS-321: within this rail only, the Buy (pvod) dot reads amber rather than the section heading's purple —
      Lee's colour call for the three purchase-model chips (Buy/Rent/Stream = amber/blue/green). The group
      heading above the section keeps its own purple dot; the two are different surfaces, not a mismatch. */
   .jumpbar .gdot.pvod{background:var(--amber)}
@@ -4449,6 +4456,10 @@ const STATUS_LABEL = {
 // placement work that puts one marker per enabled window on the score track. Replaces CAS-713's hardcoded
 // three-entry array (which folded Premium into Streaming) now that every rung gets its own named tab.
 const WATCH_TAB_LABEL = {in_cinema:"Cinema", premium:"Premium", rent:"Rental", stream:"Streaming"};
+// CAS-823: the standing each non-Cinema tab restricts to by default (filmMatchesWatchTab below) — the fix
+// for "Streaming showed films still in cinemas". Cinema carries no entry here: Part A's own decision left
+// its behaviour untouched, so it keeps testing Watch On alone, never a standing.
+const WATCH_TAB_OWN_STANDING = {stream:"included_streaming", rent:"rental", premium:"pvod"};
 function watchTabsNow(){
   return WATCH_LEVEL_KEYS.filter(k=>{
     const w=watchPrefs[k]||{};
@@ -4460,6 +4471,10 @@ function watchTabsNow(){
 // the section grouping INSIDE a tab (listingGroups/render below, unchanged). Cinema alone carries a default
 // bucket — an undecided film (no Watch On pick at all) whose current status is still upcoming/in_cinema —
 // so a film nobody has chosen a level for isn't invisible everywhere; the other tabs carry no such default.
+// CAS-823: a Watch On match is no longer the whole test for the other three tabs — the film must also be
+// STANDING in the tab's own window (WATCH_TAB_OWN_STANDING) unless Also-show (watchAlsoShow, set by the
+// Filters sheet) has widened that tab to include the film's current standing too. Cinema's own branch above
+// is untouched by this — it never consults a standing test or watchAlsoShow at all.
 function filmMatchesWatchTab(m, tab){
   const key = filmNotifyState(m.tmdb_id).key;
   if(tab==="in_cinema"){
@@ -4468,7 +4483,10 @@ function filmMatchesWatchTab(m, tab){
     const ps=primaryStatus(m);
     return ps==="upcoming" || ps==="in_cinema";
   }
-  return key===tab;
+  if(key!==tab) return false;
+  const ps=primaryStatus(m);
+  if(ps===WATCH_TAB_OWN_STANDING[tab]) return true;
+  return watchAlsoShow[tab].has(ps);
 }
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const FMT_RANK = {SD:1, HD:2, "4K":3};
@@ -5668,7 +5686,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 985, "commit": "d8d2a79", "builtAt": "2026-09-07T09:49:13Z"};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 986, "commit": "7dd3a81", "builtAt": "2026-09-07T10:15:32Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8711,43 +8729,34 @@ function filmMatchesPickedBy(m){
   const src=filmWatchSource(m.tmdb_id);
   return sel==="unset" ? !src : src===sel;
 }
-// CAS-720: STATUS_LABEL's seven raw availability keys, collapsed to the four chips the sheet's own
-// "Current status" section shows — Lee's mapping, confirmed against STATUS_LABEL's current seven keys.
-// past_opening is never a primaryStatus() value (it's a moment, not a window a film holds — see
-// STATUS_LABEL's own comment), so it can never actually drive this chip; kept in the mapping anyway since
-// the ticket names it explicitly and an unreachable entry is harmless.
-const CURRENT_STATUS_GROUPS = [
-  {key:"upcoming", label:"Upcoming", statuses:["upcoming"]},
-  {key:"cinema",   label:"Cinema",   statuses:["opening_week","in_cinema","past_opening"]},
-  {key:"rent",     label:"Rent",     statuses:["pvod","rental"]},
-  {key:"stream",   label:"Stream",   statuses:["included_streaming"]},
+// CAS-823: the widener for filmMatchesWatchTab's own-standing restriction above — one chip per window in
+// ladder order, following the same four windows Part A itself tests (upcoming/in_cinema/rental/
+// included_streaming). pvod and opening_week aren't offered: no tab's own standing is pvod-adjacent enough
+// to need widening past it, and opening_week has always been swept into "In cinemas" (the Cinema tab's own
+// union already reads it that way). Replaces CAS-720's "Current status" section, which this ticket's own
+// description names as that section's deliberate follow-on.
+const ALSO_SHOW_WINDOWS = [
+  {key:"upcoming", label:"Unreleased", cd:"var(--upcoming)"},
+  {key:"in_cinema", label:"In cinemas", cd:"var(--amber)"},
+  {key:"rental", label:"At rental", cd:"var(--blue)"},
+  {key:"included_streaming", label:"Streaming", cd:"var(--green)"},
 ];
-const STATUS_TO_CURGROUP = {};
-CURRENT_STATUS_GROUPS.forEach(g=>g.statuses.forEach(s=>STATUS_TO_CURGROUP[s]=g.key));
-// Which of the four groups are toggled OFF (hidden) per tab — same per-tab, session-only, empty-means-
-// "nothing hidden" off-set shape as watchGenreOff.
-const watchStatusOff = {in_cinema:new Set(), premium:new Set(), rent:new Set(), stream:new Set()};
-window.toggleWatchStatus = key => {
-  const set=watchStatusOff[watchTab];
+// Which windows are switched ON (widened in) per tab — same per-tab, session-only shape as watchGenreOff,
+// but "nothing switched on" here means the tab's own standing ALONE, not "everything shows" (CAS-720's off-
+// set had the opposite default). The tab's own window is tested by WATCH_TAB_OWN_STANDING directly and is
+// never added to this Set, so it can never be switched off from here.
+const watchAlsoShow = {in_cinema:new Set(), premium:new Set(), rent:new Set(), stream:new Set()};
+window.toggleWatchAlsoShow = key => {
+  if(WATCH_TAB_OWN_STANDING[watchTab]===key) return;   // the tab's own window — not switchable
+  const set=watchAlsoShow[watchTab];
   set.has(key) ? set.delete(key) : set.add(key);
   render();
 };
-window.selectAllWatchStatus = () => { watchStatusOff[watchTab].clear(); render(); };
-window.clearAllWatchStatus = () => {
-  const off=watchStatusOff[watchTab]; off.clear();
-  CURRENT_STATUS_GROUPS.forEach(g=>off.add(g.key));
-  render();
-};
-function filmMatchesCurrentStatus(m){
-  const off=watchStatusOff[watchTab];
-  if(!off.size) return true;
-  const grp=STATUS_TO_CURGROUP[primaryStatus(m)];
-  return grp ? !off.has(grp) : true;
-}
+window.clearWatchAlsoShow = () => { watchAlsoShow[watchTab].clear(); render(); };
 // CAS-720: "Agents to include" — restores the per-tab agent narrowing scopeRows() gave up when CAS-718
 // retired the deck's per-list agent picker (see that function's own comment), reading from this sheet
 // state instead of the old activeIds/cascOff deck selection. Same per-tab, session-only, empty-means-
-// "nothing excluded" off-set shape as watchGenreOff/watchStatusOff — so a tab that's never had this
+// "nothing excluded" off-set shape as watchGenreOff — so a tab that's never had this
 // filter touched defaults to every agent included, with no separate "all on" bookkeeping needed.
 const watchAgentOff = {in_cinema:new Set(), premium:new Set(), rent:new Set(), stream:new Set()};
 window.toggleWatchAgent = id => {
@@ -8802,7 +8811,7 @@ window.clearAllWatchFilters = () => {
   watchPickedBy[watchTab]="all";
   watchWatchedSel[watchTab].clear();
   watchGenreOff[watchTab].clear();
-  watchStatusOff[watchTab].clear();
+  watchAlsoShow[watchTab].clear();
   watchAgentOff[watchTab].clear();
   setWatchMineOnly(true);   // CAS-753: back to the default (on), same as every other field here
   render();
@@ -8839,11 +8848,11 @@ function renderWatchSheet(rows, shownCount){
   watchSheetGenres[watchTab]=genres;
   const watchedSel=watchWatchedSel[watchTab];
   const pickedBy=watchPickedBy[watchTab];
-  const statusOff=watchStatusOff[watchTab];
+  const alsoShowSet=watchAlsoShow[watchTab];
   const agentOff=watchAgentOff[watchTab];
   // CAS-753: default is ON, so — unlike every set/off field above — it counts as a deviation when it's OFF.
   const mineOnly=watchMineOnlyOn();
-  const activeCount=(pickedBy!=="all"?1:0)+(watchedSel.size?1:0)+(genreOff.size?1:0)+(statusOff.size?1:0)+(agentOff.size?1:0)+(mineOnly?0:1);
+  const activeCount=(pickedBy!=="all"?1:0)+(watchedSel.size?1:0)+(genreOff.size?1:0)+(alsoShowSet.size?1:0)+(agentOff.size?1:0)+(mineOnly?0:1);
   const badge=$("watchFilterBadge");
   if(badge){ badge.hidden=activeCount===0; badge.textContent=activeCount; }
   const filterBtn=$("watchFilterBtn"); if(filterBtn) filterBtn.classList.toggle("on", activeCount>0);
@@ -8859,12 +8868,20 @@ function renderWatchSheet(rows, shownCount){
     return `<button type="button" class="chip gen${on?" on":""}" aria-pressed="${on}"
       onclick="toggleWatchGenre('${escA(g)}')">${esc(g)}</button>`;
   }).join("") : `<p class="unone">No styles in this tab yet.</p>`;
-  // CAS-720: a fixed four chips, not derived from `rows` — unlike Styles' genre candidates, the four
-  // current-status groups exist regardless of what happens to match right now.
-  const statusHTML=CURRENT_STATUS_GROUPS.map(g=>{
-    const on=!statusOff.has(g.key);
-    return `<button type="button" class="chip${on?" on":""}" aria-pressed="${on}"
-      onclick="toggleWatchStatus('${g.key}')">${esc(g.label)}</button>`;
+  // CAS-823: a fixed four chips, not derived from `rows` (which is already narrowed to the tab's own
+  // standing plus whatever's already widened) — the counts instead come from watchAlsoShowPool(), the wider
+  // Watch-On-only pool, so a window not yet switched on still shows what switching it on would cost.
+  // Cinema has no Also-show section: its own standing test is untouched by this ticket (filmMatchesWatchTab).
+  const ownStanding=WATCH_TAB_OWN_STANDING[watchTab];
+  const alsoShowPool = watchTab==="in_cinema" ? [] : watchAlsoShowPool();
+  const alsoShowHTML = watchTab==="in_cinema" ? "" : ALSO_SHOW_WINDOWS.map(w=>{
+    const isOwn = w.key===ownStanding;
+    const on = isOwn || alsoShowSet.has(w.key);
+    const count = alsoShowPool.filter(m=>primaryStatus(m)===w.key).length;
+    return `<button type="button" class="chip alsochip${on?" on":""}" style="--wwc:${w.cd}"
+      aria-pressed="${on}"${isOwn?" disabled aria-disabled=\"true\"":""}
+      ${isOwn?"":`onclick="toggleWatchAlsoShow('${w.key}')"`}>
+      <span class="gdot ${w.key}" aria-hidden="true"></span>${esc(w.label)}<span class="jn">${count}</span>${isOwn?`<span class="alwaystag">always</span>`:""}</button>`;
   }).join("");
   // CAS-720: leInnerHTML's Agents-to-include checklist (agent name + switch), in cascades rank order —
   // no per-agent count/Edit here, this list only ever narrows which agents this tab draws from.
@@ -8909,10 +8926,10 @@ function renderWatchSheet(rows, shownCount){
       </div>
       <div class="chips">${stylesHTML}</div>
     </div>
-    <div class="wsheetsec">
-      <div class="wsheethd"><span>Current status</span></div>
-      <div class="chips">${statusHTML}</div>
-    </div>
+    ${watchTab==="in_cinema" ? "" : `<div class="wsheetsec">
+      <div class="wsheethd"><span>Also show</span></div>
+      <div class="chips">${alsoShowHTML}</div>
+    </div>`}
     <div class="wsheetsec">
       <div class="wsheethd"><span>Agents to include</span>
         <span class="wsheetlinks">
@@ -8931,8 +8948,8 @@ function renderWatchSheet(rows, shownCount){
   if(watchedSel.size) chips.push({label:chipSummary(REVIEW_STEPS.filter(v=>watchedSel.has(v.key)).map(v=>v.lbl)),
     clear:"clearAllWatchWatched()"});
   if(genreOff.size) chips.push({label:chipSummary([...genreOff]), clear:"clearAllWatchStyles()"});
-  if(statusOff.size) chips.push({label:chipSummary(CURRENT_STATUS_GROUPS.filter(g=>statusOff.has(g.key)).map(g=>g.label)),
-    clear:"selectAllWatchStatus()"});
+  if(alsoShowSet.size) chips.push({label:chipSummary(ALSO_SHOW_WINDOWS.filter(w=>alsoShowSet.has(w.key)).map(w=>w.label)),
+    clear:"clearWatchAlsoShow()"});
   if(agentOff.size) chips.push({label:chipSummary(cascades.filter(c=>agentOff.has(c.id)).map(c=>c.name)),
     clear:"selectAllWatchAgents()"});
   const bar=$("watchActiveFilters"); if(!bar) return;
@@ -8992,6 +9009,29 @@ function watchScopeRows(){
   }
   if(!acs.length) return [];
   return MOVIES.filter(m=>acs.some(c=>listedBy(m,c)) && filmMatchesWatchTab(m, watchTab));
+}
+// CAS-823: the same agent+occasion scope as watchScopeRows above, but narrowed only by the tab's own Watch
+// On key — no standing test — so the Also-show chips can show each window's count (renderWatchSheet) before
+// it's switched on. Mirrors watchScopeRows's own two branches rather than sharing code with it, same
+// precedent as filmInWatchRows below. Cinema has no Also-show section (see renderWatchSheet), so this is
+// never called for it.
+function watchAlsoShowPool(){
+  if(!watchTabsNow().length) return [];
+  const agentOff=watchAgentOff[watchTab];
+  const acs=agentOff.size ? cascades.filter(c=>!agentOff.has(c.id)) : cascades;
+  const ownKey = m => filmNotifyState(m.tmdb_id).key===watchTab;
+  let pool;
+  if(watchOccasion){
+    const occAcs=acs.filter(c=>(c.occasions||[]).includes(watchOccasion));
+    pool = occAcs.length ? MOVIES.filter(m=>{
+      const owner=filmOwnerCascade(m);
+      return owner && occAcs.some(c=>c.id===owner.id) && ownKey(m);
+    }) : [];
+  } else {
+    pool = acs.length ? MOVIES.filter(m=>acs.some(c=>listedBy(m,c)) && ownKey(m)) : [];
+  }
+  const wsearch=watchSearch[watchTab];
+  return wsearch ? pool.filter(m=>m.title.toLowerCase().includes(wsearch)) : pool;
 }
 // First run: the deck is just the "+ New" card, which asks for a decision without offering a reason. Give them
 // three real starting points instead — each with the number of films it catches TODAY, so the payoff is visible
@@ -18501,7 +18541,8 @@ function render(){
   if(watchPickedBy[watchTab]!=="all") rows=rows.filter(filmMatchesPickedBy);
   const genreOff=watchGenreOff[watchTab];
   if(genreOff.size) rows=rows.filter(m=>!(m.genres||[]).some(g=>genreOff.has(g)));
-  if(watchStatusOff[watchTab].size) rows=rows.filter(filmMatchesCurrentStatus);
+  // CAS-823: no separate current-status narrowing step any more — the standing/Also-show test is now inside
+  // filmMatchesWatchTab itself (watchScopeRows above already applied it), so there is nothing left to do here.
   // CAS-752: a held film (see watchHeldOpen above) stays a row despite failing its own new verdict's filter.
   const heldThisTab=watchHeldOpen[watchTab];
   rows=rows.filter(m=>filmMatchesWatchedFilter(m) || heldThisTab.has(m.tmdb_id));
@@ -18618,24 +18659,34 @@ function render(){
 // and the 2026-08-05 correction unified both back onto "Premium". Premium/Rent/Stream already fall in that
 // left-to-right order because pvod, rental and included_streaming fall that way in LISTING_ORDER and the
 // Cinema tab's own order (CAS-750) alike — the chips just walk the groups the DOM holds.
-const SECTION_SHORT = {opening_week:"Opening", in_cinema:"Cinema", pvod:"Premium",
-                       rental:"Rent", included_streaming:"Stream", upcoming:"Upcoming"};
+// CAS-823: four of the six words renamed present-tense, so none collides with the tab strip sitting right
+// above this rail (Cinema/Premium/Rental/Streaming) — Opening and Premium are untouched, since neither of
+// those ever equals a tab's own label.
+const SECTION_SHORT = {opening_week:"Opening", in_cinema:"In cinemas", pvod:"Premium",
+                       rental:"At rental", included_streaming:"Streaming", upcoming:"Unreleased"};
+// CAS-823: the rail no longer scrolls (it used to, and overflowed at real width — the bug this ticket
+// fixes). It's a non-scrolling strip instead: a "Now" label, then one stop per section actually on screen,
+// laid out across the width it has. `own` just adds a visual anchor for the tab's own standing (which is
+// also never gated/greyed — this is a decoration, not a second control).
+function jumpStopIsOwn(k){
+  if(watchTab==="in_cinema") return k==="upcoming" || k==="in_cinema";
+  return k===WATCH_TAB_OWN_STANDING[watchTab];
+}
 function renderJumpBar(){
   const el=$("jumpBar"); if(!el) return;
   const groups=[...document.querySelectorAll("#groups .group")];
   if(groups.length<2){ el.hidden=true; el.innerHTML=""; return; }
   el.hidden=false;
-  el.innerHTML=groups.map(g=>{
+  const stopsHTML=groups.map(g=>{
     const k=g.dataset.g;
     const n=(g.querySelector(".gcount")||{}).textContent||"";
-    return `<button type="button" class="jchip" data-jump="${k}"
+    return `<button type="button" class="nowstop${jumpStopIsOwn(k)?" own":""}" data-jump="${k}"
         title="${escA("Jump to "+(STATUS_LABEL[k]||k))}">
-      <span class="gdot ${k}"></span>${esc(SECTION_SHORT[k]||STATUS_LABEL[k]||k)}<span class="jn">${esc(n)}</span></button>`;
+      <span class="nowcount">${esc(n)}</span>
+      <span class="gdot ${k}" aria-hidden="true"></span>
+      <span class="nowword">${esc(SECTION_SHORT[k]||STATUS_LABEL[k]||k)}</span></button>`;
   }).join("");
-  // CAS-321: the right-edge fade (see .jumpbar.overflowing::after) only earns its keep once the rail
-  // actually scrolls — a fade over a strip that fits is just noise, and the sort pill sits outside the
-  // rail either way so this never touches it.
-  el.classList.toggle("overflowing", el.scrollWidth>el.clientWidth+1);
+  el.innerHTML = `<span class="nowlbl">Now</span><div class="nowtrack">${stopsHTML}</div>`;
 }
 // The bar is STICKY, so scrolling a section to y=0 hides its heading behind the bar. The offset is the
 // header plus the band, measured rather than guessed — both change height with their contents.
@@ -18671,7 +18722,7 @@ window.jumpToSection = k => {
   logEvent("jump_to_section",{key:k});
 };
 document.addEventListener("click", e=>{
-  const b=e.target.closest("#jumpBar .jchip"); if(!b) return;
+  const b=e.target.closest("#jumpBar .nowstop"); if(!b) return;
   jumpToSection(b.dataset.jump);
 });
 // ---- CAS-129: single-card updates (never rebuild the whole ~2,000-card list on one tap) --------
@@ -18683,15 +18734,16 @@ function patchFindCounts(){
   CASCADE.forEach(g=>{
     const gc=document.querySelector(`#groups .group[data-g="${g}"] .gcount`);
     if(gc) gc.textContent=rows.filter(m=>primaryStatus(m)===g && !taggedOut(m)).length;
-    // CAS-275: the jump chip carries the same number, so it has to be patched by the same pass — a chip
+    // CAS-275: the jump stop carries the same number, so it has to be patched by the same pass — a stop
     // still saying 12 next to a heading saying 11 is two places disagreeing about one list.
-    const jn=document.querySelector(`#jumpBar .jchip[data-jump="${g}"] .jn`);
+    const jn=document.querySelector(`#jumpBar .nowstop[data-jump="${g}"] .nowcount`);
     if(jn && gc) jn.textContent=gc.textContent;
   });
   renderCascadeBar(shown.length);
 }
 // CAS-752: whether `m` would still be one of render()'s `rows` right now — the same chain render() applies
-// (agent scope, tab, search, styles, current-status, watched filter + hold, my-services), reusing its own
+// (agent scope, tab (standing/Also-show included, CAS-823), search, styles, watched filter + hold, my-
+// services), reusing its own
 // named predicates so the two can never disagree. fastPatchFindRow's whole point is answering this for ONE
 // film without re-deriving the ~2,000-film list a full render() would; the old check here tested the tapped
 // film against activeCascade() — a single-agent idea CAS-718/725 already retired from this listing — so it
@@ -18712,7 +18764,6 @@ function filmInWatchRows(m){
   if(watchPickedBy[watchTab]!=="all" && !filmMatchesPickedBy(m)) return false;
   const genreOff=watchGenreOff[watchTab];
   if(genreOff.size && (m.genres||[]).some(g=>genreOff.has(g))) return false;
-  if(watchStatusOff[watchTab].size && !filmMatchesCurrentStatus(m)) return false;
   if(!filmMatchesWatchedFilter(m) && !watchHeldOpen[watchTab].has(m.tmdb_id)) return false;
   if(watchMineOnlyOn() && HOME_KEYS.includes(primaryStatus(m)) && !matchesServices(m, primaryStatus(m))) return false;
   return true;

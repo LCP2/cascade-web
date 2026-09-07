@@ -563,6 +563,9 @@ test("Watch Cinema tab leads with Upcoming; the Streaming tab does not (CAS-750)
 // CAS-750 AC3: the jump bar is built from the sections the DOM actually holds (renderJumpBar's own
 // long-standing rule), so it has to keep tracking the groups' own order even after this ticket makes that
 // order tab-dependent rather than fixed — checked on both tabs rather than assumed from the source.
+// CAS-823: the rail's own element is now .nowstop, not .jchip (renderJumpBar's non-scrolling rewrite); the
+// Streaming tab's default is also narrowed to its own standing alone (Also-show starts empty), so it is no
+// longer guaranteed to carry more than one group the way Cinema's Upcoming+In cinema default always has.
 test("Watch jump bar entries follow the groups' own order, on both the Cinema and Streaming tabs (CAS-750)", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
@@ -570,7 +573,7 @@ test("Watch jump bar entries follow the groups' own order, on both the Cinema an
 
   const readOrder = async () => ({
     groupOrder: await page.locator("#groups .group").evaluateAll(gs => gs.map(g => g.dataset.g)),
-    jumpOrder: await page.locator("#jumpBar .jchip").evaluateAll(chips => chips.map(c => c.dataset.jump)),
+    jumpOrder: await page.locator("#jumpBar .nowstop").evaluateAll(chips => chips.map(c => c.dataset.jump)),
   });
 
   const cinema = await readOrder();
@@ -580,7 +583,7 @@ test("Watch jump bar entries follow the groups' own order, on both the Cinema an
   await page.locator(".wtabbtn", { hasText: "Streaming" }).click();
   await settleListing(page);
   const stream = await readOrder();
-  expect(stream.groupOrder.length).toBeGreaterThan(1);
+  expect(stream.groupOrder.length).toBeGreaterThan(0);
   expect(stream.jumpOrder).toEqual(stream.groupOrder);
 });
 
