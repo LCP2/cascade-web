@@ -2207,14 +2207,23 @@
     place-items:center;font-size:13px;cursor:grab;box-shadow:0 2px 8px rgba(0,0,0,.55);padding:0;
     touch-action:none}
   .msnhandle:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  .msnzone{background:none;border:0;font-size:9.5px;font-weight:800;
-    letter-spacing:.04em;padding:2px;white-space:nowrap;cursor:pointer}
-  .msnzone:hover{text-decoration:underline}
-  /* A window that's Where&When-enabled but currently Never — no marker on the track, just a way back on. */
-  .msnnever{display:flex;flex-wrap:wrap;gap:8px;margin:0 2px 4px}
-  .msnnvchip{background:var(--panel);border:1px dashed var(--line);color:var(--faint);border-radius:10px;
-    padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer}
-  .msnnvchip:hover{border-color:var(--accent);color:var(--ink)}
+  /* CAS-817: reverted to a plain label — it used to double as the "set to Never" button with no visible
+     sign of that, so removing a window was invisible. Never now lives only in the chip row below. */
+  .msnzone{font-size:9.5px;font-weight:800;letter-spacing:.04em;white-space:nowrap}
+  /* CAS-817: "On this track" replaces .msnnever/.msnnvchip — every Where&When-enabled window gets exactly
+     one chip here, whether it currently has a marker (solid, ✕ to remove) or is set to Never (dashed,
+     dimmed, ＋ to restore), so add/remove is an explicit visible control rather than a tap on a label. */
+  .msnchiphead{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--faint);margin:0 2px 8px}
+  .msnchips{display:flex;flex-wrap:wrap;gap:8px;margin:0 2px 4px}
+  .msnchip{display:inline-flex;align-items:center;gap:6px;border-radius:10px;padding:6px 8px 6px 10px;
+    font-size:12px;font-weight:700;color:var(--ink);background:var(--panel);border:1px solid var(--line)}
+  .msnchip.off{border-style:dashed;opacity:.6}
+  .msnchipx,.msnchipplus{width:18px;height:18px;border-radius:50%;border:0;display:grid;place-items:center;
+    background:rgba(255,255,255,.08);color:inherit;font:inherit;font-size:11px;line-height:1;cursor:pointer;
+    padding:0}
+  .msnchipx:hover,.msnchipplus:hover{background:rgba(255,255,255,.16)}
+  .msnchipx:focus-visible,.msnchipplus:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
   .osmore{width:100%;text-align:center;background:var(--panel2);border:1px dashed var(--line);color:var(--dim);
     border-radius:12px;padding:15px 12px;font-size:12.5px;font-weight:700;cursor:pointer;margin-bottom:11px}
   .osmore:hover{border-color:var(--accent);color:var(--ink)}
@@ -13673,12 +13682,26 @@ function msnValueLine(c){
   const floor=Math.min(...marks.map(k=>c.watchMarkers[k]));
   return `${parts.join(" · ")} · under ${floor}, not listed`;
 }
-// Every window switched on in Where & when you'll watch gets a spot: a live marker on the track if it isn't
-// Never, or a small "restore" chip below it if it is (design record §7 item 5 — Never removes it from the
-// track, it does not delete the window's ability to have a marker again).
+// CAS-817: every window switched on in Where & when you'll watch gets exactly one chip in the "On this
+// track" row below — solid with a ✕ if it has a marker, dashed with a ＋ if it's Never — so add/remove is
+// one explicit control instead of a tap on what reads as the marker's label.
+function msnChipsHTML(c){
+  const keys=WATCH_LEVEL_KEYS.filter(k=>windowEnabled(k));
+  if(!keys.length) return "";
+  const chips=keys.map(k=>{
+    const dot=`<span class="agdot" style="background:${WINDOW_COLOR[k]}"></span>`;
+    return windowUsable(c,k)
+      ? `<span class="msnchip on">${dot}<span class="msnchiplbl" data-key="${k}">${esc(WATCH_LEVEL_SHORT_LABEL[k])} ${c.watchMarkers[k]}+</span>
+          <button type="button" class="msnchipx" data-act="never" data-key="${k}"
+            aria-label="Set ${escA(WATCH_LEVEL_SHORT_LABEL[k])} to Never">✕</button></span>`
+      : `<span class="msnchip off">${dot}<span class="msnchiplbl">${esc(WATCH_LEVEL_SHORT_LABEL[k])} — never</span>
+          <button type="button" class="msnchipplus" data-act="restore" data-key="${k}"
+            aria-label="Restore ${escA(WATCH_LEVEL_SHORT_LABEL[k])}">＋</button></span>`;
+  }).join("");
+  return `<div class="msnchiphead">On this track</div><div class="msnchips">${chips}</div>`;
+}
 function msnTrackAreaHTML(c){
   const usable=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
-  const neverEnabled=WATCH_LEVEL_KEYS.filter(k=>windowEnabled(k) && !usable.includes(k));
   const byScore=[...usable].sort((a,b)=>(c.watchMarkers[a]-c.watchMarkers[b])
     || (WATCH_LEVEL_KEYS.indexOf(b)-WATCH_LEVEL_KEYS.indexOf(a)));
   const segs=[`<div class="msnseg grey" style="left:0%;width:${byScore.length?trackPct(c.watchMarkers[byScore[0]]):100}%"></div>`];
@@ -13694,15 +13717,12 @@ function msnTrackAreaHTML(c){
       <span class="msnval">${v}</span>
       <button type="button" class="msnhandle" style="background:${WINDOW_COLOR[k]}" data-key="${k}"
         aria-label="${escA(WATCH_LEVEL_SHORT_LABEL[k])} score, currently ${v}">${WINDOW_ICON[k]}</button>
-      <button type="button" class="msnzone" data-act="never" data-key="${k}" style="color:${WINDOW_COLOR[k]}"
-        title="Say Never for ${escA(WATCH_LEVEL_SHORT_LABEL[k])} — removes it from the track">${esc(WATCH_LEVEL_SHORT_LABEL[k].toUpperCase())}</button>
+      <span class="msnzone" style="color:${WINDOW_COLOR[k]}">${esc(WATCH_LEVEL_SHORT_LABEL[k].toUpperCase())}</span>
     </div>`;
   }).join("");
-  const neverRow=neverEnabled.length ? `<div class="msnnever">${neverEnabled.map(k=>
-    `<button type="button" class="msnnvchip" data-act="restore" data-key="${k}">+ ${esc(WATCH_LEVEL_SHORT_LABEL[k])} — Never</button>`).join("")}</div>` : "";
   // id lives on the WRAP, not the thin .msnline bar, so paintMsnTrack()/wireMsnTrack() can reach both the
   // segments and the marks (siblings) through one querySelectorAll root.
-  return `<div class="msntrackwrap" id="msnTrack"><div class="msnline">${segs.join("")}</div>${marks}</div>${neverRow}`;
+  return `<div class="msntrackwrap" id="msnTrack"><div class="msnline">${segs.join("")}</div>${marks}</div>${msnChipsHTML(c)}`;
 }
 function msnScoreCardHTML(){
   const c=onbFlow.draft||{};
@@ -13753,6 +13773,13 @@ function paintMsnTrack(){
     el.style.left=pct+"%";
     el.style.transform=pct<=0?"translate(0,-50%)":pct>=100?"translate(-100%,-50%)":"translate(-50%,-50%)";
     const val=el.querySelector(".msnval"); if(val) val.textContent=v;
+  });
+  // CAS-817: the "On this track" chip repeats each window's score, so a drag has to keep it in step too —
+  // in place, same as the marker's own .msnval, never through msnRebuild (that would tear the drag).
+  const area=$("msnTrackArea");
+  if(area) area.querySelectorAll(".msnchiplbl[data-key]").forEach(el=>{
+    const key=el.dataset.key, v=c.watchMarkers[key]; if(v==null) return;
+    el.textContent=`${WATCH_LEVEL_SHORT_LABEL[key]} ${v}+`;
   });
   const vl=$("msnValueLine"); if(vl) vl.textContent=msnValueLine(c);
 }
