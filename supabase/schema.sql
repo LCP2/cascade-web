@@ -38,6 +38,9 @@
 --   push_tokens   — one row per (user, device) APNs token, registered on sign-in/re-registration.
 --                   The monitor (service_role) reads it to know where to push; the user manages
 --                   only their own rows. CAS-464.
+--   usage_events  — the CAS-809/810/811 sink: a batched copy of the client's local usage log
+--                   (event type + small data payload, never free text). Insert-only, unreadable
+--                   through the anon key — the app writes, only service_role reads. CAS-835.
 
 -- gen_random_uuid() lives in pgcrypto. It is pre-installed on Supabase, but declaring the
 -- dependency keeps this file self-contained and portable to a plain Postgres.
@@ -433,6 +436,31 @@ alter table public.push_tokens enable row level security;
 drop policy if exists push_tokens_owner on public.push_tokens;
 create policy push_tokens_owner on public.push_tokens
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ---------------------------------------------------------------------------
+-- usage_events — batched sink for the client's local usage log (CAS-835)
+-- ---------------------------------------------------------------------------
+-- Feeds CAS-808/810 (M11/M13); this ticket builds the sink only, no reporting. A signed-out
+-- visitor must be able to write, so this is insert-only for anon+authenticated with no
+-- auth.uid() gate, and unreadable through the anon key — the app writes, service_role reads.
+-- client_key is the per-device id from localStorage (cascade_client_key), not an account.
+create table if not exists public.usage_events (
+  id          bigserial primary key,
+  user_id     uuid references auth.users(id) on delete set null,
+  client_key  text not null,
+  session     text,
+  type        text not null,
+  data        jsonb,
+  created_at  timestamptz not null default now()
+);
+create index if not exists usage_events_created_idx on public.usage_events (created_at desc);
+create index if not exists usage_events_type_idx    on public.usage_events (type);
+
+alter table public.usage_events enable row level security;
+
+drop policy if exists usage_events_insert on public.usage_events;
+create policy usage_events_insert on public.usage_events
+  for insert to anon, authenticated with check (true);
 
 -- ---------------------------------------------------------------------------
 -- keep cascades.updated_at honest on every write

@@ -5869,20 +5869,55 @@ $("diagCopy").onclick = () => {
 if(new URLSearchParams(location.search).has("diag")) sessionStorage.setItem("cascade_diag", "1");
 if(sessionStorage.getItem("cascade_diag") === "1") setTimeout(openDiagPanel, 300);
 
-// ================= Usage log (local only) =================
+// ================= Usage log (local + batched Supabase sink) =================
 // The question this exists to answer: does anyone FIND "My Cascades", and which templates resonate?
 // So it records what happened, never what you typed. Event names, template keys, counts — no film titles,
-// no Cascade names, no search text, no free text of any kind. It never leaves this browser: there is no
-// fetch/XHR/beacon anywhere in this file, and nothing here adds one.
+// no Cascade names, no search text, no free text of any kind.
+// CAS-835: a batched copy also flows to the insert-only `usage_events` table (unreadable through the
+// anon key — the app writes, service_role reads) for CAS-808/810. The local log above is unaffected
+// either way, and with no Supabase config (`c` below is null) behaviour is exactly what it was before.
 const LOG_KEY="cascade_log", LOG_MAX=400;
 function loadLog(){ try{ const a=JSON.parse(localStorage.getItem(LOG_KEY)||"[]"); return Array.isArray(a)?a:[]; }catch(e){ return []; } }
 let usageLog = loadLog();
 const SESSION = Date.now().toString(36).slice(-5);   // groups a session's events; not an identity
+
+// CLIENT_KEY: a per-device id, not an account — reused as-is for the contact form's rate limit (CAS-836).
+const CLIENT_KEY_STORE="cascade_client_key";
+let CLIENT_KEY;
+try{
+  CLIENT_KEY = localStorage.getItem(CLIENT_KEY_STORE);
+  if(!CLIENT_KEY){ CLIENT_KEY = cascadeNewId(); localStorage.setItem(CLIENT_KEY_STORE, CLIENT_KEY); }
+}catch(e){ CLIENT_KEY = CLIENT_KEY || cascadeNewId(); }
+
+const USAGE_QUEUE_MAX=200;
+let usageQueue=[], usageFlushTimer=null;
+function queueUsageEvent(type, data){
+  usageQueue.push({type, data:data||null});
+  if(usageQueue.length>USAGE_QUEUE_MAX) usageQueue=usageQueue.slice(-USAGE_QUEUE_MAX);
+  if(!usageFlushTimer) usageFlushTimer=setTimeout(flushUsageEvents, 10000);
+}
+function flushUsageEvents(){
+  clearTimeout(usageFlushTimer); usageFlushTimer=null;
+  if(!usageQueue.length) return;
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  if(!c){ usageQueue=[]; return; }
+  const owner=(a.session && a.session.user) ? a.session.user.id : null;
+  const rows=usageQueue.map(q=>({ user_id:owner, client_key:CLIENT_KEY, session:SESSION, type:q.type, data:q.data }));
+  usageQueue=[];
+  try{
+    c.from("usage_events").insert(rows).then(({error})=>{ if(error) console.warn("usage_events insert", error); },
+      e=>console.warn("Cascade: usage_events flush failed", e));
+  }catch(e){ console.warn("Cascade: usage_events flush failed", e); }
+}
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="hidden") flushUsageEvents(); });
+window.addEventListener("pagehide", flushUsageEvents);
+
 function logEvent(type, data){
   const e={t:Date.now(), s:SESSION, type, ...(data||{})};
   usageLog.push(e);
   if(usageLog.length>LOG_MAX) usageLog=usageLog.slice(-LOG_MAX);
   try{ localStorage.setItem(LOG_KEY, JSON.stringify(usageLog)); }catch(err){}
+  queueUsageEvent(type, data);
   console.debug("[cascade]", type, data||"");
   if($("logModal").classList.contains("open")) renderLog();
 }
