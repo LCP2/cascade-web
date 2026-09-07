@@ -2950,9 +2950,17 @@
      not part of that flow, and borrowing its cap made every screen 20px narrower than the app it sits in.
      Above 480 CSS px of viewport that showed as a narrow centred panel with the Find listing visible
      down both sides. */
-  .uscreen{position:fixed;inset:0;left:50%;right:auto;width:100%;max-width:480px;
+  /* CAS-834: left/width overshoot by 1px on each side so the painted box always fully covers the column
+     behind it — 50%+translateX(-50%) centring can land the box's true edge a fraction of a CSS px off the
+     listing's own edge, and that hairline let the listing's .ablock rank rail show through. A 2px total
+     overshoot exceeds any possible subpixel rounding error, so full coverage holds regardless of viewport
+     width or device pixel ratio; background-color (opaque, not just the gradient) is the second half of the
+     same fix, so the gradient is decoration on top of solid cover rather than the only thing hiding what's
+     behind. */
+  .uscreen{position:fixed;inset:0;left:calc(50% - 1px);right:auto;width:calc(100% + 2px);max-width:calc(480px + 2px);
     transform:translateX(-50%);z-index:84;display:none;flex-direction:column;overflow-y:auto;
-    background:radial-gradient(120% 45% at 50% 0%,#141b30 0%,var(--bg) 42%,#080b14 100%)}
+    background-color:var(--bg);
+    background-image:radial-gradient(120% 45% at 50% 0%,#141b30 0%,var(--bg) 42%,#080b14 100%)}
   .uscreen.open{display:flex}
   /* CAS-533 (Agents management retargeted CAS-534): Your Movies is a .uscreen a header mode chip opens
      directly (CAS-530 gave it an "active" rose fill for exactly this); Agents (the management/reorder
@@ -5684,7 +5692,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 992, "commit": "6b39e3c", "builtAt": "2026-09-07T22:57:57Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 993, "commit": "e7bf306", "builtAt": "2026-09-07T23:02:37Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
