@@ -544,6 +544,88 @@ def enrich_omdb(movie: dict) -> dict:
     return movie
 
 
+# ---------------------------------------------------------------------------
+# CAS-830: v2 phase 3 — Watchmode user_rating / critic_score / popularity_percentile backfill.
+# ADDITIVE ONLY: nothing reads these fields yet (not any score, not the agents, not a filter or
+# sort) — that decision and the UI comparison line are separate tickets. Resolution uses the free
+# daily ID-map CSV (_fetch_watchmode_idmap), never the per-title /search/ endpoint, which costs a
+# credit. A record inside WATCHMODE_CACHE_TTL_DAYS of its last fetch is skipped, so a full
+# catalogue backfill converges across several bounded runs — the same discipline CAS-772's
+# revalidation sweep already uses for cache_stamped_at.
+# ---------------------------------------------------------------------------
+WM_FIELDS_MAX_CREDITS = int(os.getenv("WM_FIELDS_MAX_CREDITS", "500"))
+
+
+def _invert_watchmode_idmap(idmap: dict) -> dict:
+    """`_fetch_watchmode_idmap` returns {wm_id: tmdb_id}; this backfill looks the other way
+    around, so build the inverse once per run (never per title) and hand it to every call."""
+    return {tmdb_id: wm_id for wm_id, tmdb_id in idmap.items()}
+
+
+def _fetch_watchmode_title_details(wm_id) -> dict:
+    return get_json(f"{WATCHMODE_BASE}/title/{wm_id}/details/?apiKey={WATCHMODE_KEY}")
+
+
+def _watchmode_fields_stale(movie: dict, ttl_days: int = WATCHMODE_CACHE_TTL_DAYS) -> bool:
+    """True once `wm_fields_fetched_at` is missing or at/past the TTL — unknown is never treated
+    as fresh, the same rule CAS-772's needs_revalidation applies to cache_stamped_at."""
+    stamp = movie.get("wm_fields_fetched_at")
+    if not stamp:
+        return True
+    try:
+        stamped = datetime.date.fromisoformat(stamp)
+    except ValueError:
+        return True
+    return (datetime.date.fromisoformat(_RUN_DATE) - stamped).days >= ttl_days
+
+
+def enrich_watchmode_fields(movie: dict, wm_idmap: dict, budget: dict) -> str:
+    """Backfill wm_user_rating / wm_critic_score / wm_popularity_percentile from Watchmode's
+    /title/{id}/details/ endpoint. `wm_idmap` is the INVERSE map (tmdb_id -> wm_id) from
+    `_invert_watchmode_idmap`, built once per run. `budget` is a shared, mutable counter —
+    {"remaining": credits left, "skipped": titles that needed a call but found none left} — so a
+    caller looping over many candidates spends one pot across every call, the same shape as every
+    other bounded backfill in this module (CINEMA_RELEASE_BACKFILL_BUDGET, WIKIDATA_BACKFILL_
+    BUDGET), except the spend/skip bookkeeping lives with the per-title call here since a fresh or
+    unresolvable title must cost nothing while a stale one that finds the budget empty still
+    counts. An absent field is stored as None — never guessed, never defaulted to 0.
+
+    Returns 'ok' (fetched and wrote fields), 'cached' (already fresh, no credit spent), 'no-id'
+    (no Watchmode id resolves for this title), 'skip' (budget exhausted), or an `_api_call`
+    outcome ('skip'/'stop') on a failed fetch."""
+    if not _watchmode_fields_stale(movie):
+        return "cached"
+    wm_id = wm_idmap.get(movie.get("tmdb_id"))
+    if wm_id is None:
+        return "no-id"
+    if budget["remaining"] <= 0:
+        budget["skipped"] += 1
+        return "skip"
+    detail, outcome = _api_call("Watchmode fields", _fetch_watchmode_title_details, wm_id)
+    budget["remaining"] -= 1
+    if outcome != "ok":
+        return outcome
+    movie["wm_user_rating"] = _num(detail.get("user_rating"))
+    movie["wm_critic_score"] = _int(detail.get("critic_score"))
+    movie["wm_popularity_percentile"] = _num(detail.get("popularity_percentile"))
+    movie["wm_fields_fetched_at"] = _RUN_DATE
+    return "ok"
+
+
+def backfill_watchmode_fields(catalogue: list[dict], wm_idmap: dict,
+                               max_credits: int = WM_FIELDS_MAX_CREDITS) -> int:
+    """Run `enrich_watchmode_fields` across `catalogue` under one shared WM_FIELDS_MAX_CREDITS
+    pot, printing how many titles were skipped once it ran out. Returns the count enriched."""
+    budget = {"remaining": max_credits, "skipped": 0}
+    enriched = 0
+    for m in catalogue:
+        if enrich_watchmode_fields(m, wm_idmap, budget) == "ok":
+            enriched += 1
+    if budget["skipped"]:
+        print(f"[watchmode-fields] enriched {enriched} title(s), skipped {budget['skipped']} over budget")
+    return enriched
+
+
 # Map a film's original language (with production country as a tiebreak) to a
 # broad "culture" bucket — an approximation of the audience it was made for.
 _LANG_CULTURE = {
