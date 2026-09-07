@@ -3031,8 +3031,7 @@
   .ucap{font-size:12.5px;color:var(--dim);margin-bottom:12px}
   .unone{font-size:12.5px;color:var(--faint);line-height:1.6}
   /* ---- CAS-424: Agents screen — the list, and its drag-to-reorder rows ----
-     Same card language as the deck (agent-cin/agent-str, --dcc, 3px left accent) so a row and its carousel
-     card read as the same object seen two ways. */
+     CAS-826: a uniform 1px border on all four sides, like any other panel — no coloured rail. */
   .agshdr{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
   .agshdr-r{display:flex;align-items:baseline;gap:10px}
   .agscount{font-size:13px;font-weight:600;color:var(--dim);white-space:nowrap}
@@ -3041,16 +3040,8 @@
   .agkey::before,.agkey::after{content:"";flex:1;height:1px;background:var(--line)}
   .aglist{display:flex;flex-direction:column;gap:10px}
   .agrow{position:relative;display:flex;align-items:stretch;gap:8px;background:var(--panel);
-    border:1px solid var(--line);border-left:3px solid var(--dcc,var(--accent));border-radius:14px;
+    border:1px solid var(--line);border-radius:14px;
     padding:10px 12px 11px;touch-action:pan-y}
-  /* CAS-814: the rail takes its colour from the row's RANK (--agrank-1..6, CAS-760's tokens), not the
-     retired cinema/streaming kind — a rank above 6 keeps reusing agrank-6. */
-  .agrow.agrank-1{--dcc:var(--agrank-1)}
-  .agrow.agrank-2{--dcc:var(--agrank-2)}
-  .agrow.agrank-3{--dcc:var(--agrank-3)}
-  .agrow.agrank-4{--dcc:var(--agrank-4)}
-  .agrow.agrank-5{--dcc:var(--agrank-5)}
-  .agrow.agrank-6{--dcc:var(--agrank-6)}
   .agrow.dragging{box-shadow:0 16px 32px rgba(0,0,0,.5);z-index:5;background:var(--panel2)}
   .aggrip{flex:0 0 auto;width:24px;align-self:stretch;display:grid;place-items:center;color:var(--dim);
     cursor:grab;touch-action:none;font-size:16px;border-radius:8px}
@@ -3109,7 +3100,7 @@
   .agmstat.total{margin-left:auto;padding-left:8px}
   .agmrow.a b{color:var(--violet);font-weight:800;font-size:13.5px;line-height:1;
     font-family:var(--font-display);letter-spacing:-.02em;padding:0 1px}
-  .agmrow.b{font-size:10.5px;color:var(--faint);gap:10px;border-top:1px solid var(--line);padding-top:5px}
+  .agmrow.b{font-size:10.5px;color:var(--faint);gap:10px;padding-top:5px}
   .agmrow.b b{color:var(--dim);font-weight:700}
   .aghealth{font-size:11px;color:var(--dim);border-top:1px solid var(--line);padding-top:6px;margin-top:2px}
   .agwarn{font-size:11px;color:var(--amber);border-top:1px solid var(--line);padding-top:6px;margin-top:2px;
@@ -5708,7 +5699,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 982, "commit": "3b5e72e", "builtAt": "2026-09-07T09:23:09Z"};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 983, "commit": "5c1489f", "builtAt": "2026-09-07T09:36:54Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -16391,14 +16382,14 @@ function agentCascadeSumHTML(c){
 // CAS-814: the Mission "Movie Budget" requirement — a dollar floor (c.selScale), same readout the Mission
 // score-bar and requirement card already use (scaleReadout: "Studio · $39M+"), 0 = off.
 function agentBudgetSum(c){
-  return c.selScale ? scaleReadout(c.selScale) : "Any — not required";
+  return c.selScale ? scaleReadout(c.selScale) : "Any";
 }
 // CAS-814: the Mission Awards requirement (c.selAwards, AWARD_STOPS' rung), restated in full sentence form
 // rather than AWARD_STOPS' own short tick labels ("2+ noms").
 const AGROW_AWARDS_LABEL = {1:"Nominated or better", 2:"2+ nominations or better",
                             3:"3+ nominations or better", 4:"Winner only"};
 function agentAwardsSum(c){
-  return c.selAwards ? (AGROW_AWARDS_LABEL[c.selAwards] || AWARD_STOPS[c.selAwards].label) : "Any — not required";
+  return c.selAwards ? (AGROW_AWARDS_LABEL[c.selAwards] || AWARD_STOPS[c.selAwards].label) : "Any";
 }
 // CAS-814: age ratings + how-far-back as one sentence. c.year (an explicit year list, set via the Filters
 // panel's "Save As") wins over c.yearsBack when present — the same priority agentEraSum used before this
@@ -16464,6 +16455,15 @@ function agentMetrics(c){
   agMetricsCache.set(c.id, {sig, metrics});
   return metrics;
 }
+// CAS-826: the Agents card header line — who-line and occasions share one line now, "who-line · occasion,
+// occasion". occasionsSummary()'s sentinel strings ("Loading…", "None yet") are for the Edit Agent screen,
+// not this header — a card must never claim "None yet" for an agent that simply hasn't loaded its
+// occasions yet, or announce a loading state as if it were content.
+function agentWhoLineText(c){
+  const occ=occasionsSummary(c);
+  const occText=(occ==="Loading…" || occ==="None yet") ? "" : occ;
+  return [c.who ? WHO_LABELS[c.who] : "", occText].filter(Boolean).join(" · ");
+}
 const fmtAgentRate = n => String(Math.round(n));
 function agentMetricsHTML(c){
   const {total, scoreMin, perMonth, lastFind, d7}=agentMetrics(c);
@@ -16490,8 +16490,9 @@ function renderAgentsScreen(){
     const rank=i+1;
     const newest=agentNewestDays(c);
     const stale=(newest===null || newest>AGENT_STALE_DAYS);
+    const whoLine=agentWhoLineText(c);
     return `
-    <div class="agrow agrank-${Math.min(rank,6)}" data-id="${escA(c.id)}">
+    <div class="agrow" data-id="${escA(c.id)}">
       <span class="agranker">
         <span class="agrank" aria-hidden="true">${rank}</span>
         <span class="aggrip" data-role="grip" role="button" tabindex="0"
@@ -16502,14 +16503,14 @@ function renderAgentsScreen(){
           <span class="agicon" aria-hidden="true">${c.icon}</span>
           <span class="agnamewrap">
             <span class="agname">${esc(c.name)}</span>
-            ${c.who ? `<span class="agwho">${esc(WHO_LABELS[c.who])}</span>` : ""}
+            ${whoLine ? `<span class="agwho">${esc(whoLine)}</span>` : ""}
           </span>
           <button type="button" class="ag-edit ca-btn" onclick="editAgentRow('${escA(c.id)}')"
               aria-label="Edit ${escA(c.name)}" title="Edit ${escA(c.name)}">Edit</button>
         </span>
         <span class="agsettings">
           <span class="agsrow"><span class="agslbl">Styles</span><span class="agsval">${esc(agentStylesSum(c))}</span></span>
-          <span class="agsrow"><span class="agslbl">Cascade</span><span class="agsval">${agentCascadeSumHTML(c)}</span></span>
+          <span class="agsrow"><span class="agslbl">Score</span><span class="agsval">${agentCascadeSumHTML(c)}</span></span>
           <span class="agsrow"><span class="agslbl">Budget</span><span class="agsval">${esc(agentBudgetSum(c))}</span></span>
           <span class="agsrow"><span class="agslbl">Awards</span><span class="agsval">${esc(agentAwardsSum(c))}</span></span>
           <span class="agsrow"><span class="agslbl">Audience</span><span class="agsval">${esc(agentAudienceSum(c))}</span></span>
