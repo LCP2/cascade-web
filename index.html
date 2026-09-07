@@ -5671,7 +5671,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 974, "commit": "e868aa2", "builtAt": "2026-09-07T07:23:25Z"};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 975, "commit": "ae43c3a", "builtAt": "2026-09-07T07:39:20Z"};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -10893,7 +10893,7 @@ let draft=null;
 function newCascade(){
   draft=null;
   logEvent("new_agent_started");
-  flowStart("priority");   // CAS-629: this lane still opens on the old priority screen, not briefing1
+  flowStart("pickagent");  // CAS-815: no more cinema/streaming question — straight to picking an agent
   flowNewAgent=true;       // set AFTER flowStart, which resets the flow's own state
 }
 window.newCascade=newCascade;
@@ -12144,13 +12144,12 @@ function onbDepthFor(c){
 // One recommendation per lane, and it is the preset that answers the question they just asked rather than
 // a fixed favourite. RECOMMENDED is a badge on a card, so it has to move with the list the card is in.
 const RECOMMENDED_FOR = {cinema:"cinema", stream:"streaming"};
-// CAS-222: the name an agent is OFFERED — the channel it watches plus the standard it was built from. The
-// card's own label stays the standard alone ("Blockbusters", CAS-218), because the card is choosing a standard
-// and the standard is the same either side; it is the AGENT that belongs to one channel. Without the prefix,
-// building the same preset in both lanes gets you two agents with one name and nothing on the deck to tell
-// them apart.
+// CAS-222/CAS-815: the name an agent is OFFERED used to be the channel it watches plus the standard it was
+// built from, so that building the same preset in both lanes still got you two distinguishable agents. The
+// creation path no longer asks which channel, so the offered name is the standard alone — the card's own
+// label ("Blockbusters", CAS-218).
 const CHANNEL_WORD = {cinema:"Cinema", stream:"Streaming"};
-const starterAgentName = (s, kind) => `${CHANNEL_WORD[kind || flowKind] || CHANNEL_WORD.cinema} ${s.name}`;
+const starterAgentName = s => s.name;
 // CAS-372: the Name-your-Agent step drops this same channel word from what it prefills/saves — a prefilled
 // field reads as a decision already made, and "Streaming " in front of every offered name was that decision,
 // not the preset's. The channel word still disambiguates everywhere else this name is offered (the card,
@@ -12218,8 +12217,12 @@ const starterBar = (s, kind) => (s.barBy && s.barBy[kind || flowKind]) || s.bar;
 let pendingStarter = null;   // the agent the person chose
 // CAS-188: the cards are the body of the flow's `pickagent` step now, not a screen of their own — so this
 // returns the markup rather than writing it into an overlay that no longer exists.
+// CAS-815: this is the only caller of the card list at creation time, and there is no priority answer any
+// more to narrow it by — every starter is offered, in STARTERS' own order. startersFor() itself stays
+// untouched (the lane-consistency test suite calls it directly, per kind, for cinema/stream presets that
+// are NOT offered here).
 function starterCardsHTML(kind){
-  return startersFor(kind || flowKind).map(s=>{
+  return STARTERS.map(s=>{
     const recommended = s.key===RECOMMENDED_FOR[kind || flowKind];
     const n=starterCount(s, kind);
     // The count is REAL — countCriteria against today's catalogue, the same call the deck cards use. The
@@ -12251,9 +12254,8 @@ window.pickStarter=key=>{
   // / Ratings screens edit onbFlow.draft directly, so a preset that wants a standard of its own (CAS-307:
   // Family Movies' rating cap and genre exclude) has to seed it here, not just the bar dials below.
   // Commit is deferred to finishSharpSequence so the payoff shows the sharpened agent, not the raw card.
-  // CAS-222: the offered name is the CHANNEL plus the preset — "Cinema Blockbusters", not "Blockbusters".
-  // The card names a standard, and the same standard is a different agent in each lane, so the card's own
-  // label can't be the agent's name without two agents built from one preset ending up identically named.
+  // CAS-815: the offered name is the preset alone now — "Blockbusters", not "Cinema Blockbusters" — since
+  // there is no channel answer left to disambiguate it with.
   const dfltName = starterAgentName(s, flowKind);
   onbFlow.draft = normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:dfltName, crit:s.crit, alerts:s.alerts}));
   onbFlow.name = dfltName;
@@ -14601,28 +14603,6 @@ ${who.includes("kids") ? `
       if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, companionKeys, `<b>${n}</b> AGENTS TAKE THIS BRIEF`));
     },
   },
-  // ---- CAS-188 #1: what are you here for? -----------------------------------------------------------
-  // The one question that has to come first, because it is the only one that changes what the rest of the
-  // flow asks. It is a starting point, not a commitment — said out loud on the screen, because a fork this
-  // early reads as permanent unless you promise otherwise.
-  priority: {
-    noAgent: true, hub: true,        // the two answers ARE the continue — there is nothing to press after
-    backTo: "splash",
-    body(){
-      return `<h2 class="osh prioh">What matters most right now?</h2>
-        <div class="prioopts">
-          <button class="priobtn cin" type="button" onclick="flowPriority('cinema')">
-            <span class="prioictile"><span class="prioic">🎬</span></span>
-            <span class="priotx">Never miss a great film on the big screen.</span>
-            <span class="priochev">›</span></button>
-          <button class="priobtn str" type="button" onclick="flowPriority('stream')">
-            <span class="prioictile"><span class="prioic">📺</span></span>
-            <span class="priotx">Always know what to stream next.</span>
-            <span class="priochev">›</span></button>
-        </div>
-        <p class="priostmt">Just a starting point — add as many Cascade Agents as you like.</p>`;
-    },
-  },
   // ---- CAS-188 #2: pick an agent --------------------------------------------------------------------
   // The same cards, the same live counts, in the flow's own frame rather than an overlay of their own.
   pickagent: {
@@ -14633,7 +14613,7 @@ ${who.includes("kids") ? `
              you are choosing. What an agent does is the previous screen's job; this one is "pick from these,
              or build your own", which is exactly what the last card offers. Copy is the ticket's, verbatim. -->
         <p class="ossub">Choose a pre configured Agent or go totally custom.</p>
-        <div class="scards${flowKind==="stream"?" str":""}">${starterCardsHTML()}</div>`;
+        <div class="scards">${starterCardsHTML()}</div>`;
     },
   },
   // ---- Style (genres) -------------------------------------------------------------------------------
@@ -15164,8 +15144,9 @@ let onbStepKey=null;
 // own S5/S6, above). There is no "membership" entry: membership is reached by falling past the end of
 // flowList(), exactly as the old flow's reveal was. Both lanes are identical now (no priority screen to
 // tell them apart), so `flowKind` is set directly by flowStart() below instead. The "+ New Cascade"
-// (flowNewAgent) path still walks the OLD priority → pickagent → Briefing hop — see flowNext/flowBack —
-// since that path is deliberately untouched by this ticket (CAS-246).
+// (flowNewAgent) path still walks its own pickagent → Briefing hop — see flowNext/flowBack — since that
+// path is deliberately untouched by this ticket (CAS-246). CAS-815 dropped the priority question that
+// used to precede pickagent on that path.
 const FLOWS = {
   cinema: ["briefing1","briefing2","together","services","working","report"],
   stream: ["briefing1","briefing2","together","services","working","report"],
@@ -15210,9 +15191,9 @@ let flowOn=false;              // inside the wired flow (vs a standalone ?step= 
 // picked and hands over to the Briefing rather than walking the linear sharpening screens and finishing on
 // the membership page. Cleared by flowStart/flowStop, so it can never leak into a first run.
 let flowNewAgent=false;
-// CAS-629: no priority screen sets this on the first run any more — flowStart() below sets it directly
-// so every lane-dependent read (starterCardsHTML's ".str" class, PRIORITY_WATCH, etc.) still has a
-// defined value. The "+ New Cascade" path (flowNewAgent) still answers it via window.flowPriority.
+// CAS-629/CAS-815: no priority screen sets this on any run any more — flowStart() below sets it directly
+// so every lane-dependent read (startersFor/starterBar/starterWatch/starterCardsHTML, PRIORITY_WATCH,
+// etc.) still has a defined value, with nothing left that lets a user set it.
 let flowKind="cinema";
 let flowSlideT=null;
 const flowChromed = key => flowOn && flowCounted().includes(key);
@@ -15222,8 +15203,8 @@ const flowChromed = key => flowOn && flowCounted().includes(key);
 // since there is no Briefing hub to return to here.
 let menuStepOn=false;
 const stepSpoke = key => menuStepOn || (briefOn && key!=="briefing");
-// CAS-629: `startKey` is the "+ New Cascade" escape hatch (newCascade() passes "priority") — the first
-// run itself always opens on briefing1, the new sequence's own first screen.
+// CAS-629/CAS-815: `startKey` is the "+ New Cascade" escape hatch (newCascade() passes "pickagent") —
+// the first run itself always opens on briefing1, the new sequence's own first screen.
 function flowStart(startKey){
   flowOn=true; flowNewAgent=false;
   flowKind="stream";            // no priority screen to set it on the first run — see the declaration above
@@ -15241,10 +15222,10 @@ function flowStop(){
   $("stepHdr").hidden=true; $("stepNav").hidden=true;
 }
 function flowNext(){
-  // CAS-629: "+ New Cascade" (flowNewAgent) still walks the old priority → pickagent hop, independent of
-  // FLOWS now that FLOWS itself no longer contains either step (see the FLOWS declaration above).
+  // CAS-629/CAS-815: "+ New Cascade" (flowNewAgent) still walks its own pickagent hop, independent of
+  // FLOWS now that FLOWS itself no longer contains that step (see the FLOWS declaration above). pickagent
+  // is the first step of this lane now — no priority question precedes it any more.
   if(flowNewAgent){
-    if(onbStepKey==="priority") return gotoStep("pickagent","fwd");
     if(onbStepKey==="pickagent"){ flowNewAgent=false; return briefNewAgent(); }
   }
   const list=flowList(); let i=list.indexOf(onbStepKey);
@@ -15254,10 +15235,10 @@ function flowNext(){
   flowOn=false; finishSharpSequence();       // past the last step → S7 membership (Change E4)
 }
 function flowBack(){
-  // CAS-629: symmetric with flowNext's own flowNewAgent branch above.
+  // CAS-629/CAS-815: symmetric with flowNext's own flowNewAgent branch above — pickagent is the front of
+  // this lane now, so backing off it just closes the flow (CAS-347: off the front of the flow).
   if(flowNewAgent){
-    if(onbStepKey==="pickagent") return gotoStep("priority","back");
-    return flowStop();   // back off the front of "priority" — see the CAS-347 note this used to sit on
+    return flowStop();
   }
   const list=flowList(); let i=list.indexOf(onbStepKey)-1;
   while(i>=0 && stepSkipped(list[i])) i--;   // CAS-628: symmetric with flowNext — a skipped step is never landed on
@@ -15266,6 +15247,10 @@ function flowBack(){
   // splash underneath to back out to.
   flowStop(); showSplash();                  // off the front of the flow → back out to the splash
 }
+// CAS-815: no screen calls this any more — the cinema/streaming question is gone from the creation path,
+// so nothing in the app sets flowKind. It stays as a plain setter (not tied to any UI) because laneCrit
+// and the rest of the lane machinery are untouched by this ticket and still need a way to be exercised
+// per-lane — the test suite's pickInLane() calls this directly, with no screen behind it.
 window.flowPriority=kind=>{ flowKind=kind; logEvent("flow_priority",{kind}); flowNext(); };
 // ================= CAS-182 / CAS-208: the Agent Briefing =============================================
 // Editing an agent is the same set of screens the flow used to build it, hung off a hub instead of a line.

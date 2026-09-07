@@ -14,13 +14,13 @@ import {
 
 // Mirrors cas565.spec.mjs's addSecondAgent — a second agent made from the deck's "New Agent" card stops at
 // the Briefing hub instead of walking the splash flow, so it needs its own "Save agent" exit.
-async function addSecondAgent(page, kind){
+// CAS-815: this used to answer the cinema/streaming question first — that question is gone, so "+ New
+// Cascade" now opens straight on the agent picker.
+async function addSecondAgent(page){
   const newCard = page.locator(".dcard.new");
   await newCard.locator(".dc-name").click();
   await expect(newCard).toHaveClass(/is-centre/);
   await newCard.locator('button[data-act="new"]').click();
-  await expect(page.locator(".priobtn").first()).toBeVisible();
-  await page.locator(kind === "stream" ? ".priobtn.str" : ".priobtn.cin").click();
   await expect(page.locator(".scard").first()).toBeVisible();
   const cards = await shortlistCards(page);
   const card = page.locator(".scard", { has: page.locator(".sc-name", { hasText: cards[0].name }) }).first();
@@ -406,7 +406,7 @@ test("'Only show films on my services' changes what a new agent finds", async ({
   await ctaLocator(page).click();   // Done, back to the listing
   await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
 
-  await addSecondAgent(page, "stream");
+  await addSecondAgent(page);
   const after = await settleListing(page);
   expect(after, `before=${before} after=${after}`).toBeLessThan(before);
 });
