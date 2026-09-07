@@ -174,6 +174,22 @@
   .brandrow>div:first-child{min-width:0}
   .brandrow .updated{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .hdr-actions{flex:0 0 auto}
+  /* CAS-821 — fusing the nav row and the window strip into one tab sheet (Lee's decision, 2026-09-07,
+     EXACT — values below are verbatim). .navblock owns the outer border/radius; overflow:hidden clips
+     both tiers to it, so neither tier sets a radius or an outer border of its own. */
+  .navblock{margin:0 12px;border:1px solid var(--line);border-radius:13px;
+    background:var(--panel2);overflow:hidden}
+  /* Space above the block is this ticket's own call (not part of the EXACT margin rule, which is 0 top/
+     bottom) — matches .acctbanner's existing margin-top:9px, the header's established rhythm for whatever
+     follows the brand row. */
+  .navblock{margin-top:9px}
+  .navblock .navtop{display:flex;align-items:center;gap:7px;padding:9px}
+  /* Not in the EXACT snippet — pushes the menu button to the row's far edge now that .hdr-actions is flex,
+     not its old grid-with-an-auto-column layout. */
+  .navblock .navtop .navmenu-wrap{margin-left:auto}
+  .navblock .wtabs2{display:flex;border-top:1px solid var(--line);background:rgba(0,0,0,.22)}
+  .navblock .wtabbtn{padding:8px 6px;font-size:11px;border-right:1px solid var(--line)}
+  .navblock .wtabbtn:last-child{border-right:0}
   .brandlockup{display:inline-flex;align-items:center;gap:8px;vertical-align:middle}
   /* CAS-689: the CASCADE text wordmark is gone — it and the "Updated" freshness line were overlapping the
      three nav chips on an iPhone. The splash's own logo mark (splash-logo.svg) replaces it, inlined rather
@@ -2619,8 +2635,9 @@
      scope bar's own pills: these pick which films are even eligible before the scope bar narrows them
      further, so they read as one higher-level control, not a fourth pile alongside Notify/For review/
      Watched. Same on-colour (--brand-blue) as the scope bar's own lit state, for the same reason. */
-  .watchtabs{margin:9px 12px 0;display:flex;border:1px solid var(--line);border-radius:11px;
-    overflow:hidden;background:var(--panel2)}
+  /* CAS-821: margin, border and border-radius are gone — .navblock now supplies all three (the container
+     owns the outer border/radius; overflow:hidden clips this tier's corners to it). */
+  .watchtabs{display:flex;overflow:hidden;background:var(--panel2)}
   .watchtabs[hidden]{display:none}   /* CAS-725: no enabled window, no strip — not an empty one */
   .wtabbtn{flex:1;min-width:0;padding:8px 6px;background:transparent;border:0;border-right:1px solid var(--line);
     color:var(--dim);font-family:inherit;font-size:11.5px;font-weight:800;letter-spacing:.03em;
@@ -2629,7 +2646,8 @@
   .wtabbtn.on{background:var(--brand-blue);color:#fff}
   .wtabbtn:active{opacity:.75}
   .wtabbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
-  .cascbar.rail .watchtabs{margin:8px 12px 0}
+  /* CAS-821: the .cascbar.rail-scoped margin override that used to live here is gone with it — #watchTabs
+     is no longer a descendant of #cascbar, so a rail-state margin on it has nothing to select. */
   /* ---- GENRE FILTER (CAS-714): the styles present in the open tab's own current results, each a plain
      .chip (the same visual pattern the Mission editor's own genre chips already use) — reuses the look,
      not the wiring, since this filter must never touch a cascade's stored c.genre. Margins mirror
@@ -3562,7 +3580,14 @@
              below stays: that DOES change, every day, and it is the thing people check. -->
         <div class="updated" id="updated"></div>
       </div>
-      <div class="hdr-actions">
+    </div>
+    <!-- CAS-821: the header nav's own second tier. #watchTabs (below) used to float 9px under this row as a
+         separate joined pill inside #cascbar, in a different visual language from .modechip's own separate
+         rounded pills — Lee's decision, 2026-09-07: fuse them into one bordered block, chips on top, window
+         segments directly beneath, sharing one border/radius and a single hairline seam. .navblock owns the
+         outer border/radius (overflow:hidden clips both tiers to it); neither tier sets one of its own. -->
+    <div class="navblock">
+      <div class="hdr-actions navtop">
         <!-- Agents (was the Find chip; repurposed CAS-616, v0.9.5). The id stays #agentsBtn because six CSS
              rules and the open/close pair below already key off it, and the name is now literally right: this
              chip opens the Agents management/reorder screen, which used to live in the menu. It is NOT lit by
@@ -3645,6 +3670,10 @@
           </div>
         </div>
       </div>
+      <!-- CAS-713/821: was #cascbar's own first child, floating below the nav row in a different visual
+           language — now the header nav's fused second tier. id/role/aria and renderWatchTabs()/
+           ensureWatchTab() are all unchanged; only where the element lives, and its own CSS, moved. -->
+      <div class="wtabs2 watchtabs" id="watchTabs" role="tablist" aria-label="Watch nav"></div>
     </div>
     <!-- CAS-656: a persistent, non-dismissing state for "the account failed to load and you're looking at
          on-device data" — a toast was the wrong weight (it scrolls away; this stays until a load succeeds).
@@ -3666,9 +3695,8 @@
   <div class="cascbar blue" id="cascbar">
     <!-- CAS-371: the "AGENTS" heading is gone — the agent box is the first thing in the bar now, so
          everything below it sits that much higher. -->
-    <!-- CAS-713 — Cascade 9.7: Watch's fixed top nav. Three sub-tabs (Cinema/Rental/Streaming), each
-         pre-setting the availability-status slice the listing below then applies to. -->
-    <div class="watchtabs" id="watchTabs" role="tablist" aria-label="Watch nav"></div>
+    <!-- CAS-713/821 — Cascade 9.7's fixed sub-tabs (Cinema/Premium/Rental/Streaming): #watchTabs itself now
+         lives in <header>, fused under the nav row — see the .navblock comment there. -->
     <!-- CAS-718: replaces the old WATCH ON/For review/Watched pills, the standalone genre row, and the
          deck's per-list search/funnel with ONE consolidated per-tab control: a search box, a Filters
          button (opens #watchSheet — Watched + Styles), and the sort control, unchanged, moved in from the
@@ -8608,7 +8636,10 @@ window.setWatchTab = key => {
 function renderWatchTabs(){
   const el=$("watchTabs"); if(!el) return;
   const tabs=watchTabsNow();
-  el.hidden = !tabs.length;
+  // CAS-821: #watchTabs now lives in <header>, shared by every screen (Agents, Moving, ...) that sits below
+  // it — so the strip must also drop out whenever one of those .uscreens covers the Watch listing, on top
+  // of CAS-725's existing "no enabled window" rule.
+  el.hidden = !tabs.length || !!document.querySelector(".uscreen.open");
   el.innerHTML = tabs.map(t=>`<button type="button" class="wtabbtn${watchTab===t.key?" on":""}"
       role="tab" aria-selected="${watchTab===t.key}" onclick="setWatchTab('${t.key}')">${t.label}</button>`).join("");
 }
@@ -16797,6 +16828,12 @@ function syncWatchChip(){
     if(had) render();
   }
   $("moviesBtn").classList.toggle("active", showing);
+  // CAS-821: #watchTabs now lives in the shared header, so it has to drop out/reappear on this same
+  // open/close pair — riding `showing`, the previously active window stays selected since watchTab itself
+  // is untouched. Moving it in/out changes --hdrh (the strip's own tier), so re-measure right after,
+  // not only on resize — jumpToSection and .grouphead.sub's sticky offset both read --stickyh live.
+  renderWatchTabs();
+  syncHeaderHeight();
 }
 // CAS-A2: do NOT close the Agents screen here. It is where the user came from, and closing it
 // means Back and Save have nothing to return to — they fall through to the Watch listing.
