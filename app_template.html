@@ -16595,6 +16595,9 @@ const MOVING_EMPTY_COPY = {
   "2weeks":"Nothing has moved in the last 2 weeks.",
   month:"Nothing has moved in the last month.",
 };
+// CAS-829: shown instead of MOVING_EMPTY_COPY when the window actually held ledger entries but every one
+// was dropped for having no single owning agent — "nothing has moved" would be false in that case.
+const MOVING_EMPTY_NO_OWNER_COPY = "Something moved, but no agent currently owns it, so there's nothing to show.";
 let movingWindow="today";
 // CAS-668: whether the screen is actually open right now — the badge mirrors movingWindow
 // while it is, and predicts the window openMovingScreen would pick while it isn't. See movingBadgeWindow.
@@ -16637,8 +16640,8 @@ function movingData(){
   // CAS-667: a signed-in device must never paint the guest ledger while the real one is still in flight —
   // Moving is the landing screen, so the first render reliably lost this race. Render nothing until
   // loadRealAlerts has actually answered; a genuine guest has nothing to wait for and is unaffected.
-  if(!guest && !movingReady) return {canRows:[], newRows:[], changedRows:[]};
-  const canRows=[], newRows=[], changedRows=[];
+  if(!guest && !movingReady) return {canRows:[], newRows:[], changedRows:[], droppedRows:[]};
+  const canRows=[], newRows=[], changedRows=[], droppedRows=[];
   if(guest){
     // INDICATIVE (CHANGE 1): firstFound only ever says "this film is newly found" — it carries no notion
     // of a level being reached or lost — so a guest device gets a real NEW TO YOUR AGENTS group and
@@ -16647,9 +16650,12 @@ function movingData(){
       if(watched.has(Number(fid))) return;
       const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
       if(!m) return;
-      const agents=cascades.filter(c=>listedBy(m,c));
+      // CAS-829: a film with no single owning agent never gets a row — see filmOwnerCascade below. It is
+      // still recorded in droppedRows so the empty state can tell "no owner" apart from "nothing moved".
+      const owner=filmOwnerCascade(m);
+      if(!owner){ droppedRows.push({date:firstFound[fid]}); return; }
       newRows.push({filmId:fid, m, groupKey:"new_agents", chip:"NEW",
-        reason:"New to your agents", agentNames:agents.map(c=>c.name), date:firstFound[fid]});
+        reason:"New to your agents", agentId:owner.id, agentName:owner.name, date:firstFound[fid]});
     });
   }else{
     const byFilm=new Map();
@@ -16658,24 +16664,24 @@ function movingData(){
     realAlerts.forEach(a=>{
       const fid=String(a.movie_id);
       if(watched.has(Number(fid))) return;   // CHANGE 4: dealt with, never shown as having moved
+      if(byFilm.has(fid)) return;
       const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
       if(!m) return;
-      let g=byFilm.get(fid);
-      if(!g){
-        const isChange=Object.prototype.hasOwnProperty.call(REAL_MOMENT_SAID,a.moment);
-        // CHANGE 1: CAN WATCH NOW's row is the ledger entry recording the notify being met — an isChange
-        // moment for a film that is still, right now, sitting in a level you ticked. The same kind of
-        // moment for a film no longer in that state is AVAILABILITY CHANGED instead; group membership is
-        // unchanged from before CAS-650, only the row's date now comes from this ledger entry.
-        const canWatch=isChange && watchIsCurrent(Number(fid));
-        g={filmId:fid, m, groupKey:canWatch?"can_watch":(isChange?"availability_changed":"new_agents"),
-           chip:canWatch?"CAN WATCH":(isChange?(MOVING_CHANGE_CHIP[a.moment]||"NEW"):"NEW"),
-           reason:canWatch?movingCanWatchReason(m.tmdb_id):(REAL_MOMENT_SAID[a.moment]||a.moment),
-           agentNames:[], date:a.emailed_at};
-        byFilm.set(fid,g);
-      }
-      const nm=a.cascade_name||"Your agent";
-      if(!g.agentNames.includes(nm)) g.agentNames.push(nm);
+      // CAS-829: the row's agent is the film's single OWNER — the same recomputeFound()/agentChipHTML
+      // answer everywhere else — never the ledger entry's own agent-name field, which can list an agent
+      // that no longer owns (or never owned) this film. No owner, no row, in either branch.
+      const owner=filmOwnerCascade(m);
+      if(!owner){ droppedRows.push({date:a.emailed_at}); return; }
+      const isChange=Object.prototype.hasOwnProperty.call(REAL_MOMENT_SAID,a.moment);
+      // CHANGE 1: CAN WATCH NOW's row is the ledger entry recording the notify being met — an isChange
+      // moment for a film that is still, right now, sitting in a level you ticked. The same kind of
+      // moment for a film no longer in that state is AVAILABILITY CHANGED instead; group membership is
+      // unchanged from before CAS-650, only the row's date now comes from this ledger entry.
+      const canWatch=isChange && watchIsCurrent(Number(fid));
+      byFilm.set(fid,{filmId:fid, m, groupKey:canWatch?"can_watch":(isChange?"availability_changed":"new_agents"),
+         chip:canWatch?"CAN WATCH":(isChange?(MOVING_CHANGE_CHIP[a.moment]||"NEW"):"NEW"),
+         reason:canWatch?movingCanWatchReason(m.tmdb_id):(REAL_MOMENT_SAID[a.moment]||a.moment),
+         agentId:owner.id, agentName:owner.name, date:a.emailed_at});
     });
     byFilm.forEach(g=>{
       if(g.groupKey==="can_watch") canRows.push(g);
@@ -16687,15 +16693,18 @@ function movingData(){
   canRows.sort(byScoreDesc);
   newRows.sort(byScoreDesc);
   changedRows.sort(byScoreDesc);
-  return {canRows, newRows, changedRows};
+  return {canRows, newRows, changedRows, droppedRows};
 }
 // CAS-668: the filtered row set both the badge and the list are built from — one recipe, so they cannot
 // disagree about which rows are "in" the window. renderMovingScreen calls this with its live movingWindow;
 // movingUnseenCount calls it with whatever movingBadgeWindow() says applies right now.
+// CAS-829: also reports droppedInWindow — ledger entries inside this window that were dropped for having
+// no single owning agent — so the empty state can tell "no owner" apart from "nothing moved".
 function movingWindowRows(win){
-  const {canRows,newRows,changedRows}=movingData();
+  const {canRows,newRows,changedRows,droppedRows}=movingData();
   const inWindow=r=>movingInWindow(r.date, win);
-  return {shownCan:canRows.filter(inWindow), shownNew:newRows.filter(inWindow), shownChanged:changedRows.filter(inWindow)};
+  return {shownCan:canRows.filter(inWindow), shownNew:newRows.filter(inWindow), shownChanged:changedRows.filter(inWindow),
+    droppedInWindow:droppedRows.filter(inWindow).length};
 }
 // CAS-668: while Moving is open, the badge must track whatever window is actually on screen (movingWindow),
 // including a tap via setMovingWindow. While it's closed, there is no "on screen" window yet, so the badge
@@ -16718,12 +16727,10 @@ function updateMovingBadge(){
 // control (Moving is not a list, so there is nothing to be not-for) but is otherwise the same card.
 function movingRowHTML(row){
   const m=row.m;
-  // data-agent (not an interpolated JS string literal) so an agent name containing an apostrophe can't
-  // break out of the onclick attribute the way ${escA(nm)} inside '...' would.
-  const agentsHTML=row.agentNames.map((nm,i)=>
-    `${i?", ":""}<span class="mlchip mvagent" role="button" tabindex="0" data-agent="${escA(nm)}" onclick="event.stopPropagation();openMovingAgentEl(this)">${esc(nm)}</span>`
-  ).join("");
-  const why=`<div class="mvwhy"><span class="mvchip">${esc(row.chip)}</span> · ${esc(row.reason)}${agentsHTML?` · via ${agentsHTML}`:""}</div>`;
+  // CAS-829: bound by cascade id (data-cid), not name, so a since-renamed agent still resolves — see
+  // window.openMovingAgent below. movingData() never emits a row with no owner, so this always renders.
+  const agentHTML=`<span class="mlchip mvagent" role="button" tabindex="0" data-cid="${escA(row.agentId)}" onclick="event.stopPropagation();openMovingAgentEl(this)">${esc(row.agentName)}</span>`;
+  const why=`<div class="mvwhy"><span class="mvchip">${esc(row.chip)}</span> · ${esc(row.reason)} · via ${agentHTML}</div>`;
   const card=taggedOut(m) ? stubHTML(m) : cardHTML(m, false, {hideDismiss:true});
   return `<div class="mvitem">${why}${card}</div>`;
 }
@@ -16743,7 +16750,7 @@ function renderMovingScreen(){
     updateMovingBadge();
     return;
   }
-  const {shownCan, shownNew, shownChanged}=movingWindowRows(movingWindow);
+  const {shownCan, shownNew, shownChanged, droppedInWindow}=movingWindowRows(movingWindow);
   [...shownCan, ...shownNew, ...shownChanged].forEach(r=>{ movingSeen[r.filmId]=r.groupKey; });
   saveMovingSeen();
   updateMovingBadge();
@@ -16766,8 +16773,10 @@ function renderMovingScreen(){
     ? head + groups.map(g=>`
       <div class="grouphead"><span>${esc(g.title)}${ledgerTruncated?" (showing the most recent 200)":""}</span><span class="gcount">${g.rows.length}</span></div>
       <div class="mvlist">${g.rows.map(movingRowHTML).join("")}</div>`).join("")
+    // CAS-829: droppedInWindow means the ledger genuinely had entries here, but every one was dropped for
+    // lacking a single owning agent — say so plainly rather than reusing copy that claims nothing happened.
     : `${head}<div class="mvempty">
-      <p class="mvemptymain">${esc(MOVING_EMPTY_COPY[movingWindow])}</p>
+      <p class="mvemptymain">${esc(droppedInWindow ? MOVING_EMPTY_NO_OWNER_COPY : MOVING_EMPTY_COPY[movingWindow])}</p>
       <p class="mvemptysub">Your agents are still watching. You'll see it here first.</p>
     </div>`;
 }
@@ -16860,13 +16869,13 @@ window.editAgentRow=id=>{ briefOpen(id, "agents"); };
 // CAS-688: same rule as editAgentRow above — do NOT close #leScreen here. It is where the user came from,
 // and closing it would leave Back/Save/Delete with nowhere to return to. briefReturn() puts them back on it.
 window.editListCascRow=id=>{ briefOpen(id, "listEditor"); };
-// CAS-636: tapping an agent name on a Moving row lands on Watch with that agent selected — reads off the
-// agent's NAME rather than id, since that's all the notifications ledger carries.
-window.openMovingAgent=name=>{
-  const c=cascades.find(x=>x.name===name); if(!c) return;
+// CAS-636: tapping an agent chip on a Moving row lands on Watch with that agent selected. CAS-829: keyed
+// by cascade id now, not name, so it still resolves an agent that has since been renamed.
+window.openMovingAgent=id=>{
+  const c=cascades.find(x=>x.id===id); if(!c) return;
   closeMovingScreen(); openCascade(c.id);
 };
-window.openMovingAgentEl=el=>{ openMovingAgent(el.dataset.agent); };
+window.openMovingAgentEl=el=>{ openMovingAgent(el.dataset.cid); };
 
 // ---- CAS-441: Review this agent (Phase 1 of the CAS-440 Learning Agents spike) ---------------------------
 // Profiling only, from the user's own behaviour on THIS agent's films — no advice, no Apply (Phase 2/3).
