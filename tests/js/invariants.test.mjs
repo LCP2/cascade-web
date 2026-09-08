@@ -1450,6 +1450,15 @@ test("CAS-848 AC6: app_template.html no longer prints a trailing \"via <agent>\"
     "the lane heading names the agent now — no per-row \"via <agent>\" trailer");
 });
 
+test("CAS-852 AC4: the 200-events line appears only inside the ledgerTruncated conditional, never unconditionally", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const matches = [...src.matchAll(/Showing the most recent 200 events\./g)];
+  assert.equal(matches.length, 1, "the line must appear exactly once in app_template.html");
+  const before = src.slice(Math.max(0, matches[0].index - 200), matches[0].index);
+  assert.ok(/ledgerTruncated\s*\?/.test(before),
+    "the line must be gated behind the ledgerTruncated condition, never printed unconditionally");
+});
+
 test("CAS-848 AC4: openMovingScreen always opens pinned to 2 weeks, with no prior state", () => {
   // 9 rows all aged 20 days — under CAS-671's old row-count auto-pick this would have opened on Month.
   // The new behaviour must ignore row distribution entirely and always land on 2 weeks.

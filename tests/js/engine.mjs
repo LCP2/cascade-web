@@ -284,7 +284,10 @@ if(typeof window.CascadeAuth === "undefined"){
   movingWindowRows, movingUnseenCount, movingBadgeWindow, movingInWindow,
   // CAS-848: movingLanes is the pure per-agent grouping/ranking step renderMovingScreen paints from — a
   // test can assert lane order/membership without parsing the rendered HTML.
-  movingLanes,
+  // CAS-852: movingWindowRank is the per-row ladder position movingLanes now sorts by ahead of newest-
+  // first, and movingLedgerTruncated is the 200-row-cap predicate behind the (DOM-only) truncation notice —
+  // both exported so a test can assert them directly.
+  movingLanes, movingWindowRank, movingLedgerTruncated,
   MOVING_WINDOWS, movingSeen,
   // CAS-670 AC2/AC4: renderMovingScreen is wire code (its DOM write is absorbed by the stub) but its early
   // return on the loading-state guard is a real decision — whether it marks any row seen — so a test needs

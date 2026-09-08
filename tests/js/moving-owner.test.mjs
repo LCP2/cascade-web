@@ -173,11 +173,37 @@ test("CAS-848 AC2: new_to_agent renders the New tag, hits_stream renders the Cha
   assert.equal(changedRow.tag, "changed", "AC2: hits_stream must be tagged Changed");
 }));
 
-test("CAS-848 AC3: rows inside one lane are ordered newest first", () => withState(() => {
+// CAS-852: replaces CAS-848's own "rows inside one lane are ordered newest first" test — a lane now reads
+// down the availability ladder first, newest-first only as the tiebreak within one window. older/newer here
+// are picked from the SAME primaryStatus bucket, so the window-rank term is a no-op and this exercises the
+// tiebreak in isolation; CAS-852 AC1 below covers the cross-window ordering itself.
+function pickSameWindow(E, n){
+  const byStatus = new Map();
+  E.MOVIES.forEach(m => {
+    if(E.watched.has(m.tmdb_id)) return;
+    const ps = E.primaryStatus(m);
+    if(!byStatus.has(ps)) byStatus.set(ps, []);
+    byStatus.get(ps).push(m);
+  });
+  for(const list of byStatus.values()) if(list.length >= n) return list.slice(0, n);
+  throw new Error(`no primaryStatus bucket has ${n} unwatched films`);
+}
+function pickOneEach(E, statuses){
+  const found = {};
+  for(const m of E.MOVIES){
+    if(E.watched.has(m.tmdb_id)) continue;
+    const ps = E.primaryStatus(m);
+    if(statuses.includes(ps) && !found[ps]) found[ps] = m;
+    if(Object.keys(found).length === statuses.length) break;
+  }
+  return statuses.map(s => found[s]);
+}
+
+test("CAS-852 AC2: rows inside one lane, same window, are ordered newest first", () => withState(() => {
   E.localStorage.setItem("cascade_had_account", "1");
-  const owner = ownerCascade("cas848-ac3-owner", 0, "Owner Agent");
+  const owner = ownerCascade("cas852-ac2-owner", 0, "Owner Agent");
   E.cascades.push(owner);
-  const [older, newer] = pickFilms(2);
+  const [older, newer] = pickSameWindow(E, 2);
   E.notify[older.tmdb_id] = { cascadeIds: [owner.id] };
   E.notify[newer.tmdb_id] = { cascadeIds: [owner.id] };
   E.realAlerts.length = 0;
@@ -195,5 +221,50 @@ test("CAS-848 AC3: rows inside one lane are ordered newest first", () => withSta
   // CAS-848: lane.rows is built inside the sandboxed engine — spread it into a literal first so .map()'s
   // result is a plain array, comparable to the literal on the right (see the CAS-667 AC2 test for why).
   assert.deepEqual([...lane.rows].map(r => r.filmId), [String(newer.tmdb_id), String(older.tmdb_id)],
-    "AC3: the lane's rows must be ordered newest first");
+    "AC2: two rows in the same window must be ordered newest first");
+}));
+
+test("CAS-852 AC1: a lane with one stream, one in-cinema and one upcoming film emits upcoming, in cinema, stream", () => withState(() => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const owner = ownerCascade("cas852-ac1-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const [streamFilm, cinemaFilm, upcomingFilm] = pickOneEach(E, ["included_streaming", "in_cinema", "upcoming"]);
+  assert.ok(streamFilm && cinemaFilm && upcomingFilm, "sanity: fixture must carry a film in each of the three windows");
+  [streamFilm, cinemaFilm, upcomingFilm].forEach(m => { E.notify[m.tmdb_id] = { cascadeIds: [owner.id] }; });
+  E.realAlerts.length = 0;
+  const now = Date.now();
+  // All emitted at the same moment — if the sort fell back to newest-first alone, insertion order (stream,
+  // cinema, upcoming) would survive unchanged, so this also proves window rank is what's actually deciding.
+  E.realAlerts.push(
+    { id: 1, movie_id: streamFilm.tmdb_id, moment: "hits_stream", title: streamFilm.title,
+      cascade_name: owner.name, emailed_at: new Date(now).toISOString(), read_at: null },
+    { id: 2, movie_id: cinemaFilm.tmdb_id, moment: "hits_cinema", title: cinemaFilm.title,
+      cascade_name: owner.name, emailed_at: new Date(now).toISOString(), read_at: null },
+    { id: 3, movie_id: upcomingFilm.tmdb_id, moment: "announced", title: upcomingFilm.title,
+      cascade_name: owner.name, emailed_at: new Date(now).toISOString(), read_at: null },
+  );
+  E.setMovingReady(true);
+
+  const { rows } = E.movingData();
+  const lane = E.movingLanes(rows).find(l => l.cascade && l.cascade.id === owner.id);
+  assert.deepEqual([...lane.rows].map(r => r.filmId),
+    [String(upcomingFilm.tmdb_id), String(cinemaFilm.tmdb_id), String(streamFilm.tmdb_id)],
+    "AC1: the lane must emit upcoming, in cinema, stream, in that order");
+}));
+
+test("CAS-852 AC3: movingLedgerTruncated reads false under the 200-row cap and true at it", () => withState(() => {
+  E.realAlerts.length = 0;
+  const now = Date.now();
+  for(let i = 0; i < 199; i++){
+    E.realAlerts.push({ id: i, movie_id: 9990000 + i, moment: "new_to_agent", title: "x",
+      cascade_name: "x", emailed_at: new Date(now - i * 3600e3).toISOString(), read_at: null });
+  }
+  assert.equal(E.movingLedgerTruncated("2weeks"), false,
+    "AC3: below the 200-row cap, the truncation notice's predicate must read false");
+
+  E.realAlerts.push({ id: 199, movie_id: 9990199, moment: "new_to_agent", title: "x",
+    cascade_name: "x", emailed_at: new Date(now).toISOString(), read_at: null });
+  assert.equal(E.realAlerts.length, 200, "sanity: exactly 200 seeded");
+  assert.equal(E.movingLedgerTruncated("2weeks"), true,
+    "AC3: at the 200-row cap, the truncation notice's predicate must read true");
 }));
