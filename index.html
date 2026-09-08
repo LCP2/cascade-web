@@ -5597,7 +5597,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1022, "commit": "2d98387", "builtAt": "2026-09-08T12:41:54Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1023, "commit": "4a9c9a4", "builtAt": "2026-09-08T12:54:49Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7569,8 +7569,14 @@ function notifyChipHTML(id){
 function agentChipSource(id, owner){
   return owner ? (pinnedInto(id,owner) ? "manual" : "auto") : null;
 }
+// CAS-861: owner is gated through ownerIfShown — a film held by an agent the account's my-services switch
+// would hide from the listing reads "No agent" here rather than crediting an owner the listing itself
+// wouldn't show. Every real card renders from a catalogue film, so m is always found in production; the
+// fallback below only ever matters for the odd id with no MOVIES entry.
 function agentChipHTML(id){
-  const owner=cascadesFor(id)[0]||null;
+  const m=MOVIES.find(x=>x.tmdb_id===id);
+  const rawOwner=cascadesFor(id)[0]||null;
+  const owner=m ? ownerIfShown(m, rawOwner) : rawOwner;
   const lbl = owner ? owner.name : "No agent";
   const title = owner
     ? `Owned by ${owner.icon} ${owner.name}. Tap to move to a different agent.`
@@ -16658,7 +16664,7 @@ function movingData(){
       if(watched.has(Number(fid))) return;
       const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
       if(!m) return;
-      const owner=filmOwnerCascade(m);
+      const owner=filmOwnerShown(m);
       if(!owner){ dropped.push({date:firstFound[fid]}); return; }
       rows.push({filmId:fid, m, tag:"new", reason:"New to your agents",
         agentId:owner.id, date:firstFound[fid]});
@@ -16673,7 +16679,7 @@ function movingData(){
       if(byFilm.has(fid) || droppedByFilm.has(fid)) return;
       const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
       if(!m) return;
-      const owner=filmOwnerCascade(m);
+      const owner=filmOwnerShown(m);
       if(!owner){ droppedByFilm.set(fid,{date:a.emailed_at}); return; }
       byFilm.set(fid,{filmId:fid, m, tag:movingIsNewMoment(a.moment)?"new":"changed",
         reason:REAL_MOMENT_SAID[a.moment]||a.moment,
@@ -18430,6 +18436,18 @@ function filmOwnerCascade(m){
     if(c && (!best || (c.order??Number.MAX_SAFE_INTEGER)<(best.order??Number.MAX_SAFE_INTEGER))) best=c;
   });
   return best;
+}
+// CAS-861: narrows an already-chosen owner to one a SURFACE (Moving, the card's agent chip) may actually
+// credit — null if the listing itself would exclude this film for that cascade (the my-services gate above
+// all). Membership (filmOwnerCascade/cascadesFor, watchesFilm, recomputeFound, the agent_films ledger) is
+// untouched and keeps ignoring that gate on purpose (CAS-132/381: an agent still holds a film you cannot
+// currently stream) — only what gets SHOWN as an owner changes. Reuses listedBy, the exact test the listing
+// itself applies, so a surface can never disagree with it.
+function ownerIfShown(m, owner){
+  return owner && listedBy(m, owner) ? owner : null;
+}
+function filmOwnerShown(m){
+  return ownerIfShown(m, filmOwnerCascade(m));
 }
 // CAS-760: which of the six rank tints a cascade's sub-heading band gets — its POSITION among the
 // account's cascades sorted by `order` (order values are sparse, so the position, not the raw number),

@@ -188,11 +188,16 @@ function pickSameWindow(E, n){
   for(const list of byStatus.values()) if(list.length >= n) return list.slice(0, n);
   throw new Error(`no primaryStatus bucket has ${n} unwatched films`);
 }
+// CAS-861: movingData() now routes every row through listedBy (filmOwnerShown), which — like the real Watch
+// listing — applies listWindowOK's CAS-481 clause and denies an ESTIMATED "upcoming" film regardless of
+// ownership. Skip one here so this picker keeps choosing a film the listing would actually show, the same
+// screen invariants.test.mjs's pickPinnableFilm already applies for the same reason.
 function pickOneEach(E, statuses){
   const found = {};
   for(const m of E.MOVIES){
     if(E.watched.has(m.tmdb_id)) continue;
     const ps = E.primaryStatus(m);
+    if(ps==="upcoming" && E.isEstimated(m)) continue;
     if(statuses.includes(ps) && !found[ps]) found[ps] = m;
     if(Object.keys(found).length === statuses.length) break;
   }
@@ -290,6 +295,124 @@ test("CAS-858 AC2(b): a window with no ledger entries at all still gets the gene
   assert.equal(E.movingEmptyCopy("2weeks"), E.MOVING_EMPTY_COPY["2weeks"],
     "AC2(b): genuinely nothing having moved must still read the generic empty copy");
 }));
+
+// ---- CAS-861: membership may ignore the my-services gate (CAS-132/381); Moving may not (Lee, 2026-09-08) --
+function withServicesOn(subs, run){
+  const sub = new Set(E.prefs.sub), on = E.prefs.on;
+  E.prefs.sub.clear(); subs.forEach(s => E.prefs.sub.add(s));
+  E.prefs.on = true;
+  try { return run(); }
+  finally { E.prefs.sub.clear(); sub.forEach(s => E.prefs.sub.add(s)); E.prefs.on = on; }
+}
+// A confirmed, unwatched, subscription-window real film cloned onto a fake id and re-offered on Foxtel only
+// — a service neither CAS-861's account nor this fixture's prefs.sub ever carries.
+function foxtelOnlyFilm(){
+  const source = E.MOVIES.find(m => !E.watched.has(m.tmdb_id) && E.primaryStatus(m) === "included_streaming"
+    && !E.isEstimated(m) && (m.offers || []).some(o => o.type === "sub"));
+  assert.ok(source, "no confirmed unwatched subscription-window film found — this test would prove nothing");
+  return { ...source, tmdb_id: 8610001, title: "CAS-861 Foxtel Fixture",
+    offers: [{ type: "sub", service: "Foxtel Now", price: null }] };
+}
+function netflixFilm(){
+  const source = E.MOVIES.find(m => !E.watched.has(m.tmdb_id) && E.primaryStatus(m) === "included_streaming"
+    && !E.isEstimated(m) && (m.offers || []).some(o => o.type === "sub"));
+  assert.ok(source, "no confirmed unwatched subscription-window film found — this test would prove nothing");
+  return { ...source, tmdb_id: 8610002, title: "CAS-861 Netflix Fixture",
+    offers: [{ type: "sub", service: "Netflix", price: null }] };
+}
+function withExtraFilm(film, run){
+  E.MOVIES.push(film);
+  try { return run(); } finally { E.MOVIES.pop(); }
+}
+
+test("CAS-861 AC1: services-only ON, Foxtel not subscribed, a HELD film produces no Moving row", () => withState(() => withServicesOn([], () => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const owner = ownerCascade("cas861-ac1-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const film = foxtelOnlyFilm();
+  withExtraFilm(film, () => {
+    E.notify[film.tmdb_id] = { cascadeIds: [owner.id] };
+    E.realAlerts.length = 0;
+    E.realAlerts.push({ id: 1, movie_id: film.tmdb_id, moment: "announced_stream", title: film.title,
+      cascade_name: owner.name, emailed_at: new Date().toISOString(), read_at: null });
+    E.setMovingReady(true);
+
+    const { rows } = E.movingData();
+    const row = rows.find(r => r.filmId === String(film.tmdb_id));
+    assert.ok(!row, "AC1: a film the listing excludes on services must produce no Moving row");
+  });
+})));
+
+test("CAS-861 AC2: the same film stays HELD — cascadeIds is untouched by the Moving drop", () => withState(() => withServicesOn([], () => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const owner = ownerCascade("cas861-ac2-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const film = foxtelOnlyFilm();
+  withExtraFilm(film, () => {
+    E.notify[film.tmdb_id] = { cascadeIds: [owner.id] };
+    E.realAlerts.length = 0;
+    E.realAlerts.push({ id: 1, movie_id: film.tmdb_id, moment: "announced_stream", title: film.title,
+      cascade_name: owner.name, emailed_at: new Date().toISOString(), read_at: null });
+    E.setMovingReady(true);
+
+    E.movingData();
+    assert.ok(E.notify[film.tmdb_id].cascadeIds.length > 0,
+      "AC2: dropping the Moving row must not clear the film's held membership");
+    assert.deepEqual(E.notify[film.tmdb_id].cascadeIds, [owner.id],
+      "AC2: cascadeIds must be exactly what it was before movingData() ran");
+  });
+})));
+
+test("CAS-861 AC3: turning the account services switch off makes the row appear again", () => withState(() => withServicesOn([], () => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const owner = ownerCascade("cas861-ac3-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const film = foxtelOnlyFilm();
+  withExtraFilm(film, () => {
+    E.notify[film.tmdb_id] = { cascadeIds: [owner.id] };
+    E.realAlerts.length = 0;
+    E.realAlerts.push({ id: 1, movie_id: film.tmdb_id, moment: "announced_stream", title: film.title,
+      cascade_name: owner.name, emailed_at: new Date().toISOString(), read_at: null });
+    E.setMovingReady(true);
+
+    assert.ok(!E.movingData().rows.find(r => r.filmId === String(film.tmdb_id)),
+      "sanity: the switch on must still drop the row");
+    E.prefs.on = false;
+    const row = E.movingData().rows.find(r => r.filmId === String(film.tmdb_id));
+    assert.ok(row, "AC3: switching the account services filter off must bring the row back");
+    assert.equal(row.agentId, owner.id, "AC3: the restored row must still name the owner");
+  });
+})));
+
+test("CAS-861 AC4: a film on a service the account DOES have is unaffected", () => withState(() => withServicesOn(["Netflix"], () => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const owner = ownerCascade("cas861-ac4-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const film = netflixFilm();
+  withExtraFilm(film, () => {
+    E.notify[film.tmdb_id] = { cascadeIds: [owner.id] };
+    E.realAlerts.length = 0;
+    E.realAlerts.push({ id: 1, movie_id: film.tmdb_id, moment: "announced_stream", title: film.title,
+      cascade_name: owner.name, emailed_at: new Date().toISOString(), read_at: null });
+    E.setMovingReady(true);
+
+    const row = E.movingData().rows.find(r => r.filmId === String(film.tmdb_id));
+    assert.ok(row, "AC4: a film on a service the account has must still get a Moving row");
+    assert.equal(row.agentId, owner.id, "AC4: the row must name the owner");
+  });
+})));
+
+test("CAS-861: the card's agent chip also cannot claim an owner for a film the listing excludes on services", () => withState(() => withServicesOn([], () => {
+  const owner = ownerCascade("cas861-chip-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const film = foxtelOnlyFilm();
+  withExtraFilm(film, () => {
+    E.notify[film.tmdb_id] = { cascadeIds: [owner.id] };
+    const chip = E.agentChipHTML(film.tmdb_id);
+    assert.doesNotMatch(chip, new RegExp(owner.name), "the chip must not name an owner the listing would exclude");
+    assert.ok(chip.includes("No agent"), "the chip must fall back to No agent");
+  });
+})));
 
 test("CAS-858 AC3: the unseen badge count excludes ownerless entries", () => withState(() => {
   E.localStorage.setItem("cascade_had_account", "1");
