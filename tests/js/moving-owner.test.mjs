@@ -434,3 +434,58 @@ test("CAS-858 AC3: the unseen badge count excludes ownerless entries", () => wit
   assert.equal(E.movingUnseenCount(), 1,
     "AC3: the badge must count only the one owned, un-seen row — the ownerless entry must not contribute");
 }));
+
+// CAS-869: Moving groups by status (movingSections) then agent (movingLanes, unchanged). These drive
+// movingSections directly against synthetic rows/films — the row-selection arithmetic (movingData, who
+// owns what) is already covered above; this is only about how a given row set is sectioned and ordered.
+function fakeFilm(id, status){
+  return { tmdb_id: id, title: `Film ${id}`, status: [status] };
+}
+function fakeRow(m, agentId){
+  return { filmId: String(m.tmdb_id), m, tag: "new", reason: "test", agentId, date: new Date().toISOString() };
+}
+
+test("CAS-869 AC1: movingSections orders by LISTING_ORDER (not row-arrival order), lanes in agent rank order", () => withState(() => {
+  const lo = ownerCascade("cas869-a-lo", 0, "Low Rank");
+  const hi = ownerCascade("cas869-a-hi", 5, "High Rank");
+  E.cascades.push(lo, hi);
+  const streamFilm = fakeFilm(900001, "included_streaming");
+  const upcomingFilm = fakeFilm(900002, "upcoming");
+  const rows = [
+    fakeRow(streamFilm, hi.id),   // inserted first, but "included_streaming" sorts LAST in LISTING_ORDER
+    fakeRow(upcomingFilm, hi.id),
+    fakeRow(upcomingFilm, lo.id),
+  ];
+  const sections = E.movingSections(rows);
+  // Compared index-by-index rather than via deepEqual on the whole array: `sections` is built inside the
+  // sandboxed engine (see engine.mjs), so it (and anything .map()'d straight off it) is a cross-realm Array
+  // — deepEqual's prototype check flags that as "not reference-equal" even when every element matches.
+  assert.equal(sections.length, 2, "AC1: exactly two sections, one per status actually present");
+  assert.equal(sections[0].g, "upcoming", "AC1: sections must follow LISTING_ORDER, never the order rows arrived in");
+  assert.equal(sections[1].g, "included_streaming", "AC1: included_streaming must sort after upcoming");
+  const upcoming = sections[0];
+  assert.equal(upcoming.lanes.length, 2, "AC1: both agents' lanes must appear under upcoming");
+  assert.equal(upcoming.lanes[0].cascade.id, lo.id, "AC1: rank 0 (lo) must lead");
+  assert.equal(upcoming.lanes[1].cascade.id, hi.id, "AC1: rank 5 (hi) must follow");
+}));
+
+test("CAS-869 AC2: every row appears exactly once across sections, and the total matches the rows shown", () => withState(() => {
+  const a = ownerCascade("cas869-b-a", 0, "Agent A");
+  E.cascades.push(a);
+  const films = [fakeFilm(900011, "upcoming"), fakeFilm(900012, "in_cinema"), fakeFilm(900013, "rental")];
+  const rows = films.map(m => fakeRow(m, a.id));
+  const sections = E.movingSections(rows);
+  const seenIds = sections.flatMap(s => s.lanes.flatMap(l => l.rows.map(r => r.filmId)));
+  assert.equal(seenIds.length, rows.length, "AC2: the total across all sections must equal the rows shown");
+  assert.deepEqual(new Set(seenIds), new Set(rows.map(r => r.filmId)), "AC2: every row must appear, and only once");
+}));
+
+test("CAS-869 AC3: a status with no rows renders no section, and no lane is ever empty", () => withState(() => {
+  const a = ownerCascade("cas869-c-a", 0, "Agent A");
+  E.cascades.push(a);
+  const rows = [fakeRow(fakeFilm(900021, "pvod"), a.id)];
+  const sections = E.movingSections(rows);
+  assert.equal(sections.length, 1, "AC3: only the status with rows renders a section");
+  assert.equal(sections[0].g, "pvod", "AC3: the one section rendered must be pvod");
+  assert.ok(sections.every(s => s.lanes.every(l => l.rows.length > 0)), "AC3: no section may hold an empty agent lane");
+}));

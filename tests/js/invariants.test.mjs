@@ -941,13 +941,12 @@ test("CAS-848 AC6: app_template.html no longer prints a trailing \"via <agent>\"
     "the lane heading names the agent now — no per-row \"via <agent>\" trailer");
 });
 
-test("CAS-852 AC4: the 200-events line appears only inside the ledgerTruncated conditional, never unconditionally", () => {
+test("CAS-869 AC6: the 200-events sentence is gone — Moving's status nav takes its place, not a supersession of the 200-row fetch cap itself", () => {
   const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
-  const matches = [...src.matchAll(/Showing the most recent 200 events\./g)];
-  assert.equal(matches.length, 1, "the line must appear exactly once in app_template.html");
-  const before = src.slice(Math.max(0, matches[0].index - 200), matches[0].index);
-  assert.ok(/ledgerTruncated\s*\?/.test(before),
-    "the line must be gated behind the ledgerTruncated condition, never printed unconditionally");
+  assert.ok(!src.includes("Showing the most recent 200 events."),
+    "the sentence must no longer appear anywhere in app_template.html");
+  assert.ok(src.includes("function movingLedgerTruncated"),
+    "the 200-row ledger fetch cap predicate itself must be unchanged — only the sentence is gone");
 });
 
 test("CAS-848 AC4: openMovingScreen always opens pinned to 2 weeks, with no prior state", () => {

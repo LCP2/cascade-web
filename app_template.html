@@ -15167,6 +15167,17 @@ function movingLanes(rows){
   lanes.sort((a,b)=>(a.cascade.order??1e9)-(b.cascade.order??1e9));
   return lanes;
 }
+// CAS-869: the MAJOR grouping — one section per availability status, in the Watch listing's own order
+// (LISTING_ORDER, never hardcoded — CAS-855 already changed it once), each holding movingLanes' existing
+// per-agent lanes for just that status's rows. A film's status is primaryStatus(m), the exact test the
+// Watch listing sections by (listingGroups above), so the two screens can never disagree about where a
+// film sits. A status with no rows is dropped entirely — movingLanes never produces an empty lane, since
+// it only ever builds one from rows that are already there.
+function movingSections(rows){
+  return LISTING_ORDER
+    .map(g=>({g, lanes: movingLanes(rows.filter(r=>primaryStatus(r.m)===g))}))
+    .filter(s=>s.lanes.length);
+}
 // A row's `date` is either a realAlerts emailed_at timestamp or a firstFound day string — both parse with
 // Date.parse. Calendar-day difference from now, said plainly; never a fabricated precision.
 function movingAgeText(dateStr){
@@ -15207,16 +15218,15 @@ function renderMovingScreen(){
   shownRows.forEach(r=>{ movingSeen[r.filmId]=r.tag; });
   saveMovingSeen();
   updateMovingBadge();
-  const ledgerTruncated=movingLedgerTruncated(movingWindow);
   const chipsHTML=MOVING_WINDOWS.map(w=>
     `<button type="button" class="chip gen${movingWindow===w.key?" on":""}" aria-pressed="${movingWindow===w.key}" onclick="setMovingWindow('${w.key}')">${esc(w.label)}</button>`
   ).join("");
   // CAS-852: wrapped in #movingHead/.mvhead so it can pin under the header — see syncHeaderHeight and
   // .mvhead's own comment for why the lane heading below it (.grouphead.sub) was floating with nothing to
-  // release against otherwise. The truncation line only ever appears here, inside the conditional.
+  // release against otherwise. CAS-869: the truncation notice that used to sit here is gone — the status
+  // nav below takes its place; the 200-row ledger fetch cap itself (movingLedgerTruncated) is unchanged.
   const head=`<div class="mvhead" id="movingHead"><h2 class="osh">Moving</h2><p class="ossub">${MOVING_SUBTITLE}</p>
-    <div class="mvwindows">${chipsHTML}</div>
-    ${ledgerTruncated ? `<p class="mvemptysub" style="padding:0 2px 12px">Showing the most recent 200 events.</p>` : ""}</div>`;
+    <div class="mvwindows">${chipsHTML}</div></div>`;
   if(!shownRows.length){
     $("movingBody").innerHTML = `${head}<div class="mvempty">
       <p class="mvemptymain">${esc(movingEmptyCopy(movingWindow))}</p>
@@ -15225,19 +15235,33 @@ function renderMovingScreen(){
     syncHeaderHeight();
     return;
   }
-  const lanes=movingLanes(shownRows);
-  $("movingBody").innerHTML = head + lanes.map(lane=>{
-    const tint=cascadeRankTint(lane.cascade);
-    const name=`${lane.cascade.icon} ${esc(lane.cascade.name)}`;
-    // CAS-636: tapping the lane heading lands on Watch with that agent selected — the same destination the
-    // old per-row "via <agent>" chip opened (openMovingAgent), just moved onto the heading that now names it.
-    const clickable = ` role="button" tabindex="0" data-cid="${escA(lane.cascade.id)}" onclick="openMovingAgentEl(this)" style="cursor:pointer"`;
-    return `<div class="ablock${tint?` agrank-${tint}`:""}">
-      <div class="grouphead sub"${clickable}><span>${name}</span><span class="gcount" style="margin-left:auto">${lane.rows.length}</span></div>
-      <div class="mvlist">${lane.rows.map(movingRowHTML).join("")}</div>
+  // CAS-869: two levels of grouping — status section first (movingSections, the Watch listing's own
+  // LISTING_ORDER/primaryStatus test), the existing per-agent lanes (movingLanes, unchanged) inside each.
+  const sections=movingSections(shownRows);
+  const sectionsHTML=sections.map(({g,lanes})=>{
+    const total=lanes.reduce((n,l)=>n+l.rows.length,0);
+    const lanesHTML=lanes.map(lane=>{
+      const tint=cascadeRankTint(lane.cascade);
+      const name=`${lane.cascade.icon} ${esc(lane.cascade.name)}`;
+      // CAS-636: tapping the lane heading lands on Watch with that agent selected — the same destination the
+      // old per-row "via <agent>" chip opened (openMovingAgent), just moved onto the heading that now names it.
+      const clickable = ` role="button" tabindex="0" data-cid="${escA(lane.cascade.id)}" onclick="openMovingAgentEl(this)" style="cursor:pointer"`;
+      return `<div class="ablock${tint?` agrank-${tint}`:""}">
+        <div class="grouphead sub"${clickable}><span>${name}</span><span class="gcount" style="margin-left:auto">${lane.rows.length}</span></div>
+        <div class="mvlist">${lane.rows.map(movingRowHTML).join("")}</div>
+      </div>`;
+    }).join("");
+    return `<div class="group" data-g="${g}">
+      <div class="grouphead"><span class="gdot ${g}"></span>${STATUS_LABEL[g]}<span class="gcount">${total}</span></div>
+      ${lanesHTML}
     </div>`;
   }).join("");
-  syncHeaderHeight();   // CAS-852: #movingHead's height can change (window switch, truncation notice) — re-measure so the lane heading's --stickyh offset never drifts
+  // CAS-869: the same "Now" jump rail the Watch listing carries (renderJumpBar/jumpToSection), reused —
+  // see those functions' own comments for how they were generalised to take a container.
+  const jumpCtl=`<div class="listctl" id="movingListCtl"><div class="jumpbar" id="movingJumpBar" hidden></div></div>`;
+  $("movingBody").innerHTML = head + jumpCtl + `<div id="movingGroups">${sectionsHTML}</div>`;
+  renderJumpBar({jumpBarId:"movingJumpBar", listCtlId:"movingListCtl", groupsSel:"#movingGroups .group", isOwn:()=>false});
+  syncHeaderHeight();   // CAS-852: #movingHead's height can change (window switch) — re-measure so the lane heading's --stickyh offset never drifts
 }
 // CAS-650: switching the window re-renders in place.
 window.setMovingWindow=(key)=>{
@@ -16885,18 +16909,24 @@ function jumpStopIsOwn(k){
   if(watchTab==="in_cinema") return k==="upcoming" || k==="in_cinema";
   return k===WATCH_TAB_OWN_STANDING[watchTab];
 }
-function renderJumpBar(){
-  const el=$("jumpBar"); if(!el) return;
-  const wrap=$("listCtl");   // CAS-839: #listCtl's only child is #jumpBar — hide the wrapper too, or its
+// CAS-869: generalised so Moving can reuse this rail rather than carrying a second copy — every option
+// defaults to the Watch listing's own ids/selector, so an unqualified renderJumpBar() call (every existing
+// Watch call site) is byte-for-byte the same rail it always built. Moving passes its own ids and a groups
+// selector scoped to #movingGroups, plus isOwn:()=>false since "own standing" is a Watch-tab idea Moving
+// has no equivalent of.
+function renderJumpBar(opts){
+  const {jumpBarId="jumpBar", listCtlId="listCtl", groupsSel="#groups .group", isOwn=jumpStopIsOwn} = opts||{};
+  const el=$(jumpBarId); if(!el) return;
+  const wrap=$(listCtlId);   // CAS-839: #listCtl's only child is #jumpBar — hide the wrapper too, or its
                               // own margin still draws an empty band when the bar inside it is hidden.
-  const groups=[...document.querySelectorAll("#groups .group")];
+  const groups=[...document.querySelectorAll(groupsSel)];
   if(groups.length<2){ el.hidden=true; if(wrap) wrap.hidden=true; el.innerHTML=""; return; }
   el.hidden=false;
   if(wrap) wrap.hidden=false;
   const stopsHTML=groups.map(g=>{
     const k=g.dataset.g;
     const n=(g.querySelector(".gcount")||{}).textContent||"";
-    return `<button type="button" class="nowstop${jumpStopIsOwn(k)?" own":""}" data-jump="${k}"
+    return `<button type="button" class="nowstop${isOwn(k)?" own":""}" data-jump="${k}"
         title="${escA("Jump to "+(STATUS_LABEL[k]||k))}">
       <span class="nowcount">${esc(n)}</span>
       <span class="gdot ${k}" aria-hidden="true"></span>
@@ -16927,23 +16957,33 @@ function renderJumpBar(){
 // the search/filter bar, the active-filter chip row and the jump rail happens to be showing, so its own live
 // bottom edge — in the SAME post-zoom units as the target heading's own rect — is the real occluded boundary,
 // with no unit conversion needed.
-function watchOccludedBottom(){
-  const bar=document.getElementById("cascbar");
+// CAS-869: takes the id of whichever sticky chrome block is occluding the target — #cascbar for the Watch
+// listing (page scroll), #movingHead for Moving (its own scrollport below the header, see syncHeaderHeight).
+function jumpOccludedBottom(chromeId){
+  const bar=document.getElementById(chromeId);
   return bar ? bar.getBoundingClientRect().bottom : 0;
 }
-window.jumpToSection = k => {
+// CAS-869: generalised the same way renderJumpBar above was — every option defaults to the Watch listing's
+// own values, so jumpToSection(k) (every existing Watch call site: the jump bar, scrollWatchListingToTop)
+// is byte-for-byte the same jump it always did. Moving passes its own groups selector, #movingHead as the
+// occluding chrome, and #movingScreen as the scroller, since that screen is its own fixed overflow-y:auto
+// box (CAS-852) rather than sharing the page's own scroll the way the Watch listing does.
+window.jumpToSection = (k, opts) => {
+  const {groupsSel="#groups .group", chromeId="cascbar", scrollerId=null} = opts||{};
+  const scroller = scrollerId ? document.getElementById(scrollerId) : window;
+  if(!scroller) return;
   // How far the section's heading still has to travel to sit just clear of the sticky chrome.
   const delta = () => {
-    const g=document.querySelector(`#groups .group[data-g="${k}"]`); if(!g) return null;
-    return g.getBoundingClientRect().top - watchOccludedBottom() - 8;
+    const g=document.querySelector(`${groupsSel}[data-g="${k}"]`); if(!g) return null;
+    return g.getBoundingClientRect().top - jumpOccludedBottom(chromeId) - 8;
   };
   const first=delta(); if(first===null) return;
-  window.scrollBy({top:first, behavior:"smooth"});
+  scroller.scrollBy({top:first, behavior:"smooth"});
   let tries=0;
   const settle=()=>{
     const d=delta();
     if(d===null || Math.abs(d)<=4 || tries++>=40) return;   // arrived, gone, or given up rather than loop
-    window.scrollBy(0,d);
+    scroller.scrollBy(0,d);
     setTimeout(settle,80);
   };
   setTimeout(settle,420);                                    // let the smooth scroll have its run first
@@ -16956,9 +16996,16 @@ function scrollWatchListingToTop(){
   const first=document.querySelector("#groups .group");
   if(first) jumpToSection(first.dataset.g);
 }
+// CAS-869: routes each rail to its own jumpToSection options — #jumpBar is the Watch listing (defaults
+// apply), #movingJumpBar is Moving (its own groups/chrome/scroller). A single delegated listener still
+// covers both, rather than each screen registering its own.
 document.addEventListener("click", e=>{
-  const b=e.target.closest("#jumpBar .nowstop"); if(!b) return;
-  jumpToSection(b.dataset.jump);
+  const b=e.target.closest(".jumpbar .nowstop"); if(!b) return;
+  if(b.closest("#movingJumpBar")){
+    jumpToSection(b.dataset.jump, {groupsSel:"#movingGroups .group", chromeId:"movingHead", scrollerId:"movingScreen"});
+  }else if(b.closest("#jumpBar")){
+    jumpToSection(b.dataset.jump);
+  }
 });
 // ---- CAS-129: single-card updates (never rebuild the whole ~2,000-card list on one tap) --------
 // A "Not for me"/verdict just folds that film to its stub where it is, so we swap only that one node and
