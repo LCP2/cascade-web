@@ -183,6 +183,10 @@ if(typeof window.CascadeAuth === "undefined"){
   _scaleInferCache, _awardRankCache, invalidateComputeCaches,
   agentWindow, winOn, subOn, winSubs, PRIORITY_WATCH, ALERT_DEFAULTS, ALERT_SHORT, ALERT_MOMENT,
   alertLive, reachableRows, liveAlerts, drawWatchLanes,
+  // CAS-847: accountAlertKeysOn is the account-wide Notify answer the Upcoming lozenge now reads (via
+  // upcomingCapLabel) instead of always saying "Upcoming" — exported alongside it so a test can drive the
+  // sub-switches directly rather than only asserting the label they produce.
+  accountAlertKeysOn, upcomingCapLabel,
   selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK, voteReadout, critScoreReadout, scaleReadout,
   // CAS-694: critScore (the one recorded critics figure) and qScore's own text (qScoreSourcesText), so a test
   // can assert both independently rather than re-deriving them from qScore's output alone.
