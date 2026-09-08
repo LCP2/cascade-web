@@ -111,6 +111,63 @@ class Cas850BackfillTestCase(unittest.TestCase):
                           "the Watchmode ID map fetch returned no usable rows")
 
 
+class Cas889IdsFromTestCase(unittest.TestCase):
+    """CAS-889: `--ids-from` restricts a run to a caller-supplied id list instead of walking the
+    whole catalogue."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.catalogue_path = os.path.join(self._tmpdir.name, "movies.json")
+        with open(self.catalogue_path, "w", encoding="utf-8") as fh:
+            json.dump({"movies": [dict(m) for m in FIXTURE_MOVIES]}, fh)
+        self.ids_path = os.path.join(self._tmpdir.name, "ids.txt")
+
+    def _read_catalogue(self):
+        with open(self.catalogue_path, encoding="utf-8") as fh:
+            return {m["tmdb_id"]: m for m in json.load(fh)["movies"]}
+
+    def _write_ids(self, lines):
+        with open(self.ids_path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+
+    def test_only_the_listed_ids_receive_a_details_call(self):
+        # 100 is listed and resolves via the idmap; 200 is a real catalogue id left OUT of the
+        # list, so it must not be touched even though the idmap could resolve it too.
+        self._write_ids(["# comment", "", "100"])
+        with mock.patch.object(pp, "_fetch_watchmode_idmap", return_value=dict(FIXTURE_IDMAP)), \
+             mock.patch.object(pp, "_fetch_watchmode_title_details", return_value=dict(FIXTURE_DETAIL)):
+            counts = backfill.run(catalogue_path=self.catalogue_path, max_credits=10,
+                                   ids_from=self.ids_path)
+
+        by_id = self._read_catalogue()
+        self.assertEqual(by_id[100]["wm_user_rating"], 7.5)
+        self.assertNotIn("wm_user_rating", by_id[200])
+        self.assertNotIn("wm_user_rating", by_id[300])
+        self.assertEqual(counts["candidate records considered"], 1)
+        self.assertEqual(counts["titles enriched"], 1)
+
+    def test_an_id_absent_from_the_catalogue_is_reported_and_skipped_not_raised(self):
+        self._write_ids(["100", "999999"])
+        with mock.patch.object(pp, "_fetch_watchmode_idmap", return_value=dict(FIXTURE_IDMAP)), \
+             mock.patch.object(pp, "_fetch_watchmode_title_details", return_value=dict(FIXTURE_DETAIL)):
+            counts = backfill.run(catalogue_path=self.catalogue_path, max_credits=10,
+                                   ids_from=self.ids_path)
+
+        self.assertEqual(counts["ids requested"], 2)
+        self.assertEqual(counts["ids not found in catalogue"], 1)
+        self.assertEqual(counts["titles enriched"], 1)
+
+    def test_omitting_the_argument_leaves_full_catalogue_behaviour_unchanged(self):
+        with mock.patch.object(pp, "_fetch_watchmode_idmap", return_value=dict(FIXTURE_IDMAP)), \
+             mock.patch.object(pp, "_fetch_watchmode_title_details", return_value=dict(FIXTURE_DETAIL)):
+            counts = backfill.run(catalogue_path=self.catalogue_path, max_credits=10)
+
+        self.assertNotIn("ids requested", counts)
+        self.assertEqual(counts["candidate records considered"], len(FIXTURE_MOVIES))
+        self.assertEqual(counts["titles enriched"], 2)
+
+
 class ExitCodeForTestCase(unittest.TestCase):
     """CAS-862 AC3 — a green (exit 0) run that resolves 0 titles is only legitimate when every
     candidate was already fresh; any other zero must exit non-zero."""
