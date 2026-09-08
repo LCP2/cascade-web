@@ -1476,6 +1476,12 @@
      .dangerbtn's red tint would misread as a destructive action here. */
   .secbtn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:11px;
     padding:13px 14px;font-size:14px;font-weight:700;cursor:pointer}
+  /* CAS-864: the contact form's attach-a-screenshot preview row — sets its own display:flex, so it
+     needs the [hidden] restatement, same trap .watchsearchwrap etc already had to work around. */
+  .cattprev{display:flex;align-items:center;gap:10px;margin-top:8px}
+  .cattprev[hidden]{display:none}
+  .cattthumb{width:44px;height:44px;object-fit:cover;border-radius:8px;border:1px solid var(--line);flex:none}
+  .cattname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--dim)}
   .warnnote{font-size:11.5px;color:#ffce8f;background:rgba(240,163,54,.1);border:1px solid rgba(240,163,54,.4);
     border-radius:9px;padding:8px 10px;margin-top:8px;line-height:1.45}
   /* ---- UX-psychology framings (contrast / loss) — flag-toggleable ---- */
@@ -5225,7 +5231,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1035, "commit": "ef05ca9", "builtAt": "2026-09-08T22:56:05Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1035, "commit": "6690d94", "builtAt": "2026-09-08T23:05:07Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -11175,6 +11181,7 @@ function contactCatChipsHTML(){
 // message or error never bleeds into the next one.
 function renderContactForm(){
   contactCategory=null;
+  contactAttachFile=null;
   const a=window.CascadeAuth, signedIn=!!(a && a.status==="signed-in" && a.user);
   const email=signedIn ? (a.user.email||"") : "";
   $("contactBody").innerHTML=`
@@ -11184,6 +11191,16 @@ function renderContactForm(){
     <div class="chips" id="contactCatChips">${contactCatChipsHTML()}</div>
     <div class="flabel">Message</div>
     <textarea id="contactMsg" class="cmsg" maxlength="2000" rows="4" placeholder="What's on your mind?"></textarea>
+    <button type="button" class="secbtn" id="contactAttachBtn" style="margin-top:2px"
+      onclick="document.getElementById('contactAttachInput').click()">Attach a screenshot</button>
+    <input type="file" id="contactAttachInput" accept="image/png,image/jpeg,image/webp" hidden
+      onchange="onContactAttachChange(event)">
+    <div class="pnote" id="contactAttachErr" style="color:#ffb9a6" hidden></div>
+    <div class="cattprev" id="contactAttachPreview" hidden>
+      <img class="cattthumb" id="contactAttachThumb" alt="">
+      <div class="cattname" id="contactAttachName"></div>
+      <button type="button" class="cdiagbtn" id="contactAttachRemove" onclick="clearContactAttach()">Remove</button>
+    </div>
     <div class="flabel">Email (so we can reply)</div>
     <input id="contactEmail" class="namein" type="email" autocomplete="email" placeholder="you@example.com"
       value="${escA(email)}" ${signedIn?"":"required"}>
@@ -11224,6 +11241,43 @@ window.openContact=from=>{
   logEvent("contact_opened",{from});
 };
 $("contactClose").onclick=()=>closeModal($("contact"));
+// CAS-864: the attach-a-screenshot control. contactAttachFile holds the validated File once chosen —
+// null means no attachment. Gated client-side at selection time, not at send time, so a rejected file
+// never reaches sendContact() and is never silently dropped: the reason is reported next to the control.
+const CONTACT_ATTACH_MAX_BYTES=5*1024*1024;
+const CONTACT_ATTACH_TYPES=["image/png","image/jpeg","image/webp"];
+let contactAttachFile=null;
+function sanitiseContactAttachName(name){
+  return (name||"upload").replace(/[^a-zA-Z0-9._-]/g,"_");
+}
+window.onContactAttachChange=e=>{
+  const input=e.target, file=input.files && input.files[0], errEl=$("contactAttachErr");
+  errEl.hidden=true;
+  if(!file) return;
+  if(!CONTACT_ATTACH_TYPES.includes(file.type)){
+    errEl.textContent="That file isn't a PNG, JPEG or WEBP image.";
+    errEl.hidden=false;
+    input.value="";
+    return;
+  }
+  if(file.size>CONTACT_ATTACH_MAX_BYTES){
+    errEl.textContent="That file is over the 5 MB limit.";
+    errEl.hidden=false;
+    input.value="";
+    return;
+  }
+  contactAttachFile=file;
+  $("contactAttachName").textContent=file.name;
+  $("contactAttachThumb").src=URL.createObjectURL(file);
+  $("contactAttachPreview").hidden=false;
+};
+window.clearContactAttach=()=>{
+  contactAttachFile=null;
+  const input=$("contactAttachInput");
+  if(input) input.value="";
+  $("contactAttachPreview").hidden=true;
+  $("contactAttachErr").hidden=true;
+};
 window.sendContact=async()=>{
   if(!contactCategory) return;
   const hp=$("contactHp");
@@ -11241,8 +11295,17 @@ window.sendContact=async()=>{
   btn.disabled=true;
   try{
     if(!c) throw new Error("Cascade: no Supabase client");
+    let attachment_path=null;
+    if(contactAttachFile){
+      const path=`${CLIENT_KEY}/${Date.now()}-${sanitiseContactAttachName(contactAttachFile.name)}`;
+      const {error:upErr}=await c.storage.from("contact-attachments").upload(path, contactAttachFile);
+      if(upErr) throw upErr;
+      attachment_path=path;
+      logEvent("contact_attached",{bytes:contactAttachFile.size,type:contactAttachFile.type});
+    }
     const {error}=await c.from("contact_messages").insert([{
       client_key:CLIENT_KEY, build:buildCore(), category:contactCategory, message, email: email||null, diagnostics,
+      attachment_path,
     }]);
     if(error) throw error;
     logEvent("contact_sent",{category:contactCategory});

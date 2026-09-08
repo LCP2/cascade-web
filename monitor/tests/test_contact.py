@@ -11,10 +11,10 @@ from monitor.store import InMemoryStore
 
 def _row(id=1, user_id=None, category="bug", email="guest@example.test",
          message="It broke.", diagnostics=None, build="1.0.0",
-         created_at="2026-07-16T09:00:00+00:00", sent_at=None):
+         created_at="2026-07-16T09:00:00+00:00", sent_at=None, attachment_path=None):
     return {"id": id, "user_id": user_id, "client_key": f"device-{id}", "category": category,
             "email": email, "message": message, "diagnostics": diagnostics, "build": build,
-            "created_at": created_at, "sent_at": sent_at}
+            "created_at": created_at, "sent_at": sent_at, "attachment_path": attachment_path}
 
 
 class RenderTests(unittest.TestCase):
@@ -72,6 +72,21 @@ class RenderTests(unittest.TestCase):
         d = render_digest([row], store)
         self.assertNotIn("<script>alert(1)</script>", d["html"])
         self.assertIn("&lt;script&gt;", d["html"])
+
+    def test_attachment_path_produces_a_signed_link_in_the_digest(self):
+        store = InMemoryStore()
+        row = _row(attachment_path="device-1/123-shot.png")
+        d = render_digest([row], store)
+        url = store.sign_attachment_url(row["attachment_path"])
+        self.assertIn(url, d["html"])
+        self.assertIn(url, d["text"])
+
+    def test_no_attachment_path_no_link(self):
+        store = InMemoryStore()
+        row = _row(attachment_path=None)
+        d = render_digest([row], store)
+        self.assertNotIn("Attachment", d["text"])
+        self.assertNotIn("View attachment", d["html"])
 
 
 class MainDryRunTests(unittest.TestCase):

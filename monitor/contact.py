@@ -63,8 +63,11 @@ def render_digest(rows, store) -> dict:
         build = row.get("build") or "unknown"
         message = row.get("message") or ""
         diagnostics = row.get("diagnostics")
+        attachment_url = store.sign_attachment_url(row.get("attachment_path"))
 
         text_part = f"[{category}] {when} — {who} (build {build})\n{message}"
+        if attachment_url:
+            text_part += f"\n\nAttachment: {attachment_url}"
         if diagnostics:
             text_part += f"\n\nDiagnostics:\n{diagnostics}"
         text_parts.append(text_part)
@@ -78,6 +81,11 @@ def render_digest(rows, store) -> dict:
             f'<div style="font-size:14px;color:#141A2A;margin-top:8px;white-space:pre-wrap;">'
             f'{esc(message)}</div>'
         )
+        if attachment_url:
+            block += (
+                f'<div style="margin-top:8px;"><a href="{esc(attachment_url)}" '
+                'style="color:#7C5CFF;">View attachment</a></div>'
+            )
         if diagnostics:
             block += (
                 '<pre style="margin-top:8px;padding:10px;background:#f4f5f8;border-radius:8px;'

@@ -534,6 +534,23 @@ create trigger contact_messages_rate_limit
   for each row execute function public.contact_messages_rate_limit();
 
 -- ---------------------------------------------------------------------------
+-- contact_messages attachment — one optional screenshot per message (CAS-864)
+-- ---------------------------------------------------------------------------
+-- The bucket is private (no select policy): the anon key that uploads must never be able to
+-- read it back, and the monitor mints a signed URL with the service_role key for the digest.
+-- Insert-only, for the same reason contact_messages itself is: the sender may be signed out.
+alter table public.contact_messages add column if not exists attachment_path text;
+
+insert into storage.buckets (id, name, public)
+values ('contact-attachments', 'contact-attachments', false)
+on conflict (id) do nothing;
+
+drop policy if exists contact_attachments_insert on storage.objects;
+create policy contact_attachments_insert on storage.objects
+  for insert to anon, authenticated
+  with check (bucket_id = 'contact-attachments');
+
+-- ---------------------------------------------------------------------------
 -- keep cascades.updated_at honest on every write
 -- ---------------------------------------------------------------------------
 create or replace function public.set_updated_at()

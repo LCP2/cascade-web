@@ -24,6 +24,7 @@ Interface:
   fetch_user_films() -> [{user_id, movie_id, status}]                                      # CAS-825
   fetch_unsent_contact_messages() -> [contact_messages row, sent_at is null]                # CAS-836
   mark_contact_messages_sent(ids, sent_at) -> int                                           # CAS-836
+  sign_attachment_url(path) -> signed URL string | None                                     # CAS-864
 """
 from __future__ import annotations
 
@@ -35,6 +36,11 @@ import urllib.request
 
 SUPABASE_URL_ENV = "SUPABASE_URL"
 SERVICE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
+
+# CAS-864: the private bucket contact_messages.attachment_path points into. Fixed, not
+# configurable — supabase/schema.sql creates exactly this bucket by hand-applied SQL.
+CONTACT_ATTACHMENTS_BUCKET = "contact-attachments"
+CONTACT_ATTACHMENT_SIGNED_URL_EXPIRES_IN = 7 * 24 * 3600  # 7 days, per the ticket
 
 # CAS-486: the reserved tmdb_id range for the notify-test harness's fixture films (see
 # tests/fixtures/notify-films.json). Hard-coded here, not read from any workflow input, so
@@ -146,6 +152,12 @@ class InMemoryStore:
                 n += 1
         return n
 
+    def sign_attachment_url(self, path):
+        """No network — a deterministic fake URL, good enough for --dry-run and unit tests."""
+        if not path:
+            return None
+        return f"https://fake-signed.example.test/{CONTACT_ATTACHMENTS_BUCKET}/{path}"
+
 
 class SupabaseStore:
     """PostgREST access with the service_role key. Never constructed without a URL + key."""
@@ -243,7 +255,7 @@ class SupabaseStore:
         service_role, since the anon key that wrote these rows has no select grant on them."""
         return self._get(
             "/contact_messages?sent_at=is.null&order=created_at.asc"
-            "&select=id,user_id,client_key,category,email,message,diagnostics,build,created_at"
+            "&select=id,user_id,client_key,category,email,message,diagnostics,build,created_at,attachment_path"
         )
 
     def mark_contact_messages_sent(self, ids, sent_at) -> int:
@@ -266,6 +278,29 @@ class SupabaseStore:
             return len(json.loads(body))
         except (json.JSONDecodeError, TypeError):
             return 0
+
+    def sign_attachment_url(self, path):
+        """Mint a signed URL for a contact-attachments object with the service_role key
+        (CAS-864) — the anon key that uploaded it has no select grant on the private bucket.
+        Returns None (rather than raising) on a missing path or a failed sign, so a digest
+        with one bad attachment still sends the rest of the messages."""
+        if not path:
+            return None
+        base = self._base[: -len("/rest/v1")]   # strip the PostgREST suffix
+        data = json.dumps({"expiresIn": CONTACT_ATTACHMENT_SIGNED_URL_EXPIRES_IN}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base}/storage/v1/object/sign/{CONTACT_ATTACHMENTS_BUCKET}/{urllib.parse.quote(path)}",
+            data=data,
+            headers=self._headers(),
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, json.JSONDecodeError):
+            return None
+        signed = result.get("signedURL")
+        return f"{base}/storage/v1{signed}" if signed else None
 
     def fetch_user_email(self, user_id: str):
         """Resolve a user_id to their email via the Auth admin API (service_role only).
