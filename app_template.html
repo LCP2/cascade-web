@@ -349,6 +349,10 @@
      sat on top and ate every click and tap in the panel — sign-in from the front door was unusable. Every
      other .modal only ever opens over the plain listing, so this is scoped to #authModal, not the class. */
   #authModal.open{z-index:81}
+  /* CAS-838: the contact sheet opens from #aboutPage (z-index:90) and from renderAbout()'s #aboutScreen
+     (a .uscreen, z-index:84) — the highest of either, so it stacks over both rather than opening behind
+     the surface that launched it, same reasoning as #authModal.open above. */
+  #contact.open{z-index:91}
   /* CAS-437: the public film page. Same phone-width-capped full page as .modal, but its own z-index so it
      sits over the splash (80) too — a share link has to show the film regardless of what boot put up. */
   /* CAS-554 device-parity-ignore: R2 — same reasoning as .modal above: top:0 carries no padding of its own
@@ -1546,6 +1550,17 @@
   .applybtn{flex:1;background:var(--accentdeep);color:#fff;border:none;border-radius:11px;padding:13px;
     font-size:14.5px;font-weight:800;cursor:pointer}
   .applybtn:disabled{background:var(--panel2);color:var(--faint);cursor:not-allowed}
+  /* CAS-838: the contact form's message field — same look as .namein (background/border/radius/padding/
+     colour), just multi-line. */
+  .cmsg{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    border-radius:10px;padding:11px 12px;font-size:16px;font-weight:500;font-family:inherit;resize:vertical}
+  /* CAS-838: the honeypot — off-screen and out of the tab order, never shown to a real visitor. */
+  .cthp{position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden}
+  .cdiagbtn{background:none;border:none;color:var(--dim);font-size:12px;font-weight:700;cursor:pointer;
+    padding:8px 0;text-align:left}
+  .cdiagbox{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;
+    font-size:11px;line-height:1.5;color:var(--dim);white-space:pre-wrap;max-height:200px;overflow-y:auto;
+    margin:0 0 8px;font-family:inherit}
   .dangerbtn{background:var(--panel2);border:1px solid #5c3540;color:#ffb9a6;border-radius:11px;
     padding:13px 14px;font-size:14px;font-weight:700;cursor:pointer}
   /* CAS-317: neutral secondary action beside an .applybtn (e.g. "Log in" next to "Create account") —
@@ -3939,6 +3954,16 @@
   <div class="cascfoot"><button class="applybtn" id="saveAsGo">Save Cascade</button></div>
 </div>
 
+<!-- CONTACT US (CAS-838) — one shared sheet opened from both About surfaces: the signed-out #aboutPage
+     and renderAbout()'s signed-in screen. #contact.open gets its own z-index override below, same reason
+     as #authModal.open — it has to sit over whichever About surface opened it, both of which already sit
+     above the shared .modal z-index. Body rebuilt fresh by renderContactForm() every open, same convention
+     as renderAbout() itself, so the form and its category selection never carry state from a prior visit. -->
+<div class="modal" id="contact">
+  <div class="modalhead"><h3>Contact us</h3><button class="donebtn" id="contactClose">Cancel</button></div>
+  <div id="contactBody"></div>
+</div>
+
 <!-- DEBUG LOG modal — local-only usage log. Opened with ?log=1, or 5 taps on the "updated" line. -->
 <div class="modal" id="logModal">
   <div class="modalhead"><h3>🧪 Usage log (local)</h3><button class="donebtn" id="logDone">Done</button></div>
@@ -4087,6 +4112,10 @@
     <p>Cascade is not affiliated with any streaming service, and does not play or host video.
       Watching a film still needs whatever subscription or purchase the service asks for.</p>
   </div>
+
+  <div class="abh">Contact us</div>
+  <p class="abp">Spotted a bug, have a suggestion, or a question about your account? We read every message.</p>
+  <button class="applybtn" id="aboutPageContact" type="button" style="width:100%;margin:0 0 4px">Contact us</button>
 
   <div class="abfoot">Codynamics &middot; Australia</div>
 </div>
@@ -11486,9 +11515,12 @@ function renderAbout(){
   $("aboutBody").innerHTML=`
     <div class="ostop"><button class="osback" type="button" onclick="closeAbout()" aria-label="Back">←</button>
       <h2 class="osh">About</h2></div>
+    <div class="flabel">Contact</div>
+    <button class="applybtn" id="aboutScreenContact" type="button" style="width:100%;margin:0 0 8px">Contact us</button>
     <div class="flabel">Build</div>
     <div class="pnote" id="aboutBuild">—</div>`;
   stampAboutBuild();
+  $("aboutScreenContact").onclick=()=>openContact("aboutScreen");
 }
 window.openAbout=()=>{
   renderAbout();
@@ -11667,6 +11699,104 @@ $("splashAbout").onclick=()=>{
   $("aboutPage").classList.add("open");
 };
 $("aboutClose").onclick=()=>$("aboutPage").classList.remove("open");
+$("aboutPageContact").onclick=()=>openContact("aboutPage");
+
+// ---- CAS-838: Contact us — one shared sheet, opened from both About surfaces above -----------------
+const CONTACT_CATEGORIES=[
+  {key:"bug",label:"Bug"},
+  {key:"suggestion",label:"Suggestion"},
+  {key:"account",label:"Account"},
+  {key:"other",label:"Something else"},
+];
+let contactCategory=null;
+function contactCatChipsHTML(){
+  return CONTACT_CATEGORIES.map(c=>
+    `<button type="button" class="chip gen${contactCategory===c.key?" on":""}" aria-pressed="${contactCategory===c.key}"
+      onclick="selectContactCategory('${c.key}')">${esc(c.label)}</button>`).join("");
+}
+// Rebuilt fresh every open (mirrors renderAbout()'s own convention) so a prior visit's category, typed
+// message or error never bleeds into the next one.
+function renderContactForm(){
+  contactCategory=null;
+  const a=window.CascadeAuth, signedIn=!!(a && a.status==="signed-in" && a.user);
+  const email=signedIn ? (a.user.email||"") : "";
+  $("contactBody").innerHTML=`
+    <div class="pnote">A Cascade can't tell you why a film moved the way it did, but we can — tell us what's
+      going on.</div>
+    <div class="flabel">What's this about?</div>
+    <div class="chips" id="contactCatChips">${contactCatChipsHTML()}</div>
+    <div class="flabel">Message</div>
+    <textarea id="contactMsg" class="cmsg" maxlength="2000" rows="4" placeholder="What's on your mind?"></textarea>
+    <div class="flabel">Email (so we can reply)</div>
+    <input id="contactEmail" class="namein" type="email" autocomplete="email" placeholder="you@example.com"
+      value="${escA(email)}" ${signedIn?"":"required"}>
+    <!-- Honeypot (CAS-838): off-screen, never focusable, filled only by a bot filling every field it
+         finds. A real visitor never sees or reaches it, so a filled value is always dropped, silently. -->
+    <input id="contactHp" class="cthp" type="text" name="cf_url" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <div id="contactDiagWrap" hidden>
+      <button type="button" class="cdiagbtn" id="contactDiagToggle" aria-expanded="false"
+        onclick="toggleContactDiag()">What's included ▾</button>
+      <pre class="cdiagbox" id="contactDiagBox" hidden></pre>
+    </div>
+    <div class="pnote">We read every message, but we can't promise a reply to each one.</div>
+    <div class="pnote" id="contactErr" style="color:#ffb9a6" hidden></div>
+    <div class="cascfoot"><button class="applybtn" id="contactSend" disabled onclick="sendContact()">Send</button></div>`;
+}
+window.selectContactCategory=key=>{
+  contactCategory=key;
+  $("contactCatChips").innerHTML=contactCatChipsHTML();
+  $("contactSend").disabled=false;
+  const diagWrap=$("contactDiagWrap");
+  diagWrap.hidden = key!=="bug";
+  if(key!=="bug"){
+    $("contactDiagBox").hidden=true; $("contactDiagBox").textContent="";
+    $("contactDiagToggle").setAttribute("aria-expanded","false");
+  }
+};
+// The diagnostics block is collected lazily, only once actually expanded, so nothing is sent that the
+// person hasn't had the chance to read first.
+window.toggleContactDiag=()=>{
+  const box=$("contactDiagBox"), btn=$("contactDiagToggle"), show=box.hidden;
+  box.hidden=!show;
+  if(show && !box.textContent) box.textContent=diagReportText();
+  btn.setAttribute("aria-expanded", show?"true":"false");
+};
+window.openContact=from=>{
+  renderContactForm();
+  openModal($("contact"));
+  logEvent("contact_opened",{from});
+};
+$("contactClose").onclick=()=>closeModal($("contact"));
+window.sendContact=async()=>{
+  if(!contactCategory) return;
+  const hp=$("contactHp");
+  if(hp && hp.value) return;   // honeypot filled — drop silently, no error, no insert
+  const msgEl=$("contactMsg"), emailEl=$("contactEmail"), errEl=$("contactErr");
+  const message=(msgEl.value||"").trim(), email=(emailEl.value||"").trim();
+  errEl.hidden=true;
+  if(!message){ msgEl.focus(); return; }
+  if(emailEl.required && !email){
+    emailEl.focus(); errEl.textContent="Add an email so we can reply."; errEl.hidden=false; return;
+  }
+  const diagnostics = contactCategory==="bug" ? diagReportText() : null;
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  const btn=$("contactSend");
+  btn.disabled=true;
+  try{
+    if(!c) throw new Error("Cascade: no Supabase client");
+    const {error}=await c.from("contact_messages").insert([{
+      client_key:CLIENT_KEY, build:buildCore(), category:contactCategory, message, email: email||null, diagnostics,
+    }]);
+    if(error) throw error;
+    logEvent("contact_sent",{category:contactCategory});
+    $("contactBody").innerHTML=`<p class="pnote">Thanks — that's sent. We read every message, even the
+      ones we can't get back to.</p>`;
+  }catch(e){
+    btn.disabled=false;
+    errEl.textContent="Couldn't send that — try again in a moment.";
+    errEl.hidden=false;
+  }
+};
 document.addEventListener("keydown", e => { if(e.key==="Escape" && $("aboutPage").classList.contains("open")) $("aboutPage").classList.remove("open"); });
 
 // ---- Agent select (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
