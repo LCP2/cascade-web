@@ -368,6 +368,9 @@
   .fpcta{display:block;width:100%;background:var(--accentdeep);color:#fff;border:none;border-radius:11px;
     padding:14px;font-weight:800;font-size:15.5px;cursor:pointer;margin:20px 0 10px}
   .fpfoot{font-size:12px;color:var(--faint);text-align:center;margin:0 0 20px}
+  /* CAS-837: reuses the card's own .exshare/.exsharebtn — the film page just centers it, so the secondary
+     share action doesn't compete with .fpcta's full-width primary CTA below it. */
+  .filmpage .exshare{text-align:center;margin:16px 0 4px}
   /* .synopsis clamps to 3 lines and .wtw hides by default — both card-list space-savers this standalone
      page doesn't need; it's the one place the full synopsis and the where-to-watch list are always open. */
   .filmpage .synopsis{-webkit-line-clamp:unset;display:block;margin-bottom:14px}
@@ -6861,7 +6864,7 @@ function creditsHTML(m, inCard){
 // It lives in the expanded card, where the ticket suggests: it is a considered action, not a one-tap verdict,
 // and the control stack below is already three decisions deep.
 function shareFilmHTML(m){
-  return `<div class="exshare"><button type="button" class="exsharebtn" onclick="event.stopPropagation();shareFilm(${m.tmdb_id})"
+  return `<div class="exshare"><button type="button" class="exsharebtn" onclick="event.stopPropagation();shareFilm(${m.tmdb_id},this)"
       title="${escA("Share "+m.title)}" aria-label="${escA("Share "+m.title)}">${ICON.share}<span class="sl">Share</span></button></div>`;
 }
 // What we can say about the film without inventing anything: its title, its year, and the window we have
@@ -6872,14 +6875,36 @@ function shareTextFor(m){
   const where = isEstimated(m) ? "" : (STATUS_LABEL[primaryStatus(m)]||"");
   return `${m.title}${yr?` (${yr})`:""}${where?` — ${where}`:""}`;
 }
+// CAS-837: 8 chars from crypto.getRandomValues over [a-z0-9], never derived from the user id — the code
+// rides in every shared link and must not be reversible to an account.
+function genRefCode(){
+  const chars="abcdefghijklmnopqrstuvwxyz0123456789", buf=new Uint8Array(8), out=[];
+  crypto.getRandomValues(buf);
+  for(let i=0;i<8;i++) out.push(chars[buf[i]%chars.length]);
+  return out.join("");
+}
+// CAS-837: this device's cached copy of the signed-in account's referral code — set by loadUserPrefs()
+// below (reading user_prefs.ref_code, or minting one the first time nobody has) so shareUrlFor can stay
+// synchronous rather than a link waiting on a network round trip.
+let refCodeCache = null;
+function refCode(){
+  const a=window.CascadeAuth;
+  return (a && a.enabled && a.status==="signed-in") ? refCodeCache : null;
+}
 // CAS-437: the film's own page is now OURS — a Cascade URL, not JustWatch's or TMDB's. A hash route on the
 // same static index.html (GitHub Pages serves one file; no server-side routing to stand up), so the link is
 // real and permanent without a build-time page per title. #/film/<id> is read at boot by openFilmPage().
-const shareUrlFor = m => `${location.origin}${location.pathname}#/film/${m.tmdb_id}`;
-window.shareFilm = async id => {
+// CAS-837: signed in, the link also carries the sender's ref code (?inv=) so an arrival can be recorded —
+// signed out there is no code and the link is exactly what it was before.
+const shareUrlFor = m => { const code=refCode();
+  return `${location.origin}${location.pathname}${code?`?inv=${code}`:""}#/film/${m.tmdb_id}`; };
+// CAS-837: btnEl (passed by shareFilmHTML as `this`) is how the film page's own share control gets its
+// own "Copied" feedback — it isn't inside a #card-<id>, so the old lookup would silently find nothing.
+// Falls back to that lookup when called without one so every existing caller keeps working unchanged.
+window.shareFilm = async (id, btnEl) => {
   const m=MOVIES.find(x=>x.tmdb_id===id); if(!m) return;
   const url=shareUrlFor(m), text=shareTextFor(m);
-  const btn=document.querySelector(`#card-${id} .exsharebtn`);
+  const btn=btnEl || document.querySelector(`#card-${id} .exsharebtn`);
   const say=msg=>{ if(!btn) return; const lab=btn.querySelector(".sl"); if(!lab) return;
                    const was=lab.textContent; lab.textContent=msg; btn.classList.add("done");
                    setTimeout(()=>{ lab.textContent=was; btn.classList.remove("done"); }, 1800); };
@@ -6929,6 +6954,7 @@ function filmPageHTML(m){
     ${filmPageWhereHTML(m)}
     <div class="mrow r-scores">${scoresRowHTML(m)}</div>
     <div class="mrow r-awards">${cinemaReleaseChip(m)}${awardChips(m)}</div>
+    ${shareFilmHTML(m)}
     <button type="button" class="fpcta" onclick="filmPageCta()">Get Cascade — find more like this</button>
     <div class="fpfoot">Cascade tracks cinema, rental and streaming for you — sign up to build your own.</div>`;
 }
@@ -19129,6 +19155,20 @@ else if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
 // static listing, so it is what should greet a returning visitor. A shared link and a film link still win
 // (see below): they say what the visitor arrived for more specifically than "what changed" does.
 else if(!openedShared) openMovingScreen();
+// CAS-837: an invite link's arrival, recorded before the #/film/<id> handling below opens the film page —
+// and before closeFilmPage() (~line 7083) could ever rebuild the URL from location.pathname+location.search,
+// which is why the strip has to happen here rather than later. Preserves every other query param and the hash.
+{
+  const invParams = new URLSearchParams(location.search);
+  const invCode = invParams.get("inv");
+  if(invCode){
+    try{ localStorage.setItem("cascade_inv", invCode); }catch(e){}
+    logEvent("invite_arrival", {code:invCode});
+    invParams.delete("inv");
+    const invQs = invParams.toString();
+    history.replaceState(null, "", location.pathname + (invQs ? `?${invQs}` : "") + location.hash);
+  }
+}
 // CAS-437: a film share link's own entry point. Opens OVER whatever the rest of boot just decided —
 // a recipient arrived to see THIS film, not to resume whoever else's session this browser was mid-boot on —
 // and its own higher z-index (85) means it wins the stack without having to touch any of the above.
@@ -19998,6 +20038,7 @@ else if(dedupedN)
       watchKnown=new Map(); saveWatchKnown(); filmWatchReady=true;   // CAS-735: a guest has nothing to wait on
       userPrefsReady=true;   // CAS-740: a guest has nothing to wait on
       notifyPrefsReady=true;   // CAS-741: a guest has nothing to wait on
+      refCodeCache=null;   // CAS-837: a guest's shared links must not carry the previous account's code
       // CAS-656: a guest has no account to be disconnected from — clear any failure this device carried
       // from its last signed-in session, or the banner would wrongly survive a sign-out.
       Object.keys(acctTableFail).forEach(t=>setAcctTableFail(t, false));
@@ -20636,6 +20677,21 @@ else if(dedupedN)
     const { data, error } = await c.from("user_prefs").select("*").limit(1);   // RLS: only mine
     if(error){ console.warn("user_prefs load", error); return; }
     const row=(data||[])[0];
+    // CAS-837: ref_code is an account fact with no local-device counterpart to carry up, and — unlike
+    // every field below — has to resolve even before the account's first user_prefs row exists (a
+    // brand-new signup). Adopt what the account already has, or (nobody has minted one yet, row or no
+    // row) generate one now and write it with its own targeted upsert, never through userPrefsRow()'s
+    // whole-row upsert, so a debounced push of an unrelated setting from another device can never carry
+    // a stale/absent ref_code over this one.
+    if(row && typeof row.ref_code==="string" && row.ref_code){
+      refCodeCache = row.ref_code;
+    } else if(!refCodeCache){
+      const code = genRefCode();
+      refCodeCache = code;
+      c.from("user_prefs").upsert([{ user_id: uid(), ref_code: code }], { onConflict:"user_id" }).then(({error})=>{
+        if(error) console.warn("ref_code write", error);
+      });
+    }
     if(!row){ scheduleUserPrefsSync(); return; }   // no row yet — seed it from this device
     setTo(prefs.sub, row.sub_services||[]);
     setTo(prefs.store, row.store_services||[]);
@@ -20950,7 +21006,16 @@ else if(dedupedN)
         const signIn = await supa.auth.signInWithPassword({ email, password });
         if(!signIn.error) return { ok: true };
         const signUp = await supa.auth.signUp({ email, password });
-        if(!signUp.error) return { ok: true };
+        if(!signUp.error){
+          // CAS-837: this is the "account creation" moment an invite's arrival converts on — one event,
+          // never a table row (CAS-808 owns any reward/record; this stays stateless apart from the ref
+          // itself and the events).
+          try{
+            const code = localStorage.getItem("cascade_inv");
+            if(code){ logEvent("invite_signup", {code}); localStorage.removeItem("cascade_inv"); }
+          }catch(e){}
+          return { ok: true };
+        }
         // CAS-411: an account can exist but still fail signInWithPassword — Supabase's "Confirm
         // email" leaving it unconfirmed, or a password derived under an older scheme (pre-CAS-387).
         // signUp then reports "already registered", which used to dead-end here with neither path

@@ -175,6 +175,13 @@ alter table public.user_prefs add column if not exists moving_seen jsonb;
 -- NULL means "no device has saved this yet"; an empty array is a real, distinct answer.
 alter table public.user_prefs add column if not exists occasions jsonb;
 
+-- CAS-837: an invite link carries the sender's ref code, not their user id (the code must not be
+-- reversible to an account). NULL, same reasoning as CAS-740's columns above: no device has minted
+-- one yet. Unique so two accounts can never collide on the same code.
+alter table public.user_prefs add column if not exists ref_code text;
+create unique index if not exists user_prefs_ref_code_idx
+  on public.user_prefs (ref_code) where ref_code is not null;
+
 alter table public.user_prefs enable row level security;
 
 drop policy if exists user_prefs_owner on public.user_prefs;
