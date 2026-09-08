@@ -41,35 +41,73 @@ def save_catalogue(path, data):
         fh.write("\n")
 
 
+CACHED_REASON = "every candidate is still inside WATCHMODE_CACHE_TTL_DAYS"
+
+
 def run(catalogue_path=None, max_credits=None):
     catalogue_path = catalogue_path or CATALOGUE
     max_credits = MAX_CREDITS if max_credits is None else max_credits
 
     data, movies = load_catalogue(catalogue_path)
+    candidates = len(movies)
 
-    idmap, outcome = pp._api_call("Watchmode ID map", pp._fetch_watchmode_idmap)
-    wm_idmap = pp._invert_watchmode_idmap(idmap) if outcome == "ok" and idmap else {}
+    idmap, idmap_outcome = pp._api_call("Watchmode ID map", pp._fetch_watchmode_idmap)
+    wm_idmap = pp._invert_watchmode_idmap(idmap) if idmap_outcome == "ok" and idmap else {}
 
     budget = {"remaining": max_credits, "skipped": 0}
-    enriched = no_id = 0
+    outcomes = {"ok": 0, "cached": 0, "no-id": 0, "skip": 0, "stop": 0}
     for movie in movies:
         result = pp.enrich_watchmode_fields(movie, wm_idmap, budget)
-        if result == "ok":
-            enriched += 1
-        elif result == "no-id":
-            no_id += 1
+        outcomes[result] = outcomes.get(result, 0) + 1
 
     save_catalogue(catalogue_path, data)
 
+    enriched = outcomes["ok"]
+    credits_spent = max_credits - budget["remaining"]
+
+    # CAS-862 AC3: a green run that resolves 0 titles is only ever legitimate when every
+    # candidate is still fresh (CACHED_REASON, the sole exemption the ticket names) — any other
+    # zero is a defect (bad ID-map response, exhausted key, etc) and must be visible, not
+    # silently swallowed the way the pre-fix run was. Reason text below is diagnostic detail
+    # only; a mix of cached + no-id titles is NOT the named exemption and still exits non-zero,
+    # it just gets an accurate message instead of the misleading catch-all.
+    reason = None
+    if enriched == 0:
+        if idmap_outcome != "ok" or not idmap:
+            reason = "the Watchmode ID map fetch returned no usable rows"
+        elif outcomes["stop"]:
+            reason = "a Watchmode API call hit its stop condition (limit/auth) before resolving any title"
+        elif candidates and outcomes["cached"] == candidates:
+            reason = CACHED_REASON
+        elif outcomes["cached"] or outcomes["no-id"]:
+            reason = (f"nothing new to resolve — {outcomes['cached']} title(s) already cached, "
+                      f"{outcomes['no-id']} with no Watchmode id")
+        else:
+            reason = "no candidate resolved a Watchmode id from the ID map"
+
     counts = {
+        "candidate records considered": candidates,
         "titles enriched": enriched,
+        "records written": enriched,
         "titles skipped for budget": budget["skipped"],
-        "titles with no Watchmode id": no_id,
-        "credits spent": max_credits - budget["remaining"],
+        "titles with no Watchmode id": outcomes["no-id"],
+        "titles already cached": outcomes["cached"],
+        "credits spent": credits_spent,
     }
     for label, value in counts.items():
         print(f"{label}: {value}")
+    print(f"early exit reason: {reason or 'n/a — titles were resolved'}")
+    counts["early exit reason"] = reason
     return counts
+
+
+def _exit_code_for(counts: dict) -> int:
+    """CAS-862 AC3: a green run that writes nothing is the defect being fixed — the one
+    exception is every candidate already being fresh, which is a legitimate no-op, not a
+    failure."""
+    if counts["titles enriched"] == 0 and counts["early exit reason"] != CACHED_REASON:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
@@ -80,5 +118,4 @@ if __name__ == "__main__":
     if not os.environ.get("WATCHMODE_API_KEY"):
         print("WATCHMODE_API_KEY is not set — nothing to do, skipping the Watchmode fields backfill.")
         sys.exit(0)
-    run()
-    sys.exit(0)
+    sys.exit(_exit_code_for(run()))
