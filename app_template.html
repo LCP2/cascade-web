@@ -5437,7 +5437,8 @@ function setWatchMineOnly(v){
   saveWatchlists();
 }
 window.toggleWatchMineOnly = () => { setWatchMineOnly(!watchMineOnlyOn()); render(); };
-window.enableWatchMineOnly = () => { setWatchMineOnly(true); render(); };   // the active-filter chip's clear
+// CAS-857: the active-filter chip's clear — scrolls back to the top once the wider list has laid out.
+window.enableWatchMineOnly = () => { setWatchMineOnly(true); render(); scrollWatchListingToTop(); };
 // CAS-642 W2a: activeIds (the union the listing already reads via activeCascades/scopeRows) now tracks the
 // ACTIVE WATCH LIST's membership instead of direct rail taps — CAS-634's toggleActive is retired as the
 // rail's own input below, but the listing pipeline itself (scopeRows, deckSync's dirty-check machinery for
@@ -8532,6 +8533,7 @@ window.clearAllWatchStyles = () => {
   const off=watchGenreOff[watchTab]; off.clear();
   watchSheetGenres[watchTab].forEach(g=>off.add(g));
   render();
+  scrollWatchListingToTop();   // CAS-857
 };
 // CAS-718: search text + the Watched-verdict selection, one set per Watch tab — same session-only,
 // per-tab shape as watchGenreOff above. Replaces the old scope bar's WATCH ON/For review pills (CAS-717's
@@ -8551,7 +8553,7 @@ const PICKED_BY_OPTS = [
   {key:"unset",  label:"Unset"},
 ];
 window.setWatchPickedBy = key => { watchPickedBy[watchTab]=key; render(); };
-window.clearWatchPickedBy = () => { watchPickedBy[watchTab]="all"; render(); };
+window.clearWatchPickedBy = () => { watchPickedBy[watchTab]="all"; render(); scrollWatchListingToTop(); };   // CAS-857
 // CAS-840: ONE listbox popover shared by the Occasion and Picked by pills — an anchored panel in the app's
 // own language (.cpop's visual treatment, opened downward via .pop-down since both pills sit at the very
 // top of the screen), replacing Occasion's invisible-<select> device and Picked by's Filters-sheet segment.
@@ -8655,7 +8657,7 @@ window.toggleWatchAlsoShow = key => {
   set.has(key) ? set.delete(key) : set.add(key);
   render();
 };
-window.clearWatchAlsoShow = () => { watchAlsoShow[watchTab].clear(); render(); };
+window.clearWatchAlsoShow = () => { watchAlsoShow[watchTab].clear(); render(); scrollWatchListingToTop(); };   // CAS-857
 // CAS-720: "Agents to include" — restores the per-tab agent narrowing scopeRows() gave up when CAS-718
 // retired the deck's per-list agent picker (see that function's own comment), reading from this sheet
 // state instead of the old activeIds/cascOff deck selection. Same per-tab, session-only, empty-means-
@@ -8667,11 +8669,13 @@ window.toggleWatchAgent = id => {
   set.has(id) ? set.delete(id) : set.add(id);
   render();
 };
-window.selectAllWatchAgents = () => { watchAgentOff[watchTab].clear(); render(); };
+// CAS-857: also the active-filter chip's clear (removes the agent narrowing) — both scroll back to the top.
+window.selectAllWatchAgents = () => { watchAgentOff[watchTab].clear(); render(); scrollWatchListingToTop(); };
 window.clearAllWatchAgents = () => {
   const off=watchAgentOff[watchTab]; off.clear();
   cascades.forEach(c=>off.add(c.id));
   render();
+  scrollWatchListingToTop();
 };
 // CAS-718: the old scope.watched/scopeVerdicts gate, replaced — a tagged-out film shows only when its own
 // verdict is one of the active tab's selected chips; an undecided/decided film is never gated by this at
@@ -8709,7 +8713,7 @@ window.toggleWatchWatched = key => {
   set.has(key) ? set.delete(key) : set.add(key);
   render();
 };
-window.clearAllWatchWatched = () => { watchWatchedSel[watchTab].clear(); render(); };
+window.clearAllWatchWatched = () => { watchWatchedSel[watchTab].clear(); render(); scrollWatchListingToTop(); };   // CAS-857
 window.clearAllWatchFilters = () => {
   watchPickedBy[watchTab]="all";
   watchWatchedSel[watchTab].clear();
@@ -8718,6 +8722,7 @@ window.clearAllWatchFilters = () => {
   watchAgentOff[watchTab].clear();
   setWatchMineOnly(true);   // CAS-753: back to the default (on), same as every other field here
   render();
+  scrollWatchListingToTop();   // CAS-857
 };
 let watchSheetOpen=false;
 window.openWatchSheet = () => {
@@ -18545,12 +18550,24 @@ function renderJumpBar(){
 // So: aim, then keep re-aiming until the target stops moving. The first move is smooth because that is what
 // a jump should feel like; the corrections are instant, because a correction that animates is just another
 // thing to chase.
+//
+// CAS-857: the offset is measured live from #cascbar's own getBoundingClientRect().bottom, not read back from
+// --stickyh. --stickyh is deliberately in PRE-zoom px (CAS-157's `zoom:var(--ui-scale)` on <html> is what
+// scales it correctly for .grouphead.sub's own CSS `top`), but getBoundingClientRect() is always POST-zoom,
+// viewport-relative px — comparing the two directly silently underclipped every jump by the zoom factor
+// (~12% at the shipped 1.12 --ui-scale). #cascbar is one sticky block that already carries whatever mix of
+// the search/filter bar, the active-filter chip row and the jump rail happens to be showing, so its own live
+// bottom edge — in the SAME post-zoom units as the target heading's own rect — is the real occluded boundary,
+// with no unit conversion needed.
+function watchOccludedBottom(){
+  const bar=document.getElementById("cascbar");
+  return bar ? bar.getBoundingClientRect().bottom : 0;
+}
 window.jumpToSection = k => {
   // How far the section's heading still has to travel to sit just clear of the sticky chrome.
   const delta = () => {
     const g=document.querySelector(`#groups .group[data-g="${k}"]`); if(!g) return null;
-    const occluded=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--stickyh"))||0;
-    return g.getBoundingClientRect().top - occluded - 8;
+    return g.getBoundingClientRect().top - watchOccludedBottom() - 8;
   };
   const first=delta(); if(first===null) return;
   window.scrollBy({top:first, behavior:"smooth"});
@@ -18564,6 +18581,13 @@ window.jumpToSection = k => {
   setTimeout(settle,420);                                    // let the smooth scroll have its run first
   logEvent("jump_to_section",{key:k});
 };
+// CAS-857: after any action that removes/narrows a filter, the list can change shape (get longer) under a
+// scroll position that no longer suits it, stranding the reader mid-list — return to the first section's
+// heading, once the re-render has laid out, via the exact same offset jumpToSection above uses.
+function scrollWatchListingToTop(){
+  const first=document.querySelector("#groups .group");
+  if(first) jumpToSection(first.dataset.g);
+}
 document.addEventListener("click", e=>{
   const b=e.target.closest("#jumpBar .nowstop"); if(!b) return;
   jumpToSection(b.dataset.jump);
