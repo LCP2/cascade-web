@@ -5734,7 +5734,13 @@ let usageQueue=[], usageFlushTimer=null;
 function queueUsageEvent(type, data){
   usageQueue.push({type, data:data||null});
   if(usageQueue.length>USAGE_QUEUE_MAX) usageQueue=usageQueue.slice(-USAGE_QUEUE_MAX);
-  if(!usageFlushTimer) usageFlushTimer=setTimeout(flushUsageEvents, 10000);
+  if(!usageFlushTimer){
+    usageFlushTimer=setTimeout(flushUsageEvents, 10000);
+    // Browsers return a plain number from setTimeout with no unref(); Node's test harness (which
+    // evaluates this same script against a stand-in DOM) returns a Timeout object whose unref() stops
+    // a pending flush from holding the process open (same reasoning as reconcilePollHandle below).
+    if(usageFlushTimer && typeof usageFlushTimer.unref === "function") usageFlushTimer.unref();
+  }
 }
 function flushUsageEvents(){
   clearTimeout(usageFlushTimer); usageFlushTimer=null;

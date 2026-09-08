@@ -5544,7 +5544,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1002, "commit": "2002ed3", "builtAt": "2026-09-08T03:12:27Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1003, "commit": "8890144", "builtAt": "2026-09-08T03:50:53Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5734,7 +5734,13 @@ let usageQueue=[], usageFlushTimer=null;
 function queueUsageEvent(type, data){
   usageQueue.push({type, data:data||null});
   if(usageQueue.length>USAGE_QUEUE_MAX) usageQueue=usageQueue.slice(-USAGE_QUEUE_MAX);
-  if(!usageFlushTimer) usageFlushTimer=setTimeout(flushUsageEvents, 10000);
+  if(!usageFlushTimer){
+    usageFlushTimer=setTimeout(flushUsageEvents, 10000);
+    // Browsers return a plain number from setTimeout with no unref(); Node's test harness (which
+    // evaluates this same script against a stand-in DOM) returns a Timeout object whose unref() stops
+    // a pending flush from holding the process open (same reasoning as reconcilePollHandle below).
+    if(usageFlushTimer && typeof usageFlushTimer.unref === "function") usageFlushTimer.unref();
+  }
 }
 function flushUsageEvents(){
   clearTimeout(usageFlushTimer); usageFlushTimer=null;
