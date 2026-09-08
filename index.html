@@ -1178,6 +1178,17 @@
   /* CAS-650: the window chip row — reuses .chip.gen, the same single-select pill already used for
      other filter rows, so the new control matches the app's existing chip language. */
   .mvwindows{display:flex;flex-wrap:wrap;gap:6px;padding:0 2px 12px}
+  /* CAS-852: the "Moving" heading, its sub-line and the window chip row, sticky under the header the same
+     way #cascbar sticks under it for the Watch listing — .grouphead.sub's lane heading (CAS-761) is sticky
+     chrome with nothing above it to release against otherwise. #movingScreen is its own bounded scroll box
+     (top:var(--hdrh,0px), overflow-y:auto), not the page's own scroll the way #cascbar is, so a sticky
+     descendant's `top` here is measured from THAT box's own scrollport — already past the header — hence
+     top:0 where #cascbar (page-scrolled) needs var(--hdrh,0px). See syncHeaderHeight for the matching
+     --stickyh split.
+     CAS-852 device-parity-ignore: R2 — same reasoning as .ymcard/.ymsticky above: #movingScreen sits at
+     top:var(--hdrh,0px), below the header, not the viewport's true top:0, so this scrollport never reaches
+     the notch and needs no safe-area padding. */
+  .mvhead{position:sticky;top:0;z-index:20;background:var(--bg)}
   .mvempty{padding:40px 16px;text-align:center}
   .mvemptymain{font-size:14px;font-weight:700;color:var(--ink)}
   .mvemptysub{font-size:12px;color:var(--faint);margin-top:6px}
@@ -5582,7 +5593,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1011, "commit": "12e2c3e", "builtAt": "2026-09-08T06:20:20Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1012, "commit": "9bb6385", "builtAt": "2026-09-08T09:17:23Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -10362,8 +10373,19 @@ function syncHeaderHeight(){
   if(!phoneHeader) return;
   const hdrh=phoneHeader.offsetHeight;
   document.documentElement.style.setProperty("--hdrh", hdrh+"px");
-  const bar=document.getElementById("cascbar");
-  document.documentElement.style.setProperty("--stickyh", (hdrh+(bar?bar.offsetHeight:0))+"px");
+  // CAS-852: #movingScreen is a bounded .uscreen with its own overflow-y:auto scrollport, sitting BELOW the
+  // header (top:var(--hdrh,0px)) rather than sharing the page's own scroll the way #cascbar/the Watch
+  // listing do — so a sticky descendant's `top` there is measured from that box's own origin, which already
+  // starts past the header. --stickyh for Moving is therefore #movingHead's own height alone; everywhere
+  // else it stays header+#cascbar, exactly as CAS-761 had it.
+  const movingScreenEl=document.getElementById("movingScreen");
+  if(movingScreenEl && movingScreenEl.classList.contains("open")){
+    const head=document.getElementById("movingHead");
+    document.documentElement.style.setProperty("--stickyh", (head?head.offsetHeight:0)+"px");
+  }else{
+    const bar=document.getElementById("cascbar");
+    document.documentElement.style.setProperty("--stickyh", (hdrh+(bar?bar.offsetHeight:0))+"px");
+  }
 }
 let cascResizeT=0;
 addEventListener("resize",()=>{ clearTimeout(cascResizeT); cascResizeT=setTimeout(syncHeaderHeight,140); });
@@ -16503,6 +16525,13 @@ function movingInWindow(dateStr, windowKey){
   const days=MOVING_WINDOW_DAYS[windowKey];
   return days!=null && t>Date.now()-days*864e5;
 }
+// CAS-852: whether the ledger fetch ITSELF (not any one lane) genuinely reached its 200-row cap for a given
+// window — older matches may have been cut off by the fetch rather than by the window. Factored out of
+// renderMovingScreen (whose own truncation notice is DOM-only, not reachable from a test) so the predicate
+// can be asserted directly.
+function movingLedgerTruncated(win){
+  return realAlerts.length>=200 && realAlerts.filter(a=>movingInWindow(a.emailed_at, win)).length>=200;
+}
 // CAS-848: every row names its OWNER agent (filmOwnerCascade, the same single-owner answer the Watch
 // listing's own per-agent blocks use) rather than the ledger entry's own agent-name field, which can list
 // an agent that no longer owns (or never owned) this film. An owner that no longer resolves (or never
@@ -16568,6 +16597,22 @@ function updateMovingBadge(){
   const n=movingUnseenCount();
   if(n){ b.style.display="grid"; b.textContent=n; } else b.style.display="none";
 }
+// CAS-852: the ladder position of a film's own current window, ordering rows within a lane so it reads
+// down the availability ladder rather than by newest-first alone. Upcoming splits into its two account-
+// facing moments — announced vs opening within the week, the same threshold upcomingCapLabel's "Next week"
+// moment reads (m.cinema_date within 7 days) — while opening_week and in_cinema collapse into one "in
+// cinema" rung, matching the ticket's six-rung list exactly.
+function movingWindowRank(m){
+  const ps=primaryStatus(m);
+  if(ps==="upcoming"){
+    return (m.cinema_date!=null && Date.parse(m.cinema_date)-Date.parse(TODAY)<=7*864e5) ? 1 : 0;
+  }
+  if(ps==="opening_week" || ps==="in_cinema") return 2;
+  if(ps==="pvod") return 3;
+  if(ps==="rental") return 4;
+  if(ps==="included_streaming") return 5;
+  return 6;
+}
 // CAS-848: one lane per owning agent, ranked the same way the Watch listing ranks its own per-agent
 // blocks (cascadeRankTint/c.order) — resolved fresh by id here, not trusted from the row, so a since-
 // renamed (or since-deleted) agent is never stale. No cascade resolves -> the final untinted "Other" lane.
@@ -16580,7 +16625,11 @@ function movingLanes(rows){
     byKey.get(key).rows.push(r);
   });
   const lanes=[...byKey.values()];
-  lanes.forEach(l=>l.rows.sort((a,b)=>(Date.parse(b.date)||0)-(Date.parse(a.date)||0)));   // newest first
+  // CAS-852: window rank first, newest-first only as the tiebreak within one window — replaces CAS-848's
+  // lane-level "newest first".
+  lanes.forEach(l=>l.rows.sort((a,b)=>
+    movingWindowRank(a.m)-movingWindowRank(b.m) || (Date.parse(b.date)||0)-(Date.parse(a.date)||0)
+  ));
   lanes.sort((a,b)=>(a.cascade?(a.cascade.order??1e9):Infinity)-(b.cascade?(b.cascade.order??1e9):Infinity));
   return lanes;
 }
@@ -16624,21 +16673,22 @@ function renderMovingScreen(){
   shownRows.forEach(r=>{ movingSeen[r.filmId]=r.tag; });
   saveMovingSeen();
   updateMovingBadge();
-  // The ledger fetch itself (not any one lane) is what's capped at 200 — if this window's raw entries
-  // reach that cap, older matches may have been cut off by the fetch rather than by the window.
-  const ledgerTruncated = realAlerts.length>=200
-    && realAlerts.filter(a=>movingInWindow(a.emailed_at, movingWindow)).length>=200;
+  const ledgerTruncated=movingLedgerTruncated(movingWindow);
   const chipsHTML=MOVING_WINDOWS.map(w=>
     `<button type="button" class="chip gen${movingWindow===w.key?" on":""}" aria-pressed="${movingWindow===w.key}" onclick="setMovingWindow('${w.key}')">${esc(w.label)}</button>`
   ).join("");
-  const head=`<h2 class="osh">Moving</h2><p class="ossub">${MOVING_SUBTITLE}</p>
+  // CAS-852: wrapped in #movingHead/.mvhead so it can pin under the header — see syncHeaderHeight and
+  // .mvhead's own comment for why the lane heading below it (.grouphead.sub) was floating with nothing to
+  // release against otherwise. The truncation line only ever appears here, inside the conditional.
+  const head=`<div class="mvhead" id="movingHead"><h2 class="osh">Moving</h2><p class="ossub">${MOVING_SUBTITLE}</p>
     <div class="mvwindows">${chipsHTML}</div>
-    ${ledgerTruncated ? `<p class="mvemptysub" style="padding:0 2px 12px">Showing the most recent 200 events.</p>` : ""}`;
+    ${ledgerTruncated ? `<p class="mvemptysub" style="padding:0 2px 12px">Showing the most recent 200 events.</p>` : ""}</div>`;
   if(!shownRows.length){
     $("movingBody").innerHTML = `${head}<div class="mvempty">
       <p class="mvemptymain">${esc(MOVING_EMPTY_COPY[movingWindow])}</p>
       <p class="mvemptysub">Your agents are still watching. You'll see it here first.</p>
     </div>`;
+    syncHeaderHeight();
     return;
   }
   const lanes=movingLanes(shownRows);
@@ -16654,6 +16704,7 @@ function renderMovingScreen(){
       <div class="mvlist">${lane.rows.map(movingRowHTML).join("")}</div>
     </div>`;
   }).join("");
+  syncHeaderHeight();   // CAS-852: #movingHead's height can change (window switch, truncation notice) — re-measure so the lane heading's --stickyh offset never drifts
 }
 // CAS-650: switching the window re-renders in place.
 window.setMovingWindow=(key)=>{
