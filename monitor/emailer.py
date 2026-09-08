@@ -84,6 +84,10 @@ _MOMENT_NOTE = {
     "announced": "It has just reached Cascade, and it matches what you asked for.",
     "opens_soon": "Its published opening date is a week away.",
     "new_to_agent": "It just started matching this agent.",
+    # CAS-849: newly_qualifies has no single cause (a rating crossing the bar, a metacritic score
+    # or award arriving, a genre/age-rating correction) — this states the honest common fact
+    # instead of guessing which one it was.
+    "newly_qualifies": "Something about it changed, and now it matches this agent.",
 }
 
 
@@ -126,75 +130,131 @@ def _header_line(transition) -> str:
     return f"{phrase} · {move}" if move else phrase
 
 
-def _join_names(names) -> str:
-    """'A' | 'A & B' | 'A, B & C' — an honest list of everyone who caught it, nothing invented."""
-    if len(names) == 1:
-        return names[0]
-    return ", ".join(names[:-1]) + " & " + names[-1]
+# CAS-849: the app's own agrank tokens (app_template.html ~L79-80) — rank 1 first, repeating the
+# last colour beyond rank 6, exactly as the app's cascadeRankTint()/.agrank-N CSS already does.
+_RANK_COLORS = ["#A78BFF", "#22D3EE", "#F06FB0", "#FFD166", "#7DD3A0", "#9BA5B5"]
 
 
-def _film_entries(hits):
-    """hits collapsed to one entry per (movie, moment), each carrying every distinct name that
-    caught it — a personal Watch it tick already arrives as cascade_name "Your picks" (CAS-484),
-    so no separate agent/Watch-it branch is needed here. A film caught by more than one agent (or
-    an agent and the user's own Watch it tick) is shown once, naming everyone, in the order the
-    hits first arrived."""
-    order = []
-    by_key = {}
+def _rank_color(index: int) -> str:
+    return _RANK_COLORS[index] if index < len(_RANK_COLORS) else _RANK_COLORS[-1]
+
+
+def _tint(hex_color: str, alpha: float = 0.08) -> str:
+    """A light wash of `hex_color`, mirroring the app's `color-mix(in srgb, var(--rt) 6%, var(--bg))`
+    heading background (app_template.html ~L500-511) in a form email clients actually render."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def is_new_moment(moment: str) -> bool:
+    """CAS-849: the shared classification rule — New = the film's first appearance for this agent
+    (`new_to_agent` / `newly_qualifies`); Changed = every other moment. Nothing is both. Mirrors
+    app_template.html's movingIsNewMoment() so the email and the Moving screen never disagree."""
+    return moment in ("new_to_agent", "newly_qualifies")
+
+
+def _agent_sections(hits):
+    """Group hits into per-agent sections (CAS-849), ordered by each cascade's own `rank` — the
+    `_rank_key()` tuple matching.py already computed and carried onto the Hit, not re-derived here.
+    A hit with no cascade (a per-film Watch it tick, cascade_name "Your picks") is grouped into its
+    own final, untinted section instead, in the order those hits first arrived.
+
+    Returns a list of {"name", "color" (None for the untinted trailing sections), "hits"}."""
+    ranked, ranked_order = {}, []
+    other, other_order = {}, []
     for h in hits:
-        t = h.transition
-        key = (t.movie_id, t.moment)
-        entry = by_key.get(key)
+        if h.cascade_id is None:
+            key, bucket, order = h.cascade_name, other, other_order
+        else:
+            key, bucket, order = h.cascade_id, ranked, ranked_order
+        entry = bucket.get(key)
         if entry is None:
-            entry = {"transition": t, "names": []}
-            by_key[key] = entry
+            entry = {"name": h.cascade_name, "rank": h.rank or (float("inf"), "", ""), "hits": []}
+            bucket[key] = entry
             order.append(key)
-        if h.cascade_name not in entry["names"]:
-            entry["names"].append(h.cascade_name)
-    return [by_key[k] for k in order]
+        entry["hits"].append(h)
+
+    sections = sorted((ranked[k] for k in ranked_order), key=lambda e: e["rank"])
+    for i, section in enumerate(sections):
+        section["color"] = _rank_color(i)
+        del section["rank"]
+    for key in other_order:
+        section = other[key]
+        section["color"] = None
+        del section["rank"]
+        sections.append(section)
+    return sections
+
+
+def _row_text(hit, site_url) -> list:
+    t = hit.transition
+    tag = "New" if is_new_moment(t.moment) else "Changed"
+    return [f"  [{tag}] {t.title}", f"    {_header_line(t)}", f"    {site_url}#/film/{t.movie_id}"]
+
+
+def _row_html(hit, esc, site_url) -> str:
+    t = hit.transition
+    is_new = is_new_moment(t.moment)
+    pill_bg, pill_fg = ("#E6F9EE", "#1A9C5C") if is_new else ("#E8ECFF", "#3B4FE0")
+    note = _MOMENT_NOTE.get(t.moment, "")
+    # CAS-524: same #/film/<id> hash route shareUrlFor() builds in the app itself, so the link
+    # is the real, permanent film page — tapping it on a device with the app installed is what
+    # the universal-link/AASA setup turns into an in-app open instead of a browser tab.
+    film_url = f"{site_url}#/film/{t.movie_id}"
+    return (
+        '<tr><td style="padding:14px 0;border-bottom:1px solid #e6e8ee;">'
+        f'<a href="{esc(film_url)}" style="text-decoration:none;color:inherit;display:block;">'
+        f'<span style="display:inline-block;font-size:11px;font-weight:800;letter-spacing:0.4px;'
+        f'text-transform:uppercase;padding:2px 9px;border-radius:20px;background:{pill_bg};'
+        f'color:{pill_fg};">{"New" if is_new else "Changed"}</span>'
+        f'<div style="font-size:16px;font-weight:600;color:#141A2A;margin-top:6px;">{esc(t.title)}</div>'
+        f'<div style="font-size:14px;color:#4C7DFF;font-weight:600;margin-top:2px;">{esc(_header_line(t))}</div>'
+        + (f'<div style="font-size:13px;color:#6b7280;margin-top:2px;">{esc(note)}</div>' if note else "")
+        + '</a></td></tr>'
+    )
+
+
+def _section_heading_html(section, esc) -> str:
+    color = section["color"]
+    if color:
+        style = f'padding:12px 14px;border-radius:12px;border-left:3px solid {color};background:{_tint(color)};'
+        text_style = f'font-size:13px;font-weight:800;letter-spacing:0.3px;color:{color};'
+    else:
+        style = 'padding:12px 14px;border-radius:12px;background:#f4f5f8;'
+        text_style = 'font-size:13px;font-weight:800;letter-spacing:0.3px;color:#4b5563;'
+    return f'<tr><td style="{style}"><span style="{text_style}">{esc(section["name"])}</span></td></tr>'
 
 
 def render_digest(hits, site_url: str = None) -> dict:
     """Return {'subject', 'html', 'text'} for one user's consolidated digest.
 
+    CAS-849: grouped into per-agent sections in rank order (see _agent_sections), each row tagged
+    New or Changed (see is_new_moment) — the same shape and classification rule as the Moving
+    screen (app_template.html), so the two never disagree about what's new and what's changed.
+
     hits: list of monitor.matching.Hit (all for the same user)."""
     site_url = site_url or os.environ.get(SITE_URL_ENV) or DEFAULT_SITE_URL
     subject = digest_subject(hits)
-    entries = _film_entries(hits)
+    sections = _agent_sections(hits)
+    esc = _html.escape
 
     # ---- plain-text part ----
-    text_lines = ["Cascade has been watching. Here's what changed:", ""]
-    for entry in entries:
-        t = entry["transition"]
-        names = _join_names(entry["names"])
-        text_lines.append(f"• {t.title} — {names}")
-        text_lines.append(f"  {_header_line(t)}")
-        text_lines.append(f"  {site_url}#/film/{t.movie_id}")
-    text_lines += ["", f"Open Cascade: {site_url}",
+    text_lines = ["Your agents have been watching. Here's today.", ""]
+    for section in sections:
+        text_lines.append(section["name"])
+        for h in section["hits"]:
+            text_lines.extend(_row_text(h, site_url))
+        text_lines.append("")
+    text_lines += [f"Open Cascade: {site_url}",
                    "You're getting this because Cascade is watching films for you."]
     text = "\n".join(text_lines)
 
-    # ---- HTML part (inline styles; email-client safe) ----
-    esc = _html.escape
-    items = []
-    for entry in entries:
-        t = entry["transition"]
-        names = _join_names(entry["names"])
-        note = _MOMENT_NOTE.get(t.moment, "")
-        # CAS-524: same #/film/<id> hash route shareUrlFor() builds in the app itself, so the link
-        # is the real, permanent film page — tapping it on a device with the app installed is what
-        # the universal-link/AASA setup turns into an in-app open instead of a browser tab.
-        film_url = f"{site_url}#/film/{t.movie_id}"
-        items.append(
-            '<tr><td style="padding:14px 0;border-bottom:1px solid #e6e8ee;">'
-            f'<a href="{esc(film_url)}" style="text-decoration:none;color:inherit;display:block;">'
-            f'<div style="font-size:16px;font-weight:600;color:#141A2A;">{esc(t.title)}</div>'
-            f'<div style="font-size:12px;font-weight:700;letter-spacing:0.5px;color:#7C5CFF;'
-            f'text-transform:uppercase;margin-top:2px;">{esc(names)}</div>'
-            f'<div style="font-size:14px;color:#4C7DFF;font-weight:600;margin-top:2px;">{esc(_header_line(t))}</div>'
-            + (f'<div style="font-size:13px;color:#6b7280;margin-top:2px;">{esc(note)}</div>' if note else "")
-            + '</a></td></tr>'
-        )
+    # ---- HTML part (inline styles; email-client safe — no <style>, no class=, no display:flex) ----
+    section_html = []
+    for section in sections:
+        section_html.append(_section_heading_html(section, esc))
+        section_html.extend(_row_html(h, esc, site_url) for h in section["hits"])
     html_doc = (
         '<!doctype html><html><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
@@ -208,10 +268,10 @@ def render_digest(hits, site_url: str = None) -> dict:
         '<div style="font-size:18px;font-weight:700;letter-spacing:1px;color:#7C5CFF;'
         'text-transform:uppercase;">Cascade</div>'
         '<div style="font-size:15px;color:#141A2A;margin-top:10px;font-weight:600;">'
-        "Your agent's been watching. Here's what changed.</div>"
+        "Your agents have been watching. Here's today.</div>"
         '</td></tr>'
-        '<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
-        + "".join(items) +
+        '<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:14px;">'
+        + "".join(section_html) +
         '</table></td></tr>'
         '<tr><td style="padding-top:20px;">'
         f'<a href="{esc(site_url)}" style="display:inline-block;background:#6b48f2;color:#ffffff;'

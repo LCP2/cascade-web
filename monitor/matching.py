@@ -47,6 +47,10 @@ class Hit:
     # CAS-244: which channels THIS agent will accept, read from criteria.channelsLive. None means the agent
     # predates the setting and takes whatever the account allows — the behaviour it already had.
     channels: Optional[dict] = None
+    # CAS-849: this cascade's own _rank_key() tuple, carried on the hit so the digest can order its
+    # agent sections without re-deriving rank from a cascade row it doesn't have. None for a hit with
+    # no cascade (a per-film Watch it tick) — it never sorts by rank, see emailer._agent_sections.
+    rank: Optional[tuple] = None
 
     def wants(self, channel: str) -> bool:
         """Does this agent accept delivery on `channel` ("in_app" | "email" | "push")?
@@ -332,7 +336,7 @@ def match(cascades: list, transitions: list, already=None, admission=None, suppr
             by_user.setdefault(c["user_id"], []).append(
                 Hit(user_id=c["user_id"], cascade_id=c["id"],
                     cascade_name=c.get("name", "My Cascade"), transition=t,
-                    channels=agent_channels(criteria)))
+                    channels=agent_channels(criteria), rank=rank_of[c["id"]]))
     return {uid: _collapse_by_rank(hits, rank_of) for uid, hits in by_user.items()}
 
 
@@ -430,7 +434,7 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
             by_user.setdefault(c["user_id"], []).append(
                 Hit(user_id=c["user_id"], cascade_id=c["id"],
                     cascade_name=c.get("name", "My Cascade"), transition=t,
-                    channels=agent_channels(criteria)))
+                    channels=agent_channels(criteria), rank=rank_of[c["id"]]))
     return {uid: _collapse_by_rank(hits, rank_of) for uid, hits in by_user.items()}
 
 
@@ -518,7 +522,7 @@ def match_new_to_agent(cascades: list, prev_movies: list, today_movies: list, pr
             by_user.setdefault(c["user_id"], []).append(
                 Hit(user_id=c["user_id"], cascade_id=c["id"],
                     cascade_name=c.get("name", "My Cascade"), transition=t,
-                    channels=agent_channels(criteria)))
+                    channels=agent_channels(criteria), rank=rank_of[c["id"]]))
     return {uid: _collapse_by_rank(hits, rank_of) for uid, hits in by_user.items()}
 
 

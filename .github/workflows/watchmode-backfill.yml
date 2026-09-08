@@ -1,0 +1,52 @@
+name: Watchmode fields backfill
+
+# CAS-850: run CAS-830's additive Watchmode fields backfill (wm_user_rating, wm_critic_score,
+# wm_popularity_percentile, wm_fields_fetched_at) across the live catalogue before the Watchmode
+# Startup trial key expires. WATCHMODE_API_KEY is a GitHub secret only — no developer machine has
+# it — so this has to be a workflow, not a script run from a clone. Manual dispatch only, and it
+# defaults to a 1000-credit budget rather than the full ~4,800-credit catalogue pass: the run is
+# idempotent (a record inside WATCHMODE_CACHE_TTL_DAYS is skipped), so it is safe to dispatch
+# repeatedly and let each run commit its own progress against the closing trial window.
+on:
+  workflow_dispatch:
+    inputs:
+      max_credits:
+        description: 'WM_FIELDS_MAX_CREDITS — credits to spend this run (1 credit per resolved title)'
+        required: false
+        type: string
+        default: '1000'
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: staging
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run the Watchmode fields backfill
+        env:
+          WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
+          CASCADE_CATALOGUE: movies.json
+          WM_FIELDS_MAX_CREDITS: ${{ inputs.max_credits }}
+        run: python scripts/cas850_watchmode_backfill.py
+
+      - name: Commit and push (CAS-758 reset-soft-and-push retry — never to main)
+        # Pushes via scripts/reset_soft_and_push.sh's `git push origin HEAD:staging`, the same
+        # tested reset --soft retry algorithm daily.yml inlines at its own two push sites — this
+        # branch, never main; only promote.yml writes main.
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
+          WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
+        run: |
+          git config user.name  "cascade-bot"
+          git config user.email "actions@users.noreply.github.com"
+          bash scripts/reset_soft_and_push.sh staging "python poc_pipeline.py --build-html" index.html movies.json state

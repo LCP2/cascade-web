@@ -9,17 +9,26 @@ from unittest import mock
 
 from monitor import render_digest, moment_phrase, digest_subject
 from monitor.emailer import USER_AGENT, send_via_resend
-from monitor.matching import Hit
+from monitor.matching import Hit, _rank_key
 from monitor.transitions import Transition
 
+_UNSET = object()
 
-def _hit(title, moment, cascade, services=None, price=None, prior_window=None,
-         movie_id="1", cascade_id="c1"):
+
+def _hit(title, moment, cascade, order=None, services=None, price=None, prior_window=None,
+         movie_id="1", cascade_id=_UNSET):
+    """cascade_id defaults to one derived from the agent name, so two calls naming different
+    agents land in different sections (matching.py's own rank-collapse already guarantees a real
+    Hit list never mixes cascade_id with cascade_name this way). Pass cascade_id=None explicitly
+    for a Watch-it hit (no cascade — cascade_name "Your picks")."""
     t = Transition(movie_id=movie_id, title=title, moment=moment,
                    services=services or [], price=price, movie={})
     if prior_window is not None:
         t.prior_window = prior_window
-    return Hit(user_id="user-A", cascade_id=cascade_id, cascade_name=cascade, transition=t)
+    if cascade_id is _UNSET:
+        cascade_id = f"id-{cascade}"
+    rank = _rank_key({"criteria": {"order": order}}) if cascade_id is not None else None
+    return Hit(user_id="user-A", cascade_id=cascade_id, cascade_name=cascade, transition=t, rank=rank)
 
 
 class PhraseTests(unittest.TestCase):
@@ -85,8 +94,8 @@ class RenderTests(unittest.TestCase):
 
 
 class SectioningTests(unittest.TestCase):
-    """CAS-496: section headings were replaced by a per-film agent-name line (see AgentNamingTests)
-    — these check what survives that change."""
+    """CAS-849: films render inside their agent's own section now (see AgentSectionTests) — these
+    check what survives that change."""
 
     def setUp(self):
         self.hits = [
@@ -126,24 +135,27 @@ class SectioningTests(unittest.TestCase):
         self.assertEqual(d1, d2)
 
 
-class AgentNamingTests(unittest.TestCase):
-    """CAS-496: each film names the agent(s) that caught it, on the film itself."""
+class AgentSectionTests(unittest.TestCase):
+    """CAS-849: films render grouped under the agent's own section heading, not named per-row."""
 
-    def test_one_agent_named_on_its_film(self):
+    def test_one_agent_named_on_its_section(self):
         d = render_digest([_hit("Warfare", "hits_cinema", "Cinema date night")],
                            site_url="https://x.test/")
         for part in (d["html"], d["text"]):
             self.assertIn("Warfare", part)
             self.assertIn("Cinema date night", part)
 
-    def test_two_agents_on_the_same_film_show_it_once_naming_both(self):
+    def test_two_agents_catching_the_same_film_each_get_their_own_row(self):
+        # matching.py's own _collapse_by_rank already guarantees one (cascade, movie, moment) is
+        # never produced by two DIFFERENT cascades within a single match() call — two cascade_ids
+        # both naming the same film here are two real, separate events, one per agent's section.
         hits = [
             _hit("Sinners", "hits_stream", "Everyday favourites", services=["Netflix"]),
             _hit("Sinners", "hits_stream", "Weekend picks", services=["Netflix"]),
         ]
         d = render_digest(hits, site_url="https://x.test/")
         for part in (d["html"], d["text"]):
-            self.assertEqual(part.count("Sinners"), 1)
+            self.assertEqual(part.count("Sinners"), 2)
             self.assertIn("Everyday favourites", part)
             self.assertIn("Weekend picks", part)
 
@@ -153,14 +165,14 @@ class AgentNamingTests(unittest.TestCase):
         for part in (d["html"], d["text"]):
             self.assertIn("Your picks", part)
 
-    def test_agent_and_watch_it_on_the_same_film_show_it_once_naming_both(self):
+    def test_agent_and_watch_it_on_the_same_film_each_get_their_own_row(self):
         hits = [
             _hit("Warfare", "hits_cinema", "Cinema date night"),
             _hit("Warfare", "hits_cinema", "Your picks", cascade_id=None),
         ]
         d = render_digest(hits, site_url="https://x.test/")
         for part in (d["html"], d["text"]):
-            self.assertEqual(part.count("Warfare"), 1)
+            self.assertEqual(part.count("Warfare"), 2)
             self.assertIn("Cinema date night", part)
             self.assertIn("Your picks", part)
 
@@ -173,6 +185,82 @@ class AgentNamingTests(unittest.TestCase):
         d = render_digest(hits, site_url="https://x.test/")
         for part in (d["html"], d["text"]):
             self.assertEqual(part.count("Warfare"), 2)
+
+    def test_agent_name_appears_once_per_section_not_once_per_row(self):
+        # AC3: three films from the same agent still name that agent exactly once (the heading).
+        hits = [
+            _hit("Film One", "hits_cinema", "Busy Agent", movie_id="1"),
+            _hit("Film Two", "hits_stream", "Busy Agent", services=["Netflix"], movie_id="2"),
+            _hit("Film Three", "hits_rent", "Busy Agent", movie_id="3"),
+        ]
+        d = render_digest(hits, site_url="https://x.test/")
+        self.assertEqual(d["html"].count("Busy Agent"), 1)
+        self.assertEqual(d["text"].count("Busy Agent"), 1)
+
+
+class SectionOrderTests(unittest.TestCase):
+    """AC1 + AC4: section order follows _rank_key() ascending; Your picks always sorts last."""
+
+    def test_rank_one_agent_section_comes_first(self):
+        hits = [
+            _hit("Second Pick", "hits_cinema", "Rank Two Agent", order=2, movie_id="a"),
+            _hit("First Pick", "hits_cinema", "Rank One Agent", order=1, movie_id="b"),
+        ]
+        d = render_digest(hits, site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            self.assertLess(part.index("Rank One Agent"), part.index("Rank Two Agent"))
+
+    def test_your_picks_sorts_last_after_a_ranked_agent(self):
+        hits = [
+            _hit("Watched Film", "hits_cinema", "Your picks", cascade_id=None, movie_id="w"),
+            _hit("Agent Film", "hits_cinema", "Some Agent", order=5, movie_id="a"),
+        ]
+        d = render_digest(hits, site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            self.assertLess(part.index("Some Agent"), part.index("Your picks"))
+
+    def test_your_picks_sorts_last_even_against_an_unranked_agent(self):
+        hits = [
+            _hit("Watched Film", "hits_cinema", "Your picks", cascade_id=None, movie_id="w"),
+            _hit("Agent Film", "hits_cinema", "No Order Agent", movie_id="a"),
+        ]
+        d = render_digest(hits, site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            self.assertLess(part.index("No Order Agent"), part.index("Your picks"))
+
+
+class TagTests(unittest.TestCase):
+    """AC2: New = new_to_agent/newly_qualifies; Changed = every other moment."""
+
+    def test_new_to_agent_tags_new(self):
+        d = render_digest([_hit("Fresh Find", "new_to_agent", "Some Agent")], site_url="https://x.test/")
+        self.assertIn("New", d["html"])
+        self.assertIn("[New]", d["text"])
+
+    def test_newly_qualifies_tags_new(self):
+        d = render_digest([_hit("Now Qualifies", "newly_qualifies", "Some Agent")], site_url="https://x.test/")
+        self.assertIn("New", d["html"])
+        self.assertIn("[New]", d["text"])
+        self.assertIn("matches this agent", d["html"])   # CAS-849: newly_qualifies gets its own sub-line
+
+    def test_hits_rent_tags_changed(self):
+        d = render_digest([_hit("Price Drop", "hits_rent", "Some Agent")], site_url="https://x.test/")
+        self.assertIn("Changed", d["html"])
+        self.assertIn("[Changed]", d["text"])
+
+
+class InlineStylingTests(unittest.TestCase):
+    """AC5: email-client-safe markup only — no <style> block, no class=, no display:flex."""
+
+    def test_no_style_block_class_attr_or_flex(self):
+        hits = [
+            _hit("Film One", "new_to_agent", "Some Agent"),
+            _hit("Film Two", "hits_rent", "Your picks", cascade_id=None),
+        ]
+        d = render_digest(hits, site_url="https://x.test/")
+        self.assertNotIn("<style", d["html"])
+        self.assertNotIn("class=", d["html"])
+        self.assertNotIn("display:flex", d["html"])
 
 
 class SendViaResendTests(unittest.TestCase):

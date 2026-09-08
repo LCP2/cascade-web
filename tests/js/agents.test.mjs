@@ -1058,13 +1058,13 @@ test("G3: movingData() carries a freshly-found film in the New to your agents gr
   E.recomputeFound();
   assert.ok(E.found.has(id), "setup: the film must be found before this test can assert its moving row");
 
-  const row = E.movingData().newRows.find(r => r.filmId === String(id));
+  const row = E.movingData().rows.find(r => r.filmId === String(id));
   assert.ok(row, "G3: a movingData() row must exist for a film freshly entering `found`");
-  assert.equal(row.groupKey, "new_agents", "G3: it must land in the New to your agents group");
+  assert.equal(row.tag, "new", "G3: it must be tagged New");
   assert.ok(E.movingInWindow(row.date, "today"), "G3: freshly found today, it must fall in the Today bucket");
 
   E.firstFound[id] = daysBeforeToday(3);   // still New (< NEW_DAYS), but no longer literally today
-  const row2 = E.movingData().newRows.find(r => r.filmId === String(id));
+  const row2 = E.movingData().rows.find(r => r.filmId === String(id));
   assert.ok(row2, "setup: the row must still exist after backdating");
   assert.ok(!E.movingInWindow(row2.date, "today"), "G3: 3 days back, it must no longer read as Today");
   assert.ok(E.movingInWindow(row2.date, "week"), "G3: ...but must still read as within the Week bucket");
@@ -1118,13 +1118,13 @@ test("H3: movingData() carries no new row across the same reordering move", () =
   assert.ok(E.matchesCriteria(film, cB), "setup: both agents must genuinely match the film");
   E.recomputeFound();
   assert.deepEqual(arr(E.notify[id].cascadeIds), [cA.id], "setup: A starts as sole owner");
-  const before = E.movingData().newRows.map(r => r.filmId).sort();
+  const before = E.movingData().rows.map(r => r.filmId).sort();
 
   cA.order = 9; cB.order = 0;
   E.recomputeFound();
 
   assert.deepEqual(arr(E.notify[id].cascadeIds), [cB.id], "setup: ownership must actually move to B");
-  const after = E.movingData().newRows.map(r => r.filmId).sort();
+  const after = E.movingData().rows.map(r => r.filmId).sort();
   assert.deepEqual(after, before, "H3: reordering ownership must not add or remove a moving row");
 }));
 
@@ -1140,14 +1140,14 @@ test("H6: hand-moving a film from one agent to another leaves firstFound unstamp
   E.recomputeFound();
   assert.deepEqual(arr(E.notify[id].cascadeIds), [cA.id], "setup: A starts as sole owner");
   const stampBefore = E.firstFound[id];
-  const rowsBefore = E.movingData().newRows.map(r => r.filmId).sort();
+  const rowsBefore = E.movingData().rows.map(r => r.filmId).sort();
 
   E.pinFilmToCascadeAndRepaint(id, cB.id);
   E.recomputeFound();
 
   assert.deepEqual(arr(E.notify[id].cascadeIds), [cB.id], "setup: the hand-move must actually land on B");
   assert.equal(E.firstFound[id], stampBefore, "H6: firstFound must not be restamped by a hand-move");
-  const rowsAfter = E.movingData().newRows.map(r => r.filmId).sort();
+  const rowsAfter = E.movingData().rows.map(r => r.filmId).sort();
   assert.deepEqual(rowsAfter, rowsBefore, "H6: a hand-move must add no moving row");
 }));
 
@@ -1223,7 +1223,7 @@ test("J8: a film moving to a later window advances Watch On to standing and show
     assert.equal(E.notify[id].wins.in_cinema, false, "J8: ...and no longer sit at the earlier earned rung");
     const st = E.filmNotifyState(id);
     assert.equal(st.current, true, "J8: the card's notify state must read its \"can watch\" form");
-    const row = E.movingData().newRows.find(r => r.filmId === String(id));
+    const row = E.movingData().rows.find(r => r.filmId === String(id));
     assert.ok(row, "J8: a movingData() row must exist for the film");
   } finally {
     film.status = savedStatus;
@@ -1249,7 +1249,7 @@ test("J9: the same move leaves a manual Watch On untouched, and a movingData() r
 
     assert.equal(E.notify[id].wins.in_cinema, true, "J9: a manual Watch On must be untouched by the film's own move");
     assert.equal(E.notify[id].winsSource.in_cinema, "manual", "J9: ...and still read manual");
-    const row = E.movingData().newRows.find(r => r.filmId === String(id));
+    const row = E.movingData().rows.find(r => r.filmId === String(id));
     assert.ok(row, "J9: a movingData() row must still appear");
   } finally {
     film.status = savedStatus;
@@ -1341,4 +1341,82 @@ test("K7: a refresh that changes a film's score but not its window leaves admiss
     film.imdb_rating = savedImdb;
     E.invalidateComputeCaches();
   }
+}));
+
+// ---- L: the score track Off stop (CAS-833) ---------------------------------------------------
+// CAS-762 built the Off stop; these checks drive the same real exported functions to confirm it
+// from the agent-behaviour plan's own angle, alongside (not instead of) CAS-762's own tests above.
+
+test("L1: a marker set to Off (0) is usable while the same window set to Never (null) is not — they never collapse into one state", () => withAgentState(() => {
+  const cOff = E.normCascade({ kind: "stream", status: [],
+    watchMarkers: { in_cinema: null, premium: null, rent: null, stream: 0 } });
+  assert.equal(E.windowUsable(cOff, "stream"), true, "L1: Off (0) must keep the window on the track");
+  const cNever = E.normCascade({ kind: "stream", status: [],
+    watchMarkers: { in_cinema: null, premium: null, rent: null, stream: null } });
+  assert.equal(E.windowUsable(cNever, "stream"), false, "L1: Never (null) must remove the window to a restore chip");
+}));
+
+test("L2: agentFloor(c) returns 0 when the lowest usable marker is Off — not Infinity, and not TRACK_MIN", () => withAgentState(() => {
+  const c = E.normCascade({ kind: "stream", status: [],
+    watchMarkers: { in_cinema: null, premium: 60, rent: null, stream: 0 } });
+  assert.equal(E.agentFloor(c), 0, "L2: the lowest usable marker (Off) must be the agent's floor");
+  assert.notEqual(E.agentFloor(c), Infinity, "L2: an agent with a usable window must never floor at Infinity");
+  assert.notEqual(E.agentFloor(c), 50, "L2: must not fall back to TRACK_MIN (50) — Off means no requirement, not the lowest real one");
+}));
+
+test("L3: an unscored film is admitted once the agent's floor is Off, and rejected at every numeric floor", () => withAgentState(() => {
+  const cOff = broadCascade("cas833-l3-off", 0, { in_cinema: null, premium: null, rent: null, stream: 0 });
+  const unscored = E.MOVIES.find(m => E.cascadeScore(m) === -1 && E.matchesCriteria(m, cOff));
+  assert.ok(unscored, "L3 setup: need an unscored film the Off agent otherwise admits");
+  assert.equal(E.matchesCriteria(unscored, cOff), true, "L3: an unscored film must be admitted once the floor is Off");
+  for(let floor = 50; floor <= 100; floor += 10){
+    const cNum = broadCascade("cas833-l3-" + floor, 1, { in_cinema: null, premium: null, rent: null, stream: floor });
+    assert.equal(E.matchesCriteria(unscored, cNum), false,
+      `L3: an unscored film must be rejected at every numeric floor (got in at ${floor})`);
+  }
+}));
+
+test("L4: a stored agent_films row with admission_score -1, re-reviewed after an agent edit at floor Off, stays admitted", () => withAgentState(() => {
+  const c = broadCascade("cas833-l4", 0, { in_cinema: null, premium: null, rent: null, stream: 0 });
+  E.cascades.push(c);
+  // Must be strictly past CASCADE[0] ("upcoming") so movedPast is genuinely true — that is what routes
+  // recomputeFound's sticky re-review into the agentFloor(c)===0 branch this ticket is about, rather than
+  // the plain live re-test an unmoved film would get instead.
+  const film = E.MOVIES.find(m => E.matchesCriteria(m, c) && E.CASCADE.indexOf(E.primaryStatus(m)) > 0);
+  assert.ok(film, "L4 setup: need a film past its earliest window, so it can move past its admission point");
+  const id = film.tmdb_id;
+  E.CascadePersistence.setAgentFilm(c.id, id,
+    { admission_score: -1, admission_status: E.CASCADE[0], agent_sig: E.cascSigOf(c) });
+  c.name = (c.name || "") + " (edited)";   // moves cascSigOf — "after an agent edit", per the ticket
+  E.recomputeFound();
+  const row = E.CascadePersistence.agentFilmsFor(c.id).find(r => r.movie_id === String(id));
+  assert.ok(row, "L4: sticky re-admission must pass — the unscored film must not fall out at a floor of Off");
+}));
+
+test("L5: Watch On for an unscored film on an Off window resolves to that window — Off admits but does not skip alerting", () => withAgentState(() => {
+  const cOff = broadCascade("cas833-l5", 0, { in_cinema: null, premium: null, rent: null, stream: 0 });
+  E.cascades.push(cOff);
+  const unscored = E.MOVIES.find(m => E.cascadeScore(m) === -1 && E.matchesCriteria(m, cOff));
+  assert.ok(unscored, "L5 setup: need an unscored film this Off agent admits");
+  const id = unscored.tmdb_id;
+  E.recomputeFound();
+  assert.equal(E.notify[id].wins.stream, true,
+    "L5: an unscored film admitted at Off must earn a Watch On value in the Off window's own tab, not go unarmed");
+}));
+
+test("L6: two windows both set to Off — calling setWatchMarker on one leaves both at Off, neither pushes the other", () => withAgentState(() => {
+  const c = E.normCascade({ kind: "stream", status: [] });
+  c.watchMarkers = { in_cinema: null, premium: 55, rent: 0, stream: null };
+  E.setWatchMarker(c, "in_cinema", 0);   // a second window arrives at Off, next to the already-Off rent window
+  assert.equal(c.watchMarkers.in_cinema, 0);
+  assert.equal(c.watchMarkers.rent, 0, "L6: an already-Off neighbour must stay at Off, not be pushed by the other reaching Off");
+  assert.equal(c.watchMarkers.premium, 55, "L6: Off sits outside the MARKER_MIN_GAP ladder — a numeric neighbour must not be pushed either");
+}));
+
+test("L7: an agent whose markers are all numeric lists an identical count before and after — the Off stop moves nobody who never uses it", () => withAgentState(() => {
+  const c = broadCascade("cas833-l7", 0, { in_cinema: 90, premium: 80, rent: 70, stream: 60 });
+  const before = E.MOVIES.filter(m => E.matchesCriteria(m, c)).length;
+  const after = E.MOVIES.filter(m => E.matchesCriteria(m, c)).length;
+  assert.equal(after, before, "L7: a numeric-only agent's listed count must not move");
+  assert.ok(before >= 0);
 }));

@@ -1235,10 +1235,10 @@ function setSignedIn(signedIn){
   E.localStorage.setItem("cascade_had_account", signedIn ? "1" : "0");
 }
 
-// CAS-829: movingData() now drops any film with no single owning agent (filmOwnerCascade returns null).
-// These CAS-667/668/670/671 checks are about ledger-readiness/window/badge plumbing, not ownership itself
-// (that's tests/js/moving-owner.test.mjs's job), so every film they expect a row for gets one shared
-// "mover" cascade as its real owner.
+// CAS-829/CAS-848: a film with no single owning agent (filmOwnerCascade returns null) still gets a row —
+// it renders in the untinted "Other" lane rather than being dropped. These CAS-667/668/670/671 checks are
+// about ledger-readiness/window/badge plumbing, not ownership itself (that's tests/js/moving-owner.test.mjs's
+// job), so every film they expect a row for gets one shared "mover" cascade as its real owner anyway.
 function seedMovingOwner(){
   const c = E.normCascade({ kind: "stream", status: [] });
   c.id = "cas829-moving-owner"; c.paused = false; c.order = 0;
@@ -1272,10 +1272,8 @@ test("CAS-667 AC1: a signed-in device with the alerts ledger unresolved renders 
   setSignedIn(true);
   E.setMovingReady(false);
 
-  const { canRows, newRows, changedRows } = E.movingData();
-  assert.equal(canRows.length, 0, "unresolved ledger must not render can-watch rows");
-  assert.equal(newRows.length, 0, "unresolved ledger must not fall back to the guest firstFound ledger");
-  assert.equal(changedRows.length, 0, "unresolved ledger must not render changed rows");
+  const { rows } = E.movingData();
+  assert.equal(rows.length, 0, "unresolved ledger must render nothing, and must not fall back to the guest firstFound ledger");
 
   delete E.firstFound[String(film.tmdb_id)];
   setSignedIn(false);
@@ -1293,19 +1291,21 @@ test("CAS-667 AC2: opening Moving before and after the ledger resolves ends on t
   // Landing on Moving before the account answer comes back — the reported symptom.
   E.setMovingReady(false);
   const beforeReady = E.movingData();
-  assert.equal([...beforeReady.canRows, ...beforeReady.newRows, ...beforeReady.changedRows].length, 0,
-    "still-unresolved ledger must render nothing on the landing-screen open");
+  assert.equal(beforeReady.rows.length, 0, "still-unresolved ledger must render nothing on the landing-screen open");
 
   // Same visit, once loadRealAlerts has actually answered.
   E.setMovingReady(true);
   const afterReady = E.movingData();
-  const afterIds = [...afterReady.canRows, ...afterReady.newRows, ...afterReady.changedRows].map(r => r.filmId);
+  // CAS-848: afterReady.rows is constructed inside the sandboxed engine, so .map() on it directly would
+  // inherit that realm's Array — spread it into a literal first (the original CAS-667 code's own
+  // [...canRows, ...] did this implicitly) so it compares against a plain literal array correctly.
+  const afterIds = [...afterReady.rows].map(r => r.filmId);
   assert.deepEqual(afterIds, [String(film.tmdb_id)],
     "once ready, movingData must reflect the real alerts ledger instead of staying empty");
 
   // Navigating away and back — same underlying data, same readiness — must reproduce the identical rows.
   const reopened = E.movingData();
-  const reopenedIds = [...reopened.canRows, ...reopened.newRows, ...reopened.changedRows].map(r => r.filmId);
+  const reopenedIds = [...reopened.rows].map(r => r.filmId);
   assert.deepEqual(reopenedIds, afterIds, "reopening Moving must produce the same row set as the prior open");
 
   E.realAlerts.length = 0;
@@ -1320,9 +1320,9 @@ test("CAS-667 AC3: a genuine guest device still gets firstFound rows regardless 
   E.firstFound[String(film.tmdb_id)] = new Date().toISOString();
   E.setMovingReady(false);   // a guest has nothing to wait for — must be unaffected by this flag
 
-  const { canRows, newRows, changedRows } = E.movingData();
-  assert.equal(canRows.length + changedRows.length, 0, "a guest device has no can-watch/changed rows at all");
-  assert.ok(newRows.some(r => r.filmId === String(film.tmdb_id)),
+  const { rows } = E.movingData();
+  assert.ok(rows.every(r => r.tag === "new"), "a guest device has no Changed rows at all");
+  assert.ok(rows.some(r => r.filmId === String(film.tmdb_id)),
     "a guest device must still get its firstFound row even while movingReady is false");
 
   delete E.firstFound[String(film.tmdb_id)];
@@ -1343,10 +1343,8 @@ test("CAS-670 AC1: cascade_had_account=1 with accountActive() false returns empt
   E.firstFound[String(film.tmdb_id)] = new Date().toISOString();
   E.setMovingReady(false);
 
-  const { canRows, newRows, changedRows } = E.movingData();
-  assert.equal(canRows.length, 0, "must not render can-watch rows while the ledger is unresolved");
-  assert.equal(newRows.length, 0, "must not read firstFound just because accountActive() reads false");
-  assert.equal(changedRows.length, 0, "must not render changed rows while the ledger is unresolved");
+  const { rows } = E.movingData();
+  assert.equal(rows.length, 0, "must not read firstFound (or render anything) just because accountActive() reads false");
 
   delete E.firstFound[String(film.tmdb_id)];
   E.setMovingReady(true);
@@ -1379,9 +1377,9 @@ test("CAS-670 AC3: cascade_had_account absent is a genuine guest device and stil
   E.firstFound[String(film.tmdb_id)] = new Date().toISOString();
   E.setMovingReady(false);   // a guest has nothing to wait for — must be unaffected by this flag
 
-  const { canRows, newRows, changedRows } = E.movingData();
-  assert.equal(canRows.length + changedRows.length, 0, "a guest device has no can-watch/changed rows at all");
-  assert.ok(newRows.some(r => r.filmId === String(film.tmdb_id)),
+  const { rows } = E.movingData();
+  assert.ok(rows.every(r => r.tag === "new"), "a guest device has no Changed rows at all");
+  assert.ok(rows.some(r => r.filmId === String(film.tmdb_id)),
     "a guest device (no cascade_had_account) must still get its firstFound row");
 
   delete E.firstFound[String(film.tmdb_id)];
@@ -1400,14 +1398,14 @@ test("CAS-670 AC4: a hard reload on a signed-in device never surfaces a firstFou
   E.setMovingReady(false);
 
   // Boot, pre-answer: nothing may render, and nothing sourced from firstFound.
-  let rows = E.movingData();
-  assert.ok(![...rows.canRows, ...rows.newRows, ...rows.changedRows].some(r => r.filmId === fid),
+  let data = E.movingData();
+  assert.ok(!data.rows.some(r => r.filmId === fid),
     "no point before the ledger resolves may surface a firstFound-sourced row");
 
   // The ledger answers, still no real alerts for this film — firstFound must still never leak through.
   E.setMovingReady(true);
-  rows = E.movingData();
-  assert.ok(![...rows.canRows, ...rows.newRows, ...rows.changedRows].some(r => r.filmId === fid),
+  data = E.movingData();
+  assert.ok(!data.rows.some(r => r.filmId === fid),
     "once resolved, a signed-in device must read its real ledger, never fall back to firstFound");
 
   delete E.firstFound[fid];
@@ -1415,19 +1413,20 @@ test("CAS-670 AC4: a hard reload on a signed-in device never surfaces a firstFou
   disownFilms([film]);
 });
 
-// ---- MOVING OPENS ON THE FULLEST WINDOW (CAS-671), AND THE BADGE COUNTS THE SAME WINDOW THE SCREEN SHOWS
+// ---- MOVING OPENS PINNED TO 2 WEEKS (CAS-848), AND THE BADGE COUNTS THE SAME WINDOW THE SCREEN SHOWS
 // (CAS-668) --------------------------------------------------------------------------------------------
-// CAS-671 removed "Since you last looked" and the visit-cutoff it depended on: movingAutoOpenWindow() now
-// opens on the shortest window (Today/Week/2 weeks/Month, in that order) holding 3 or more rows, falling
-// back to Month if none do. movingWindowRows(win) is still the one recipe both renderMovingScreen and
-// movingUnseenCount read through, so the badge and the list can never disagree about the window.
+// CAS-671 removed "Since you last looked" and the visit-cutoff it depended on, opening instead on the
+// shortest window holding 3+ rows. CAS-848 replaced that auto-pick outright: Moving now always opens
+// pinned to 2 weeks, with no prior state and no row-count dependence — see the AC4 test below.
+// movingWindowRows(win) is still the one recipe both renderMovingScreen and movingUnseenCount read
+// through, so the badge and the list can never disagree about the window.
 const daysAgoISO = n => new Date(Date.now() - n * 864e5).toISOString();
 function unwatchedFilms(n){
   return E.MOVIES.filter(m => !E.watched.has(m.tmdb_id)).slice(0, n);
 }
 function seedFirstFound(films, daysAgo){
   films.forEach(m => { E.firstFound[String(m.tmdb_id)] = daysAgoISO(daysAgo); delete E.movingSeen[String(m.tmdb_id)]; });
-  ownFilms(MOVING_OWNER, films);   // CAS-829: movingData() drops any film with no single owner
+  ownFilms(MOVING_OWNER, films);   // gives every seeded film a real owner, so these stay pure window checks
 }
 function unseedFirstFound(films){
   films.forEach(m => { delete E.firstFound[String(m.tmdb_id)]; delete E.movingSeen[String(m.tmdb_id)]; });
@@ -1440,54 +1439,32 @@ test("CAS-671 AC1: app_template.html contains no since_last or movingVisitCutoff
   assert.ok(!src.includes("movingVisitCutoff"), "movingVisitCutoff must be fully removed");
 });
 
-test("CAS-671 AC2: opens on the shortest window holding 3 or more rows (Today 0/Week 1/2 weeks 4/Month 9)", () => {
+test("CAS-848 AC5: app_template.html contains no movingAutoOpenWindow", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  assert.ok(!src.includes("movingAutoOpenWindow"), "movingAutoOpenWindow must be fully removed");
+});
+
+test("CAS-848 AC6: app_template.html no longer prints a trailing \"via <agent>\" on a Moving row", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  assert.ok(!/via <span class="mlchip mvagent"|via .{0,40}mvagent/.test(src),
+    "the lane heading names the agent now — no per-row \"via <agent>\" trailer");
+});
+
+test("CAS-848 AC4: openMovingScreen always opens pinned to 2 weeks, with no prior state", () => {
+  // 9 rows all aged 20 days — under CAS-671's old row-count auto-pick this would have opened on Month.
+  // The new behaviour must ignore row distribution entirely and always land on 2 weeks.
   const films = unwatchedFilms(9);
   assert.equal(films.length, 9, "sanity: needs 9 distinct unwatched films to seed this scenario");
-  const weekFilm = films.slice(0, 1);      // age 3d: inside week/2weeks/month, outside today — Week totals 1
-  const twoWeekFilms = films.slice(1, 4);  // age 10d: inside 2weeks/month, outside week — 2 weeks totals 4
-  const monthFilms = films.slice(4, 9);    // age 20d: inside month only — Month totals 9
-  seedFirstFound(weekFilm, 3);
-  seedFirstFound(twoWeekFilms, 10);
-  seedFirstFound(monthFilms, 20);
-
-  assert.equal(E.movingAutoOpenWindow(), "2weeks",
-    "Today=0, Week=1, 2 weeks=4, Month=9 must open on 2 weeks — the shortest window holding >=3 rows");
-
-  unseedFirstFound([...weekFilm, ...twoWeekFilms, ...monthFilms]);
-});
-
-test("CAS-671 AC3: falls back to Month when no window reaches 3 rows", () => {
-  const films = unwatchedFilms(2);
-  seedFirstFound(films, 5);   // 2 rows, inside week/2weeks/month — never reaches 3 anywhere
-
-  assert.equal(E.movingAutoOpenWindow(), "month",
-    "no window holding 3+ rows must fall back to Month, not an empty window");
-
-  unseedFirstFound(films);
-});
-
-test("CAS-671 AC4/AC5: opening lands on the predicted window with the matching rows/badge, and reopening with no data change repeats it", () => {
-  const films = unwatchedFilms(3);
-  seedFirstFound(films, 10);   // 3 rows inside 2weeks/month, outside today/week
-
-  const predicted = E.movingAutoOpenWindow();
-  assert.equal(predicted, "2weeks", "sanity: 3 rows aged 10 days must open on 2 weeks");
+  seedFirstFound(films, 20);
 
   E.openMovingScreen();
-  assert.equal(E.movingWindow, predicted, "openMovingScreen must land on the window movingAutoOpenWindow predicted");
-  const shownIds = E.movingWindowRows(E.movingWindow).shownNew.map(r => r.filmId).sort();
-  assert.deepEqual(shownIds, films.map(m => String(m.tmdb_id)).sort(),
-    "the rendered window must show exactly the seeded rows");
-  assert.equal(E.movingUnseenCount(), 0, "every row just shown must now count as seen");
+  assert.equal(E.movingWindow, "2weeks", "openMovingScreen must always land on 2 weeks, regardless of row age/count");
   E.closeMovingScreen();
 
-  // Reopening with the same, unchanged data must pick the same window again.
+  // Reopening with the same, unchanged data must land on 2 weeks again.
   E.openMovingScreen();
-  const window2 = E.movingWindow;
-  const rows2 = E.movingWindowRows(window2).shownNew.map(r => r.filmId).sort();
+  assert.equal(E.movingWindow, "2weeks", "reopening with no data change must still land on 2 weeks");
   E.closeMovingScreen();
-  assert.equal(window2, predicted, "reopening with no data change must pick the same window");
-  assert.deepEqual(rows2, shownIds, "reopening with no data change must show the same rows");
 
   unseedFirstFound(films);
 });
@@ -1495,22 +1472,21 @@ test("CAS-671 AC4/AC5: opening lands on the predicted window with the matching r
 test("CAS-668: rendering a window does not clear the unseen state of rows outside it", () => {
   const [filmA, filmB] = unwatchedFilms(2);
   const idA = String(filmA.tmdb_id), idB = String(filmB.tmdb_id);
-  const padding = unwatchedFilms(4).slice(2, 4);   // 2 more films so filmB's window reaches the 3-row threshold
 
-  seedFirstFound([filmB, ...padding], 10);   // 3 rows aged 10 days — inside 2weeks/month, outside today/week
-  seedFirstFound([filmA], 20);               // 1 row aged 20 days — inside month only, outside 2weeks
+  seedFirstFound([filmB], 10);   // aged 10 days — inside 2weeks/month, outside today/week
+  seedFirstFound([filmA], 20);   // aged 20 days — inside month only, outside 2weeks
 
   E.openMovingScreen();
-  assert.equal(E.movingWindow, "2weeks", "sanity: 3 rows aged 10 days must auto-open on 2 weeks");
-  const { shownNew } = E.movingWindowRows("2weeks");
-  const shownIds = shownNew.map(r => r.filmId);
+  assert.equal(E.movingWindow, "2weeks", "sanity: Moving always opens on 2 weeks now");
+  const { shownRows } = E.movingWindowRows("2weeks");
+  const shownIds = shownRows.map(r => r.filmId);
   assert.ok(shownIds.includes(idB) && !shownIds.includes(idA), "sanity: filmB is in the 2 weeks window, filmA is not");
 
-  assert.equal(E.movingSeen[idB], "new_agents", "the row actually shown in the rendered window must be marked seen");
+  assert.equal(E.movingSeen[idB], "new", "the row actually shown in the rendered window must be marked seen");
   assert.ok(!(idA in E.movingSeen), "a row outside the rendered window must not have its unseen state touched");
   E.closeMovingScreen();
 
-  unseedFirstFound([filmA, filmB, ...padding]);
+  unseedFirstFound([filmA, filmB]);
 });
 
 test("CAS-668: an empty window's badge reads 0, not a count borrowed from a different window", () => {
@@ -1519,8 +1495,8 @@ test("CAS-668: an empty window's badge reads 0, not a count borrowed from a diff
 
   E.openMovingScreen();
   E.setMovingWindow("today");
-  const { shownNew } = E.movingWindowRows("today");
-  assert.equal(shownNew.length, 0, "sanity: \"today\" really is empty for this seeded data");
+  const { shownRows } = E.movingWindowRows("today");
+  assert.equal(shownRows.length, 0, "sanity: \"today\" really is empty for this seeded data");
   assert.equal(E.movingUnseenCount(), 0,
     "the badge must read 0 for an empty window even though an unseen row exists in a different window");
   E.closeMovingScreen();

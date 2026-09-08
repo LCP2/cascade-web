@@ -349,6 +349,10 @@
      sat on top and ate every click and tap in the panel — sign-in from the front door was unusable. Every
      other .modal only ever opens over the plain listing, so this is scoped to #authModal, not the class. */
   #authModal.open{z-index:81}
+  /* CAS-838: the contact sheet opens from #aboutPage (z-index:90) and from renderAbout()'s #aboutScreen
+     (a .uscreen, z-index:84) — the highest of either, so it stacks over both rather than opening behind
+     the surface that launched it, same reasoning as #authModal.open above. */
+  #contact.open{z-index:91}
   /* CAS-437: the public film page. Same phone-width-capped full page as .modal, but its own z-index so it
      sits over the splash (80) too — a share link has to show the film regardless of what boot put up. */
   /* CAS-554 device-parity-ignore: R2 — same reasoning as .modal above: top:0 carries no padding of its own
@@ -368,6 +372,9 @@
   .fpcta{display:block;width:100%;background:var(--accentdeep);color:#fff;border:none;border-radius:11px;
     padding:14px;font-weight:800;font-size:15.5px;cursor:pointer;margin:20px 0 10px}
   .fpfoot{font-size:12px;color:var(--faint);text-align:center;margin:0 0 20px}
+  /* CAS-837: reuses the card's own .exshare/.exsharebtn — the film page just centers it, so the secondary
+     share action doesn't compete with .fpcta's full-width primary CTA below it. */
+  .filmpage .exshare{text-align:center;margin:16px 0 4px}
   /* .synopsis clamps to 3 lines and .wtw hides by default — both card-list space-savers this standalone
      page doesn't need; it's the one place the full synopsis and the where-to-watch list are always open. */
   .filmpage .synopsis{-webkit-line-clamp:unset;display:block;margin-bottom:14px}
@@ -1164,7 +1171,10 @@
   .mvwhy{font-size:11px;color:var(--dim);line-height:1.4;padding:0 2px 6px}
   .mvchip{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.3px;padding:3px 7px;
     border-radius:6px;background:var(--panel2);border:1px solid var(--line);color:var(--accenttext)}
-  .mlchip.mvagent{cursor:pointer}
+  /* CAS-848: the two moment tags — New (a first appearance for this agent) vs Changed (everything else) —
+     same colour language as the status chips elsewhere (--green/--blue). */
+  .mvchip.new{background:rgba(72,199,142,.16);border-color:var(--green);color:#a7eccb}
+  .mvchip.changed{background:rgba(90,169,240,.16);border-color:var(--blue);color:#bcdcff}
   /* CAS-650: the window chip row — reuses .chip.gen, the same single-select pill already used for
      other filter rows, so the new control matches the app's existing chip language. */
   .mvwindows{display:flex;flex-wrap:wrap;gap:6px;padding:0 2px 12px}
@@ -1540,6 +1550,17 @@
   .applybtn{flex:1;background:var(--accentdeep);color:#fff;border:none;border-radius:11px;padding:13px;
     font-size:14.5px;font-weight:800;cursor:pointer}
   .applybtn:disabled{background:var(--panel2);color:var(--faint);cursor:not-allowed}
+  /* CAS-838: the contact form's message field — same look as .namein (background/border/radius/padding/
+     colour), just multi-line. */
+  .cmsg{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    border-radius:10px;padding:11px 12px;font-size:16px;font-weight:500;font-family:inherit;resize:vertical}
+  /* CAS-838: the honeypot — off-screen and out of the tab order, never shown to a real visitor. */
+  .cthp{position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden}
+  .cdiagbtn{background:none;border:none;color:var(--dim);font-size:12px;font-weight:700;cursor:pointer;
+    padding:8px 0;text-align:left}
+  .cdiagbox{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;
+    font-size:11px;line-height:1.5;color:var(--dim);white-space:pre-wrap;max-height:200px;overflow-y:auto;
+    margin:0 0 8px;font-family:inherit}
   .dangerbtn{background:var(--panel2);border:1px solid #5c3540;color:#ffb9a6;border-radius:11px;
     padding:13px 14px;font-size:14px;font-weight:700;cursor:pointer}
   /* CAS-317: neutral secondary action beside an .applybtn (e.g. "Log in" next to "Create account") —
@@ -3933,6 +3954,16 @@
   <div class="cascfoot"><button class="applybtn" id="saveAsGo">Save Cascade</button></div>
 </div>
 
+<!-- CONTACT US (CAS-838) — one shared sheet opened from both About surfaces: the signed-out #aboutPage
+     and renderAbout()'s signed-in screen. #contact.open gets its own z-index override below, same reason
+     as #authModal.open — it has to sit over whichever About surface opened it, both of which already sit
+     above the shared .modal z-index. Body rebuilt fresh by renderContactForm() every open, same convention
+     as renderAbout() itself, so the form and its category selection never carry state from a prior visit. -->
+<div class="modal" id="contact">
+  <div class="modalhead"><h3>Contact us</h3><button class="donebtn" id="contactClose">Cancel</button></div>
+  <div id="contactBody"></div>
+</div>
+
 <!-- DEBUG LOG modal — local-only usage log. Opened with ?log=1, or 5 taps on the "updated" line. -->
 <div class="modal" id="logModal">
   <div class="modalhead"><h3>🧪 Usage log (local)</h3><button class="donebtn" id="logDone">Done</button></div>
@@ -4081,6 +4112,10 @@
     <p>Cascade is not affiliated with any streaming service, and does not play or host video.
       Watching a film still needs whatever subscription or purchase the service asks for.</p>
   </div>
+
+  <div class="abh">Contact us</div>
+  <p class="abp">Spotted a bug, have a suggestion, or a question about your account? We read every message.</p>
+  <button class="applybtn" id="aboutPageContact" type="button" style="width:100%;margin:0 0 4px">Contact us</button>
 
   <div class="abfoot">Codynamics &middot; Australia</div>
 </div>
@@ -6858,7 +6893,7 @@ function creditsHTML(m, inCard){
 // It lives in the expanded card, where the ticket suggests: it is a considered action, not a one-tap verdict,
 // and the control stack below is already three decisions deep.
 function shareFilmHTML(m){
-  return `<div class="exshare"><button type="button" class="exsharebtn" onclick="event.stopPropagation();shareFilm(${m.tmdb_id})"
+  return `<div class="exshare"><button type="button" class="exsharebtn" onclick="event.stopPropagation();shareFilm(${m.tmdb_id},this)"
       title="${escA("Share "+m.title)}" aria-label="${escA("Share "+m.title)}">${ICON.share}<span class="sl">Share</span></button></div>`;
 }
 // What we can say about the film without inventing anything: its title, its year, and the window we have
@@ -6869,14 +6904,36 @@ function shareTextFor(m){
   const where = isEstimated(m) ? "" : (STATUS_LABEL[primaryStatus(m)]||"");
   return `${m.title}${yr?` (${yr})`:""}${where?` — ${where}`:""}`;
 }
+// CAS-837: 8 chars from crypto.getRandomValues over [a-z0-9], never derived from the user id — the code
+// rides in every shared link and must not be reversible to an account.
+function genRefCode(){
+  const chars="abcdefghijklmnopqrstuvwxyz0123456789", buf=new Uint8Array(8), out=[];
+  crypto.getRandomValues(buf);
+  for(let i=0;i<8;i++) out.push(chars[buf[i]%chars.length]);
+  return out.join("");
+}
+// CAS-837: this device's cached copy of the signed-in account's referral code — set by loadUserPrefs()
+// below (reading user_prefs.ref_code, or minting one the first time nobody has) so shareUrlFor can stay
+// synchronous rather than a link waiting on a network round trip.
+let refCodeCache = null;
+function refCode(){
+  const a=window.CascadeAuth;
+  return (a && a.enabled && a.status==="signed-in") ? refCodeCache : null;
+}
 // CAS-437: the film's own page is now OURS — a Cascade URL, not JustWatch's or TMDB's. A hash route on the
 // same static index.html (GitHub Pages serves one file; no server-side routing to stand up), so the link is
 // real and permanent without a build-time page per title. #/film/<id> is read at boot by openFilmPage().
-const shareUrlFor = m => `${location.origin}${location.pathname}#/film/${m.tmdb_id}`;
-window.shareFilm = async id => {
+// CAS-837: signed in, the link also carries the sender's ref code (?inv=) so an arrival can be recorded —
+// signed out there is no code and the link is exactly what it was before.
+const shareUrlFor = m => { const code=refCode();
+  return `${location.origin}${location.pathname}${code?`?inv=${code}`:""}#/film/${m.tmdb_id}`; };
+// CAS-837: btnEl (passed by shareFilmHTML as `this`) is how the film page's own share control gets its
+// own "Copied" feedback — it isn't inside a #card-<id>, so the old lookup would silently find nothing.
+// Falls back to that lookup when called without one so every existing caller keeps working unchanged.
+window.shareFilm = async (id, btnEl) => {
   const m=MOVIES.find(x=>x.tmdb_id===id); if(!m) return;
   const url=shareUrlFor(m), text=shareTextFor(m);
-  const btn=document.querySelector(`#card-${id} .exsharebtn`);
+  const btn=btnEl || document.querySelector(`#card-${id} .exsharebtn`);
   const say=msg=>{ if(!btn) return; const lab=btn.querySelector(".sl"); if(!lab) return;
                    const was=lab.textContent; lab.textContent=msg; btn.classList.add("done");
                    setTimeout(()=>{ lab.textContent=was; btn.classList.remove("done"); }, 1800); };
@@ -6926,6 +6983,7 @@ function filmPageHTML(m){
     ${filmPageWhereHTML(m)}
     <div class="mrow r-scores">${scoresRowHTML(m)}</div>
     <div class="mrow r-awards">${cinemaReleaseChip(m)}${awardChips(m)}</div>
+    ${shareFilmHTML(m)}
     <button type="button" class="fpcta" onclick="filmPageCta()">Get Cascade — find more like this</button>
     <div class="fpfoot">Cascade tracks cinema, rental and streaming for you — sign up to build your own.</div>`;
 }
@@ -11457,9 +11515,12 @@ function renderAbout(){
   $("aboutBody").innerHTML=`
     <div class="ostop"><button class="osback" type="button" onclick="closeAbout()" aria-label="Back">←</button>
       <h2 class="osh">About</h2></div>
+    <div class="flabel">Contact</div>
+    <button class="applybtn" id="aboutScreenContact" type="button" style="width:100%;margin:0 0 8px">Contact us</button>
     <div class="flabel">Build</div>
     <div class="pnote" id="aboutBuild">—</div>`;
   stampAboutBuild();
+  $("aboutScreenContact").onclick=()=>openContact("aboutScreen");
 }
 window.openAbout=()=>{
   renderAbout();
@@ -11638,6 +11699,104 @@ $("splashAbout").onclick=()=>{
   $("aboutPage").classList.add("open");
 };
 $("aboutClose").onclick=()=>$("aboutPage").classList.remove("open");
+$("aboutPageContact").onclick=()=>openContact("aboutPage");
+
+// ---- CAS-838: Contact us — one shared sheet, opened from both About surfaces above -----------------
+const CONTACT_CATEGORIES=[
+  {key:"bug",label:"Bug"},
+  {key:"suggestion",label:"Suggestion"},
+  {key:"account",label:"Account"},
+  {key:"other",label:"Something else"},
+];
+let contactCategory=null;
+function contactCatChipsHTML(){
+  return CONTACT_CATEGORIES.map(c=>
+    `<button type="button" class="chip gen${contactCategory===c.key?" on":""}" aria-pressed="${contactCategory===c.key}"
+      onclick="selectContactCategory('${c.key}')">${esc(c.label)}</button>`).join("");
+}
+// Rebuilt fresh every open (mirrors renderAbout()'s own convention) so a prior visit's category, typed
+// message or error never bleeds into the next one.
+function renderContactForm(){
+  contactCategory=null;
+  const a=window.CascadeAuth, signedIn=!!(a && a.status==="signed-in" && a.user);
+  const email=signedIn ? (a.user.email||"") : "";
+  $("contactBody").innerHTML=`
+    <div class="pnote">A Cascade can't tell you why a film moved the way it did, but we can — tell us what's
+      going on.</div>
+    <div class="flabel">What's this about?</div>
+    <div class="chips" id="contactCatChips">${contactCatChipsHTML()}</div>
+    <div class="flabel">Message</div>
+    <textarea id="contactMsg" class="cmsg" maxlength="2000" rows="4" placeholder="What's on your mind?"></textarea>
+    <div class="flabel">Email (so we can reply)</div>
+    <input id="contactEmail" class="namein" type="email" autocomplete="email" placeholder="you@example.com"
+      value="${escA(email)}" ${signedIn?"":"required"}>
+    <!-- Honeypot (CAS-838): off-screen, never focusable, filled only by a bot filling every field it
+         finds. A real visitor never sees or reaches it, so a filled value is always dropped, silently. -->
+    <input id="contactHp" class="cthp" type="text" name="cf_url" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <div id="contactDiagWrap" hidden>
+      <button type="button" class="cdiagbtn" id="contactDiagToggle" aria-expanded="false"
+        onclick="toggleContactDiag()">What's included ▾</button>
+      <pre class="cdiagbox" id="contactDiagBox" hidden></pre>
+    </div>
+    <div class="pnote">We read every message, but we can't promise a reply to each one.</div>
+    <div class="pnote" id="contactErr" style="color:#ffb9a6" hidden></div>
+    <div class="cascfoot"><button class="applybtn" id="contactSend" disabled onclick="sendContact()">Send</button></div>`;
+}
+window.selectContactCategory=key=>{
+  contactCategory=key;
+  $("contactCatChips").innerHTML=contactCatChipsHTML();
+  $("contactSend").disabled=false;
+  const diagWrap=$("contactDiagWrap");
+  diagWrap.hidden = key!=="bug";
+  if(key!=="bug"){
+    $("contactDiagBox").hidden=true; $("contactDiagBox").textContent="";
+    $("contactDiagToggle").setAttribute("aria-expanded","false");
+  }
+};
+// The diagnostics block is collected lazily, only once actually expanded, so nothing is sent that the
+// person hasn't had the chance to read first.
+window.toggleContactDiag=()=>{
+  const box=$("contactDiagBox"), btn=$("contactDiagToggle"), show=box.hidden;
+  box.hidden=!show;
+  if(show && !box.textContent) box.textContent=diagReportText();
+  btn.setAttribute("aria-expanded", show?"true":"false");
+};
+window.openContact=from=>{
+  renderContactForm();
+  openModal($("contact"));
+  logEvent("contact_opened",{from});
+};
+$("contactClose").onclick=()=>closeModal($("contact"));
+window.sendContact=async()=>{
+  if(!contactCategory) return;
+  const hp=$("contactHp");
+  if(hp && hp.value) return;   // honeypot filled — drop silently, no error, no insert
+  const msgEl=$("contactMsg"), emailEl=$("contactEmail"), errEl=$("contactErr");
+  const message=(msgEl.value||"").trim(), email=(emailEl.value||"").trim();
+  errEl.hidden=true;
+  if(!message){ msgEl.focus(); return; }
+  if(emailEl.required && !email){
+    emailEl.focus(); errEl.textContent="Add an email so we can reply."; errEl.hidden=false; return;
+  }
+  const diagnostics = contactCategory==="bug" ? diagReportText() : null;
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  const btn=$("contactSend");
+  btn.disabled=true;
+  try{
+    if(!c) throw new Error("Cascade: no Supabase client");
+    const {error}=await c.from("contact_messages").insert([{
+      client_key:CLIENT_KEY, build:buildCore(), category:contactCategory, message, email: email||null, diagnostics,
+    }]);
+    if(error) throw error;
+    logEvent("contact_sent",{category:contactCategory});
+    $("contactBody").innerHTML=`<p class="pnote">Thanks — that's sent. We read every message, even the
+      ones we can't get back to.</p>`;
+  }catch(e){
+    btn.disabled=false;
+    errEl.textContent="Couldn't send that — try again in a moment.";
+    errEl.hidden=false;
+  }
+};
 document.addEventListener("keydown", e => { if(e.key==="Escape" && $("aboutPage").classList.contains("open")) $("aboutPage").classList.remove("open"); });
 
 // ---- Agent select (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
@@ -16294,35 +16453,15 @@ function renderAgentsScreen(){
   console.log('[CAS-664] renderAgentsScreen took', (performance.now()-_t664).toFixed(1), 'ms for', n, 'agents');
 }
 // ================= CAS-636: Moving — the alert feed made visible =================
-// CAS-650: every row is a dated event now, not a standing-state snapshot. With an account, all three
-// groups are sourced from the notifications ledger (realAlerts); as a guest, only NEW TO YOUR AGENTS is
-// derivable, from firstFound. watchIsCurrent(id) — the exact predicate that gives a card its gold "Can
-// Watch" state — still decides whether a dated ledger entry belongs in CAN WATCH NOW or AVAILABILITY
-// CHANGED (that split is a membership rule CAS-650 explicitly leaves unchanged), but it no longer
-// MANUFACTURES a row on its own: a row only exists where there is a dated event to hang it on.
-function movingCanWatchReason(id){
-  const levels=watchLevelsFor(id);
-  const m=MOVIES.find(x=>x.tmdb_id===id);
-  const hitWindow=m && (m.status||[]).find(w=>{
-    const key=filmOptKeyForWindow(null,w);
-    const l=key && levels.find(x=>x.key===key);
-    return !!(l && filmOptOn(id,l));
-  });
-  const key=hitWindow && filmOptKeyForWindow(null,hitWindow);
-  const l=key && levels.find(x=>x.key===key);
-  return l ? `Reached ${l.label}` : "You can watch it now";
+// CAS-848: the screen's own subtitle, shared by the loading state and the real one so they never say two
+// different things about what this screen covers.
+const MOVING_SUBTITLE = "What your agents found and what moved, over the last 2 weeks.";
+// CAS-848: the shared classification rule (also used by monitor/emailer.py's daily digest) — New = the
+// film's first appearance for this agent; Changed = anything else (a window move on a film the agent
+// already had). Nothing is both.
+function movingIsNewMoment(moment){
+  return moment==="new_to_agent" || moment==="newly_qualifies";
 }
-// CAS-644: the moment that decides NEW TO YOUR AGENTS vs a "changed" moment (CAN WATCH NOW/AVAILABILITY
-// CHANGED) — a ledger entry whose moment is one of REAL_MOMENT_SAID's own keys is a window move (the film
-// was already an agent's, and something about where you can watch it changed); anything else (starting
-// with "announced", the film's first appearance for that agent) is the weaker claim, NEW TO YOUR AGENTS.
-// A moment we can't classify falls to NEW TO YOUR AGENTS rather than being guessed into a window it may
-// not belong to.
-const MOVING_CHANGE_CHIP = {
-  hits_cinema:"IN CINEMAS", past_opening_weekend:"IN CINEMAS",
-  hits_pvod:"NOW RENTABLE", hits_rent:"NOW RENTABLE",
-  hits_stream:"NOW STREAMING",
-};
 // CAS-671: the time-window chips, in this exact order (shortest to longest) — rolling windows measured
 // back from now. "Since you last looked" is gone; there is no visit-relative window any more.
 const MOVING_WINDOWS = [
@@ -16338,9 +16477,6 @@ const MOVING_EMPTY_COPY = {
   "2weeks":"Nothing has moved in the last 2 weeks.",
   month:"Nothing has moved in the last month.",
 };
-// CAS-829: shown instead of MOVING_EMPTY_COPY when the window actually held ledger entries but every one
-// was dropped for having no single owning agent — "nothing has moved" would be false in that case.
-const MOVING_EMPTY_NO_OWNER_COPY = "Something moved, but no agent currently owns it, so there's nothing to show.";
 let movingWindow="today";
 // CAS-668: whether the screen is actually open right now — the badge mirrors movingWindow
 // while it is, and predicts the window openMovingScreen would pick while it isn't. See movingBadgeWindow.
@@ -16367,161 +16503,157 @@ function movingInWindow(dateStr, windowKey){
   const days=MOVING_WINDOW_DAYS[windowKey];
   return days!=null && t>Date.now()-days*864e5;
 }
-// CAS-671: open on the SHORTEST window holding >=3 rows — MOVING_WINDOWS is already ordered shortest to
-// longest, so the first match walking it in order is the shortest one. If no window reaches 3, open on the
-// longest window (Month) so the user lands on the fullest view rather than an empty one. Opening selection
-// only — a tap always wins (setMovingWindow), and nothing here is persisted.
-function movingAutoOpenWindow(){
-  const {canRows,newRows,changedRows}=movingData();
-  const all=[...canRows,...newRows,...changedRows];
-  const countFor=key=>all.filter(r=>movingInWindow(r.date,key)).length;
-  const withThree=MOVING_WINDOWS.find(w=>countFor(w.key)>=3);
-  return withThree ? withThree.key : "month";
-}
+// CAS-848: every row names its OWNER agent (filmOwnerCascade, the same single-owner answer the Watch
+// listing's own per-agent blocks use) rather than the ledger entry's own agent-name field, which can list
+// an agent that no longer owns (or never owned) this film. An owner that no longer resolves (or never
+// existed — cascadeIds empty) is not dropped any more: it renders in the final untinted "Other" lane at
+// render time, exactly like the Watch listing's splitByOwner treats the same case.
 function movingData(){
   const guest=movingIsGuestDevice();
   // CAS-667: a signed-in device must never paint the guest ledger while the real one is still in flight —
   // Moving is the landing screen, so the first render reliably lost this race. Render nothing until
   // loadRealAlerts has actually answered; a genuine guest has nothing to wait for and is unaffected.
-  if(!guest && !movingReady) return {canRows:[], newRows:[], changedRows:[], droppedRows:[]};
-  const canRows=[], newRows=[], changedRows=[], droppedRows=[];
+  if(!guest && !movingReady) return {rows:[]};
+  const rows=[];
   if(guest){
-    // INDICATIVE (CHANGE 1): firstFound only ever says "this film is newly found" — it carries no notion
-    // of a level being reached or lost — so a guest device gets a real NEW TO YOUR AGENTS group and
-    // nothing else. Never fabricate a CAN WATCH NOW/AVAILABILITY CHANGED date for a guest; there isn't one.
+    // firstFound only ever says "this film is newly found" — it carries no notion of a level being
+    // reached or lost — so a guest device only ever gets New rows.
     Object.keys(firstFound).forEach(fid=>{
       if(watched.has(Number(fid))) return;
       const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
       if(!m) return;
-      // CAS-829: a film with no single owning agent never gets a row — see filmOwnerCascade below. It is
-      // still recorded in droppedRows so the empty state can tell "no owner" apart from "nothing moved".
       const owner=filmOwnerCascade(m);
-      if(!owner){ droppedRows.push({date:firstFound[fid]}); return; }
-      newRows.push({filmId:fid, m, groupKey:"new_agents", chip:"NEW",
-        reason:"New to your agents", agentId:owner.id, agentName:owner.name, date:firstFound[fid]});
+      rows.push({filmId:fid, m, tag:"new", reason:"New to your agents",
+        agentId:owner?owner.id:null, date:firstFound[fid]});
     });
   }else{
-    const byFilm=new Map();
     // realAlerts is loaded newest-first (loadRealAlerts orders by emailed_at descending), so the first
     // entry seen per film is the most recent — exactly the one whose moment/date should describe the row.
+    const byFilm=new Map();
     realAlerts.forEach(a=>{
       const fid=String(a.movie_id);
-      if(watched.has(Number(fid))) return;   // CHANGE 4: dealt with, never shown as having moved
+      if(watched.has(Number(fid))) return;   // dealt with, never shown as having moved
       if(byFilm.has(fid)) return;
       const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
       if(!m) return;
-      // CAS-829: the row's agent is the film's single OWNER — the same recomputeFound()/agentChipHTML
-      // answer everywhere else — never the ledger entry's own agent-name field, which can list an agent
-      // that no longer owns (or never owned) this film. No owner, no row, in either branch.
       const owner=filmOwnerCascade(m);
-      if(!owner){ droppedRows.push({date:a.emailed_at}); return; }
-      const isChange=Object.prototype.hasOwnProperty.call(REAL_MOMENT_SAID,a.moment);
-      // CHANGE 1: CAN WATCH NOW's row is the ledger entry recording the notify being met — an isChange
-      // moment for a film that is still, right now, sitting in a level you ticked. The same kind of
-      // moment for a film no longer in that state is AVAILABILITY CHANGED instead; group membership is
-      // unchanged from before CAS-650, only the row's date now comes from this ledger entry.
-      const canWatch=isChange && watchIsCurrent(Number(fid));
-      byFilm.set(fid,{filmId:fid, m, groupKey:canWatch?"can_watch":(isChange?"availability_changed":"new_agents"),
-         chip:canWatch?"CAN WATCH":(isChange?(MOVING_CHANGE_CHIP[a.moment]||"NEW"):"NEW"),
-         reason:canWatch?movingCanWatchReason(m.tmdb_id):(REAL_MOMENT_SAID[a.moment]||a.moment),
-         agentId:owner.id, agentName:owner.name, date:a.emailed_at});
+      byFilm.set(fid,{filmId:fid, m, tag:movingIsNewMoment(a.moment)?"new":"changed",
+        reason:REAL_MOMENT_SAID[a.moment]||a.moment,
+        agentId:owner?owner.id:null, date:a.emailed_at});
     });
-    byFilm.forEach(g=>{
-      if(g.groupKey==="can_watch") canRows.push(g);
-      else if(g.groupKey==="availability_changed") changedRows.push(g);
-      else newRows.push(g);
-    });
+    rows.push(...byFilm.values());
   }
-  const byScoreDesc=(a,b)=>qScore(b.m)-qScore(a.m);
-  canRows.sort(byScoreDesc);
-  newRows.sort(byScoreDesc);
-  changedRows.sort(byScoreDesc);
-  return {canRows, newRows, changedRows, droppedRows};
+  return {rows};
 }
 // CAS-668: the filtered row set both the badge and the list are built from — one recipe, so they cannot
 // disagree about which rows are "in" the window. renderMovingScreen calls this with its live movingWindow;
 // movingUnseenCount calls it with whatever movingBadgeWindow() says applies right now.
-// CAS-829: also reports droppedInWindow — ledger entries inside this window that were dropped for having
-// no single owning agent — so the empty state can tell "no owner" apart from "nothing moved".
 function movingWindowRows(win){
-  const {canRows,newRows,changedRows,droppedRows}=movingData();
-  const inWindow=r=>movingInWindow(r.date, win);
-  return {shownCan:canRows.filter(inWindow), shownNew:newRows.filter(inWindow), shownChanged:changedRows.filter(inWindow),
-    droppedInWindow:droppedRows.filter(inWindow).length};
+  const {rows}=movingData();
+  return {shownRows: rows.filter(r=>movingInWindow(r.date, win))};
 }
 // CAS-668: while Moving is open, the badge must track whatever window is actually on screen (movingWindow),
 // including a tap via setMovingWindow. While it's closed, there is no "on screen" window yet, so the badge
-// predicts the same window openMovingScreen would pick if opened right now — the same computation, run early.
+// predicts the window Moving now always opens on (CAS-848: pinned to 2 weeks, no longer auto-picked).
 function movingBadgeWindow(){
-  return movingIsOpen ? movingWindow : movingAutoOpenWindow();
+  return movingIsOpen ? movingWindow : "2weeks";
 }
 function movingUnseenCount(){
   const win=movingBadgeWindow();
-  const {shownCan,shownNew,shownChanged}=movingWindowRows(win);
-  return [...shownCan,...shownNew,...shownChanged].filter(r=>movingSeen[r.filmId]!==r.groupKey).length;
+  const {shownRows}=movingWindowRows(win);
+  return shownRows.filter(r=>movingSeen[r.filmId]!==r.tag).length;
 }
 function updateMovingBadge(){
   const b=$("movingBadge"); if(!b) return;
   const n=movingUnseenCount();
   if(n){ b.style.display="grid"; b.textContent=n; } else b.style.display="none";
 }
-// CHANGE 3: the item is the change line above the SAME card the Watch listing renders for that film —
-// taggedOut() picks the stub exactly as Watch does, and the full card omits the "Not for this list"
-// control (Moving is not a list, so there is nothing to be not-for) but is otherwise the same card.
+// CAS-848: one lane per owning agent, ranked the same way the Watch listing ranks its own per-agent
+// blocks (cascadeRankTint/c.order) — resolved fresh by id here, not trusted from the row, so a since-
+// renamed (or since-deleted) agent is never stale. No cascade resolves -> the final untinted "Other" lane.
+function movingLanes(rows){
+  const byKey=new Map();
+  rows.forEach(r=>{
+    const cascade = r.agentId!=null ? cascades.find(c=>c.id===r.agentId) : null;
+    const key = cascade ? cascade.id : "__other__";
+    if(!byKey.has(key)) byKey.set(key, {cascade, rows:[]});
+    byKey.get(key).rows.push(r);
+  });
+  const lanes=[...byKey.values()];
+  lanes.forEach(l=>l.rows.sort((a,b)=>(Date.parse(b.date)||0)-(Date.parse(a.date)||0)));   // newest first
+  lanes.sort((a,b)=>(a.cascade?(a.cascade.order??1e9):Infinity)-(b.cascade?(b.cascade.order??1e9):Infinity));
+  return lanes;
+}
+// A row's `date` is either a realAlerts emailed_at timestamp or a firstFound day string — both parse with
+// Date.parse. Calendar-day difference from now, said plainly; never a fabricated precision.
+function movingAgeText(dateStr){
+  const t=dateStr && Date.parse(dateStr);
+  if(!t || isNaN(t)) return "";
+  const days=Math.floor((Date.now()-t)/864e5);
+  if(days<=0) return "today";
+  if(days===1) return "yesterday";
+  return `${days} days ago`;
+}
+// The item is the change line above the SAME card the Watch listing renders for that film — taggedOut()
+// picks the stub exactly as Watch does, and the full card omits the "Not for this list" control (Moving
+// is not a list, so there is nothing to be not-for) but is otherwise the same card.
 function movingRowHTML(row){
   const m=row.m;
-  // CAS-829: bound by cascade id (data-cid), not name, so a since-renamed agent still resolves — see
-  // window.openMovingAgent below. movingData() never emits a row with no owner, so this always renders.
-  const agentHTML=`<span class="mlchip mvagent" role="button" tabindex="0" data-cid="${escA(row.agentId)}" onclick="event.stopPropagation();openMovingAgentEl(this)">${esc(row.agentName)}</span>`;
-  const why=`<div class="mvwhy"><span class="mvchip">${esc(row.chip)}</span> · ${esc(row.reason)} · via ${agentHTML}</div>`;
+  const age=movingAgeText(row.date);
+  const why=`<div class="mvwhy"><span class="mvchip ${row.tag}">${row.tag==="new"?"NEW":"CHANGED"}</span> · ${esc(row.reason)}${age?` · ${esc(age)}`:""}</div>`;
   const card=taggedOut(m) ? stubHTML(m) : cardHTML(m, false, {hideDismiss:true});
   return `<div class="mvitem">${why}${card}</div>`;
 }
-// CHANGE 3: movingSeen no longer decides whether a row renders — every row inside the selected window
-// shows, full stop (the render-time filter CAS-644 added is gone). It is still upserted here so
-// movingUnseenCount() (the chip badge — the only thing movingSeen is for now) can tell what has been shown.
-// CAS-668: the row set marked seen is movingWindowRows(movingWindow) — the exact same function and the
-// exact same window the badge computation reads, so the two can never disagree.
+// movingSeen no longer decides whether a row renders — every row inside the selected window shows, full
+// stop. It is still upserted here so movingUnseenCount() (the chip badge — the only thing movingSeen is
+// for now) can tell what has been shown. CAS-668: the row set marked seen is movingWindowRows(movingWindow)
+// — the exact same function and the exact same window the badge computation reads, so the two can never
+// disagree.
 function renderMovingScreen(){
   // CAS-667: while a signed-in device's alerts ledger is still in flight, movingData() returns nothing to
   // paint — say so explicitly instead of falling through to the "nothing has moved" empty state, which
   // would read as a real (and wrong) answer rather than "still loading".
   const guest=movingIsGuestDevice();
   if(!guest && !movingReady){
-    $("movingBody").innerHTML = `<h2 class="osh">Moving</h2><p class="ossub">What changed since you last looked. Same events as your alerts.</p>
+    $("movingBody").innerHTML = `<h2 class="osh">Moving</h2><p class="ossub">${MOVING_SUBTITLE}</p>
       <div class="mvempty"><p class="mvemptymain">Loading what's moved…</p></div>`;
     updateMovingBadge();
     return;
   }
-  const {shownCan, shownNew, shownChanged, droppedInWindow}=movingWindowRows(movingWindow);
-  [...shownCan, ...shownNew, ...shownChanged].forEach(r=>{ movingSeen[r.filmId]=r.groupKey; });
+  const {shownRows}=movingWindowRows(movingWindow);
+  shownRows.forEach(r=>{ movingSeen[r.filmId]=r.tag; });
   saveMovingSeen();
   updateMovingBadge();
-  // CHANGE 4: the ledger fetch itself (not any one group) is what's capped at 200 — if this window's raw
-  // entries reach that cap, older matches may have been cut off by the fetch rather than by the window, so
-  // every group shown this pass states it instead of hiding it.
+  // The ledger fetch itself (not any one lane) is what's capped at 200 — if this window's raw entries
+  // reach that cap, older matches may have been cut off by the fetch rather than by the window.
   const ledgerTruncated = realAlerts.length>=200
     && realAlerts.filter(a=>movingInWindow(a.emailed_at, movingWindow)).length>=200;
-  const groups=[
-    {title:"Can watch now", rows:shownCan},
-    {title:"New to your agents", rows:shownNew},
-    {title:"Availability changed", rows:shownChanged},
-  ].filter(g=>g.rows.length);
   const chipsHTML=MOVING_WINDOWS.map(w=>
     `<button type="button" class="chip gen${movingWindow===w.key?" on":""}" aria-pressed="${movingWindow===w.key}" onclick="setMovingWindow('${w.key}')">${esc(w.label)}</button>`
   ).join("");
-  const head=`<h2 class="osh">Moving</h2><p class="ossub">What changed since you last looked. Same events as your alerts.</p>
-    <div class="mvwindows">${chipsHTML}</div>`;
-  $("movingBody").innerHTML = groups.length
-    ? head + groups.map(g=>`
-      <div class="grouphead"><span>${esc(g.title)}${ledgerTruncated?" (showing the most recent 200)":""}</span><span class="gcount">${g.rows.length}</span></div>
-      <div class="mvlist">${g.rows.map(movingRowHTML).join("")}</div>`).join("")
-    // CAS-829: droppedInWindow means the ledger genuinely had entries here, but every one was dropped for
-    // lacking a single owning agent — say so plainly rather than reusing copy that claims nothing happened.
-    : `${head}<div class="mvempty">
-      <p class="mvemptymain">${esc(droppedInWindow ? MOVING_EMPTY_NO_OWNER_COPY : MOVING_EMPTY_COPY[movingWindow])}</p>
+  const head=`<h2 class="osh">Moving</h2><p class="ossub">${MOVING_SUBTITLE}</p>
+    <div class="mvwindows">${chipsHTML}</div>
+    ${ledgerTruncated ? `<p class="mvemptysub" style="padding:0 2px 12px">Showing the most recent 200 events.</p>` : ""}`;
+  if(!shownRows.length){
+    $("movingBody").innerHTML = `${head}<div class="mvempty">
+      <p class="mvemptymain">${esc(MOVING_EMPTY_COPY[movingWindow])}</p>
       <p class="mvemptysub">Your agents are still watching. You'll see it here first.</p>
     </div>`;
+    return;
+  }
+  const lanes=movingLanes(shownRows);
+  $("movingBody").innerHTML = head + lanes.map(lane=>{
+    const tint=cascadeRankTint(lane.cascade);   // null keeps the untinted "Other" appearance
+    const name=lane.cascade ? `${lane.cascade.icon} ${esc(lane.cascade.name)}` : "Other";
+    // CAS-636: tapping the lane heading lands on Watch with that agent selected — the same destination the
+    // old per-row "via <agent>" chip opened (openMovingAgent), just moved onto the heading that now names it.
+    const clickable = lane.cascade
+      ? ` role="button" tabindex="0" data-cid="${escA(lane.cascade.id)}" onclick="openMovingAgentEl(this)" style="cursor:pointer"` : "";
+    return `<div class="ablock${tint?` agrank-${tint}`:""}">
+      <div class="grouphead sub"${clickable}><span>${name}</span><span class="gcount" style="margin-left:auto">${lane.rows.length}</span></div>
+      <div class="mvlist">${lane.rows.map(movingRowHTML).join("")}</div>
+    </div>`;
+  }).join("");
 }
 // CAS-650: switching the window re-renders in place.
 window.setMovingWindow=(key)=>{
@@ -16550,13 +16682,13 @@ window.closeAgentsScreen=()=>{
 // CAS-636: Moving — the alert feed made visible. Same open/close shape as Agents (mutually exclusive with
 // Your Movies/Agents), plus its own render + seen-state pass (renderMovingScreen marks every row it shows
 // as seen and refreshes the badge, per cascade_moving_seen — see that function for the mechanism).
-// CAS-671: which window the visit OPENS on is the shortest window holding 3 or more rows, falling back to
-// Month — see movingAutoOpenWindow. Never persisted; the user's own tap (setMovingWindow) always overrides it.
+// CAS-848: which window the visit OPENS on is always 2 weeks now (CAS-671's shortest-window-holding-3-rows
+// auto-pick is gone). Never persisted; the user's own tap (setMovingWindow) always overrides it.
 window.openMovingScreen=()=>{
   if($("yourMovies").classList.contains("open")) closeYourMovies();
   if($("agentsScreen").classList.contains("open")) closeAgentsScreen();
   movingIsOpen=true;
-  movingWindow=movingAutoOpenWindow();
+  movingWindow="2weeks";   // CAS-848: always opens pinned to 2 weeks; a tap (setMovingWindow) still overrides it
   renderMovingScreen();
   $("movingScreen").scrollTop=0;
   $("movingScreen").classList.add("open"); document.body.style.overflow="hidden";
@@ -18911,6 +19043,9 @@ const REAL_MOMENT_SAID = {
   hits_pvod:"is available to buy", hits_rent:"dropped to a rental price",
   hits_stream:"landed on streaming", newly_qualifies:"now matches this agent",
   new_to_agent:"is new to this agent",
+  // CAS-848: the other two moments the monitor can emit — previously missing here, so a row for either
+  // printed its raw moment key instead of a said phrase.
+  announced:"just reached Cascade", opens_soon:"opens in cinemas soon",
 };
 const REAL_MOMENT_WINDOW = {
   hits_cinema:"in_cinema", past_opening_weekend:"past_opening", hits_pvod:"pvod",
@@ -19150,6 +19285,20 @@ else if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
 // static listing, so it is what should greet a returning visitor. A shared link and a film link still win
 // (see below): they say what the visitor arrived for more specifically than "what changed" does.
 else if(!openedShared) openMovingScreen();
+// CAS-837: an invite link's arrival, recorded before the #/film/<id> handling below opens the film page —
+// and before closeFilmPage() (~line 7083) could ever rebuild the URL from location.pathname+location.search,
+// which is why the strip has to happen here rather than later. Preserves every other query param and the hash.
+{
+  const invParams = new URLSearchParams(location.search);
+  const invCode = invParams.get("inv");
+  if(invCode){
+    try{ localStorage.setItem("cascade_inv", invCode); }catch(e){}
+    logEvent("invite_arrival", {code:invCode});
+    invParams.delete("inv");
+    const invQs = invParams.toString();
+    history.replaceState(null, "", location.pathname + (invQs ? `?${invQs}` : "") + location.hash);
+  }
+}
 // CAS-437: a film share link's own entry point. Opens OVER whatever the rest of boot just decided —
 // a recipient arrived to see THIS film, not to resume whoever else's session this browser was mid-boot on —
 // and its own higher z-index (85) means it wins the stack without having to touch any of the above.
@@ -20019,6 +20168,7 @@ else if(dedupedN)
       watchKnown=new Map(); saveWatchKnown(); filmWatchReady=true;   // CAS-735: a guest has nothing to wait on
       userPrefsReady=true;   // CAS-740: a guest has nothing to wait on
       notifyPrefsReady=true;   // CAS-741: a guest has nothing to wait on
+      refCodeCache=null;   // CAS-837: a guest's shared links must not carry the previous account's code
       // CAS-656: a guest has no account to be disconnected from — clear any failure this device carried
       // from its last signed-in session, or the banner would wrongly survive a sign-out.
       Object.keys(acctTableFail).forEach(t=>setAcctTableFail(t, false));
@@ -20657,6 +20807,21 @@ else if(dedupedN)
     const { data, error } = await c.from("user_prefs").select("*").limit(1);   // RLS: only mine
     if(error){ console.warn("user_prefs load", error); return; }
     const row=(data||[])[0];
+    // CAS-837: ref_code is an account fact with no local-device counterpart to carry up, and — unlike
+    // every field below — has to resolve even before the account's first user_prefs row exists (a
+    // brand-new signup). Adopt what the account already has, or (nobody has minted one yet, row or no
+    // row) generate one now and write it with its own targeted upsert, never through userPrefsRow()'s
+    // whole-row upsert, so a debounced push of an unrelated setting from another device can never carry
+    // a stale/absent ref_code over this one.
+    if(row && typeof row.ref_code==="string" && row.ref_code){
+      refCodeCache = row.ref_code;
+    } else if(!refCodeCache){
+      const code = genRefCode();
+      refCodeCache = code;
+      c.from("user_prefs").upsert([{ user_id: uid(), ref_code: code }], { onConflict:"user_id" }).then(({error})=>{
+        if(error) console.warn("ref_code write", error);
+      });
+    }
     if(!row){ scheduleUserPrefsSync(); return; }   // no row yet — seed it from this device
     setTo(prefs.sub, row.sub_services||[]);
     setTo(prefs.store, row.store_services||[]);
@@ -20971,7 +21136,16 @@ else if(dedupedN)
         const signIn = await supa.auth.signInWithPassword({ email, password });
         if(!signIn.error) return { ok: true };
         const signUp = await supa.auth.signUp({ email, password });
-        if(!signUp.error) return { ok: true };
+        if(!signUp.error){
+          // CAS-837: this is the "account creation" moment an invite's arrival converts on — one event,
+          // never a table row (CAS-808 owns any reward/record; this stays stateless apart from the ref
+          // itself and the events).
+          try{
+            const code = localStorage.getItem("cascade_inv");
+            if(code){ logEvent("invite_signup", {code}); localStorage.removeItem("cascade_inv"); }
+          }catch(e){}
+          return { ok: true };
+        }
         // CAS-411: an account can exist but still fail signInWithPassword — Supabase's "Confirm
         // email" leaving it unconfirmed, or a password derived under an older scheme (pre-CAS-387).
         // signUp then reports "already registered", which used to dead-end here with neither path
