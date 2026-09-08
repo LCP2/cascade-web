@@ -437,18 +437,31 @@ def ingest_tmdb_upcoming(seen: set) -> list[dict]:
 #     id (Lee's call, not made here). Only entered when CASCADE_SPINE=watchmode.
 # ---------------------------------------------------------------------------
 WATCHMODE_BASE = "https://api.watchmode.com/v1"
-# Exact shape unverified against a live paid key (none exists yet, per the ticket) — Lee confirms
-# this against the real response before CASCADE_SPINE is ever flipped away from its "tmdb" default.
+# CAS-862: shape confirmed against the live trial key via CAS-579's Q5 report (run 2026-09-07) —
+# the real header is `Watchmode ID, IMDB ID, TMDB ID, TMDB Type, Title, Year`, not the snake_case
+# originally assumed. `_parse_watchmode_idmap_csv` below matches column names case/spacing-
+# insensitively so either shape parses.
 WATCHMODE_IDMAP_URL = "https://api.watchmode.com/datasets/title_id_map.csv"
+
+_WM_ID_COL_NAMES = ("wm_id", "id", "watchmode id", "watchmode_id")
+_TMDB_ID_COL_NAMES = ("tmdb_id", "tmdbid", "tmdb id")
 
 
 def _parse_watchmode_idmap_csv(text: str) -> dict:
-    """Watchmode id (str) -> tmdb_id (int) for every row that actually carries a tmdb_id. Pure
-    and network-free so it's testable straight off a sample CSV string."""
+    """Watchmode id (str) -> tmdb_id (int) for every row that actually carries a tmdb_id. Column
+    names are matched case/spacing-insensitively (exact match on the stripped/lowered name, so
+    `TMDB Type` is never mistaken for `TMDB ID`). Pure and network-free so it's testable straight
+    off a sample CSV string."""
     idmap = {}
-    for row in csv.DictReader(io.StringIO(text)):
-        wm_id = row.get("wm_id") or row.get("id")
-        tmdb_id = row.get("tmdb_id") or row.get("tmdbId")
+    reader = csv.DictReader(io.StringIO(text))
+    cols = reader.fieldnames or []
+    wm_col = next((c for c in cols if c.strip().lower() in _WM_ID_COL_NAMES), None)
+    tmdb_col = next((c for c in cols if c.strip().lower() in _TMDB_ID_COL_NAMES), None)
+    if not wm_col or not tmdb_col:
+        return idmap
+    for row in reader:
+        wm_id = row.get(wm_col)
+        tmdb_id = row.get(tmdb_col)
         if not wm_id or not tmdb_id:
             continue
         try:

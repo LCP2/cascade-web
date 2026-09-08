@@ -84,6 +84,49 @@ class Cas850BackfillTestCase(unittest.TestCase):
 
         self.assertEqual(counts["titles enriched"], 0)
         self.assertEqual(counts["credits spent"], 0)
+        # Not CACHED_REASON: FIXTURE_MOVIES' third title has no Watchmode id at all, so this
+        # rerun is a mix of cached + no-id, not "every candidate cached" — still a legitimate
+        # no-op, but AC3 only names the pure-cache case, so it still exits non-zero (below).
+        self.assertNotEqual(counts["early exit reason"], backfill.CACHED_REASON)
+        self.assertEqual(backfill._exit_code_for(counts), 1)
+
+    def test_candidate_records_considered_is_reported(self):
+        with mock.patch.object(pp, "_fetch_watchmode_idmap", return_value=dict(FIXTURE_IDMAP)), \
+             mock.patch.object(pp, "_fetch_watchmode_title_details", return_value=dict(FIXTURE_DETAIL)):
+            counts = backfill.run(catalogue_path=self.catalogue_path, max_credits=10)
+        self.assertEqual(counts["candidate records considered"], len(FIXTURE_MOVIES))
+        self.assertEqual(counts["records written"], 2)
+
+    def test_reason_names_the_cause_when_the_idmap_fetch_returns_nothing_usable(self):
+        """CAS-862: this is the actual pre-fix defect — a live idmap response whose column names
+        `_parse_watchmode_idmap_csv` didn't recognise resolved to an empty map, so every title
+        read as 'no id' and the run exited 0 having written nothing."""
+        with mock.patch.object(pp, "_fetch_watchmode_idmap", return_value={}), \
+             mock.patch.object(pp, "_fetch_watchmode_title_details",
+                               side_effect=AssertionError("no id map means no per-title calls")):
+            counts = backfill.run(catalogue_path=self.catalogue_path, max_credits=10)
+
+        self.assertEqual(counts["titles enriched"], 0)
+        self.assertEqual(counts["early exit reason"],
+                          "the Watchmode ID map fetch returned no usable rows")
+
+
+class ExitCodeForTestCase(unittest.TestCase):
+    """CAS-862 AC3 — a green (exit 0) run that resolves 0 titles is only legitimate when every
+    candidate was already fresh; any other zero must exit non-zero."""
+
+    def test_exit_code_is_zero_when_everything_is_freshly_cached(self):
+        counts = {"titles enriched": 0, "early exit reason": backfill.CACHED_REASON}
+        self.assertEqual(backfill._exit_code_for(counts), 0)
+
+    def test_exit_code_is_nonzero_when_zero_titles_resolve_for_another_reason(self):
+        counts = {"titles enriched": 0,
+                   "early exit reason": "the Watchmode ID map fetch returned no usable rows"}
+        self.assertEqual(backfill._exit_code_for(counts), 1)
+
+    def test_exit_code_is_zero_when_titles_are_enriched(self):
+        counts = {"titles enriched": 3, "early exit reason": None}
+        self.assertEqual(backfill._exit_code_for(counts), 0)
 
 
 class Cas859SubprocessInvocationTestCase(unittest.TestCase):

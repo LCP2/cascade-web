@@ -28,6 +28,18 @@ class ParseWatchmodeIdmapCsv(unittest.TestCase):
         csv_text = "wm_id,tmdb_id\n100,not-a-number\n"
         self.assertEqual(pp._parse_watchmode_idmap_csv(csv_text), {})
 
+    def test_the_live_dataset_header_shape_parses(self):
+        """CAS-862: the real header is `Watchmode ID, IMDB ID, TMDB ID, TMDB Type, Title, Year`
+        (confirmed via CAS-579's Q5 report against the live trial key), not the snake_case
+        originally assumed — that mismatch silently produced an empty idmap on every real run."""
+        csv_text = ("Watchmode ID,IMDB ID,TMDB ID,TMDB Type,Title,Year\n"
+                     "12345,tt0000001,555,movie,Foo,2020\n")
+        self.assertEqual(pp._parse_watchmode_idmap_csv(csv_text), {"12345": 555})
+
+    def test_tmdb_type_is_never_mistaken_for_tmdb_id(self):
+        csv_text = "Watchmode ID,TMDB Type\n12345,movie\n"
+        self.assertEqual(pp._parse_watchmode_idmap_csv(csv_text), {})
+
 
 class IngestWatchmode(unittest.TestCase):
     """AC3 — stubbed HTTP layer + stubbed ID map: a title with a tmdb_id is ingested and keyed
