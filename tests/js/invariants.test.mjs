@@ -530,6 +530,43 @@ test("CAS-724 AC3: the Awards requirement exempts a film that hasn't been judged
     `${released.title}: released, unawarded film cleared the Awards requirement`);
 });
 
+// ---- CAS-854: an upcoming film is only an agent's news once Cinema is a window that agent actually
+// watches — "upcoming" means "coming to cinemas", so an agent with Cinema at Never (windowUsable false)
+// is not waiting for that arrival, whatever else its watchMarkers admit. -------------------------------
+const cascadeWithMarkers = markers => E.normCascade({ kind: "stream", status: [],
+  watchMarkers: { in_cinema: null, premium: null, rent: null, stream: 0, ...markers } });
+
+test("CAS-854 AC1: an upcoming film is not admitted to an agent whose Cinema window is Never", () => {
+  const cinemaUsable = cascadeWithMarkers({ in_cinema: 0 });
+  const film = E.MOVIES.find(m => E.primaryStatus(m) === "upcoming" && E.matchesCriteria(m, cinemaUsable));
+  assert.ok(film, "no upcoming film matches an open, Cinema-usable agent — this test would prove nothing");
+  const cinemaNever = cascadeWithMarkers({});
+  assert.equal(E.matchesCriteria(film, cinemaNever), false,
+    `${film.title}: an upcoming film was admitted to an agent whose Cinema marker is Never and only usable window is Stream`);
+});
+
+test("CAS-854 AC2: the same upcoming film IS admitted once the agent's Cinema window is usable", () => {
+  const cinemaUsable = cascadeWithMarkers({ in_cinema: 0 });
+  const film = E.MOVIES.find(m => E.primaryStatus(m) === "upcoming" && E.matchesCriteria(m, cinemaUsable));
+  assert.ok(film, "no upcoming film matches an open, Cinema-usable agent — this test would prove nothing");
+  assert.equal(E.matchesCriteria(film, cinemaUsable), true,
+    `${film.title}: an upcoming film was excluded from an agent whose Cinema window is usable`);
+});
+
+test("CAS-854 AC3: a released film is unaffected by the Cinema-Never gate, on both agents", () => {
+  const cinemaUsable = cascadeWithMarkers({ in_cinema: 0 });
+  const cinemaNever = cascadeWithMarkers({});
+  let checked = 0;
+  for(const status of ["in_cinema", "pvod", "rental", "included_streaming"]){
+    const film = E.MOVIES.find(m => E.primaryStatus(m) === status && E.matchesCriteria(m, cinemaUsable));
+    if(!film) continue;
+    checked++;
+    assert.equal(E.matchesCriteria(film, cinemaNever), true,
+      `${film.title}: a ${status} film was excluded by an agent whose Cinema marker is Never — CAS-854 must only gate upcoming`);
+  }
+  assert.ok(checked > 0, "no film at in_cinema/pvod/rental/included_streaming matched the open agent — this test would prove nothing");
+});
+
 // AC2: for every agent and film, listedBy(m,c) implies cascadeScore(m) >= c.scoreFloor. No exceptions —
 // checked both across the real preset/lane matrix (CASES) and directly against matchesCriteria with a custom
 // floor, since listedBy narrows further (window/pin state) and must not be the only place this holds.

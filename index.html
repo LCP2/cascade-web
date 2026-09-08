@@ -5593,7 +5593,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1016, "commit": "a0f0a98", "builtAt": "2026-09-08T10:23:26Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1017, "commit": "04967a4", "builtAt": "2026-09-08T10:30:40Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -9891,6 +9891,9 @@ function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   // agent SHOWS without collapsing into what it WATCHES (CAS-67's split is deliberately untouched by this).
   if(c.myServices!==false && (prefs.on || scopeOf(c)[ps]) && !matchesServices(m, ps)) return false;   // CAS-252/342: see passes()
   if(c.status.length && !c.status.includes(ps)) return false;
+  // CAS-854: "upcoming" means coming to cinemas — an agent that never watches cinema isn't waiting for that
+  // arrival, so a pre-release film only becomes its news once it reaches a window that agent actually watches.
+  if(ps==="upcoming" && !windowUsable(c,"in_cinema")) return false;
   if((c.exclude||[]).length && (m.genres||[]).some(g=>c.exclude.includes(g))) return false;   // skip beats match
   // CAS-182: cleared means cleared. A dimension holding null admits nothing, so the count says 0 rather
   // than quietly reverting to the whole catalogue behind a screen of switched-off chips.
