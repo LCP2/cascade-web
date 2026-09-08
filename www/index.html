@@ -5225,7 +5225,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1031, "commit": "8e7e4bd", "builtAt": "2026-09-08T22:32:42Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1032, "commit": "d4f805a", "builtAt": "2026-09-08T22:48:31Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7326,16 +7326,22 @@ window.openNotifyPanel=(id, btn)=>{
 // ticking one level can move several rows at once (the auto-tick cascade) and a per-row patch would have to
 // know that too.
 function repaintWatchControl(id){
-  const btn=document.querySelector(`#card-${id} .actions .ctl.notify`); if(!btn) return;
-  const pop=btn.closest(".actions").querySelector(".cpop.npop");
-  btn.outerHTML=notifyChipHTML(id);
-  if(pop){
-    pop.querySelector(".nopts").innerHTML=watchPanelRowsHTML(id);
-    // The chip node above was just replaced (outerHTML) — the panel is still open, so the fresh chip needs
-    // the open state re-applied; nothing set it because it never went through openNotifyPanel this time.
-    const newBtn=document.querySelector(`#card-${id} .actions .ctl.notify`);
-    if(newBtn){ newBtn.classList.add("open"); newBtn.setAttribute("aria-expanded","true"); }
-  }
+  // CAS-868: same id-collision class as toggleExpand — Moving overlays the Watch listing, so a card's
+  // notify chip (and, if open, its panel) can exist twice with the same id. A single querySelector only
+  // ever reaches the FIRST in document order (Watch's), leaving whichever copy the user is actually
+  // looking at stale. Scope each lookup to its own `.actions` container and repaint every copy.
+  document.querySelectorAll(`[id="card-${id}"] .actions .ctl.notify`).forEach(btn=>{
+    const actions=btn.closest(".actions");
+    const pop=actions.querySelector(".cpop.npop");
+    btn.outerHTML=notifyChipHTML(id);
+    if(pop){
+      pop.querySelector(".nopts").innerHTML=watchPanelRowsHTML(id);
+      // The chip node above was just replaced (outerHTML) — the panel is still open, so the fresh chip needs
+      // the open state re-applied; nothing set it because it never went through openNotifyPanel this time.
+      const newBtn=actions.querySelector(".ctl.notify");
+      if(newBtn){ newBtn.classList.add("open"); newBtn.setAttribute("aria-expanded","true"); }
+    }
+  });
 }
 window.toggleFilmOpt=(id,key)=>{
   const levels=watchLevelsFor(id);
@@ -8672,19 +8678,26 @@ window.cardTap=(e,id)=>{
 window.toggleExpand=id=>{
   expandedSet.has(id)?expandedSet.delete(id):expandedSet.add(id);
   const on=expandedSet.has(id);
-  const c=document.getElementById("card-"+id); if(!c) return;
-  c.classList.toggle("expanded", on);
-  // CAS-657: trailer thumbnails are lazy — the background-image is only ever set here, on first expand,
-  // never at render. The guard keeps a collapse/re-expand from re-issuing the same request.
-  if(on) c.querySelectorAll(".trailer[data-yt]").forEach(b=>{
-    if(!b.style.backgroundImage) b.style.backgroundImage=`url(https://img.youtube.com/vi/${b.dataset.yt}/mqdefault.jpg)`;
+  // CAS-868: Moving is an overlay — the Watch listing sits underneath it in the DOM, carrying its own copy
+  // of the same film's card with the SAME id. getElementById/querySelector only ever return the FIRST of
+  // those in document order (Watch's, since it renders before the overlay), so a tap on Moving's copy was
+  // toggling the hidden Watch copy instead. expandedSet is global, so every copy of a film's card should
+  // agree about whether it is expanded — act on all of them; any that are off screen cost nothing to update.
+  const copies=[...document.querySelectorAll(`[id="card-${id}"]`)];
+  copies.forEach(c=>{
+    c.classList.toggle("expanded", on);
+    // CAS-657: trailer thumbnails are lazy — the background-image is only ever set here, on first expand,
+    // never at render. The guard keeps a collapse/re-expand from re-issuing the same request.
+    if(on) c.querySelectorAll(".trailer[data-yt]").forEach(b=>{
+      if(!b.style.backgroundImage) b.style.backgroundImage=`url(https://img.youtube.com/vi/${b.dataset.yt}/mqdefault.jpg)`;
+    });
+    // CAS-612 (v0.9.5): opening a card no longer opens its "where to watch" list. The full provider list
+    // is a second question ("where exactly?"), asked by tapping the availability capsule (bandHTML's
+    // .captog) — expanding the card was answering it unasked and pushing everything else off screen.
+    // CLOSING the card still resets the list, so a card never reopens with it already down.
+    const wtw=c.querySelector(".wtw"), svcBtn=c.querySelector(".svcbtn");
+    if(wtw && !on){ wtw.classList.remove("open"); if(svcBtn) svcBtn.classList.remove("open"); }
   });
-  // CAS-612 (v0.9.5): opening a card no longer opens its "where to watch" list. The full provider list
-  // is a second question ("where exactly?"), asked by tapping the availability capsule (bandHTML's
-  // .captog) — expanding the card was answering it unasked and pushing everything else off screen.
-  // CLOSING the card still resets the list, so a card never reopens with it already down.
-  const wtw=c.querySelector(".wtw"), svcBtn=c.querySelector(".svcbtn");
-  if(wtw && !on){ wtw.classList.remove("open"); if(svcBtn) svcBtn.classList.remove("open"); }
 };
 function activeCount(){
   let n=filt.status.size+filt.year.size+filt.age.size+filt.culture.size+filt.genre.size;
