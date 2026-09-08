@@ -54,3 +54,22 @@ test("CAS-786 AC1: a film with no owner carries neither provenance class", () =>
   assert.doesNotMatch(html, /\bcsrc-manual\b/, "an unowned film must not carry csrc-manual");
   assert.doesNotMatch(html, /\bcsrc-auto\b/, "an unowned film must not carry csrc-auto");
 }));
+
+// CAS-847: the Watch On chip's not-yet-reached icon used to be the retired ICON.bell — it now borrows the
+// availability capsule's own WIN_ICON vocabulary for the level the chip names, so chip and lozenge share one
+// icon set. No level picked yet falls back to WIN_ICON.upcoming, the ladder's own "nothing chosen" mark.
+test("CAS-847 AC3: the Watch On chip's not-yet-reached icon borrows WIN_ICON, never the retired bell", () => withNotifyAndCascadeState(() => {
+  const m = E.MOVIES.find(x => x.status.includes("upcoming"));
+  assert.ok(m, "no upcoming film in the catalogue — this test would prove nothing");
+  const id = m.tmdb_id;
+
+  E.notify[id] = { wins: {} };
+  let html = E.notifyChipHTML(id);
+  assert.ok(html.includes("🗓️"), "an unset Watch On must show the upcoming WIN_ICON, not the retired bell");
+  assert.doesNotMatch(html, /M6\.4 10\.2a5\.6/, "the retired bell glyph path must not appear in the chip's markup");
+
+  E.notify[id] = { wins: { premium: true } };
+  html = E.notifyChipHTML(id);
+  assert.ok(html.includes("⭐"), "a not-yet-reached Premium pick must show the pvod WIN_ICON");
+  assert.doesNotMatch(html, /M6\.4 10\.2a5\.6/, "the retired bell glyph path must not appear in the chip's markup");
+}));

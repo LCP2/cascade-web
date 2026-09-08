@@ -4720,3 +4720,61 @@ test("CAS-793 AC6/AC7: the card's agent chip (agentChipHTML has no ownerOverride
     }
   });
 });
+
+// ---- CAS-847: the Upcoming lozenge follows the moment, not a static word --------------------------------
+// upcomingCapLabel reads the account's own Where & when Notify sub-switches (accountAlertKeysOn), the same
+// answer the alert system itself reads — so the label can never promise a moment the account didn't ask for.
+function daysAfterToday(n){
+  const d = new Date(Date.parse(E.TODAY));
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+test("CAS-847 AC1: the Upcoming lozenge label follows the published date and the account's sub-switches", () => withWatchPrefs({
+  upcoming: { list: true, notify: true, subs: { announced: true, opens_soon: true } },
+}, () => {
+  const soon = { status: ["upcoming"], cinema_date: daysAfterToday(3) };
+  assert.equal(E.upcomingCapLabel(soon), "Next week",
+    "a published date 3 days out with Opening next week on must read Next week");
+
+  const far = { status: ["upcoming"], cinema_date: daysAfterToday(30) };
+  assert.equal(E.upcomingCapLabel(far), "Announced",
+    "a published date 30 days out (outside the 7-day window) must fall back to Announced");
+
+  withWatchPrefs({ upcoming: { list: true, notify: true, subs: { announced: false, opens_soon: false } } }, () => {
+    assert.equal(E.upcomingCapLabel(soon), "Upcoming",
+      "with both sub-switches off, even a film 3 days out must read plain Upcoming");
+  });
+}));
+
+test("CAS-847 AC2: an upcoming film with both sub-switches off and no recent window change carries no recent class", () => withWatchPrefs({
+  upcoming: { list: true, notify: true, subs: { announced: false, opens_soon: false } },
+}, () => {
+  const m = { status: ["upcoming"], cinema_date: daysAfterToday(30) };
+  const html = E.bandHTML(m, "");
+  assert.ok(html.includes(">Upcoming<") || html.includes(">Upcoming</b>") || /Upcoming/.test(html),
+    "sanity: the lozenge must actually render the Upcoming label in this scenario");
+  assert.doesNotMatch(html, /\brecent\b/, "no recent window change must not carry the recent glow class");
+}));
+
+test("CAS-847 AC3: ICON.bell is retired — app_template.html no longer references it anywhere", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const count = (src.match(/ICON\.bell\b/g) || []).length;
+  assert.equal(count, 0, `ICON.bell must not be referenced anywhere (found ${count}) — the bell icon retired with CAS-847`);
+});
+
+test("CAS-847 AC4: the built index.html gives wsrc-manual/csrc-manual a box-shadow with no .isnew in the selector", () => {
+  const src = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  assert.match(src, /\.ctl\.notify\.wsrc-manual\s*\.cmini\{[^}]*box-shadow/,
+    "the built CSS must give .ctl.notify.wsrc-manual .cmini a box-shadow rule with no .isnew qualifier");
+  assert.doesNotMatch(src, /\.ctl\.notify\.wsrc-manual\.isnew\s*\.cmini\{[^}]*box-shadow/,
+    "the manual Notify glow must no longer be gated on .isnew");
+  assert.match(src, /\.ctl\.casc\.csrc-manual\s*\.cmini\{[^}]*box-shadow/,
+    "the built CSS must give .ctl.casc.csrc-manual .cmini a box-shadow rule with no .isnew qualifier");
+  assert.doesNotMatch(src, /\.ctl\.casc\.csrc-manual\.isnew\s*\.cmini\{[^}]*box-shadow/,
+    "the manual agent-chip glow must no longer be gated on .isnew");
+  // The blue auto glow is unchanged — still gated on .isnew for both chips.
+  assert.match(src, /\.ctl\.notify\.wsrc-auto\.isnew\s*\.cmini\{[^}]*box-shadow/,
+    "the blue agent-set Notify glow must still require .isnew");
+  assert.match(src, /\.ctl\.casc\.csrc-auto\.isnew\s*\.cmini\{[^}]*box-shadow/,
+    "the blue agent-set agent-chip glow must still require .isnew");
+});

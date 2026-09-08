@@ -183,6 +183,10 @@ if(typeof window.CascadeAuth === "undefined"){
   _scaleInferCache, _awardRankCache, invalidateComputeCaches,
   agentWindow, winOn, subOn, winSubs, PRIORITY_WATCH, ALERT_DEFAULTS, ALERT_SHORT, ALERT_MOMENT,
   alertLive, reachableRows, liveAlerts, drawWatchLanes,
+  // CAS-847: accountAlertKeysOn is the account-wide Notify answer the Upcoming lozenge now reads (via
+  // upcomingCapLabel) instead of always saying "Upcoming" — exported alongside it so a test can drive the
+  // sub-switches directly rather than only asserting the label they produce.
+  accountAlertKeysOn, upcomingCapLabel,
   selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK, voteReadout, critScoreReadout, scaleReadout,
   // CAS-694: critScore (the one recorded critics figure) and qScore's own text (qScoreSourcesText), so a test
   // can assert both independently rather than re-deriving them from qScore's output alone.
@@ -258,6 +262,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // that replaced the old on-exit-from-found delete) — exported so a test can pick dates relative to the
   // real horizon rather than hard-coding a day count that could silently drift from the engine's own.
   NEW_DAYS, FIRST_FOUND_PRUNE_DAYS,
+  // CAS-846: isRecent is the "recent window" decision the status pill glow reads — exported so a test can
+  // assert its NEW_DAYS boundary directly instead of re-deriving daysSince/primaryStatus by hand.
+  isRecent,
   // CAS-738: the other five watched-film verdict sets, exposed by reference like watched above —
   // a test needs to seed/restore all of them to exercise filmRows()/applyFilmRows() without leaking
   // state into later tests, since applyFilmRows() rebuilds every one of them from scratch.
