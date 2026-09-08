@@ -4,10 +4,12 @@
 // movingData() directly against seeded notify/cascades/realAlerts/firstFound state (the same shape
 // tests/js/invariants.test.mjs's CAS-667/670/671 Moving checks already use) to assert the row-selection
 // arithmetic now goes through filmOwnerCascade() exclusively, in both branches.
-// CAS-848: movingData() rows no longer carry a resolved agentName, and a row whose owner doesn't resolve
-// is no longer dropped — it renders in the final untinted "Other" lane instead (movingLanes(), matching
-// the Watch listing's own splitByOwner treatment of the same case). The tests below were updated for that:
-// AC2(b)/(d)'s old "no owner, no row" guarantee is superseded by "no owner, an Other-lane row".
+// CAS-848: movingData() rows no longer carried a resolved agentName, and a row whose owner didn't resolve
+// rendered in a final untinted "Other" lane (movingLanes()) instead of being dropped.
+// CAS-858: that "Other" lane was wrong — Lee's decision is that a row which cannot name an agent is not a
+// row. movingData() drops it again (as CAS-829 originally did), and movingLanes() no longer has an
+// "Other" branch at all. The tests below were updated back to the CAS-829 "no owner, no row" shape, plus
+// new coverage for the restored MOVING_EMPTY_NO_OWNER_COPY empty state and the unseen badge.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadEngine } from "./engine.mjs";
@@ -65,7 +67,7 @@ test("CAS-829 AC2(a): every row movingData() returns names exactly one agent, fr
   assert.equal(lane.cascade.name, owner.name, "AC2(a): the lane must resolve to the owner's current name");
 }));
 
-test("CAS-848: a realAlerts entry for a film with empty cascadeIds still produces a row, in the Other lane", () => withState(() => {
+test("CAS-858 AC1: a realAlerts entry for a film with empty cascadeIds produces no row", () => withState(() => {
   E.localStorage.setItem("cascade_had_account", "1");
   const [film] = pickFilms(1);
   E.notify[film.tmdb_id] = { cascadeIds: [] };
@@ -74,14 +76,13 @@ test("CAS-848: a realAlerts entry for a film with empty cascadeIds still produce
     cascade_name: "Some Agent", emailed_at: new Date().toISOString(), read_at: null });
   E.setMovingReady(true);
 
-  const { rows } = E.movingData();
+  const { rows, dropped } = E.movingData();
   const row = rows.find(r => r.filmId === String(film.tmdb_id));
-  assert.ok(row, "CAS-848: an unowned film must still produce a row");
-  assert.equal(row.agentId, null, "CAS-848: an unowned film's row must carry no agent id");
+  assert.ok(!row, "AC1: an unowned film (filmOwnerCascade returns null) must produce no row");
+  assert.equal(dropped.length, 1, "AC1: the ownerless entry must still be tracked as dropped");
 
-  const otherLane = E.movingLanes(rows).find(l => !l.cascade);
-  assert.ok(otherLane && otherLane.rows.some(r => r.filmId === row.filmId),
-    "CAS-848: the row must land in the untinted Other lane");
+  const lanes = E.movingLanes(rows);
+  assert.ok(!lanes.some(l => !l.cascade), "AC1: there must be no fallback Other lane any more");
 }));
 
 test("CAS-829 AC2(c): a ledger entry naming a non-owner agent still produces a row naming the OWNER", () => withState(() => {
@@ -118,10 +119,9 @@ test("CAS-829 AC2(d): the guest branch emits at most one agent per row", () => w
   assert.ok(ownedRow, "AC2(d): the owned film must still get a row on a guest device");
   assert.equal(ownedRow.agentId, owner.id, "AC2(d): the guest row must name the owner");
 
-  // CAS-848: an unowned film on a guest device now also gets a row (Other lane), not a drop.
+  // CAS-858: an unowned film on a guest device is dropped, same as the signed-in branch.
   const unownedRow = rows.find(r => r.filmId === String(unownedFilm.tmdb_id));
-  assert.ok(unownedRow, "CAS-848: an unowned film must still get a row on a guest device");
-  assert.equal(unownedRow.agentId, null, "CAS-848: the unowned guest row must carry no agent id");
+  assert.ok(!unownedRow, "CAS-858: an unowned film must produce no row on a guest device either");
 }));
 
 test("CAS-848 AC1: two agents of rank 1 and 2 each owning one row produce two lanes, rank 1 first", () => withState(() => {
@@ -267,4 +267,47 @@ test("CAS-852 AC3: movingLedgerTruncated reads false under the 200-row cap and t
   assert.equal(E.realAlerts.length, 200, "sanity: exactly 200 seeded");
   assert.equal(E.movingLedgerTruncated("2weeks"), true,
     "AC3: at the 200-row cap, the truncation notice's predicate must read true");
+}));
+
+test("CAS-858 AC2: a window whose entries are ALL ownerless renders MOVING_EMPTY_NO_OWNER_COPY", () => withState(() => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const [film] = pickFilms(1);
+  E.notify[film.tmdb_id] = { cascadeIds: [] };
+  E.realAlerts.length = 0;
+  E.realAlerts.push({ id: 1, movie_id: film.tmdb_id, moment: "announced_stream", title: film.title,
+    cascade_name: "Some Agent", emailed_at: new Date().toISOString(), read_at: null });
+  E.setMovingReady(true);
+
+  assert.equal(E.movingEmptyCopy("2weeks"), E.MOVING_EMPTY_NO_OWNER_COPY,
+    "AC2: a window whose only entries were dropped for having no owner must get the no-owner empty copy, not the generic one");
+}));
+
+test("CAS-858 AC2(b): a window with no ledger entries at all still gets the generic empty copy", () => withState(() => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  E.realAlerts.length = 0;
+  E.setMovingReady(true);
+
+  assert.equal(E.movingEmptyCopy("2weeks"), E.MOVING_EMPTY_COPY["2weeks"],
+    "AC2(b): genuinely nothing having moved must still read the generic empty copy");
+}));
+
+test("CAS-858 AC3: the unseen badge count excludes ownerless entries", () => withState(() => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const owner = ownerCascade("cas858-ac3-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const [ownedFilm, unownedFilm] = pickFilms(2);
+  E.notify[ownedFilm.tmdb_id] = { cascadeIds: [owner.id] };
+  E.notify[unownedFilm.tmdb_id] = { cascadeIds: [] };
+  E.realAlerts.length = 0;
+  E.realAlerts.push(
+    { id: 1, movie_id: ownedFilm.tmdb_id, moment: "new_to_agent", title: ownedFilm.title,
+      cascade_name: owner.name, emailed_at: new Date().toISOString(), read_at: null },
+    { id: 2, movie_id: unownedFilm.tmdb_id, moment: "new_to_agent", title: unownedFilm.title,
+      cascade_name: "Some Agent", emailed_at: new Date().toISOString(), read_at: null },
+  );
+  E.setMovingReady(true);
+
+  // movingBadgeWindow() predicts "2weeks" while Moving is closed (movingIsOpen is false by default here).
+  assert.equal(E.movingUnseenCount(), 1,
+    "AC3: the badge must count only the one owned, un-seen row — the ownerless entry must not contribute");
 }));
