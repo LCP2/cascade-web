@@ -80,6 +80,35 @@ class Hit:
 
 
 # --------------------------------------------------------------------------- #
+# window placement (CAS-841) — window key (film_watch.windows, whether persisted there by the
+# app's own auto-placement (CAS-726) or a manual Watch-it tick, CAS-484) -> the moment that
+# window's arrival fires. Shared by match() below and match_film_watches() further down, which
+# predates this mapping living up here.
+# --------------------------------------------------------------------------- #
+WINDOW_TO_MOMENT = {
+    "in_cinema": "hits_cinema",
+    "premium": "hits_pvod",
+    "rent": "hits_rent",
+    "stream": "hits_stream",
+}
+MOMENT_TO_WINDOW = {moment: window for window, moment in WINDOW_TO_MOMENT.items()}
+WINDOW_ARRIVAL_MOMENTS = frozenset(WINDOW_TO_MOMENT.values())
+
+
+def _film_watch_placements(film_watches) -> dict:
+    """{(user_id, movie_id): {window_key, ...}} from film_watch rows, both stringified so lookups
+    match however `transitions`/`cascades` already key their own ids. A row with an empty (or
+    absent) `windows` contributes nothing — CAS-841 treats that the same as no row at all."""
+    out: dict = {}
+    for w in film_watches or ():
+        windows = set(w.get("windows") or ())
+        if not windows:
+            continue
+        out.setdefault((str(w.get("user_id")), str(w.get("movie_id"))), set()).update(windows)
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # taste matching — CAS-825: a lookup into the REAL engine's own admission answer, not a second port
 # --------------------------------------------------------------------------- #
 def compute_admission(cascades: list, catalogues: dict, account_prefs: dict = None) -> dict:
@@ -225,7 +254,7 @@ def _collapse_by_rank(hits: list, rank_of: dict) -> list:
 
 
 def match(cascades: list, transitions: list, already=None, admission=None, suppressed=None,
-          excluded=None) -> dict:
+          excluded=None, film_watches=None, placement_counts=None) -> dict:
     """Return {user_id: [Hit, ...]} — one entry per (cascade, transition) that fires and hasn't
     been sent before.
 
@@ -243,6 +272,19 @@ def match(cascades: list, transitions: list, already=None, admission=None, suppr
                   Preferences (see ``excluded_moments``). Like `suppressed`, it outranks the
                   Cascade — a muted type never fires for that user, whatever their Cascades say.
                   Empty/None -> nothing is globally muted.
+    film_watches : iterable of {user_id, movie_id, windows} — the `film_watch` table (CAS-484/
+                  CAS-726). CAS-841: a window-arrival moment (hits_cinema/hits_pvod/hits_rent/
+                  hits_stream) only fires when that moment's own window is present in the film's
+                  placement for that user; any other window-arrival moment for that film is
+                  skipped. A film with no row here (or an empty `windows`) skips EVERY
+                  window-arrival moment for it — fail closed, the app would not have shown it in
+                  that tab either. Non-window moments (announced, opens_soon,
+                  past_opening_weekend, newly_qualifies, new_to_agent) are never gated by this.
+                  None/missing behaves as "nothing is placed anywhere".
+    placement_counts : an optional dict this call increments in place, so a caller can report the
+                  size of CAS-841's effect: "no_placement" for a hit skipped because the film has
+                  no placement row (or an empty one), "wrong_window" for a hit skipped because the
+                  film IS placed, just not in the window this moment maps to. Omit to not count.
 
     CAS-784: when two of a user's active Cascades both catch the same film at the same moment,
     only the lowest-`criteria.order` one is kept — one film, one agent, one line, on email same
@@ -252,6 +294,7 @@ def match(cascades: list, transitions: list, already=None, admission=None, suppr
     off = {(str(u), str(m)) for u, m in (suppressed or ())}
     muted = excluded_moments(excluded)
     admission = admission or {}
+    placements = _film_watch_placements(film_watches)
     rank_of = {c["id"]: _rank_key(c) for c in cascades}
     by_user: dict = {}
 
@@ -272,6 +315,16 @@ def match(cascades: list, transitions: list, already=None, admission=None, suppr
                 continue
             if not service_ok(t, criteria):
                 continue
+            if t.moment in WINDOW_ARRIVAL_MOMENTS:
+                windows_here = placements.get((str(c["user_id"]), str(t.movie_id)))
+                if not windows_here:
+                    if placement_counts is not None:
+                        placement_counts["no_placement"] = placement_counts.get("no_placement", 0) + 1
+                    continue
+                if MOMENT_TO_WINDOW[t.moment] not in windows_here:
+                    if placement_counts is not None:
+                        placement_counts["wrong_window"] = placement_counts.get("wrong_window", 0) + 1
+                    continue
             key = (c["id"], t.movie_id, t.moment)
             if key in seen:
                 continue
@@ -539,16 +592,9 @@ def notification_rows(by_user: dict) -> list:
 # --------------------------------------------------------------------------- #
 # per-film "Watch it" ticks (CAS-484) — a second, agent-independent source
 # --------------------------------------------------------------------------- #
-# window key (as ticked on the film's Watch-it control, app_template.html's WATCH_LEVEL_KEYS) ->
-# the moment it arms. Mirrors the app's own rung labels one to one.
-WINDOW_TO_MOMENT = {
-    "in_cinema": "hits_cinema",
-    "premium": "hits_pvod",
-    "rent": "hits_rent",
-    "stream": "hits_stream",
-}
-
-
+# WINDOW_TO_MOMENT (window key, as ticked on the film's Watch-it control, app_template.html's
+# WATCH_LEVEL_KEYS -> the moment it arms) now lives above, near compute_admission — CAS-841 made
+# match() a second reader of it.
 def match_film_watches(watches, transitions, already=None, cascade_hits=None, excluded=None,
                        suppressed=None) -> dict:
     """Return {user_id: [Hit, ...]} for per-film Watch-it ticks (CAS-484) — hits that owe nothing

@@ -9,6 +9,7 @@ import unittest
 
 from monitor import (PREFS_DEFAULT, compute_admission, delivery_plan, excludes_from_prefs, match,
                      prefs_for)
+from monitor.matching import MOMENT_TO_WINDOW
 from monitor.store import InMemoryStore
 from monitor.transitions import Transition
 
@@ -38,9 +39,19 @@ def _cascade(cid="c1", user="user-A", moments=("hits_rent",), criteria=None):
             "criteria": crit, "alert_moments": list(moments)}
 
 
-def _match(cascades, transitions, **kw):
+def _auto_placements(cascades, transitions):
+    """CAS-841: stand in for the app's own auto-placement (CAS-726) — every window-arrival
+    transition here is treated as already placed in its own window, matching what these fixtures
+    assumed before the ticket existed."""
+    return [{"user_id": c["user_id"], "movie_id": t.movie_id, "windows": [MOMENT_TO_WINDOW[t.moment]]}
+           for c in cascades for t in transitions if t.moment in MOMENT_TO_WINDOW]
+
+
+def _match(cascades, transitions, film_watches=None, **kw):
     admission = compute_admission(cascades, {"today": [t.movie for t in transitions]})
-    return match(cascades, transitions, admission=admission, **kw)
+    if film_watches is None:
+        film_watches = _auto_placements(cascades, transitions)
+    return match(cascades, transitions, admission=admission, film_watches=film_watches, **kw)
 
 
 class PrefsDefaults(unittest.TestCase):

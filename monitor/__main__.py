@@ -195,12 +195,26 @@ def main(argv=None) -> int:
     admission = compute_admission(cascades, {"today": today_movies, "yesterday": prev_movies},
                                   account_prefs=account_prefs)
 
+    # CAS-841: fetched here (rather than down by match_film_watches() as before) so match() can
+    # also read it — an agent's window-arrival moment must agree with where the app actually
+    # placed the film, not just admit it.
+    watches = _load_json(args.watches) if args.watches else _store_call(store, "fetch_film_watches", [])
+    if args.target_user:
+        watches = [w for w in watches if str(w.get("user_id")) == args.target_user]
+
     # CAS-601: an agent's own Alert toggles are the control again (Lee's decision of 2026-08-24,
     # reversing CAS-502 AC1/widening CAS-506) — every moment a cascade's `alert_moments` names can
     # notify, not just `announced`. match() already gates on `alert_moments`/admission/suppressed/
     # excluded, so feeding it every transition is the whole change; nothing in match() itself moves.
+    placement_counts = {}
     agent_hits = match(cascades, transitions, already=already, admission=admission,
-                       suppressed=suppressed, excluded=muted)
+                       suppressed=suppressed, excluded=muted, film_watches=watches,
+                       placement_counts=placement_counts)
+    # CAS-841 AC5: the size of the placement change, measurable on the first live run rather than
+    # inferred.
+    print(f"[monitor] window placement (CAS-841): {placement_counts.get('wrong_window', 0)} "
+          f"hit(s) suppressed for the wrong window, {placement_counts.get('no_placement', 0)} "
+          f"for no placement row.")
 
     # CAS-602: a film already held in both catalogues that newly qualifies for an agent because its
     # OWN attributes changed — no catalogue transition to hang this off, so its "newly_qualifies"
@@ -238,9 +252,6 @@ def main(argv=None) -> int:
     # agent match so `agent_seen` can carry the (user, movie, moment) pairs `announced` already
     # caught this run — belt-and-braces de-dupe (WINDOW_TO_MOMENT never maps to `announced`, so the
     # two paths cannot really collide, but a film covered twice must still resolve to one alert).
-    watches = _load_json(args.watches) if args.watches else _store_call(store, "fetch_film_watches", [])
-    if args.target_user:
-        watches = [w for w in watches if str(w.get("user_id")) == args.target_user]
     watch_already = _store_call(store, "fetch_watch_notification_keys", set())
     agent_seen = {(str(uid), h.transition.movie_id, h.transition.moment)
                   for uid, hits in agent_hits.items() for h in hits}

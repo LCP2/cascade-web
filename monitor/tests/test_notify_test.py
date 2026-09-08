@@ -142,7 +142,13 @@ class DeliverySourceProof(unittest.TestCase):
             return rc, buf.getvalue()
 
     def test_an_agent_match_delivers_with_no_watch_it_tick(self):
-        rc, out = self._run(watches=[])
+        # CAS-841: the agent path now also needs the film's own placement — in production CAS-726
+        # auto-places every admitted film, so this row stands in for that auto-placement, not a
+        # manual tick; the point under test (the next one) is that a SEPARATE manual tick on the
+        # same film+window does not turn this one alert into two.
+        watches = [{"user_id": self.TARGET_USER, "movie_id": str(self.target["tmdb_id"]),
+                    "windows": ["stream"]}]
+        rc, out = self._run(watches=watches)
         self.assertEqual(rc, 0)
         self.assertIn("1 new alert(s)", out)
         self.assertNotIn("no new alerts for anyone", out)

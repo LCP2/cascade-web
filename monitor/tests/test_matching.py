@@ -19,9 +19,10 @@ import unittest
 from monitor import (compute_transitions, match, matches_criteria, compute_admission, service_ok,
                      notification_rows, suppressed_pairs, excluded_moments, match_film_watches,
                      match_newly_qualified, match_new_to_agent)
-from monitor.matching import Hit, agent_channels
+from monitor.matching import Hit, agent_channels, MOMENT_TO_WINDOW
 from monitor.catalogue import load_catalogue_file
 from monitor.store import InMemoryStore
+from monitor.transitions import Transition
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _FIX = os.path.join(os.path.dirname(_HERE), "fixtures")
@@ -54,6 +55,21 @@ def _admit(cascades, today=None, yesterday=None, account_prefs=None):
     return compute_admission(cascades, catalogues, account_prefs=account_prefs or {})
 
 
+def _auto_placements(cascades, transitions):
+    """CAS-841: film_watch rows standing in for "the app has already placed this film in the
+    window the transition itself represents" — the assumption every fixture below made before the
+    ticket existed (in production CAS-726 auto-places every admitted film, so this is the normal
+    case, not a special one). Tests specifically about CAS-841's own gate build their own
+    `film_watches` instead of calling this."""
+    out = []
+    for c in cascades:
+        for t in transitions:
+            window = MOMENT_TO_WINDOW.get(t.moment)
+            if window:
+                out.append({"user_id": c.get("user_id"), "movie_id": t.movie_id, "windows": [window]})
+    return out
+
+
 class MatchTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -61,11 +77,14 @@ class MatchTests(unittest.TestCase):
         cls.prev = load_catalogue_file(os.path.join(_FIX, "yesterday.json"))
         cls.transitions = compute_transitions(cls.prev, cls.today, RUN_DATE)
         cls.cascades = _load("cascades.json")
+        cls.film_watches = _auto_placements(cls.cascades, cls.transitions)
 
-    def _match(self, already=None, cascades=None):
+    def _match(self, already=None, cascades=None, film_watches=None):
         cascades = self.cascades if cascades is None else cascades
+        film_watches = self.film_watches if film_watches is None else film_watches
         admission = _admit(cascades, today=self.today)
-        return match(cascades, self.transitions, already=already, admission=admission)
+        return match(cascades, self.transitions, already=already, admission=admission,
+                    film_watches=film_watches)
 
     def _keys(self, by_user):
         return {(h.cascade_id, h.transition.movie_id, h.transition.moment)
@@ -90,7 +109,7 @@ class MatchTests(unittest.TestCase):
     def test_global_exclude_mutes_that_type_for_that_user(self):
         admission = _admit(self.cascades, today=self.today)
         by_user = match(self.cascades, self.transitions, admission=admission,
-                        excluded={"user-A": ["hits_rent"]})
+                        excluded={"user-A": ["hits_rent"]}, film_watches=self.film_watches)
         keys = self._keys(by_user)
         self.assertNotIn(("cascade-A1", "5001", "hits_rent"), keys)
         self.assertIn(("cascade-A2", "5003", "hits_cinema"), keys)      # A's other type is untouched
@@ -99,14 +118,14 @@ class MatchTests(unittest.TestCase):
     def test_global_exclude_can_silence_a_user_entirely(self):
         admission = _admit(self.cascades, today=self.today)
         by_user = match(self.cascades, self.transitions, admission=admission,
-                        excluded={"user-A": ["hits_rent", "hits_cinema"]})
+                        excluded={"user-A": ["hits_rent", "hits_cinema"]}, film_watches=self.film_watches)
         self.assertNotIn("user-A", by_user)
         self.assertIn("user-B", by_user)
 
     def test_global_exclude_absent_changes_nothing(self):
         admission = _admit(self.cascades, today=self.today)
         self.assertEqual(self._keys(match(self.cascades, self.transitions, admission=admission,
-                                          excluded={})),
+                                          excluded={}, film_watches=self.film_watches)),
                          self._keys(self._match()))
 
     def test_excluded_moments_accepts_both_shapes(self):
@@ -166,7 +185,7 @@ class MatchTests(unittest.TestCase):
         # user-A took 5001 off by hand. cascade-A1 goes on matching it; we go on saying nothing.
         admission = _admit(self.cascades, today=self.today)
         keys = self._keys(match(self.cascades, self.transitions, admission=admission,
-                                suppressed={("user-A", "5001")}))
+                                suppressed={("user-A", "5001")}, film_watches=self.film_watches))
         self.assertNotIn(("cascade-A1", "5001", "hits_rent"), keys)
         self.assertIn(("cascade-A2", "5003", "hits_cinema"), keys)     # user-A's other alerts stand
 
@@ -174,7 +193,7 @@ class MatchTests(unittest.TestCase):
         # user-B turning 5001 off must not silence user-A's alert for the same film.
         admission = _admit(self.cascades, today=self.today)
         keys = self._keys(match(self.cascades, self.transitions, admission=admission,
-                                suppressed={("user-B", "5001")}))
+                                suppressed={("user-B", "5001")}, film_watches=self.film_watches))
         self.assertIn(("cascade-A1", "5001", "hits_rent"), keys)
 
     def test_suppressed_pairs_reads_only_off(self):
@@ -193,7 +212,7 @@ class MatchTests(unittest.TestCase):
     def test_no_overrides_changes_nothing(self):
         admission = _admit(self.cascades, today=self.today)
         self.assertEqual(self._keys(match(self.cascades, self.transitions, admission=admission,
-                                          suppressed=None)),
+                                          suppressed=None, film_watches=self.film_watches)),
                          self._keys(self._match()))
 
     # ---- ledger rows ----
@@ -216,10 +235,10 @@ class MatchTests(unittest.TestCase):
         self.assertTrue(all(c.get("active", True) for c in active))
         admission = _admit(active, today=self.today)
         first = match(active, self.transitions, already=store.fetch_notification_keys(),
-                     admission=admission)
+                     admission=admission, film_watches=self.film_watches)
         store.insert_notifications(notification_rows(first))
         second = match(active, self.transitions, already=store.fetch_notification_keys(),
-                       admission=admission)
+                       admission=admission, film_watches=self.film_watches)
         self.assertEqual(second, {})
 
     # ---- matches_criteria is now a lookup (CAS-825) ----
@@ -237,6 +256,81 @@ class MatchTests(unittest.TestCase):
             moment = "hits_rent"
             services = []
         self.assertTrue(service_ok(T(), {"services": ["Netflix"]}))   # rent moment: unconstrained
+
+
+class WindowPlacementTests(unittest.TestCase):
+    """CAS-841: an agent's window-arrival moment (hits_cinema/hits_pvod/hits_rent/hits_stream)
+    must agree with where the app has actually placed the film (film_watch.windows), not just
+    admit it. Non-window moments (announced, opens_soon, newly_qualifies, new_to_agent) are never
+    gated by placement."""
+
+    def _movie(self, tmdb_id=8001, title="Placed Film", status=("rental",)):
+        return {"tmdb_id": tmdb_id, "title": title, "genres": ["Drama"], "status": list(status),
+                "cinema_date": "2026-01-01", "language": "en", "rt_critic": 70, "popularity": 50,
+                "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}],
+                "imdb_rating": 7.5, "imdb_votes": 5000}
+
+    def _cascade(self, moments):
+        return [{"id": "c1", "user_id": "u1", "name": "Everything", "active": True,
+                 "alert_moments": list(moments), "criteria": _criteria(genre=["Drama"], imdb=7.0)}]
+
+    def _match(self, cascades, transitions, film_watches, movie):
+        admission = _admit(cascades, today=[movie])
+        return match(cascades, transitions, admission=admission, film_watches=film_watches)
+
+    # ---- AC1: fires only on the moment mapped from the film's OWN placed window ----
+    def test_wrong_window_is_silent_right_window_fires(self):
+        movie = self._movie()
+        cascades = self._cascade(["hits_cinema", "hits_pvod", "hits_rent", "hits_stream"])
+        watches = [{"user_id": "u1", "movie_id": "8001", "windows": ["rent"]}]
+
+        cinema_t = Transition("8001", movie["title"], "hits_cinema", movie=movie)
+        self.assertEqual(self._match(cascades, [cinema_t], watches, movie), {})
+
+        rent_t = Transition("8001", movie["title"], "hits_rent", movie=movie)
+        hits = self._match(cascades, [rent_t], watches, movie)
+        self.assertEqual(len(hits.get("u1", [])), 1)
+        self.assertEqual(hits["u1"][0].transition.moment, "hits_rent")
+
+    # ---- AC2: no placement row at all -> fail closed ----
+    def test_no_placement_row_is_silent(self):
+        movie = self._movie()
+        cascades = self._cascade(["hits_cinema", "hits_pvod", "hits_rent", "hits_stream"])
+        t = Transition("8001", movie["title"], "hits_cinema", movie=movie)
+        self.assertEqual(self._match(cascades, [t], [], movie), {})
+
+    def test_an_empty_windows_row_is_the_same_as_no_row(self):
+        movie = self._movie()
+        cascades = self._cascade(["hits_rent"])
+        watches = [{"user_id": "u1", "movie_id": "8001", "windows": []}]
+        t = Transition("8001", movie["title"], "hits_rent", movie=movie)
+        self.assertEqual(self._match(cascades, [t], watches, movie), {})
+
+    # ---- AC3: non-window moments never leak into rule 3 ----
+    def test_non_window_moments_fire_with_no_placement_row(self):
+        movie = self._movie(status=("upcoming",))
+        cascades = self._cascade(["announced", "opens_soon", "newly_qualifies", "new_to_agent"])
+        for moment in ("announced", "opens_soon", "newly_qualifies", "new_to_agent"):
+            t = Transition("8001", movie["title"], moment, movie=movie)
+            hits = self._match(cascades, [t], [], movie)
+            self.assertEqual(len(hits.get("u1", [])), 1, f"{moment} must fire with no placement row")
+
+    # ---- AC4/5 are exercised via __main__.py's own counters (see test_delivery.py / manual run) ----
+    def test_placement_counts_are_reported_when_a_dict_is_passed(self):
+        movie = self._movie()
+        cascades = self._cascade(["hits_cinema", "hits_rent"])
+        admission = _admit(cascades, today=[movie])
+        wrong_window_t = Transition("8001", movie["title"], "hits_cinema", movie=movie)
+        counts = {}
+        match(cascades, [wrong_window_t], admission=admission,
+              film_watches=[{"user_id": "u1", "movie_id": "8001", "windows": ["rent"]}],
+              placement_counts=counts)
+        self.assertEqual(counts, {"wrong_window": 1})
+
+        no_row_t = Transition("8001", movie["title"], "hits_rent", movie=movie)
+        counts = {}
+        match(cascades, [no_row_t], admission=admission, film_watches=[], placement_counts=counts)
+        self.assertEqual(counts, {"no_placement": 1})
 
 
 class OneAgentPerFilmTests(unittest.TestCase):
@@ -266,7 +360,7 @@ class OneAgentPerFilmTests(unittest.TestCase):
 
     def _match(self, cascades, ts):
         admission = _admit(cascades, today=[t.movie for t in ts])
-        return match(cascades, ts, admission=admission)
+        return match(cascades, ts, admission=admission, film_watches=_auto_placements(cascades, ts))
 
     def test_two_agents_matching_one_film_yield_one_hit_from_the_lower_order(self):
         ts = self._transitions()
@@ -363,7 +457,8 @@ class PerAgentChannels(unittest.TestCase):
                      "alert_moments": ["hits_rent"],
                      "criteria": _criteria(channelsLive={"inApp": True, "email": False})}]
         admission = _admit(cascades, today=[t.movie for t in ts])
-        hits = match(cascades, ts, admission=admission)["u1"]
+        hits = match(cascades, ts, admission=admission,
+                    film_watches=_auto_placements(cascades, ts))["u1"]
         self.assertEqual(len(hits), 1)
         self.assertFalse(hits[0].wants("email"))
         self.assertTrue(hits[0].wants("in_app"))
@@ -391,7 +486,7 @@ class FilmWatchTests(unittest.TestCase):
 
     def _match(self, cascades, ts):
         admission = _admit(cascades, today=[t.movie for t in ts])
-        return match(cascades, ts, admission=admission)
+        return match(cascades, ts, admission=admission, film_watches=_auto_placements(cascades, ts))
 
     # ---- the four scenarios the ticket's AC calls out by name ----
     def test_per_film_tick_alone_fires(self):
@@ -657,7 +752,8 @@ class NewToAgentTests(unittest.TestCase):
                    "alert_moments": ["hits_cinema"], "criteria": _criteria(genre=["Drama"], imdb=7.0),
                    "updated_at": self.STABLE}
         window_admission = _admit([cascade], today=[t.movie for t in transitions])
-        window_hits = match([cascade], transitions, admission=window_admission)
+        window_hits = match([cascade], transitions, admission=window_admission,
+                           film_watches=_auto_placements([cascade], transitions))
         covered = {(h.cascade_id, h.transition.movie_id)
                    for hits in window_hits.values() for h in hits}
         new_admission = _admit([cascade], today=today, yesterday=prev)
