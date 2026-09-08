@@ -2671,6 +2671,9 @@
      (.pop-down — both pills sit at the very top of the screen, so .cpop's upward default is wrong here),
      content-width but floored so a short list ("All") isn't a sliver. */
   .cpop.pickpop{min-width:120px}
+  /* CAS-856: the Watch listing's own sort popover — same content-width .cpop chrome, floored so the
+     longest label ("Most anticipated") never wraps onto two lines. */
+  .cpop.ordpop{min-width:170px}
   .popt{display:flex;align-items:center;width:100%;text-align:left;padding:8px 10px;border-radius:9px;
     background:transparent;border:0;color:var(--dim);font-family:inherit;font-size:13px;font-weight:600;
     cursor:pointer;white-space:nowrap}
@@ -2788,6 +2791,12 @@
   .sortctl select{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;
     opacity:0;cursor:pointer;-webkit-appearance:none;appearance:none}
   .sortctl select:focus-visible ~ .sortic{outline:2px solid var(--cyan);outline-offset:2px}
+  /* CAS-856: #ymSortCtl (the Watch listing's own sort control) swaps its native <select> for a real button
+     that opens an in-app popover — .sortctl's shared position:relative above still anchors it. The rule
+     above stays for #sortCtl's own <select> (the deck's sort control, untouched by this ticket). */
+  #ymSortCtl button{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;
+    background:transparent;color:inherit;font:inherit;cursor:pointer;display:grid;place-items:center}
+  #ymSortCtl button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .fglabel{display:flex;align-items:center;gap:8px;padding:15px 12px 4px;font-size:13px;font-weight:800}
   .fglabel .n{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:1px 7px;
     font-size:10.5px;color:var(--dim);font-weight:700}
@@ -4166,19 +4175,11 @@
       <div class="deckstrip" id="wlStrip" role="group" aria-label="Watch lists — use the arrow keys to move between them"
            aria-keyshortcuts="ArrowLeft ArrowRight Home End" tabindex="0"></div>
     </div>
-    <div class="sortctl ca-btn x" id="ymSortCtl" title="Order">
-      <select id="ymSort" aria-label="Order this list">
-        <option value="">Best match</option>
-        <option value="availability">Availability</option>
-        <option value="imdb">IMDb rating</option>
-        <option value="cascade">Cascade score</option>
-        <option value="rt">RT critic</option>
-        <option value="gross">Box office</option>
-        <option value="popularity">Most anticipated</option>
-        <option value="cinema">Newest cinema</option>
-        <option value="title">Title A–Z</option>
-      </select>
-      <span class="sortic" aria-hidden="true">⇅</span>
+    <div class="sortctl ca-btn x" id="ymSortCtl" title="Order: Best match">
+      <button type="button" id="ymSortBtn" aria-haspopup="true" aria-expanded="false"
+              aria-label="Order: Best match" onclick="toggleYmSortPanel(this)">
+        <span class="sortic" aria-hidden="true">⇅</span>
+      </button>
     </div>
   </div>
   <div class="uwrap" id="yourMoviesBody"></div>
@@ -15872,6 +15873,7 @@ function wlSync(shown){
   });
   const actsHome=wlStrip.querySelector(".dcard.is-active .dc-acts");
   if(actsHome && wlSortCtl.parentElement!==actsHome) actsHome.appendChild(wlSortCtl);
+  syncYmSortBtn();   // CAS-856: keep the sort button's own name of the active order honest
   wlPaint();
 }
 // Create makes a list immediately — no criteria funnel, unlike newCascade()/commitDraft(): default name,
@@ -16037,7 +16039,72 @@ document.addEventListener("click", e=>{
 // CAS-646: sort now drives the LIVE listing's own per-section order too (render()'s groups.map, not just
 // this screen's own preview feed).
 window.ymSortChange=v=>{ ymSort = v||null; ymPersist(); ymRefreshFeed(); render(); };
-$("ymSort").onchange=e=>ymSortChange(e.target.value);
+// CAS-856: the native <select> that used to write ymSortChange directly is gone — replaced by an in-app
+// popover built the same way openScopePanel builds .cpop.spop (.nopt rows, one .cpop live at a time), since
+// a native OS list box was the one control on this screen that didn't belong to the app's own design
+// language. Same eight sortMoviesBy orders plus "Best match" (null — the feed's own default), same order,
+// same ymSortChange handler underneath, so ordering behaviour itself is untouched.
+const YM_SORT_OPTS=[
+  {key:"",             lbl:"Best match"},
+  {key:"availability",  lbl:"Availability"},
+  {key:"imdb",          lbl:"IMDb rating"},
+  {key:"cascade",       lbl:"Cascade score"},
+  {key:"rt",            lbl:"RT critic"},
+  {key:"gross",         lbl:"Box office"},
+  {key:"popularity",    lbl:"Most anticipated"},
+  {key:"cinema",        lbl:"Newest cinema"},
+  {key:"title",         lbl:"Title A–Z"},
+];
+function ymSortRowsHTML(){
+  return YM_SORT_OPTS.map(o=>{
+    const on=(ymSort||"")===o.key;
+    return `<button type="button" class="nopt${on?" on":""}" style="--wwc:var(--accent)"
+      role="menuitemradio" aria-checked="${on}" tabindex="${on?0:-1}" data-key="${escA(o.key)}">
+      <span class="wwb">✓</span><span class="nol">${esc(o.lbl)}</span></button>`;
+  }).join("");
+}
+// Keeps the button's own name of the active order honest — same job syncSortCtl does for the deck's #sort,
+// called from wlSync() so it repaints on every list switch/sort change, not just this file's own handler.
+function syncYmSortBtn(){
+  const btn=$("ymSortBtn"); if(!btn) return;
+  const cur=YM_SORT_OPTS.find(o=>o.key===(ymSort||"")) || YM_SORT_OPTS[0];
+  btn.setAttribute("aria-label","Order: "+cur.lbl);
+  $("ymSortCtl").title="Order: "+cur.lbl;
+}
+function closeYmSortPanel(){
+  document.querySelectorAll(".cpop.ordpop").forEach(n=>n.remove());
+  const btn=$("ymSortBtn"); if(btn) btn.setAttribute("aria-expanded","false");
+}
+window.toggleYmSortPanel=btn=>{
+  const already=btn.getAttribute("aria-expanded")==="true";
+  closeYmSortPanel();
+  if(already) return;   // second tap closes it
+  const pop=document.createElement("div");
+  pop.className="cpop ordpop al-r pop-down";
+  pop.setAttribute("role","menu");
+  pop.setAttribute("aria-label","Order");
+  pop.innerHTML=`<div class="nopts">${ymSortRowsHTML()}</div>`;
+  $("ymSortCtl").appendChild(pop);
+  btn.setAttribute("aria-expanded","true");
+  const sel=pop.querySelector('[tabindex="0"]') || pop.querySelector(".nopt");
+  if(sel) sel.focus({preventScroll:true});
+};
+document.addEventListener("click", e=>{
+  const row=e.target.closest(".cpop.ordpop .nopt");
+  if(row){ closeYmSortPanel(); ymSortChange(row.dataset.key); $("ymSortBtn").focus({preventScroll:true}); return; }
+  if(document.querySelector(".cpop.ordpop") && !e.target.closest(".cpop.ordpop") && !e.target.closest("#ymSortBtn"))
+    closeYmSortPanel();
+});
+document.addEventListener("keydown", e=>{
+  const pop=document.querySelector(".cpop.ordpop"); if(!pop) return;
+  if(e.key==="Escape"){ e.stopPropagation(); closeYmSortPanel(); $("ymSortBtn").focus({preventScroll:true}); return; }
+  if(e.key!=="ArrowDown" && e.key!=="ArrowUp") return;
+  e.preventDefault();
+  const opts=[...pop.querySelectorAll(".nopt")];
+  const i=opts.indexOf(document.activeElement);
+  opts[e.key==="ArrowDown" ? (i+1+opts.length)%opts.length : (i-1+opts.length)%opts.length].focus();
+}, true);
+addEventListener("scroll", ()=>{ if(document.querySelector(".cpop.ordpop")) closeYmSortPanel(); }, {passive:true});
 // A per-keystroke search/filter change only needs the feed's own count/result-line/cards refreshed — not the
 // whole screen (renderYourMovies would tear down and rebuild the search input mid-type, stealing its focus).
 function ymRefreshFeed(){
