@@ -3869,9 +3869,7 @@ test("CAS-740 AC3: an account that already answered touched=true is adopted on l
 // ---- WHOLE-ROW UPSERTS DON'T OVERWRITE ANOTHER DEVICE (CAS-741) --------------------------------------------
 // notify_prefs pushed unconditionally, with no gate on whether this device's own load had resolved or even
 // succeeded — a failed load still let the next edit push this device's local defaults over a real account
-// row (muting email alerts, erasing a real address). `lists` pushed the WHOLE lists array on every
-// membership tick — tagging any film re-pushed every OTHER list's current in-memory name, silently
-// reverting a rename made on another device this one hadn't reloaded yet.
+// row (muting email alerts, erasing a real address).
 function fakeCas741NotifySupabase({ row = null, loadError = null } = {}){
   const state = { row: row ? { ...row } : null, upsertCalls: [] };
   const client = {
@@ -3936,117 +3934,6 @@ test("CAS-741 AC2(b): a failed notify_prefs load suppresses the write rather tha
   assert.equal(state.upsertCalls.length, 0,
     "a failed load must suppress the notify_prefs write, not fall through to pushing this device's defaults over the real row — fails on current code");
   assert.equal(state.row.email_address, "real@account.com", "the account's real row must be untouched");
-}));
-
-function fakeCas741ListsSupabase(seed){
-  const state = { lists: (seed.lists || []).map(r => ({ ...r })),
-                  list_films: (seed.list_films || []).map(r => ({ ...r })),
-                  upsertCalls: { lists: [], list_films: [] } };
-  function deleteBuilder(table){
-    const conds = [];
-    const builder = {
-      eq(col, val){ conds.push([col, v => v === val]); return builder; },
-      in(col, vals){ const set = new Set(vals); conds.push([col, v => set.has(v)]); return builder; },
-      then(resolve, reject){
-        state[table] = state[table].filter(r => !conds.every(([c, test]) => test(r[c])));
-        return Promise.resolve({ error: null }).then(resolve, reject);
-      },
-    };
-    return builder;
-  }
-  const client = {
-    from(table){
-      return {
-        select: () => ({ then(resolve, reject){
-          return Promise.resolve({ data: state[table].map(r => ({ ...r })), error: null }).then(resolve, reject);
-        } }),
-        upsert(rows){
-          state.upsertCalls[table].push(rows.map(r => ({ ...r })));
-          const nowIso = new Date().toISOString();
-          rows.forEach(r => {
-            if(table === "lists"){
-              const i = state.lists.findIndex(x => x.id === r.id);
-              const stored = { ...r, updated_at: nowIso };
-              if(i >= 0) state.lists[i] = stored; else state.lists.push(stored);
-            } else {
-              const i = state.list_films.findIndex(x => x.user_id === r.user_id && x.movie_id === r.movie_id && x.list_id === r.list_id);
-              const stored = { ...r, updated_at: nowIso };
-              if(i >= 0) state.list_films[i] = stored; else state.list_films.push(stored);
-            }
-          });
-          const result = { data: rows.map(r => ({ id: r.id, updated_at: nowIso })), error: null };
-          return { select: async () => result, then(resolve, reject){ return Promise.resolve(result).then(resolve, reject); } };
-        },
-        delete: () => deleteBuilder(table),
-      };
-    },
-  };
-  return { client, state };
-}
-function withCas741ListsState(fn){
-  const savedLists = E.lists.slice();
-  const savedMembership = JSON.parse(JSON.stringify(E.listMembership));
-  const savedKnown = new Map(E.CascadePersistence.listKnown);
-  return (async () => {
-    try { await fn(); }
-    finally {
-      E.lists.length = 0; savedLists.forEach(l => E.lists.push(l));
-      Object.keys(E.listMembership).forEach(k => delete E.listMembership[k]);
-      Object.assign(E.listMembership, savedMembership);
-      E.CascadePersistence.listKnown.clear();
-      savedKnown.forEach((v, k) => E.CascadePersistence.listKnown.set(k, v));
-      signOut();
-    }
-  })();
-}
-
-test("CAS-741 AC3(a): a membership-only change writes only the affected list_films row and pushes no lists row at all", () => withCas741ListsState(async () => {
-  const listA = uuidFor(741001), listB = uuidFor(741002);
-  const rowA = { id: listA, user_id: "cas681-test-user", name: "List A",
-    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" };
-  const rowB = { id: listB, user_id: "cas681-test-user", name: "List B",
-    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" };
-  const { client, state } = fakeCas741ListsSupabase({ lists: [rowA, rowB] });
-  signInWithClient(client);
-
-  await E.CascadePersistence.loadListsAccount();   // establishes lists + listKnown from the account
-  state.upsertCalls.lists.length = 0;
-  state.upsertCalls.list_films.length = 0;
-
-  // A membership-only change: tag a film into List A. Neither list's own name changed.
-  const filmId = 741111;
-  (E.listMembership[filmId] || (E.listMembership[filmId] = [])).push(listA);
-
-  await E.CascadePersistence.syncListsNow();
-
-  assert.equal(state.upsertCalls.lists.length, 0,
-    "a membership-only tick must not push any `lists` row — fails on current code (pushes the whole array)");
-  assert.equal(state.upsertCalls.list_films.length, 1, "the affected list_films row must still be pushed");
-  assert.ok(state.upsertCalls.list_films[0].some(r => r.movie_id === String(filmId) && r.list_id === listA),
-    "the pushed list_films row must be the one that actually changed");
-}));
-
-test("CAS-741 AC3(b): a rename made on another device survives a membership tick this device makes without reloading first", () => withCas741ListsState(async () => {
-  const listA = uuidFor(741003), listB = uuidFor(741004);
-  const rowA = { id: listA, user_id: "cas681-test-user", name: "List A",
-    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" };
-  const rowB = { id: listB, user_id: "cas681-test-user", name: "List B",
-    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" };
-  const { client, state } = fakeCas741ListsSupabase({ lists: [rowA, rowB] });
-  signInWithClient(client);
-
-  await E.CascadePersistence.loadListsAccount();   // this device's baseline: List B is "List B"
-
-  // Another device renames List B, directly against the fake account — this device never reloads.
-  state.lists.find(r => r.id === listB).name = "List B renamed elsewhere";
-
-  // This device ticks a film into List A — a membership-only change, no local edit to either list's name.
-  const filmId = 741112;
-  (E.listMembership[filmId] || (E.listMembership[filmId] = [])).push(listA);
-  await E.CascadePersistence.syncListsNow();
-
-  assert.equal(state.lists.find(r => r.id === listB).name, "List B renamed elsewhere",
-    "an unrelated membership tick must never revert a rename made on another device — fails on current code");
 }));
 
 // ---- PER-DEVICE CACHES AND STAMPS MADE TWO DEVICES DISAGREE (CAS-742) --------------------------------------

@@ -3148,8 +3148,8 @@
   .revsig p{font-size:13px;color:var(--dim);line-height:1.5;margin:0 0 8px}
   .revsig p:last-child{margin-bottom:0}
   .revsig b{color:var(--ink)}
-  /* ---- CAS-428: Lists screen — same .ucard/.urow row language as Account, plus rename/delete affordances
-     no other .urow row needs (a List is the one thing here you can rename or remove yourself). ---- */
+  /* ---- CAS-775: Occasions screen — same .ucard/.urow row language as Account, plus rename/delete
+     affordances no other .urow row needs (an Occasion is a thing you can rename or remove yourself). ---- */
   .listact{flex:0 0 auto;width:30px;height:30px;border-radius:8px;border:1px solid var(--line);
     background:rgba(255,255,255,.04);color:var(--dim);cursor:pointer;display:grid;place-items:center;
     font-size:13px;line-height:1;margin-left:2px}
@@ -3225,12 +3225,8 @@
   .cascbar.blue .dcard.new .dc-in{border-color:rgba(76,125,255,.28)}
   .cascbar.blue .dcard.new .dc-icon,.cascbar.blue .dcard.new .dc-name{color:var(--brand-blue)}
   .cascbar.blue .ca-btn.new{background:rgba(76,125,255,.2);border-color:var(--brand-blue);color:#fff}
-  /* TAGS TO INCLUDE reuses the one-line cascade row (one-line, CAS-587) with a tag-shaped icon */
-  .agrow.ym-tag{--dcc:var(--rose)}
-  .agrow.ym-tag .agicon{background:rgba(255,47,135,.16)}
-  /* CAS-705: Manage Lists rows get their own modifier rather than restyling .agrow.ym-tag, so the Tags
-     row above keeps its rose accent untouched. Blue because brand-blue is Watch's colour (#moviesBtn,
-     .cascbar.blue, CAS-645) — rose is the Tags accent, not Watch's. */
+  /* CAS-842: Manage Lists rows get their own modifier, blue because brand-blue is Watch's colour
+     (#moviesBtn, .cascbar.blue, CAS-645). */
   .agrow.ym-list{--dcc:var(--brand-blue)}
   .agrow.ym-list .agicon{background:rgba(76,125,255,.16)}
   /* the list editor's own hub, on the agent editor's shell */
@@ -3645,7 +3641,6 @@
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('whereWhen')">Where &amp; when you'll watch</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('services')">My services</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('svcAnalysis')">Service analysis</button>
-            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('lists')">Tags</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('occasions')">Occasions</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('account')">Account</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('about')">About</button>
@@ -4249,16 +4244,9 @@
   <div class="uwrap" id="wwBody"></div>
 </div>
 
-<!-- LISTS (CAS-428) — manage the user's own manual collections: create, rename, delete. A different screen
-     from Agents (CAS-424, criteria-driven and reorderable) — these are hand-picked and have no order of their
-     own. Body rendered by renderListsScreen(). Reached from the top menu. -->
-<div class="uscreen" id="listsScreen" role="dialog" aria-modal="true" aria-label="Tags">
-  <div class="uwrap" id="listsBody"></div>
-</div>
-
 <!-- OCCASIONS (CAS-775) — manage the user's Occasions register: create, rename, delete. Replaces CAS-768's
      derived-from-agents set, which could not hold an occasion no agent yet carried, be renamed, or be
-     deleted. Same rename/delete row pattern as the Tags screen just above. Body rendered by
+     deleted. Body rendered by
      renderManageOccasionsScreen(). Reached from the top menu. -->
 <div class="uscreen" id="manageOccasionsScreen" role="dialog" aria-modal="true" aria-label="Occasions">
   <div class="uwrap" id="manageOccasionsBody"></div>
@@ -5297,7 +5285,7 @@ const WATCH_STEPS = [
 // since the editor UI that could widen a narrower stored value is gone (see normWatchlist migration below).
 // CAS-753: mineOnly defaults ON (Lee's explicit call) — a stored record without the field (every list that
 // pre-dates this ticket) takes the default, which is what makes it on-by-default for existing users too.
-function watchlistDefaults(){ return {svcOn:["stream"], cascOff:[], watchedOn:WATCH_STEPS.map(s=>s.key), watchTiers:[], sort:null, excludeTags:[], mineOnly:true}; }
+function watchlistDefaults(){ return {svcOn:["stream"], cascOff:[], watchedOn:WATCH_STEPS.map(s=>s.key), watchTiers:[], sort:null, mineOnly:true}; }
 function normWatchlist(o){
   const d=watchlistDefaults();
   if(!o || typeof o!=="object") return d;
@@ -5313,8 +5301,6 @@ function normWatchlist(o){
     watchedOn,
     watchTiers: arr(o.watchTiers) || d.watchTiers,
     sort:       typeof o.sort==="string" ? o.sort : null,
-    // CAS-642: excludeTags moves here from the agent object — one tag-exclusion home per list, not per agent.
-    excludeTags: arr(o.excludeTags) || d.excludeTags,
     mineOnly:   typeof o.mineOnly==="boolean" ? o.mineOnly : d.mineOnly,
   };
 }
@@ -5441,7 +5427,7 @@ const activeWatchlist = () => watchLists.find(l=>l.id===watchActiveId) || null;
 // so the scratch state still ends up scoped to the right list before any render can read it.
 if(!activeWatchlist() && watchLists.length) setActiveWatchlist(firstWatchlistId());
 // CAS-753: "Show only available on my services" — a boolean on the ACTIVE watch list's own persisted
-// record (mirrors excludeTags just below: one gate, read from here, not re-expressed per call site).
+// record: one gate, read from here, not re-expressed per call site.
 // Every entry in `watchLists` is already normWatchlistEntry()-shaped by the time it can be active, so
 // `.mineOnly` is always a real boolean here — no default-coalescing needed at the read site.
 const watchMineOnlyOn = () => { const l=activeWatchlist(); return l ? l.mineOnly : true; };
@@ -5452,28 +5438,6 @@ function setWatchMineOnly(v){
 }
 window.toggleWatchMineOnly = () => { setWatchMineOnly(!watchMineOnlyOn()); render(); };
 window.enableWatchMineOnly = () => { setWatchMineOnly(true); render(); };   // the active-filter chip's clear
-// CAS-642 INDICATIVE: excludeTags moves from the agent to the watch list. An agent that carries one today
-// has its value copied onto every list that includes that agent (cascOff not listing it), once — keyed like
-// the CAS-148 sort migration (SORT_MIG_KEY above) so it cannot run twice. matchesCriteria's own excludeTags
-// gate (see its own CAS-642 comment) reads the ACTIVE list's array from here on, never the agent's again.
-const EXTAGS_MIG_KEY = "cascade_extagsmig_642";
-try{
-  if(!localStorage.getItem(EXTAGS_MIG_KEY)){
-    let extagsMigChanged=false;
-    cascades.forEach(c=>{
-      if(!(c.excludeTags||[]).length) return;
-      watchLists.forEach(l=>{
-        if((l.cascOff||[]).includes(c.id)) return;
-        const set=new Set(l.excludeTags||[]);
-        const before=set.size;
-        c.excludeTags.forEach(t=>set.add(t));
-        if(set.size!==before){ l.excludeTags=[...set]; extagsMigChanged=true; }
-      });
-    });
-    if(extagsMigChanged) saveWatchlists();
-    localStorage.setItem(EXTAGS_MIG_KEY,"1");
-  }
-}catch(e){}
 // CAS-642 W2a: activeIds (the union the listing already reads via activeCascades/scopeRows) now tracks the
 // ACTIVE WATCH LIST's membership instead of direct rail taps — CAS-634's toggleActive is retired as the
 // rail's own input below, but the listing pipeline itself (scopeRows, deckSync's dirty-check machinery for
@@ -5493,98 +5457,6 @@ function syncActiveIdsFromActiveList(liveCascOff){
   saveActiveIds();
 }
 syncActiveIdsFromActiveList();
-
-// ---- CAS-428: Lists — user-curated, manual collections (a different thing from an Agent) ---------------
-// An Agent is auto-populated by its own criteria; a List is the opposite — nothing lands in one except by
-// a tick, and a film can sit in as many at once as you like. That is why membership is a plain array on the
-// film, not a single "home" the way the old Agent-move panel worked: there is no moving OUT of a List when
-// you tick another one.
-function loadLists(){
-  try{
-    const a=JSON.parse(localStorage.getItem("cascade_lists")||"[]");
-    if(!Array.isArray(a)) return [];
-    return a.filter(l=>l && typeof l.id==="string" && typeof l.name==="string");
-  }catch(e){ return []; }
-}
-function saveLists(){ try{ localStorage.setItem("cascade_lists", JSON.stringify(lists)); }catch(e){} }
-const lists = loadLists();
-
-const LIST_FILMS_KEY="cascade_list_films";
-function loadListMembership(){
-  let m={};
-  try{ const o=JSON.parse(localStorage.getItem(LIST_FILMS_KEY)||"{}"); if(o && typeof o==="object" && !Array.isArray(o)) m=o; }catch(e){}
-  Object.keys(m).forEach(k=>{
-    m[k]=Array.isArray(m[k]) ? [...new Set(m[k].filter(x=>typeof x==="string"))] : [];
-    if(!m[k].length) delete m[k];
-  });
-  return m;
-}
-// filmId (string key) -> list id[]. Kept separate from `notify` on purpose: recomputeFound() rebuilds and
-// prunes notify entries every render, and a List tick has nothing to do with any Cascade's criteria — folding
-// it into that object would mean a film with no Cascade match and no manual find would have its List
-// membership silently swept away the next time render() ran.
-const listMembership = loadListMembership();
-let listMembershipSaved=null;
-function saveListMembership(){
-  const s=JSON.stringify(listMembership);
-  if(s===listMembershipSaved) return;
-  listMembershipSaved=s;
-  try{ localStorage.setItem(LIST_FILMS_KEY, s); }catch(e){}
-}
-const listsFor = id => (listMembership[id]||[]).map(lid=>lists.find(l=>l.id===lid)).filter(Boolean);
-const inList = (id,lid) => (listMembership[id]||[]).includes(lid);
-function toggleFilmList(id, lid){
-  const key=String(id);
-  const arr = listMembership[key] || (listMembership[key]=[]);
-  const i=arr.indexOf(lid);
-  if(i>=0) arr.splice(i,1); else arr.push(lid);
-  if(!arr.length) delete listMembership[key];
-  saveListMembership();
-}
-function listFilmCount(lid){
-  let n=0; for(const k in listMembership){ if((listMembership[k]||[]).includes(lid)) n++; } return n;
-}
-function createList(name){
-  const nm=(name||"").trim(); if(!nm) return null;
-  const l={id:cascadeNewId(), name:nm};
-  lists.push(l);
-  saveLists();
-  logEvent("list_created",{});
-  return l;
-}
-function renameListTo(id,name){
-  const nm=(name||"").trim(); if(!nm) return;
-  const l=lists.find(x=>x.id===id); if(!l) return;
-  l.name=nm;
-  saveLists();
-  logEvent("list_renamed",{});
-}
-function removeList(id){
-  const i=lists.findIndex(x=>x.id===id); if(i<0) return;
-  lists.splice(i,1);
-  saveLists();
-  Object.keys(listMembership).forEach(k=>{
-    const arr=listMembership[k], j=arr.indexOf(id);
-    if(j>=0){ arr.splice(j,1); if(!arr.length) delete listMembership[k]; }
-  });
-  saveListMembership();
-  logEvent("list_deleted",{});
-}
-// CAS-635 N3c: the per-list dismiss's tag, found by name (created once, reused after) rather than always
-// pushed like createList() — "at most one tag per agent, however many films are dismissed" (AC4) depends
-// on this being idempotent by name.
-function findOrCreateTag(name){
-  const nm=(name||"").trim(); if(!nm) return null;
-  let l=lists.find(x=>x.name===nm);
-  if(!l){ l={id:cascadeNewId(), name:nm}; lists.push(l); saveLists(); }
-  return l;
-}
-function addFilmToList(id, lid){
-  const key=String(id);
-  const arr=listMembership[key] || (listMembership[key]=[]);
-  if(!arr.includes(lid)) arr.push(lid);
-  saveListMembership();
-}
 
 // ---- CAS-775: Occasions register — account-level, one per user, replacing CAS-768's derived-from-agents
 // set (the list of occasions was the union of what agents happened to carry, so one that no agent carried
@@ -5628,9 +5500,9 @@ function findOccasionByName(name){
   const nm=name.toLowerCase();
   return occasionReg.find(o=>o.name.toLowerCase()===nm);
 }
-// Idempotent by name, like findOrCreateTag above — typing a name that's a case-insensitive match for an
-// existing entry ticks that entry rather than creating a second one (AC7 of CAS-768, unchanged by this
-// ticket). Writes straight to the register — not to any draft — so every other agent can offer it at once.
+// Idempotent by name — typing a name that's a case-insensitive match for an existing entry ticks that
+// entry rather than creating a second one (AC7 of CAS-768, unchanged by this ticket). Writes straight to
+// the register — not to any draft — so every other agent can offer it at once.
 function createOccasion(name){
   const nm=normOccasionName(name); if(!nm) return null;
   const existing=findOccasionByName(nm); if(existing) return existing;
@@ -5720,7 +5592,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 999, "commit": "3ad682b", "builtAt": "2026-09-08T01:40:03Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1000, "commit": "f606f26", "builtAt": "2026-09-08T02:09:21Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -7694,12 +7566,10 @@ function notifyChipHTML(id){
       <span class="clab${st.on?"":" dim"}">${lbl}</span>
       <span class="ctog">${ICON.chev}</span></span></button>`;
 }
-// ---- CAS-711: the Agent control (replaces the CAS-428 Lists/"Tags" control) ------------------------------
+// ---- CAS-711: the Agent control (replaces the CAS-428 Lists/"Tags" control, removed outright by CAS-842) --
 // A film belongs to exactly one agent (CAS-708/709 — highest-ranked criteria match, or a hand-pin overriding
 // that). This control shows and sets that ownership directly: the chip names the film's current owner, and
-// the panel is a single-select move, not the old Lists checklist. The Lists/`lists` data model and its own
-// `listsScreen` nav entry are untouched — only this card control moved onto agents; see CAS-711 for the
-// follow-up flag on cleaning up the now-orphaned Lists feature itself.
+// the panel is a single-select move, not the old Lists checklist.
 // CAS-786: which colour the agent chip reads as — "manual" if the owner is a hand placement (pinnedInto),
 // "auto" if it was picked by rank, null if there's no owner. Mirrors filmWatchSource's wsrc-*/csrc-* pairing.
 function agentChipSource(id, owner){
@@ -9848,9 +9718,6 @@ function normCascade(c, opts){
   // told it to drop. Pre-existing Cascades predate the toggles, so they adopt the same default.
   c.excludeWatched = c.excludeWatched===undefined ? true : !!c.excludeWatched;
   c.excludeBlocked = c.excludeBlocked===undefined ? true : !!c.excludeBlocked;
-  // CAS-635: tag exclusions default to none — an agent that predates this ticket excluded nothing, and
-  // still excludes nothing until a tag is ticked or a film is dismissed.
-  c.excludeTags = Array.isArray(c.excludeTags) ? c.excludeTags.filter(x=>typeof x==="string") : [];
   c.alerts = {...ALERT_DEFAULTS, ...(c.alerts||{})};
   // Which bells the user has pressed BY HAND this editing session (CAS-103 AC2). Editor-only — it is
   // never persisted (commitDraft copies a named field list), because it answers "did you choose this,
@@ -10186,13 +10053,6 @@ function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   if(scopeOf(c)[ps] && !matchesServices(m, ps)) return false;   // CAS-252/342: see passes()
   if(c.status.length && !c.status.includes(ps)) return false;
   if((c.exclude||[]).length && (m.genres||[]).some(g=>c.exclude.includes(g))) return false;   // skip beats match
-  // CAS-635: a tag is a user's own "this shouldn't be here" answer, so a film carrying an excluded tag drops
-  // out of the listing wherever this agent draws it from — listedBy, watchesFilm and countCriteria all route
-  // through this one gate, so no other call site needs its own excludeTags check.
-  // CAS-642 INDICATIVE: excludeTags moved from the agent to the watch list — this gate now reads the ACTIVE
-  // list's array, not `c`'s own (which the agent object no longer carries as the source of truth).
-  const activeExTags=(activeWatchlist()&&activeWatchlist().excludeTags)||[];
-  if(activeExTags.length && (listMembership[m.tmdb_id]||[]).some(lid=>activeExTags.includes(lid))) return false;
   // CAS-182: cleared means cleared. A dimension holding null admits nothing, so the count says 0 rather
   // than quietly reverting to the whole catalogue behind a screen of switched-off chips.
   if(c.genre===null || c.age===null) return false;
@@ -11135,7 +10995,6 @@ function commitDraft(){
     selScale:draft.selScale, selBuzz:draft.selBuzz, selOr:draft.selOr,
     awards:draft.awards, cinemaReleaseOnly:draft.cinemaReleaseOnly, myServices:{...draft.myServices},
     excludeWatched:draft.excludeWatched, excludeBlocked:draft.excludeBlocked,
-    excludeTags:[...(draft.excludeTags||[])],
     // CAS-768: occasions travel with the agent. Left out of this whitelist, the Briefing's Occasions
     // spoke appears to work and the tag is discarded the moment Save is pressed — the same failure
     // listStatus (CAS-228) and watchMarkers (CAS-729) each had, for the same reason.
@@ -11881,7 +11740,6 @@ window.navMenuGo=key=>{
   else if(key==="svcAnalysis") openSvcAnalysis();
   else if(key==="languages") openLanguages();
   else if(key==="whereWhen") openWhereWhen();
-  else if(key==="lists") openListsScreen();
   else if(key==="occasions") openManageOccasionsScreen();
   else if(key==="about") openAbout();
 };
@@ -14667,12 +14525,11 @@ const SHARP_STEPS = {
           <span>🎬 Had a cinema release
             <small style="color:var(--faint)">— an AU cinema (not limited) release, at any point</small></span>
           <span class="knob"></span></div>
-        <!-- CAS-642 W2b: the service-status scope (CAS-635 N3a) and exclude-tags (CAS-635 N3b) spokes moved
-             off this screen — both are a statement about a WATCH LIST, not about what this agent is allowed
-             to find, and now live in a list's own Edit screen (leInnerHTML) instead. One home each, not two.
-             briefToggleSvc/briefToggleExcludeTag and the 'extags' step stay defined: onboarding's own S3/S4
-             sequence (CAS-628/629) still routes a new agent's draft through them before this screen ever
-             opens. -->
+        <!-- CAS-642 W2b: the service-status scope (CAS-635 N3a) spoke moved off this screen — it is a
+             statement about a WATCH LIST, not about what this agent is allowed to find. briefToggleSvc stays
+             defined: onboarding's own S3/S4 sequence (CAS-628/629) still routes a new agent's draft through
+             it before this screen ever opens. (CAS-635 N3b's exclude-tags spoke was removed outright by
+             CAS-842, along with the rest of the Tags feature.) -->
         <!-- CAS-268: Delete only appears for an agent that EXISTS. A brand-new agent reaching this screen
              from New Cascade (CAS-246) has never been saved, so there is nothing to delete — offering the
              button there would either do nothing or claim to have removed something that was never on the
@@ -15017,27 +14874,6 @@ ${who.includes("kids") ? `
       [...box.children].forEach(b=>{
         b.onclick=()=>{ dAgeToggle(+b.dataset.i); renderOnbStep("age"); };
       });
-    },
-  },
-  // ---- CAS-635 N3b: exclude tags, v1 exclude-only ----------------------------------------------------
-  // One row per existing tag with a tick; ticking adds the tag's id to this agent's excludeTags. There is
-  // no include control — a film not carrying any ticked tag is unaffected, exactly as it always was.
-  extags: {
-    title: "Exclude tags",
-    noAgent: true,
-    body(){
-      const d=onbFlow.draft||{};
-      const ex=new Set(d.excludeTags||[]);
-      const rows=lists.map(l=>{
-        const on=ex.has(l.id);
-        return `<button type="button" class="nopt${on?" on":""}" data-lid="${l.id}" style="--wwc:var(--accent)"
-          aria-pressed="${on}" onclick="briefToggleExcludeTag('${l.id}')"
-          title="${escA(on?`Excluded from this agent's list — tap to include again`:`Exclude ${l.name} from this agent's list`)}">
-          <span class="wwb sq">✓</span><span class="nol">${esc(l.name)}</span></button>`;
-      }).join("");
-      const none = lists.length ? "" : `<div class="nopt nonone">You have no tags yet — tag a film first, then come back here to exclude it.</div>`;
-      return `<p class="ossub">A film carrying a ticked tag is dropped from this agent's list.</p>
-        <div class="nopts">${none}${rows}</div>`;
     },
   },
   // ---- CAS-775: Occasions -----------------------------------------------------------------------------
@@ -15584,15 +15420,6 @@ window.briefToggleSvc=key=>{
   d.myServices[key]=!d.myServices[key];
   renderOnbStep("briefing");
 };
-// CAS-635 N3b: the exclude-tags spoke's one control — ticking a tag adds its id to this agent's
-// excludeTags, unticking removes it. No include control exists anywhere in this spoke.
-window.briefToggleExcludeTag=lid=>{
-  const d=onbFlow.draft; if(!d) return;
-  d.excludeTags = Array.isArray(d.excludeTags) ? d.excludeTags.slice() : [];
-  const i=d.excludeTags.indexOf(lid);
-  if(i>=0) d.excludeTags.splice(i,1); else d.excludeTags.push(lid);
-  renderOnbStep("extags");
-};
 // CAS-775: the register (occasionReg, declared above with createOccasion/renameOccasion/deleteOccasion) is
 // now the one list of occasions — see the Occasions register section for occasionRegSorted/occasionName.
 // occasionsSummary resolves each id through the register and drops any that no longer match one (an id an
@@ -15606,8 +15433,7 @@ const occasionsSummary = d => {
   const names=(d.occasions||[]).map(occasionName).filter(Boolean);
   return names.length ? names.join(", ") : "None yet";
 };
-// Multi-select, same shape as briefToggleExcludeTag: ticking adds the id to this agent's occasions,
-// unticking removes it.
+// Multi-select: ticking adds the id to this agent's occasions, unticking removes it.
 window.briefToggleOccasion=id=>{
   const d=onbFlow.draft; if(!d) return;
   d.occasions = Array.isArray(d.occasions) ? d.occasions.slice() : [];
@@ -15615,9 +15441,9 @@ window.briefToggleOccasion=id=>{
   if(i>=0) d.occasions.splice(i,1); else d.occasions.push(id);
   renderOnbStep("occasions");
 };
-// "New occasion", modelled on startCreateListRow/commitCreateListRow: an inline input that, on Enter or
-// blur, trims and caps the name, writes it straight to the register (available to every other agent at
-// once — CAS-775), then ticks it on for this agent in the draft.
+// "New occasion": an inline input that, on Enter or blur, trims and caps the name, writes it straight to
+// the register (available to every other agent at once — CAS-775), then ticks it on for this agent in the
+// draft.
 window.startCreateOccasionRow=()=>{
   const btn=$("occNewBtn"); if(!btn) return;
   btn.outerHTML=`<div class="ucard" id="occNewRow" style="margin-top:8px"><div class="urow nodiv">
@@ -15868,8 +15694,8 @@ function ymFeedList(){
   });
 }
 // CAS-680 Part 1: an agent's contribution TO THIS LIST — the same basis ymFeedMatches applies (chips,
-// verdict set, search, tiers, and the active list's own excludeTags via listedBy -> matchesCriteria), but
-// for one agent's own listedBy regardless of whether it is ticked. With exactly one agent ticked, that
+// verdict set, search, tiers via listedBy -> matchesCriteria), but for one agent's own listedBy regardless
+// of whether it is ticked. With exactly one agent ticked, that
 // agent's figure equals ymFeedList().length exactly; an unticked agent's figure shows what ticking it
 // would add. Agents can overlap, so these figures do not sum to the list total — the Edit screen says so.
 function ymAgentListCount(c){
@@ -15879,7 +15705,7 @@ function ymAgentListCount(c){
 // TICKED — ymCascToggle only changes ymCascOff, never a film's criteria or an agent's own. So the expensive
 // part (one MOVIES.filter pass evaluating ymListBaseOK+listedBy for every agent) only has to run once per
 // open, and again whenever something that actually can change a film's membership changes: an availability
-// chip (ymListBaseOK), an exclude tag (matchesCriteria's excludeTags gate) or the agent set itself (renamed,
+// chip (ymListBaseOK) or the agent set itself (renamed,
 // edited, added, removed). A tap on an agent's own include toggle changes none of those, so it reuses the
 // cache and pays only for re-summing already-known memberships against the new tick set — no matchesCriteria
 // calls at all. leInvalidateCache() is called from every one of those actually-invalidating actions below.
@@ -17146,25 +16972,14 @@ function reviewChipsHTML(tags, cls){
   if(!tags.length) return `<p class="unone">Nothing here yet.</p>`;
   return `<div class="chips">${tags.map(([t])=>`<span class="chip on ${cls}">${esc(t)}</span>`).join("")}</div>`;
 }
-// Signals: the Notify picks and List membership already on this agent's films — CAS-427 (one Streaming
-// option) and CAS-428 (Lists), read directly rather than duplicating either's own state.
+// Signals: the Notify picks already on this agent's films — CAS-427 (one Streaming option), read directly
+// rather than duplicating its own state.
 function reviewSignalsHTML(films){
   const notifyN=films.filter(m=>(notify[m.tmdb_id]||{}).wins?.stream).length;
   const notifyLine = notifyN
     ? `<b>Notify:</b> Streaming picked on ${notifyN} film${notifyN===1?"":"s"}.`
     : `<b>Notify:</b> Nothing picked yet on this agent's films.`;
-  const tallies={}; let listedFilms=0;
-  films.forEach(m=>{
-    const ls=listsFor(m.tmdb_id);
-    if(ls.length) listedFilms++;
-    ls.forEach(l=>{ (tallies[l.id]||(tallies[l.id]={name:l.name,n:0})).n++; });
-  });
-  const top=Object.values(tallies).sort((a,b)=>b.n-a.n).slice(0,2);
-  const listsLine = listedFilms
-    ? `<b>Tags:</b> ${listedFilms} of this agent's films ${listedFilms===1?"is":"are"} tagged`
-      + (top.length ? ` — mostly ${top.map(t=>`${esc(t.name)} (${t.n})`).join(" and ")}.` : ".")
-    : `<b>Tags:</b> None of this agent's films are tagged yet.`;
-  return `<p>${notifyLine}</p><p>${listsLine}</p>`;
+  return `<p>${notifyLine}</p>`;
 }
 let reviewAgentId=null;
 function renderReviewScreen(){
@@ -17205,90 +17020,9 @@ window.closeReviewScreen=()=>{
   syncWatchChip();
 };
 
-// ---- CAS-428: Lists screen — create / rename / delete, mirroring the Agents screen's shell but with no
-// reorder (a List has no order of its own) and its own row actions instead. ----------------------------
-function listRowHTML(l){
-  const n=listFilmCount(l.id);
-  return `<div class="urow nodiv listrow" data-lid="${escA(l.id)}">
-    <span class="uic">📋</span>
-    <span class="utxt">
-      <span class="ut" data-role="name">${esc(l.name)}</span>
-      <span class="ussub">${n} film${n===1?"":"s"}</span>
-    </span>
-    <button type="button" class="listact" onclick="startRenameList('${l.id}')"
-      title="Rename ${escA(l.name)}" aria-label="Rename ${escA(l.name)}">✎</button>
-    <button type="button" class="listact danger" onclick="confirmDeleteList('${l.id}')"
-      title="Delete ${escA(l.name)}" aria-label="Delete ${escA(l.name)}">🗑</button>
-  </div>`;
-}
-function renderListsScreen(){
-  const n=lists.length;
-  $("listsBody").innerHTML=`
-    <div class="ostop"><button class="osback" type="button" onclick="closeListsScreen()" aria-label="Back">←</button></div>
-    <div class="agshdr"><h2 class="osh">Tags</h2><span class="agscount">${n} tag${n===1?"":"s"}</span></div>
-    <p class="ossub">Your own hand-picked labels. Nothing lands on one except by you, and a film can carry
-      as many as you like — unlike an agent, a Tag has no criteria of its own.</p>
-    <div class="ucard" id="listsCard">
-      ${lists.length ? lists.map(listRowHTML).join("")
-        : `<div class="urow nodiv"><span class="utxt"><span class="ut">No tags yet</span>
-             <span class="ussub">Add one below, or from a film's Tags control.</span></span></div>`}
-    </div>
-    <button type="button" class="listnewbtn" id="listNewBtn" onclick="startCreateListRow()">＋ New tag</button>`;
-}
-window.openListsScreen=()=>{
-  renderListsScreen();
-  $("listsScreen").scrollTop=0;
-  $("listsScreen").classList.add("open"); document.body.style.overflow="hidden";
-  syncWatchChip();
-  logEvent("lists_screen_opened",{count:lists.length});
-};
-window.closeListsScreen=()=>{
-  $("listsScreen").classList.remove("open"); document.body.style.overflow="";
-  syncWatchChip();
-};
-window.startRenameList=(id)=>{
-  const row=document.querySelector(`.listrow[data-lid="${id}"]`); if(!row) return;   // ids are our own uuids — safe unescaped in an attribute selector
-  const l=lists.find(x=>x.id===id); if(!l) return;
-  const nameEl=row.querySelector('[data-role="name"]'); if(!nameEl) return;
-  nameEl.outerHTML=`<input type="text" class="listnamein" data-role="name" maxlength="40" value="${escA(l.name)}"
-    onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
-    onblur="commitRenameList('${id}',this)">`;
-  const inp=row.querySelector(".listnamein");
-  if(inp){ inp.focus(); inp.select(); }
-};
-window.commitRenameList=(id, inputEl)=>{
-  if(!inputEl || !inputEl.isConnected) return;
-  const name=(inputEl.value||"").trim();
-  if(name) renameListTo(id, name);
-  renderListsScreen();
-};
-window.confirmDeleteList=(id)=>{
-  const l=lists.find(x=>x.id===id); if(!l) return;
-  const n=listFilmCount(id);
-  if(!confirm(`Delete the list "${l.name}"?\n\n${n?`It has ${n} film${n===1?"":"s"} in it — `:""}This can't be undone.`)) return;
-  removeList(id);
-  renderListsScreen();
-  if(typeof render==="function") render();
-};
-window.startCreateListRow=()=>{
-  const btn=$("listNewBtn"); if(!btn) return;
-  btn.outerHTML=`<div class="ucard" id="listNewRow" style="margin-top:8px"><div class="urow nodiv">
-    <span class="uic">📋</span>
-    <input type="text" class="listnamein" id="listNewInput" maxlength="40" placeholder="Tag name" autocomplete="off"
-      onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
-      onblur="commitCreateListRow(this)"></div></div>`;
-  const inp=$("listNewInput"); if(inp) inp.focus();
-};
-window.commitCreateListRow=(inputEl)=>{
-  if(!inputEl || !inputEl.isConnected) return;
-  const name=(inputEl.value||"").trim();
-  if(name) createList(name);
-  renderListsScreen();
-};
-
 // ================= CAS-775: Manage Occasions screen =====================================================
-// Mirrors the Tags screen immediately above, row-for-row: the register has no order of its own (unlike
-// Manage Lists), so no drag/reorder — just rename, delete and add, over occasionReg instead of `lists`.
+// The register has no order of its own (unlike Manage Lists), so no drag/reorder — just rename, delete
+// and add, over occasionReg.
 function occasionRowHTML(o){
   const n=occasionAgentCount(o.id);
   return `<div class="urow nodiv occrow" data-oid="${escA(o.id)}">
@@ -17459,10 +17193,8 @@ function wireAgentsDrag(){
 // ================= CAS-591: Manage Lists screen =======================================================
 // Mirrors the Agents screen immediately above, row-for-row and function-for-function (renderAgentsScreen/
 // wireAgentsDrag/commitAgentOrder -> renderManageListsScreen/wireWatchlistsDrag/commitListOrder, same
-// short-list rejection). Rename/delete reuse the Tags screen's own row-action pattern instead of inventing
-// a new one (startRenameList/.listnamein -> startRenameWatchlistRow, confirmDeleteList ->
-// confirmDeleteWatchlistRow). Blue-accented (.agrow.ym-list, CAS-705) since brand-blue is Watch's own
-// colour everywhere else (.cascbar.blue, CAS-645) — rose (.agrow.ym-tag) is the Tags row's own accent.
+// short-list rejection). Blue-accented (.agrow.ym-list, CAS-705) since brand-blue is Watch's own colour
+// everywhere else (.cascbar.blue, CAS-645).
 function watchlistRowHTML(l){
   const n=watchlistRawCount(l);
   const onlyOne=watchLists.length<=1;
@@ -19805,12 +19537,12 @@ else if(dedupedN)
   // ---- CAS-656: per-table load-failure tracking + the persistent "not connected" banner ---------------
   // A failed READ used to be silent (console.warn, or a toast that scrolled away in seconds) and left the
   // corresponding sync free to push this device's on-device state over an account it had never actually
-  // read back. Tracked per TABLE (not per feature) because `lists` and `list_films` fail independently on
-  // the live project right now, and a lists-only recovery must not silently clear list_films' own failure.
-  // acctTableFail is the single source of truth both the banner and every push gate below read from.
-  const ACCT_TABLE_SURFACE = { cascades:"agents", lists:"tags", listFilms:"tags", watchlists:"watchLists" };
-  const ACCT_SURFACE_LABEL = { agents:"agents", tags:"tags", watchLists:"watch lists" };
-  const acctTableFail = { cascades:false, lists:false, listFilms:false, watchlists:false };
+  // read back. Tracked per TABLE (not per feature), so a recovery on one table never silently clears
+  // another's own failure. acctTableFail is the single source of truth both the banner and every push
+  // gate below read from.
+  const ACCT_TABLE_SURFACE = { cascades:"agents", watchlists:"watchLists" };
+  const ACCT_SURFACE_LABEL = { agents:"agents", watchLists:"watch lists" };
+  const acctTableFail = { cascades:false, watchlists:false };
   function setAcctTableFail(table, failed){
     if(acctTableFail[table]===failed) return;
     acctTableFail[table]=failed;
@@ -19840,7 +19572,7 @@ else if(dedupedN)
   // push is still in flight, still queued behind a debounce, or has already failed once and is retrying.
   // Kept as its own map (not folded into acctTableFail) because the two states mean different things and
   // can be true independently: a table can be mid-push with a perfectly good last read, or vice versa.
-  const acctTablePending = { cascades:false, lists:false, listFilms:false, watchlists:false };
+  const acctTablePending = { cascades:false, watchlists:false };
   function setAcctTablePending(table, pending){
     if(acctTablePending[table]===pending) return;
     acctTablePending[table]=pending;
@@ -19888,7 +19620,7 @@ else if(dedupedN)
   // which is exactly how CAS-740's schema drift disabled user_prefs syncing, silently, for weeks. One
   // record per target, overwritten on every attempt — no history, no persistence, just "what happened
   // the last time this device tried."
-  const SYNC_TARGET_ORDER = ["cascades","lists","list_films","watchlists","user_films",
+  const SYNC_TARGET_ORDER = ["cascades","watchlists","user_films",
                               "notify_prefs","film_picks","film_watch","agent_films","user_prefs"];
   const syncOutcome = {};         // target -> {when, ok, error, schemaDrift} (absent = never attempted)
   const syncTargetDegraded = {};  // target -> true once its latest failure was its SECOND IN A ROW
@@ -20256,184 +19988,6 @@ else if(dedupedN)
   // built on this device that isn't already accounted for by the on-sign-in fold in loadAccount().
 
   // ==========================================================================
-  // CAS-428: Lists per account (`lists` + `list_films`)
-  // --------------------------------------------------------------------------
-  // Two tables, mirroring the shapes already here: `lists` is upsert/baseline-diff-delete exactly like
-  // `cascades` (one small row per list); `list_films` is upsert/baseline-diff-delete exactly like
-  // `user_films`, except its primary key is three columns (user, film, list) because — unlike a watch
-  // status — a film can carry several rows at once. Both ride the SAME debounce/baseline pair, since in
-  // practice a list edit and a membership tick happen together (create a list, then tick it).
-  // ==========================================================================
-  function listToRow(l){ return { id:l.id, user_id:uid(), name:l.name||"My list" }; }
-  function rowToList(row){ return { id:row.id, name:row.name||"My list" }; }
-  // CAS-741: same Map<id,{sig,version}> shape CAS-734 gave cascadeKnown — this device's own record of what
-  // the account last confirmed for each list. A membership-only tick never touches `lists` at all, so
-  // diffing the push against this baseline (instead of pushing lists.map(listToRow) whole, every time) is
-  // what stops that tick from re-pushing every OTHER list's current in-memory name — including a stale one
-  // this device hasn't reloaded since another device renamed it there.
-  const listSigOf = l => l.name || "My list";
-  const LIST_KNOWN_KEY = "cascade_list_known";
-  function loadListKnown(){
-    try{
-      const raw=localStorage.getItem(LIST_KNOWN_KEY);
-      if(!raw) return new Map();
-      const parsed=JSON.parse(raw);
-      return new Map(Array.isArray(parsed) ? parsed : []);
-    }catch(e){ return new Map(); }
-  }
-  function saveListKnown(){
-    try{ localStorage.setItem(LIST_KNOWN_KEY, JSON.stringify([...listKnown])); }catch(e){}
-  }
-  let listKnown = loadListKnown();
-  const listDirtyRows = () => lists.filter(l=>{
-    const known=listKnown.get(l.id);
-    return !known || known.sig!==listSigOf(l);
-  });
-  const listPendingDeleteIds = () => {
-    const ids=new Set(lists.map(l=>l.id).filter(isUuid));
-    return [...listKnown.keys()].filter(id=>!ids.has(id));
-  };
-  function listFilmRows(){
-    const owner=uid(), out=[];
-    for(const fid in listMembership){
-      (listMembership[fid]||[]).forEach(lid=>out.push({user_id:owner, movie_id:String(fid), list_id:lid}));
-    }
-    return out;
-  }
-  let listsTimer=null, listsSyncing=false, listsAgain=false;
-  let listFilmBaseline=null;
-  function scheduleListsSync(){ clearTimeout(listsTimer); listsTimer=setTimeout(runListsSync, 400); }
-  async function runListsSync(){
-    if(!accountActive()) return;
-    if(listsSyncing){ listsAgain=true; return; }
-    listsSyncing=true;
-    try{ await syncListsToAccount(); await syncListFilmsToAccount(); }
-    catch(err){ console.warn("Cascade: lists sync failed", err); }
-    finally{ listsSyncing=false; if(listsAgain){ listsAgain=false; scheduleListsSync(); } }
-  }
-  // CAS-741: pushes only the lists this device has actually changed (listDirtyRows, diffed against
-  // listKnown) — a membership-only tick (which never touches `lists`) now upserts nothing here at all,
-  // instead of re-pushing every list's current in-memory name. Mirrors syncToAccount (cascades) above.
-  async function syncListsToAccount(){
-    const c=client(), owner=uid(); if(!c||!owner) return;
-    if(acctTableFail.lists) return;   // CAS-656 AC2: a failed load must not push local state back over it
-    const dirty = listDirtyRows();
-    const deletes = listPendingDeleteIds();
-    if(dirty.length){
-      const rows = dirty.map(listToRow);
-      const { data, error } = await c.from("lists").upsert(rows, { onConflict:"id" }).select("id,updated_at");
-      if(error){ console.warn("Lists upsert", error); recordSyncOutcome("lists", false, error); return; }
-      const versionById = new Map((data||[]).map(r=>[r.id, r.updated_at]));
-      dirty.forEach(x=>{ listKnown.set(x.id, { sig: listSigOf(x), version: versionById.get(x.id)||null }); });
-    }
-    if(deletes.length){
-      const { error } = await c.from("lists").delete().eq("user_id", owner).in("id", deletes);
-      if(error){ console.warn("Lists delete", error); recordSyncOutcome("lists", false, error); return; }
-      deletes.forEach(id=>listKnown.delete(id));
-    }
-    saveListKnown();
-    recordSyncOutcome("lists", true);
-  }
-  async function syncListFilmsToAccount(){
-    const c=client(), owner=uid(); if(!c||!owner) return;
-    if(acctTableFail.listFilms) return;   // CAS-656 AC2: a failed load must not push local state back over it
-    const rows=listFilmRows();
-    if(rows.length){
-      const { error } = await c.from("list_films").upsert(rows, { onConflict:"user_id,movie_id,list_id" });
-      if(error){ console.warn("list_films upsert", error); recordSyncOutcome("list_films", false, error); return; }
-    }
-    const keys=new Set(rows.map(r=>`${r.movie_id}:${r.list_id}`));
-    if(listFilmBaseline){
-      const gone=[...listFilmBaseline].filter(k=>!keys.has(k));
-      if(gone.length){
-        // No composite .in() over two columns in supabase-js — a handful of per-row deletes is fine for
-        // membership churn, which is small (one tick at a time).
-        await Promise.all(gone.map(k=>{
-          const [movie_id,list_id]=k.split(":");
-          return c.from("list_films").delete().eq("user_id",owner).eq("movie_id",movie_id).eq("list_id",list_id);
-        }));
-      }
-    }
-    listFilmBaseline=keys;
-    recordSyncOutcome("list_films", true);
-  }
-  async function loadListsAccount(){
-    const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await acctRead("lists", () => c.from("lists").select("*"));
-    if(error){ console.warn("Lists load", error); return; }
-    const rawRows = data||[];
-    listKnown = new Map(rawRows.filter(r=>isUuid(r.id))
-      .map(r=>[r.id, { sig: listSigOf(rowToList(r)), version: r.updated_at||null }]));
-    saveListKnown();
-    const remote = rawRows.map(rowToList);
-    lists.length=0; remote.forEach(l=>lists.push(l));
-    await loadListMembershipAccount();
-    if(typeof render==="function") render();
-  }
-  async function loadListMembershipAccount(){
-    const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await acctRead("listFilms", () => c.from("list_films").select("movie_id,list_id"));
-    if(error){ console.warn("list_films load", error); return; }
-    const remote=data||[];
-    listFilmBaseline=new Set(remote.map(r=>`${r.movie_id}:${r.list_id}`));
-    Object.keys(listMembership).forEach(k=>delete listMembership[k]);
-    remote.forEach(r=>{
-      const arr=listMembership[r.movie_id] || (listMembership[r.movie_id]=[]);
-      if(!arr.includes(r.list_id)) arr.push(r.list_id);
-    });
-  }
-  // CAS-408-style background convergence — see reconcileCascades for the fuller comment on why a reconcile
-  // (merge) and a load (replace) are different operations.
-  async function reconcileLists(){
-    const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await acctRead("lists", () => c.from("lists").select("*"));
-    if(error){ console.warn("Lists reconcile", error); return; }
-    const rawRows = data||[];
-    const remote=rawRows.map(rowToList);
-    const remoteIds=new Set(remote.map(x=>x.id));
-    const oldKnown=listKnown;   // this device's OWN last-confirmed state, from before this fetch
-    remote.forEach(r=>{
-      const i=lists.findIndex(x=>x.id===r.id);
-      if(i>=0) lists[i]=r; else lists.push(r);
-    });
-    for(let i=lists.length-1;i>=0;i--){
-      const id=lists[i].id;
-      if(oldKnown.has(id) && !remoteIds.has(id)) lists.splice(i,1);
-    }
-    listKnown = new Map(rawRows.filter(r=>isUuid(r.id))
-      .map(r=>[r.id, { sig: listSigOf(rowToList(r)), version: r.updated_at||null }]));
-    saveListKnown();
-    if(typeof render==="function") render();
-  }
-  async function reconcileListMembership(){
-    const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await acctRead("listFilms", () => c.from("list_films").select("movie_id,list_id"));
-    if(error){ console.warn("list_films reconcile", error); return; }
-    const remote=data||[];
-    const remoteKeys=new Set(remote.map(r=>`${r.movie_id}:${r.list_id}`));
-    const localOnly = listFilmBaseline
-      ? listFilmRows().filter(r=>{
-          const k=`${r.movie_id}:${r.list_id}`;
-          return !listFilmBaseline.has(k) && !remoteKeys.has(k);
-        })
-      : [];
-    Object.keys(listMembership).forEach(k=>delete listMembership[k]);
-    [...remote, ...localOnly].forEach(r=>{
-      const arr=listMembership[r.movie_id] || (listMembership[r.movie_id]=[]);
-      if(!arr.includes(r.list_id)) arr.push(r.list_id);
-    });
-    listFilmBaseline=remoteKeys;
-    if(typeof render==="function") render();
-  }
-  function loadGuestLists(){
-    replaceListsInPlace(loadLists());
-    Object.keys(listMembership).forEach(k=>delete listMembership[k]);
-    Object.assign(listMembership, loadListMembership());
-    if(typeof render==="function") render();
-  }
-  function replaceListsInPlace(arr){ lists.length=0; arr.forEach(l=>lists.push(l)); }
-
-  // ==========================================================================
   // CAS-590: the Watch List's own filter record — now an ARRAY of named lists, one row per list, the
   // same upsert/baseline-diff-delete shape `cascades` already uses (CAS-589's single-row shape, matched
   // by a bare id with no signature, is retired here — see watchlistSigOf below).
@@ -20444,8 +19998,7 @@ else if(dedupedN)
   }
   function rowToWatchlist(row){ return normWatchlistEntry({...(row.criteria||{}), id:row.id}); }
   // A real signature, mirroring cascSigOf (which also excludes name — see dedupeCascades' own comment:
-  // two records differing only in name are still the same one). Trap: matching on name alone (the way
-  // loadListsAccount does for the OTHER Lists/Tags feature, which has no criteria to sign) would merge
+  // two records differing only in name are still the same one). Trap: matching on name alone would merge
   // two devices' genuinely different lists the moment they happen to share a name.
   const watchlistSigOf = l => JSON.stringify([l.svcOn, l.cascOff, l.watchedOn, l.watchTiers, l.sort]);
   // CAS-691: watchlistSigOf is deliberately name-blind for the reason above, but that makes it the WRONG
@@ -20730,16 +20283,6 @@ else if(dedupedN)
     saveCascadesLocal();
     if(accountActive()){ markCascadesEditedNow(); scheduleSync(); }
   };
-  const saveListsLocal = saveLists;
-  saveLists = function(){
-    saveListsLocal();
-    if(accountActive()) scheduleListsSync();
-  };
-  const saveListMembershipLocal = saveListMembership;
-  saveListMembership = function(){
-    saveListMembershipLocal();
-    if(accountActive()) scheduleListsSync();
-  };
   const saveWatchlistsLocal = saveWatchlists;
   saveWatchlists = function(){
     saveWatchlistsLocal();
@@ -20756,7 +20299,7 @@ else if(dedupedN)
     // flips this true on its own success path only, never on a failed load.
     notifyPrefsReady=false;
     Promise.allSettled([
-      loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadRealAlerts(), loadListsAccount(),
+      loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadRealAlerts(),
       loadWatchlistAccount(), loadFilmPicks()
     ]).then(()=>{
       const t1 = performance.now();
@@ -20789,15 +20332,14 @@ else if(dedupedN)
     } else if(currentUser !== null){
       // CAS-733: signed out → the agent list empties (loadGuest, above) rather than reverting to an
       // on-device set that no longer exists; the bell stops showing another account's news.
-      currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); loadGuestLists(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
+      currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); loadGuestWatchlist(); realAlerts=[]; updateBadge();
       cascadeKnown=new Map(); saveCascadeKnown(); cascadeEditedAt=new Map(); saveCascadeEditedAt();
-      filmBaseline=null; pickBaseline=null; listFilmBaseline=null; watchBaseline=null;
+      filmBaseline=null; pickBaseline=null; watchBaseline=null;
       agentFilms={}; agentFilmsBaseline=null; agentFilmsReady=true;   // CAS-736: a guest has nothing to wait on
       watchlistKnown=new Map(); saveWatchlistKnown();
       watchKnown=new Map(); saveWatchKnown(); filmWatchReady=true;   // CAS-735: a guest has nothing to wait on
       userPrefsReady=true;   // CAS-740: a guest has nothing to wait on
       notifyPrefsReady=true;   // CAS-741: a guest has nothing to wait on
-      listKnown=new Map(); saveListKnown();
       // CAS-656: a guest has no account to be disconnected from — clear any failure this device carried
       // from its last signed-in session, or the banner would wrongly survive a sign-out.
       Object.keys(acctTableFail).forEach(t=>setAcctTableFail(t, false));
@@ -20824,7 +20366,6 @@ else if(dedupedN)
     if(!accountActive()) return;
     if(!syncing && !syncTimer) reconcileCascades();
     if(!filmSyncing && !filmTimer) reconcileFilms();
-    if(!listsSyncing && !listsTimer){ reconcileLists(); reconcileListMembership(); }
     if(!watchSyncing && !watchTimer) reconcileFilmWatches();
     if(ymReady && !ymSyncing && !ymSyncTimer) reconcileWatchlists();
     // CAS-561: taste/watch_windows only pulled the account's answer on sign-in/boot before this —
@@ -20948,7 +20489,7 @@ else if(dedupedN)
   }
   // CAS-609: `notify` is a const captured by closures across the file, so re-reading it on sign-out
   // must mutate it in place (delete every key, then copy the fresh guest read back in) rather than
-  // reassign — the same reason loadGuestLists() mutates `listMembership` instead of replacing it.
+  // reassign.
   function loadGuestNotify(){
     Object.keys(notify).forEach(id=>delete notify[id]);
     Object.assign(notify, loadNotify());
@@ -21558,17 +21099,9 @@ else if(dedupedN)
                                 cascadeDirtyRows, cascadePendingDeleteIds,
                                 get cascadeKnown(){ return cascadeKnown; },
                                 get cascadeEditedAt(){ return cascadeEditedAt; },
-                                // CAS-428: Lists' own load/sync/reconcile seam, same shape as the above.
-                                // CAS-741: listKnown (by reference, like cascadeKnown above) plus
-                                // listDirtyRows/listPendingDeleteIds, so a test can assert the per-item push
-                                // diff directly rather than re-deriving it from upsert call arguments alone.
-                                loadListsAccount, syncListsNow: runListsSync, listToRow, rowToList, listFilmRows,
-                                reconcileLists, reconcileListMembership,
-                                get listKnown(){ return listKnown; },
-                                listDirtyRows, listPendingDeleteIds,
-                                // CAS-681: Watch Lists' own load/sync/reconcile seam, same shape as Lists above —
-                                // never wired up before, which is why the id-duplication bug here had no seam
-                                // a test could reach directly.
+                                // CAS-681: Watch Lists' own load/sync/reconcile seam — never wired up before,
+                                // which is why the id-duplication bug here had no seam a test could reach
+                                // directly.
                                 loadWatchlistAccount, syncWatchlistsNow: runWatchlistSync, watchlistToRow,
                                 rowToWatchlist, reconcileWatchlists,
                                 // CAS-691: the guest-cache reload seam (what a cold boot re-reads localStorage
@@ -21593,7 +21126,7 @@ else if(dedupedN)
                                 syncOutcomeReport, anySyncTargetDegraded,
                                 get ACCT_READ_DELAYS(){ return ACCT_READ_DELAYS; },
                                 set ACCT_READ_DELAYS(v){ ACCT_READ_DELAYS=v; },
-                                saveWatchlists, saveCascades, saveLists, saveListMembership, saveWatchStatus,
+                                saveWatchlists, saveCascades, saveWatchStatus,
                                 // CAS-484: the per-film Watch-it tick's own load/sync/reconcile seam.
                                 loadFilmWatches, syncWatchesNow: runWatchSync, watchRows, applyWatchRows,
                                 reconcileFilmWatches,
