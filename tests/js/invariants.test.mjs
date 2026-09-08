@@ -3800,6 +3800,24 @@ test("CAS-739 AC4: a recomputeFound() pass never clears a pinnedTo value", () =>
   }
 }));
 
+// ---- THE REMOVED PICK RING'S "off" ROW IS A LEGACY NO-OP (CAS-844) -----------------------------------------
+// The Pick ring (pickBtnHTML/cyclePick) is gone: nothing in the live app writes film_picks.state="off" any
+// more. But an old device may still have one sitting in the account, and loadFilmPicks() must read it and do
+// nothing with it — not resurrect the removal flag it used to drive — or a legacy row would silently keep
+// suppressing a film forever with no control left anywhere to undo it.
+test("CAS-844 AC3: a loaded film_picks row with state \"off\" does not remove the film from the listing", () => withCas739State(async () => {
+  const id = 844001;
+  E.entryFor(id).source = "manual";   // a hand-added film — on the listing on its own, nothing to do with "off"
+  const { client } = fakeCas739Supabase({
+    film_picks: [{ user_id: "cas844-test-user", movie_id: String(id), state: "off", pinned_to: [], not_in: [] }],
+  });
+  signInWithClient(client);
+  await E.CascadePersistence.loadFilmPicks();
+  assert.ok(!("removed" in E.notify[id]), "a legacy \"off\" row must not reintroduce the removed flag");
+  E.recomputeFound();
+  assert.ok(E.found.has(id), "a legacy \"off\" film_picks row must not suppress a film that is otherwise on the list");
+}));
+
 // ---- ACCOUNT-LEVEL SETTINGS STAY ON ONE DEVICE (CAS-740) ---------------------------------------------------
 // userPrefsRow() didn't carry `touched` (has this device's owner answered the services question). A second
 // device loaded without it, read the scope as unanswered, silently re-enabled services-only, and pushed that
