@@ -204,13 +204,12 @@ test("in cinema: a wide-open cinema agent loses none of them, and is not a wall 
     `the widest cinema recipe is ${share.toFixed(0)}% Upcoming (${upcoming} of ${listed.length}) — a wall, not a listing`);
 });
 
-// The listing leads with what you can watch, and keeps Upcoming as the tail. Asserted on the shipped order
-// rather than on the rendering, because the reveal and the listing must walk the same sequence (CAS-176).
-test("the listing leads with what is out and ends with what is not — on the STREAMING lane", () => {
-  // CAS-295 split this rule by lane. On streaming it is unchanged and still load-bearing: an unreleased film
-  // is the least actionable thing on the page, so it belongs at the tail.
-  assert.equal(E.LISTING_ORDER[E.LISTING_ORDER.length - 1], "upcoming",
-    `the listing leads with ${E.LISTING_ORDER[0]} and would put unreleased films above watchable ones`);
+// CAS-855 reverses CAS-237: the listing leads with Upcoming again, same journey order as CASCADE. Asserted
+// on the shipped order rather than on the rendering, because the reveal and the listing must walk the same
+// sequence (CAS-176).
+test("the listing leads with what is not out yet — on the STREAMING lane", () => {
+  assert.equal(E.LISTING_ORDER[0], "upcoming",
+    `the listing leads with ${E.LISTING_ORDER[0]}, not upcoming`);
   assert.deepEqual([...E.LISTING_ORDER].sort(), [...E.CASCADE].sort(),
     "the listing order and the journey order are not the same six windows");
   pickInLane(E, "stream", "custom");
@@ -218,8 +217,8 @@ test("the listing leads with what is out and ends with what is not — on the ST
   const seq = E.listingOrder(E.MOVIES.filter(m => E.listedBy(m, d)), d.sort || "availability", d);
   const firstUpcoming = seq.findIndex(m => E.isUpcoming(m));
   const lastReleased = seq.map(m => !E.isUpcoming(m)).lastIndexOf(true);
-  if(firstUpcoming >= 0 && lastReleased >= 0) assert.ok(firstUpcoming > lastReleased,
-    `an Upcoming film sits at ${firstUpcoming}, above a released one at ${lastReleased}`);
+  if(firstUpcoming >= 0 && lastReleased >= 0) assert.ok(firstUpcoming < lastReleased,
+    `an Upcoming film sits at ${firstUpcoming}, below a released one at ${lastReleased}`);
 });
 
 // CAS-750: reverses CAS-394/CAS-471, and retires the "cinema lane" framing above with it. Section order is
@@ -242,7 +241,7 @@ test("orderFor: Cinema and Streaming tabs read the journey order (CASCADE); Prem
   }
 });
 
-test("listingGroups: watchTab===\"in_cinema\" or \"stream\" leads with Upcoming; \"premium\"/\"rent\" do not (CAS-750/CAS-754)", () => {
+test("listingGroups: every watch tab leads with Upcoming when it has films (CAS-855)", () => {
   const section = status => ({
     title: status, status: [status], cinema_date: "2026-07-01",
     popularity: 1, rt_critic: null, imdb_rating: null, imdb_votes: 0,
@@ -253,17 +252,11 @@ test("listingGroups: watchTab===\"in_cinema\" or \"stream\" leads with Upcoming;
   const ac = { kind: "cinema" };
   const savedTab = E.watchTab;
   try{
-    for(const tab of ["in_cinema", "stream"]){
+    for(const tab of ["in_cinema", "stream", "premium", "rent"]){
       E.setWatchTab(tab);
       const groups = E.listingGroups(rows, ac);
       assert.equal(groups[0].g, "upcoming",
         `the ${tab} tab's first group is ${groups[0].g}, not upcoming`);
-    }
-    for(const tab of ["premium", "rent"]){
-      E.setWatchTab(tab);
-      const groups = E.listingGroups(rows, ac);
-      assert.notEqual(groups[0].g, "upcoming",
-        `the ${tab} tab picked up the Cinema/Streaming tabs' order`);
     }
   } finally {
     E.setWatchTab(savedTab);   // module-scope state — leave it as every other test found it
