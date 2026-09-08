@@ -341,6 +341,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // at the bottom of the account-sync IIFE — a live reference, so a test can stub CascadeAuth.client with
   // a fake Supabase and call e.g. CascadePersistence.loadWatchlistAccount() directly.
   get CascadePersistence(){ return window.CascadePersistence; },
+  // CAS-843: momentsOf (alert_moments derivation, now off the account's own Where & when Notify switches
+  // rather than a per-agent field) lives on window.CascadeShape, the same live-reference reasoning as
+  // CascadePersistence above.
+  get CascadeShape(){ return window.CascadeShape; },
   // CAS-715: filmIsNew is the Watch On chip's combined "isnew" rule (isNewFound AND admitDrift — "the world
   // moved, not the agent"); admitDrift is exposed by reference (mutated via property assignment inside
   // recomputeFound, never reassigned) so a test can seed/read it the same way firstFound above is. filt/

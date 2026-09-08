@@ -3901,14 +3901,12 @@
   <div class="chips" id="prefStoreChips"></div>
   <!-- CAS-344: the "Which service covers what Cascade found?" coverage block moved off this modal onto its
        own Service analysis page (#svcAnalysis) so it isn't buried in Preferences. -->
-  <!-- Global alert-type exclude (CAS-103 AC4). The one place to stop a KIND of alert without
-       editing every Cascade one at a time. -->
-  <div class="flabel">Never alert me about</div>
-  <div class="chips" id="prefAlertChips"></div>
-  <div class="pnote">A type switched off here is off for <b>every</b> Cascade, whatever each one has
-    set — and the daily email respects it too. Your Cascades keep their own settings: turn a type
-    back on and each one goes straight back to what you chose.</div>
-  <div id="prefAlertNote"></div>
+  <!-- CAS-843: the "Never alert me about" global mute lived here (CAS-103 AC4) — removed outright, per
+       Lee's decision that Where & when you'll watch is the only alert-type control now. This modal itself
+       is left in place rather than repointed/deleted: openServices()/pickServicesCTA are its only doors
+       (CAS-377/475 moved the live "My services" screen to openMenuServices() elsewhere), and prefSwitch/
+       uxSwitch below share this modal's markup for concerns this ticket doesn't touch — untangling those
+       to retire the modal itself is more than change 5 of this ticket can safely carry. -->
   <div class="flabel">Experiment — value framing</div>
   <div class="switch" id="uxSwitch"><span>Show savings &amp; alert framing</span><span class="knob"></span></div>
   <div class="pnote">Adds a savings line to cards where a genuinely cheaper path exists, a live result count on
@@ -5172,19 +5170,14 @@ const removedByHand = id => !!(notify[id] && notify[id].removed);
 const cascadesFor = id => ((notify[id]||{}).cascadeIds||[])
   .map(cid=>cascades.find(c=>c.id===cid)).filter(Boolean);
 // `touched` = the user has worked the my-services switch by hand, so we stop auto-defaulting it for them.
-// alertsOff (CAS-103 AC4) is the GLOBAL alert-type exclude: types muted here are off across every
-// Cascade, whatever each one has switched on. It rides in cascade_prefs with the rest of the
-// device-local preferences.
 function loadPrefs(){ try{ const p=JSON.parse(localStorage.getItem("cascade_prefs")||"{}");
   // CAS-251: a service saved under a variant name is folded onto its canonical one on the way in, so
   // somebody who picked "Netflix Standard with Ads" last week still has Netflix picked today.
   const canon = xs => new Set((xs||[]).map(svcCanon));
-  return {on:!!p.on, touched:!!p.touched, sub:canon(p.sub), store:canon(p.store),
-          alertsOff:new Set(p.alertsOff||[])}; }
-  catch(e){ return {on:false,touched:false,sub:new Set(),store:new Set(),alertsOff:new Set()}; } }
+  return {on:!!p.on, touched:!!p.touched, sub:canon(p.sub), store:canon(p.store)}; }
+  catch(e){ return {on:false,touched:false,sub:new Set(),store:new Set()}; } }
 function savePrefs(){ try{ localStorage.setItem("cascade_prefs",
-  JSON.stringify({on:prefs.on,touched:prefs.touched,sub:[...prefs.sub],store:[...prefs.store],
-                  alertsOff:[...prefs.alertsOff]})); }catch(e){} }
+  JSON.stringify({on:prefs.on,touched:prefs.touched,sub:[...prefs.sub],store:[...prefs.store]})); }catch(e){} }
 const prefs = loadPrefs();
 // How many times this browser has opened the app. CAS-273 removed its ONE reader — "Finish your agent" had
 // to arrive after the agent proved itself, so it needed to know this wasn't the first visit — so the counter
@@ -5976,45 +5969,6 @@ addChips("excludeChips", ALL_GENRES, filt.exclude, "exc");
 // preferences service chips
 addChips("prefSubChips", SUB_SERVICES, prefs.sub, "svc", svcName);
 addChips("prefStoreChips", STORE_SERVICES, prefs.store, "svc", svcName);
-
-// ---- Global alert-type exclude (CAS-103 AC4) -----------------------------------
-// Chip ON = this type never alerts me, matching the "Never show me" genre chips in the Find panel:
-// the app already teaches that a lit chip in a "never" list is something being kept OUT.
-const ALERT_TYPES = [
-  {key:"cinema",             label:"🎬 Cinema"},
-  {key:"past_opening",       label:"📣 Past opening weekend"},
-  {key:"pvod",               label:"💳 Premium"},
-  {key:"rental",             label:"📼 Rent"},
-  {key:"included_streaming", label:"📺 Stream"},
-];
-function syncAlertPrefChips(){
-  const box=$("prefAlertChips"); if(!box) return;
-  [...box.children].forEach(c=>c.classList.toggle("on", prefs.alertsOff.has(c.dataset.val)));
-  // Say what it's actually doing right now, counted off the real Cascades — never a bare "3 muted".
-  const n=prefs.alertsOff.size;
-  const hit=cascades.filter(c=>[...prefs.alertsOff].some(k=>(c.alerts||ALERT_DEFAULTS)[k])).length;
-  $("prefAlertNote").innerHTML = !n ? ""
-    : `<div class="warnnote">${n} alert type${n===1?"":"s"} switched off everywhere${
-        hit ? ` — ${hit} of your ${cascades.length} Cascade${cascades.length===1?"":"s"} had ${
-          hit===1?"it":"one of them"} switched on, and won't alert you about ${n===1?"it":"them"} while this stands.`
-            : `. None of your Cascades had ${n===1?"it":"any of them"} on, so nothing changes today.`}</div>`;
-}
-ALERT_TYPES.forEach(t=>{
-  const c=document.createElement("div");
-  c.className="chip exc"; c.textContent=t.label; c.dataset.val=t.key;
-  c.setAttribute("role","button"); c.tabIndex=0;
-  c.onclick=()=>{
-    prefs.alertsOff.has(t.key) ? prefs.alertsOff.delete(t.key) : prefs.alertsOff.add(t.key);
-    savePrefs();
-    // Re-save the Cascades so the alert_moments handed to the monitor pick the change up: momentsOf()
-    // strips muted types, so the daily job stops firing them without needing its own copy of prefs.
-    saveCascades();
-    logEvent("alert_type_muted",{key:t.key, off:prefs.alertsOff.has(t.key)});
-    syncAlertPrefChips(); render();
-  };
-  c.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); c.onclick(); } };
-  $("prefAlertChips").appendChild(c);
-});
 
 // ---- modals ----
 // Every .switch in the app is a div with role="switch" — which a mouse can use and a keyboard cannot.
@@ -9213,12 +9167,10 @@ function activeCount(){
 // ================= My Cascades =================
 // Smart defaults: every template lands pre-filled with a criteria set that already returns films —
 // the user scans and adjusts rather than filling a blank query.
-// Alert defaults follow the Cascades concept: Rent + Stream ON, Premium OFF
-// (nobody wants to be nudged to overpay), and cinema OFF — a release is news, not a saving.
-// past_opening (CAS-68) defaults OFF for the same reason cinema does: it's news about the big screen, not a
-// saving, and a Cascade nobody pointed at the cinema shouldn't start talking about it.
-// CAS-242 adds two Upcoming moments. Both default OFF for the same reason cinema does — they are news about
-// a film nobody can watch yet, and an agent nobody pointed at the cinema should not start talking about it.
+// CAS-843: the seven alert types this app knows, kept as a static enumeration — ALERT_SHORT/ALERT_MOMENT
+// name and phrase each one, and AGENT_WINDOWS' own `alerts` fields are checked against this key set. No
+// per-cascade field is filled from these values any more (alertLive() reads the account's Where & when
+// Notify switches instead), so only the KEY SET is load-bearing now; the booleans are a leftover shape.
 const ALERT_DEFAULTS = {cinema:false, past_opening:false, announced:false, opens_soon:false,
                         pvod:false, rental:true, included_streaming:true};
 
@@ -9718,11 +9670,9 @@ function normCascade(c, opts){
   // told it to drop. Pre-existing Cascades predate the toggles, so they adopt the same default.
   c.excludeWatched = c.excludeWatched===undefined ? true : !!c.excludeWatched;
   c.excludeBlocked = c.excludeBlocked===undefined ? true : !!c.excludeBlocked;
-  c.alerts = {...ALERT_DEFAULTS, ...(c.alerts||{})};
-  // Which bells the user has pressed BY HAND this editing session (CAS-103 AC2). Editor-only — it is
-  // never persisted (commitDraft copies a named field list), because it answers "did you choose this,
-  // or did we?", and once a Cascade is saved every setting on it is a choice.
-  c.alertsTouched = c.alertsTouched || {};
+  // CAS-843: c.alerts (the per-agent alert set) is retired — alertLive() reads the account's own Where &
+  // when Notify switches now, not a per-agent field, so there is nothing left to default here.
+  delete c.alerts;
   // CAS-664: the rate slider that used to read this field is gone, and nothing reads it any more —
   // but the field itself is kept exactly as CAS-643 normalised it, so an agent that carries one keeps
   // carrying it rather than silently changing shape.
@@ -9737,8 +9687,7 @@ const CASCADE_TEMPLATES = [
    crit:{status:[], genre:[], age:[], imdb:7.5, rt:0, awards:false, myServices:false}},
   {key:"watch_tonight", icon:"🍿", name:"Watch tonight", blurb:"Included on services I already have",
    crit:{status:["included_streaming"], genre:[], age:[], imdb:6.5, rt:0, awards:false,
-         myServices:{included_streaming:true}},
-   alerts:{pvod:false, rental:false, included_streaming:true}},
+         myServices:{included_streaming:true}}},
   {key:"rent_radar", icon:"📼", name:"Rent radar", blurb:"Good films that reach Rent (~$7)",
    crit:{status:["rental"], genre:[], age:[], imdb:6.5, rt:0, awards:false, myServices:false}},
   {key:"bargain", icon:"🏷️", name:"Bargain hunter", blurb:"Never overpay — tell me when it drops below $30",
@@ -9750,21 +9699,18 @@ const CASCADE_TEMPLATES = [
   {key:"genre_fan", icon:"🎃", name:"Genre superfan", blurb:"A standing radar for one genre — horror to start",
    crit:{status:[], genre:["Horror"], age:[], imdb:0, rt:0, awards:false, myServices:false}},
   // The one Cascade whose moment IS the cinema: it watches films on their way to a release, so the arrival is
-  // the news. The default bells (rent + stream) are rows it doesn't watch — it would have rung none of them.
+  // the news.
   {key:"blockbuster", icon:"💥", name:"Blockbuster radar", blurb:"The films heading for cinemas, most anticipated first",
-   crit:{status:["upcoming"], genre:[], age:[], imdb:0, rt:0, awards:false, myServices:false, sort:"popularity"},
-   alerts:{cinema:true, pvod:false, rental:false, included_streaming:false}},
+   crit:{status:["upcoming"], genre:[], age:[], imdb:0, rt:0, awards:false, myServices:false, sort:"popularity"}},
   // Date night: crowd-pleasing genres, a bar high enough that neither of you resents the pick, at home,
   // and scoped to what you already pay for — nobody rents a $30 premium for a Tuesday.
   {key:"date_night", icon:"🍷", name:"Date night", blurb:"Crowd-pleasers you both agree on, on your services",
    crit:{status:["rental","included_streaming"], genre:["Romance","Comedy","Drama"], age:[],
-         imdb:RATING_STOPS[2].imdb, rt:0, awards:false, myServices:{rental:true, included_streaming:true}},
-   alerts:{cinema:false, pvod:false, rental:true, included_streaming:true}},
+         imdb:RATING_STOPS[2].imdb, rt:0, awards:false, myServices:{rental:true, included_streaming:true}}},
   // Rewatch: "older" is a real filter here, not a vibe — every year in the catalogue except the current one.
   {key:"rewatch", icon:"🛋️", name:"Rewatch & comfort", blurb:"Films you already love, now included or cheap",
    crit:{status:["rental","included_streaming"], genre:[], age:[], year:EARLIER_YEARS,
-         imdb:RATING_STOPS[3].imdb, rt:0, awards:false, myServices:false},
-   alerts:{cinema:false, pvod:false, rental:true, included_streaming:true}},
+         imdb:RATING_STOPS[3].imdb, rt:0, awards:false, myServices:false}},
   // Foreign & Arthouse: CAS-560 retired the per-agent language field (account-wide Preferences is the only
   // language filter now), so this preset can no longer express "non-English" as a criterion — it is a plain
   // rating-bar preset like "My taste" until/unless a future ticket gives Preferences (or agents) a way to
@@ -9776,7 +9722,7 @@ const CASCADE_TEMPLATES = [
    crit:{status:[], genre:[], age:[], imdb:6.5, rt:0, awards:false, myServices:false}},
 ];
 CASCADE_TEMPLATES.forEach(t=>normCascade(t.crit));
-cascades.forEach(normCascade);   // saved Cascades are filled out here, not at load — ALERT_DEFAULTS lives above
+cascades.forEach(normCascade);   // saved Cascades are filled out here, not at load
 // CAS-424: the Agents screen's own reorder position. An agent saved before this screen existed has never
 // had one — it keeps the position it already holds in the array (which IS the deck order), stamped once so
 // a later cross-device load has something to sort by. `saveCascades()` never runs from this default-fill
@@ -9815,7 +9761,7 @@ const cascSigOf = c => JSON.stringify([c.name, c.status, c.genre, c.exclude, c.a
   c.imdb, c.rt, c.awards, c.budget, c.includeUnbudgeted, c.includeUnrated, c.tentpole,
   c.selCrowd||0, c.selCritScore||0, c.selAwards||0, c.selScale||0, c.selBuzz||0, !!c.selOr, c.yearsBack||0,
   !!c.cinemaReleaseOnly, c.scoreFloor||0, c.watchMarkers||{},
-  c.myServices, c.alerts, c.sort||DEFAULT_SORT, c.excludeWatched, c.excludeBlocked,
+  c.myServices, c.sort||DEFAULT_SORT, c.excludeWatched, c.excludeBlocked,
   // CAS-160: the viewing windows are part of "the alert moments" too. Three of them (announced / 1 month /
   // 1 week out) all resolve to the same `status`, so without this line two agents that differ only in when
   // they'd tell you would read as exact twins and the second would be silently collapsed into the first.
@@ -10168,20 +10114,32 @@ const reachableRows = c => {
   if(!(c.status||[]).length || (c.status||[]).includes("upcoming")){ rows.add("announced"); rows.add("opens_soon"); }
   return rows;
 };
-// ---- Global alert-type exclude (CAS-103 AC4) -----------------------------------
-// One switch that outranks every Cascade: "never alert me about Premium" means no Cascade alerts
-// you about Premium, whatever its own bells say. It deliberately does NOT rewrite those bells —
-// un-mute the type and each Cascade goes back to exactly what you set it to.
-const alertMuted = k => prefs.alertsOff.has(k);
-// The ONE test for "will this bell ever actually ring": switched on, reachable for the scope, and
-// not muted globally. Every promise the app makes — the deck's "alerts on…" line, the agent's
-// voice, the editor's own paint, and the alert_moments we hand the monitor — reads off this, so
-// they cannot drift apart and start promising an email that will never arrive.
-// CAS-601: agent Alert toggles are the control for status alerts again (Lee's decision of 2026-08-24,
-// reversing CAS-502 AC1). A bell rings when it's switched on for this agent, its window is reachable
-// for the agent's scope, and the type isn't globally muted.
+// ---- CAS-843: alerts follow the account's own Where & when Notify switches --------------------------
+// The two things that can ever make a bell ring: My services (folded into reachability below — the
+// reachableRows() guard already answers "can this scope still witness it") and the account-wide Notify
+// switches on Where & when you'll watch (watchPrefs, CAS-532's single source of truth for every agent).
+// There is no per-agent alert set and no separate global mute (Lee's decision, 2026-09-08) — one Notify
+// switch per window, plus Upcoming's two sub-switches, is the whole control surface now.
+// In cinema's Notify carries BOTH moments the big screen can produce — the film reaching a cinema and it
+// going past its opening weekend — because the screen offers no separate switch for the second one.
+function accountAlertKeysOn(){
+  const w = watchAllWindows(watchPrefs), on = new Set();
+  if(w.in_cinema && w.in_cinema.notify){ on.add("cinema"); on.add("past_opening"); }
+  if(w.premium && w.premium.notify) on.add("pvod");
+  if(w.rent && w.rent.notify) on.add("rental");
+  if(w.stream && w.stream.notify) on.add("included_streaming");
+  if(w.upcoming && w.upcoming.notify && w.upcoming.subs){
+    if(w.upcoming.subs.announced) on.add("announced");
+    if(w.upcoming.subs.opens_soon) on.add("opens_soon");
+  }
+  return on;
+}
+// The ONE test for "will this bell ever actually ring": the account's Notify answer is on for this
+// moment, AND it's reachable for the scope. Every promise the app makes — the deck's "alerts on…" line,
+// the agent's voice, and the alert_moments we hand the monitor — reads off this, so they cannot drift
+// apart and start promising an email that will never arrive.
 function alertLive(c,k){
-  return !!(c.alerts||ALERT_DEFAULTS)[k] && reachableRows(c).has(k) && !alertMuted(k);
+  return accountAlertKeysOn().has(k) && reachableRows(c).has(k);
 }
 const liveAlerts = c => Object.keys(ALERT_SHORT).filter(k=>alertLive(c,k));
 function alertSummary(c){
@@ -10749,7 +10707,7 @@ function openSaveAs(src){
   const bits=critBits(saveAsSrc), skipped=fromEditor?[]:filtNotSaved();
   // The number the SAVED Cascade will find — counted from the criteria themselves, not read off a list that
   // may be sitting behind a search term which isn't coming with it.
-  const n=countCriteria(normCascade({...saveAsSrc, id:null, name:"", alerts:{...ALERT_DEFAULTS}}));
+  const n=countCriteria(normCascade({...saveAsSrc, id:null, name:""}));
   $("saveAsCrit").innerHTML =
       (bits.length ? bits.map(t=>`<b>${esc(t)}</b>`).join(" · ")
                    : `<b>Everything</b> — you haven't narrowed anything yet, so this would watch the whole catalogue.`)
@@ -10773,7 +10731,7 @@ $("saveAsGo").onclick=()=>{
   // screen exactly like one built in the editor. Guests included: it lands in the same localStorage list.
   const src=saveAsSrc || filtAsCriteria();
   draft=normCascade({...src, id:null, template:null, icon:src.icon||"🔍", name,
-    ratingStop:stopFor(src.imdb||0), alerts:{...(src.alerts||ALERT_DEFAULTS)}});
+    ratingStop:stopFor(src.imdb||0)});
   const {c, isNew, dup}=commitDraft();
   saveAsSrc=null;
   closeModal($("saveAs")); closeModal($("builder")); render();
@@ -10962,7 +10920,7 @@ function newCascade(){
 }
 window.newCascade=newCascade;
 const draftFromTemplate = t => ({id:null, template:t.key, icon:t.icon, name:t.name,
-  ...JSON.parse(JSON.stringify(t.crit)), alerts:{...ALERT_DEFAULTS, ...(t.alerts||{})}});
+  ...JSON.parse(JSON.stringify(t.crit))});
 function startFromTemplate(t){ logEvent("template_opened",{key:t.key}); draft=draftFromTemplate(t); openEditor("New Cascade"); }
 // First-run shortcuts on the empty deck. Straight into the editor, pre-filled — never a straight-to-save.
 const QUICK_STARTS = ["watch_tonight","bargain","my_taste"].map(k=>CASCADE_TEMPLATES.find(t=>t.key===k));
@@ -11001,7 +10959,7 @@ function commitDraft(){
     // CAS-775: an id matching no register entry is dropped here — "on the agent's next save", not on
     // load (normCascade) — so a half-synced device never shows a phantom occasion (AC11).
     occasions:pruneOccasionIds(draft.occasions),
-    sort:draft.sort||"cascade", alerts:draft.alerts, watchWindows:draft.watchWindows,
+    sort:draft.sort||"cascade", watchWindows:draft.watchWindows,
     // CAS-228: listStatus travels with status. Left out, the agent on disk would watch the right windows and
     // list all of them, so turning List off for one window would appear to work and then not survive a save.
     listStatus:draft.listStatus,
@@ -11057,8 +11015,9 @@ function buildSpine(){
     // shape — so the row and the card teach each other rather than being two vocabularies.
     // CAS-502: the per-row 📣 bell (and the cinema row's "past opening weekend" extra alert) is gone —
     // an agent's own bell never notified anyone once the backend stopped reading alert_moments, so it
-    // was a dead switch (AC4). `draft.alerts`/alert_moments keep being computed under the hood
-    // (autoSelectAlerts) so nothing about the stored data changes — only the (now-fake) control is gone.
+    // was a dead switch (AC4). CAS-843: alert_moments is now computed straight off the account's Where &
+    // when Notify switches (accountAlertKeysOn/alertLive) — there is no per-agent alert set left to
+    // auto-select here at all.
     el.innerHTML=`<div class="arow-main">
         <button class="atog" role="switch"><span class="adot"></span>
           <span class="alab"><span class="pill ${r.pill}">${r.title}</span><small>${r.sub}</small></span></button>
@@ -11067,9 +11026,7 @@ function buildSpine(){
         <div class="switch mini" id="mine-${r.key}" role="switch">
           <span>Only what I can watch <small style="color:var(--faint)">(my services)</small></span>
           <span class="knob"></span></div></div></div></div>` : ""}`;
-    // Changing the scope changes which bells can ever ring, so re-run the auto-select right here
-    // rather than leaving the user to notice for themselves (CAS-103 AC2).
-    el.querySelector(".atog").onclick=()=>{ setRow(r, rowState(r)==="off"); autoSelectAlerts(); syncSpine(); refreshDraft(); };
+    el.querySelector(".atog").onclick=()=>{ setRow(r, rowState(r)==="off"); syncSpine(); refreshDraft(); };
     const mine=r.home ? el.querySelector("#mine-"+r.key) : null;
     if(mine) mine.onclick=()=>{ draft.myServices[r.key]=!draft.myServices[r.key]; syncSpine(); refreshDraft(); };
     spine.appendChild(el);
@@ -11082,22 +11039,6 @@ function buildSpine(){
   const warn=document.createElement("div");
   warn.id="cMineWarn";
   spine.appendChild(warn);
-}
-// ---- Alert auto-select (CAS-103 AC2/AC3) -------------------------------------------------------
-// Auto-select the alerts still AHEAD of this Cascade's scope, and force off the ones behind it.
-// Two rules keep it honest rather than merely convenient:
-//   · an unreachable bell is switched OFF in the data, not just greyed — leaving it true would let
-//     a widened scope silently resurrect an alert the user never asked for;
-//   · a bell the user has actually pressed is never overwritten (draft.alertsTouched), which is
-//     what makes an auto-selected one deselectable instead of springing back on.
-function autoSelectAlerts(){
-  const reach=reachableRows(draft);
-  AVAIL_ROWS.concat(AVAIL_ROWS.filter(r=>r.extraAlert).map(r=>({alert:r.extraAlert.key})))
-    .forEach(r=>{
-      const k=r.alert;
-      if(!reach.has(k)){ draft.alerts[k]=false; return; }
-      if(!draft.alertsTouched[k]) draft.alerts[k]=true;
-    });
 }
 // State lives in `draft`; the DOM is only ever synced to it — so the reveal transition survives a toggle.
 function syncSpine(){
@@ -11343,9 +11284,6 @@ function openEditor(title){
   $("cDelete").style.display = draft.id ? "" : "none";
   // CAS-150: Save as… only means something once there is an original to save a copy OF.
   $("cSaveAs").style.display = draft.id ? "" : "none";
-  // Auto-select before the first paint, so the editor OPENS showing what this Cascade will actually
-  // tell you about rather than a default set the scope may already have ruled out (CAS-103 AC2).
-  autoSelectAlerts();
   buildSpine(); syncSpine();
   buildQuality();
   buildEditorChips("cGenreChips", ALL_GENRES, "genre", null, ()=>"gen");
@@ -11814,8 +11752,7 @@ function agentDraft(over){
   const a={...onb, ...(over||{})};
   const c={id:null, template:"agent", icon:"🎯", name:(a.name||"").trim() || "My agent",
     status:[], genre:[...a.genres], exclude:[...a.exclude], age:[], lang:[], culture:[], year:[],
-    imdb:0, rt:0, awards:false, budget:0, tentpole:"any", myServices:false, sort:"availability",
-    alerts:{...ALERT_DEFAULTS}};
+    imdb:0, rt:0, awards:false, budget:0, tentpole:"any", myServices:false, sort:"availability"};
   (STANDARDS.find(s=>s.key===a.standard) || {apply(){}}).apply(c);
   return normCascade(c);
 }
@@ -12018,8 +11955,6 @@ const ONB_AGENTS = [
    capOverride:a => a.cinema==="often" ? null : 3,
    crit:{status:["upcoming","opening_week","in_cinema"], selScale:0, selBuzz:1,
          myServices:false, yearsBack:20},
-   alerts:{cinema:true, past_opening:false, announced:false, opens_soon:false,
-           pvod:false, rental:false, included_streaming:false},
    watchWindows:{upcoming:{list:true, notify:false}, in_cinema:{list:true, notify:true}}},
 
   {key:"onb_stream", icon:"📺", name:"Streaming tonight", kind:"stream",
@@ -12027,8 +11962,6 @@ const ONB_AGENTS = [
    // Deliberately a lower bar than Watch at home — this is the everyday list.
    crit:{status:["included_streaming"], selCrowd:6.0, selCritScore:0, selAwards:0, selScale:0,
          myServices:{pvod:false, rental:false, included_streaming:true}, yearsBack:20},
-   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
-           pvod:false, rental:false, included_streaming:true},
    watchWindows:{stream:{list:true, notify:true}}},
 
   {key:"onb_awards", icon:"🏆", name:"Awards watch", kind:"stream",
@@ -12037,8 +11970,6 @@ const ONB_AGENTS = [
    // all-era, and myServices false because you want to know a winner exists wherever it is.
    crit:{status:[], selCrowd:0, selCritScore:0, selScale:0, myServices:false, yearsBack:0},
    awardsRung:a => a.awards==="closely" ? 1 : 4,
-   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
-           pvod:true, rental:true, included_streaming:true},
    watchWindows:{rent:{list:true, notify:true}, stream:{list:true, notify:true}}},
 
   {key:"onb_family", icon:"👨‍👩‍👧", name:"Family night", kind:"stream",
@@ -12049,8 +11980,6 @@ const ONB_AGENTS = [
          selScale:0, extraExclude:["Horror","Crime"],
          myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
    ageCap:true,
-   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
-           pvod:false, rental:true, included_streaming:true},
    watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
 
   {key:"onb_partner", icon:"❤️", name:"With your partner", kind:"stream",
@@ -12059,8 +11988,6 @@ const ONB_AGENTS = [
    taste:"partner",
    crit:{status:["rental","included_streaming"], selCrowd:7.0, selCritScore:0, selAwards:0,
          selScale:0, myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
-   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
-           pvod:false, rental:true, included_streaming:true},
    watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
 
   {key:"onb_cinema_wide", icon:"🎟️", name:"At the cinema now", kind:"cinema",
@@ -12068,8 +11995,6 @@ const ONB_AGENTS = [
    // No buzz floor — this is the broad "what's on" list, and 3 years back because a film in
    // cinemas now is recent by definition.
    crit:{status:["in_cinema"], selScale:0, selBuzz:0, myServices:false, yearsBack:3},
-   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
-           pvod:false, rental:false, included_streaming:false},
    watchWindows:{in_cinema:{list:true, notify:false}}},
 
   {key:"onb_home", icon:"📼", name:"Watch at home", kind:"stream",
@@ -12079,8 +12004,6 @@ const ONB_AGENTS = [
    // Cinema-grade but not trip-worthy. The crowd + critic pair is what makes this the quality lane.
    crit:{status:["pvod","rental"], selCrowd:7.0, selCritScore:70, selAwards:0, selScale:0,
          myServices:{pvod:false, rental:true, included_streaming:false}, yearsBack:20},
-   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
-           pvod:false, rental:true, included_streaming:false},
    watchWindows:{rent:{list:true, notify:true}}},
 
   {key:"onb_friends", icon:"🍿", name:"Big nights in", kind:"stream",
@@ -12089,8 +12012,6 @@ const ONB_AGENTS = [
    // one selectivity dial that survives laneCrit on BOTH lanes.
    crit:{status:["rental","included_streaming"], selCrowd:6.5, selCritScore:0, selAwards:0,
          selScale:50e6, myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
-   alerts:{cinema:false, past_opening:false, announced:false, opens_soon:false,
-           pvod:false, rental:true, included_streaming:true},
    watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
 ];
 
@@ -12124,7 +12045,6 @@ function buildOnbAgents(a){
     }
     c.age = r.ageCap ? AGE_LEVELS.filter(x => !MATURE.has(x)) : [];
     if(r.awardsRung) c.selAwards = r.awardsRung(ans);
-    c.alerts = {...ALERT_DEFAULTS, ...(r.alerts||{})};
     c.watchWindows = JSON.parse(JSON.stringify(r.watchWindows||{}));
     c.sort = DEFAULT_SORT;                    // CAS-618: the Cascade score is the default order
     // Resolved here, against the answers, so the agent on disk carries a number and onbDepthFor
@@ -12251,7 +12171,7 @@ function starterWatch(s, kind){
   return JSON.parse(JSON.stringify(watchPrefs));
 }
 function starterPreview(s, kind){
-  const d=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
+  const d=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit}));
   // CAS-532: fixed system defaults, verbatim — all genres, last 20 years, M and up — except age, which
   // stays the preset's OWN cap (CAS-307: Family Movies' rating ladder is part of its standard, not
   // something the card should quote as wide open). The card and the agent pickStarter is about to build
@@ -12319,7 +12239,7 @@ window.pickStarter=key=>{
   // CAS-815: the offered name is the preset alone now — "Blockbusters", not "Cinema Blockbusters" — since
   // there is no channel answer left to disambiguate it with.
   const dfltName = starterAgentName(s, flowKind);
-  onbFlow.draft = normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:dfltName, crit:s.crit, alerts:s.alerts}));
+  onbFlow.draft = normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:dfltName, crit:s.crit}));
   onbFlow.name = dfltName;
   // CAS-191: the name the field OFFERS is the name an emptied field falls back to. They used to be two
   // different strings — the placeholder showed the agent you picked and onbApply quietly wrote "Friday
@@ -12387,19 +12307,18 @@ const WIZ_STEPS = {
   rentals:   ["love","price","worthTime","skip","name"],
   streaming: ["love","services","worthTime","skip","name"],
 };
-// Cinema — "when should I tell you?" maps to the real alert moments (there is no fabricated "announced"
-// bell: the earliest honest signal is the film reaching cinemas, so "announced" simply also watches from
-// the upcoming stage; "before it leaves" is the past-opening-weekend moment from CAS-68).
+// Cinema — "when should I tell you?" decides which windows this agent watches (its alerts now come
+// solely from the account's own Where & when you'll watch Notify switches, CAS-843).
 const TELL_OPTS = [
-  {key:"announced", label:"As soon as it's announced", status:["upcoming","opening_week","in_cinema"], alerts:{cinema:true}},
-  {key:"opens",     label:"When it opens",             status:["opening_week","in_cinema"], alerts:{cinema:true}},
-  {key:"leaving",   label:"Before it leaves — last chance", status:["opening_week","in_cinema"], alerts:{past_opening:true}},
+  {key:"announced", label:"As soon as it's announced", status:["upcoming","opening_week","in_cinema"]},
+  {key:"opens",     label:"When it opens",             status:["opening_week","in_cinema"]},
+  {key:"leaving",   label:"Before it leaves — last chance", status:["opening_week","in_cinema"]},
 ];
-// Rentals — the price ceiling decides which windows the agent watches and rings.
+// Rentals — the price ceiling decides which windows the agent watches.
 const PRICE_OPTS = [
-  {key:"cheap",   label:"Only when it's cheap (~$7)", status:["rental"],                 alerts:{rental:true}},
-  {key:"premium", label:"Premium's OK (~$30)",     status:["pvod","rental"],          alerts:{pvod:true, rental:true}},
-  {key:"wait",    label:"I'll wait for streaming",    status:["included_streaming"],     alerts:{included_streaming:true}},
+  {key:"cheap",   label:"Only when it's cheap (~$7)", status:["rental"]},
+  {key:"premium", label:"Premium's OK (~$30)",     status:["pvod","rental"]},
+  {key:"wait",    label:"I'll wait for streaming",    status:["included_streaming"]},
 ];
 // Rating bars, as catalogue-percentile stops (RATING_STOPS): "great" = top tier, the crowd/blockbuster
 // default = above-average sorted by buzz, "not fussy" = no bar.
@@ -12426,19 +12345,18 @@ function wizDraft(over){
   const c={id:null, template:"agent", icon:st.icon, name:(w.name||"").trim()||WIZ_DEFAULT_NAME[w.starter],
     status:[], genre:[...w.genres], exclude:[...w.exclude], age:[], lang:[], culture:[], year:[],
     imdb:0, rt:0, awards:false, budget:0, includeUnbudgeted:false, tentpole:"any",
-    myServices:false, sort:"availability", alerts:{cinema:false, past_opening:false, pvod:false, rental:false, included_streaming:false}};
+    myServices:false, sort:"availability"};
   const ropts = w.starter==="cinema" ? BIG_SCREEN_OPTS : WORTH_OPTS;
   const r = ropts.find(o=>o.key===w.ratingKey) || ropts[1];
   c.imdb = RATING_STOPS[r.ratingStop].imdb; c.ratingStop=r.ratingStop; c.sort=r.sort;
   if(w.starter==="cinema"){
     const t=TELL_OPTS.find(o=>o.key===w.tellWhen)||TELL_OPTS[1];
-    c.status=[...t.status]; Object.assign(c.alerts, t.alerts);
+    c.status=[...t.status];
   } else if(w.starter==="rentals"){
     const p=PRICE_OPTS.find(o=>o.key===w.price)||PRICE_OPTS[0];
-    c.status=[...p.status]; Object.assign(c.alerts, p.alerts);
+    c.status=[...p.status];
   } else {
     c.status=["included_streaming"]; c.myServices={pvod:false, rental:false, included_streaming:true};
-    c.alerts.included_streaming=true;
   }
   return normCascade(c);
 }
@@ -13148,33 +13066,12 @@ function onbApply(){
   // channel back on restores what this agent was set to.
   d.channels = {...(d.channels||{})};
   d.channelsLive = {inApp: channelLive("inApp"), email: channelLive("email")};
-  // CAS-197: the windows you picked ARE the alerts the daily job fires on. CAS-160 recorded them and
-  // deliberately did not write them, because promising delivery we had not built would have been a
-  // fabricated capability. CAS-185 built it — so leaving them unwritten is now the opposite failure: a
-  // screen that takes an answer nothing acts on. alertLive() still has the last word, so a bell that is
-  // unreachable for this agent's scope, or muted globally, never reaches alert_moments.
   // CAS-199: "only show films on my services" is a per-window scope on the agent, and it is the switch
   // that says so — naming your services alone never narrows anything.
   if(d.kind==="stream") HOME_KEYS.forEach(k=>{ d.myServices[k] = !!prefs.on; });
-  // CAS-228: only the NOTIFY switches write alerts. Under CAS-160 a ticked window did both jobs, so listing a
-  // window silently armed its bell; now a window you only wanted to see stays silent, and a window you only
-  // wanted to hear about never has to appear in the list.
-  // CAS-229: and the starting point is ALL OFF, not ALERT_DEFAULTS. ALERT_DEFAULTS turns Rent and Stream on,
-  // which is right for a Cascade built in the editor over the whole ladder and wrong for an agent scoped to
-  // one end of it: a cinema agent was shipping with rental and streaming bells set true, and those bells can
-  // never fire for it — a film reaching rent has already left a cinema agent's watch set, so the flags were
-  // unreachable-but-true, exactly the state CAS-103 requires be switched off in the data rather than greyed.
-  // Building up from nothing means the agent's bells are precisely the windows it has a Notify on, which is
-  // also this ticket's stated default for each type.
-  const off={}; Object.keys(ALERT_DEFAULTS).forEach(k=>{ off[k]=false; });
-  d.alerts = off;
-  agentWindows().forEach(w=>{
-    if(!winOn(w.key,"notify")) return;
-    if(w.alerts) Object.assign(d.alerts, w.alerts);
-    // CAS-242: and the finer moments, each only if it was actually asked for. subOn() already requires
-    // Notify, so a sub-switch left on under a bell you turned off writes nothing.
-    (w.subs||[]).forEach(s=>{ if(subOn(w.key,s.key) && s.alerts) Object.assign(d.alerts, s.alerts); });
-  });
+  // CAS-843: this agent no longer carries its own alert set — alert_moments is computed straight off the
+  // account's own Where & when Notify switches (accountAlertKeysOn/alertLive), gated by this agent's
+  // reachability guard, so there is nothing left to derive or write here.
   return normCascade(d);
 }
 const onbCount = () => watchCount(onbApply());
@@ -18071,7 +17968,7 @@ function membStartWork(){
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
   if(!cascades.length){
     const s=STARTERS.find(x=>x.key==="streaming");   // CAS-143: the R5 presets replaced watch_tonight
-    if(s){ draft=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts})); commitDraft(); }
+    if(s){ draft=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit})); commitDraft(); }
   }
   showFoundList();
   render();
@@ -18090,7 +17987,7 @@ function openListingPreview(){
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
   const s=STARTERS.find(x=>x.key==="streaming");   // CAS-143: the R5 presets replaced watch_tonight
   if(s && !cascades.length){
-    draft=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit, alerts:s.alerts}));
+    draft=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit}));
     commitDraft();
   }
   render();
@@ -18517,7 +18414,6 @@ function render(){
   renderSaid();     // membership changes from a card, from the list itself, or from a Cascade — one repaint covers all
   updatePrefSwitch(); updatePrefBtn(); updateUxSwitch(); refreshSetupMeters();
   if($("svcAnalysis").classList.contains("open")) renderSvcAnalysis();
-  syncAlertPrefChips();
   // Smart defaults: label the apply control with its payoff, not a bare "Done".
   $("filtersDone").textContent = ux.on
     ? (shown.length ? `Show ${shown.length} film${shown.length===1?"":"s"}` : "No films match")
@@ -18982,8 +18878,10 @@ function catchReason(m, c, w, services){
   // this the lookup would come back undefined and the moment would fire for every Cascade, including the ones
   // whose bell for it is switched off.
   const k = w==="past_opening" ? "past_opening" : WINDOW_ROW[w];
-  if(k && c.alerts && (k in c.alerts) && !c.alerts[k])
-    return `your ${ALERT_SHORT[k]} alerts are off for this Cascade`;
+  // CAS-843: the switch is the account's own Where & when Notify now, not a per-Cascade field — every
+  // Cascade gives the same reason here, the same way the muted-film case above does.
+  if(k && !accountAlertKeysOn().has(k))
+    return `your ${ALERT_SHORT[k]} alerts are off`;
   return null;                                  // caught: this Cascade tells you about it
 }
 // Every transition today's poll produced, WITH the per-Cascade verdict already attached. The digest is a
@@ -19353,11 +19251,7 @@ function sanitiseShared(o){
     myServices: (o.myServices && typeof o.myServices==="object")
       ? Object.fromEntries(HOME_KEYS.map(k=>[k, !!o.myServices[k]]))
       : !!o.myServices,
-    alerts:{},
   };
-  Object.keys(ALERT_DEFAULTS).forEach(k=>{
-    c.alerts[k] = typeof o.alerts?.[k]==="boolean" ? o.alerts[k] : ALERT_DEFAULTS[k];
-  });
   c.ratingStop = num(o.ratingStop,0,RATING_STOPS.length-1, stopFor(c.imdb));
   return normCascade(c);
 }
@@ -19654,19 +19548,20 @@ else if(dedupedN)
 
   // ---- shape mapping: local Cascade <-> table row --------------------------
   // criteria (jsonb) carries the whole local Cascade minus the columns stored on their own
-  // (id, name, paused->active). alert_moments (text[]) is DERIVED from the local alerts object for
-  // the monitor (CAS-84/85). pvod now has a real monitor moment too (hits_pvod, CAS-103) — before
-  // that the Purchase bell was UI-only, a switch the daily job could never act on.
+  // (id, name, paused->active). alert_moments (text[]) is DERIVED from the account's own Where & when
+  // Notify switches for the monitor (CAS-84/85, CAS-843). pvod now has a real monitor moment too
+  // (hits_pvod, CAS-103) — before that the Purchase bell was UI-only, a switch the daily job could
+  // never act on.
   const ALERT_TO_MOMENT = { cinema:"hits_cinema", past_opening:"past_opening_weekend",
                             announced:"announced", opens_soon:"opens_soon",
                             pvod:"hits_pvod", rental:"hits_rent",
                             included_streaming:"hits_stream" };
-  // What we write here is the promise the monitor will keep, so it has to survive the same two
-  // tests the UI applies: the bell must be REACHABLE for this Cascade's scope, and the type must
-  // not be muted globally in Preferences. Writing a moment that fails either would have the daily
-  // job email about something the app is simultaneously telling the user it will never mention.
+  // What we write here is the promise the monitor will keep, so it has to survive the same test the
+  // UI applies: the bell must be ON (the account's Notify switch) and REACHABLE for this Cascade's
+  // scope. Writing a moment that fails either would have the daily job email about something the app
+  // is simultaneously telling the user it will never mention.
   function momentsOf(c){
-    const a=c.alerts||{}, out=[];
+    const out=[];
     for(const k in ALERT_TO_MOMENT) if(alertLive(c,k)) out.push(ALERT_TO_MOMENT[k]);
     return out;
   }
@@ -20514,12 +20409,14 @@ else if(dedupedN)
   //        row IS the in-app alert; the bell draws it, and marking it read is the one write an
   //        end user is allowed to make against that table.
   // ==========================================================================
+  // CAS-843: excluded_moments (the old global alert-type mute) is no longer written — the column stays
+  // (dropping it is a Lee-gated schema step, not this ticket) but nothing here overwrites whatever a
+  // pre-843 device already left in it.
   function prefsRow(){
     return { user_id:uid(),
              in_app:!!notifyPrefs.inApp,
              email_on:!!notifyPrefs.emailOn,
-             email_address:(notifyPrefs.email||"").trim() || null,
-             excluded_moments:[...prefs.alertsOff] };
+             email_address:(notifyPrefs.email||"").trim() || null };
   }
   // Only the answers the USER gave travel. An auto entry is derivable from the Cascade that made
   // it, so uploading it would be storing a conclusion next to its own premise — and the two would
@@ -20592,10 +20489,6 @@ else if(dedupedN)
     notifyPrefs.emailOn = !!row.email_on;
     notifyPrefs.email   = row.email_address || "";
     saveNotifyPrefs();
-    // CAS-609: excluded_moments was write-only — prefsRow() has pushed it since it existed, but
-    // nothing read it back. Replace, not union, same as the three columns above.
-    prefs.alertsOff = new Set(Array.isArray(row.excluded_moments) ? row.excluded_moments : []);
-    savePrefs();
     notifyPrefsReady=true;
   }
   // CAS-609: film_picks was push-only (upsert+delete, no select) — a manual "notify me"/"never
@@ -21063,11 +20956,11 @@ else if(dedupedN)
   const saveNotifyPrefsLocal = saveNotifyPrefs;
   saveNotifyPrefs = function(){ saveNotifyPrefsLocal(); if(accountActive()) scheduleNotifySync(); };
   const savePrefsLocal = savePrefs;
-  // prefs carries BOTH the global alert mutes (notify_prefs.excluded_moments) and the services
-  // (user_prefs), so one write fans out to both rather than the caller having to know which.
+  // CAS-843: prefs is the services answer (user_prefs) only now — the global alert mute it used to
+  // also carry (notify_prefs.excluded_moments) is gone, so this chokepoint no longer touches notify_prefs.
   savePrefs = function(){
     savePrefsLocal();
-    if(accountActive()){ scheduleNotifySync(); scheduleUserPrefsSync(); }
+    if(accountActive()) scheduleUserPrefsSync();
   };
 
   window.CascadePersistence = { loadAccount, syncNow: runSync, accountActive, isUuid,

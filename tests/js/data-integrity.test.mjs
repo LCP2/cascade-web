@@ -654,6 +654,69 @@ test("alerts: a saved agent from before this screen is never armed on its behalf
   assert.equal(now.upcoming.subs.opens_soon, false);
 });
 
+// ---- 3c-i. CAS-843: alert_moments follows the ACCOUNT's own Where & when Notify switches ------------------
+// The per-agent alert set (autoSelectAlerts, c.alerts) and the global "Never alert me about" mute
+// (prefs.alertsOff) are both retired — My services and Where & when you'll watch are the only two things
+// that may influence alert_moments now (Lee's decision, 2026-09-08). watchPrefs is the account's single,
+// global copy of those Notify switches (CAS-532), so every test below drives it directly and restores it
+// afterwards — the same isolation shape tests/js/agents.test.mjs's withWatchPrefs uses.
+function withWatchPrefs(overrides, fn){
+  const saved = E.watchPrefs;
+  E.setWatchPrefs({ ...saved, ...overrides });
+  try{ fn(); } finally{ E.setWatchPrefs(saved); }
+}
+test("alerts: Notify ON for Rent only produces hits_rent, and nothing else, for an agent watching the whole ladder", () => {
+  withWatchPrefs({
+    in_cinema: { list: true, notify: false }, premium: { list: false, notify: false },
+    rent: { list: true, notify: true }, stream: { list: true, notify: false },
+    upcoming: { list: true, notify: false },
+  }, () => {
+    const wholeLadder = E.normCascade({ status: [] });   // [] = every window, CAS-843's "whole ladder" case
+    // Joined rather than deep-equalled: arrays built inside the vm realm fail a strict deep-equal against
+    // a host array of identical contents (see the "windows" tests below for the same pattern).
+    assert.equal(E.CascadeShape.momentsOf(wholeLadder).join(","), "hits_rent");
+  });
+});
+// AC3 as Lee wrote it ("an agent scoped to rent only, so cinema is unreachable") cannot be built: reachableRows()
+// is a downward-closed PREFIX from the ladder's start (CASCADE = [upcoming, opening_week, in_cinema, pvod,
+// rental, included_streaming]) up to the agent's furthest-scoped window, and "cinema" is that prefix's first
+// three entries — so it is included for EVERY non-empty scope, including one scoped to rental alone (verified
+// empirically: E.reachableRows(E.normCascade({status:["rental"]})) already contains "cinema"). That is pre-
+// existing, deliberately documented behaviour (reachableRows' own comment: "A Blockbuster radar scoped to
+// `upcoming` ships with rent + stream bells lit… it will never ring either" — the guard excludes rows PAST an
+// agent's scope, never rows before it), not something this ticket's change introduces, and this ticket's own
+// instruction is to keep reachableRows(c) exactly as it is. So this proves the identical guard — Notify ON for
+// a moment the agent's scope has already let go of still produces nothing — with the one scope direction that
+// can actually demonstrate it: an agent narrowed to Upcoming has let go of Stream, the same relationship the
+// comment above documents for Rent/Stream.
+test("alerts: Notify ON for Stream produces nothing for an agent scoped to Upcoming only — the reachability guard survives", () => {
+  withWatchPrefs({
+    in_cinema: { list: true, notify: false }, premium: { list: false, notify: false },
+    rent: { list: true, notify: false }, stream: { list: true, notify: true },
+    upcoming: { list: true, notify: false },
+  }, () => {
+    const upcomingOnly = E.normCascade({ status: ["upcoming"] });
+    assert.equal(E.CascadeShape.momentsOf(upcomingOnly).length, 0,
+      "Stream's Notify is on account-wide, but an Upcoming-only agent has already let Stream go");
+  });
+});
+test("alerts: Upcoming's two sub-switches produce announced and opens_soon independently", () => {
+  withWatchPrefs({
+    in_cinema: { list: true, notify: false }, premium: { list: false, notify: false },
+    rent: { list: true, notify: false }, stream: { list: true, notify: false },
+    upcoming: { list: true, notify: true, subs: { announced: true, opens_soon: false } },
+  }, () => {
+    assert.equal(E.CascadeShape.momentsOf(E.normCascade({ status: [] })).join(","), "announced");
+  });
+  withWatchPrefs({
+    in_cinema: { list: true, notify: false }, premium: { list: false, notify: false },
+    rent: { list: true, notify: false }, stream: { list: true, notify: false },
+    upcoming: { list: true, notify: true, subs: { announced: false, opens_soon: true } },
+  }, () => {
+    assert.equal(E.CascadeShape.momentsOf(E.normCascade({ status: [] })).join(","), "opens_soon");
+  });
+});
+
 // ---- 3d. THE PAY-PER-FILM WINDOWS ARE TWO, NOT ONE (CAS-243, CAS-723) -------------------------------------
 // CAS-723: AGENT_WINDOWS is the one list every agent reads now — there is no more per-kind array to pick
 // Premium/Rent/Streaming off, so this checks the tail of the one shared list instead.
