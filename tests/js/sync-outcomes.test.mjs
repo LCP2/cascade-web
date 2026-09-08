@@ -80,7 +80,9 @@ test("CAS-787 AC2: after a successful user_prefs upsert, the outcome reads succe
 
 test("CAS-787 AC3: every account sync target on the persistence seam appears in the report, not just user_prefs", () => {
   const targets = E.CascadePersistence.syncOutcomeReport().map(r => r.target);
-  ["cascades", "watchlists", "user_films",
+  // CAS-863: watchlists retired — it stopped reading/writing the watchlists table, so it is no longer a
+  // sync target here either.
+  ["cascades", "user_films",
    "notify_prefs", "film_picks", "film_watch", "agent_films", "user_prefs"].forEach(t => {
     assert.ok(targets.includes(t), `${t} is missing from the sync outcome report`);
   });

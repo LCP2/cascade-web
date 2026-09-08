@@ -128,12 +128,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-723: inScope is the predicate the "one agent type" invariant is actually about — exported so a test
   // can assert it directly rather than re-deriving it from watchesFilm's combination with matchesTaste.
   inScope,
-  // CAS-680: the list-editor's own predicates — ymFeedList (the list's own total, no inFindScope applied),
-  // ymAgentListCount (an agent's contribution TO the active list), inFindScope and scope (the scope bar
-  // that scopeRows() applies and ymFeedList() deliberately does not) — so a test can assert the two
-  // predicates stay different rather than re-deriving them from render() output. YM_SVC/ymSvcOn/ymSvcToggle
-  // let a test drive the availability chips the same way a person taps them.
-  ymFeedList, ymAgentListCount, inFindScope, scope, scopeRows,
+  // CAS-863: inFindScope/scope are the Find-scope predicates the (now-removed) list editor's own
+  // ymFeedList/ymAgentListCount/scopeRows used to sit alongside — those went with the rest of the
+  // retired watch-list model; the live Watch screen reads watchScopeRows (exported below) instead.
+  inFindScope, scope,
   // CAS-682: taggedOut — the predicate that decides card vs. stub — so a test can assert a stub is really
   // a stub, rather than assuming a watched film demonstrates it.
   // CAS-718: opinionOf alongside it — the verdict key a taggedOut film carries, which watchWatchedSel below
@@ -152,19 +150,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // above) and toggleWatchAgent (its wire mutator, wrapped like toggleFilmOpt below) — so a test can drive a
   // real untick through the real function and assert watchScopeRows' owner-based occasion filter honours it.
   watchAgentOff, toggleWatchAgent: (id) => window.toggleWatchAgent(id),
-  YM_SVC,
-  // CAS-677: WATCH_STEPS (the watched-verdict ramp watchlistDefaults()'s permissive watchedOn is built
-  // from), ymWatchedOn itself (by reference, like ymCascOff below, so a test can drive it directly the same
-  // way a restrictive pre-ticket value would have) and leInnerHTML (the list editor's real render, so a
-  // test can assert the removed verdict section is actually gone from its output, not just from source text).
-  // CAS-693: leComputeCounts is the single-pass replacement for the old ymFeedList()+per-agent
-  // ymAgentListCount(c) calls leInnerHTML used to make — exported so a test can assert the two ways of
-  // computing the same figures still agree, without parsing leInnerHTML()'s HTML output for numbers.
-  WATCH_STEPS, leInnerHTML, leComputeCounts,
-  get ymWatchedOn(){ return ymWatchedOn; },
-  get ymSvcOn(){ return ymSvcOn; },
-  ymSvcToggle: (key, btn) => window.ymSvcToggle(key, btn),
-  ymSvcSetAll: on => window.ymSvcSetAll(on),
+  // CAS-863: WATCH_STEPS is the watched-verdict ramp the Watch On panel renders — unrelated to the retired
+  // watch-list model despite once sitting next to it. YM_SVC/ymSvcOn/ymSvcToggle/ymSvcSetAll/ymWatchedOn/
+  // leInnerHTML/leComputeCounts all went with that model.
+  WATCH_STEPS,
   normCascade, showable, primaryStatus, inCinemaWindow, isEstimated, deriveStatus, isUpcoming,
   // CAS-255: the my-services scope and the stage dates are both places the app makes a claim about what you
   // can watch and when, so the QA gate needs to reach them the same way the listing does.
@@ -226,28 +215,11 @@ if(typeof window.CascadeAuth === "undefined"){
   get onbFlow(){ return onbFlow; },
   get flowKind(){ return flowKind; },
   setFlowKind(k){ flowKind = k; },
-  // CAS-666: the watch-list scratch-state bridge (deckSelect/wlRailCreate are wire code, exercised here the
-  // same way the rest of this file's "wire code" comment describes — DOM reads/writes are absorbed by the stub).
-  watchLists, activeWatchlist, setActiveWatchlist, applyActiveWatchlist, watchlistRecord,
-  normWatchlistEntry, watchlistDefaults, deckSelect, wlRailCreate,
-  get watchActiveId(){ return watchActiveId; },
-  // CAS-673: activeCascades/activeIds are what the live listing (scopeRows) and the empty state
-  // (emptyResultsHTML) both read; ymCascOff/ymCascTicked are the list editor's own live scratch Set for
-  // agent membership, and ymCascToggle/ymCascSetAll (window-assigned wire code, wrapped the same way
-  // renderMovingScreen is above) are its two write sites — the ones the ordering bug was in.
+  // CAS-863: activeCascades/activeIds are what the live listing (watchScopeRows) and the empty state
+  // (emptyResultsHTML) both read — seeded straight from the agents themselves now that the watch-list
+  // model (and the list editor's own ymCascOff/ymCascToggle/leOpen scratch state) is retired.
   activeCascades, emptyResultsHTML,
   get activeIds(){ return activeIds; },
-  get ymCascOff(){ return ymCascOff; },
-  ymCascTicked,
-  ymCascToggle: (id, btn) => window.ymCascToggle(id, btn),
-  ymCascSetAll: on => window.ymCascSetAll(on),
-  // CAS-676: the Edit screen's own open/close (wire code, DOM absorbed by the stub, same pattern as
-  // openMovingScreen/closeMovingScreen below) plus its open flag and its "the deck still owes a rebuild"
-  // flag, so a test can drive a burst of toggles while it's open and assert what got deferred to close.
-  leOpen: () => window.leOpen(),
-  leClose: () => window.leClose(),
-  get leOn(){ return leOn; },
-  get ymDeckStale(){ return ymDeckStale; },
   // CAS-667: movingData is wire-adjacent (it reads window.CascadePersistence.accountActive()) but its
   // row-selection arithmetic is exactly the kind of decision this harness exists to test. realAlerts and
   // firstFound are exposed by reference (mutated via push, never reassigned, in test use) so a test can seed
@@ -305,18 +277,15 @@ if(typeof window.CascadeAuth === "undefined"){
   setMovingWindow: (key) => window.setMovingWindow(key),
   // CAS-662: the listing's own group partition — pure over a rows set and an active agent, no DOM, so it is
   // exactly the "decision" half of render() this harness exists to test independent of the paint half.
-  // CAS-699: ymSort exposed by getter/setter (like watchPrefs/flowKind below) so a test can drive the list's
-  // own sort pick the same way ymSortChange does, and assert listingGroups honours it over CAS-430's default.
   listingGroups,
   // CAS-793: filmOwnerCascade/filmOwnerOrder/splitByOwner/watchScopeRows are all pure over cascades/notify/
   // MOVIES, exactly like listingGroups above — exported so a test can drive the single CAS-709 global-owner
   // lookup and the occasion pool test directly rather than scraping rendered headings. agentChipHTML is the
   // one DOM-free render helper worth exporting here too, so a test can assert the chip's own name/HTML.
   filmOwnerCascade, filmOwnerOrder, splitByOwner, watchScopeRows, agentChipHTML,
-  get ymSort(){ return ymSort; },
-  setYmSort(v){ ymSort = v; },
-  // CAS-819: listingGroups now reads sortPicked (the Watch bar's own #sort control), not ymSort — exposed
-  // the same get/set-over-a-let shape so a test can drive it the way #sort's own onchange does.
+  // CAS-819: listingGroups reads sortPicked (the Watch bar's own #sort control) — exposed through a
+  // get/set-over-a-let shape so a test can drive it the way #sort's own onchange does. ymSort itself
+  // (Your Movies' own sort control) went with the rest of the retired watch-list model in CAS-863.
   get sortPicked(){ return sortPicked; },
   setSortPicked(v){ sortPicked = v; },
   // CAS-613: auto-notify's own decision surface. recomputeFound is the wire-adjacent entry point (it reads
