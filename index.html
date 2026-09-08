@@ -2461,6 +2461,37 @@
   .advbar span{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--green))}
   .advrent{font-size:11.5px;font-weight:700;color:#a7eccb;margin-top:7px}
   .advfoot{font-size:11px;color:var(--faint);line-height:1.55;margin-top:2px}
+  /* ---- CAS-866: service analysis rebuild — population blockquote, coverage headline, segmented rows ---- */
+  .svcpop{border-left:3px solid var(--line);padding-left:10px;color:var(--dim);font-size:12.5px;line-height:1.55;margin:0 0 14px}
+  .svcpop b{color:var(--ink)}
+  .svchead{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px}
+  .svcheadnum{font-size:30px;font-weight:800;color:var(--ink)}
+  .svcheadof{font-size:13px;font-weight:600;color:var(--dim);margin-left:6px}
+  .svcbar{height:8px;border-radius:5px;background:#2a303b;margin-top:10px;overflow:hidden;display:flex}
+  .svcbar .human{display:block;height:100%;background:var(--green)}
+  .svcbar .agent{display:block;height:100%;background:var(--purple)}
+  .svcleg{margin-top:8px;font-size:11.5px;color:var(--dim);display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center}
+  .svcleg .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+  .svcleg .dot.human{background:var(--green)}
+  .svcleg .dot.agent{background:var(--purple)}
+  .svcleg .dot.none{background:var(--line)}
+  .svcseg{display:flex;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:3px;margin:4px 0 10px;gap:3px}
+  .svcsegbtn{flex:1;border:0;background:transparent;color:var(--dim);font-size:12.5px;font-weight:700;padding:8px 6px;border-radius:8px;cursor:pointer}
+  .svcsegbtn.on{background:var(--accent);color:#fff}
+  .svcrow{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:11px 12px;margin-bottom:8px;
+    display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+  .svcrow .svcmain{flex:1;min-width:0}
+  .svcname{font-size:14px;font-weight:800}
+  .svcwhy{font-size:12.5px;color:#c4ccd6;line-height:1.5;margin-top:4px}
+  .svcwhy b{color:var(--ink)}
+  .svcfree{display:inline-block;margin-top:6px;font-size:10px;font-weight:800;padding:2px 7px;border-radius:20px;
+    background:rgba(72,199,142,.16);color:#a7eccb;border:1px solid rgba(72,199,142,.5)}
+  .svcheadline{flex-shrink:0;text-align:right}
+  .svcnum{display:block;font-size:20px;font-weight:800;color:var(--ink)}
+  .svcnum.zero,.svcnum.plus{color:var(--green)}
+  .svcnumlbl{display:block;font-size:9.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--faint)}
+  .svcwarn{border:1px solid var(--amber);background:rgba(240,163,54,.08);border-radius:12px;padding:10px 12px;
+    font-size:12.5px;color:#ffce8f;line-height:1.5;margin:4px 0 10px}
   /* ---- plain-English setup (rules-based preview) ---- */
   .nlrow{display:flex;gap:8px;align-items:stretch}
   .nlrow .namein{flex:1;min-width:0;font-size:16px;font-weight:500}
@@ -5194,7 +5225,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1026, "commit": "fde3bbe", "builtAt": "2026-09-08T22:04:38Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1027, "commit": "1aa5ecd", "builtAt": "2026-09-08T22:15:56Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -10558,110 +10589,209 @@ $("cDelete").onclick=()=>{
 };
 
 // ================= Service selector (insight) =================
-// "Which service covers the most of my list?" — a plain count over the REAL offer data.
-// Honesty guardrail: the catalogue carries no subscription prices, so we never quote a monthly saving or
-// a "you'd save $X/mo" figure we can't back up. What we CAN say truthfully is what renting those same
-// films would cost instead — every dollar of that is a price sitting in the offer data (contrast effect,
-// honestly sourced). Films still in cinemas are excluded from the denominator: no service can cover them.
-// CAS-448: not found (that's the WATCH set — CAS-132 keeps that one alive past a poll cycle, not a coverage
-// list) and not the my-services-filtered listing either. This is the union, across every active cascade, of
-// what it would LIST with each window's "only on my services" scope forced off — the full set of films you'd
-// want to watch based on your cascades, so a service you don't have yet can still surface if it would cover
-// a lot of them. Same "results, not stubs" rule as listedCount: a film you've already watched or blocked
-// doesn't need a service recommending it.
+// "What do my services actually cover, and what would change if I added or dropped one?"
+// Honesty guardrail unchanged: the catalogue carries no subscription prices, so nothing on this screen is a
+// cost comparison — Section 2 ranks by films added, never a saving nobody can verify.
+// CAS-866: the population is the full "if I had every service and could watch in any window" set — BOTH the
+// per-window SERVICE scope and the WINDOW scope itself removed, not just services (the old scopeOff only
+// cleared myServices, so an agent's Watch On window still narrowed what counted). Deduplicated across every
+// unpaused Cascade; taggedOut() already covers "watched" (CAS-100's opinionOf resolves watched.has(id) into
+// a real opinion), so one gate excludes both.
 function svcAdviceFilms(){
-  const seen=new Set(), out=[];
+  const byId=new Map();   // tmdb_id -> {m, human}
   cascades.forEach(c=>{
     if(c.paused) return;                    // guest mode (CAS-79): watches nothing, so it advises nothing
     // CAS-853: myServices:false (not {}) — {} is a real, narrowable "no window scoped yet" agent shape and
     // is now itself subject to the account toggle; false is the dedicated "ignore services entirely" signal
-    // this advisory read needs, same as matchesTaste's (a service you don't have yet must still be able to
-    // surface here, independent of whether the account switch happens to be on).
-    const scopeOff={...c, myServices:false};
+    // this advisory read needs. status/listStatus:[] removes the WINDOW scope the same way (inScope and
+    // listWindowOK both read "no scope set" as "everything passes").
+    const scopeOff={...c, myServices:false, status:[], listStatus:[]};
+    // CAS-866: a window this Cascade's own person actually dragged a marker on is a DEFINITE intention; one
+    // still sitting on the CAS-743 auto-seed is a SUGGESTION nobody has confirmed yet. _watchMarkersDefaulted
+    // is cleared the instant a real edit happens (setWatchMarker), so its absence on the agent IS "a person
+    // set this" — human, not agent-set.
+    const human=!c._watchMarkersDefaulted;
     MOVIES.forEach(m=>{
-      if(seen.has(m.tmdb_id) || taggedOut(m) || !listedBy(m, scopeOff)) return;
-      seen.add(m.tmdb_id); out.push(m);
+      if(taggedOut(m) || !listedBy(m, scopeOff)) return;
+      const id=m.tmdb_id, e=byId.get(id);
+      if(!e) byId.set(id,{m, human});
+      else if(human) e.human=true;   // any human-set Cascade wanting it is enough to call the film definite
     });
   });
-  return out;
+  return [...byId.values()];
 }
+// One entry per canonical service (svcCanon), never a raw provider string — "Netflix" and "Netflix Standard
+// with Ads" are the same row everywhere on this screen.
 function serviceAdvice(){
-  const want = svcAdviceFilms();
-  const home = want.filter(m=>(m.offers||[]).length);
-  const byService = new Map();
-  home.forEach(m=>{
-    const offers = dedupOffers(m.offers);
-    const rents  = offers.filter(o=>o.type==="rent" && o.price!=null).map(o=>o.price);
-    const cheapestRent = rents.length ? Math.min(...rents) : null;
-    new Set(offers.filter(o=>o.type==="sub"||o.type==="free").map(o=>o.service)).forEach(svc=>{
-      if(!byService.has(svc)) byService.set(svc,{svc, films:[], rentTotal:0, priced:0});
-      const e=byService.get(svc);
-      e.films.push(m.tmdb_id);
-      if(cheapestRent!=null){ e.rentTotal+=cheapestRent; e.priced++; }
+  const pop=svcAdviceFilms();
+  const total=pop.length;
+  const withOffer=pop.filter(e=>(e.m.offers||[]).length);
+  // "No offers" is not the same as "in cinemas". pop carries films that haven't been RELEASED yet (a Cascade
+  // lists them all the way in), and they have no offers either — so lumping the two together would have told
+  // the user that unreleased films were "still in cinemas".
+  const noOffer=pop.filter(e=>!(e.m.offers||[]).length);
+  const upcoming=noOffer.filter(e=>primaryStatus(e.m)==="upcoming").length;
+  const inCinema=noOffer.length-upcoming;
+
+  const filmSvc=new Map();   // tmdb_id -> Set(canon services that sub/free-cover it)
+  let rentOnly=0;
+  withOffer.forEach(e=>{
+    const offers=dedupOffers(e.m.offers);
+    const svcSet=new Set(offers.filter(o=>o.type==="sub"||o.type==="free").map(o=>svcCanon(o.service)));
+    if(svcSet.size) filmSvc.set(e.m.tmdb_id, svcSet);
+    else if(offers.some(o=>o.type==="rent"||o.type==="buy")) rentOnly++;   // reachable only by renting/buying
+  });
+
+  const humanById=new Map(pop.map(e=>[e.m.tmdb_id, e.human]));
+  const mySvcs=prefs.sub;
+  let coveredHuman=0, coveredAgent=0;
+  filmSvc.forEach((svcSet,id)=>{
+    if(![...svcSet].some(s=>mySvcs.has(s))) return;
+    if(humanById.get(id)) coveredHuman++; else coveredAgent++;
+  });
+  const coveredTotal=coveredHuman+coveredAgent;
+  const coveredPct=total ? Math.round(coveredTotal/total*100) : 0;
+
+  const svcTotals=new Map();   // canon -> {films:Set(id), human:Set(id)} — every service touching the population
+  filmSvc.forEach((svcSet,id)=>{
+    svcSet.forEach(svc=>{
+      if(!svcTotals.has(svc)) svcTotals.set(svc,{films:new Set(), human:new Set()});
+      const e=svcTotals.get(svc);
+      e.films.add(id);
+      if(humanById.get(id)) e.human.add(id);
     });
   });
-  const ranked=[...byService.values()].sort((a,b)=> b.films.length-a.films.length || a.svc.localeCompare(b.svc));
-  const covered=new Set(ranked.flatMap(e=>e.films));
-  // "No offers" is not the same as "in cinemas". want carries films that haven't been RELEASED yet (a
-  // Cascade lists them all the way in), and they have no offers either — so lumping the two together would
-  // have told the user that unreleased films were "still in cinemas".
-  const noHome=want.filter(m=>!(m.offers||[]).length);
-  const upcoming=noHome.filter(m=>primaryStatus(m)==="upcoming").length;
-  return {total:want.length, home:home.length,
-          inCinema:noHome.length-upcoming, upcoming,
-          ranked, uncovered:home.length-covered.size};
+
+  const mine=[...mySvcs].map(svc=>{
+    const e=svcTotals.get(svc);
+    const films=e?e.films:new Set();
+    let onlyHere=0;
+    films.forEach(id=>{
+      const owned=[...filmSvc.get(id)].filter(s=>mySvcs.has(s));
+      if(owned.length===1) onlyHere++;   // no OTHER service the user has also carries this one
+    });
+    return {svc, total:films.size, human:e?e.human.size:0, onlyHere};
+  });
+
+  const worth=[...svcTotals.entries()]
+    .filter(([svc])=>!mySvcs.has(svc))
+    .map(([svc,e])=>{
+      let marginal=0;
+      e.films.forEach(id=>{ if(![...filmSvc.get(id)].some(s=>mySvcs.has(s))) marginal++; });
+      return {svc, total:e.films.size, marginal};
+    })
+    // CAS-866: a service that adds nothing you don't already have isn't "worth adding" — omitted rather than
+    // ranked last, so the section only ever names services actually worth a look.
+    .filter(x=>x.marginal>0)
+    .sort((a,b)=> b.marginal-a.marginal || a.svc.localeCompare(b.svc));
+
+  const rentWatched=cascades.some(c=>!c.paused && windowUsable(c,"rent"));
+  return {total, home:withOffer.length, inCinema, upcoming, rentOnly,
+    coveredHuman, coveredAgent, notCovered:total-coveredTotal, coveredTotal, coveredPct,
+    mine, worth, rentWatched, hasStore:prefs.store.size>0};
+}
+let svcRankBy="most";   // "most" | "least" — resets to the default every time the screen opens (AC3)
+window.svcSetRank=mode=>{ if(svcRankBy===mode) return; svcRankBy=mode; renderSvcAnalysis(); };
+// Row markup is IDENTICAL between the two sort modes — only which figure sits in the big right-hand slot
+// changes (AC3: "without adding, removing or changing any figure other than the headline one"). Both the
+// total and the "only here" count are always stated in the row body regardless of which is the headline.
+function svcRowHTML(e, mode){
+  const headline = mode==="least"
+    ? `<span class="svcnum${e.onlyHere===0?" zero":""}">${e.onlyHere}</span><span class="svcnumlbl">you'd lose</span>`
+    : `<span class="svcnum">${e.total}</span><span class="svcnumlbl">films</span>`;
+  const only = e.onlyHere===0 ? "none only here" : `${e.onlyHere} only here`;
+  return `<div class="svcrow">
+    <div class="svcmain">
+      <span class="svcname">${esc(svcName(e.svc))}</span>
+      <div class="svcwhy">${e.total} film${e.total===1?"":"s"} — <b>${e.human} you chose</b> · ${only}</div>
+      ${e.onlyHere===0?'<span class="svcfree">free to drop</span>':""}
+    </div>
+    <div class="svcheadline">${headline}</div>
+  </div>`;
+}
+function svcWorthRowHTML(e){
+  return `<div class="svcrow">
+    <div class="svcmain">
+      <span class="svcname">${esc(svcName(e.svc))}</span>
+      <div class="svcwhy">${e.total} film${e.total===1?"":"s"} — ${e.marginal} you can't get anywhere you subscribe</div>
+    </div>
+    <div class="svcheadline"><span class="svcnum plus">+${e.marginal}</span><span class="svcnumlbl">new to you</span></div>
+  </div>`;
 }
 function renderSvcAnalysis(){
   const el=$("svcAnalysisBody"); if(!el) return;
   const a=serviceAdvice();
   let body;
   if(!a.total){
-    body=`<div class="pnote">Create a Cascade and it starts finding films for you — then we'll work out
-      which service covers the most of them, and what renting them instead would cost you.</div>`;
+    // Same zero-population number, two honest reasons: no agent has matched anything yet, or every match has
+    // already been watched/blocked (AC7) — the copy shouldn't claim "create an agent" when one already exists.
+    body = cascades.some(c=>!c.paused)
+      ? `<div class="pnote">Every film your agents matched is already watched or ruled out — nothing to
+          measure your services against right now.</div>`
+      : `<div class="pnote">Create an agent and it starts finding films for you — then we'll work out which
+          of your services cover them, and which one might be worth adding.</div>`;
   } else {
     const notes=[];
-    if(a.inCinema) notes.push(`${a.inCinema} of the ${a.total} film${a.total===1?"":"s"} your Cascades match
+    if(a.inCinema) notes.push(`${a.inCinema} of the ${a.total} film${a.total===1?"":"s"}
       ${a.inCinema===1?"is":"are"} still in cinemas, so no service can cover ${a.inCinema===1?"it":"them"} yet.`);
     if(a.upcoming) notes.push(`${a.upcoming} ${a.upcoming===1?"hasn't":"haven't"} been released yet — your
-      Cascades are watching ${a.upcoming===1?"it":"them"} all the way in.`);
-    if(a.uncovered) notes.push(`${a.uncovered} ${a.uncovered===1?"is":"are"} rent-or-buy only so far —
-      not included on any service.`);
-    if(!a.ranked.length){
-      body=`<div class="pnote">Nothing your Cascades match is included on a service yet. ${notes.join(" ")}</div>`;
-    } else {
-      notes.push(`Coverage is counted from the real AU offer data. We don't hold subscription prices, so we
-        won't guess at a monthly saving — the rent figure is simply what those films would cost you instead.`);
-      const rows=a.ranked.map((e,i)=>{
-        const n=e.films.length, pct=Math.round(n/a.home*100);
-        const rent = e.priced
-          ? `<div class="advrent">Renting ${e.priced===n?(n===1?"it":"those"):`the ${e.priced} of them we have a price for`}
-               instead: <b>$${e.rentTotal.toFixed(2)}</b></div>`
-          : "";
-        return `<div class="adv ${i===0?"top":""}">
-          <div class="advhead">
-            <span class="advsvc">${i===0?"🥇 ":""}${esc(svcName(e.svc))}</span>
-            ${prefs.sub.has(e.svc)?'<span class="advhave">✓ you have it</span>':""}
-          </div>
-          <div class="advwhy">Covers <b>${n} of the ${a.home}</b> film${a.home===1?"":"s"} your Cascades match that have reached home.</div>
-          <div class="advbar"><span style="width:${pct}%"></span></div>
-          ${rent}</div>`;
-      }).join("");
-      body=rows+`<div class="advfoot">${notes.join(" ")}</div>`;
-    }
+      agents are watching ${a.upcoming===1?"it":"them"} all the way in.`);
+    const mineRows=[...a.mine].sort((x,y)=>
+      svcRankBy==="least" ? (x.onlyHere-y.onlyHere || y.total-x.total) : (y.total-x.total || x.svc.localeCompare(y.svc)));
+    const mineBody = !a.mine.length
+      ? `<div class="pnote">You haven't added any services yet — ⚙️ Services is where you tell us what you have.</div>`
+      : `<div class="svcseg" role="tablist" aria-label="Rank my services by">
+          <button type="button" role="tab" aria-selected="${svcRankBy==="most"}" class="svcsegbtn${svcRankBy==="most"?" on":""}" onclick="svcSetRank('most')">Most films</button>
+          <button type="button" role="tab" aria-selected="${svcRankBy==="least"}" class="svcsegbtn${svcRankBy==="least"?" on":""}" onclick="svcSetRank('least')">Least impact to drop</button>
+        </div>
+        ${mineRows.map(e=>svcRowHTML(e, svcRankBy)).join("")}
+        <div class="advfoot">"Only here" is what you'd lose if you dropped it — films no other service you have carries.</div>`;
+    const rentNote = a.rentWatched
+      ? `<div class="svcwarn">⚠️ Your agents watch the Rent window${a.hasStore
+          ? `, and you have a rental store — ${esc([...prefs.store].map(svcName).join(", "))}. ${a.rentOnly}
+             film${a.rentOnly===1?"":"s"} in your population ${a.rentOnly===1?"is":"are"} rent-only.`
+          : `, but you don't have a rental store. ${a.rentOnly} film${a.rentOnly===1?"":"s"} in your population
+             can only be reached by renting or buying — none of them count toward your services' coverage above.`}
+        </div>`
+      : "";
+    const worthBody = !a.worth.length
+      ? `<div class="pnote">No other service would add anything you don't already have.</div>`
+      : a.worth.map(svcWorthRowHTML).join("")
+        + `<div class="advfoot">Ranked by what each one would ADD, not by its total catalogue. We don't hold
+           subscription prices, so nothing here is a cost comparison.</div>`;
+    body=`
+      <div class="svcpop">Measured against the <b>${a.total}</b> film${a.total===1?"":"s"} your agents would
+        want if you had every service and could watch in any window. Films you've watched are excluded.
+        ${notes.join(" ")}</div>
+      <div class="flabel">My services</div>
+      <div class="svchead">
+        <div class="svcheadnum">${a.coveredTotal}<span class="svcheadof">of ${a.total} covered · ${a.coveredPct}%</span></div>
+        <div class="svcbar">
+          <span class="human" style="width:${a.total?a.coveredHuman/a.total*100:0}%"></span>
+          <span class="agent" style="width:${a.total?a.coveredAgent/a.total*100:0}%"></span>
+        </div>
+        <div class="svcleg"><span class="dot human"></span>${a.coveredHuman} you chose
+          <span class="dot agent"></span>${a.coveredAgent} suggested
+          <span class="dot none"></span>${a.notCovered} not covered</div>
+      </div>
+      ${mineBody}
+      ${rentNote}
+      <div class="flabel">Worth adding</div>
+      ${worthBody}`;
   }
   el.innerHTML=`
     <div class="ostop"><button class="osback" type="button" onclick="closeSvcAnalysis()" aria-label="Back">←</button>
       <h2 class="osh">Service analysis</h2></div>
-    <p class="ossub">Which service covers the most of what your agents found — and what renting those films
-      would cost you instead.</p>
+    <p class="ossub">What your services actually cover, and what would change if you added or dropped one.</p>
     ${body}`;
 }
 window.openSvcAnalysis=()=>{
+  svcRankBy="most";
   renderSvcAnalysis();
   $("svcAnalysis").scrollTop=0;
   $("svcAnalysis").classList.add("open"); document.body.style.overflow="hidden";
   syncWatchChip();
-  logEvent("svc_analysis_opened",{ranked:serviceAdvice().ranked.length});
+  logEvent("svc_analysis_opened",{mine:serviceAdvice().mine.length});
 };
 window.closeSvcAnalysis=()=>{ $("svcAnalysis").classList.remove("open"); document.body.style.overflow=""; syncWatchChip(); };
 
