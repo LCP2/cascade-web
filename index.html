@@ -5593,7 +5593,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1014, "commit": "5daf001", "builtAt": "2026-09-08T09:39:11Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1015, "commit": "5183c3e", "builtAt": "2026-09-08T10:03:11Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -9881,7 +9881,14 @@ function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   // CAS-724: released films only, computed once here — used by the "released since" cutoff below and by the
   // Awards requirement further down.
   const preRelease = ps==="upcoming" || ps==="in_cinema";
-  if(scopeOf(c)[ps] && !matchesServices(m, ps)) return false;   // CAS-252/342: see passes()
+  // CAS-853: the account-level "only show films on my services" switch is authoritative for what an agent
+  // SHOWS you — once it's on, it governs every agent regardless of that agent's own myServices, which may
+  // still NARROW (a window an agent has scoped stays scoped) but can no longer make the account-wide switch
+  // inactive by omission. myServices===false (as opposed to an object, even an empty/all-false one) stays
+  // the internal "ignore the services test entirely" signal a few WATCH-set/advisory computations already
+  // rely on — matchesTaste and recomputeFound's re-test, below — so the account toggle governs what an
+  // agent SHOWS without collapsing into what it WATCHES (CAS-67's split is deliberately untouched by this).
+  if(c.myServices!==false && (prefs.on || scopeOf(c)[ps]) && !matchesServices(m, ps)) return false;   // CAS-252/342: see passes()
   if(c.status.length && !c.status.includes(ps)) return false;
   if((c.exclude||[]).length && (m.genres||[]).some(g=>c.exclude.includes(g))) return false;   // skip beats match
   // CAS-182: cleared means cleared. A dimension holding null admits nothing, so the count says 0 rather
@@ -11290,7 +11297,11 @@ function svcAdviceFilms(){
   const seen=new Set(), out=[];
   cascades.forEach(c=>{
     if(c.paused) return;                    // guest mode (CAS-79): watches nothing, so it advises nothing
-    const scopeOff={...c, myServices:{}};
+    // CAS-853: myServices:false (not {}) — {} is a real, narrowable "no window scoped yet" agent shape and
+    // is now itself subject to the account toggle; false is the dedicated "ignore services entirely" signal
+    // this advisory read needs, same as matchesTaste's (a service you don't have yet must still be able to
+    // surface here, independent of whether the account switch happens to be on).
+    const scopeOff={...c, myServices:false};
     MOVIES.forEach(m=>{
       if(seen.has(m.tmdb_id) || taggedOut(m) || !listedBy(m, scopeOff)) return;
       seen.add(m.tmdb_id); out.push(m);
@@ -13063,9 +13074,8 @@ function onbApply(){
   // channel back on restores what this agent was set to.
   d.channels = {...(d.channels||{})};
   d.channelsLive = {inApp: channelLive("inApp"), email: channelLive("email")};
-  // CAS-199: "only show films on my services" is a per-window scope on the agent, and it is the switch
-  // that says so — naming your services alone never narrows anything.
-  if(d.kind==="stream") HOME_KEYS.forEach(k=>{ d.myServices[k] = !!prefs.on; });
+  // CAS-853: no longer seeded off prefs.on here — the account toggle now reaches matchesCriteria directly
+  // and stays authoritative for the agent's whole life, so a value copied once at save time can't go stale.
   // CAS-843: this agent no longer carries its own alert set — alert_moments is computed straight off the
   // account's own Where & when Notify switches (accountAlertKeysOn/alertLive), gated by this agent's
   // reachability guard, so there is nothing left to derive or write here.
@@ -15151,10 +15161,10 @@ let onbStepKey=null;
 // CAS-475: "My streaming services" is no longer a first-run step either — naming your services and the
 // "only show films on my services" switch are both account-level state already (`prefs`, in
 // localStorage/the synced prefs row), never per-agent, so asking for them mid-creation was a second place to
-// set the same account-wide answer. A person who has never named a service still gets one: onbApply() keeps
-// seeding a new streaming agent's per-window `myServices` scope off whatever `prefs.on` already is (CAS-199),
-// same as it always has — this only removes the prompt, not the seed. Naming services (or turning the
-// switch on) now happens at Account > My streaming services, before or after the agent exists either way.
+// set the same account-wide answer. CAS-853: onbApply() no longer seeds a new agent's `myServices` off
+// `prefs.on` either — the account switch reaches matchesCriteria directly now, so there is no per-agent copy
+// left to seed. Naming services (or turning the switch on) happens at Account > My streaming services,
+// before or after the agent exists either way.
 // CAS-532: "genres"/"age"/"years" stay out of both lanes' FLOWS — a new agent still starts from the
 // pickStarter defaults (see there) and walks this same short line. CAS-550 gives Style, Rating and How far
 // back UI again, but only from the Briefing afterwards, by its own explicit "out of scope: first-run flow

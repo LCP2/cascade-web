@@ -20,7 +20,7 @@ Interface:
   fetch_film_watches() -> [{user_id, movie_id, windows}]                                  # CAS-484
   fetch_watch_notification_keys() -> set[(user_id, movie_id, moment)]  # de-dupe, null-cascade rows
   delete_notifications_for_movie_ids(ids) -> int          # CAS-486: fixture-range-only, for notify-test
-  fetch_user_prefs() -> {user_id: {sub_services, store_services, taste}}                   # CAS-825
+  fetch_user_prefs() -> {user_id: {sub_services, store_services, taste, services_only}}    # CAS-825/CAS-853
   fetch_user_films() -> [{user_id, movie_id, status}]                                      # CAS-825
   fetch_unsent_contact_messages() -> [contact_messages row, sent_at is null]                # CAS-836
   mark_contact_messages_sent(ids, sent_at) -> int                                           # CAS-836
@@ -220,13 +220,15 @@ class SupabaseStore:
         return {(str(r.get("user_id")), str(r.get("movie_id")), r.get("moment")) for r in rows}
 
     def fetch_user_prefs(self) -> dict:
-        """user_id -> {sub_services, store_services, taste} (CAS-825): the account facts the real
-        engine's matchesCriteria reads beyond an agent's own criteria — CAS-211's services (the
-        my-services scope's own comparison set) and CAS-146's taste baseline (only `.langs`
-        survives there today, see app_template.html's passesTasteBase). A user with no row here has
-        never opened those screens, and compute_admission() reads that as the engine's own
-        permissive default, not as "answered empty"."""
-        rows = self._get("/user_prefs?select=user_id,sub_services,store_services,taste")
+        """user_id -> {sub_services, store_services, taste, services_only} (CAS-825/CAS-853): the
+        account facts the real engine's matchesCriteria reads beyond an agent's own criteria —
+        CAS-211's services (the my-services scope's own comparison set), CAS-146's taste baseline
+        (only `.langs` survives there today, see app_template.html's passesTasteBase), and CAS-853's
+        `services_only` (the "only show films on my services" switch, now authoritative over every
+        agent's own myServices). A user with no row here has never opened those screens, and
+        compute_admission() reads that as the engine's own permissive default, not as "answered
+        empty"."""
+        rows = self._get("/user_prefs?select=user_id,sub_services,store_services,taste,services_only")
         return {str(r.get("user_id")): r for r in rows if r.get("user_id")}
 
     def fetch_user_films(self) -> list:

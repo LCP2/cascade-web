@@ -126,11 +126,12 @@ def compute_admission(cascades: list, catalogues: dict, account_prefs: dict = No
     catalogues    : {snapshot_label: [movie dict, ...]} — e.g. {"today": [...], "yesterday": [...]}.
                     Every snapshot a caller will later ask about must be included; matches_criteria()
                     below can only answer for what was asked here.
-    account_prefs : {user_id: {langs, subServices, storeServices, filmStatuses}} — the account-level
-                    facts matchesCriteria reads beyond an agent's own criteria (CAS-146 taste
-                    baseline, CAS-211 services, CAS-183 watched/blocked opinions). A user absent here
-                    gets the engine's own permissive "never touched this" defaults, same as a device
-                    that has never opened those screens.
+    account_prefs : {user_id: {langs, subServices, storeServices, filmStatuses, servicesOnly}} — the
+                    account-level facts matchesCriteria reads beyond an agent's own criteria (CAS-146
+                    taste baseline, CAS-211 services, CAS-183 watched/blocked opinions, CAS-853's
+                    "only show films on my services" switch). A user absent here gets the engine's own
+                    permissive "never touched this" defaults, same as a device that has never opened
+                    those screens.
 
     Returns {cascade_id: {snapshot_label: {movie_id str, ...}}}.
     """
@@ -149,6 +150,7 @@ def compute_admission(cascades: list, catalogues: dict, account_prefs: dict = No
             "subServices": p.get("subServices") or [],
             "storeServices": p.get("storeServices") or [],
             "filmStatuses": p.get("filmStatuses") or [],
+            "servicesOnly": bool(p.get("servicesOnly")),
             "agents": agents,
         })
 
