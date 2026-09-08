@@ -7737,6 +7737,7 @@ function advanceClock(){
   if(now === TODAY) return false;
   TODAY = now;
   rederiveStatuses();
+  agMetricsCache.clear();   // CAS-867: "last find Nd ago" and the recent-find count move with the clock alone
   return true;
 }
 async function pollCatalogue(){
@@ -9498,8 +9499,9 @@ window.showScaleInfer=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(
 // catalogue swap (MOVIES=payload.movies) rather than a manual clear at each call site — a stale entry let a
 // budget/awards-gated agent admit a different set of films on a device left open across a refresh than on
 // one that just booted. CAS-748 reuses this same hook for _releasedScoreVals rather than adding a second,
-// separate clearing mechanism.
-function invalidateComputeCaches(){ _scaleInferCache.clear(); _awardRankCache.clear(); _releasedScoreVals = null; }
+// separate clearing mechanism. CAS-867: agMetricsCache (declared further down, with agentMetrics) reuses it
+// too — a catalogue swap can change which films an agent lists without touching that agent's own signature.
+function invalidateComputeCaches(){ _scaleInferCache.clear(); _awardRankCache.clear(); _releasedScoreVals = null; agMetricsCache.clear(); }
 // ---- Buzz (CAS-145, ladder replaced by CAS-678) --------------------------------
 // How much a film is being talked about right now, off the TMDB popularity figure the pipeline already
 // carries on every title. BUZZ_PCTL/BUZZ_CUTS/buzzStop are defined above (the Scale-tiers section) — the
@@ -14887,7 +14889,7 @@ function agentAwardsSum(c){
 // ticket folded it in here, so a Cascade carrying that legacy field still reports it correctly.
 function agentAudienceSum(c){
   const ageText = c.age===null ? "no ratings admitted"
-    : (!c.age.length || c.age.length>=AGE_LEVELS.length) ? "any rating"
+    : (!c.age.length || c.age.length>=AGE_LEVELS.length) ? "any age"
     : joinAnd(c.age);
   const eraText=(c.year||[]).length
     ? `released in ${joinAnd(c.year.slice().sort().reverse())}`
@@ -14900,17 +14902,14 @@ function agentAudienceSum(c){
 const WHO_LABELS = {me:"just me", partner:"me + partner", kids:"with the kids",
                     friends:"with friends", everyone:"everyone"};
 // ---- CAS-664: the five real metrics that replaced the rate slider's preview ---------------------------
-// Every one of them is DERIVED, NOT REMEMBERED (Lee's decision 2026-08-28): recomputed from window_dates
-// against the agent's CURRENT criteria on every render, nothing persisted. Editing an agent is therefore
-// the only thing that can move its own numbers — including its own history — and that is intended.
-// The window a matching film "entered" is the same one isRecent() already reads for the status pill's
-// gold glow: CUR_WINDOW_DATE_KEY keyed off the film's current primaryStatus, so this can't disagree with
-// what "recent" already means elsewhere on the film itself.
-function agentFilmEntryDate(m){
-  const key=CUR_WINDOW_DATE_KEY[primaryStatus(m)];
-  return (key && m.window_dates && m.window_dates[key]) || null;
-}
-const AGENT_NEW_TREND_DAYS = 84;   // 12 weeks
+// Every one of them is DERIVED, NOT REMEMBERED (Lee's decision 2026-08-28): recomputed from firstFound
+// against the agent's CURRENT criteria, nothing persisted beyond firstFound itself.
+// CAS-867: the three history figures are measured from firstFound[m.tmdb_id] — the date a film first
+// entered ANYONE's Found list — never from window_dates, which only records when a film entered whichever
+// availability window it is in RIGHT NOW. A film that only moved windows (e.g. Rent -> Streaming) must not
+// read as a fresh find.
+const AGENT_NEW_TREND_DAYS = 30;   // CAS-867: shortened from 84 so the window can never outrun
+                                    // FIRST_FOUND_PRUNE_DAYS, the horizon firstFound is actually kept for.
 function agentMetricsCompute(c){
   // CAS-674: this comment always claimed "same test the listing itself runs", but the code read watchesFilm
   // — the WATCH set (CAS-67: taste + a window still AHEAD), deliberately wider than what's actually shown —
@@ -14918,25 +14917,34 @@ function agentMetricsCompute(c){
   // rule listedCount already applies) is the real listing predicate, so the Agents row and
   // Mission's "N films match right now" can no longer disagree over what one agent has found.
   const films=MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m));   // Total listed — same test the listing itself runs
-  let scoreMin=null;
+  // CAS-867: lastFind has no time window — a film with no firstFound stamp (never picked up, or its stamp
+  // already pruned) contributes to none of these three figures. oldestFound tracks the earliest stamp this
+  // agent's OWN films carry, so the rate below can tell a genuinely young agent from a quiet one.
+  let lastFind=null, oldestFound=null, trendCount=0, recentCount=0;
   films.forEach(m=>{
-    const q=qScore(m);
-    if(q>=0 && (scoreMin===null || q<scoreMin)) scoreMin=q;
-  });
-  let lastFind=null, trendCount=0, d7=0;
-  films.forEach(m=>{
-    const d=agentFilmEntryDate(m); if(!d) return;
-    if(lastFind===null || Date.parse(d)>Date.parse(lastFind)) lastFind=d;
+    const d=firstFound[m.tmdb_id]; if(!d) return;
+    const t=Date.parse(d);
+    if(lastFind===null || t>Date.parse(lastFind)) lastFind=d;
+    if(oldestFound===null || t<Date.parse(oldestFound)) oldestFound=d;
     const n=daysSince(d);
     if(n<AGENT_NEW_TREND_DAYS) trendCount++;
-    if(n<7) d7++;
+    if(n<NEW_DAYS) recentCount++;
   });
-  return {total:films.length, scoreMin,
-    perMonth: trendCount/(AGENT_NEW_TREND_DAYS/30), lastFind, d7};
+  // Lee's decision, 2026-09-08: divide by however much of the window this agent actually HAS, not always by
+  // the full window — a 3-day-old agent's rate is extrapolated from 3 days, not diluted by 27 days that
+  // haven't happened yet. Zero elapsed days (the agent's first find landed today) can't support a rate at
+  // all, and neither can zero finds — both print nothing rather than a number the data can't back.
+  const spanDays = oldestFound===null ? 0 : Math.min(AGENT_NEW_TREND_DAYS, daysSince(oldestFound));
+  const perMonth = spanDays<=0 ? null : (trendCount/spanDays)*30;
+  return {total:films.length, perMonth, lastFind, recentCount};
 }
 // recomputeFound-scale sweeps (50-155ms measured) are too slow to run six times per Agents-screen render —
-// cached per agent id, invalidated only when that agent's own signature (cascSigOf, the same one dedupe
-// uses) changes, since editing an agent is the only thing allowed to move its numbers.
+// cached per agent id, invalidated when that agent's own signature (cascSigOf, the same one dedupe uses)
+// changes. CAS-867: editing an agent is NOT the only thing that can move these numbers — "last find Nd ago"
+// and the recent-find count move with the clock alone, and a catalogue refresh or a tag-out swaps which
+// films even count. agMetricsCache.clear() is called from all three of those places (pollCatalogue's
+// catalogue-swap branch, advanceClock, and every taggedOut-mutating path); the per-id sig check above only
+// ever needs to catch an actual criteria edit.
 const agMetricsCache=new Map();
 function agentMetrics(c){
   const sig=cascSigOf(c);
@@ -14957,18 +14965,19 @@ function agentWhoLineText(c){
 }
 const fmtAgentRate = n => String(Math.round(n));
 function agentMetricsHTML(c){
-  const {total, scoreMin, perMonth, lastFind, d7}=agentMetrics(c);
-  const score = total===0 ? "no films listed"
-    : scoreMin===null ? null
-    : `Cascade over <b>${scoreMin}</b>`;
-  const est=`~<b>${fmtAgentRate(perMonth)}</b> new / month`;
+  const {total, perMonth, lastFind, recentCount}=agentMetrics(c);
+  // CAS-867: "Cascade over N" (scoreMin) is gone — the SCORE row above already states the agent's real
+  // floor per window, and this was a second, near-identically-worded number that only coincidentally agreed.
+  const est = perMonth===null ? null : `~<b>${fmtAgentRate(perMonth)}</b> new / month`;
   const listed=`<b>${total}</b> movies`;
   const last = lastFind===null ? "no finds yet"
     : (daysSince(lastFind)===0 ? "last find today" : `last find ${daysSince(lastFind)}d ago`);
-  const found=`Found <b>${d7}</b> movie${d7===1?"":"s"} in the last week`;
-  const rowA=[score, est].filter(Boolean).map(s=>`<span class="agmstat">${s}</span>`).join("")
+  // CAS-867: "the last week" was a literal 7 while NEW_DAYS (what "this week" means everywhere else) is 14
+  // — read NEW_DAYS instead, and word the label to match whatever it actually is.
+  const recentLine=`Found <b>${recentCount}</b> movie${recentCount===1?"":"s"} in the last ${NEW_DAYS} days`;
+  const rowA=[est].filter(Boolean).map(s=>`<span class="agmstat">${s}</span>`).join("")
     + `<span class="agmstat total">${listed}</span>`;
-  const rowB=[last, found].map(s=>`<span class="agmstat">${s}</span>`).join("");
+  const rowB=[last, recentLine].map(s=>`<span class="agmstat">${s}</span>`).join("");
   return `<span class="agmrow a">${rowA}</span><span class="agmrow b">${rowB}</span>`;
 }
 function renderAgentsScreen(){
@@ -17148,6 +17157,7 @@ function keepRowInPlace(id, repaint){
 // so clearing the answer restores exactly the Pick state you had before. Pressing the lit answer clears it
 // and the full card comes back. Persisted immediately, so it survives a reload.
 window.setOpinion=(id,kind)=>{
+  agMetricsCache.clear();   // CAS-867: this flips taggedOut(id) for every agent that lists this film
   const was=opinionOf(id), on=was!==kind, wasFound=found.has(id);
   // Read the film's freshness BEFORE the answer changes it, so the 🆕 chip on the stub doesn't flicker off
   // under the tap. (The ORDER can't move at all now — availability section, then date, see byTimeline.)
@@ -18414,6 +18424,7 @@ else if(dedupedN)
       if(r.status==="wow")      wowed.add(id);
       if(r.status==="enjoyed")  enjoyed.add(id);
     });
+    agMetricsCache.clear();   // CAS-867: a synced verdict can flip taggedOut() same as a local one can
     recomputeFound();
     if(typeof render==="function") render();
   }
@@ -18477,6 +18488,7 @@ else if(dedupedN)
     indifferent.clear();loadSet("cascade_indifferent").forEach(id=>indifferent.add(id));
     wowed.clear();       loadSet("cascade_wow").forEach(id=>wowed.add(id));
     enjoyed.clear();     loadSet("cascade_enjoyed").forEach(id=>enjoyed.add(id));
+    agMetricsCache.clear();   // CAS-867: a reloaded guest verdict set can flip taggedOut() too
     recomputeFound();
     if(typeof render==="function") render();
   }
