@@ -583,6 +583,7 @@
       "tomb  syn"
       "tomb  money"
       "tomb  scores"
+      "tomb  wmscores"
       "badge awards"
       "credits credits"}
   /* CAS-612 (v0.9.5): Awards / Director / Cast move up out of .expand and into the card body, above the
@@ -897,6 +898,7 @@
      A figure we don't hold reads "–" (and never "$–": there is no dollar sign on a number we lack). */
   .mrow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;align-content:center;min-width:0}
   .r-money{grid-area:money} .r-scores{grid-area:scores}
+  .r-wmscores{grid-area:wmscores}
   /* CAS-686: only ever shown by the .card.cinfo condensed-card override below — hidden here so
      the expanded card (which has its own r-money/r-scores/r-badge rows) never renders it twice. */
   .r-cinfo{display:none}
@@ -3426,6 +3428,7 @@
   .card:not(.expanded) .r-money,
   .card:not(.expanded) .r-badge,
   .card:not(.expanded) .r-awards,
+  .card:not(.expanded) .r-wmscores,
   .card:not(.expanded) .estline{display:none}
   /* the scores line, compacted to plain text */
   /* CAS-655: flex-wrap:wrap (was nowrap) so .attrib — the last item on this row — drops to its own
@@ -5594,7 +5597,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1018, "commit": "57f3aea", "builtAt": "2026-09-08T10:43:35Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1019, "commit": "fbe4b77", "builtAt": "2026-09-08T12:10:11Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6567,6 +6570,17 @@ function scoresRowHTML(m){
        + cell("rt",  "RT",   m.rt_critic!=null?m.rt_critic+"%":"", m.rt_critic!=null)
        + cell("meta","Meta", m.metacritic!=null?m.metacritic:"",   m.metacritic!=null);
 }
+// CAS-831: a TEMPORARY comparison row, not shipped design — put here so the incoming Watchmode figures can
+// be checked by eye against scoresRowHTML's OMDb/TMDB ones before any scoring or agent logic moves onto
+// Watchmode. Renders even when every field is null: the gaps are themselves what this row exists to show,
+// and the catalogue may still be empty of them at build time (CAS-850's backfill dispatch is a Lee-only
+// step). Expanded card only — see the `.r-wmscores` hide rule for collapsed cards.
+function wmScoresRowHTML(m){
+  const cell=(label,val,has)=>`<span class="m${has?"":" muted"}"><span class="lab">${label}</span> <b>${has?val:"–"}</b></span>`;
+  return cell("WM",      m.wm_user_rating!=null?m.wm_user_rating.toFixed(1):"", m.wm_user_rating!=null)
+       + cell("WM pop",  m.wm_popularity_percentile!=null?m.wm_popularity_percentile.toFixed(1):"", m.wm_popularity_percentile!=null)
+       + cell("WM crit", m.wm_critic_score!=null?Math.round(m.wm_critic_score):"", m.wm_critic_score!=null);
+}
 // ---- The scale badge -----------------------------------------------------------
 // One badge, on its own row under the description. The tooltip (hover) and the toast (tap — a title= on a
 // phone is a tooltip nobody can reach) both say WHY, and the why is only ever the film's own figures:
@@ -7140,6 +7154,9 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
         <div class="mrow r-scores">${scoresRowHTML(m)}${oscMarkHTML(m)}${condensedBadgeHTML(m)}${attributionHTML(m)}</div>
+        <!-- CAS-831: temporary Watchmode-vs-OMDb/TMDB comparison row, expanded card only — hidden on the
+             collapsed card the same way r-money/r-badge/r-awards already are (see the CSS hide rule). -->
+        <div class="mrow r-wmscores">${wmScoresRowHTML(m)}</div>
         <!-- CAS-686: condensed-card-only — shown instead of r-scores when this film gets the "cinfo" class
              on .card (condensedShowsScores(m) is false). Hidden everywhere else, including the expanded
              card, by the base .r-cinfo{display:none}. -->
