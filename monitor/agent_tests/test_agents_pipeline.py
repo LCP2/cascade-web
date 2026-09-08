@@ -27,6 +27,13 @@ class K1RebuildMatchesTheCommittedIndexExceptItsOwnStamp(unittest.TestCase):
     not get to leave the working tree dirty."""
 
     def test_rebuild_diffs_only_by_its_build_stamp(self):
+        # CAS-860: this check only means anything inside a git working tree — `git diff` exits 129
+        # ("not a git repository") otherwise, which is an environment fact, not a build defect.
+        git_dir = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=REPO_ROOT,
+                                 capture_output=True, text=True)
+        if git_dir.returncode != 0:
+            self.skipTest("not running inside a git working tree")
+
         # Binary snapshot/restore, deliberately — a text-mode round trip on Windows translates line
         # endings on the way out, which can leave a byte-identical-after-normalization file still
         # reading as "modified" to git's stat cache. Restoring the exact original bytes sidesteps that.

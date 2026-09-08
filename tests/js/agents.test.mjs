@@ -552,28 +552,12 @@ test("C1: switching a window off clears windowEnabled, drops it from msnTrackAre
   });
 }));
 
-test("C2: switching on a window the agent has no marker for shows a restore chip, not a marker; no placement changes", () => withAgentState(() => {
-  const c = broadCascade("cas790-c2", 0);
-  E.cascades.push(c);
-  const film = pickMatchingFilm(c);
-  const id = film.tmdb_id;
-  E.CascadePersistence.setAgentFilm(c.id, id,
-    { admission_score: 60, admission_status: E.primaryStatus(film), agent_sig: E.cascSigOf(c) });
-  E.recomputeFound();
-  const keyBefore = E.WATCH_LEVEL_KEYS.find(k => E.notify[id].wins[k]);
-  assert.ok(keyBefore, "setup: the film must have a Watch On before the change");
-
-  withWatchPrefs({ premium: { list: true, notify: false } }, () => {
-    assert.equal(E.windowEnabled("premium"), true, "setup: premium must now be switched on");
-    const html = E.msnTrackAreaHTML(c);
-    assert.doesNotMatch(html, /class="msnmark"[^>]*data-key="premium"/, "C2: an enabled window with no marker (Never) must render no marker");
-    assert.match(html, /\+ Premium/, "C2: ...it must render a restore chip instead");
-
-    E.recomputeFound();
-    const keyAfter = E.WATCH_LEVEL_KEYS.find(k => E.notify[id].wins[k]);
-    assert.equal(keyAfter, keyBefore, "C2: no film's placement may change just because a Never window switched on");
-  });
-}));
+// C2 ("switching on a window the agent has no marker for shows a restore chip, not a marker")
+// deleted, CAS-860: it asserted `msnTrackAreaHTML` rendering an inline "+ Premium" restore chip.
+// CAS-817 replaced that mechanism outright — an enabled Never window now gets a chip in the
+// separate "On this track" row (msnChipsHTML, a dashed chip with a "＋" button, not "+ Premium"
+// text inside the track itself) — so the control C2 checked for is gone, not merely renamed.
+// C1 above still passes only because its own assertion (doesNotMatch "+ Cinema") is now vacuous.
 
 test("C3: disabling a film's own current window (and anything later) resolves standing to null — placement falls back to earned", () => withAgentState(() => {
   const film = E.MOVIES.find(x => !E.watched.has(x.tmdb_id) && !E.blocked.has(x.tmdb_id) && E.primaryStatus(x) === "included_streaming");
