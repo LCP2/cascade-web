@@ -1245,9 +1245,16 @@ test("my services: with the scope on and nothing picked, nothing on a service qu
 });
 
 // …and with SOME picked it is the matching subset, never the whole catalogue and never nothing.
-test("my services: with some picked, the scope leaves exactly what those services carry", () => {
+// CAS-853: the account toggle is authoritative now (it governs an unscoped agent too, see the AC1/AC2/AC3
+// tests below), so this test holds it explicitly OFF to isolate what it originally set out to prove — that
+// an agent's OWN per-window myServices scope still narrows on its own terms when the account switch isn't
+// the one doing the filtering.
+test("my services: with some picked, an agent's own scope still narrows when the account toggle is off", () => {
   const subs = E.SUB_SERVICES.slice(0, 3);
-  withServices(subs, [], () => {
+  const sub = new Set(E.prefs.sub), store = new Set(E.prefs.store), on = E.prefs.on;
+  E.prefs.sub.clear(); subs.forEach(s => E.prefs.sub.add(s));
+  E.prefs.on = false;
+  try {
     pickInLane(E, "stream", "custom");
     const base = E.normCascade({ ...E.onbApply(), myServices: false });
     const scoped = E.normCascade({ ...base, myServices: { included_streaming: true } });
@@ -1261,7 +1268,93 @@ test("my services: with some picked, the scope leaves exactly what those service
         `${m.title} survived a scope to ${subs.join(", ")} on offers from ` +
         `${(m.offers || []).map(o => o.service).join(", ")}`);
     }
-  });
+  } finally {
+    E.prefs.sub.clear(); sub.forEach(x => E.prefs.sub.add(x));
+    E.prefs.store.clear(); store.forEach(x => E.prefs.store.add(x));
+    E.prefs.on = on;
+  }
+});
+
+// CAS-853: My services and Where & when are the only two things that may narrow an agent — the account
+// toggle is authoritative, and an agent's own myServices is not a second opinion it can override. These
+// three tests are this ticket's own AC1-3.
+test("CAS-853 AC1/AC2: the account toggle alone decides whether an unscoped agent sees a film outside your services", () => {
+  const subs = E.SUB_SERVICES.slice(0, 2);
+  const stores = E.STORE_SERVICES.slice(0, 2);
+  assert.ok(subs.length && stores.length, "the catalogue names no services — this test would prove nothing");
+  const sub = new Set(E.prefs.sub), store = new Set(E.prefs.store), on = E.prefs.on;
+  E.prefs.sub.clear(); subs.forEach(x => E.prefs.sub.add(x));
+  E.prefs.store.clear(); stores.forEach(x => E.prefs.store.add(x));
+  try {
+    let proved = false;
+    for(const { kind, s, label } of CASES){
+      pickInLane(E, kind, s.key);
+      const unscoped = E.normCascade({ ...E.onbApply(), myServices: false });
+
+      E.prefs.on = false;
+      const film = E.MOVIES.find(m => {
+        const ps = E.primaryStatus(m);
+        return E.HOME_KEYS.includes(ps) && !E.matchesServices(m, ps) && E.matchesCriteria(m, unscoped);
+      });
+      if(!film) continue;
+      proved = true;
+
+      // AC2: toggle off — an unscoped agent's own myServices:false leaves it unfiltered by services,
+      // exactly as it always has.
+      assert.equal(E.matchesCriteria(film, unscoped), true,
+        `${label}: ${film.title} should still be admitted by an unscoped agent with the account toggle off`);
+
+      // AC1: toggle on — the account switch alone now excludes it, even though this agent carries no
+      // scope of its own to have caught it the old way.
+      E.prefs.on = true;
+      assert.equal(E.matchesCriteria(film, unscoped), false,
+        `${label}: ${film.title} was admitted by an unscoped agent even though it is on none of ` +
+        `${[...subs, ...stores].join(", ")} and the account toggle is on`);
+      E.prefs.on = false;
+    }
+    assert.ok(proved, "no lane produced an off-service film to prove the point with — widen the picked services");
+  } finally {
+    E.prefs.sub.clear(); sub.forEach(x => E.prefs.sub.add(x));
+    E.prefs.store.clear(); store.forEach(x => E.prefs.store.add(x));
+    E.prefs.on = on;
+  }
+});
+
+test("CAS-853 AC3: the account toggle does not exclude a film that IS on one of your own services", () => {
+  const subs = E.SUB_SERVICES.slice(0, 2);
+  const stores = E.STORE_SERVICES.slice(0, 2);
+  assert.ok(subs.length && stores.length, "the catalogue names no services — this test would prove nothing");
+  const sub = new Set(E.prefs.sub), store = new Set(E.prefs.store), on = E.prefs.on;
+  E.prefs.sub.clear(); subs.forEach(x => E.prefs.sub.add(x));
+  E.prefs.store.clear(); stores.forEach(x => E.prefs.store.add(x));
+  try {
+    let proved = false;
+    for(const { kind, s, label } of CASES){
+      pickInLane(E, kind, s.key);
+      const unscoped = E.normCascade({ ...E.onbApply(), myServices: false });
+
+      // Toggle off first, so the film chosen is one this lane's OTHER criteria already admit — the point
+      // being proven is narrowly about the services gate, not a lane-specific genre/rating/status mismatch.
+      E.prefs.on = false;
+      const film = E.MOVIES.find(m => {
+        const ps = E.primaryStatus(m);
+        return E.HOME_KEYS.includes(ps) && E.matchesServices(m, ps) && E.matchesCriteria(m, unscoped);
+      });
+      if(!film) continue;
+      proved = true;
+
+      E.prefs.on = true;
+      assert.equal(E.matchesCriteria(film, unscoped), true,
+        `${label}: ${film.title} is on one of your own services but an unscoped agent excluded it ` +
+        `with the account toggle on`);
+      E.prefs.on = false;
+    }
+    assert.ok(proved, "no lane produced an on-service film to prove the point with — widen the picked services");
+  } finally {
+    E.prefs.sub.clear(); sub.forEach(x => E.prefs.sub.add(x));
+    E.prefs.store.clear(); store.forEach(x => E.prefs.store.add(x));
+    E.prefs.on = on;
+  }
 });
 
 test("my services: switching the scope on never adds a film", () => {

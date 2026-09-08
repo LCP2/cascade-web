@@ -186,6 +186,9 @@ def main(argv=None) -> int:
             "subServices": row.get("sub_services") or [],
             "storeServices": row.get("store_services") or [],
             "filmStatuses": film_statuses_by_user.get(uid, []),
+            # CAS-853: the "only show films on my services" switch — authoritative over every agent's
+            # own myServices now, so it has to reach admission the same way langs/subServices do.
+            "servicesOnly": bool(row.get("services_only")),
         }
 
     # CAS-825: ONE call to the shipped engine for the whole run — never once per film, never once

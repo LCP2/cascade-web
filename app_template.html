@@ -2671,6 +2671,9 @@
      (.pop-down — both pills sit at the very top of the screen, so .cpop's upward default is wrong here),
      content-width but floored so a short list ("All") isn't a sliver. */
   .cpop.pickpop{min-width:120px}
+  /* CAS-856: the Watch listing's own sort popover — same content-width .cpop chrome, floored so the
+     longest label ("Most anticipated") never wraps onto two lines. */
+  .cpop.ordpop{min-width:170px}
   .popt{display:flex;align-items:center;width:100%;text-align:left;padding:8px 10px;border-radius:9px;
     background:transparent;border:0;color:var(--dim);font-family:inherit;font-size:13px;font-weight:600;
     cursor:pointer;white-space:nowrap}
@@ -2788,6 +2791,12 @@
   .sortctl select{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;
     opacity:0;cursor:pointer;-webkit-appearance:none;appearance:none}
   .sortctl select:focus-visible ~ .sortic{outline:2px solid var(--cyan);outline-offset:2px}
+  /* CAS-856: #ymSortCtl (the Watch listing's own sort control) swaps its native <select> for a real button
+     that opens an in-app popover — .sortctl's shared position:relative above still anchors it. The rule
+     above stays for #sortCtl's own <select> (the deck's sort control, untouched by this ticket). */
+  #ymSortCtl button{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;
+    background:transparent;color:inherit;font:inherit;cursor:pointer;display:grid;place-items:center}
+  #ymSortCtl button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .fglabel{display:flex;align-items:center;gap:8px;padding:15px 12px 4px;font-size:13px;font-weight:800}
   .fglabel .n{background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:1px 7px;
     font-size:10.5px;color:var(--dim);font-weight:700}
@@ -4166,19 +4175,11 @@
       <div class="deckstrip" id="wlStrip" role="group" aria-label="Watch lists — use the arrow keys to move between them"
            aria-keyshortcuts="ArrowLeft ArrowRight Home End" tabindex="0"></div>
     </div>
-    <div class="sortctl ca-btn x" id="ymSortCtl" title="Order">
-      <select id="ymSort" aria-label="Order this list">
-        <option value="">Best match</option>
-        <option value="availability">Availability</option>
-        <option value="imdb">IMDb rating</option>
-        <option value="cascade">Cascade score</option>
-        <option value="rt">RT critic</option>
-        <option value="gross">Box office</option>
-        <option value="popularity">Most anticipated</option>
-        <option value="cinema">Newest cinema</option>
-        <option value="title">Title A–Z</option>
-      </select>
-      <span class="sortic" aria-hidden="true">⇅</span>
+    <div class="sortctl ca-btn x" id="ymSortCtl" title="Order: Best match">
+      <button type="button" id="ymSortBtn" aria-haspopup="true" aria-expanded="false"
+              aria-label="Order: Best match" onclick="toggleYmSortPanel(this)">
+        <span class="sortic" aria-hidden="true">⇅</span>
+      </button>
     </div>
   </div>
   <div class="uwrap" id="yourMoviesBody"></div>
@@ -6653,16 +6654,17 @@ const CAP_LABEL={upcoming:"Upcoming",opening:"Opening",cinema:"In cinemas",
 // CAS-429: the streaming icon is a plain ▶ (no VS16), not the "▶️" emoji — most fonts render that as a
 // boxed white-triangle-on-blue glyph, which reads as its own icon rather than the capsule's own green tint.
 const WIN_ICON={upcoming:"🗓️",opening:"🎬",cinema:"🎬",pvod:"⭐",rental:"🎫",included_streaming:"▶"};
-// CAS-847: the Upcoming lozenge used to say "Upcoming" for every unreleased film, so the two Upcoming
-// sub-switches on Where & when you'll watch (When announced / Opening next week) had no visible effect on
-// the card even though they're what arms those alerts. The label now follows the moment the account has
-// actually asked to hear about — accountAlertKeysOn is the same account-wide Notify answer the alert system
-// itself reads, so the card can never promise a moment the account didn't ask for.
+// CAS-847: an upcoming film's lozenge reads "Upcoming" unless the film is within a week of its published
+// opening date AND the account has "Opening next week" switched on, in which case it reads "Next week" —
+// the one thing about an unreleased film the reader cannot see for themselves. CAS-847 also gave "When
+// announced" its own "Announced" label; Lee reversed that on 2026-09-08, because every unreleased film in
+// the catalogue has been announced, so the word carried no information. accountAlertKeysOn is the same
+// account-wide Notify answer the alert system itself reads, so the card can never promise a moment the
+// account didn't ask for.
 function upcomingCapLabel(m){
   const on=accountAlertKeysOn();
   if(on.has("opens_soon") && m.cinema_date!=null && Date.parse(m.cinema_date)-Date.parse(TODAY)<=7*864e5)
     return "Next week";
-  if(on.has("announced")) return "Announced";
   return CAP_LABEL.upcoming;
 }
 const WINDOW_SLOTS=["cinema","pvod","rental","included_streaming"];
@@ -9881,8 +9883,18 @@ function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   // CAS-724: released films only, computed once here — used by the "released since" cutoff below and by the
   // Awards requirement further down.
   const preRelease = ps==="upcoming" || ps==="in_cinema";
-  if(scopeOf(c)[ps] && !matchesServices(m, ps)) return false;   // CAS-252/342: see passes()
+  // CAS-853: the account-level "only show films on my services" switch is authoritative for what an agent
+  // SHOWS you — once it's on, it governs every agent regardless of that agent's own myServices, which may
+  // still NARROW (a window an agent has scoped stays scoped) but can no longer make the account-wide switch
+  // inactive by omission. myServices===false (as opposed to an object, even an empty/all-false one) stays
+  // the internal "ignore the services test entirely" signal a few WATCH-set/advisory computations already
+  // rely on — matchesTaste and recomputeFound's re-test, below — so the account toggle governs what an
+  // agent SHOWS without collapsing into what it WATCHES (CAS-67's split is deliberately untouched by this).
+  if(c.myServices!==false && (prefs.on || scopeOf(c)[ps]) && !matchesServices(m, ps)) return false;   // CAS-252/342: see passes()
   if(c.status.length && !c.status.includes(ps)) return false;
+  // CAS-854: "upcoming" means coming to cinemas — an agent that never watches cinema isn't waiting for that
+  // arrival, so a pre-release film only becomes its news once it reaches a window that agent actually watches.
+  if(ps==="upcoming" && !windowUsable(c,"in_cinema")) return false;
   if((c.exclude||[]).length && (m.genres||[]).some(g=>c.exclude.includes(g))) return false;   // skip beats match
   // CAS-182: cleared means cleared. A dimension holding null admits nothing, so the count says 0 rather
   // than quietly reverting to the whole catalogue behind a screen of switched-off chips.
@@ -11290,7 +11302,11 @@ function svcAdviceFilms(){
   const seen=new Set(), out=[];
   cascades.forEach(c=>{
     if(c.paused) return;                    // guest mode (CAS-79): watches nothing, so it advises nothing
-    const scopeOff={...c, myServices:{}};
+    // CAS-853: myServices:false (not {}) — {} is a real, narrowable "no window scoped yet" agent shape and
+    // is now itself subject to the account toggle; false is the dedicated "ignore services entirely" signal
+    // this advisory read needs, same as matchesTaste's (a service you don't have yet must still be able to
+    // surface here, independent of whether the account switch happens to be on).
+    const scopeOff={...c, myServices:false};
     MOVIES.forEach(m=>{
       if(seen.has(m.tmdb_id) || taggedOut(m) || !listedBy(m, scopeOff)) return;
       seen.add(m.tmdb_id); out.push(m);
@@ -13063,9 +13079,8 @@ function onbApply(){
   // channel back on restores what this agent was set to.
   d.channels = {...(d.channels||{})};
   d.channelsLive = {inApp: channelLive("inApp"), email: channelLive("email")};
-  // CAS-199: "only show films on my services" is a per-window scope on the agent, and it is the switch
-  // that says so — naming your services alone never narrows anything.
-  if(d.kind==="stream") HOME_KEYS.forEach(k=>{ d.myServices[k] = !!prefs.on; });
+  // CAS-853: no longer seeded off prefs.on here — the account toggle now reaches matchesCriteria directly
+  // and stays authoritative for the agent's whole life, so a value copied once at save time can't go stale.
   // CAS-843: this agent no longer carries its own alert set — alert_moments is computed straight off the
   // account's own Where & when Notify switches (accountAlertKeysOn/alertLive), gated by this agent's
   // reachability guard, so there is nothing left to derive or write here.
@@ -15151,10 +15166,10 @@ let onbStepKey=null;
 // CAS-475: "My streaming services" is no longer a first-run step either — naming your services and the
 // "only show films on my services" switch are both account-level state already (`prefs`, in
 // localStorage/the synced prefs row), never per-agent, so asking for them mid-creation was a second place to
-// set the same account-wide answer. A person who has never named a service still gets one: onbApply() keeps
-// seeding a new streaming agent's per-window `myServices` scope off whatever `prefs.on` already is (CAS-199),
-// same as it always has — this only removes the prompt, not the seed. Naming services (or turning the
-// switch on) now happens at Account > My streaming services, before or after the agent exists either way.
+// set the same account-wide answer. CAS-853: onbApply() no longer seeds a new agent's `myServices` off
+// `prefs.on` either — the account switch reaches matchesCriteria directly now, so there is no per-agent copy
+// left to seed. Naming services (or turning the switch on) happens at Account > My streaming services,
+// before or after the agent exists either way.
 // CAS-532: "genres"/"age"/"years" stay out of both lanes' FLOWS — a new agent still starts from the
 // pickStarter defaults (see there) and walks this same short line. CAS-550 gives Style, Rating and How far
 // back UI again, but only from the Briefing afterwards, by its own explicit "out of scope: first-run flow
@@ -15858,6 +15873,7 @@ function wlSync(shown){
   });
   const actsHome=wlStrip.querySelector(".dcard.is-active .dc-acts");
   if(actsHome && wlSortCtl.parentElement!==actsHome) actsHome.appendChild(wlSortCtl);
+  syncYmSortBtn();   // CAS-856: keep the sort button's own name of the active order honest
   wlPaint();
 }
 // Create makes a list immediately — no criteria funnel, unlike newCascade()/commitDraft(): default name,
@@ -16023,7 +16039,72 @@ document.addEventListener("click", e=>{
 // CAS-646: sort now drives the LIVE listing's own per-section order too (render()'s groups.map, not just
 // this screen's own preview feed).
 window.ymSortChange=v=>{ ymSort = v||null; ymPersist(); ymRefreshFeed(); render(); };
-$("ymSort").onchange=e=>ymSortChange(e.target.value);
+// CAS-856: the native <select> that used to write ymSortChange directly is gone — replaced by an in-app
+// popover built the same way openScopePanel builds .cpop.spop (.nopt rows, one .cpop live at a time), since
+// a native OS list box was the one control on this screen that didn't belong to the app's own design
+// language. Same eight sortMoviesBy orders plus "Best match" (null — the feed's own default), same order,
+// same ymSortChange handler underneath, so ordering behaviour itself is untouched.
+const YM_SORT_OPTS=[
+  {key:"",             lbl:"Best match"},
+  {key:"availability",  lbl:"Availability"},
+  {key:"imdb",          lbl:"IMDb rating"},
+  {key:"cascade",       lbl:"Cascade score"},
+  {key:"rt",            lbl:"RT critic"},
+  {key:"gross",         lbl:"Box office"},
+  {key:"popularity",    lbl:"Most anticipated"},
+  {key:"cinema",        lbl:"Newest cinema"},
+  {key:"title",         lbl:"Title A–Z"},
+];
+function ymSortRowsHTML(){
+  return YM_SORT_OPTS.map(o=>{
+    const on=(ymSort||"")===o.key;
+    return `<button type="button" class="nopt${on?" on":""}" style="--wwc:var(--accent)"
+      role="menuitemradio" aria-checked="${on}" tabindex="${on?0:-1}" data-key="${escA(o.key)}">
+      <span class="wwb">✓</span><span class="nol">${esc(o.lbl)}</span></button>`;
+  }).join("");
+}
+// Keeps the button's own name of the active order honest — same job syncSortCtl does for the deck's #sort,
+// called from wlSync() so it repaints on every list switch/sort change, not just this file's own handler.
+function syncYmSortBtn(){
+  const btn=$("ymSortBtn"); if(!btn) return;
+  const cur=YM_SORT_OPTS.find(o=>o.key===(ymSort||"")) || YM_SORT_OPTS[0];
+  btn.setAttribute("aria-label","Order: "+cur.lbl);
+  $("ymSortCtl").title="Order: "+cur.lbl;
+}
+function closeYmSortPanel(){
+  document.querySelectorAll(".cpop.ordpop").forEach(n=>n.remove());
+  const btn=$("ymSortBtn"); if(btn) btn.setAttribute("aria-expanded","false");
+}
+window.toggleYmSortPanel=btn=>{
+  const already=btn.getAttribute("aria-expanded")==="true";
+  closeYmSortPanel();
+  if(already) return;   // second tap closes it
+  const pop=document.createElement("div");
+  pop.className="cpop ordpop al-r pop-down";
+  pop.setAttribute("role","menu");
+  pop.setAttribute("aria-label","Order");
+  pop.innerHTML=`<div class="nopts">${ymSortRowsHTML()}</div>`;
+  $("ymSortCtl").appendChild(pop);
+  btn.setAttribute("aria-expanded","true");
+  const sel=pop.querySelector('[tabindex="0"]') || pop.querySelector(".nopt");
+  if(sel) sel.focus({preventScroll:true});
+};
+document.addEventListener("click", e=>{
+  const row=e.target.closest(".cpop.ordpop .nopt");
+  if(row){ closeYmSortPanel(); ymSortChange(row.dataset.key); $("ymSortBtn").focus({preventScroll:true}); return; }
+  if(document.querySelector(".cpop.ordpop") && !e.target.closest(".cpop.ordpop") && !e.target.closest("#ymSortBtn"))
+    closeYmSortPanel();
+});
+document.addEventListener("keydown", e=>{
+  const pop=document.querySelector(".cpop.ordpop"); if(!pop) return;
+  if(e.key==="Escape"){ e.stopPropagation(); closeYmSortPanel(); $("ymSortBtn").focus({preventScroll:true}); return; }
+  if(e.key!=="ArrowDown" && e.key!=="ArrowUp") return;
+  e.preventDefault();
+  const opts=[...pop.querySelectorAll(".nopt")];
+  const i=opts.indexOf(document.activeElement);
+  opts[e.key==="ArrowDown" ? (i+1+opts.length)%opts.length : (i-1+opts.length)%opts.length].focus();
+}, true);
+addEventListener("scroll", ()=>{ if(document.querySelector(".cpop.ordpop")) closeYmSortPanel(); }, {passive:true});
 // A per-keystroke search/filter change only needs the feed's own count/result-line/cards refreshed — not the
 // whole screen (renderYourMovies would tear down and rebuild the search input mid-type, stealing its focus).
 function ymRefreshFeed(){

@@ -10,6 +10,7 @@
 //     "users": [
 //       { "userId": "...", "langs": ["en"] | null, "subServices": [...], "storeServices": [...],
 //         "filmStatuses": [{"movie_id": "...", "status": "disliked"|"soso"|"notfor"|"wow"|"enjoyed"|"liked"}, ...],
+//         "servicesOnly": true|false,
 //         "agents": [ { "id": "<cascade id>", "criteria": {...} }, ... ] },
 //       ...
 //     ],
@@ -18,8 +19,9 @@
 //
 // `langs: null` means "no user_prefs row" — left alone so the engine's own permissive default
 // (baseDefaults().langs, English-only) applies, exactly as it would for a device that never opened the
-// Languages screen. subServices/storeServices/filmStatuses absent or empty mean the same "never touched
-// this" default the app itself would show.
+// Languages screen. subServices/storeServices/filmStatuses/servicesOnly absent or empty mean the same
+// "never touched this" default the app itself would show — servicesOnly absent leaves E.prefs.on at the
+// engine's own default (off).
 //
 // Response shape:
 //   { "<cascade id>": { "<snapshot label>": ["<tmdb_id>", ...], ... }, ... }
@@ -59,6 +61,9 @@ async function main(){
     (user.subServices || []).forEach(s => E.prefs.sub.add(s));
     E.prefs.store.clear();
     (user.storeServices || []).forEach(s => E.prefs.store.add(s));
+    // CAS-853: the account-level "only show films on my services" switch — matchesCriteria now reads
+    // this directly and it governs every agent, not just the ones that copied it into their own myServices.
+    E.prefs.on = !!user.servicesOnly;
     // applyFilmRows lives inside the account-sync closure, not at the engine's top level — reached
     // the same way the rest of that surface is (CascadePersistence), per tests/js/engine.mjs's own
     // comment on watchRows/applyWatchRows just above its `found` export.

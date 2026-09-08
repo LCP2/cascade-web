@@ -112,5 +112,65 @@ class PrimaryGenreOnly(unittest.TestCase):
         self.assertIn("999900003", admission["c-genre2"]["today"])
 
 
+class ServiceScopeAuthority(unittest.TestCase):
+    """(d) CAS-853 AC4: the account-level "only show films on my services" switch governs admission
+    for every agent, not just one that copied it into its own criteria.myServices — an agent with no
+    scope of its own must still lose a film that is on none of the user's picked services once the
+    account switch is on, and get it back the moment the switch is off."""
+
+    def _stan_only_film(self):
+        return {"tmdb_id": "999900853", "title": "Stan-Only Test Film", "genres": ["Drama"],
+                "age_rating": "M", "language": "en", "status": ["included_streaming"],
+                "imdb_rating": 7.0, "imdb_votes": 5000, "rt_critic": 70,
+                "offers": [{"service": "Stan", "type": "sub", "price": None}]}
+
+    def test_excluded_when_services_only_is_on_and_the_service_is_not_picked(self):
+        movie = self._stan_only_film()
+        cascade = {"id": "c-svc-on", "user_id": "u-svc",
+                  "criteria": {"watchMarkers": dict(_OPEN)}}
+        admission = compute_admission([cascade], {"today": [movie]},
+                                      account_prefs={"u-svc": {"subServices": [], "servicesOnly": True}})
+        self.assertNotIn("999900853", admission["c-svc-on"]["today"],
+                         "a Stan-only film was admitted to an unscoped agent with the account "
+                         "services-only switch on and Stan not among the user's picked services")
+
+    def test_admitted_when_services_only_is_off(self):
+        movie = self._stan_only_film()
+        cascade = {"id": "c-svc-off", "user_id": "u-svc",
+                  "criteria": {"watchMarkers": dict(_OPEN)}}
+        admission = compute_admission([cascade], {"today": [movie]},
+                                      account_prefs={"u-svc": {"subServices": [], "servicesOnly": False}})
+        self.assertIn("999900853", admission["c-svc-off"]["today"],
+                      "a Stan-only film was excluded even though the account services-only switch is off")
+
+
+class UpcomingCinemaGate(unittest.TestCase):
+    """(e) CAS-854: "upcoming" means coming to cinemas, so a pre-release film is only news to an agent
+    that actually watches Cinema. An agent whose only usable window is Stream (Cinema marker Never)
+    must not admit an upcoming film, however high it scores — so the daily email never fires for it."""
+
+    def _upcoming_film(self):
+        return {"tmdb_id": "999900854", "title": "CAS-854 Upcoming Test Film", "genres": ["Drama"],
+                "age_rating": "M", "language": "en", "status": ["upcoming"],
+                "popularity": 50, "award": None}
+
+    def test_stream_only_agent_does_not_admit_an_upcoming_film(self):
+        movie = self._upcoming_film()
+        cascade = {"id": "c-854-never", "user_id": "u-854",
+                  "criteria": {"watchMarkers": {"in_cinema": None, "rent": None, "stream": 0}}}
+        admission = compute_admission([cascade], {"today": [movie]})
+        self.assertNotIn("999900854", admission["c-854-never"]["today"],
+                         "an upcoming film was admitted to an agent whose only usable window is Stream — "
+                         "its Cinema marker is Never, so this agent is not waiting for a cinema arrival")
+
+    def test_admitted_once_the_agent_watches_cinema(self):
+        movie = self._upcoming_film()
+        cascade = {"id": "c-854-usable", "user_id": "u-854",
+                  "criteria": {"watchMarkers": {"in_cinema": 0, "rent": None, "stream": 0}}}
+        admission = compute_admission([cascade], {"today": [movie]})
+        self.assertIn("999900854", admission["c-854-usable"]["today"],
+                      "an upcoming film was excluded even though the agent's Cinema window is usable")
+
+
 if __name__ == "__main__":
     unittest.main()
