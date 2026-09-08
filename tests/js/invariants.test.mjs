@@ -4722,8 +4722,8 @@ test("CAS-847 AC1: the Upcoming lozenge label follows the published date and the
     "a published date 3 days out with Opening next week on must read Next week");
 
   const far = { status: ["upcoming"], cinema_date: daysAfterToday(30) };
-  assert.equal(E.upcomingCapLabel(far), "Announced",
-    "a published date 30 days out (outside the 7-day window) must fall back to Announced");
+  assert.equal(E.upcomingCapLabel(far), "Upcoming",
+    "a published date 30 days out (outside the 7-day window) must read plain Upcoming");
 
   withWatchPrefs({ upcoming: { list: true, notify: true, subs: { announced: false, opens_soon: false } } }, () => {
     assert.equal(E.upcomingCapLabel(soon), "Upcoming",
