@@ -18,6 +18,10 @@ on:
         description: 'CAS767_MAX_CREDITS — trial-eval credit-spend guard (default 2000)'
         required: false
         type: string
+      reprobe_max_credits:
+        description: 'CAS882_MAX_CREDITS — re-probe credit-spend guard (default 120, hard cap 250)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -88,3 +92,37 @@ jobs:
         run: |
           cat watchmode_trial_eval_report.md >> "$GITHUB_STEP_SUMMARY"
           cat watchmode_trial_eval_report.md
+
+  # CAS-882: re-probes the three points Brian Einhaus (Watchmode) corrected on 8 Sep - AU
+  # classification, relevance_percentile, and the changes endpoints' real subpath. Separate
+  # job so it cannot collide with the two evaluations above.
+  reprobe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run the re-probe
+        env:
+          WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
+          CASCADE_CATALOGUE: movies.json
+          CAS882_REPORT: watchmode_reprobe_report.md
+          CAS882_MAX_CREDITS: ${{ inputs.reprobe_max_credits }}
+        run: python scripts/cas882_watchmode_reprobe.py
+
+      - name: Publish the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchmode-reprobe-report
+          path: watchmode_reprobe_report.md
+          if-no-files-found: error
+
+      - name: Publish the report to the run summary
+        if: always()
+        run: |
+          cat watchmode_reprobe_report.md >> "$GITHUB_STEP_SUMMARY"
+          cat watchmode_reprobe_report.md
