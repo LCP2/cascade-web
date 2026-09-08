@@ -41,6 +41,11 @@
 --   usage_events  — the CAS-809/810/811 sink: a batched copy of the client's local usage log
 --                   (event type + small data payload, never free text). Insert-only, unreadable
 --                   through the anon key — the app writes, only service_role reads. CAS-835.
+--   contact_messages — Contact us submissions (CAS-836/M10). An unauthenticated write on a
+--                   public origin, so it is rate limited by client_key via a security definer
+--                   trigger from day one. Insert-only, unreadable through the anon key — the
+--                   daily monitor reads unsent rows with service_role and stamps sent_at once
+--                   its digest email has gone out.
 
 -- gen_random_uuid() lives in pgcrypto. It is pre-installed on Supabase, but declaring the
 -- dependency keeps this file self-contained and portable to a plain Postgres.
@@ -461,6 +466,65 @@ alter table public.usage_events enable row level security;
 drop policy if exists usage_events_insert on public.usage_events;
 create policy usage_events_insert on public.usage_events
   for insert to anon, authenticated with check (true);
+
+-- ---------------------------------------------------------------------------
+-- contact_messages — Contact us submissions + rate limiting (CAS-836)
+-- ---------------------------------------------------------------------------
+-- An unauthenticated write on a public origin, so the abuse controls ship here rather than
+-- waiting for CAS-812. No select, update or delete policy is created — the anon key must
+-- never read this table; the daily monitor reads unsent rows and stamps sent_at with the
+-- service_role key, which bypasses RLS.
+create table if not exists public.contact_messages (
+  id          bigserial primary key,
+  user_id     uuid references auth.users(id) on delete set null,
+  client_key  text not null,
+  category    text not null,
+  email       text,
+  message     text not null,
+  diagnostics text,
+  build       text,
+  created_at  timestamptz not null default now(),
+  sent_at     timestamptz
+);
+create index if not exists contact_messages_unsent_idx
+  on public.contact_messages (created_at) where sent_at is null;
+
+alter table public.contact_messages enable row level security;
+
+drop policy if exists contact_messages_insert on public.contact_messages;
+create policy contact_messages_insert on public.contact_messages
+  for insert to anon, authenticated with check (
+    length(message) between 1 and 2000
+    and length(coalesce(email,'')) <= 200
+    and length(coalesce(diagnostics,'')) <= 8000
+    and category in ('bug','suggestion','account','other')
+  );
+
+-- security definer: counts every client_key's own rows to enforce the rate limit, including
+-- rows the anon role that just inserted has no select grant on.
+create or replace function public.contact_messages_rate_limit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if (select count(*) from public.contact_messages
+      where client_key = new.client_key and created_at > now() - interval '1 hour') >= 5 then
+    raise exception 'contact_messages: rate limit exceeded (5/hour)';
+  end if;
+  if (select count(*) from public.contact_messages
+      where client_key = new.client_key and created_at > now() - interval '24 hours') >= 20 then
+    raise exception 'contact_messages: rate limit exceeded (20/day)';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists contact_messages_rate_limit on public.contact_messages;
+create trigger contact_messages_rate_limit
+  before insert on public.contact_messages
+  for each row execute function public.contact_messages_rate_limit();
 
 -- ---------------------------------------------------------------------------
 -- keep cascades.updated_at honest on every write

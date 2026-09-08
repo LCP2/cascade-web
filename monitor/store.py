@@ -22,6 +22,8 @@ Interface:
   delete_notifications_for_movie_ids(ids) -> int          # CAS-486: fixture-range-only, for notify-test
   fetch_user_prefs() -> {user_id: {sub_services, store_services, taste}}                   # CAS-825
   fetch_user_films() -> [{user_id, movie_id, status}]                                      # CAS-825
+  fetch_unsent_contact_messages() -> [contact_messages row, sent_at is null]                # CAS-836
+  mark_contact_messages_sent(ids, sent_at) -> int                                           # CAS-836
 """
 from __future__ import annotations
 
@@ -58,7 +60,8 @@ class InMemoryStore:
     """A store backed by plain Python lists — used for dry-run and tests."""
 
     def __init__(self, cascades=None, notifications=None, emails=None, prefs=None, picks=None,
-                 push_tokens=None, watches=None, user_prefs=None, user_films=None):
+                 push_tokens=None, watches=None, user_prefs=None, user_films=None,
+                 contact_messages=None):
         self._cascades = list(cascades or [])
         self._notifications = list(notifications or [])
         self._emails = dict(emails or {})
@@ -68,6 +71,7 @@ class InMemoryStore:
         self._watches = list(watches or [])
         self._user_prefs = dict(user_prefs or {})
         self._user_films = list(user_films or [])
+        self._contact_messages = [dict(r) for r in (contact_messages or [])]
 
     def fetch_active_cascades(self) -> list:
         return [c for c in self._cascades if c.get("active", True)]
@@ -129,6 +133,18 @@ class InMemoryStore:
 
     def fetch_user_films(self) -> list:
         return list(self._user_films)
+
+    def fetch_unsent_contact_messages(self) -> list:
+        return [dict(r) for r in self._contact_messages if not r.get("sent_at")]
+
+    def mark_contact_messages_sent(self, ids, sent_at) -> int:
+        ids = set(ids)
+        n = 0
+        for r in self._contact_messages:
+            if r.get("id") in ids:
+                r["sent_at"] = sent_at
+                n += 1
+        return n
 
 
 class SupabaseStore:
@@ -219,6 +235,35 @@ class SupabaseStore:
         runs on sign-in — so a blocked/disliked film is excluded from admission the same way the app
         excludes it, not by a second exclusion rule guessed at in Python."""
         return self._get("/user_films?select=user_id,movie_id,status")
+
+    def fetch_unsent_contact_messages(self) -> list:
+        """Every contact_messages row not yet emailed (CAS-836), oldest first — read with
+        service_role, since the anon key that wrote these rows has no select grant on them."""
+        return self._get(
+            "/contact_messages?sent_at=is.null&order=created_at.asc"
+            "&select=id,user_id,client_key,category,email,message,diagnostics,build,created_at"
+        )
+
+    def mark_contact_messages_sent(self, ids, sent_at) -> int:
+        """Stamp sent_at on exactly these rows, after the digest has actually been sent
+        (send-before-ledger, same ordering as insert_notifications elsewhere in this module)."""
+        ids = list(ids)
+        if not ids:
+            return 0
+        quoted = ",".join(str(i) for i in ids)
+        data = json.dumps({"sent_at": sent_at}).encode("utf-8")
+        req = urllib.request.Request(
+            self._base + f"/contact_messages?id=in.({quoted})",
+            data=data,
+            headers=self._headers({"Prefer": "return=representation"}),
+            method="PATCH",
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            body = resp.read().decode("utf-8")
+        try:
+            return len(json.loads(body))
+        except (json.JSONDecodeError, TypeError):
+            return 0
 
     def fetch_user_email(self, user_id: str):
         """Resolve a user_id to their email via the Auth admin API (service_role only).
