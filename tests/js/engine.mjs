@@ -305,11 +305,8 @@ if(typeof window.CascadeAuth === "undefined"){
   // seed and read the per-film arming state directly; watchPrefs is exposed through a getter/setter (like
   // flowKind) because the engine REASSIGNS the binding wholesale on load/sync, not just its contents.
   recomputeFound, notify, entryFor, watchLevelsFor, WATCH_LEVEL_KEYS,
-  // CAS-741: lists/listMembership (CAS-428's own two data structures — a list is mutated in place, never
-  // reassigned, exactly like cascades/watchLists above) plus notifyPrefs (reassigned wholesale on load, so
-  // exposed through a getter like watchPrefs/flowKind below) — so a test can seed/read the exact state the
-  // notify_prefs load-gate and the lists per-item push diff operate over.
-  lists, listMembership,
+  // CAS-741: notifyPrefs (reassigned wholesale on load, so exposed through a getter like watchPrefs/flowKind
+  // below) — so a test can seed/read the exact state the notify_prefs load-gate operates over.
   get notifyPrefs(){ return notifyPrefs; },
   // CAS-731: placementSplitHTML (the Mission mirror's placement split) and filmNotifyState (the Watch On
   // value it now counts by) — exported so a test can assert the parts sum to the headline directly, rather
@@ -344,6 +341,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // at the bottom of the account-sync IIFE — a live reference, so a test can stub CascadeAuth.client with
   // a fake Supabase and call e.g. CascadePersistence.loadWatchlistAccount() directly.
   get CascadePersistence(){ return window.CascadePersistence; },
+  // CAS-843: momentsOf (alert_moments derivation, now off the account's own Where & when Notify switches
+  // rather than a per-agent field) lives on window.CascadeShape, the same live-reference reasoning as
+  // CascadePersistence above.
+  get CascadeShape(){ return window.CascadeShape; },
   // CAS-715: filmIsNew is the Watch On chip's combined "isnew" rule (isNewFound AND admitDrift — "the world
   // moved, not the agent"); admitDrift is exposed by reference (mutated via property assignment inside
   // recomputeFound, never reassigned) so a test can seed/read it the same way firstFound above is. filt/
@@ -363,8 +364,8 @@ if(typeof window.CascadeAuth === "undefined"){
   // person tapping a Watch panel row does.
   deleteAgentAsk, pinFilmToCascadeAndRepaint: (id, cid) => window.pinFilmToCascadeAndRepaint(id, cid),
   // CAS-775: the Occasions register replaces CAS-768's derived-from-agents allOccasionNames — occasionReg
-  // is exported by reference (mutated in place by create/rename/delete, never reassigned, exactly like
-  // lists/listMembership above) so a test can seed/read the exact register state. create/rename/delete/
+  // is exported by reference (mutated in place by create/rename/delete, never reassigned) so a test can
+  // seed/read the exact register state. create/rename/delete/
   // occasionAgentCount/occasionName/occasionRegSorted are plain top-level functions, exported directly.
   // migrateOccasionNamesIfNeeded is exposed so a test can call the real one-time upgrade rather than
   // re-deriving its legacy-name detection by hand. briefToggleOccasion/commitCreateOccasionRow are
@@ -390,6 +391,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // mutator and render helpers) and notifyChipHTML (the Watch On chip's own render, alongside agentChipHTML
   // above) — plain top-level functions, exported directly like the rest of this file.
   windowEnabled, restoreWatchMarker, msnTrackAreaHTML, msnValueLine, notifyChipHTML,
+  // CAS-762: msnLastValue — the module-level "value a window carried before Never" map — exported by
+  // reference (like watched/blocked/found above) so a test can seed the exact Off-round-trip restoreWatchMarker
+  // now has to handle without driving the real click handlers.
+  msnLastValue,
   // CAS-790/791: found — the live membership Set recomputeFound rebuilds every pass, by reference like
   // watched/blocked above — needed for the A-F and G/I checks' direct membership assertions.
   // (watchRows/applyWatchRows already reach a test through CascadePersistence, same as the rest of the

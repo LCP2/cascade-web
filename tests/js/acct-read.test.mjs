@@ -1,5 +1,5 @@
 // CAS-764: acctRead is the shared retry-before-latch helper every account-table load/reconcile call site
-// (cascades/lists/list_films/watchlists, load and reconcile — eight sites total) now routes its read
+// (cascades/watchlists, load and reconcile — four sites total) now routes its read
 // through, so the retry policy exists in one place and can't drift between them. These tests drive the
 // helper directly with a stubbed reader (no real Supabase client needed) and assert acctBannerText, the
 // pure decision half of the banner, so they never depend on the DOM-write stub the wider engine harness

@@ -190,6 +190,23 @@ jobs:
             python -m monitor --dry-run $BASELINE_ARGS
           fi
 
+      - name: Run the Contact-us digest (CAS-836)
+        # Same secrets-present/--dry-run split as the monitor step above: with all three present
+        # this sends the real digest and stamps sent_at; without them it renders and sends
+        # nothing, so the workflow still passes before the secrets are configured.
+        if: ${{ github.event.inputs.probe_title == '' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          CASCADE_CONTACT_TO: ${{ secrets.CASCADE_CONTACT_TO }}
+        run: |
+          DRYRUN=""
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] || [ -z "$RESEND_API_KEY" ]; then
+            DRYRUN="--dry-run"
+          fi
+          python -m monitor.contact $DRYRUN
+
       - name: Dispatch qa.yml (CAS-523)
         # The commits above were pushed with the default GITHUB_TOKEN, so GitHub's anti-recursion
         # protection silently suppresses qa.yml's `push` trigger for them — meaning promote.yml's

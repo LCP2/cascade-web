@@ -533,12 +533,13 @@ test("CAS-724 AC3: the Awards requirement exempts a film that hasn't been judged
 // AC2: for every agent and film, listedBy(m,c) implies cascadeScore(m) >= c.scoreFloor. No exceptions —
 // checked both across the real preset/lane matrix (CASES) and directly against matchesCriteria with a custom
 // floor, since listedBy narrows further (window/pin state) and must not be the only place this holds.
-test("CAS-724 AC2: no listed film's Cascade score is below its own agent's scoreFloor — no exceptions", () => {
+test("CAS-724 AC2: no listed film's Cascade score is below its own agent's scoreFloor — no exceptions but Off (CAS-762)", () => {
   for(const { kind, s, label } of CASES){
     pickInLane(E, kind, s.key);
     const d = E.onbApply();
     const listed = E.MOVIES.filter(m => E.listedBy(m, d));
-    for(const m of listed) assert.ok(E.cascadeScore(m) >= d.scoreFloor,
+    // CAS-762: a floor of 0 is Off — no score requirement, so an unscored film (-1) legitimately lists there.
+    for(const m of listed) assert.ok(d.scoreFloor === 0 || E.cascadeScore(m) >= d.scoreFloor,
       `${label}: ${m.title} lists at Cascade score ${E.cascadeScore(m)}, below its own agent's floor ${d.scoreFloor}`);
   }
   const floored = missionCase({ scoreFloor: 70 });
@@ -546,10 +547,15 @@ test("CAS-724 AC2: no listed film's Cascade score is below its own agent's score
   assert.ok(scoredBelow.length > 0, "no film scored below 70 in the fixture catalogue — this test would prove nothing");
   for(const m of scoredBelow) assert.equal(E.matchesCriteria(m, floored), false,
     `${m.title} scores ${E.cascadeScore(m)}, below the agent's floor of 70, but still matched`);
-  // and rule 4: a film with no Cascade score at all is never admitted, even at the most permissive floor (0).
+  // CAS-762 supersedes rule 4 at a floor of 0 (Off): that floor is now no score requirement at all, so an
+  // unscored film DOES clear it — a floor of 0 is exactly the case AC2's own >= check above can never see,
+  // since cascadeScore(m) >= d.scoreFloor is -1 >= 0 (false) for a film this rule now legitimately admits.
   const unscored = E.MOVIES.find(m => E.cascadeScore(m) === -1 && E.matchesCriteria(m, missionCase(), undefined, true));
-  if(unscored) assert.equal(E.matchesCriteria(unscored, missionCase({ scoreFloor: 0 })), false,
-    `${unscored.title} has no Cascade score but was admitted at a floor of 0`);
+  if(unscored) assert.equal(E.matchesCriteria(unscored, missionCase({ scoreFloor: 0 })), true,
+    `${unscored.title} has no Cascade score and its agent's floor is Off (0) — CAS-762 says that admits it`);
+  // and rule 4 still holds wherever there IS a real floor: any positive floor keeps denying a scoreless film.
+  if(unscored) assert.equal(E.matchesCriteria(unscored, missionCase({ scoreFloor: 50 })), false,
+    `${unscored.title} has no Cascade score but was admitted at a real floor of 50`);
 });
 
 // AC6: raising any single requirement never increases what an agent lists — asserted over the live MOVIES
@@ -572,10 +578,10 @@ test("CAS-724 AC6: raising the Budget requirement never increases what an agent 
 });
 
 // CAS-724 change item 6: scoreHeldBackCount is restated against c.scoreFloor rather than the retired
-// Mission-dials target — and, since rule 4 (no score, never admitted) is now unconditional rather than only
-// active "while a target is in force", the count is meaningful even at a floor of 0.
-test("CAS-724: scoreHeldBackCount agrees with its own set, at any floor including 0", () => {
-  const d = missionCase({ status: ["included_streaming", "pvod", "rental"], scoreFloor: 0 });
+// Mission-dials target, so the count is meaningful at any real floor. CAS-762 changes what "at a floor of 0"
+// means: 0 is now Off, no score requirement at all, so nothing is held back for score there any more.
+test("CAS-724: scoreHeldBackCount agrees with its own set, at a real floor", () => {
+  const d = missionCase({ status: ["included_streaming", "pvod", "rental"], scoreFloor: 50 });
   const held = E.scoreHeldBackCount(d);
   const heldFilms = E.MOVIES.filter(m => E.cascadeScore(m) === -1
     && !E.listedBy(m, d) && E.listedBy(m, d, true));
@@ -583,6 +589,11 @@ test("CAS-724: scoreHeldBackCount agrees with its own set, at any floor includin
   assert.ok(held > 0, "test setup: expected at least one unscored film held back to exercise the count");
   for(const m of heldFilms) assert.equal(E.listedBy(m, d), false,
     `${m.title} has no score but is still listed`);
+});
+// CAS-762: at a floor of 0 (Off) scoreHeldBackCount must read 0 — nothing is excluded by score any more.
+test("CAS-762: scoreHeldBackCount is 0 for an agent whose floor is Off", () => {
+  const d = missionCase({ status: ["included_streaming", "pvod", "rental"], scoreFloor: 0 });
+  assert.equal(E.scoreHeldBackCount(d), 0, "an Off-floor agent must hold nothing back for having no score");
 });
 
 // ---- 10b. THE CHOSEN SORT'S OWN COMPARATOR DECIDES THE ORDER (CAS-702) ------------------------------------
@@ -3789,6 +3800,24 @@ test("CAS-739 AC4: a recomputeFound() pass never clears a pinnedTo value", () =>
   }
 }));
 
+// ---- THE REMOVED PICK RING'S "off" ROW IS A LEGACY NO-OP (CAS-844) -----------------------------------------
+// The Pick ring (pickBtnHTML/cyclePick) is gone: nothing in the live app writes film_picks.state="off" any
+// more. But an old device may still have one sitting in the account, and loadFilmPicks() must read it and do
+// nothing with it — not resurrect the removal flag it used to drive — or a legacy row would silently keep
+// suppressing a film forever with no control left anywhere to undo it.
+test("CAS-844 AC3: a loaded film_picks row with state \"off\" does not remove the film from the listing", () => withCas739State(async () => {
+  const id = 844001;
+  E.entryFor(id).source = "manual";   // a hand-added film — on the listing on its own, nothing to do with "off"
+  const { client } = fakeCas739Supabase({
+    film_picks: [{ user_id: "cas844-test-user", movie_id: String(id), state: "off", pinned_to: [], not_in: [] }],
+  });
+  signInWithClient(client);
+  await E.CascadePersistence.loadFilmPicks();
+  assert.ok(!("removed" in E.notify[id]), "a legacy \"off\" row must not reintroduce the removed flag");
+  E.recomputeFound();
+  assert.ok(E.found.has(id), "a legacy \"off\" film_picks row must not suppress a film that is otherwise on the list");
+}));
+
 // ---- ACCOUNT-LEVEL SETTINGS STAY ON ONE DEVICE (CAS-740) ---------------------------------------------------
 // userPrefsRow() didn't carry `touched` (has this device's owner answered the services question). A second
 // device loaded without it, read the scope as unanswered, silently re-enabled services-only, and pushed that
@@ -3858,9 +3887,7 @@ test("CAS-740 AC3: an account that already answered touched=true is adopted on l
 // ---- WHOLE-ROW UPSERTS DON'T OVERWRITE ANOTHER DEVICE (CAS-741) --------------------------------------------
 // notify_prefs pushed unconditionally, with no gate on whether this device's own load had resolved or even
 // succeeded — a failed load still let the next edit push this device's local defaults over a real account
-// row (muting email alerts, erasing a real address). `lists` pushed the WHOLE lists array on every
-// membership tick — tagging any film re-pushed every OTHER list's current in-memory name, silently
-// reverting a rename made on another device this one hadn't reloaded yet.
+// row (muting email alerts, erasing a real address).
 function fakeCas741NotifySupabase({ row = null, loadError = null } = {}){
   const state = { row: row ? { ...row } : null, upsertCalls: [] };
   const client = {
@@ -3925,117 +3952,6 @@ test("CAS-741 AC2(b): a failed notify_prefs load suppresses the write rather tha
   assert.equal(state.upsertCalls.length, 0,
     "a failed load must suppress the notify_prefs write, not fall through to pushing this device's defaults over the real row — fails on current code");
   assert.equal(state.row.email_address, "real@account.com", "the account's real row must be untouched");
-}));
-
-function fakeCas741ListsSupabase(seed){
-  const state = { lists: (seed.lists || []).map(r => ({ ...r })),
-                  list_films: (seed.list_films || []).map(r => ({ ...r })),
-                  upsertCalls: { lists: [], list_films: [] } };
-  function deleteBuilder(table){
-    const conds = [];
-    const builder = {
-      eq(col, val){ conds.push([col, v => v === val]); return builder; },
-      in(col, vals){ const set = new Set(vals); conds.push([col, v => set.has(v)]); return builder; },
-      then(resolve, reject){
-        state[table] = state[table].filter(r => !conds.every(([c, test]) => test(r[c])));
-        return Promise.resolve({ error: null }).then(resolve, reject);
-      },
-    };
-    return builder;
-  }
-  const client = {
-    from(table){
-      return {
-        select: () => ({ then(resolve, reject){
-          return Promise.resolve({ data: state[table].map(r => ({ ...r })), error: null }).then(resolve, reject);
-        } }),
-        upsert(rows){
-          state.upsertCalls[table].push(rows.map(r => ({ ...r })));
-          const nowIso = new Date().toISOString();
-          rows.forEach(r => {
-            if(table === "lists"){
-              const i = state.lists.findIndex(x => x.id === r.id);
-              const stored = { ...r, updated_at: nowIso };
-              if(i >= 0) state.lists[i] = stored; else state.lists.push(stored);
-            } else {
-              const i = state.list_films.findIndex(x => x.user_id === r.user_id && x.movie_id === r.movie_id && x.list_id === r.list_id);
-              const stored = { ...r, updated_at: nowIso };
-              if(i >= 0) state.list_films[i] = stored; else state.list_films.push(stored);
-            }
-          });
-          const result = { data: rows.map(r => ({ id: r.id, updated_at: nowIso })), error: null };
-          return { select: async () => result, then(resolve, reject){ return Promise.resolve(result).then(resolve, reject); } };
-        },
-        delete: () => deleteBuilder(table),
-      };
-    },
-  };
-  return { client, state };
-}
-function withCas741ListsState(fn){
-  const savedLists = E.lists.slice();
-  const savedMembership = JSON.parse(JSON.stringify(E.listMembership));
-  const savedKnown = new Map(E.CascadePersistence.listKnown);
-  return (async () => {
-    try { await fn(); }
-    finally {
-      E.lists.length = 0; savedLists.forEach(l => E.lists.push(l));
-      Object.keys(E.listMembership).forEach(k => delete E.listMembership[k]);
-      Object.assign(E.listMembership, savedMembership);
-      E.CascadePersistence.listKnown.clear();
-      savedKnown.forEach((v, k) => E.CascadePersistence.listKnown.set(k, v));
-      signOut();
-    }
-  })();
-}
-
-test("CAS-741 AC3(a): a membership-only change writes only the affected list_films row and pushes no lists row at all", () => withCas741ListsState(async () => {
-  const listA = uuidFor(741001), listB = uuidFor(741002);
-  const rowA = { id: listA, user_id: "cas681-test-user", name: "List A",
-    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" };
-  const rowB = { id: listB, user_id: "cas681-test-user", name: "List B",
-    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" };
-  const { client, state } = fakeCas741ListsSupabase({ lists: [rowA, rowB] });
-  signInWithClient(client);
-
-  await E.CascadePersistence.loadListsAccount();   // establishes lists + listKnown from the account
-  state.upsertCalls.lists.length = 0;
-  state.upsertCalls.list_films.length = 0;
-
-  // A membership-only change: tag a film into List A. Neither list's own name changed.
-  const filmId = 741111;
-  (E.listMembership[filmId] || (E.listMembership[filmId] = [])).push(listA);
-
-  await E.CascadePersistence.syncListsNow();
-
-  assert.equal(state.upsertCalls.lists.length, 0,
-    "a membership-only tick must not push any `lists` row — fails on current code (pushes the whole array)");
-  assert.equal(state.upsertCalls.list_films.length, 1, "the affected list_films row must still be pushed");
-  assert.ok(state.upsertCalls.list_films[0].some(r => r.movie_id === String(filmId) && r.list_id === listA),
-    "the pushed list_films row must be the one that actually changed");
-}));
-
-test("CAS-741 AC3(b): a rename made on another device survives a membership tick this device makes without reloading first", () => withCas741ListsState(async () => {
-  const listA = uuidFor(741003), listB = uuidFor(741004);
-  const rowA = { id: listA, user_id: "cas681-test-user", name: "List A",
-    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" };
-  const rowB = { id: listB, user_id: "cas681-test-user", name: "List B",
-    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" };
-  const { client, state } = fakeCas741ListsSupabase({ lists: [rowA, rowB] });
-  signInWithClient(client);
-
-  await E.CascadePersistence.loadListsAccount();   // this device's baseline: List B is "List B"
-
-  // Another device renames List B, directly against the fake account — this device never reloads.
-  state.lists.find(r => r.id === listB).name = "List B renamed elsewhere";
-
-  // This device ticks a film into List A — a membership-only change, no local edit to either list's name.
-  const filmId = 741112;
-  (E.listMembership[filmId] || (E.listMembership[filmId] = [])).push(listA);
-  await E.CascadePersistence.syncListsNow();
-
-  assert.equal(state.lists.find(r => r.id === listB).name, "List B renamed elsewhere",
-    "an unrelated membership tick must never revert a rename made on another device — fails on current code");
 }));
 
 // ---- PER-DEVICE CACHES AND STAMPS MADE TWO DEVICES DISAGREE (CAS-742) --------------------------------------
