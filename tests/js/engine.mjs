@@ -258,6 +258,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // that replaced the old on-exit-from-found delete) — exported so a test can pick dates relative to the
   // real horizon rather than hard-coding a day count that could silently drift from the engine's own.
   NEW_DAYS, FIRST_FOUND_PRUNE_DAYS,
+  // CAS-846: isRecent is the "recent window" decision the status pill glow reads — exported so a test can
+  // assert its NEW_DAYS boundary directly instead of re-deriving daysSince/primaryStatus by hand.
+  isRecent,
   // CAS-738: the other five watched-film verdict sets, exposed by reference like watched above —
   // a test needs to seed/restore all of them to exercise filmRows()/applyFilmRows() without leaking
   // state into later tests, since applyFilmRows() rebuilds every one of them from scratch.

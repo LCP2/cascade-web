@@ -68,3 +68,11 @@ test("CAS-783 AC2: a firstFound stamp older than the prune horizon is dropped; o
   assert.ok(!(staleId in E.firstFound), "AC2: a stamp older than the prune horizon must be dropped");
   assert.ok(freshId in E.firstFound, "a stamp still inside the prune horizon must not be dropped");
 }));
+
+// CAS-846: NEW_DAYS moved from 7 to 14 — isRecent (the status pill glow) must honour the new horizon.
+test("CAS-846 AC3: isRecent is true 10 days into a film's current window, false 20 days in", () => {
+  const recent = { status: ["in_cinema"], window_dates: { in_cinema: daysBeforeToday(10) } };
+  const stale = { status: ["in_cinema"], window_dates: { in_cinema: daysBeforeToday(20) } };
+  assert.equal(E.isRecent(recent), true, "CAS-846: a window reached 10 days ago must read as recent under a 14-day horizon");
+  assert.equal(E.isRecent(stale), false, "CAS-846: a window reached 20 days ago must no longer read as recent");
+});
