@@ -2654,33 +2654,42 @@
   .watchsearchwrap{flex:1;min-width:0;position:relative;display:flex;align-items:center}
   .watchsearchwrap .search{padding:9px 32px 9px 12px;font-size:14px}
   .watchsearchwrap .searchclear{width:24px;height:24px}
-  /* CAS-822: OCCASION PICKER — replaces the CAS-769 scrolling chip rail (.occbar/.occchip), which had
-     room for only ~2 of five chips at 390px and left the row landed mid-scroll, cut at both edges. Same
-     native-<select>-stretched-over-the-button device as .sortctl (~2764): a pill reading "For <name>",
-     tap anywhere to open the OS's own list of every occasion — no hand-rolled dropdown. Sized to its
-     content (not a hardcoded px width) rather than truncating, since the AC requires the selected name
-     stay legible however long it is. Styled after the tinted .watchfilterbtn.on treatment unconditionally
-     (CAS-822 design ref), not just as an "on" state — the active availability tab sits directly above and
-     two solid blues stacked would read as one control. */
-  .occwrap{position:relative;flex:0 0 auto;display:flex;align-items:center;gap:6px;
-    padding:0 12px;height:38px;border-radius:10px;border:1px solid var(--brand-blue);
-    background:rgba(76,125,255,.16);color:#cddcff;font-family:inherit;font-size:13px;font-weight:700;
-    white-space:nowrap;-webkit-tap-highlight-color:transparent}
-  .occwrap select{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;
-    opacity:0;cursor:pointer;-webkit-appearance:none;appearance:none}
-  .occwrap .occlbl{pointer-events:none;display:flex;align-items:center;gap:6px}
-  .occwrap .occfor{flex:none;font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
-    opacity:.8}
-  .occwrap .occchev{flex:none;font-size:9px;opacity:.8}
-  .occwrap select:focus-visible ~ .occlbl{outline:2px solid var(--cyan);outline-offset:2px}
+  /* CAS-840: OCCASION + PICKED BY — two-line pills sharing the row's spare width (flex:1 1 0), replacing
+     both the CAS-822 invisible-<select>-stretched-over-the-pill device (Occasion) and the Filters sheet's
+     segmented control (Picked by, CAS-719) with one shared component: a real button opening an in-app
+     listbox below it (.pickpop) — on desktop the native <select> opened a raw OS listbox belonging to no
+     part of this app. Only tinted (.on) once its value is off the default, so two pills that are usually
+     "All"/"All" don't read as two solid blues stacked under the active availability tab. */
+  .pickerwrap{position:relative;flex:1 1 0;min-width:0}
+  .pickerbtn{width:100%;height:40px;display:flex;flex-direction:column;justify-content:center;gap:1px;
+    padding:0 10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--dim);
+    font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;text-align:left}
+  .pickerbtn.on{border-color:var(--brand-blue);background:rgba(76,125,255,.16);color:#cddcff}
+  .pickerbtn .pblbl{font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;opacity:.75}
+  .pickerbtn .pbval{display:flex;align-items:center;gap:4px;font-size:13px;font-weight:700;white-space:nowrap}
+  .pickerbtn .pbtext{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .pickerbtn .pbchev{flex:none;font-size:9px;opacity:.8}
+  .pickerbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* The listbox itself: .cpop's own visual treatment (panel/border/radius/shadow), opening downward
+     (.pop-down — both pills sit at the very top of the screen, so .cpop's upward default is wrong here),
+     content-width but floored so a short list ("All") isn't a sliver. */
+  .cpop.pickpop{min-width:120px}
+  .popt{display:flex;align-items:center;width:100%;text-align:left;padding:8px 10px;border-radius:9px;
+    background:transparent;border:0;color:var(--dim);font-family:inherit;font-size:13px;font-weight:600;
+    cursor:pointer;white-space:nowrap}
+  .popt.on{background:rgba(76,125,255,.16);color:#cddcff;font-weight:800}
+  .popt:hover{color:var(--ink)}
+  .popt:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
   .watchiconbtn{flex:0 0 auto;width:40px;display:grid;place-items:center;border-radius:10px;
     border:1px solid var(--line);background:var(--panel2);color:var(--dim);cursor:pointer;padding:0}
   .watchiconbtn svg{width:16px;height:16px;display:block}
   /* CAS-769 gave these elements a `display` in their own class while relying on the `hidden`
      attribute to remove them — and a bare [hidden] loses to a class rule, exactly as .cascsearch[hidden]
      (~1268) and .stephdr/.stepnav[hidden] (~2790) already had to restate. Without this, the search box
-     never hides when the occasion pill appears: it keeps flex:1 and squeezes the pill down to nothing. */
-  .occwrap[hidden],.watchsearchwrap[hidden],.watchiconbtn[hidden]{display:none}
+     never hides when the occasion pill appears: it keeps flex:1 and squeezes the pill down to nothing.
+     CAS-840: .pickerwrap sets no `display` of its own, so it needs no entry here — a bare [hidden]
+     already beats the browser default. */
+  .watchsearchwrap[hidden],.watchiconbtn[hidden]{display:none}
   .watchiconbtn:active{opacity:.75}
   .watchiconbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
   /* CAS-822: Filters drops its text label (icon only), so the button now shares .watchiconbtn's fixed
@@ -2692,7 +2701,7 @@
     background:var(--brand-blue);color:#fff;font-size:10px;font-weight:800;line-height:16px;text-align:center;padding:0 3px}
   .watchactivefilters{margin:8px 12px 0;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
     scrollbar-width:none}
-  /* CAS-839: .chips sets display:flex, so a bare [hidden] loses to it — the same trap .occwrap[hidden]
+  /* CAS-839: .chips sets display:flex, so a bare [hidden] loses to it — the same trap .watchsearchwrap[hidden]
      (~2683), .cascsearch[hidden] (~1286) and .stephdr[hidden] (~2840) already had to restate. */
   .watchactivefilters[hidden]{display:none}
   .watchactivefilters::-webkit-scrollbar{display:none}
@@ -2728,16 +2737,6 @@
   .alsochip .jn{font-weight:800;opacity:.85}
   .alsochip .alwaystag{font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;opacity:.7}
   .alsochip:disabled{cursor:default;opacity:1}
-  /* CAS-719: "Picked by" — same joined-pill segmented shape as .watchtabs (CAS-713), single-select same
-     as the tab bar itself, reused rather than duplicated since it is the same kind of control. */
-  .pickedbyseg{display:flex;border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--panel2)}
-  .pickedbyseg-s{flex:1;min-width:0;padding:8px 6px;background:transparent;border:0;
-    border-right:1px solid var(--line);color:var(--dim);font-family:inherit;font-size:12.5px;font-weight:700;
-    cursor:pointer;-webkit-tap-highlight-color:transparent;transition:.15s}
-  .pickedbyseg-s:last-child{border-right:0}
-  .pickedbyseg-s.on{background:var(--brand-blue);color:#fff}
-  .pickedbyseg-s:active{opacity:.75}
-  .pickedbyseg-s:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
   .wsheethd{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
   .wsheethd>span:first-child{font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--faint)}
   .wsheetlinks{display:flex;gap:12px}
@@ -3686,15 +3685,26 @@
          button (opens #watchSheet — Watched + Styles), and the sort control, unchanged, moved in from the
          retired deck. -->
     <div class="watchctl" id="watchCtl">
-      <!-- CAS-769/822: the occasion row is the FIRST child, taking the horizontal space the search box
+      <!-- CAS-769/822/840: the occasion pill is the FIRST child, taking the horizontal space the search box
            gives up by collapsing to an icon — rendered only once two or more occasions exist across
            the roster (renderWatchCtl below), so this costs nothing until the user has tagged something.
-           CAS-822: a single pill, not a scrolling chip rail — the invisible <select> stretched over it
-           is the real control (same device as #sortCtl below), so a tap anywhere opens the OS's own
-           list of every occasion instead of a hand-rolled dropdown. -->
-      <div class="occwrap" id="occWrap" hidden>
-        <select id="occSelect" aria-label="Occasion"></select>
-        <span class="occlbl" aria-hidden="true"><span class="occfor">For</span> <span class="occname" id="occName">All</span><span class="occchev">▾</span></span>
+           CAS-840: a real button opening an in-app listbox (togglePickerFor below), not the invisible
+           <select>-stretched-over-the-pill device CAS-822 shipped. -->
+      <div class="pickerwrap" id="occWrap" hidden>
+        <button type="button" class="pickerbtn" id="occBtn" aria-haspopup="listbox" aria-expanded="false"
+                onclick="togglePickerFor('occ',this)">
+          <span class="pblbl">Occasion</span>
+          <span class="pbval"><span class="pbtext" id="occName">All</span><span class="pbchev" aria-hidden="true">▾</span></span>
+        </button>
+      </div>
+      <!-- CAS-840: moved in from the Filters sheet (was `.pickedbyseg`, CAS-719) — always present, search
+           expanded or not, unlike the occasion pill above. Same shared listbox device. -->
+      <div class="pickerwrap" id="pickedByWrap">
+        <button type="button" class="pickerbtn" id="pickedByBtn" aria-haspopup="listbox" aria-expanded="false"
+                onclick="togglePickerFor('pickedby',this)">
+          <span class="pblbl">Picked by</span>
+          <span class="pbval"><span class="pbtext" id="pickedByName">All</span><span class="pbchev" aria-hidden="true">▾</span></span>
+        </button>
       </div>
       <div class="watchsearchwrap" id="watchSearchWrap">
         <input id="watchSearchInput" class="search" type="text" inputmode="search" autocomplete="off"
@@ -8698,9 +8708,6 @@ window.setWatchOccasion = id => {
   try{ localStorage.setItem("cascade_watch_occasion", watchOccasion||""); }catch(e){}
   render();
 };
-// CAS-822: the select is a static node (like #sort) — only its <option>s are rebuilt, per render, by
-// renderOccBar — so wiring the handler once here (rather than inline per-option) is enough.
-$("occSelect").onchange = e => setWatchOccasion(e.target.value);
 // CAS-769: whether the search box is expanded over the occasion row right now — never persisted, and
 // separate from `watchSearch`/`watchSearchRaw` (the actual typed term), which this never touches.
 let watchSearchOpen = false;
@@ -8724,7 +8731,7 @@ function renderWatchCtl(){
     if(inp.value!==raw) inp.value=raw;
   }
   const clr=$("watchSearchClear"); if(clr) clr.hidden = !(inp && inp.value);
-  // CAS-769/775: the occasion row only earns its keep once there are at least two occasions in the
+  // CAS-769/775: the occasion pill only earns its keep once there are at least two occasions in the
   // REGISTER to choose between — with none or one, it stays absent and the search box keeps its original
   // full-width form. (A register entry no agent yet carries still counts — CAS-775 AC2.)
   const regEntries=occasionRegSorted();
@@ -8734,18 +8741,24 @@ function renderWatchCtl(){
   if(searchBtn) searchBtn.hidden = !showOcc || watchSearchOpen;
   if(searchWrap) searchWrap.hidden = showOcc && !watchSearchOpen;
   if(showOcc && !watchSearchOpen) renderOccBar(regEntries);
+  // CAS-840: Picked by is always present — search expanded or not, occasion pill shown or not.
+  renderPickedByPill();
 }
-// CAS-769/775/822: one <option> per REGISTER entry (occasionRegSorted — already alphabetical), plus
-// "All", first — whether or not any agent currently carries that occasion yet. Rebuilds the select's
-// options (not the select node itself, which keeps its onchange handler — see setWatchOccasion above)
-// and repaints the pill's visible name to match.
+// CAS-769/775/822/840: repaints the occasion pill's visible name and its .on tint (on once a real
+// occasion, not "All", is selected) from the REGISTER (occasionRegSorted — already alphabetical).
 function renderOccBar(regEntries){
-  const sel=$("occSelect"), name=$("occName"); if(!sel||!name) return;
+  const btn=$("occBtn"), name=$("occName"); if(!btn||!name) return;
   const items=[{id:null,name:"All"}, ...regEntries];
-  sel.innerHTML = items.map(o=>
-    `<option value="${escA(o.id||"All")}"${watchOccasion===o.id?" selected":""}>${esc(o.name)}</option>`
-  ).join("");
-  name.textContent = (items.find(o=>o.id===watchOccasion) || items[0]).name;
+  const cur=items.find(o=>o.id===watchOccasion) || items[0];
+  name.textContent = cur.name;
+  btn.classList.toggle("on", watchOccasion!=null);
+}
+// CAS-840: same repaint, for the Picked by pill — moved in from the Filters sheet's `.pickedbyseg`.
+function renderPickedByPill(){
+  const btn=$("pickedByBtn"), name=$("pickedByName"); if(!btn||!name) return;
+  const key=watchPickedBy[watchTab];
+  name.textContent = PICKED_BY_OPTS.find(o=>o.key===key).label;
+  btn.classList.toggle("on", key!=="all");
 }
 // CAS-714/CAS-718: which genres are toggled OFF (hidden) in each Watch tab's own view — session-only, one
 // Set per tab. Never persisted and never written back to any cascade's own stored c.genre: this only
@@ -8785,6 +8798,78 @@ const PICKED_BY_OPTS = [
 ];
 window.setWatchPickedBy = key => { watchPickedBy[watchTab]=key; render(); };
 window.clearWatchPickedBy = () => { watchPickedBy[watchTab]="all"; render(); };
+// CAS-840: ONE listbox popover shared by the Occasion and Picked by pills — an anchored panel in the app's
+// own language (.cpop's visual treatment, opened downward via .pop-down since both pills sit at the very
+// top of the screen), replacing Occasion's invisible-<select> device and Picked by's Filters-sheet segment.
+// `kind` picks which pill's own options/current value/setter apply; everything else (open/close, outside
+// click, Escape, arrow-key roving focus) is shared.
+const PICKER_KINDS = {
+  occ: {
+    items: () => [{key:"All", label:"All"}, ...occasionRegSorted().map(o=>({key:o.id, label:o.name}))],
+    current: () => watchOccasion || "All",
+    pick: key => setWatchOccasion(key),
+  },
+  pickedby: {
+    items: () => PICKED_BY_OPTS,
+    current: () => watchPickedBy[watchTab],
+    pick: key => setWatchPickedBy(key),
+  },
+};
+function closePickerPop(){
+  const pop=document.querySelector(".cpop.pickpop"); if(!pop) return null;
+  const btn=document.getElementById(pop.dataset.forBtn);
+  pop.remove();
+  if(btn) btn.setAttribute("aria-expanded","false");
+  return btn;
+}
+window.togglePickerFor = (kind, btn) => {
+  const cfg=PICKER_KINDS[kind];
+  const openPop=document.querySelector(".cpop.pickpop");
+  const already=openPop && openPop.dataset.forBtn===btn.id;
+  closePickerPop();
+  if(already) return;   // second tap closes it
+  const items=cfg.items(), curKey=cfg.current();
+  const pop=document.createElement("div");
+  // CAS-374 precedent: edge-aligned under the pill that opens it — .al-l for Occasion (leftmost, so the
+  // content-width panel grows rightward, clear of the screen edge), .al-r for Picked by (grows leftward,
+  // clear of the RIGHT screen edge instead, since it sits further along the row).
+  pop.className=`cpop pickpop ${kind==="occ"?"al-l":"al-r"} pop-down`;
+  pop.dataset.forBtn=btn.id;
+  pop.setAttribute("role","listbox");
+  const lbl=btn.querySelector(".pblbl"); if(lbl) pop.setAttribute("aria-label", lbl.textContent);
+  pop.innerHTML=`<div class="nopts">${items.map(o=>{
+    const on=o.key===curKey;
+    return `<button type="button" class="popt${on?" on":""}" role="option" aria-selected="${on}"
+      tabindex="${on?0:-1}" data-key="${escA(o.key)}">${esc(o.label)}</button>`;
+  }).join("")}</div>`;
+  btn.parentElement.appendChild(pop);
+  pop.addEventListener("click", e=>{
+    const row=e.target.closest(".popt"); if(!row) return;
+    closePickerPop();
+    cfg.pick(row.dataset.key);
+    btn.focus({preventScroll:true});
+  });
+  btn.setAttribute("aria-expanded","true");
+  const sel=pop.querySelector('[tabindex="0"]') || pop.querySelector(".popt");
+  if(sel) sel.focus({preventScroll:true});
+};
+document.addEventListener("keydown", e=>{
+  const pop=document.querySelector(".cpop.pickpop"); if(!pop) return;
+  if(e.key==="Escape"){ e.stopPropagation(); const btn=closePickerPop(); if(btn) btn.focus({preventScroll:true}); return; }
+  if(e.key!=="ArrowDown" && e.key!=="ArrowUp") return;
+  e.preventDefault();
+  const opts=[...pop.querySelectorAll(".popt")];
+  const i=opts.indexOf(document.activeElement);
+  opts[e.key==="ArrowDown" ? (i+1+opts.length)%opts.length : (i-1+opts.length)%opts.length].focus();
+}, true);
+document.addEventListener("pointerdown", e=>{
+  const pop=document.querySelector(".cpop.pickpop"); if(!pop) return;
+  if(pop.contains(e.target)) return;
+  const btn=document.getElementById(pop.dataset.forBtn);
+  if(btn && btn.contains(e.target)) return;
+  closePickerPop();
+}, true);
+addEventListener("scroll", ()=>{ if(document.querySelector(".cpop.pickpop")) closePickerPop(); }, {passive:true});
 // A film not currently on the picked level (filmWatchSource reads whichever level is driving the chip)
 // falls to Unset, the same "nothing recorded" reading filmWatchSource itself already gives that film.
 function filmMatchesPickedBy(m){
@@ -8920,8 +9005,6 @@ function renderWatchSheet(rows, shownCount){
   const badge=$("watchFilterBadge");
   if(badge){ badge.hidden=activeCount===0; badge.textContent=activeCount; }
   const filterBtn=$("watchFilterBtn"); if(filterBtn) filterBtn.classList.toggle("on", activeCount>0);
-  const pickedByHTML=PICKED_BY_OPTS.map(o=>`<button type="button" class="pickedbyseg-s${pickedBy===o.key?" on":""}"
-      aria-pressed="${pickedBy===o.key}" onclick="setWatchPickedBy('${o.key}')">${esc(o.label)}</button>`).join("");
   const watchedHTML=REVIEW_STEPS.map(v=>{
     const on=watchedSel.has(v.key);
     return `<button type="button" class="chip${on?" on":""}" style="--wwc:${v.cd}" aria-pressed="${on}"
@@ -8972,10 +9055,6 @@ function renderWatchSheet(rows, shownCount){
         aria-checked="${mineOnly}" onclick="toggleWatchMineOnly()">
         <span>Show only available on my services</span><span class="knob"></span>
       </div>
-    </div>
-    <div class="wsheetsec">
-      <div class="wsheethd"><span>Picked by</span></div>
-      <div class="pickedbyseg">${pickedByHTML}</div>
     </div>
     <div class="wsheetsec">
       <div class="wsheethd"><span>Watched</span></div>
@@ -18800,8 +18879,10 @@ function render(){
 // CAS-823: four of the six words renamed present-tense, so none collides with the tab strip sitting right
 // above this rail (Cinema/Premium/Rental/Streaming) — Opening and Premium are untouched, since neither of
 // those ever equals a tab's own label.
-const SECTION_SHORT = {opening_week:"Opening", in_cinema:"In cinemas", pvod:"Premium",
-                       rental:"At rental", included_streaming:"Streaming", upcoming:"Unreleased"};
+// CAS-840: four of these realigned to match the section headings they jump to (Upcoming/In Cinema/Rent/
+// Stream) — the rail's own words had drifted from the headings over past renames (CAS-823 above).
+const SECTION_SHORT = {opening_week:"Opening", in_cinema:"In Cinema", pvod:"Premium",
+                       rental:"Rent", included_streaming:"Stream", upcoming:"Upcoming"};
 // CAS-823: the rail no longer scrolls (it used to, and overflowed at real width — the bug this ticket
 // fixes). It's a non-scrolling strip instead: a "Now" label, then one stop per section actually on screen,
 // laid out across the width it has. `own` just adds a visual anchor for the tab's own standing (which is
