@@ -278,9 +278,13 @@ if(typeof window.CascadeAuth === "undefined"){
   localStorage,
   // CAS-668: the badge/list agreement — movingWindowRows is the one recipe both renderMovingScreen and
   // movingUnseenCount filter through, movingBadgeWindow is which window applies right now (live if Moving
-  // is open, predicted if it's not), and openMovingScreen/closeMovingScreen/setMovingWindow are the
-  // real wire code (DOM reads/writes absorbed by the stub, exactly like the rest of this file's wire calls).
-  movingWindowRows, movingUnseenCount, movingBadgeWindow, movingAutoOpenWindow, movingInWindow,
+  // is open, predicted — always "2weeks", CAS-848 — if it's not), and openMovingScreen/closeMovingScreen/
+  // setMovingWindow are the real wire code (DOM reads/writes absorbed by the stub, exactly like the rest of
+  // this file's wire calls).
+  movingWindowRows, movingUnseenCount, movingBadgeWindow, movingInWindow,
+  // CAS-848: movingLanes is the pure per-agent grouping/ranking step renderMovingScreen paints from — a
+  // test can assert lane order/membership without parsing the rendered HTML.
+  movingLanes,
   MOVING_WINDOWS, movingSeen,
   // CAS-670 AC2/AC4: renderMovingScreen is wire code (its DOM write is absorbed by the stub) but its early
   // return on the loading-state guard is a real decision — whether it marks any row seen — so a test needs

@@ -1058,13 +1058,13 @@ test("G3: movingData() carries a freshly-found film in the New to your agents gr
   E.recomputeFound();
   assert.ok(E.found.has(id), "setup: the film must be found before this test can assert its moving row");
 
-  const row = E.movingData().newRows.find(r => r.filmId === String(id));
+  const row = E.movingData().rows.find(r => r.filmId === String(id));
   assert.ok(row, "G3: a movingData() row must exist for a film freshly entering `found`");
-  assert.equal(row.groupKey, "new_agents", "G3: it must land in the New to your agents group");
+  assert.equal(row.tag, "new", "G3: it must be tagged New");
   assert.ok(E.movingInWindow(row.date, "today"), "G3: freshly found today, it must fall in the Today bucket");
 
   E.firstFound[id] = daysBeforeToday(3);   // still New (< NEW_DAYS), but no longer literally today
-  const row2 = E.movingData().newRows.find(r => r.filmId === String(id));
+  const row2 = E.movingData().rows.find(r => r.filmId === String(id));
   assert.ok(row2, "setup: the row must still exist after backdating");
   assert.ok(!E.movingInWindow(row2.date, "today"), "G3: 3 days back, it must no longer read as Today");
   assert.ok(E.movingInWindow(row2.date, "week"), "G3: ...but must still read as within the Week bucket");
@@ -1118,13 +1118,13 @@ test("H3: movingData() carries no new row across the same reordering move", () =
   assert.ok(E.matchesCriteria(film, cB), "setup: both agents must genuinely match the film");
   E.recomputeFound();
   assert.deepEqual(arr(E.notify[id].cascadeIds), [cA.id], "setup: A starts as sole owner");
-  const before = E.movingData().newRows.map(r => r.filmId).sort();
+  const before = E.movingData().rows.map(r => r.filmId).sort();
 
   cA.order = 9; cB.order = 0;
   E.recomputeFound();
 
   assert.deepEqual(arr(E.notify[id].cascadeIds), [cB.id], "setup: ownership must actually move to B");
-  const after = E.movingData().newRows.map(r => r.filmId).sort();
+  const after = E.movingData().rows.map(r => r.filmId).sort();
   assert.deepEqual(after, before, "H3: reordering ownership must not add or remove a moving row");
 }));
 
@@ -1140,14 +1140,14 @@ test("H6: hand-moving a film from one agent to another leaves firstFound unstamp
   E.recomputeFound();
   assert.deepEqual(arr(E.notify[id].cascadeIds), [cA.id], "setup: A starts as sole owner");
   const stampBefore = E.firstFound[id];
-  const rowsBefore = E.movingData().newRows.map(r => r.filmId).sort();
+  const rowsBefore = E.movingData().rows.map(r => r.filmId).sort();
 
   E.pinFilmToCascadeAndRepaint(id, cB.id);
   E.recomputeFound();
 
   assert.deepEqual(arr(E.notify[id].cascadeIds), [cB.id], "setup: the hand-move must actually land on B");
   assert.equal(E.firstFound[id], stampBefore, "H6: firstFound must not be restamped by a hand-move");
-  const rowsAfter = E.movingData().newRows.map(r => r.filmId).sort();
+  const rowsAfter = E.movingData().rows.map(r => r.filmId).sort();
   assert.deepEqual(rowsAfter, rowsBefore, "H6: a hand-move must add no moving row");
 }));
 
@@ -1223,7 +1223,7 @@ test("J8: a film moving to a later window advances Watch On to standing and show
     assert.equal(E.notify[id].wins.in_cinema, false, "J8: ...and no longer sit at the earlier earned rung");
     const st = E.filmNotifyState(id);
     assert.equal(st.current, true, "J8: the card's notify state must read its \"can watch\" form");
-    const row = E.movingData().newRows.find(r => r.filmId === String(id));
+    const row = E.movingData().rows.find(r => r.filmId === String(id));
     assert.ok(row, "J8: a movingData() row must exist for the film");
   } finally {
     film.status = savedStatus;
@@ -1249,7 +1249,7 @@ test("J9: the same move leaves a manual Watch On untouched, and a movingData() r
 
     assert.equal(E.notify[id].wins.in_cinema, true, "J9: a manual Watch On must be untouched by the film's own move");
     assert.equal(E.notify[id].winsSource.in_cinema, "manual", "J9: ...and still read manual");
-    const row = E.movingData().newRows.find(r => r.filmId === String(id));
+    const row = E.movingData().rows.find(r => r.filmId === String(id));
     assert.ok(row, "J9: a movingData() row must still appear");
   } finally {
     film.status = savedStatus;
