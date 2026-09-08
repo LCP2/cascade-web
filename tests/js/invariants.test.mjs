@@ -1272,10 +1272,10 @@ function setSignedIn(signedIn){
   E.localStorage.setItem("cascade_had_account", signedIn ? "1" : "0");
 }
 
-// CAS-829/CAS-848: a film with no single owning agent (filmOwnerCascade returns null) still gets a row —
-// it renders in the untinted "Other" lane rather than being dropped. These CAS-667/668/670/671 checks are
-// about ledger-readiness/window/badge plumbing, not ownership itself (that's tests/js/moving-owner.test.mjs's
-// job), so every film they expect a row for gets one shared "mover" cascade as its real owner anyway.
+// CAS-829/CAS-858: a film with no single owning agent (filmOwnerCascade returns null) gets no row at all —
+// dropped, not rendered under any fallback lane. These CAS-667/668/670/671 checks are about ledger-
+// readiness/window/badge plumbing, not ownership itself (that's tests/js/moving-owner.test.mjs's job), so
+// every film they expect a row for gets one shared "mover" cascade as its real owner anyway.
 function seedMovingOwner(){
   const c = E.normCascade({ kind: "stream", status: [] });
   c.id = "cas829-moving-owner"; c.paused = false; c.order = 0;

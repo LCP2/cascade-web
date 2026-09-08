@@ -641,6 +641,53 @@ test("CAS-765 AC5: reaches signed-in state for a stored session with every non-a
   expect(await page.evaluate(() => window.CascadeAuth.user && window.CascadeAuth.user.email)).toBe("cas740@example.com");
 });
 
+// CAS-831: a temporary Watchmode-vs-OMDb/TMDB comparison row (wmScoresRowHTML), expanded card only. Values
+// are pushed onto a live MOVIES entry and the card re-rendered via fastPatchFindRow — the same targeted
+// re-render the app's own opinion/notify flows already use — because expanding a card only toggles a CSS
+// class (toggleExpand) and never re-runs cardHTML, so the row has to exist in the initial markup, hidden on
+// the collapsed card by CSS exactly like r-money/r-badge/r-awards already are, or a real tap-to-expand would
+// never reveal it. This suite's own "ios" project is already the 390x844 reference frame (playwright.config.mjs).
+test("CAS-831: the expanded card's Watchmode row shows its values, a missing one is a muted en-dash, and a collapsed card never shows the row", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  const cards = page.locator("#groups .card");
+  const card = cards.first();
+  await expect(card).toBeVisible();
+  const id = await card.evaluate(el => Number(el.id.replace("card-", "")));
+
+  await page.evaluate((filmId) => {
+    const m = MOVIES.find(x => x.tmdb_id === filmId);
+    m.wm_user_rating = 7.6; m.wm_popularity_percentile = 82.3; m.wm_critic_score = 91;
+    fastPatchFindRow(filmId);
+  }, id);
+
+  const wmRow = page.locator(`#card-${id} .r-wmscores`);
+  await expect(wmRow).toBeHidden();   // still collapsed — AC4, same collapsed card
+
+  await card.locator(".metaline").click();
+  await expect(page.locator(`#card-${id}`)).toHaveClass(/expanded/);
+  await expect(wmRow).toBeVisible();
+  await expect(wmRow).toContainText("7.6");
+  await expect(wmRow).toContainText("82.3");
+  await expect(wmRow).toContainText("91");
+
+  await page.evaluate((filmId) => {
+    const m = MOVIES.find(x => x.tmdb_id === filmId);
+    m.wm_critic_score = null;
+    fastPatchFindRow(filmId);
+  }, id);
+  const critCell = wmRow.locator(".m", { hasText: "WM crit" });
+  await expect(critCell).toHaveClass(/muted/);
+  await expect(critCell).toContainText("–");
+  await expect(wmRow).toContainText("7.6");     // the other two cells are unaffected
+  await expect(wmRow).toContainText("82.3");
+
+  // AC4: an untouched, still-collapsed card carries no visible Watchmode row.
+  await expect(cards.nth(1).locator(".r-wmscores")).toBeHidden();
+});
+
 // CAS-765 AC7: the silent guest-mode drop is gone. If the vendored client library ever fails to define
 // window.supabase.createClient — forced here by serving a broken bundle in place of the real one — the
 // failure must be visible on screen, not just a console.warn no user will ever read.

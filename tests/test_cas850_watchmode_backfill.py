@@ -6,12 +6,14 @@ never touch the real movies.json.
 """
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 from unittest import mock
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_REPO_ROOT, "scripts"))
 import cas850_watchmode_backfill as backfill  # noqa: E402
 
 import poc_pipeline as pp
@@ -82,6 +84,34 @@ class Cas850BackfillTestCase(unittest.TestCase):
 
         self.assertEqual(counts["titles enriched"], 0)
         self.assertEqual(counts["credits spent"], 0)
+
+
+class Cas859SubprocessInvocationTestCase(unittest.TestCase):
+    """CAS-859: the workflow runs this script as a subprocess from the repo root, not as an
+    in-process import — pytest's own import (above) puts the repo root on sys.path for free and
+    so cannot catch the ModuleNotFoundError the real invocation hit."""
+
+    def _run_without_api_key(self):
+        env = dict(os.environ)
+        env.pop("WATCHMODE_API_KEY", None)
+        return subprocess.run(
+            [sys.executable, os.path.join("scripts", "cas850_watchmode_backfill.py")],
+            cwd=_REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def test_the_script_imports_cleanly_when_run_as_a_subprocess_from_the_repo_root(self):
+        result = self._run_without_api_key()
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_a_missing_api_key_exits_cleanly_with_a_message_instead_of_a_traceback(self):
+        result = self._run_without_api_key()
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("WATCHMODE_API_KEY", result.stdout)
 
 
 if __name__ == "__main__":

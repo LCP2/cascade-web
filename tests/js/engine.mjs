@@ -289,6 +289,11 @@ if(typeof window.CascadeAuth === "undefined"){
   // both exported so a test can assert them directly.
   movingLanes, movingWindowRank, movingLedgerTruncated,
   MOVING_WINDOWS, movingSeen,
+  // CAS-858: MOVING_EMPTY_NO_OWNER_COPY is the empty-state copy shown when a window's entries were all
+  // dropped for having no owning agent, and movingEmptyCopy is the pure decision between it and the
+  // generic MOVING_EMPTY_COPY — both exported so a test can assert the choice directly instead of
+  // parsing renderMovingScreen's DOM-only write.
+  MOVING_EMPTY_NO_OWNER_COPY, MOVING_EMPTY_COPY, movingEmptyCopy,
   // CAS-670 AC2/AC4: renderMovingScreen is wire code (its DOM write is absorbed by the stub) but its early
   // return on the loading-state guard is a real decision — whether it marks any row seen — so a test needs
   // to call the real function rather than re-deriving the guard.

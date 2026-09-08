@@ -4,10 +4,12 @@
 // movingData() directly against seeded notify/cascades/realAlerts/firstFound state (the same shape
 // tests/js/invariants.test.mjs's CAS-667/670/671 Moving checks already use) to assert the row-selection
 // arithmetic now goes through filmOwnerCascade() exclusively, in both branches.
-// CAS-848: movingData() rows no longer carry a resolved agentName, and a row whose owner doesn't resolve
-// is no longer dropped — it renders in the final untinted "Other" lane instead (movingLanes(), matching
-// the Watch listing's own splitByOwner treatment of the same case). The tests below were updated for that:
-// AC2(b)/(d)'s old "no owner, no row" guarantee is superseded by "no owner, an Other-lane row".
+// CAS-848: movingData() rows no longer carried a resolved agentName, and a row whose owner didn't resolve
+// rendered in a final untinted "Other" lane (movingLanes()) instead of being dropped.
+// CAS-858: that "Other" lane was wrong — Lee's decision is that a row which cannot name an agent is not a
+// row. movingData() drops it again (as CAS-829 originally did), and movingLanes() no longer has an
+// "Other" branch at all. The tests below were updated back to the CAS-829 "no owner, no row" shape, plus
+// new coverage for the restored MOVING_EMPTY_NO_OWNER_COPY empty state and the unseen badge.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadEngine } from "./engine.mjs";
@@ -65,7 +67,7 @@ test("CAS-829 AC2(a): every row movingData() returns names exactly one agent, fr
   assert.equal(lane.cascade.name, owner.name, "AC2(a): the lane must resolve to the owner's current name");
 }));
 
-test("CAS-848: a realAlerts entry for a film with empty cascadeIds still produces a row, in the Other lane", () => withState(() => {
+test("CAS-858 AC1: a realAlerts entry for a film with empty cascadeIds produces no row", () => withState(() => {
   E.localStorage.setItem("cascade_had_account", "1");
   const [film] = pickFilms(1);
   E.notify[film.tmdb_id] = { cascadeIds: [] };
@@ -74,14 +76,13 @@ test("CAS-848: a realAlerts entry for a film with empty cascadeIds still produce
     cascade_name: "Some Agent", emailed_at: new Date().toISOString(), read_at: null });
   E.setMovingReady(true);
 
-  const { rows } = E.movingData();
+  const { rows, dropped } = E.movingData();
   const row = rows.find(r => r.filmId === String(film.tmdb_id));
-  assert.ok(row, "CAS-848: an unowned film must still produce a row");
-  assert.equal(row.agentId, null, "CAS-848: an unowned film's row must carry no agent id");
+  assert.ok(!row, "AC1: an unowned film (filmOwnerCascade returns null) must produce no row");
+  assert.equal(dropped.length, 1, "AC1: the ownerless entry must still be tracked as dropped");
 
-  const otherLane = E.movingLanes(rows).find(l => !l.cascade);
-  assert.ok(otherLane && otherLane.rows.some(r => r.filmId === row.filmId),
-    "CAS-848: the row must land in the untinted Other lane");
+  const lanes = E.movingLanes(rows);
+  assert.ok(!lanes.some(l => !l.cascade), "AC1: there must be no fallback Other lane any more");
 }));
 
 test("CAS-829 AC2(c): a ledger entry naming a non-owner agent still produces a row naming the OWNER", () => withState(() => {
@@ -118,10 +119,9 @@ test("CAS-829 AC2(d): the guest branch emits at most one agent per row", () => w
   assert.ok(ownedRow, "AC2(d): the owned film must still get a row on a guest device");
   assert.equal(ownedRow.agentId, owner.id, "AC2(d): the guest row must name the owner");
 
-  // CAS-848: an unowned film on a guest device now also gets a row (Other lane), not a drop.
+  // CAS-858: an unowned film on a guest device is dropped, same as the signed-in branch.
   const unownedRow = rows.find(r => r.filmId === String(unownedFilm.tmdb_id));
-  assert.ok(unownedRow, "CAS-848: an unowned film must still get a row on a guest device");
-  assert.equal(unownedRow.agentId, null, "CAS-848: the unowned guest row must carry no agent id");
+  assert.ok(!unownedRow, "CAS-858: an unowned film must produce no row on a guest device either");
 }));
 
 test("CAS-848 AC1: two agents of rank 1 and 2 each owning one row produce two lanes, rank 1 first", () => withState(() => {
@@ -188,11 +188,16 @@ function pickSameWindow(E, n){
   for(const list of byStatus.values()) if(list.length >= n) return list.slice(0, n);
   throw new Error(`no primaryStatus bucket has ${n} unwatched films`);
 }
+// CAS-861: movingData() now routes every row through listedBy (filmOwnerShown), which — like the real Watch
+// listing — applies listWindowOK's CAS-481 clause and denies an ESTIMATED "upcoming" film regardless of
+// ownership. Skip one here so this picker keeps choosing a film the listing would actually show, the same
+// screen invariants.test.mjs's pickPinnableFilm already applies for the same reason.
 function pickOneEach(E, statuses){
   const found = {};
   for(const m of E.MOVIES){
     if(E.watched.has(m.tmdb_id)) continue;
     const ps = E.primaryStatus(m);
+    if(ps==="upcoming" && E.isEstimated(m)) continue;
     if(statuses.includes(ps) && !found[ps]) found[ps] = m;
     if(Object.keys(found).length === statuses.length) break;
   }
@@ -267,4 +272,165 @@ test("CAS-852 AC3: movingLedgerTruncated reads false under the 200-row cap and t
   assert.equal(E.realAlerts.length, 200, "sanity: exactly 200 seeded");
   assert.equal(E.movingLedgerTruncated("2weeks"), true,
     "AC3: at the 200-row cap, the truncation notice's predicate must read true");
+}));
+
+test("CAS-858 AC2: a window whose entries are ALL ownerless renders MOVING_EMPTY_NO_OWNER_COPY", () => withState(() => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const [film] = pickFilms(1);
+  E.notify[film.tmdb_id] = { cascadeIds: [] };
+  E.realAlerts.length = 0;
+  E.realAlerts.push({ id: 1, movie_id: film.tmdb_id, moment: "announced_stream", title: film.title,
+    cascade_name: "Some Agent", emailed_at: new Date().toISOString(), read_at: null });
+  E.setMovingReady(true);
+
+  assert.equal(E.movingEmptyCopy("2weeks"), E.MOVING_EMPTY_NO_OWNER_COPY,
+    "AC2: a window whose only entries were dropped for having no owner must get the no-owner empty copy, not the generic one");
+}));
+
+test("CAS-858 AC2(b): a window with no ledger entries at all still gets the generic empty copy", () => withState(() => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  E.realAlerts.length = 0;
+  E.setMovingReady(true);
+
+  assert.equal(E.movingEmptyCopy("2weeks"), E.MOVING_EMPTY_COPY["2weeks"],
+    "AC2(b): genuinely nothing having moved must still read the generic empty copy");
+}));
+
+// ---- CAS-861: membership may ignore the my-services gate (CAS-132/381); Moving may not (Lee, 2026-09-08) --
+function withServicesOn(subs, run){
+  const sub = new Set(E.prefs.sub), on = E.prefs.on;
+  E.prefs.sub.clear(); subs.forEach(s => E.prefs.sub.add(s));
+  E.prefs.on = true;
+  try { return run(); }
+  finally { E.prefs.sub.clear(); sub.forEach(s => E.prefs.sub.add(s)); E.prefs.on = on; }
+}
+// A confirmed, unwatched, subscription-window real film cloned onto a fake id and re-offered on Foxtel only
+// — a service neither CAS-861's account nor this fixture's prefs.sub ever carries.
+function foxtelOnlyFilm(){
+  const source = E.MOVIES.find(m => !E.watched.has(m.tmdb_id) && E.primaryStatus(m) === "included_streaming"
+    && !E.isEstimated(m) && (m.offers || []).some(o => o.type === "sub"));
+  assert.ok(source, "no confirmed unwatched subscription-window film found — this test would prove nothing");
+  return { ...source, tmdb_id: 8610001, title: "CAS-861 Foxtel Fixture",
+    offers: [{ type: "sub", service: "Foxtel Now", price: null }] };
+}
+function netflixFilm(){
+  const source = E.MOVIES.find(m => !E.watched.has(m.tmdb_id) && E.primaryStatus(m) === "included_streaming"
+    && !E.isEstimated(m) && (m.offers || []).some(o => o.type === "sub"));
+  assert.ok(source, "no confirmed unwatched subscription-window film found — this test would prove nothing");
+  return { ...source, tmdb_id: 8610002, title: "CAS-861 Netflix Fixture",
+    offers: [{ type: "sub", service: "Netflix", price: null }] };
+}
+function withExtraFilm(film, run){
+  E.MOVIES.push(film);
+  try { return run(); } finally { E.MOVIES.pop(); }
+}
+
+test("CAS-861 AC1: services-only ON, Foxtel not subscribed, a HELD film produces no Moving row", () => withState(() => withServicesOn([], () => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const owner = ownerCascade("cas861-ac1-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const film = foxtelOnlyFilm();
+  withExtraFilm(film, () => {
+    E.notify[film.tmdb_id] = { cascadeIds: [owner.id] };
+    E.realAlerts.length = 0;
+    E.realAlerts.push({ id: 1, movie_id: film.tmdb_id, moment: "announced_stream", title: film.title,
+      cascade_name: owner.name, emailed_at: new Date().toISOString(), read_at: null });
+    E.setMovingReady(true);
+
+    const { rows } = E.movingData();
+    const row = rows.find(r => r.filmId === String(film.tmdb_id));
+    assert.ok(!row, "AC1: a film the listing excludes on services must produce no Moving row");
+  });
+})));
+
+test("CAS-861 AC2: the same film stays HELD — cascadeIds is untouched by the Moving drop", () => withState(() => withServicesOn([], () => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const owner = ownerCascade("cas861-ac2-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const film = foxtelOnlyFilm();
+  withExtraFilm(film, () => {
+    E.notify[film.tmdb_id] = { cascadeIds: [owner.id] };
+    E.realAlerts.length = 0;
+    E.realAlerts.push({ id: 1, movie_id: film.tmdb_id, moment: "announced_stream", title: film.title,
+      cascade_name: owner.name, emailed_at: new Date().toISOString(), read_at: null });
+    E.setMovingReady(true);
+
+    E.movingData();
+    assert.ok(E.notify[film.tmdb_id].cascadeIds.length > 0,
+      "AC2: dropping the Moving row must not clear the film's held membership");
+    assert.deepEqual(E.notify[film.tmdb_id].cascadeIds, [owner.id],
+      "AC2: cascadeIds must be exactly what it was before movingData() ran");
+  });
+})));
+
+test("CAS-861 AC3: turning the account services switch off makes the row appear again", () => withState(() => withServicesOn([], () => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const owner = ownerCascade("cas861-ac3-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const film = foxtelOnlyFilm();
+  withExtraFilm(film, () => {
+    E.notify[film.tmdb_id] = { cascadeIds: [owner.id] };
+    E.realAlerts.length = 0;
+    E.realAlerts.push({ id: 1, movie_id: film.tmdb_id, moment: "announced_stream", title: film.title,
+      cascade_name: owner.name, emailed_at: new Date().toISOString(), read_at: null });
+    E.setMovingReady(true);
+
+    assert.ok(!E.movingData().rows.find(r => r.filmId === String(film.tmdb_id)),
+      "sanity: the switch on must still drop the row");
+    E.prefs.on = false;
+    const row = E.movingData().rows.find(r => r.filmId === String(film.tmdb_id));
+    assert.ok(row, "AC3: switching the account services filter off must bring the row back");
+    assert.equal(row.agentId, owner.id, "AC3: the restored row must still name the owner");
+  });
+})));
+
+test("CAS-861 AC4: a film on a service the account DOES have is unaffected", () => withState(() => withServicesOn(["Netflix"], () => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const owner = ownerCascade("cas861-ac4-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const film = netflixFilm();
+  withExtraFilm(film, () => {
+    E.notify[film.tmdb_id] = { cascadeIds: [owner.id] };
+    E.realAlerts.length = 0;
+    E.realAlerts.push({ id: 1, movie_id: film.tmdb_id, moment: "announced_stream", title: film.title,
+      cascade_name: owner.name, emailed_at: new Date().toISOString(), read_at: null });
+    E.setMovingReady(true);
+
+    const row = E.movingData().rows.find(r => r.filmId === String(film.tmdb_id));
+    assert.ok(row, "AC4: a film on a service the account has must still get a Moving row");
+    assert.equal(row.agentId, owner.id, "AC4: the row must name the owner");
+  });
+})));
+
+test("CAS-861: the card's agent chip also cannot claim an owner for a film the listing excludes on services", () => withState(() => withServicesOn([], () => {
+  const owner = ownerCascade("cas861-chip-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const film = foxtelOnlyFilm();
+  withExtraFilm(film, () => {
+    E.notify[film.tmdb_id] = { cascadeIds: [owner.id] };
+    const chip = E.agentChipHTML(film.tmdb_id);
+    assert.doesNotMatch(chip, new RegExp(owner.name), "the chip must not name an owner the listing would exclude");
+    assert.ok(chip.includes("No agent"), "the chip must fall back to No agent");
+  });
+})));
+
+test("CAS-858 AC3: the unseen badge count excludes ownerless entries", () => withState(() => {
+  E.localStorage.setItem("cascade_had_account", "1");
+  const owner = ownerCascade("cas858-ac3-owner", 0, "Owner Agent");
+  E.cascades.push(owner);
+  const [ownedFilm, unownedFilm] = pickFilms(2);
+  E.notify[ownedFilm.tmdb_id] = { cascadeIds: [owner.id] };
+  E.notify[unownedFilm.tmdb_id] = { cascadeIds: [] };
+  E.realAlerts.length = 0;
+  E.realAlerts.push(
+    { id: 1, movie_id: ownedFilm.tmdb_id, moment: "new_to_agent", title: ownedFilm.title,
+      cascade_name: owner.name, emailed_at: new Date().toISOString(), read_at: null },
+    { id: 2, movie_id: unownedFilm.tmdb_id, moment: "new_to_agent", title: unownedFilm.title,
+      cascade_name: "Some Agent", emailed_at: new Date().toISOString(), read_at: null },
+  );
+  E.setMovingReady(true);
+
+  // movingBadgeWindow() predicts "2weeks" while Moving is closed (movingIsOpen is false by default here).
+  assert.equal(E.movingUnseenCount(), 1,
+    "AC3: the badge must count only the one owned, un-seen row — the ownerless entry must not contribute");
 }));

@@ -14,7 +14,15 @@ import json
 import os
 import sys
 
-import poc_pipeline as pp
+# CAS-859: invoked as `python scripts/cas850_watchmode_backfill.py`, which puts this file's own
+# directory (scripts/) at the front of sys.path, not the repo root — poc_pipeline.py at the root
+# is otherwise invisible. Resolve from __file__, not the working directory, so this also runs
+# correctly when invoked from elsewhere.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+import poc_pipeline as pp  # noqa: E402
 
 CATALOGUE = os.environ.get("CASCADE_CATALOGUE", "movies.json")
 MAX_CREDITS = int(os.environ.get("WM_FIELDS_MAX_CREDITS", str(pp.WM_FIELDS_MAX_CREDITS)))
@@ -65,5 +73,12 @@ def run(catalogue_path=None, max_credits=None):
 
 
 if __name__ == "__main__":
+    # CAS-859: a missing key is not a per-title failure `_api_call` can degrade around — every
+    # call this run would fail the same way. Check up front so a bad dispatch (trial key expired,
+    # secret not configured) exits with a clear message instead of a traceback or a wasted run
+    # against the real catalogue.
+    if not os.environ.get("WATCHMODE_API_KEY"):
+        print("WATCHMODE_API_KEY is not set — nothing to do, skipping the Watchmode fields backfill.")
+        sys.exit(0)
     run()
     sys.exit(0)

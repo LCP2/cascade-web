@@ -583,6 +583,7 @@
       "tomb  syn"
       "tomb  money"
       "tomb  scores"
+      "tomb  wmscores"
       "badge awards"
       "credits credits"}
   /* CAS-612 (v0.9.5): Awards / Director / Cast move up out of .expand and into the card body, above the
@@ -897,6 +898,7 @@
      A figure we don't hold reads "–" (and never "$–": there is no dollar sign on a number we lack). */
   .mrow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;align-content:center;min-width:0}
   .r-money{grid-area:money} .r-scores{grid-area:scores}
+  .r-wmscores{grid-area:wmscores}
   /* CAS-686: only ever shown by the .card.cinfo condensed-card override below — hidden here so
      the expanded card (which has its own r-money/r-scores/r-badge rows) never renders it twice. */
   .r-cinfo{display:none}
@@ -3426,6 +3428,7 @@
   .card:not(.expanded) .r-money,
   .card:not(.expanded) .r-badge,
   .card:not(.expanded) .r-awards,
+  .card:not(.expanded) .r-wmscores,
   .card:not(.expanded) .estline{display:none}
   /* the scores line, compacted to plain text */
   /* CAS-655: flex-wrap:wrap (was nowrap) so .attrib — the last item on this row — drops to its own
@@ -6567,6 +6570,17 @@ function scoresRowHTML(m){
        + cell("rt",  "RT",   m.rt_critic!=null?m.rt_critic+"%":"", m.rt_critic!=null)
        + cell("meta","Meta", m.metacritic!=null?m.metacritic:"",   m.metacritic!=null);
 }
+// CAS-831: a TEMPORARY comparison row, not shipped design — put here so the incoming Watchmode figures can
+// be checked by eye against scoresRowHTML's OMDb/TMDB ones before any scoring or agent logic moves onto
+// Watchmode. Renders even when every field is null: the gaps are themselves what this row exists to show,
+// and the catalogue may still be empty of them at build time (CAS-850's backfill dispatch is a Lee-only
+// step). Expanded card only — see the `.r-wmscores` hide rule for collapsed cards.
+function wmScoresRowHTML(m){
+  const cell=(label,val,has)=>`<span class="m${has?"":" muted"}"><span class="lab">${label}</span> <b>${has?val:"–"}</b></span>`;
+  return cell("WM",      m.wm_user_rating!=null?m.wm_user_rating.toFixed(1):"", m.wm_user_rating!=null)
+       + cell("WM pop",  m.wm_popularity_percentile!=null?m.wm_popularity_percentile.toFixed(1):"", m.wm_popularity_percentile!=null)
+       + cell("WM crit", m.wm_critic_score!=null?Math.round(m.wm_critic_score):"", m.wm_critic_score!=null);
+}
 // ---- The scale badge -----------------------------------------------------------
 // One badge, on its own row under the description. The tooltip (hover) and the toast (tap — a title= on a
 // phone is a tooltip nobody can reach) both say WHY, and the why is only ever the film's own figures:
@@ -7140,6 +7154,9 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
         ${syn}
         <div class="mrow r-money">${moneyRowHTML(m)}</div>
         <div class="mrow r-scores">${scoresRowHTML(m)}${oscMarkHTML(m)}${condensedBadgeHTML(m)}${attributionHTML(m)}</div>
+        <!-- CAS-831: temporary Watchmode-vs-OMDb/TMDB comparison row, expanded card only — hidden on the
+             collapsed card the same way r-money/r-badge/r-awards already are (see the CSS hide rule). -->
+        <div class="mrow r-wmscores">${wmScoresRowHTML(m)}</div>
         <!-- CAS-686: condensed-card-only — shown instead of r-scores when this film gets the "cinfo" class
              on .card (condensedShowsScores(m) is false). Hidden everywhere else, including the expanded
              card, by the base .r-cinfo{display:none}. -->
@@ -7552,8 +7569,14 @@ function notifyChipHTML(id){
 function agentChipSource(id, owner){
   return owner ? (pinnedInto(id,owner) ? "manual" : "auto") : null;
 }
+// CAS-861: owner is gated through ownerIfShown — a film held by an agent the account's my-services switch
+// would hide from the listing reads "No agent" here rather than crediting an owner the listing itself
+// wouldn't show. Every real card renders from a catalogue film, so m is always found in production; the
+// fallback below only ever matters for the odd id with no MOVIES entry.
 function agentChipHTML(id){
-  const owner=cascadesFor(id)[0]||null;
+  const m=MOVIES.find(x=>x.tmdb_id===id);
+  const rawOwner=cascadesFor(id)[0]||null;
+  const owner=m ? ownerIfShown(m, rawOwner) : rawOwner;
   const lbl = owner ? owner.name : "No agent";
   const title = owner
     ? `Owned by ${owner.icon} ${owner.name}. Tap to move to a different agent.`
@@ -16584,6 +16607,10 @@ const MOVING_EMPTY_COPY = {
   "2weeks":"Nothing has moved in the last 2 weeks.",
   month:"Nothing has moved in the last month.",
 };
+// CAS-829, restored by CAS-858: shown instead of MOVING_EMPTY_COPY when the selected window held ledger
+// entries but every one was dropped for having no current owning agent — that is a different truth than
+// "nothing moved" and should not be said as if it were.
+const MOVING_EMPTY_NO_OWNER_COPY = "Something moved, but no agent currently owns it, so there's nothing to show.";
 let movingWindow="today";
 // CAS-668: whether the screen is actually open right now — the badge mirrors movingWindow
 // while it is, and predicts the window openMovingScreen would pick while it isn't. See movingBadgeWindow.
@@ -16619,16 +16646,17 @@ function movingLedgerTruncated(win){
 }
 // CAS-848: every row names its OWNER agent (filmOwnerCascade, the same single-owner answer the Watch
 // listing's own per-agent blocks use) rather than the ledger entry's own agent-name field, which can list
-// an agent that no longer owns (or never owned) this film. An owner that no longer resolves (or never
-// existed — cascadeIds empty) is not dropped any more: it renders in the final untinted "Other" lane at
-// render time, exactly like the Watch listing's splitByOwner treats the same case.
+// an agent that no longer owns (or never owned) this film.
+// CAS-858: a film with no current owning agent is dropped, not rendered under a fallback "Other" lane — a
+// row that cannot name an agent is not a row. `dropped` carries just enough (the date) for
+// movingWindowRows to tell "nothing moved" apart from "something moved but every entry was ownerless".
 function movingData(){
   const guest=movingIsGuestDevice();
   // CAS-667: a signed-in device must never paint the guest ledger while the real one is still in flight —
   // Moving is the landing screen, so the first render reliably lost this race. Render nothing until
   // loadRealAlerts has actually answered; a genuine guest has nothing to wait for and is unaffected.
-  if(!guest && !movingReady) return {rows:[]};
-  const rows=[];
+  if(!guest && !movingReady) return {rows:[], dropped:[]};
+  const rows=[], dropped=[];
   if(guest){
     // firstFound only ever says "this film is newly found" — it carries no notion of a level being
     // reached or lost — so a guest device only ever gets New rows.
@@ -16636,35 +16664,51 @@ function movingData(){
       if(watched.has(Number(fid))) return;
       const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
       if(!m) return;
-      const owner=filmOwnerCascade(m);
+      const owner=filmOwnerShown(m);
+      if(!owner){ dropped.push({date:firstFound[fid]}); return; }
       rows.push({filmId:fid, m, tag:"new", reason:"New to your agents",
-        agentId:owner?owner.id:null, date:firstFound[fid]});
+        agentId:owner.id, date:firstFound[fid]});
     });
   }else{
     // realAlerts is loaded newest-first (loadRealAlerts orders by emailed_at descending), so the first
     // entry seen per film is the most recent — exactly the one whose moment/date should describe the row.
-    const byFilm=new Map();
+    const byFilm=new Map(), droppedByFilm=new Map();
     realAlerts.forEach(a=>{
       const fid=String(a.movie_id);
       if(watched.has(Number(fid))) return;   // dealt with, never shown as having moved
-      if(byFilm.has(fid)) return;
+      if(byFilm.has(fid) || droppedByFilm.has(fid)) return;
       const m=MOVIES.find(x=>String(x.tmdb_id)===fid);
       if(!m) return;
-      const owner=filmOwnerCascade(m);
+      const owner=filmOwnerShown(m);
+      if(!owner){ droppedByFilm.set(fid,{date:a.emailed_at}); return; }
       byFilm.set(fid,{filmId:fid, m, tag:movingIsNewMoment(a.moment)?"new":"changed",
         reason:REAL_MOMENT_SAID[a.moment]||a.moment,
-        agentId:owner?owner.id:null, date:a.emailed_at});
+        agentId:owner.id, date:a.emailed_at});
     });
     rows.push(...byFilm.values());
+    dropped.push(...droppedByFilm.values());
   }
-  return {rows};
+  return {rows, dropped};
 }
 // CAS-668: the filtered row set both the badge and the list are built from — one recipe, so they cannot
 // disagree about which rows are "in" the window. renderMovingScreen calls this with its live movingWindow;
 // movingUnseenCount calls it with whatever movingBadgeWindow() says applies right now.
+// CAS-858: droppedInWindow lets renderMovingScreen tell an empty window (nothing moved) apart from a
+// window whose entries were all dropped for having no owner — the two need different empty copy.
 function movingWindowRows(win){
-  const {rows}=movingData();
-  return {shownRows: rows.filter(r=>movingInWindow(r.date, win))};
+  const {rows, dropped}=movingData();
+  return {
+    shownRows: rows.filter(r=>movingInWindow(r.date, win)),
+    droppedInWindow: dropped.filter(d=>movingInWindow(d.date, win)),
+  };
+}
+// CAS-858: which empty-state line an empty window gets — factored out of renderMovingScreen (whose own
+// write is DOM-only, not reachable from a test) so the choice between "nothing moved" and "something
+// moved but every entry was ownerless" can be asserted directly.
+function movingEmptyCopy(win){
+  const {shownRows, droppedInWindow}=movingWindowRows(win);
+  if(shownRows.length) return null;
+  return droppedInWindow.length ? MOVING_EMPTY_NO_OWNER_COPY : MOVING_EMPTY_COPY[win];
 }
 // CAS-668: while Moving is open, the badge must track whatever window is actually on screen (movingWindow),
 // including a tap via setMovingWindow. While it's closed, there is no "on screen" window yet, so the badge
@@ -16700,14 +16744,14 @@ function movingWindowRank(m){
 }
 // CAS-848: one lane per owning agent, ranked the same way the Watch listing ranks its own per-agent
 // blocks (cascadeRankTint/c.order) — resolved fresh by id here, not trusted from the row, so a since-
-// renamed (or since-deleted) agent is never stale. No cascade resolves -> the final untinted "Other" lane.
+// renamed agent is never stale. CAS-858: every row's agentId already resolves — an ownerless row never
+// reaches here, movingData() dropped it — so there is no "Other" lane to fall back to any more.
 function movingLanes(rows){
   const byKey=new Map();
   rows.forEach(r=>{
-    const cascade = r.agentId!=null ? cascades.find(c=>c.id===r.agentId) : null;
-    const key = cascade ? cascade.id : "__other__";
-    if(!byKey.has(key)) byKey.set(key, {cascade, rows:[]});
-    byKey.get(key).rows.push(r);
+    const cascade = cascades.find(c=>c.id===r.agentId);
+    if(!byKey.has(cascade.id)) byKey.set(cascade.id, {cascade, rows:[]});
+    byKey.get(cascade.id).rows.push(r);
   });
   const lanes=[...byKey.values()];
   // CAS-852: window rank first, newest-first only as the tiebreak within one window — replaces CAS-848's
@@ -16715,7 +16759,7 @@ function movingLanes(rows){
   lanes.forEach(l=>l.rows.sort((a,b)=>
     movingWindowRank(a.m)-movingWindowRank(b.m) || (Date.parse(b.date)||0)-(Date.parse(a.date)||0)
   ));
-  lanes.sort((a,b)=>(a.cascade?(a.cascade.order??1e9):Infinity)-(b.cascade?(b.cascade.order??1e9):Infinity));
+  lanes.sort((a,b)=>(a.cascade.order??1e9)-(b.cascade.order??1e9));
   return lanes;
 }
 // A row's `date` is either a realAlerts emailed_at timestamp or a firstFound day string — both parse with
@@ -16770,7 +16814,7 @@ function renderMovingScreen(){
     ${ledgerTruncated ? `<p class="mvemptysub" style="padding:0 2px 12px">Showing the most recent 200 events.</p>` : ""}</div>`;
   if(!shownRows.length){
     $("movingBody").innerHTML = `${head}<div class="mvempty">
-      <p class="mvemptymain">${esc(MOVING_EMPTY_COPY[movingWindow])}</p>
+      <p class="mvemptymain">${esc(movingEmptyCopy(movingWindow))}</p>
       <p class="mvemptysub">Your agents are still watching. You'll see it here first.</p>
     </div>`;
     syncHeaderHeight();
@@ -16778,12 +16822,11 @@ function renderMovingScreen(){
   }
   const lanes=movingLanes(shownRows);
   $("movingBody").innerHTML = head + lanes.map(lane=>{
-    const tint=cascadeRankTint(lane.cascade);   // null keeps the untinted "Other" appearance
-    const name=lane.cascade ? `${lane.cascade.icon} ${esc(lane.cascade.name)}` : "Other";
+    const tint=cascadeRankTint(lane.cascade);
+    const name=`${lane.cascade.icon} ${esc(lane.cascade.name)}`;
     // CAS-636: tapping the lane heading lands on Watch with that agent selected — the same destination the
     // old per-row "via <agent>" chip opened (openMovingAgent), just moved onto the heading that now names it.
-    const clickable = lane.cascade
-      ? ` role="button" tabindex="0" data-cid="${escA(lane.cascade.id)}" onclick="openMovingAgentEl(this)" style="cursor:pointer"` : "";
+    const clickable = ` role="button" tabindex="0" data-cid="${escA(lane.cascade.id)}" onclick="openMovingAgentEl(this)" style="cursor:pointer"`;
     return `<div class="ablock${tint?` agrank-${tint}`:""}">
       <div class="grouphead sub"${clickable}><span>${name}</span><span class="gcount" style="margin-left:auto">${lane.rows.length}</span></div>
       <div class="mvlist">${lane.rows.map(movingRowHTML).join("")}</div>
@@ -18393,6 +18436,18 @@ function filmOwnerCascade(m){
     if(c && (!best || (c.order??Number.MAX_SAFE_INTEGER)<(best.order??Number.MAX_SAFE_INTEGER))) best=c;
   });
   return best;
+}
+// CAS-861: narrows an already-chosen owner to one a SURFACE (Moving, the card's agent chip) may actually
+// credit — null if the listing itself would exclude this film for that cascade (the my-services gate above
+// all). Membership (filmOwnerCascade/cascadesFor, watchesFilm, recomputeFound, the agent_films ledger) is
+// untouched and keeps ignoring that gate on purpose (CAS-132/381: an agent still holds a film you cannot
+// currently stream) — only what gets SHOWN as an owner changes. Reuses listedBy, the exact test the listing
+// itself applies, so a surface can never disagree with it.
+function ownerIfShown(m, owner){
+  return owner && listedBy(m, owner) ? owner : null;
+}
+function filmOwnerShown(m){
+  return ownerIfShown(m, filmOwnerCascade(m));
 }
 // CAS-760: which of the six rank tints a cascade's sub-heading band gets — its POSITION among the
 // account's cascades sorted by `order` (order values are sparse, so the position, not the raw number),
