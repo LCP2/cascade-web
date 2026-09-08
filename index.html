@@ -2692,6 +2692,9 @@
     background:var(--brand-blue);color:#fff;font-size:10px;font-weight:800;line-height:16px;text-align:center;padding:0 3px}
   .watchactivefilters{margin:8px 12px 0;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
     scrollbar-width:none}
+  /* CAS-839: .chips sets display:flex, so a bare [hidden] loses to it — the same trap .occwrap[hidden]
+     (~2683), .cascsearch[hidden] (~1286) and .stephdr[hidden] (~2840) already had to restate. */
+  .watchactivefilters[hidden]{display:none}
   .watchactivefilters::-webkit-scrollbar{display:none}
   .watchactivefilters .chip{flex:0 0 auto;display:flex;align-items:center;gap:6px;
     background:rgba(76,125,255,.16);border-color:rgba(76,125,255,.5);color:#cddcff}
@@ -2749,10 +2752,13 @@
      rounded panel, sitting just under the pill it belongs to, says the same thing without the artefact. */
   .cpop.spop{padding:5px 4px 4px;border-color:rgba(76,125,255,.5)}
   .listctl{display:flex;align-items:stretch;gap:8px;margin:8px 12px 0}
+  /* CAS-839: display:flex above beats a bare [hidden] — same restatement as .watchactivefilters (~2696). */
+  .listctl[hidden]{display:none}
   /* CAS-823: replaces the CAS-275 scrolling rail — at real width the chips overflowed and landed mid-scroll,
      cut at both edges, so the first section was unreachable without a flick. This version never scrolls: a
      short "Now" label, then one stop per section actually on screen, spaced across the width it has. */
   .jumpbar{flex:1;min-width:0;display:flex;align-items:flex-start;gap:10px}
+  .jumpbar[hidden]{display:none}
   .jumpbar .nowlbl{flex:none;font-size:10.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
     color:var(--faint);padding-top:15px}
   .jumpbar .nowtrack{flex:1;min-width:0;position:relative;display:flex;justify-content:space-between}
@@ -5704,7 +5710,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 996, "commit": "c71b9ad", "builtAt": "2026-09-07T23:58:05Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 997, "commit": "d4c1a95", "builtAt": "2026-09-08T00:38:34Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -10595,6 +10601,15 @@ function syncHeaderHeight(){
 let cascResizeT=0;
 addEventListener("resize",()=>{ clearTimeout(cascResizeT); cascResizeT=setTimeout(syncHeaderHeight,140); });
 syncHeaderHeight();
+// CAS-839: the call sites above only fire at specific known moments, but the chrome can also change size
+// on its own — a web font swapping in, or any layout shift none of those call sites happen to run after.
+// Observing the two boxes directly catches every case instead of chasing another guessed call site.
+if(phoneHeader && typeof ResizeObserver!=="undefined"){
+  const cascChromeObserver=new ResizeObserver(syncHeaderHeight);
+  cascChromeObserver.observe(phoneHeader);
+  const cascbarEl=document.getElementById("cascbar");
+  if(cascbarEl) cascChromeObserver.observe(cascbarEl);
+}
 
 // ---- CAS-136: per-cascade search ------------------------------------------------------------------
 // Search belongs to the watch list you are reading, so it is remembered per list: leave a term in one, go
@@ -18797,9 +18812,12 @@ function jumpStopIsOwn(k){
 }
 function renderJumpBar(){
   const el=$("jumpBar"); if(!el) return;
+  const wrap=$("listCtl");   // CAS-839: #listCtl's only child is #jumpBar — hide the wrapper too, or its
+                              // own margin still draws an empty band when the bar inside it is hidden.
   const groups=[...document.querySelectorAll("#groups .group")];
-  if(groups.length<2){ el.hidden=true; el.innerHTML=""; return; }
+  if(groups.length<2){ el.hidden=true; if(wrap) wrap.hidden=true; el.innerHTML=""; return; }
   el.hidden=false;
+  if(wrap) wrap.hidden=false;
   const stopsHTML=groups.map(g=>{
     const k=g.dataset.g;
     const n=(g.querySelector(".gcount")||{}).textContent||"";
