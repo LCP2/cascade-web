@@ -2969,7 +2969,12 @@
   .card.expanded .qscore{font-size:14px}
   /* ---- Minimal card layout (collapsed card reads as a row) --------------------
      Collapsed only. The expanded card, the film page and every stub are untouched. */
-  .card:not(.expanded){border-radius:10px;margin-bottom:5px;contain-intrinsic-size:auto 108px}
+  /* CAS-897: was 108px — CAS-895 stopped hiding .r-wmscores on a collapsed card, adding a real ~29px row
+     (26.875px content + the ctop grid's row-gap) that this placeholder never grew to match. content-
+     visibility:auto swaps an off-screen card's estimated height for its real one as it nears the viewport;
+     with the estimate short, dozens of not-yet-rendered cards above the one under test all overshot by
+     that same ~29px, and the accumulated jump landed as scroll drift once they resolved. */
+  .card:not(.expanded){border-radius:10px;margin-bottom:5px;contain-intrinsic-size:auto 137px}
   .card:not(.expanded) .cbody{padding:6px 10px}
   .card:not(.expanded) .ctop{
     grid-template-columns:30px minmax(0,1fr);
@@ -2996,11 +3001,11 @@
   .card:not(.expanded) .mrow.r-scores .m,
   .card:not(.expanded) .mrow.r-scores button.m,
   .card:not(.expanded) .mrow.r-wmscores .m,
-  .card:not(.expanded) .mrow.r-wmscores button.m{padding:0;background:none;border:none;font-size:11px;line-height:1.2;white-space:nowrap;flex:none}
+  .card:not(.expanded) .mrow.r-wmscores button.m{padding:0;background:none;border:none;font-size:12px;line-height:1.2;white-space:nowrap;flex:none}
   .card:not(.expanded) .mrow.r-scores .m b,
-  .card:not(.expanded) .mrow.r-wmscores .m b{font-size:11px}
+  .card:not(.expanded) .mrow.r-wmscores .m b{font-size:12px}
   .card:not(.expanded) .mrow.r-scores .lab,
-  .card:not(.expanded) .mrow.r-wmscores .lab{font-size:10px}
+  .card:not(.expanded) .mrow.r-wmscores .lab{font-size:11px}
   .card:not(.expanded) .mrow.r-scores .dot,
   .card:not(.expanded) .mrow.r-wmscores .dot{width:6px;height:6px}
   /* CAS-686: a condensed card for a film with none of IMDb/RT/Metacritic shows badge + money instead of
@@ -5918,8 +5923,8 @@ function wmScoresRowHTML(m){
   // Watchmode fields, for eyeballing against scoresRowHTML's own Cascade cell above.
   const wcs=wmCascadeScore(m);
   return cell("WM",      m.wm_user_rating!=null?m.wm_user_rating.toFixed(1):"", m.wm_user_rating!=null)
-       + cell("WM pop",  m.wm_popularity_percentile!=null?m.wm_popularity_percentile.toFixed(1):"", m.wm_popularity_percentile!=null)
-       + cell("WM crit", m.wm_critic_score!=null?Math.round(m.wm_critic_score):"", m.wm_critic_score!=null)
+       + cell("Pop",     m.wm_popularity_percentile!=null?m.wm_popularity_percentile.toFixed(1):"", m.wm_popularity_percentile!=null)
+       + cell("Crit",    m.wm_critic_score!=null?Math.round(m.wm_critic_score):"", m.wm_critic_score!=null)
        + cell("Cascade", wcs, wcs>=0);
 }
 // ---- The scale badge -----------------------------------------------------------
@@ -7177,6 +7182,10 @@ function positionPanel(pop, anchorBtn){
   // directly BELOW it with their own heights, and .card's overflow:hidden + content-visibility:auto mean
   // .cpop's z-index can never paint above them. So the band to clear is the measured BOTTOM of whichever
   // of those bars is currently on screen, falling back to the header when neither is.
+  // CAS-897: the per-agent lane heading (.grouphead.sub) is ALSO sticky and sits in that same trapped
+  // stacking context — same reason as cascbar/ymSticky above, just scoped to this row's own .ablock rather
+  // than the whole screen. Missing this let a card tall enough to land its row under a stuck lane heading
+  // open its panel straight underneath it: nothing failed visibly, but every click landed on the heading.
   const stickyBottom = el => {
     if(!el) return 0;
     const r = el.getBoundingClientRect();
@@ -7184,7 +7193,8 @@ function positionPanel(pop, anchorBtn){
   };
   const occluded = Math.max(hdr,
     stickyBottom(document.getElementById("cascbar")),
-    stickyBottom(document.getElementById("ymSticky")));
+    stickyBottom(document.getElementById("ymSticky")),
+    stickyBottom(pop.closest(".ablock")?.querySelector(".grouphead.sub")));
   if(pop.getBoundingClientRect().top < occluded+8) pop.classList.add("pop-down");
   if(anchorBtn){
     const row=pop.parentElement;
@@ -7236,7 +7246,15 @@ let watchPanelAnchorY=null;
 // focus() call (every open*Panel below now does) catches that same drift before it is ever visible, instead
 // of only cleaning it up once you go on to answer.
 function snapToWatchPanelAnchor(){
-  if(watchPanelAnchorY!=null && Math.abs(scrollY-watchPanelAnchorY)>0.5) scrollBy(0, watchPanelAnchorY-scrollY);
+  const fix=()=>{ if(watchPanelAnchorY!=null && Math.abs(scrollY-watchPanelAnchorY)>0.5) scrollBy(0, watchPanelAnchorY-scrollY); };
+  fix();
+  // CAS-897: a card's content-visibility:auto placeholder (see the intrinsic-size comment on .card above)
+  // can still be swapping neighbouring off-screen cards to their real height on a LATER frame, after this
+  // synchronous pass already ran — each correction can itself bring a fresh batch of cards near enough to
+  // the viewport to trigger their own swap, so this chases it across a few frames rather than just one.
+  let n=0;
+  const chase=()=>{ fix(); if(++n<5) requestAnimationFrame(chase); };
+  requestAnimationFrame(chase);
 }
 window.openWatchPanel=(id, btn)=>{
   // CAS-281: "was MY panel already open?", not "was ANY panel open?". The old test closed whatever was open
