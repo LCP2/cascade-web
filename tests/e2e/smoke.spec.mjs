@@ -65,6 +65,30 @@ test("recommendations render as a results list with items", async ({ page }) => 
   expect(rendered).toBeGreaterThan(0);
 });
 
+// CAS-901: the Watch listing (no screen/modal open, so none of the app's own JS-driven
+// body.style.overflow="hidden" toggles are active) could be dragged sideways on iOS/WebKit — html and body
+// carried no CSS overflow-x containment at rest, only the --ui-scale zoom, so documentElement.scrollWidth
+// ran wider than clientWidth and WebKit let the document rubber-band pan. Fixed with overflow-x:clip on
+// both html and body (AC1-3). AC4 covers the fix's own named regression risk: overflow-x:hidden would force
+// a paired overflow-y:auto and put sticky descendants' containing block in question — clip does not, but
+// assert the header is still sticky so a future change back to hidden would be caught here.
+test("Watch listing has no horizontal overflow and the header stays sticky (CAS-901)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await settleListing(page);
+
+  const { scrollWidth, clientWidth, overflowX, headerPosition } = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+    overflowX: getComputedStyle(document.documentElement).overflowX,
+    headerPosition: getComputedStyle(document.querySelector("header")).position,
+  }));
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+  expect(overflowX).not.toBe("visible");
+  expect(headerPosition).toBe("sticky");
+});
+
 test("a film card's Watched control lands an answer", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
