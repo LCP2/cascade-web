@@ -325,6 +325,13 @@
     font-size:14px;font-weight:600;padding:12px 14px;cursor:pointer}
   .navitem:last-child{border-bottom:0}
   .navitem:hover,.navitem:focus-visible{background:var(--panel2)}
+  /* CAS-886: Invites' own unread count, next to its label in the dropdown, plus the small dot the hamburger
+     icon itself carries whenever that count is non-zero — --accent (violet) rather than --rt/--green, so it
+     reads as its own thing and not a reuse of Moving's badge or the account-error dot. */
+  .navitem-badge{background:var(--accent);color:#fff;font-size:11px;font-weight:800;min-width:18px;
+    height:18px;border-radius:10px;display:grid;place-items:center;padding:0 5px;flex:0 0 auto}
+  .navdot{position:absolute;top:-3px;right:-3px;width:10px;height:10px;border-radius:50%;
+    background:var(--accent);border:2px solid var(--bg);display:none}
   .search{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
     border-radius:10px;padding:11px 40px 11px 12px;font-size:16px}
   .search::placeholder{color:var(--faint)}
@@ -1076,6 +1083,11 @@
   .pill.rental{background:rgba(90,169,240,.13);border-color:rgba(90,169,240,.5);color:#bcdcff}
   .pill.included_streaming{background:rgba(72,199,142,.13);border-color:rgba(72,199,142,.5);color:#a7eccb}
   .pill.upcoming{background:rgba(var(--upcoming-rgb),.15);border-color:rgba(var(--upcoming-rgb),.5);color:var(--upcoming-ink)}
+  /* CAS-886: the Invites screen's reply state pills — Yes (green, same language as .mvchip.new), No (quiet,
+     no colour claim to make), No reply (dashed outline, nothing has happened yet). */
+  .pill.invyes{background:rgba(72,199,142,.16);border-color:var(--green);color:#a7eccb}
+  .pill.invno{background:var(--panel2);border-color:var(--line);color:var(--dim)}
+  .pill.invwait{background:transparent;border-color:var(--line);border-style:dashed;color:var(--faint)}
 
   .wtw-toggle .chev{transition:transform .18s}
   .wtw-toggle.open .chev{transform:rotate(180deg)}
@@ -1214,6 +1226,29 @@
   .mvempty{padding:40px 16px;text-align:center}
   .mvemptymain{font-size:14px;font-weight:700;color:var(--ink)}
   .mvemptysub{font-size:12px;color:var(--faint);margin-top:6px}
+
+  /* ---- Invites (CAS-886) — the sender's own list of who's replied, and the in-flow alert Moving shows
+     while a reply is unread. Rows reuse .flabel for group headings and .pill for the state (see the
+     .pill.inv* variants above), so the screen borrows the app's existing visual language rather than
+     inventing a new one. ---- */
+  .invrow{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--line)}
+  .invrow:last-child{border-bottom:0}
+  .invposter{width:44px;height:64px;border-radius:8px;background:var(--panel2) center/cover no-repeat;
+    flex:0 0 auto}
+  .invmain{flex:1 1 auto;min-width:0}
+  .invname{font-size:15px;font-weight:700;color:var(--ink)}
+  .invsub{font-size:12.5px;color:var(--dim);margin-top:2px}
+  .invpills{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .invdot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:0 0 auto}
+  .invempty{padding:40px 16px;text-align:center;color:var(--faint);font-size:13px}
+  /* The Moving-screen panel (item 4): a bordered block in the flow, never a floating toast — see
+     renderMovingScreen's own call site for why it sits between #movingHead and the sections/empty state. */
+  .invalert{border:1px solid var(--accent);background:rgba(124,92,255,.1);border-radius:12px;
+    padding:12px 14px;margin:0 2px 14px;cursor:pointer}
+  .invalert-head{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink)}
+  .invalert-head .invdot{margin-left:auto}
+  .invalert-detail{font-size:12.5px;color:var(--dim);margin-top:4px;line-height:1.5}
+  .invalert-link{color:var(--accenttext);font-weight:700;white-space:nowrap}
   /* My List reuses the card's .actbtn — same three icons, same grey default, same purple ON state — and
      only overrides the box. One action wearing two different active colours in two places was exactly the
      inconsistency CAS-64 is here to kill. */
@@ -3236,8 +3271,14 @@
              Account drops to second-last since it's reached for rarely. -->
         <div class="navmenu-wrap">
           <div class="iconbtn" id="navMenuBtn" title="Menu" role="button" tabindex="0" aria-haspopup="true"
-               aria-expanded="false" aria-controls="navMenu" aria-label="Menu" onclick="toggleNavMenu(event)">☰</div>
+               aria-expanded="false" aria-controls="navMenu" aria-label="Menu" onclick="toggleNavMenu(event)">☰
+            <span class="navdot" id="navMenuDot" style="display:none" aria-hidden="true"></span>
+          </div>
           <div class="navmenu" id="navMenu" role="menu" aria-label="Menu">
+            <!-- CAS-886: Invites leads the menu — the top-of-list slot Notifications held before CAS-636
+                 folded that surface into Moving, and the position the design image gives Invites now. -->
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('invites')">Invites
+              <span class="navitem-badge" id="invitesNavBadge" style="display:none">0</span></button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('languages')">Languages</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('whereWhen')">Where &amp; when you'll watch</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('services')">My services</button>
@@ -3769,6 +3810,12 @@
      (CAS-345). -->
 <div class="uscreen" id="accountScreen" role="dialog" aria-modal="true" aria-label="Account">
   <div class="uwrap" id="accountBody"></div>
+</div>
+
+<!-- INVITES (CAS-886) — the sender's own list of who they've invited to watch something, and who's
+     replied. Body rendered by renderInvitesScreen(). Reached from the top menu, its own top entry. -->
+<div class="uscreen" id="invitesScreen" role="dialog" aria-modal="true" aria-label="Invites">
+  <div class="uwrap" id="invitesBody"></div>
 </div>
 
 <!-- SERVICE ANALYSIS (CAS-344) — the "which service covers what your agents found" view, given its own
@@ -4973,7 +5020,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1064, "commit": "de37c49", "builtAt": "2026-09-09T21:17:48Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1065, "commit": "f43d313", "builtAt": "2026-09-09T21:40:34Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6535,6 +6582,152 @@ window.replyFilmInvite=async answer=>{
     : `<div class="fpinvite-confirm no">Noted</div>
        <div class="fpinvite-note">${sender} will see you said no thanks.</div>`;
 };
+
+// ---- CAS-886: Invites screen, menu badge and the Moving reply alert — the SENDER's side of an invite ----
+// invites holds the account's own invites (RLS: invites_owner), each with its invite_replies embedded via
+// the FK PostgREST resource-embed (public.invite_replies.token -> public.invites.token). Loaded once per
+// sign-in by loadInvites() (added to fireAccountFanout, below, next to loadRealAlerts) and kept in memory —
+// there is no live subscription, the same "reload on next fanout" freshness every other account table here
+// gets.
+let invites=[];
+let invitesReady=true;   // CAS-886: flips false for the span of fireAccountFanout's loadInvites() call, same
+                          // shape as movingReady/filmWatchReady — a guest has nothing to wait on, hence true.
+// A recipient can in principle reply from more than one device (a fresh client_key each time), but the
+// screen shows ONE state per invite, not one row per reply — the newest reply is what's true now.
+function latestInviteReply(inv){
+  const replies=inv.invite_replies||[];
+  if(!replies.length) return null;
+  return replies.reduce((a,b)=>(Date.parse(b.created_at)||0)>(Date.parse(a.created_at)||0)?b:a);
+}
+function invitesUnseenCount(){
+  return invites.reduce((n,inv)=>{
+    const r=latestInviteReply(inv);
+    return n + (r && !r.seen_at ? 1 : 0);
+  }, 0);
+}
+function updateInvitesBadge(){
+  const n=invitesUnseenCount();
+  const b=$("invitesNavBadge");
+  if(b){ if(n){ b.style.display="grid"; b.textContent=n; } else b.style.display="none"; }
+  const d=$("navMenuDot");
+  if(d) d.style.display = n ? "block" : "none";
+}
+// Truthful, coarse relative time — never more precise than the gap actually warrants (movingAgeText's own
+// reasoning), but Invites needs minute/hour granularity movingAgeText doesn't: "replied 20 min ago" reads
+// very differently from "replied today" on a screen that's largely about how fresh a reply is.
+function inviteAgeText(dateStr){
+  const t=dateStr && Date.parse(dateStr);
+  if(!t || isNaN(t)) return "";
+  const mins=Math.floor((Date.now()-t)/60000);
+  if(mins<1) return "just now";
+  if(mins<60) return `${mins} min ago`;
+  const hours=Math.floor(mins/60);
+  if(hours<24) return `${hours}h ago`;
+  const days=Math.floor(hours/24);
+  if(days===1) return "yesterday";
+  return `${days} days ago`;
+}
+function inviteRowHTML(inv, state){
+  const reply=latestInviteReply(inv);
+  const name=esc(inv.to_name || "Someone");
+  const m=MOVIES.find(x=>x.tmdb_id===inv.tmdb_id);
+  const poster=m && m.poster
+    ? `<div class="invposter" style="background-image:url(https://image.tmdb.org/t/p/w92${esc(m.poster)})"></div>`
+    : `<div class="invposter"></div>`;
+  const pill = state==="waiting" ? `<span class="pill invwait">No reply</span>`
+    : reply.answer==="yes" ? `<span class="pill invyes">Yes</span>`
+    : `<span class="pill invno">No</span>`;
+  const when = state==="waiting" ? `sent ${inviteAgeText(inv.created_at)}` : `replied ${inviteAgeText(reply.created_at)}`;
+  const unread = state==="new";
+  return `<div class="invrow">
+    ${poster}
+    <div class="invmain">
+      <div class="invname">${name}</div>
+      <div class="invsub">${esc(inv.film_title||"")} · ${when}</div>
+    </div>
+    <div class="invpills">${pill}${unread?'<span class="invdot" aria-hidden="true"></span>':""}</div>
+  </div>`;
+}
+// New replies (unread) / Earlier (read) / Waiting (no reply yet) — newest first within each group. A group
+// with nothing in it gets no heading at all, rather than an empty section the design image never shows.
+function renderInvitesScreen(){
+  const el=$("invitesBody"); if(!el) return;
+  const byDate=(a,b)=>(Date.parse(b._t)||0)-(Date.parse(a._t)||0);
+  const groups={New:[], Earlier:[], Waiting:[]};
+  invites.forEach(inv=>{
+    const reply=latestInviteReply(inv);
+    if(!reply){ groups.Waiting.push({...inv,_t:inv.created_at}); }
+    else if(!reply.seen_at){ groups.New.push({...inv,_t:reply.created_at}); }
+    else{ groups.Earlier.push({...inv,_t:reply.created_at}); }
+  });
+  Object.values(groups).forEach(g=>g.sort(byDate));
+  const sections=[
+    {label:"New replies", key:"new", rows:groups.New},
+    {label:"Earlier", key:"earlier", rows:groups.Earlier},
+    {label:"Waiting", key:"waiting", rows:groups.Waiting},
+  ].filter(s=>s.rows.length);
+  const body = !invites.length
+    ? `<div class="invempty">No invites yet — invite someone to a film from its page and their reply will show up here.</div>`
+    : sections.map(s=>`<div class="flabel">${s.label}</div>${s.rows.map(inv=>inviteRowHTML(inv, s.key)).join("")}`).join("");
+  el.innerHTML=`
+    <div class="ostop"><h2 class="osh">Invites</h2>
+      <button class="donebtn" type="button" onclick="closeInvitesScreen()">Close</button></div>
+    ${body}`;
+}
+window.openInvitesScreen=()=>{
+  const unread=invitesUnseenCount();
+  renderInvitesScreen();
+  $("invitesScreen").scrollTop=0;
+  $("invitesScreen").classList.add("open"); document.body.style.overflow="hidden";
+  syncWatchChip();
+  logEvent("invites_opened",{unread});
+  // Stamped AFTER render (item 3 of the ticket) — the person has to actually see which rows were new
+  // before the badge clears out from under them.
+  markInviteRepliesSeen();
+};
+window.closeInvitesScreen=()=>{ $("invitesScreen").classList.remove("open"); document.body.style.overflow=""; syncWatchChip(); };
+// Stamps seen_at on exactly the unread replies this screen just showed. Mirrors markRealAlertsRead's
+// shape (update local state first so the badge/dot clear immediately, then push the write) but targets by
+// id rather than a blanket "is null" filter, since these ids are already known from what was just rendered.
+window.markInviteRepliesSeen=async()=>{
+  const unreadIds=[];
+  invites.forEach(inv=>{
+    const r=latestInviteReply(inv);
+    if(r && !r.seen_at) unreadIds.push(r.id);
+  });
+  if(!unreadIds.length) return;
+  const now=new Date().toISOString();
+  invites.forEach(inv=>{
+    const r=latestInviteReply(inv);
+    if(r && !r.seen_at) r.seen_at=now;
+  });
+  updateInvitesBadge();
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  if(!c) return;
+  try{
+    const {error}=await c.from("invite_replies").update({seen_at:now}).in("id", unreadIds);
+    if(error) console.warn("invite_replies mark-seen", error);
+  }catch(e){}
+};
+// The Moving-screen panel (item 4): the single newest unread reply, since Moving is a "what changed"
+// glance, not a second Invites listing — the full set is what Invites itself is for.
+function inviteAlertHTML(){
+  const unread=invites
+    .map(inv=>({inv, reply:latestInviteReply(inv)}))
+    .filter(x=>x.reply && !x.reply.seen_at)
+    .sort((a,b)=>(Date.parse(b.reply.created_at)||0)-(Date.parse(a.reply.created_at)||0));
+  if(!unread.length) return "";
+  const {inv, reply}=unread[0];
+  const name=esc(inv.to_name || "Someone");
+  const film=esc(inv.film_title||"");
+  const headline = reply.answer==="yes" ? `${name} is in` : `${name} said no`;
+  return `<div class="invalert" role="button" tabindex="0" onclick="openInvitesScreen()">
+      <div class="invalert-head">🎬 <b>${headline}</b><span class="invdot" aria-hidden="true"></span></div>
+      <div class="invalert-detail">${name} said ${reply.answer==="yes"?"yes":"no"} to <b>${film}</b>.
+        <span class="invalert-link">Open Invites ›</span></div>
+    </div>`;
+}
+
 // CAS-657: the thumbnail URL is carried in data-yt, not an inline background-image, so a collapsed card
 // (hidden by max-height:0, not display:none) never triggers img.youtube.com fetches for films the user
 // hasn't expanded. A card already expanded at render time is the one exception — see the `expanded` param —
@@ -10714,6 +10907,7 @@ window.navMenuGo=key=>{
   closeNavMenu();
   logEvent("nav_menu_item",{item:key});
   if(key==="find") showAgentsHome();
+  else if(key==="invites") openInvitesScreen();
   else if(key==="account") openAccount();
   else if(key==="services") openMenuServices();
   else if(key==="svcAnalysis") openSvcAnalysis();
@@ -14842,8 +15036,11 @@ function renderMovingScreen(){
   // nav below takes its place; the 200-row ledger fetch cap itself (movingLedgerTruncated) is unchanged.
   const head=`<div class="mvhead" id="movingHead"><h2 class="osh">Moving</h2><p class="ossub">${MOVING_SUBTITLE}</p>
     <div class="mvwindows">${chipsHTML}</div></div>`;
+  // CAS-886: the reply alert is IN THE FLOW, not sticky with #movingHead and not a floating toast — it
+  // scrolls away with the rest of the content, the same as everything else here.
+  const alertHTML=inviteAlertHTML();
   if(!shownRows.length){
-    $("movingBody").innerHTML = `${head}<div class="mvempty">
+    $("movingBody").innerHTML = `${head}${alertHTML}<div class="mvempty">
       <p class="mvemptymain">${esc(movingEmptyCopy(movingWindow))}</p>
       <p class="mvemptysub">Your agents are still watching. You'll see it here first.</p>
     </div>`;
@@ -14874,7 +15071,7 @@ function renderMovingScreen(){
   // CAS-869: the same "Now" jump rail the Watch listing carries (renderJumpBar/jumpToSection), reused —
   // see those functions' own comments for how they were generalised to take a container.
   const jumpCtl=`<div class="listctl" id="movingListCtl"><div class="jumpbar" id="movingJumpBar" hidden></div></div>`;
-  $("movingBody").innerHTML = head + jumpCtl + `<div id="movingGroups">${sectionsHTML}</div>`;
+  $("movingBody").innerHTML = head + alertHTML + jumpCtl + `<div id="movingGroups">${sectionsHTML}</div>`;
   renderJumpBar({jumpBarId:"movingJumpBar", listCtlId:"movingListCtl", groupsSel:"#movingGroups .group", isOwn:()=>false});
   syncHeaderHeight();   // CAS-852: #movingHead's height can change (window switch) — re-measure so the lane heading's --stickyh offset never drifts
 }
@@ -17309,9 +17506,10 @@ else if(dedupedN)
     // CAS-741: set before loadNotifyPrefs() is invoked (inside the array below) — loadNotifyPrefs itself
     // flips this true on its own success path only, never on a failed load.
     notifyPrefsReady=false;
+    invitesReady=false;
     Promise.allSettled([
       loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadRealAlerts(),
-      loadFilmPicks()
+      loadFilmPicks(), loadInvites()
     ]).then(()=>{
       const t1 = performance.now();
       console.log('[CAS-460] account fan-out end (' + label + ')', t1, 'elapsed_ms', (t1-_t460fanout).toFixed(1));
@@ -17344,6 +17542,7 @@ else if(dedupedN)
       // CAS-733: signed out → the agent list empties (loadGuest, above) rather than reverting to an
       // on-device set that no longer exists; the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); realAlerts=[]; updateMovingBadge();
+      invites=[]; invitesReady=true; updateInvitesBadge();   // CAS-886: same reasoning — a guest has no invites
       cascadeKnown=new Map(); saveCascadeKnown(); cascadeEditedAt=new Map(); saveCascadeEditedAt();
       filmBaseline=null; pickBaseline=null; watchBaseline=null;
       agentFilms={}; agentFilmsBaseline=null; agentFilmsReady=true;   // CAS-736: a guest has nothing to wait on
@@ -17880,6 +18079,22 @@ else if(dedupedN)
     updateMovingBadge();
     // A device parked on Moving as the landing screen — the exact race this ticket fixes — must see its
     // loading state resolve into the real rows once the ledger actually answers, not just on next open.
+    if(typeof renderMovingScreen==="function" && $("movingScreen") && $("movingScreen").classList.contains("open")) renderMovingScreen();
+  }
+  // CAS-886: the sender's own invites, replies embedded. RLS (invites_owner / invite_replies_sender_read)
+  // already scopes both tables to this account, so no .eq("sender_id",...) filter is needed here.
+  // invitesReady must resolve on every exit — including a failed fetch — the same reasoning loadRealAlerts'
+  // movingReady already follows, so a test (or a device) waiting on it is never left hanging.
+  async function loadInvites(){
+    if(!client()||!accountActive()){ invites=[]; invitesReady=true; updateInvitesBadge(); return; }
+    const { data, error } = await client().from("invites")
+      .select("token,tmdb_id,film_title,to_name,created_at,invite_replies(id,answer,created_at,seen_at)")
+      .order("created_at", { ascending:false });
+    if(error){ console.warn("invites load", error); invitesReady=true; return; }
+    invites = data || [];
+    invitesReady=true;
+    updateInvitesBadge();
+    if(typeof renderInvitesScreen==="function" && $("invitesScreen") && $("invitesScreen").classList.contains("open")) renderInvitesScreen();
     if(typeof renderMovingScreen==="function" && $("movingScreen") && $("movingScreen").classList.contains("open")) renderMovingScreen();
   }
   // Opening the bell is reading it. The rows stay — "we told you about this" is a fact about the
