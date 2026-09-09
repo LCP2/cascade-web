@@ -13,11 +13,16 @@ environment (never hardcoded). ``--dry-run`` in the CLI renders the HTML and sen
 """
 from __future__ import annotations
 
+import datetime as _dt
 import html as _html
 import json
 import os
 import urllib.error
 import urllib.request
+
+# Same monotonic tier order poc_pipeline itself uses to decide a film's `status` — reused here
+# only to pick which window is CURRENT for the invite-replies block, never to re-derive it.
+from poc_pipeline import AVAILABILITY_TIERS, tier_rank
 
 USER_AGENT = "cascade-monitor/1.0 (+https://cascademovies.com)"
 
@@ -91,8 +96,18 @@ _MOMENT_NOTE = {
 }
 
 
-def digest_subject(hits) -> str:
+def digest_subject(hits, replies=None) -> str:
+    """CAS-887: a reply is worth opening the email for on its own, so it leads the subject when
+    there are any — built only from the real counts (honesty guardrail), never an invented "someone
+    replied!" urgency line."""
+    replies = replies or []
     n = len(hits)
+    if replies:
+        r_word = "reply" if len(replies) == 1 else "replies"
+        subject = f"{len(replies)} {r_word} to your invites"
+        if n:
+            subject += f", {n} update{'' if n == 1 else 's'}"
+        return subject
     return f"Cascade found {n} update{'' if n == 1 else 's'} for you"
 
 
@@ -227,7 +242,129 @@ def _section_heading_html(section, esc) -> str:
     return f'<tr><td style="{style}"><span style="{text_style}">{esc(section["name"])}</span></td></tr>'
 
 
-def render_digest(hits, site_url: str = None) -> dict:
+# CAS-887: label per window, for the replies block's second line (design image: "In cinemas 17
+# Sep" / "Upcoming 24 Sep"). Deliberately its own small map rather than emailer.py's _WINDOW_LABEL
+# above — that one reads as half of a "prior -> destination" move, this reads as a plain fact.
+_INVITE_WINDOW_LABEL = {
+    "upcoming": "Upcoming",
+    "in_cinema": "In cinemas",
+    "pvod": "Premium",
+    "rental": "Rent",
+    "included_streaming": "Streaming",
+}
+
+
+def _format_short_date(value) -> str:
+    """'17 Sep' — day-of-month, no leading zero, abbreviated month, no year (the design image's own
+    date shape). Returns "" for anything not a real date, never a placeholder (honesty guardrail)."""
+    if not value:
+        return ""
+    try:
+        d = _dt.date.fromisoformat(str(value)[:10])
+    except (ValueError, TypeError):
+        return ""
+    return f"{d.day} {d.strftime('%b')}"
+
+
+def _invite_window_text(movie) -> str:
+    """The invited film's CURRENT window + date, e.g. "In cinemas 17 Sep". `movie` is today's
+    catalogue record (or None/{} if the film has since dropped out of the catalogue). Only ever
+    states a date the catalogue actually carries for that window — upcoming/in_cinema fall back to
+    `cinema_date` (the one date poc_pipeline derives those two windows from itself); a home window
+    with no `window_dates` entry shows its label alone rather than inventing a date."""
+    if not movie:
+        return ""
+    tier = tier_rank(movie.get("status") or [])
+    if tier < 0:
+        return ""
+    window = AVAILABILITY_TIERS[tier]
+    label = _INVITE_WINDOW_LABEL.get(window)
+    if not label:
+        return ""
+    date_str = (movie.get("window_dates") or {}).get(window)
+    if not date_str and window in ("upcoming", "in_cinema"):
+        date_str = movie.get("cinema_date")
+    date_text = _format_short_date(date_str)
+    return f"{label} {date_text}" if date_text else label
+
+
+def _invite_age_text(created_at, now=None) -> str:
+    """Mirrors the app's own inviteAgeText (app_template.html) so the digest and the Invites
+    screen never disagree about how fresh a reply reads."""
+    if not created_at:
+        return ""
+    try:
+        t = _dt.datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    mins = int((now - t).total_seconds() // 60)
+    if mins < 1:
+        return "just now"
+    if mins < 60:
+        return f"{mins} min ago"
+    hours = mins // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    if days == 1:
+        return "yesterday"
+    return f"{days} days ago"
+
+
+def format_invite_reply(row: dict, movie=None, now=None) -> dict:
+    """One invite_replies row (plus its film's today-catalogue record, if still present) resolved
+    into the shape render_digest's `replies` wants — the window text and reply age are computed
+    here so render_digest itself stays a pure formatter, the same division of labour Transition/Hit
+    already have with moment_phrase above."""
+    return {
+        "to_name": row.get("to_name") or "Someone",
+        "answer": row.get("answer"),
+        "film_title": row.get("film_title") or "",
+        "window_text": _invite_window_text(movie),
+        "when_text": _invite_age_text(row.get("created_at"), now=now),
+    }
+
+
+def _replies_block_text(replies) -> list:
+    lines = ["Replies to your invites"]
+    for r in replies:
+        verb = "yes" if r.get("answer") == "yes" else "no"
+        lines.append(f"  {r['to_name']} said {verb} to {r['film_title']}")
+        sub = " · ".join(x for x in (r.get("window_text"), r.get("when_text")) if x)
+        if sub:
+            lines.append(f"    {sub}")
+    lines.append("")
+    return lines
+
+
+def _replies_block_html(replies, esc) -> str:
+    heading = ('<div style="font-size:12px;font-weight:800;letter-spacing:0.4px;'
+               'text-transform:uppercase;color:#7C5CFF;">Replies to your invites</div>')
+    rows = []
+    for i, r in enumerate(replies):
+        verb = "yes" if r.get("answer") == "yes" else "no"
+        verb_color = "#1A9C5C" if verb == "yes" else "#6b7280"
+        sub = " · ".join(x for x in (r.get("window_text"), r.get("when_text")) if x)
+        divider = '<div style="height:1px;background:#e0dbfa;margin:10px 0;"></div>' if i else ''
+        rows.append(
+            divider +
+            f'<div style="font-size:15px;color:#141A2A;margin-top:{"10px" if not i else "0"};">'
+            f'<b>{esc(r["to_name"])}</b> said <b style="color:{verb_color};">{verb}</b> to '
+            f'<b>{esc(r["film_title"])}</b></div>'
+            + (f'<div style="font-size:13px;color:#6b7280;margin-top:2px;">{esc(sub)}</div>' if sub else '')
+        )
+    return (
+        '<tr><td style="padding-top:14px;">'
+        '<div style="padding:14px 16px;border-radius:14px;background:#F1EEFE;">'
+        + heading + "".join(rows) +
+        '</div></td></tr>'
+    )
+
+
+def render_digest(hits, site_url: str = None, replies=None) -> dict:
     """Return {'subject', 'html', 'text'} for one user's consolidated digest.
 
     CAS-849: grouped into per-agent sections in rank order (see _agent_sections), each row tagged
@@ -236,17 +373,26 @@ def render_digest(hits, site_url: str = None) -> dict:
 
     hits: list of monitor.matching.Hit (all for the same user)."""
     site_url = site_url or os.environ.get(SITE_URL_ENV) or DEFAULT_SITE_URL
-    subject = digest_subject(hits)
+    replies = list(replies or [])
+    subject = digest_subject(hits, replies)
     sections = _agent_sections(hits)
     esc = _html.escape
 
     # ---- plain-text part ----
-    text_lines = ["Your agents have been watching. Here's today.", ""]
-    for section in sections:
-        text_lines.append(section["name"])
-        for h in section["hits"]:
-            text_lines.extend(_row_text(h, site_url))
+    # CAS-887: replies lead — added first, ahead of the "Your agents have been watching" section,
+    # which itself only appears when there is a film transition to report (AC2: a replies-only
+    # digest must not claim "here's what changed" over an empty list).
+    text_lines = []
+    if replies:
+        text_lines.extend(_replies_block_text(replies))
+    if sections:
+        text_lines.append("Your agents have been watching. Here's today.")
         text_lines.append("")
+        for section in sections:
+            text_lines.append(section["name"])
+            for h in section["hits"]:
+                text_lines.extend(_row_text(h, site_url))
+            text_lines.append("")
     text_lines += [f"Open Cascade: {site_url}",
                    "You're getting this because Cascade is watching films for you."]
     text = "\n".join(text_lines)
@@ -256,6 +402,19 @@ def render_digest(hits, site_url: str = None) -> dict:
     for section in sections:
         section_html.append(_section_heading_html(section, esc))
         section_html.extend(_row_html(h, esc, site_url) for h in section["hits"])
+    body_rows = ""
+    if replies:
+        body_rows += _replies_block_html(replies, esc)
+    if sections:
+        body_rows += (
+            '<tr><td style="padding-top:14px;">'
+            '<div style="font-size:15px;color:#141A2A;font-weight:600;">'
+            "Your agents have been watching. Here's today.</div>"
+            '</td></tr>'
+            '<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:14px;">'
+            + "".join(section_html) +
+            '</table></td></tr>'
+        )
     html_doc = (
         '<!doctype html><html><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
@@ -268,12 +427,8 @@ def render_digest(hits, site_url: str = None) -> dict:
         '<tr><td>'
         '<div style="font-size:18px;font-weight:700;letter-spacing:1px;color:#7C5CFF;'
         'text-transform:uppercase;">Cascade</div>'
-        '<div style="font-size:15px;color:#141A2A;margin-top:10px;font-weight:600;">'
-        "Your agents have been watching. Here's today.</div>"
         '</td></tr>'
-        '<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:14px;">'
-        + "".join(section_html) +
-        '</table></td></tr>'
+        + body_rows +
         '<tr><td style="padding-top:20px;">'
         f'<a href="{esc(site_url)}" style="display:inline-block;background:#6b48f2;color:#ffffff;'
         'text-decoration:none;font-weight:700;font-size:14px;padding:12px 22px;border-radius:11px;">'
