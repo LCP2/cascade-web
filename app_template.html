@@ -349,6 +349,9 @@
      (a .uscreen, z-index:84) — the highest of either, so it stacks over both rather than opening behind
      the surface that launched it, same reasoning as #authModal.open above. */
   #contact.open{z-index:91}
+  /* CAS-883: the Invite sheet opens from the film page (.filmpage, z-index:85) as well as the plain
+     listing, so it needs the same over-the-film-page treatment as #contact.open above. */
+  #filmInvite.open{z-index:91}
   /* CAS-437: the public film page. Same phone-width-capped full page as .modal, but its own z-index so it
      sits over the splash (80) too — a share link has to show the film regardless of what boot put up. */
   /* CAS-554 device-parity-ignore: R2 — same reasoning as .modal above: top:0 carries no padding of its own
@@ -368,9 +371,6 @@
   .fpcta{display:block;width:100%;background:var(--accentdeep);color:#fff;border:none;border-radius:11px;
     padding:14px;font-weight:800;font-size:15.5px;cursor:pointer;margin:20px 0 10px}
   .fpfoot{font-size:12px;color:var(--faint);text-align:center;margin:0 0 20px}
-  /* CAS-837: reuses the card's own .exshare/.exsharebtn — the film page just centers it, so the secondary
-     share action doesn't compete with .fpcta's full-width primary CTA below it. */
-  .filmpage .exshare{text-align:center;margin:16px 0 4px}
   /* .synopsis clamps to 3 lines and .wtw hides by default — both card-list space-savers this standalone
      page doesn't need; it's the one place the full synopsis and the where-to-watch list are always open. */
   .filmpage .synopsis{-webkit-line-clamp:unset;display:block;margin-bottom:14px}
@@ -680,6 +680,23 @@
   .exsharebtn:hover{color:var(--ink);border-color:#3a4150}
   .exsharebtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .exsharebtn.done{color:var(--green);border-color:rgba(72,199,142,.55)}
+  /* CAS-883 naming note: the film-page Invite feature below is unrelated to the older "agent invite"
+     mock (.invite/#invite/#inviteBody, CAS-78, ~line 2214) — its classes are prefixed filminv* / its
+     modal is #filmInvite so neither collides with that prototype's ids/classes.
+     CAS-883: the film page's own Invite control — the large gradient CTA in the design image, replacing
+     the small .exsharebtn pill there (the expanded card keeps that pill, just relabelled). */
+  .filminvcta{display:block;width:100%;background:var(--grad);color:#fff;border:none;border-radius:13px;
+    padding:15px;font-family:var(--font-display);font-size:15px;font-weight:700;cursor:pointer;
+    box-shadow:0 10px 30px rgba(124,92,255,.3);margin-top:16px}
+  .filminvcta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+  .filminvcta:disabled{opacity:.5;cursor:default}
+  /* CAS-883: the invite sheet's compact film row — poster thumb, title, window line — so the sender can
+     see which film they're inviting to before they type a name. */
+  .filminvrow{display:flex;align-items:center;gap:12px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:12px;padding:10px 12px;margin:4px 0 18px}
+  .filminvthumb{width:52px;height:78px;object-fit:cover;border-radius:8px;flex:none;background:var(--panel)}
+  .filminvtitle{font-size:15.5px;font-weight:700;color:var(--ink)}
+  .filminvwin{margin-top:2px}
   /* CAS-304: back to a left-to-right row (reverting CAS-277's stack, per Lee's 0.8.3 review). CAS-348: the
      row is exactly three controls now — Notify, Agent, Watched (CAS-349 retaxonomized the first and third,
      CAS-427 relabelled the first again; the DOM classes stay `.ctl.notify`/`.ctl.casc`/`.ctl.watch` — see
@@ -3490,6 +3507,15 @@
   <div id="contactBody"></div>
 </div>
 
+<!-- INVITE TO A FILM (CAS-883) — replaces the old Share pill: an invite is now a real record
+     (public.invites), with a per-send token and a named recipient, not a stateless link. Named #filmInvite
+     (not #invite) because that id already belongs to the unrelated older "agent invite" mock (CAS-78,
+     ~line 2214). Body rebuilt fresh by renderFilmInviteSheet() every open. -->
+<div class="modal" id="filmInvite">
+  <div class="modalhead"><h3>Invite someone</h3><button class="donebtn" id="filmInviteClose">Cancel</button></div>
+  <div id="filmInviteBody"></div>
+</div>
+
 <!-- DEBUG LOG modal — local-only usage log. Opened with ?log=1, or 5 taps on the "updated" line. -->
 <div class="modal" id="logModal">
   <div class="modalhead"><h3>🧪 Usage log (local)</h3><button class="donebtn" id="logDone">Done</button></div>
@@ -6126,22 +6152,27 @@ function creditsHTML(m, inCard){
   // shown only while the card is expanded. The standalone film page keeps calling this with no flag.
   return rows.length ? `<div class="credits${inCard?" incard":""}">${rows.join("")}</div>` : "";
 }
-// ---- CAS-284: share a film -------------------------------------------------------------------------------
-// CAS-272 removed the cascade "share" for being a string on a clipboard dressed up as a share. This one is
-// different in the way that matters: a FILM has a real public identity, so there is something true to send
-// and somewhere real for it to land. It uses the platform's own share sheet where the browser has one — an
-// actual share, to actual people — and falls back to the clipboard, saying so on the button rather than
-// claiming a share that did not happen.
+// ---- CAS-883: invite someone to a film ---------------------------------------------------------------
+// CAS-272 removed the cascade "share" for being a string on a clipboard dressed up as a share. CAS-284's
+// film share was different in the way that matters — a FILM has a real public identity — but a share had
+// no recipient and no reply. An invite is that same idea made real: the sender names who it's for, it's a
+// row in `public.invites` with its own token, and a reply comes back under that name. Supersedes part of
+// CAS-837, whose `?inv=` ref-code link this ticket's `?inv=<invite token>` replaces.
 //
-// It lives in the expanded card, where the ticket suggests: it is a considered action, not a one-tap verdict,
-// and the control stack below is already three decisions deep.
-function shareFilmHTML(m){
-  return `<div class="exshare"><button type="button" class="exsharebtn" onclick="event.stopPropagation();shareFilm(${m.tmdb_id},this)"
-      title="${escA("Share "+m.title)}" aria-label="${escA("Share "+m.title)}">${ICON.share}<span class="sl">Share</span></button></div>`;
+// One function draws both surfaces — the expanded card's small pill and the film page's own, larger
+// control — so "Invite" can never say two different things; `big` only switches which shape is drawn.
+function inviteFilmHTML(m, big){
+  const a=window.CascadeAuth;
+  if(!(a && a.enabled && a.status==="signed-in")) return "";   // no account to attribute the invite to
+  if(big) return `<button type="button" class="filminvcta" onclick="event.stopPropagation();openFilmInvite(${m.tmdb_id})">
+      ＋ Invite someone to watch</button>
+    <div class="pnote" style="text-align:center">They'll see this film and a Yes / No — no app needed.</div>`;
+  return `<div class="exshare"><button type="button" class="exsharebtn" onclick="event.stopPropagation();openFilmInvite(${m.tmdb_id})"
+      title="${escA("Invite someone to "+m.title)}" aria-label="${escA("Invite someone to "+m.title)}">${ICON.share}<span class="sl">Invite</span></button></div>`;
 }
 // What we can say about the film without inventing anything: its title, its year, and the window we have
 // actually CONFIRMED it is in. An estimated window says nothing at all — the whole point of the estimate is
-// that we have not read a listing, and a share is the last place to pass a guess off as a fact.
+// that we have not read a listing, and an invite is the last place to pass a guess off as a fact.
 function shareTextFor(m){
   const yr=yearOf(m);
   const where = isEstimated(m) ? "" : (STATUS_LABEL[primaryStatus(m)]||"");
@@ -6156,30 +6187,83 @@ function genRefCode(){
   return out.join("");
 }
 // CAS-837: this device's cached copy of the signed-in account's referral code — set by loadUserPrefs()
-// below (reading user_prefs.ref_code, or minting one the first time nobody has) so shareUrlFor can stay
-// synchronous rather than a link waiting on a network round trip.
+// below (reading user_prefs.ref_code, or minting one the first time nobody has). CAS-883: no longer read
+// to build the invite link (inviteUrlFor below carries a per-invite token instead) — the column and this
+// cache stay, since CAS-808's own attribution work still owns what ref_code is for.
 let refCodeCache = null;
 function refCode(){
   const a=window.CascadeAuth;
   return (a && a.enabled && a.status==="signed-in") ? refCodeCache : null;
 }
+// CAS-883: 10 chars from crypto.getRandomValues over [a-z0-9] — this is the per-send INVITE token (distinct
+// from genRefCode's account-level referral code above), minted fresh on every Invite send.
+function genInviteToken(){
+  const chars="abcdefghijklmnopqrstuvwxyz0123456789", buf=new Uint8Array(10), out=[];
+  crypto.getRandomValues(buf);
+  for(let i=0;i<10;i++) out.push(chars[buf[i]%chars.length]);
+  return out.join("");
+}
 // CAS-437: the film's own page is now OURS — a Cascade URL, not JustWatch's or TMDB's. A hash route on the
 // same static index.html (GitHub Pages serves one file; no server-side routing to stand up), so the link is
 // real and permanent without a build-time page per title. #/film/<id> is read at boot by openFilmPage().
-// CAS-837: signed in, the link also carries the sender's ref code (?inv=) so an arrival can be recorded —
-// signed out there is no code and the link is exactly what it was before.
-const shareUrlFor = m => { const code=refCode();
-  return `${location.origin}${location.pathname}${code?`?inv=${code}`:""}#/film/${m.tmdb_id}`; };
-// CAS-837: btnEl (passed by shareFilmHTML as `this`) is how the film page's own share control gets its
-// own "Copied" feedback — it isn't inside a #card-<id>, so the old lookup would silently find nothing.
-// Falls back to that lookup when called without one so every existing caller keeps working unchanged.
-window.shareFilm = async (id, btnEl) => {
+// CAS-883: the one function in the file that builds an invite URL, replacing the CAS-837 link builder.
+// tmdb_id stays the title key, never a Watchmode id or a row id, same as every other #/film/<id> link.
+const inviteUrlFor = (token, m) => `${location.origin}${location.pathname}?inv=${token}#/film/${m.tmdb_id}`;
+// ---- CAS-883: the Invite sheet -----------------------------------------------------------------------
+// #filmInvite/#filmInviteBody, not #invite/#inviteBody — those ids already belong to the unrelated older
+// "agent invite" mock above (CAS-78, ~line 2214).
+let filmInviteId = null;
+// Rebuilt fresh every open (mirrors renderContactForm()'s own convention) so a prior invite's typed name
+// or error never bleeds into the next one.
+function renderFilmInviteSheet(m){
+  const poster = m.poster
+    ? `<img class="filminvthumb" src="https://image.tmdb.org/t/p/w92${esc(m.poster)}" alt="">`
+    : `<div class="filminvthumb"></div>`;
+  $("filmInviteBody").innerHTML = `
+    <div class="filminvrow">${poster}<div><div class="filminvtitle">${esc(m.title)}</div>
+      <div class="filminvwin">${windowsLineHTML(m)}</div></div></div>
+    <div class="flabel">Who are you inviting?</div>
+    <input id="filmInviteName" class="namein" type="text" maxlength="40" autocomplete="off" placeholder="e.g. Sam">
+    <div class="pnote">Just so the reply comes back with a name on it. They never see this.</div>
+    <div class="pnote" id="filmInviteErr" style="color:#ffb9a6" hidden></div>
+    <button type="button" class="filminvcta" id="filmInviteSend" onclick="sendFilmInvite()">Create invite &amp; share…</button>
+    <div class="pnote" style="text-align:center">Opens your share sheet — send it however you like.</div>`;
+}
+window.openFilmInvite = id => {
   const m=MOVIES.find(x=>x.tmdb_id===id); if(!m) return;
-  const url=shareUrlFor(m), text=shareTextFor(m);
-  const btn=btnEl || document.querySelector(`#card-${id} .exsharebtn`);
-  const say=msg=>{ if(!btn) return; const lab=btn.querySelector(".sl"); if(!lab) return;
-                   const was=lab.textContent; lab.textContent=msg; btn.classList.add("done");
-                   setTimeout(()=>{ lab.textContent=was; btn.classList.remove("done"); }, 1800); };
+  filmInviteId = id;
+  renderFilmInviteSheet(m);
+  openModal($("filmInvite"));
+  logEvent("invite_opened",{id});
+};
+$("filmInviteClose").onclick=()=>closeModal($("filmInvite"));
+// Mints the token and inserts the invites row FIRST, and only calls the platform share sheet once that
+// insert has actually succeeded — a link whose invite does not exist is a dead end for the recipient.
+window.sendFilmInvite = async()=>{
+  const m=MOVIES.find(x=>x.tmdb_id===filmInviteId); if(!m) return;
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  const uid=(a && a.session && a.session.user) ? a.session.user.id : null;
+  const nameEl=$("filmInviteName"), errEl=$("filmInviteErr"), btn=$("filmInviteSend");
+  const to_name=(nameEl.value||"").trim() || null;
+  errEl.hidden=true;
+  if(!c || !uid){ errEl.textContent="Couldn't create that invite — try again in a moment."; errEl.hidden=false; return; }
+  btn.disabled=true;
+  const token=genInviteToken();
+  const sender_name=(a.user && a.user.email) ? a.user.email.split("@")[0] : null;
+  try{
+    const {error}=await c.from("invites").insert([{
+      token, sender_id:uid, sender_name, tmdb_id:m.tmdb_id, film_title:m.title, to_name,
+    }]);
+    if(error) throw error;
+    logEvent("invite_created",{named:!!to_name});
+  }catch(e){
+    btn.disabled=false;
+    errEl.textContent="Couldn't create that invite — try again in a moment.";
+    errEl.hidden=false;
+    return;
+  }
+  const url=inviteUrlFor(token, m), text=shareTextFor(m);
+  closeModal($("filmInvite"));
   if(navigator.share){
     try{ await navigator.share({title:m.title, text, url}); logEvent("film_shared",{how:"sheet"}); return; }
     // A cancelled share sheet is not a failure and must not fall through to copying something the person
@@ -6188,10 +6272,10 @@ window.shareFilm = async (id, btnEl) => {
   }
   const payload=`${text}\n${url}`;
   if(navigator.clipboard && navigator.clipboard.writeText){
-    try{ await navigator.clipboard.writeText(payload); logEvent("film_shared",{how:"clipboard"}); say("Copied"); return; }
+    try{ await navigator.clipboard.writeText(payload); logEvent("film_shared",{how:"clipboard"}); toast("Copied"); return; }
     catch(e){}
   }
-  say("Couldn't copy");
+  toast("Couldn't copy");
 };
 // ---- CAS-437: the public film page a share link opens ---------------------------------------------------
 // What a person who has never opened Cascade is entitled to see: the film, honestly — the same facts the
@@ -6226,12 +6310,12 @@ function filmPageHTML(m){
     ${filmPageWhereHTML(m)}
     <div class="mrow r-scores">${scoresRowHTML(m)}</div>
     <div class="mrow r-awards">${cinemaReleaseChip(m)}${awardChips(m)}</div>
-    ${shareFilmHTML(m)}
+    ${inviteFilmHTML(m, true)}
     <button type="button" class="fpcta" onclick="filmPageCta()">Get Cascade — find more like this</button>
     <div class="fpfoot">Cascade tracks cinema, rental and streaming for you — sign up to build your own.</div>`;
 }
 // Hash-routed so the same static index.html (there is no per-film build output, GitHub Pages serves the
-// one file) is a real, permanent, bookmarkable page for the film — see shareUrlFor.
+// one file) is a real, permanent, bookmarkable page for the film — see inviteUrlFor.
 const FILM_ROUTE_RE=/^#\/film\/(\d+)$/;
 const filmRouteId=()=>{ const m=FILM_ROUTE_RE.exec(location.hash); return m ? +m[1] : null; };
 function openFilmPage(id){
@@ -6407,7 +6491,7 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
     </div>
     <!-- CAS-436: the detail section (awards/director/cast/trailers/share) opens BELOW the control row, not
          above it — it is extra material about the film, not something that has to be seen before you act. -->
-    <div class="expand">${trailersHTML(m, expandedSet.has(id))}${shareFilmHTML(m)}</div>
+    <div class="expand">${trailersHTML(m, expandedSet.has(id))}${inviteFilmHTML(m)}</div>
   </div>`;
 }
 // ---- The three verdicts (CAS-100) ----------------------------------------------
@@ -17509,7 +17593,7 @@ else if(dedupedN)
       });
     }
     // CAS-524: universal-link tap (from a notification email) delivers the full tapped URL here —
-    // reuse the existing #/film/<id> hash route (shareUrlFor/filmRouteId) rather than forking a
+    // reuse the existing #/film/<id> hash route (inviteUrlFor/filmRouteId) rather than forking a
     // second "open a film" path. AASA only matches the URL's path, never its fragment, so this
     // listener is what actually turns the link into the film page once iOS has already decided to
     // open the app.

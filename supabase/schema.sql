@@ -46,6 +46,13 @@
 --                   trigger from day one. Insert-only, unreadable through the anon key — the
 --                   daily monitor reads unsent rows with service_role and stamps sent_at once
 --                   its digest email has gone out.
+--   invites       — one row per Invite send (CAS-883/M12). A real record, not a stateless
+--                   ref-code link: a per-send token, the sender, the film, and the name the
+--                   sender gave the recipient. Readable by anon (token only) so a signed-out
+--                   recipient can open the invite they were sent.
+--   invite_replies — one row per (invite, client_key) Yes/No reply. Insertable by anon so a
+--                   signed-out recipient can answer; readable/updatable only by the invite's
+--                   own sender.
 
 -- gen_random_uuid() lives in pgcrypto. It is pre-installed on Supabase, but declaring the
 -- dependency keeps this file self-contained and portable to a plain Postgres.
@@ -549,6 +556,61 @@ drop policy if exists contact_attachments_insert on storage.objects;
 create policy contact_attachments_insert on storage.objects
   for insert to anon, authenticated
   with check (bucket_id = 'contact-attachments');
+
+-- ---------------------------------------------------------------------------
+-- invites / invite_replies — Invite to a movie (CAS-883/M12)
+-- ---------------------------------------------------------------------------
+create table if not exists public.invites (
+  token       text primary key,
+  sender_id   uuid not null references auth.users(id) on delete cascade,
+  sender_name text,
+  tmdb_id     bigint not null,
+  film_title  text,
+  to_name     text,
+  created_at  timestamptz not null default now()
+);
+create index if not exists invites_sender_idx on public.invites (sender_id, created_at desc);
+
+alter table public.invites enable row level security;
+
+drop policy if exists invites_owner on public.invites;
+create policy invites_owner on public.invites
+  for all using (auth.uid() = sender_id) with check (auth.uid() = sender_id);
+
+-- A signed-out recipient must be able to READ the invite they were sent, by token only.
+-- Never listable: a select without a token filter returns nothing useful because the
+-- policy is satisfied per-row and the table is only ever queried by primary key.
+drop policy if exists invites_read_by_token on public.invites;
+create policy invites_read_by_token on public.invites
+  for select to anon, authenticated using (true);
+
+create table if not exists public.invite_replies (
+  id           bigserial primary key,
+  token        text not null references public.invites(token) on delete cascade,
+  client_key   text not null,
+  replier_id   uuid references auth.users(id) on delete set null,
+  answer       text not null check (answer in ('yes','no')),
+  created_at   timestamptz not null default now(),
+  seen_at      timestamptz,
+  unique (token, client_key)
+);
+create index if not exists invite_replies_token_idx on public.invite_replies (token, created_at desc);
+
+alter table public.invite_replies enable row level security;
+
+drop policy if exists invite_replies_insert on public.invite_replies;
+create policy invite_replies_insert on public.invite_replies
+  for insert to anon, authenticated with check (answer in ('yes','no'));
+
+drop policy if exists invite_replies_sender_read on public.invite_replies;
+create policy invite_replies_sender_read on public.invite_replies
+  for select to authenticated using (
+    exists (select 1 from public.invites i where i.token = token and i.sender_id = auth.uid()));
+
+drop policy if exists invite_replies_sender_update on public.invite_replies;
+create policy invite_replies_sender_update on public.invite_replies
+  for update to authenticated using (
+    exists (select 1 from public.invites i where i.token = token and i.sender_id = auth.uid()));
 
 -- ---------------------------------------------------------------------------
 -- keep cascades.updated_at honest on every write
