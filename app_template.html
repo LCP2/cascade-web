@@ -2421,42 +2421,6 @@
      right — so the listing starts a screenful sooner. The services "scoped" banner that used to sit under
      them is gone outright (its job — saying the list is narrowed to your services — is now obvious from the
      Buy/Rent/Stream chips themselves); the "empty scope" warning stays, because that one is actionable. */
-  /* ---- SCOPE BAR (v0.9.4): what the Find list is FOR ----
-     Find offers you films to decide on, so the list is three named piles and this bar says which you are
-     looking at. ONE on-colour for all three (var(--accent)) — they are not three kinds of thing.
-     No counts: the count is already the length of the list underneath, and carrying it here forced a
-     double-height control for a number nobody acts on.
-     The caret opens the SAME .cpop listbox the deck card's funnel used to open, anchored under the pill and
-     opening downward — which is why the funnel is gone from the card. */
-  .scopebar{margin:9px 12px 0}
-  .scopepills{display:flex;gap:7px}
-  .scopebtn{flex:1;min-width:0;display:flex;align-items:stretch;border-radius:11px;
-    border:1px solid var(--line);background:var(--panel2);overflow:hidden;transition:.15s}
-  /* The app already has ONE convention for "this control is lit": .dc-search.on / .dc-filter.on, i.e. an
-     accent border over an 18% accent wash with #cfc2ff text. A solid accent fill is a different, louder
-     language that appears nowhere else, so these use the existing one. */
-  /* The lit state reads in Find's OWN blue (--brand-blue, the centre stop of the Find chip's gradient),
-     not the purple --accent. The bar now sits directly under the Find chip, and a purple control there
-     looked like it belonged to something else. Fill stays a low-alpha wash so the bar reads as chrome
-     rather than as three solid buttons competing with the agent card below it. */
-  .scopebtn.on{border-color:rgba(76,125,255,.65);background:rgba(76,125,255,.16)}
-  .scopebtn.open{border-color:rgba(76,125,255,.85)}
-  .scmain{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;
-    padding:8px 6px;background:transparent;border:0;color:var(--dim);font-family:inherit;cursor:pointer;
-    -webkit-tap-highlight-color:transparent}
-  .scopebtn.on .scmain{color:#cddcff}
-  .scn{font-size:11.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-  .sccar{flex:0 0 auto;width:24px;border:0;border-left:1px solid var(--line);background:transparent;
-    color:var(--faint);font-size:10px;cursor:pointer;font-family:inherit;transition:.15s}
-  .scopebtn.on .sccar{border-left-color:rgba(76,125,255,.4);color:#cddcff}
-  .scopebtn.open .sccar{color:var(--brand-blue)}
-  .scmain:active,.sccar:active{opacity:.75}
-  .scmain:focus-visible,.sccar:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
-  /* a lit dot on the caret when that pile is narrowed, so a filter can never be on invisibly */
-  .sccar.narrowed{position:relative}
-  .sccar.narrowed::after{content:"";position:absolute;top:5px;right:5px;width:5px;height:5px;
-    border-radius:50%;background:var(--brand-blue)}
   .cascbar.rail .scopebar{margin:8px 12px 9px}
   /* ---- WATCH TABS (CAS-713): Cascade 9.7's fixed top nav — three sub-tabs above the scope bar, each a
      slice of the listing below by availability status. A segmented control rather than three more of the
@@ -4415,7 +4379,6 @@ const wowed = loadSet("cascade_wow");
 const enjoyed = loadSet("cascade_enjoyed");
 const isWow      = id => watched.has(id) && wowed.has(id) && !disliked.has(id) && !indifferent.has(id);
 const isEnjoyed  = id => watched.has(id) && enjoyed.has(id) && !wowed.has(id) && !disliked.has(id) && !indifferent.has(id);
-const isLiked    = id => watched.has(id) && !wowed.has(id) && !enjoyed.has(id) && !disliked.has(id) && !indifferent.has(id);
 const isDisliked = id => watched.has(id) && disliked.has(id);
 const isSoso     = id => watched.has(id) && indifferent.has(id) && !disliked.has(id);
 // "" when you've said nothing — the only state in which the full card is drawn.
@@ -4894,21 +4857,6 @@ function saveActiveIds(){ try{ localStorage.setItem("cascade_active_multi", JSON
 function setActive(id){
   activeId=id||firstAgentId();
   activeIds = activeId ? [activeId] : [];
-  try{ localStorage.setItem("cascade_active",activeId||""); }catch(e){}
-  saveActiveIds();
-}
-// A tap on a rail card toggles its membership in the selection. The last one standing cannot be removed —
-// an empty rail is not a state the listing can show (CAS-566/R3 already treats "no agent" as "list nothing").
-function toggleActive(id){
-  if(!id) return;
-  const i=activeIds.indexOf(id);
-  if(i>=0){
-    if(activeIds.length<=1) return;
-    activeIds.splice(i,1);
-  } else {
-    activeIds.push(id);
-  }
-  activeId=activeIds[0]||null;
   try{ localStorage.setItem("cascade_active",activeId||""); }catch(e){}
   saveActiveIds();
 }
@@ -5506,7 +5454,6 @@ $("filtersDone").onclick=()=>{ logEvent("filters_applied",{active:activeCount(),
 // the wordmark ends up under the icons — and three is what the 0.8 header carries (Your Movies · Account ·
 // alerts). Services are still one tap away from the places you actually want them: the Agent Briefing's
 // "Streaming services" row, the "Add my services" CTA on the listing, and the membership setup sheet.
-window.openPrefs=()=>{ logEvent("services_opened",{picked:prefs.sub.size+prefs.store.size}); openModal($("prefs")); };
 $("prefsDone").onclick=()=>closeModal($("prefs"));
 function updatePrefSwitch(){
   $("prefSwitch").classList.toggle("on", prefs.on);
@@ -5711,7 +5658,6 @@ function awardsBreakdownHTML(m){
 // yours to undo. Since CAS-100 your answer alone folds the card; it no longer waits on a View chip.
 const taggedOut = m => !!opinionOf(m.tmdb_id);
 let ignoreTagged=false;   // set only by passesOrStub(), so the counters that call passes() are unaffected
-const passesOrStub = m => { ignoreTagged=true; const ok=passes(m); ignoreTagged=false; return ok; };
 // ---- The status gate (CAS-148) -------------------------------------------------
 // A Cascade's window scope is a WATCH scope, not a display filter. A cinema-window Cascade is watching 26
 // films — the 21 on screens now AND the ~5 still on their way to one — but the listing tested the film's
@@ -5763,7 +5709,6 @@ const byPopularity=(a,b)=>(b.popularity||0)-(a.popularity||0);
 // Not recency (the day Cascade happened to pick a film up says nothing about the film), and not taste
 // weighting (what you keep and what you wave off decides what is ON the list, it does not quietly reshuffle
 // what's on it). Two keys, both of them things you can check for yourself.
-const stageIdx = m => CASCADE.indexOf(primaryStatus(m));
 // primaryStatus() is the LAST window a film holds, i.e. the furthest it has travelled — a film that is both
 // rentable and included with a subscription sorts as streaming, its most-progressed window.
 // ---- Ratings we can stand behind (CAS-156) -------------------------------------
@@ -5905,7 +5850,6 @@ function sortMoviesBy(a,b,key){
     default: return (ratingOf(b)||0)-(ratingOf(a)||0);   // CAS-156: the same vote gate as byRatingDesc
   }
 }
-const sortMovies = (a,b) => sortMoviesBy(a,b,filt.sort);
 // An un-released film has no rating, no box office and usually no budget — ranking it by a metric it doesn't
 // have just sorts noise (which is how genuine tentpoles ended up at the bottom of the budget sort). So the
 // Upcoming group always ranks by anticipation, except under the sorts that DO mean something pre-release.
@@ -5948,7 +5892,6 @@ const sortForKey = (g,key,cinema,isUserSort) =>
   : key==="availability" ? (cinema||g==="upcoming" ? byTimelineAsc : byTimeline)
   : key==="imdb" ? byRatingDesc
   : ((a,b)=>sortMoviesBy(a,b,key));
-const sortFor = (g,c) => sortForKey(g, filt.sort, c && c.kind==="cinema");
 // ---- The listing's order, as one function (CAS-176) -----------------------------
 // The listing is sections in CASCADE order, each sorted by sortFor(); the reveal is the same films as one
 // flat grid. For the two to be the same SEQUENCE, the flat one has to walk the same sections in the same
@@ -6628,14 +6571,6 @@ const OPINIONS = [
   // the same flag/gesture for the stub and My List, where the panel isn't the surface). Same `blocked` flag.
   {key:"notfor",   ico:"block",   lbl:"Never",       on:"Never — tap to undo",       off:"Not for me"},
 ];
-function opinionBtnsHTML(id, cls=""){
-  const cur=opinionOf(id);
-  return OPINIONS.map(o=>{
-    const on=cur===o.key, title=on?o.on:o.off;
-    return `<button class="actbtn ${cls} ${on?"on "+o.key:""}" onclick="setOpinion(${id},'${o.key}')"
-      aria-pressed="${on}" title="${escA(title)}" aria-label="${escA(title)}">${ICON[o.ico]}</button>`;
-  }).join("");
-}
 // ---- CAS-230: the v0.8 card controls -------------------------------------------------------------------
 // The card carried six controls in a row: the Pick badge, four verdict icons and the chevron. The v0.8
 // prototype replaces that with two labelled chips and the chevron — a WATCH STATUS chip that opens a panel of
@@ -7372,35 +7307,6 @@ function stubHTML(m){
     </span>
   </div>`;
 }
-// ================= Found (CAS-67) =================
-// The payoff view, and now the point of the whole app: the union of what every Cascade selected, plus what you
-// added by hand — with today's real window and price, and the honest answer to "why is this here?" printed on
-// every row. (Watched / Not-interested still live here too: they're the other two things you can say about a
-// film, and the undo for both has to be somewhere.)
-const TAG_GROUPS = [
-  {key:"found", icon:"🔔", title:"Found for you", colour:"var(--purple)", set:()=>found,
-   blurb:"Cascade found these while you were getting on with your life. It'll tell you the moment one moves"},
-  // Liked and Disliked are filed apart (CAS-100): they are the two halves of what one tick used to say, they
-  // pull the taste weighting in opposite directions, and a film you told us you disliked must not sit in a
-  // group headed "the kind you keep".
-  // CAS-278: Wow! gets a group of its own rather than being folded in with Watch Again. Without one, every
-  // film given the top answer would silently vanish from these receipts — `isLiked` no longer matches it —
-  // and a film disappearing because you praised it is the worst possible reading of that gesture.
-  {key:"wow", icon:"🌟", title:"Watched · wow", colour:"var(--green)",
-   set:()=>new Set([...watched].filter(isWow)),
-   blurb:"The ones that landed hardest — I keep them out of what I find for you, and I lean toward more like them"},
-  {key:"liked", icon:"👍", title:"Watched · watch again", colour:"var(--green)",
-   set:()=>new Set([...watched].filter(isLiked)),
-   blurb:"Seen and enjoyed — I keep them out of what I find for you, and I look for more like them"},
-  {key:"disliked", icon:"👎", title:"Watched · didn't like", colour:"var(--open)",
-   set:()=>new Set([...watched].filter(isDisliked)),
-   blurb:"Seen and not for you — I keep them out, and I push this kind down the list"},
-  {key:"soso", icon:"😐", title:"Watched · so-so", colour:"var(--grey)",
-   set:()=>new Set([...watched].filter(isSoso)),
-   blurb:"Seen, and it didn't land either way — I keep them out, and I read nothing into the kind"},
-  {key:"blocked", icon:"🙅", title:"Not for me",  colour:"var(--grey)",  set:()=>blocked,
-   blurb:"Collapsed to one line on the main list. Undo any time — here or there"},
-];
 // ================= The Found view — the hero (CAS-70) =======================================================
 // The front door. Not a filtered list you have to work: a SELECTION, presented — the agent says what it found
 // up top, marks what's new since it last reported, gives a reason on every card, and orders the lot by where
@@ -7631,7 +7537,6 @@ async function maybeLoadFixtures(){
 // real email off window.CascadeAuth. Attaching the listener here, ahead of that module running,
 // means it is always in place before the dispatch fires.
 window.addEventListener("cascade-auth-change", () => { maybeLoadFixtures(); });
-window.CascadeFixtures = { maybeLoadFixtures, fixturesRequested, FIXTURES_TEST_EMAILS };
 
 // ---- "Newly added" (CAS-447) — a catalogue fact, not an agent one ---------------
 // Distinct from isNewFound above: that is "an agent picked this up lately", per-device and re-triggerable.
@@ -7743,14 +7648,6 @@ const listedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m)).length
 // listedCount above (a newly-added film that doesn't even list here shouldn't inflate this agent's number),
 // narrowed to the ones newlyAddedKind actually flags.
 const newlyAddedCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m) && newlyAddedKind(m)).length;
-// How many of this agent's films are still waiting on a decision — the For-review pile, scoped to one
-// agent. Same predicate the scope bar's New/For-review pill uses (not tagged out, no Watch-it window
-// ticked), so the two can never disagree.
-// CAS-642: lost its only caller (the rail card's own "N to review" badge) once the rail stopped
-// representing a single agent — the scope bar's own For-review pill (untouched by this ticket) still
-// surfaces the same pile at the listing level. Left defined rather than deleted; see the CAS-642 comment
-// by cascadeDirty() for why.
-const toReviewCount = c => MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m) && !filmDecided(m.tmdb_id)).length;
 // ---- v0.9.4 SCOPE: Watch it / New / Watched ---------------------------------------------------------
 // Find is where you DECIDE. So the list is three piles and this bar says which you are looking at:
 //   Watch it — you have already picked a window for it (filmOptOn on any rung)
@@ -7775,89 +7672,6 @@ function inFindScope(m){
   if(filmDecided(id)) return scope.watch && (!scopeTiers.size || [...scopeTiers].some(k=>filmHasWatchTier(id,k)));
   return scope.new;
 }
-window.toggleScope = key => {
-  scope[key]=!scope[key];
-  if(!scope.watch && !scope.new && !scope.watched) scope[key]=true;   // never all three off
-  if(!scope[key]) closeScopePanel();
-  render();
-};
-const SCOPE_SETS = {watch:scopeTiers, watched:scopeVerdicts};
-const SCOPE_OPTS = {
-  watch:   () => FILTER_TIERS.map(t=>({key:t.key, lbl:t.label, cd:t.cd})),
-  watched: () => REVIEW_STEPS.map(v=>({key:v.key, lbl:v.lbl,  cd:v.cd})),
-};
-function scopePanelRowsHTML(key){
-  const set=SCOPE_SETS[key];
-  const rows=SCOPE_OPTS[key]().map(o=>{
-    const on=set.has(o.key);
-    return `<button type="button" class="nopt${on?" on":""}${o.key==="notfor"?" sep":""}" style="--wwc:${o.cd}"
-      data-sopt="${o.key}" aria-pressed="${on}"
-      title="${escA(on?o.lbl+" — tap to clear":"Show only "+o.lbl)}">
-      <span class="wwb sq">✓</span><span class="nol">${esc(o.lbl)}</span></button>`;
-  }).join("");
-  return rows;   // no .npthd — the pill the panel is attached to is the header
-}
-// The funnel's positionFilterPanel anchors by RIGHT edge — correct for an icon at the right of a card, wrong
-// for a pill at the LEFT of a three-across row, where a content-width panel then runs off the screen. This
-// anchors the panel's LEFT to the pill's left, floors its width at the pill's, and clamps both edges inside
-// #cascbar. It never opens upward: the bar is at the top of the screen, so there is nowhere to open up into.
-function positionScopePanel(pop, pill){
-  const bar=$("cascbar");
-  // Two things make a one-shot calculation wrong here. `left`/`top` on an absolutely-positioned child are
-  // measured from the offsetParent's PADDING box, not the border box getBoundingClientRect reports; and a
-  // width:max-content panel shrinks to the space left of the containing block's edge, so its width changes
-  // as you move it. So: pin an explicit width first, then converge on the target x/y by correction.
-  pop.style.right="auto"; pop.style.left="0px"; pop.style.top="0px"; pop.style.width="auto";
-  const barR=bar.getBoundingClientRect(), pR=pill.getBoundingClientRect();
-  pop.style.minWidth=Math.round(pR.width)+"px";
-  pop.style.maxWidth=Math.round(barR.width-20)+"px";
-  pop.style.width=Math.ceil(pop.getBoundingClientRect().width)+"px";   // pin it — no more shrink-to-fit
-  const w=pop.getBoundingClientRect().width;
-  const wantX=Math.max(barR.left+10, Math.min(pR.left, barR.right-w-10)), wantY=pR.bottom+5;
-  for(let i=0;i<3;i++){
-    const r=pop.getBoundingClientRect();
-    if(Math.abs(r.left-wantX)<0.5 && Math.abs(r.top-wantY)<0.5) break;
-    pop.style.left=Math.round(parseFloat(pop.style.left||0)+(wantX-r.left))+"px";
-    pop.style.top =Math.round(parseFloat(pop.style.top ||0)+(wantY-r.top ))+"px";
-  }
-}
-function closeScopePanel(){
-  document.querySelectorAll(".cpop.spop").forEach(n=>n.remove());
-  document.querySelectorAll(".sccar[aria-expanded='true']").forEach(b=>b.setAttribute("aria-expanded","false"));
-  document.querySelectorAll(".scopebtn.open").forEach(b=>b.classList.remove("open"));
-}
-window.openScopePanel = (key, btn) => {
-  const already = btn.getAttribute("aria-expanded")==="true";
-  closeScopePanel();
-  if(already) return;                                  // second tap closes it
-  if(!scope[key]){ scope[key]=true; render(); return openScopePanel(key, $("scopeBar").querySelector(`.sccar[data-scope="${key}"]`)); }
-  const pop=document.createElement("div");
-  pop.className="cpop spop al-r";
-  pop.style.cssText="position:absolute;bottom:auto";
-  pop.dataset.scope=key;
-  pop.innerHTML=`<div class="nopts">${scopePanelRowsHTML(key)}</div>`;
-  $("cascbar").appendChild(pop);
-  positionScopePanel(pop, btn.closest(".scopebtn"));
-  btn.setAttribute("aria-expanded","true");
-  btn.closest(".scopebtn").classList.add("open");
-};
-// Multi-select, exactly like the funnel: a tap toggles one row and the panel stays open.
-window.toggleScopeOpt = (key, val) => {
-  const set=SCOPE_SETS[key];
-  set.has(val) ? set.delete(val) : set.add(val);
-  const pop=document.querySelector(".cpop.spop");
-  if(pop) pop.querySelector(".nopts").innerHTML=scopePanelRowsHTML(key);
-  render();
-};
-document.addEventListener("click", e=>{
-  const row=e.target.closest(".cpop.spop .nopt[data-sopt]");
-  if(row){ toggleScopeOpt(row.closest(".cpop.spop").dataset.scope, row.dataset.sopt); return; }
-  const car=e.target.closest(".sccar");
-  if(car){ openScopePanel(car.dataset.scope, car); return; }
-  if(document.querySelector(".cpop.spop") && !e.target.closest(".cpop.spop")) closeScopePanel();
-});
-document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeScopePanel(); });
-addEventListener("scroll", ()=>{ if(document.querySelector(".cpop.spop")) closeScopePanel(); }, {passive:true});
 // CAS-713: Watch's fixed top nav — three sub-tabs above the scope bar, each pre-setting which
 // availability statuses the listing below even considers. Session-only state, exactly like `scope`
 // above: never persisted, so a fresh load always starts on Cinema.
@@ -8535,7 +8349,6 @@ const AVAIL_ROWS = [
 ];
 const WINDOW_ROW = {};
 AVAIL_ROWS.forEach(r=>r.windows.forEach(w=>{ WINDOW_ROW[w]=r.alert; }));
-const HOME_ROWS = AVAIL_ROWS.filter(r=>r.home).map(r=>r.key);
 const ALL_WINDOWS = AVAIL_ROWS.flatMap(r=>r.windows);
 
 // ---- Rating: catalogue percentile, not a bare IMDb number ----------------------
@@ -9483,10 +9296,6 @@ function alertLive(c,k){
   return accountAlertKeysOn().has(k) && reachableRows(c).has(k);
 }
 const liveAlerts = c => Object.keys(ALERT_SHORT).filter(k=>alertLive(c,k));
-function alertSummary(c){
-  const on=liveAlerts(c);
-  return on.length ? "alerts on "+on.map(k=>ALERT_SHORT[k]).join(" + ") : "alerts off";
-}
 // The same fact, said in the agent's voice — what it will actually come back to you about. Read off the same
 // reachable-bells rule as alertSummary(), so the promise can only name a moment that can really fire.
 const ALERT_MOMENT = {cinema:"reaches a cinema", past_opening:"is past its opening weekend",
@@ -9539,34 +9348,7 @@ window.openCascade=id=>{
 // already does by being scrolled to. An × on a card the user has spent time building reads as "delete
 // this", so the one control on that row that destroyed nothing was also the one that looked most like
 // it did. Selecting All is still how you leave an agent; it is just no longer disguised as an exit.
-// Filters touched by hand while a Cascade is open → offer to save them back into it.
-// CAS-642: this inline Save shortcut and its dirty-mark lost their only caller (the rail's own Save button)
-// once the rail stopped representing a single agent — editing an agent's own filters and saving them is
-// still reachable through Manage Agents → the agent's Briefing, which never routed through here. Left
-// defined rather than deleted, same as the retired Your Movies screen (CAS-633's own comment) — out of this
-// already-large ticket's scope to also resolve, but not left silently unreferenced.
 const sameSet=(s,a)=> s.size===a.length && a.every(v=>s.has(v));
-function cascadeDirty(){
-  const c=activeCascade(); if(!c) return false;
-  return !sameSet(filt.status,c.status) || !sameSet(filt.genre,c.genre) || !sameSet(filt.age,c.age)
-      || !sameSet(filt.exclude,c.exclude||[])
-      || !sameSet(filt.culture,c.culture||[]) || !sameSet(filt.year,c.year||[])
-      || filt.imdb!==(c.imdb||0) || filt.rt!==(c.rt||0) || filt.awards!==!!c.awards
-      || filt.includeUnrated!==!!c.includeUnrated || filt.sort!==(c.sort||DEFAULT_SORT)
-      || filt.budget!==(c.budget||0) || filt.includeUnbudgeted!==!!c.includeUnbudgeted
-      || filt.hideWatched!==(c.excludeWatched!==false) || filt.showHidden!==(c.excludeBlocked===false);
-}
-window.saveCascadeEdits=()=>{
-  const c=activeCascade(); if(!c) return;
-  c.status=[...filt.status]; c.genre=[...filt.genre]; c.age=[...filt.age];
-  c.exclude=[...filt.exclude];
-  c.culture=[...filt.culture]; c.year=[...filt.year];
-  c.imdb=filt.imdb; c.rt=filt.rt; c.awards=filt.awards; c.sort=filt.sort;
-  c.includeUnrated=filt.includeUnrated; c.ratingStop=stopFor(c.imdb);
-  c.budget=filt.budget; c.includeUnbudgeted=filt.includeUnbudgeted;
-  c.excludeWatched=filt.hideWatched; c.excludeBlocked=!filt.showHidden;
-  saveCascades(); render();
-};
 
 // CAS-863: the primary deck (#cascStrip) already stopped being called from render() as of CAS-718/721 —
 // this finishes that retirement. sortCtl is the one live survivor: the Watch listing's own #sort control
@@ -9806,7 +9588,6 @@ window.relaxFilter=key=>{
   const n=MOVIES.filter(passes).length;
   // CAS-287: the count on the card and the list itself both move — no banner needed to say so.
 };
-window.resetEverything=()=>{ setActive(null); clearFilters(); syncFilterUI(); render(); };
 // CAS-753 AC4: the honest-dead-end pattern (CAS-252) for the Watch list's own "my services" filter — same
 // tone as prefSwitch's own note, said as a full empty state rather than a note under a switch.
 function watchMineOnlyDeadEndHTML(){
@@ -11084,7 +10865,6 @@ document.addEventListener("keydown", e => { if(e.key==="Escape" && $("aboutPage"
 // criteria so the card and the built agent can never drift. No membership gate: service-scoped agents
 // (Watch tonight, Date night) count against the whole catalogue because no services are picked yet at
 // first run — matchesCriteria only scopes to "my services" once servicesPicked() is true.
-const _tplCrit = k => CASCADE_TEMPLATES.find(t=>t.key===k);
 // ---- R5 agent presets (CAS-143 / onboarding-mocks/r5-prototype.html, buildspec §Per-agent defaults) ----
 // The candy shop. CAS-160 splits what used to be one thing in two: a preset is now a STANDARD only — the
 // taste and quality bar it holds films to — and WHERE/WHEN you'll watch is no longer baked into it. That
@@ -11568,8 +11348,6 @@ const CRIT_MARKS = [
   {v:90, label:"Universal",     say:"universally acclaimed"},
 ];
 const critScoreReadout = v => v ? `Score ${Math.round(v)}+` : "Off";
-const critScoreSay = v => (CRIT_MARKS.filter(r=>r.v>0 && v>=r.v).pop()||{}).say
-                       || (v ? `scoring ${Math.round(v)}+ with critics` : null);
 // CAS-166 (reverses buildspec decision #2): Budget & scale is continuous, like People's vote. Four bands
 // could only say "between these two numbers", which is not how anyone thinks about how big a film they want
 // — you want at least this big — and it misfired at the edges, dropping a $110M film from "Studio" for being
@@ -11616,7 +11394,6 @@ function scalePos(dollars){
 // band rather than claiming to be no restriction at all.
 const scaleBand    = d => (SCALE_REF.filter(r=>r.d>0 && d>=r.d).pop()||SCALE_REF[1]).label;
 const scaleReadout = d => d>0 ? `${scaleBand(d)} · ${money(d)}+` : "Off";
-const scaleSay     = d => d>0 ? `made at ${money(d)} or more` : null;
 // CAS-145: the Buzz dial. Plain English on the face of it — the percentile machinery behind BUZZ_CUTS is
 // not something a person setting a bar should have to read about. CAS-678 replaces the stops with the same
 // three bands the card lozenge wears (Anticipated/Blockbuster/Must-see), over the upcoming-and-in-cinema
@@ -11635,7 +11412,6 @@ const VOTE_REF = [[6,"Liked"],[7,"Well-liked"],[7.5,"Loved"],[8.2,"Adored"]];
 const votePos  = v => Math.max(0, Math.min(100, (v-VOTE_MIN)/(VOTE_MAX-VOTE_MIN)*100));
 const voteBand = v => (VOTE_REF.filter(r=>v>=r[0]).pop()||[])[1] || "";
 const voteReadout = v => v<VOTE_OFF ? "Off" : `${voteBand(v)?voteBand(v)+" · ":""}${v.toFixed(1)}+`;
-const voteSay = v => v<VOTE_OFF ? null : `scored ${v.toFixed(1)}+ by viewers`;
 
 // CAS-188: genresOn / langsOn / ageStop are gone. They were the pre-CAS-146 per-agent copies of genre,
 // language and age, and once those three moved to the account-level taste baseline nothing read them any
@@ -11723,7 +11499,6 @@ const agentWindow  = key => agentWindows().find(w=>w.key===key);
 // pair of switches is held as a plain object throughout: {list:bool, notify:bool}.
 const winFlags = key => activeWatch()[key] || {};
 const winOn    = (key, which) => !!winFlags(key)[which];
-const winAny   = key => winOn(key,"list") || winOn(key,"notify");
 // CAS-242: a window's Notify can carry finer moments. They live under the window's own flags so the whole
 // answer stays one JSON-able object, and they only mean anything while Notify itself is on — the sub-switch
 // chooses WHICH moments, it does not turn the bell on behind your back.
@@ -11816,13 +11591,6 @@ function listStatuses(){  return listToStatuses(watchAllWindows(onbFlow.watch));
 const WATCH_KEY="cascade_watchwins";
 function saveWatch(){
   try{ localStorage.setItem(WATCH_KEY, JSON.stringify({agent:wiz.starter||null, watch:onbFlow.watch})); }catch(e){}
-}
-function loadWatch(agentKey){
-  try{
-    const s=JSON.parse(localStorage.getItem(WATCH_KEY)||"null");
-    if(s && s.agent===agentKey && s.watch && typeof s.watch==="object") return migrateWatch(s.watch);
-  }catch(e){}
-  return null;
 }
 // ---- CAS-532: Where & when you'll watch, promoted to a global setting --------------------------------
 // One answer for every agent, the same way tasteBase.langs already is — not a per-agent seed a new agent
@@ -12221,7 +11989,6 @@ let tasteBase = baseDefaults();
 try{ const o=JSON.parse(localStorage.getItem(BASE_KEY)||"null");
      if(o && typeof o==="object") tasteBase={...baseDefaults(), ...o}; }catch(e){}
 function saveTasteBase(){ try{ localStorage.setItem(BASE_KEY, JSON.stringify(tasteBase)); }catch(e){} }
-const baseAges = () => AGE_LEVELS.slice(tasteBase.ageLo, tasteBase.ageHi+1);
 // CAS-250: the baseline asks the same question as the agent's own how-far-back, so it answers it the same
 // way — a rolling number of years, converted once from the old index.
 const baseYearsBack = () => (typeof tasteBase.yearsBack==="number")
@@ -12559,16 +12326,6 @@ function missionRest(){
   const used=MISSION_DIALS_USED[kind] || MISSION_DIALS_USED.cinema;
   return used.filter(k=>!primary.includes(k));
 }
-const DIAL_DEFS = {
-  vote:  {em:"👥", label:"People's vote", how:"What everyday viewers scored it, out of 10.", cont:"vote"},
-  crit:  {em:"🏅", label:"Critics & awards", how:"What professional critics and awards thought.",
-          cont:"crit", also:{stops:AWARD_STOPS, key:"awardStop", dial:"awards",
-                             cap:"…and how decorated. A winner clears every nomination rung."}},
-  scale: {em:"🎬", label:"Movie Budget", how:"How big the film is — from a small indie to a huge blockbuster.",
-          cont:"scale"},
-  buzz:  {em:"🔥", label:"Movie Buzz", how:"How much people are talking about it right now.", isNew:true,
-          stops:BUZZ_STOPS, key:"buzzStop"},
-};
 // CAS-729: onbMoreOpen/onbShowMore ("More controls") retired with dialCardHTML above — the Mission screen
 // they expanded no longer has a primary/secondary dial split to expand.
 const edgeShift = (i,n) => i===0 ? "translateX(0)" : (i===n-1 ? "translateX(-100%)" : "translateX(-50%)");
@@ -13124,7 +12881,6 @@ window.flowSetAll=(key,on)=>{
 // selected and the ONE live count — the agent's own, the same number the step's Continue shows and the
 // same one the bar step before them showed. Printing the agent's 21 on one screen and the baseline's 769
 // on the next is two true measurements that read as a contradiction (the CAS-175 lesson).
-const flowCount = () => onbFlow.draft ? onbCount() : tasteBaseCount();
 const flowCnt = n => `<span class="cnt">${n} film${n===1?"":"s"}</span> match right now.`;
 // CAS-198/164: every one of these takes the count as an ARGUMENT. The screen prints the same number in
 // three places — the mirror at the top, the Continue button and this line — and "equal at all times" can
@@ -16613,9 +16369,6 @@ function windowOf(o){
   if(o.type==="rent") return (o.price!=null&&o.price>RENTAL_MAX)?"pvod":"rental";
   return "";
 }
-const evLine = e => `${esc(e.title)} → <b>${STATUS_LABEL[e.window]}</b>`
-  + (e.services.length ? ` on ${esc(e.services.join(", "))}` : "")
-  + (e.price!=null ? ` · $${e.price.toFixed(2)}` : "");
 // `realAlerts` is the daily monitor's record, read back out of the `notifications` ledger the job writes.
 // Moving (movingUnseenCount/updateMovingBadge) is the only surface that reads it now.
 let realAlerts=[];            // [{id, movie_id, moment, title, cascade_name, emailed_at, read_at}]
@@ -16628,16 +16381,6 @@ const REAL_MOMENT_SAID = {
   // CAS-848: the other two moments the monitor can emit — previously missing here, so a row for either
   // printed its raw moment key instead of a said phrase.
   announced:"just reached Cascade", opens_soon:"opens in cinemas soon",
-};
-const REAL_MOMENT_WINDOW = {
-  hits_cinema:"in_cinema", past_opening_weekend:"past_opening", hits_pvod:"pvod",
-  hits_rent:"rental", hits_stream:"included_streaming",
-  // CAS-602: newly_qualifies fires from the film's CURRENT window, which varies per film — there is
-  // no single destination window to name here, unlike every other moment above.
-  newly_qualifies:null,
-  // CAS-785: new_to_agent is the same "no single destination" case as newly_qualifies — a first
-  // appearance can land in any window.
-  new_to_agent:null,
 };
 let toastT; function toast(msg){const t=$("toast");t.textContent=msg;t.classList.add("show");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("show"),3200);}
 
@@ -18263,7 +18006,6 @@ else if(dedupedN)
   // CAS-345 moved that entry point off its own header icon into the top menu's "Account" item, which
   // gets its Enter/Space handling for free from armSwitches() (every .iconbtn is wired there), so this
   // module no longer needs its own keydown shim for a button it never owned the click of anyway.
-  window.CascadeOpenAuth = openAuth;
   gid('authDone').addEventListener('click', closeAuth);
 
   // A config is only "real" if both fields are filled and not the example placeholders.
