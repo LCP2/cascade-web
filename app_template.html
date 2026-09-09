@@ -14536,12 +14536,26 @@ function movingLanes(rows){
   });
   const lanes=[...byKey.values()];
   // CAS-852: window rank first, newest-first only as the tiebreak within one window — replaces CAS-848's
-  // lane-level "newest first".
+  // lane-level "newest first". CAS-890: the Upcoming section reads by release date instead — every row
+  // passed in one call already shares a single primaryStatus (movingSections filters before calling), so
+  // checking the first row is enough to tell which sort this call needs.
+  const upcoming = rows.length>0 && primaryStatus(rows[0].m)==="upcoming";
   lanes.forEach(l=>l.rows.sort((a,b)=>
-    movingWindowRank(a.m)-movingWindowRank(b.m) || (Date.parse(b.date)||0)-(Date.parse(a.date)||0)
+    upcoming ? movingUpcomingCmp(a,b)
+      : movingWindowRank(a.m)-movingWindowRank(b.m) || (Date.parse(b.date)||0)-(Date.parse(a.date)||0)
   ));
   lanes.sort((a,b)=>(a.cascade.order??1e9)-(b.cascade.order??1e9));
   return lanes;
+}
+// CAS-890: cinema_date ascending — soonest release first. A film with no cinema_date can't be placed on
+// that scale, so it sorts after every dated film rather than as if it were "today" (0) or unreleased (Infinity
+// would work too, but explicit is clearer); undated films keep the old newest-event-first order among themselves.
+function movingUpcomingCmp(a,b){
+  const da=Date.parse(a.m.cinema_date), db=Date.parse(b.m.cinema_date);
+  const aHas=a.m.cinema_date!=null && !isNaN(da), bHas=b.m.cinema_date!=null && !isNaN(db);
+  if(aHas && bHas) return da-db || (Date.parse(b.date)||0)-(Date.parse(a.date)||0);
+  if(aHas!==bHas) return aHas ? -1 : 1;
+  return (Date.parse(b.date)||0)-(Date.parse(a.date)||0);
 }
 // CAS-869: the MAJOR grouping — one section per availability status, in the Watch listing's own order
 // (LISTING_ORDER, never hardcoded — CAS-855 already changed it once), each holding movingLanes' existing
