@@ -18,6 +18,13 @@ build tests yesterday's app. `npm run qa` does the build for you; running a suit
 | Monitor (pre-existing) | `python -m unittest discover -s monitor/tests` plus `python -m monitor --dry-run` | The notifier's rules and its de-dupe. |
 | End to end (CAS-232) | `npx playwright test` | A real browser walking the built page. |
 
+`npx playwright test` above is the gate's own tiny smoke set (`npm run test:e2e` — `smoke.spec.mjs` plus the
+handful of specs named in `package.json`), the same one `qa.yml` runs. The full per-ticket Playwright suite —
+every spec under `tests/e2e/`, gate members included — is `npm run test:e2e:full`. It is not part of `npm run
+qa` or the CI gate (CAS-385's reasoning: a spec pinned to one commit's exact copy/DOM would turn the gate red
+for an approved UI change that is not a regression), but it is still runnable on demand, locally or via the
+**`e2e-full`** GitHub Actions workflow (`workflow_dispatch` only) — CAS-878.
+
 ## The two rules every assertion here follows
 
 1. **Nothing pins a number.** `main` refreshes the catalogue daily, so an assertion that today's catalogue

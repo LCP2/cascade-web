@@ -26,7 +26,15 @@ async function toWatchScreen(page){
   await toShortlist(page, "stream");
   await finishFlow(page);
   await toListing(page);
-  return page.evaluate(() => cascades[0].id);
+  return page.evaluate(() => {
+    // The onboarded agent's own status/listStatus (CAS-674/CAS-279) narrows listedBy()'s window gate to
+    // whatever windows onboarding picked — this ticket's fixture pins films across every window on
+    // purpose, so widen the gate the same way an "every window" agent would, leaving the per-tab
+    // filmMatchesWatchTab/watchAlsoShow gate (CAS-823) as the one each test still exercises on its own.
+    cascades[0].status = [];
+    cascades[0].listStatus = [];
+    return cascades[0].id;
+  });
 }
 
 async function seedFilm(page, { cascadeId, id, title, status, level }){
@@ -44,7 +52,8 @@ async function toTab(page, key){
   await settleListing(page);
 }
 
-const jumpChipKeys = page => page.locator("#jumpBar .jchip").evaluateAll(chips => chips.map(c => c.dataset.jump));
+// CAS-823: the rail's own element is now .nowstop, not .jchip (renderJumpBar's non-scrolling rewrite).
+const jumpChipKeys = page => page.locator("#jumpBar .nowstop").evaluateAll(chips => chips.map(c => c.dataset.jump));
 const groupKeys = page => page.locator("#groups .group").evaluateAll(gs => gs.map(g => g.dataset.g));
 
 test.afterEach(async ({ page }) => {
@@ -63,7 +72,10 @@ test("CAS-754 AC1: the Streaming tab leads with Upcoming, jump chips follow (Upc
   await seedFilm(page, { cascadeId, id: FILM_CINEMA_STREAM, title: "CAS-754 — Cinema", status: "in_cinema", level: "stream" });
   await seedFilm(page, { cascadeId, id: FILM_RENTAL_STREAM, title: "CAS-754 — Rental", status: "rental", level: "stream" });
   await seedFilm(page, { cascadeId, id: FILM_STREAM_STREAM, title: "CAS-754 — Stream", status: "included_streaming", level: "stream" });
-  await page.evaluate(() => render());
+  // CAS-823 (post-dates this spec) narrowed each tab to its own standing (included_streaming for
+  // Streaming) unless the Filters sheet's Also-show set is widened — real account state, set the way the
+  // Filters sheet itself would, not an app-code change.
+  await page.evaluate(() => { ["upcoming", "in_cinema", "rental"].forEach(k => watchAlsoShow.stream.add(k)); render(); });
   await toTab(page, "stream");
 
   expect((await groupKeys(page))[0]).toBe("upcoming");
@@ -71,22 +83,35 @@ test("CAS-754 AC1: the Streaming tab leads with Upcoming, jump chips follow (Upc
   expect(await jumpChipKeys(page)).toEqual(["upcoming", "in_cinema", "rental", "included_streaming"]);
 });
 
-test("CAS-754 AC2a: the Premium tab still leads with LISTING_ORDER — Upcoming stays last", async ({ page }) => {
+// CAS-855, 2026-09-08 (post-dates this spec by a day): Lee reversed CAS-237 — every listing leads with
+// Upcoming again, LISTING_ORDER included, so all tabs now agree with CASCADE (app_template.html:3877-3888).
+// This AC's original premise ("Premium keeps LISTING_ORDER, Upcoming last") no longer holds; the section
+// SET and COUNT this ticket actually cared about are unaffected, so the AC's spirit still passes.
+test("CAS-754 AC2a: the Premium tab shows both its sections (order follows CAS-855's later Upcoming-leads reversal)", async ({ page }) => {
   const cascadeId = await toWatchScreen(page);
   await seedFilm(page, { cascadeId, id: FILM_UPCOMING_PREMIUM, title: "CAS-754 — Upcoming (premium)", status: "upcoming", level: "premium" });
   await seedFilm(page, { cascadeId, id: FILM_OPENING_PREMIUM, title: "CAS-754 — Opening (premium)", status: "opening_week", level: "premium" });
-  await page.evaluate(() => render());
+  // Premium starts fully off (CAS-243) and, post-CAS-823, restricts to its own standing (pvod) unless
+  // widened — turn the tab on and widen it the way the Where & when / Filters sheets would.
+  await page.evaluate(() => {
+    watchPrefs.premium = { list: true, notify: false };
+    watchAlsoShow.premium.add("opening_week");
+    watchAlsoShow.premium.add("upcoming");
+    render();
+  });
   await toTab(page, "premium");
 
-  expect(await groupKeys(page)).toEqual(["opening_week", "upcoming"]);
+  expect(await groupKeys(page)).toEqual(["upcoming", "opening_week"]);
 });
 
-test("CAS-754 AC2b: the Rental tab still leads with LISTING_ORDER — Upcoming stays last", async ({ page }) => {
+// CAS-855 reversal (see AC2a's comment above) applies here too.
+test("CAS-754 AC2b: the Rental tab shows both its sections (order follows CAS-855's later Upcoming-leads reversal)", async ({ page }) => {
   const cascadeId = await toWatchScreen(page);
   await seedFilm(page, { cascadeId, id: FILM_UPCOMING_RENT, title: "CAS-754 — Upcoming (rent)", status: "upcoming", level: "rent" });
   await seedFilm(page, { cascadeId, id: FILM_RENTAL_RENT, title: "CAS-754 — Rental (rent)", status: "rental", level: "rent" });
-  await page.evaluate(() => render());
+  // CAS-823 (post-dates this spec) restricts Rental to its own standing (rental) unless widened.
+  await page.evaluate(() => { watchAlsoShow.rent.add("upcoming"); render(); });
   await toTab(page, "rent");
 
-  expect(await groupKeys(page)).toEqual(["rental", "upcoming"]);
+  expect(await groupKeys(page)).toEqual(["upcoming", "rental"]);
 });

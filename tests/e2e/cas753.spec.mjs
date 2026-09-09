@@ -88,14 +88,17 @@ test("CAS-753 AC1/AC2: default on hides a film only on an unpicked service; the 
 test("CAS-753 AC3: the toggle persists across a reload; a brand new list still starts on", async ({ page }) => {
   await toWatchScreen(page, "stream");
   await page.evaluate(() => setWatchMineOnly(false));
-  await expect.poll(() => page.evaluate(() => activeWatchlist().mineOnly)).toBe(false);
+  await expect.poll(() => page.evaluate(() => watchMineOnly[watchTab])).toBe(false);
 
   await page.reload();
   await page.waitForFunction(() => typeof flowStart === "function" && Array.isArray(MOVIES));
-  expect(await page.evaluate(() => activeWatchlist().mineOnly)).toBe(false);
+  expect(await page.evaluate(() => watchMineOnly[watchTab])).toBe(false);
 
   // A record this device has never seen before (nothing stored yet) takes the default — on.
-  expect(await page.evaluate(() => watchlistDefaults().mineOnly)).toBe(true);
+  await page.evaluate(() => localStorage.removeItem("cascade_watch_mineonly"));
+  await page.reload();
+  await page.waitForFunction(() => typeof flowStart === "function" && Array.isArray(MOVIES));
+  expect(await page.evaluate(() => watchMineOnly[watchTab])).toBe(true);
 });
 
 test("CAS-753 AC4: on with no services picked shows the honest dead end, not a silent empty list", async ({ page }) => {
