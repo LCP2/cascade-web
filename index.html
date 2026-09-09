@@ -3178,6 +3178,7 @@
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('svcAnalysis')">Service analysis</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('occasions')">Occasions</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('account')">Account</button>
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('recommend')">Recommend Cascade</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('about')">About</button>
           </div>
         </div>
@@ -3514,6 +3515,15 @@
 <div class="modal" id="filmInvite">
   <div class="modalhead"><h3>Invite someone</h3><button class="donebtn" id="filmInviteClose">Cancel</button></div>
   <div id="filmInviteBody"></div>
+</div>
+
+<!-- RECOMMEND CASCADE (CAS-884) — the send half of M11 (Refer a friend); CAS-808 still owns attribution
+     and any reward. Reached from the nav menu, signed-in only. Body rebuilt fresh by renderRecommendForm()
+     every open, same convention as #contact/#filmInvite. Cascade itself sends the email (a new hourly
+     workflow reads unsent public.recommendations rows) — nothing here talks to Resend directly. -->
+<div class="modal" id="recommend">
+  <div class="modalhead"><h3>Recommend Cascade</h3><button class="donebtn" id="recommendClose">Cancel</button></div>
+  <div id="recommendBody"></div>
 </div>
 
 <!-- DEBUG LOG modal — local-only usage log. Opened with ?log=1, or 5 taps on the "updated" line. -->
@@ -4896,7 +4906,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1050, "commit": "55d2de3", "builtAt": "2026-09-09T06:06:34Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1051, "commit": "656bc69", "builtAt": "2026-09-09T06:17:45Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -10485,6 +10495,7 @@ window.navMenuGo=key=>{
   else if(key==="languages") openLanguages();
   else if(key==="whereWhen") openWhereWhen();
   else if(key==="occasions") openManageOccasionsScreen();
+  else if(key==="recommend") openRecommend();
   else if(key==="about") openAbout();
 };
 document.addEventListener("click", e=>{
@@ -10766,6 +10777,81 @@ window.sendContact=async()=>{
   }
 };
 document.addEventListener("keydown", e => { if(e.key==="Escape" && $("aboutPage").classList.contains("open")) $("aboutPage").classList.remove("open"); });
+
+// ---- CAS-884: Recommend Cascade — the send half of M11 (Refer a friend) -----------------------------
+// Signed-in only, reached from the nav menu. Cascade sends the email itself, on a new hourly workflow
+// (.github/workflows/recommend.yml -> monitor/recommend.py) — this only inserts a row into
+// public.recommendations, the same "queue a row, a job emails it" shape monitor/contact.py established.
+let recommendMsgDirty=false;
+function recommendMessageFor(name, sender){
+  const who=(name||"").trim() || "there";
+  const from=sender || "A friend";
+  return `Hi ${who} — I've been using Cascade to keep track of films I mean to see. It watches for `+
+    `when something lands in cinemas or on a service I already pay for, and tells me. Thought you'd `+
+    `like it. — ${from}`;
+}
+// Rebuilt fresh every open (mirrors renderContactForm()'s own convention) so a prior visit's typed
+// name, message edits or error never bleed into the next one.
+function renderRecommendForm(){
+  recommendMsgDirty=false;
+  const a=window.CascadeAuth;
+  const senderName=(a && a.user && a.user.email) ? a.user.email.split("@")[0] : null;
+  window._recommendSender=senderName;
+  $("recommendBody").innerHTML=`
+    <div class="pnote">Send someone an introduction to Cascade and a link to sign up. One email, from you.</div>
+    <div class="flabel">Their name</div>
+    <input id="recommendName" class="namein" type="text" maxlength="40" autocomplete="off" placeholder="e.g. Priya" oninput="onRecommendNameInput()">
+    <div class="flabel">Their email</div>
+    <input id="recommendEmail" class="namein" type="email" autocomplete="off" placeholder="e.g. priya@example.com">
+    <div class="flabel">What they'll get</div>
+    <textarea id="recommendMsg" class="cmsg" maxlength="2000" rows="6" oninput="onRecommendMsgInput()">${esc(recommendMessageFor("", senderName))}</textarea>
+    <div class="pnote" id="recommendErr" style="color:#ffb9a6" hidden></div>
+    <button type="button" class="filminvcta" id="recommendSend" onclick="sendRecommend()">Send introduction</button>
+    <div class="pnote" style="text-align:center">You can edit the message before it goes.</div>`;
+}
+// The greeting stays in sync with the typed name until the message itself is edited by hand — once
+// that happens, an edit-in-progress must never be silently overwritten by a later keystroke in Name.
+window.onRecommendNameInput=()=>{
+  if(recommendMsgDirty) return;
+  $("recommendMsg").value=recommendMessageFor($("recommendName").value, window._recommendSender);
+};
+window.onRecommendMsgInput=()=>{ recommendMsgDirty=true; };
+window.openRecommend=()=>{
+  renderRecommendForm();
+  openModal($("recommend"));
+  logEvent("recommend_opened");
+};
+$("recommendClose").onclick=()=>closeModal($("recommend"));
+window.sendRecommend=async()=>{
+  const nameEl=$("recommendName"), emailEl=$("recommendEmail"), msgEl=$("recommendMsg"),
+        errEl=$("recommendErr"), btn=$("recommendSend");
+  const to_name=(nameEl.value||"").trim() || null;
+  const to_email=(emailEl.value||"").trim();
+  const message=(msgEl.value||"").trim();
+  errEl.hidden=true;
+  if(!emailValid(to_email)){
+    errEl.textContent="Add a valid email address."; errEl.hidden=false; emailEl.focus(); return;
+  }
+  if(!message){ errEl.textContent="Add a message before sending."; errEl.hidden=false; msgEl.focus(); return; }
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  const uid=(a && a.session && a.session.user) ? a.session.user.id : null;
+  if(!c || !uid){
+    errEl.textContent="Couldn't send that — try again in a moment."; errEl.hidden=false; return;
+  }
+  btn.disabled=true;
+  try{
+    const {error}=await c.from("recommendations").insert([{
+      sender_id:uid, sender_name:window._recommendSender||null, to_name, to_email, message,
+    }]);
+    if(error) throw error;
+    logEvent("recommend_sent");
+    $("recommendBody").innerHTML=`<p class="pnote">Sent — thanks for spreading the word.</p>`;
+  }catch(e){
+    btn.disabled=false;
+    errEl.textContent="Couldn't send that — try again in a moment.";
+    errEl.hidden=false;
+  }
+};
 
 // ---- Agent select (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
 // The mock's ten first-agent cards. Each carries real criteria, so its green "N films match now" is the

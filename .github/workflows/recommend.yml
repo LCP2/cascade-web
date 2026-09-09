@@ -1,0 +1,42 @@
+name: Recommend Cascade
+
+# CAS-884 (M11 — Refer a friend, send half): a recommendation should land within the hour, not
+# wait for daily.yml's 6am digest, so this is its own hourly job. Reads unsent public.recommendations
+# rows and sends one introduction email per row via monitor/recommend.py, then stamps sent_at on
+# each row it actually sent. Read-only from git's point of view: no commit, no catalogue build, no
+# qa.yml dispatch — this only ever talks to Supabase and Resend.
+
+on:
+  schedule:
+    - cron: "5 * * * *"        # five past every hour
+  workflow_dispatch:            # manual "Run workflow" button
+
+jobs:
+  recommend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: staging
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run the Recommend Cascade sender
+        # Same secrets-present/--dry-run split as daily.yml's monitor + contact-us steps: with all
+        # three present this sends real introductions and stamps sent_at; without them it renders
+        # and sends nothing, so the workflow still passes before the secrets are configured.
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$RESEND_API_KEY" ]; then
+            echo "Secrets present — live run (will send introductions + stamp sent_at)."
+            python -m monitor.recommend
+          else
+            echo "Supabase/Resend secrets absent — running --dry-run (no sends, no writes)."
+            python -m monitor.recommend --dry-run
+          fi
