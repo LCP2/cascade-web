@@ -791,7 +791,8 @@ test("CAS-831: the expanded card's Watchmode row shows its values, a missing one
     m.wm_critic_score = null;
     fastPatchFindRow(filmId);
   }, id);
-  const critCell = wmRow.locator(".m", { hasText: "WM crit" });
+  // CAS-900: the Watchmode-critic label was shortened from "WM crit" to "Crit".
+  const critCell = wmRow.locator(".m", { hasText: "Crit" });
   await expect(critCell).toHaveClass(/muted/);
   await expect(critCell).toContainText("–");
   await expect(wmRow).toContainText("7.6");     // the other two cells are unaffected
@@ -850,6 +851,49 @@ test("CAS-895: a collapsed card shows a Cascade score on both the OMDb and Watch
   expect(gridAreas).toContain("wmscores");
   const wmDisplay = await wmRow.evaluate(el => getComputedStyle(el).display);
   expect(wmDisplay).not.toBe("none");
+});
+
+// CAS-900: CAS-895's second collapsed-card score row doubled the 10-11px compact type CAS-655 tuned for a
+// single row, reviewed on device as too small. Raises both rows to 12px cells/values and 11px labels, and
+// shortens "WM pop"/"WM crit" to "Pop"/"Crit" so the Watchmode row still fits one line at the larger size.
+test("CAS-900: collapsed-card score rows are 12px/11px type and the Watchmode row uses short labels", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  const cards = page.locator("#groups .card");
+  const card = cards.first();
+  await expect(card).toBeVisible();
+  const id = await card.evaluate(el => Number(el.id.replace("card-", "")));
+
+  await page.evaluate((filmId) => {
+    const m = MOVIES.find(x => x.tmdb_id === filmId);
+    m.status = ["included_streaming"];
+    m.imdb_rating = 8.3; m.imdb_votes = 1000000; m.metacritic = 89; m.rt_critic = null;
+    m.wm_user_rating = 4.0; m.wm_popularity_percentile = 100; m.wm_critic_score = 40;
+    fastPatchFindRow(filmId);
+  }, id);
+
+  const cardEl = page.locator(`#card-${id}`);
+  await expect(cardEl).not.toHaveClass(/expanded/);
+
+  const scoresRow = cardEl.locator(".mrow.r-scores");
+  const wmRow = cardEl.locator(".mrow.r-wmscores");
+  await expect(scoresRow).toBeVisible();
+  await expect(wmRow).toBeVisible();
+
+  // AC3: computed font-size on the collapsed card's score cells and labels.
+  expect(await scoresRow.locator(".m").first().evaluate(el => getComputedStyle(el).fontSize)).toBe("12px");
+  expect(await wmRow.locator(".m").first().evaluate(el => getComputedStyle(el).fontSize)).toBe("12px");
+  expect(await scoresRow.locator(".lab").first().evaluate(el => getComputedStyle(el).fontSize)).toBe("11px");
+  expect(await wmRow.locator(".lab").first().evaluate(el => getComputedStyle(el).fontSize)).toBe("11px");
+
+  // AC4: the Watchmode row's labels are the shortened "Pop"/"Crit", not "WM pop"/"WM crit".
+  const wmRowText = await wmRow.innerText();
+  expect(wmRowText).toContain("Pop");
+  expect(wmRowText).toContain("Crit");
+  expect(wmRowText).not.toContain("WM pop");
+  expect(wmRowText).not.toContain("WM crit");
 });
 
 // CAS-765 AC7: the silent guest-mode drop is gone. If the vendored client library ever fails to define
