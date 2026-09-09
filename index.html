@@ -2973,7 +2973,7 @@
   .card:not(.expanded) .cbody{padding:6px 10px}
   .card:not(.expanded) .ctop{
     grid-template-columns:30px minmax(0,1fr);
-    grid-template-areas:"tomb title" "tomb scores";
+    grid-template-areas:"tomb title" "tomb scores" "tomb wmscores";
     column-gap:10px;row-gap:2px;align-items:center;margin-left:0;width:100%}
   .card:not(.expanded) .ptomb{width:30px;grid-area:tomb}
   .card:not(.expanded) .poster{border-radius:5px}
@@ -2985,7 +2985,6 @@
   .card:not(.expanded) .r-money,
   .card:not(.expanded) .r-badge,
   .card:not(.expanded) .r-awards,
-  .card:not(.expanded) .r-wmscores,
   .card:not(.expanded) .estline{display:none}
   /* the scores line, compacted to plain text */
   /* CAS-655: flex-wrap:wrap (was nowrap) so .attrib — the last item on this row — drops to its own
@@ -2993,11 +2992,17 @@
      a long agent list). Score cells go flex:none so they never shrink; only .attrib (min-width:0,
      ellipsised below) gives way. */
   .card:not(.expanded) .mrow.r-scores{grid-area:scores;margin:0;gap:10px;flex-wrap:wrap;overflow:hidden}
+  .card:not(.expanded) .mrow.r-wmscores{grid-area:wmscores;margin:0;gap:10px;flex-wrap:wrap;overflow:hidden}
   .card:not(.expanded) .mrow.r-scores .m,
-  .card:not(.expanded) .mrow.r-scores button.m{padding:0;background:none;border:none;font-size:11px;line-height:1.2;white-space:nowrap;flex:none}
-  .card:not(.expanded) .mrow.r-scores .m b{font-size:11px}
-  .card:not(.expanded) .mrow.r-scores .lab{font-size:10px}
-  .card:not(.expanded) .mrow.r-scores .dot{width:6px;height:6px}
+  .card:not(.expanded) .mrow.r-scores button.m,
+  .card:not(.expanded) .mrow.r-wmscores .m,
+  .card:not(.expanded) .mrow.r-wmscores button.m{padding:0;background:none;border:none;font-size:11px;line-height:1.2;white-space:nowrap;flex:none}
+  .card:not(.expanded) .mrow.r-scores .m b,
+  .card:not(.expanded) .mrow.r-wmscores .m b{font-size:11px}
+  .card:not(.expanded) .mrow.r-scores .lab,
+  .card:not(.expanded) .mrow.r-wmscores .lab{font-size:10px}
+  .card:not(.expanded) .mrow.r-scores .dot,
+  .card:not(.expanded) .mrow.r-wmscores .dot{width:6px;height:6px}
   /* CAS-686: a condensed card for a film with none of IMDb/RT/Metacritic shows badge + money instead of
      the scores line — same grid-area:scores slot, same compacted-to-plain-text treatment as .mrow.r-scores
      just above. Decided per film (condensedShowsScores), not per listing — was #groups.cinema-listing. */
@@ -3055,7 +3060,7 @@
   .card:not(.expanded) .poster{width:100%;height:auto;aspect-ratio:2/3;
     border-radius:0;border:0;background-size:cover;background-position:center}
   .card:not(.expanded) .ctop{grid-template-columns:minmax(0,1fr);
-    grid-template-areas:"title" "meta" "scores";margin-left:0;width:100%}
+    grid-template-areas:"title" "meta" "scores" "wmscores";margin-left:0;width:100%}
   /* CAS-685: the Style line (genres/language) is back on a collapsed card, between the title and
      the scores row. Base .metaline carries margin-top:-6px, tuned to ride up against the expanded
      card's title; with the condensed grid's own row-gap that reads as overlap here, so it is reset. */
@@ -4934,7 +4939,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1056, "commit": "90493b9", "builtAt": "2026-09-09T07:00:23Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1057, "commit": "3c075cd", "builtAt": "2026-09-09T07:07:55Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5719,6 +5724,16 @@ function qScore(m){
   if(!p.length) return -1;
   return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
 }
+// CAS-895: TEMPORARY — mirrors qScore against the Watchmode fields, so the two can be compared by eye while
+// Cascade evaluates Watchmode as a replacement for the OMDb-derived ratings. Not a shipped scoring axis; see
+// wmCascadeScore/wmScoresRowHTML below. Watchmode has no RT equivalent, so RT_ADJ does not apply here.
+function wmQScore(m){
+  const p=[];
+  if(typeof m.wm_user_rating==="number" && m.wm_user_rating>0) p.push(m.wm_user_rating*10);
+  if(typeof m.wm_critic_score==="number" && m.wm_critic_score>0) p.push(m.wm_critic_score/META_ADJ);
+  if(!p.length) return -1;
+  return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
+}
 function qScoreSourcesText(m){
   const names=[];
   if(ratingOf(m)!=null) names.push("People's vote");
@@ -5884,9 +5899,13 @@ function scoresRowHTML(m){
   // CAS-156: below the vote bar the score is withheld, not shrunk — but a bare "–" would read as "nobody has
   // rated this", which is a different (and equally untrue) claim. So the gated chip is a button that says
   // what it is actually waiting for, on tap as well as on hover.
+  // CAS-895: Cascade appended last — the existing OMDb-derived cascadeScore(m), for eyeballing against
+  // wmScoresRowHTML's own Cascade cell below.
+  const cs=cascadeScore(m);
   return imdbGate(m)
        + cell("rt",  "RT",   m.rt_critic!=null?m.rt_critic+"%":"", m.rt_critic!=null)
-       + cell("meta","Meta", m.metacritic!=null?m.metacritic:"",   m.metacritic!=null);
+       + cell("meta","Meta", m.metacritic!=null?m.metacritic:"",   m.metacritic!=null)
+       + cell("cascade","Cascade", cs, cs>=0);
 }
 // CAS-831: a TEMPORARY comparison row, not shipped design — put here so the incoming Watchmode figures can
 // be checked by eye against scoresRowHTML's OMDb/TMDB ones before any scoring or agent logic moves onto
@@ -5895,9 +5914,13 @@ function scoresRowHTML(m){
 // step). Expanded card only — see the `.r-wmscores` hide rule for collapsed cards.
 function wmScoresRowHTML(m){
   const cell=(label,val,has)=>`<span class="m${has?"":" muted"}"><span class="lab">${label}</span> <b>${has?val:"–"}</b></span>`;
+  // CAS-895: Cascade appended last — wmCascadeScore(m), the same mirrored figure computed over the
+  // Watchmode fields, for eyeballing against scoresRowHTML's own Cascade cell above.
+  const wcs=wmCascadeScore(m);
   return cell("WM",      m.wm_user_rating!=null?m.wm_user_rating.toFixed(1):"", m.wm_user_rating!=null)
        + cell("WM pop",  m.wm_popularity_percentile!=null?m.wm_popularity_percentile.toFixed(1):"", m.wm_popularity_percentile!=null)
-       + cell("WM crit", m.wm_critic_score!=null?Math.round(m.wm_critic_score):"", m.wm_critic_score!=null);
+       + cell("WM crit", m.wm_critic_score!=null?Math.round(m.wm_critic_score):"", m.wm_critic_score!=null)
+       + cell("Cascade", wcs, wcs>=0);
 }
 // ---- The scale badge -----------------------------------------------------------
 // One badge, on its own row under the description. The tooltip (hover) and the toast (tap — a title= on a
@@ -8535,6 +8558,18 @@ function cascadeScore(m){
     return q>=0 ? Math.round((buzz+q)/2) : buzz;
   }
   return qScore(m);
+}
+// CAS-895: TEMPORARY — mirrors cascadeScore exactly, but over wmQScore instead of qScore, so the two
+// Cascade figures can be compared side by side. See wmQScore's own comment; not read by any scoring,
+// sorting, filtering or agent-matching code.
+function wmCascadeScore(m){
+  const ps=primaryStatus(m);
+  if(ps==="upcoming") return cinemaScore(m);
+  if(ps==="in_cinema" || ps==="opening_week"){
+    const buzz=cinemaScore(m), q=wmQScore(m);
+    return q>=0 ? Math.round((buzz+q)/2) : buzz;
+  }
+  return wmQScore(m);
 }
 function cascadeScoreSourcesText(m){
   const ps=primaryStatus(m);

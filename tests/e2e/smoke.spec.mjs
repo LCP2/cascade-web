@@ -688,6 +688,57 @@ test("CAS-831: the expanded card's Watchmode row shows its values, a missing one
   await expect(cards.nth(1).locator(".r-wmscores")).toBeHidden();
 });
 
+// CAS-895: a second, TEMPORARY comparison instrument — a Cascade score appended to both the OMDb/TMDB
+// scores line and the CAS-831 Watchmode line, visible on a COLLAPSED card (unlike CAS-831's row, which
+// only surfaces once expanded), so the two figures can be scanned across the catalogue without tapping
+// into every card. This suite's own "ios" project is already the 390x844 reference frame (playwright.config.mjs).
+test("CAS-895: a collapsed card shows a Cascade score on both the OMDb and Watchmode lines, reading its own source", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  const cards = page.locator("#groups .card");
+  const card = cards.first();
+  await expect(card).toBeVisible();
+  const id = await card.evaluate(el => Number(el.id.replace("card-", "")));
+
+  await page.evaluate((filmId) => {
+    const m = MOVIES.find(x => x.tmdb_id === filmId);
+    // CAS-895: force the released path so cascadeScore/wmCascadeScore each read straight off qScore/
+    // wmQScore rather than blending in cinemaScore — an upcoming film would score the same on both lines
+    // (neither term applies pre-release), which would prove nothing about AC5.
+    m.status = ["included_streaming"];
+    m.imdb_rating = 8.3; m.imdb_votes = 1000000; m.metacritic = 89; m.rt_critic = null;
+    m.wm_user_rating = 4.0; m.wm_popularity_percentile = 100; m.wm_critic_score = 40;
+    fastPatchFindRow(filmId);
+  }, id);
+
+  const card2 = page.locator(`#card-${id}`);
+  await expect(card2).not.toHaveClass(/expanded/);   // AC4/AC6: still collapsed
+
+  const scoresRow = card2.locator(".mrow.r-scores");
+  const wmRow = card2.locator(".mrow.r-wmscores");
+  await expect(scoresRow).toBeVisible();
+  await expect(wmRow).toBeVisible();
+
+  const scoresCascade = scoresRow.locator(".m", { hasText: "Cascade" });
+  const wmCascade = wmRow.locator(".m", { hasText: "Cascade" });
+  await expect(scoresCascade).toBeVisible();
+  await expect(wmCascade).toBeVisible();
+
+  // AC5: the two Cascade cells read different sources — proven by different values for a fixture where
+  // the OMDb and Watchmode figures disagree.
+  const omdbVal = await scoresCascade.locator("b").innerText();
+  const wmVal = await wmCascade.locator("b").innerText();
+  expect(omdbVal).not.toBe(wmVal);
+
+  // AC6: the collapsed grid actually reserves a row for the new line, and the line itself is not hidden.
+  const gridAreas = await card2.locator(".ctop").evaluate(el => getComputedStyle(el).gridTemplateAreas);
+  expect(gridAreas).toContain("wmscores");
+  const wmDisplay = await wmRow.evaluate(el => getComputedStyle(el).display);
+  expect(wmDisplay).not.toBe("none");
+});
+
 // CAS-765 AC7: the silent guest-mode drop is gone. If the vendored client library ever fails to define
 // window.supabase.createClient — forced here by serving a broken bundle in place of the real one — the
 // failure must be visible on screen, not just a console.warn no user will ever read.

@@ -402,6 +402,42 @@ test("critScore: the mean of Metacritic and RT where both are present, whichever
   assert.equal(E.critScore({ metacritic: null, rt_critic: 0 }), 0, "an RT score of exactly 0 should still read as present");
 });
 
+// ---- 9c. THE WATCHMODE COMPARISON SCORES ARE TEMPORARY MIRRORS OF qScore/cascadeScore (CAS-895) -------------
+// wmQScore mirrors qScore over the wm_user_rating/wm_critic_score fields (scale-matched via the existing
+// META_ADJ ratio, no RT_ADJ equivalent — Watchmode carries no RT-shaped field). wmCascadeScore mirrors
+// cascadeScore's three primaryStatus branches exactly, but blends cinemaScore with wmQScore instead of qScore.
+test("wmQScore: the rounded mean of whichever Watchmode terms are present, scale-matched like qScore", () => {
+  const both  = { wm_user_rating: 7.6, wm_critic_score: 91 };
+  const userOnly = { wm_user_rating: 8.0, wm_critic_score: null };
+  const critOnly = { wm_user_rating: null, wm_critic_score: 91 };
+  const neither = { wm_user_rating: null, wm_critic_score: null };
+  assert.equal(E.wmQScore(both), Math.round((7.6*10 + 91/META_ADJ)/2), "both present should average the two scale-matched terms");
+  assert.equal(E.wmQScore(userOnly), 80, "wm_user_rating alone should score as itself x10");
+  assert.equal(E.wmQScore(critOnly), Math.round(91/META_ADJ), "wm_critic_score alone should scale-match against IMDb via META_ADJ");
+  assert.equal(E.wmQScore(neither), -1, "a film with neither Watchmode term should not score");
+});
+
+test("wmCascadeScore: follows cascadeScore's three primaryStatus branches, over wmQScore instead of qScore", () => {
+  const upcoming = E.MOVIES.find(m => E.primaryStatus(m) === "upcoming");
+  assert.ok(upcoming, "no upcoming film found — this test would prove nothing");
+  assert.equal(E.wmCascadeScore(upcoming), E.cinemaScore(upcoming), "upcoming should return cinemaScore unchanged");
+
+  const released = E.MOVIES.find(m => !E.isPreRelease(m));
+  assert.ok(released, "no released film found — this test would prove nothing");
+  assert.equal(E.wmCascadeScore(released), E.wmQScore(released), "released (not in_cinema/opening_week) should return wmQScore unchanged");
+
+  // A film in cinemas (or its opening week) whose wmQScore is -1 falls back to cinemaScore rather than
+  // returning a negative number, exactly like cascadeScore falls back to buzz when qScore is -1.
+  const cinemaFilm = E.MOVIES.find(m => (E.primaryStatus(m)==="in_cinema" || E.primaryStatus(m)==="opening_week"));
+  assert.ok(cinemaFilm, "no in_cinema/opening_week film found — this test would prove nothing");
+  const noWm = { ...cinemaFilm, wm_user_rating: null, wm_critic_score: null };
+  assert.equal(E.wmCascadeScore(noWm), E.cinemaScore(noWm), "in_cinema/opening_week with no Watchmode terms should fall back to cinemaScore, not a negative number");
+
+  const withWm = { ...cinemaFilm, wm_user_rating: 8.0, wm_critic_score: 90 };
+  const expectedBuzz = E.cinemaScore(withWm), expectedWm = E.wmQScore(withWm);
+  assert.equal(E.wmCascadeScore(withWm), Math.round((expectedBuzz+expectedWm)/2), "in_cinema/opening_week with a real wmQScore should blend it with cinemaScore");
+});
+
 // ---- 9d. qScoreSourcesText NAMES THE THREE RAW SOURCES (CAS-706) -------------------------------------------
 // AC5: the card's own tooltip names People's vote, RT and Metacritic individually now that qScore is back to
 // three scale-matched terms rather than the CAS-694 two-axis (People's vote, Critics) collapse.

@@ -187,6 +187,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // CINEMA_BUDGET_MIN survive — CAS-724's legacyMissionFloorDefault still reads them for a cinema agent's
   // one-time scoreFloor migration.
   cascadeScore, cascadeScoreSourcesText, cinemaScore, isPreRelease, buzzPctlOf, pctRankOf,
+  // CAS-895: wmQScore/wmCascadeScore, the TEMPORARY Watchmode-mirrored pair of qScore/cascadeScore — exported
+  // the same way so a test can assert each stage directly rather than only the rendered row.
+  wmQScore, wmCascadeScore,
   BUZZ_POP_VALS, CINEMA_BUDGET_VALS, CINEMA_BUDGET_MIN,
   // CAS-748: the released-cohort quantile map's own lookup table, so a test can assert the mapping formula
   // directly rather than only cinemaScore's output.
