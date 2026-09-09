@@ -22,7 +22,7 @@ E.CascadePersistence.ACCT_READ_DELAYS = [0, 0];
 
 // Every preset in every lane it is offered in — the real matrix a person can walk into.
 const LANES = ["cinema", "stream"];
-const CASES = LANES.flatMap(kind => E.startersFor(kind).map(s => ({ kind, s, label: `${kind}/${s.key}` })));
+const CASES = LANES.flatMap(kind => E.STARTERS.filter(s => (s.kinds || LANES).includes(kind)).map(s => ({ kind, s, label: `${kind}/${s.key}` })));
 
 test("the harness is holding the real, built catalogue", () => {
   assert.ok(E.MOVIES.length > 500, `only ${E.MOVIES.length} films — index.html looks unbuilt`);
@@ -391,9 +391,7 @@ test("cascade score: scored from IMDb/RT/Metacritic (scale-matched), never from 
 });
 
 // ---- 9b. CRITICS IS ONE RECORDED FIGURE (CAS-694) -----------------------------------------------------------
-// AC1: critScore has exactly one definition, and AC2: it's the same figure both selCriticsOK (the dial) and
-// qScore (the score) read — the defect this fixes is a dial that tested one source while the score averaged
-// two, which meant the two disagreed about what "the critics" said.
+// AC1: critScore has exactly one definition.
 test("critScore: the mean of Metacritic and RT where both are present, whichever is present otherwise, null when neither is", () => {
   assert.equal(E.critScore({ metacritic: 60, rt_critic: 90 }), 75, "both present should average to their mean");
   assert.equal(E.critScore({ metacritic: 61, rt_critic: null }), 61, "Metacritic alone should read as itself");
@@ -402,14 +400,6 @@ test("critScore: the mean of Metacritic and RT where both are present, whichever
   // rt_critic: 0 is a present (if extreme) score, not an absent one — a truthy-only check would wrongly treat
   // it as missing, exactly the asymmetry this ticket fixes.
   assert.equal(E.critScore({ metacritic: null, rt_critic: 0 }), 0, "an RT score of exactly 0 should still read as present");
-
-  // AC2, whole catalogue: selCriticsOK's dial must never disagree with critScore() about a film's own figure.
-  for(const m of E.MOVIES){
-    const cs = E.critScore(m);
-    if(cs == null) continue;
-    assert.equal(E.selCriticsOK(m, E.normCascade({ selCritScore: cs }, { template: true })), true,
-      `${m.title}: selCriticsOK read a different Critics figure than critScore()`);
-  }
 });
 
 // ---- 9d. qScoreSourcesText NAMES THE THREE RAW SOURCES (CAS-706) -------------------------------------------
@@ -1463,8 +1453,8 @@ test("CAS-678 AC2: a film displays a band's lozenge if and only if the Buzz dial
     const badge = E.scaleTier(m);
     if(badge === "landmark") continue;   // Landmark outranks the ladder — its own axis, tested separately
     for(const [band, stop] of Object.entries(BAND_KEY)){
-      const dialReturnsExactlyThisBand = E.selBuzzOK(m, { selBuzz: stop })
-        && (stop === 3 || !E.selBuzzOK(m, { selBuzz: stop + 1 }));
+      const dialReturnsExactlyThisBand = E.buzzStop(m) >= stop
+        && (stop === 3 || !(E.buzzStop(m) >= stop + 1));
       assert.equal(badge === band, dialReturnsExactlyThisBand,
         `${m.title}: badge is ${badge || "none"}, dial-at-${band} says ${dialReturnsExactlyThisBand}`);
     }
@@ -1484,10 +1474,10 @@ test("CAS-678 AC4: the three bands are disjoint and ordered — a film's band is
     assert.ok(stop >= 0 && stop <= 3, `${m.title}: buzzStop ${stop} out of range`);
     // Every lower stop must also be cleared (a floor, not a band) — otherwise "highest cleared" is undefined.
     for(let s = 1; s <= stop; s++){
-      assert.equal(E.selBuzzOK(m, { selBuzz: s }), true, `${m.title}: clears stop ${stop} but not the lower stop ${s}`);
+      assert.equal(E.buzzStop(m) >= s, true, `${m.title}: clears stop ${stop} but not the lower stop ${s}`);
     }
     for(let s = stop + 1; s <= 3; s++){
-      assert.equal(E.selBuzzOK(m, { selBuzz: s }), false, `${m.title}: buzzStop says ${stop} but also clears the higher stop ${s}`);
+      assert.equal(E.buzzStop(m) >= s, false, `${m.title}: buzzStop says ${stop} but also clears the higher stop ${s}`);
     }
   }
 });

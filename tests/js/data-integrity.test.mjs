@@ -21,7 +21,7 @@ import { loadEngine, pickInLane } from "./engine.mjs";
 const E = loadEngine();
 
 const LANES = ["cinema", "stream"];
-const CASES = LANES.flatMap(kind => E.startersFor(kind).map(s => ({ kind, s, label: `${kind}/${s.key}` })));
+const CASES = LANES.flatMap(kind => E.STARTERS.filter(s => (s.kinds || LANES).includes(kind)).map(s => ({ kind, s, label: `${kind}/${s.key}` })));
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const SHOWABLE = E.MOVIES.filter(E.showable);
 
@@ -598,12 +598,12 @@ test("inferred scale: the card says a band and never a dollar figure", () => {
 // one CAS-103 established: an alert key is a promise, so it must map to a moment the daily job computes, be
 // reachable for the agent's own scope, and be settable from the screen that claims to set it.
 test("alerts: every alert key has a name, a moment and a place in the defaults", () => {
-  for(const k of Object.keys(E.ALERT_DEFAULTS)){
+  for(const k of Object.keys(E.ALERT_SHORT)){
     assert.ok(E.ALERT_SHORT[k], `alert ${k} has no short name — the summary line would print undefined`);
     assert.ok(E.ALERT_MOMENT[k], `alert ${k} has no moment phrase — the agent's promise would be unsayable`);
   }
-  for(const k of Object.keys(E.ALERT_SHORT)) assert.ok(k in E.ALERT_DEFAULTS,
-    `alert ${k} is named but has no default — normCascade would never fill it in`);
+  for(const k of Object.keys(E.ALERT_MOMENT)) assert.ok(k in E.ALERT_SHORT,
+    `alert ${k} has a moment phrase but no short name — the summary line would print undefined`);
 });
 
 test("alerts: an Upcoming moment is only reachable for an agent that watches Upcoming", () => {
@@ -622,17 +622,9 @@ test("alerts: a sub-moment writes an alert only when its own bell is on", () => 
   for(const s of win.subs){
     assert.ok(s.alerts && Object.keys(s.alerts).length === 1, `${s.key} arms no alert`);
     const key = Object.keys(s.alerts)[0];
-    assert.ok(key in E.ALERT_DEFAULTS, `${s.key} arms ${key}, which is not an alert the app knows`);
-    assert.equal(E.ALERT_DEFAULTS[key], false,
-      `${key} defaults ON — an agent built in the editor would start emailing about it unasked`);
+    assert.ok(key in E.ALERT_SHORT, `${s.key} arms ${key}, which is not an alert the app knows`);
     assert.ok(s.sub && s.sub.length > 20, `${s.key} does not say what it actually fires on`);
   }
-  // CAS-427: a new cinema agent Lists Upcoming but does not alert on it — no Notify option is ticked by
-  // default, sub-moments included, until the person turns the bell on for themselves.
-  const seed = E.PRIORITY_WATCH.cinema.upcoming;
-  assert.ok(seed.list, "a new cinema agent does not list Upcoming");
-  assert.ok(!seed.notify, "a new cinema agent starts with the Upcoming bell on, against CAS-427's default-off rule");
-  assert.ok(!seed.subs, "a new cinema agent starts with pre-armed sub-moments, against CAS-427's default-off rule");
 });
 
 test("alerts: a saved agent from before this screen is never armed on its behalf", () => {
@@ -729,19 +721,26 @@ test("windows: every agent is offered Premium, Standard Rent and Streaming, one 
     }
     const keys = Object.keys(w.alerts || {});
     assert.equal(keys.length, 1, `${w.key} arms ${keys.length} alerts`);
-    assert.ok(keys[0] in E.ALERT_DEFAULTS, `${w.key} arms ${keys[0]}, which is not an alert the app knows`);
+    assert.ok(keys[0] in E.ALERT_SHORT, `${w.key} arms ${keys[0]}, which is not an alert the app knows`);
   }
   assert.equal([...seen].sort().join(","), "included_streaming,pvod,rental");
 });
 
-test("windows: a new streaming agent takes rent and streaming, and is never opted into $30", () => {
-  const seed = E.PRIORITY_WATCH.stream;
+test("windows: a new agent lists Upcoming/In cinema/Rent/Streaming, alerts on none, and is never opted into $30", () => {
+  // CAS-532/CAS-723: watchPrefsDefaults() is the one seed now — there is no more per-kind (cinema vs
+  // streaming) lane split to seed separately.
+  const seed = E.watchPrefsDefaults();
+  // CAS-427: a new agent Lists Upcoming but does not alert on it — no Notify option is ticked by
+  // default, sub-moments included, until the person turns the bell on for themselves.
+  assert.ok(seed.upcoming.list, "a new agent does not list Upcoming");
+  assert.ok(!seed.upcoming.notify, "a new agent starts with the Upcoming bell on, against CAS-427's default-off rule");
+  assert.ok(!seed.upcoming.subs, "a new agent starts with pre-armed sub-moments, against CAS-427's default-off rule");
   assert.ok(seed.rent && seed.rent.list, "Standard Rent is not listed for a new agent");
   assert.ok(seed.stream && seed.stream.list, "Streaming is not listed for a new agent");
   // CAS-427: List is still automatic; Notify is not — nothing is ticked until the person taps it themselves.
   assert.ok(!seed.rent.notify, "Standard Rent's bell is on by default, against CAS-427's default-off rule");
   assert.ok(!seed.stream.notify, "Streaming's bell is on by default, against CAS-427's default-off rule");
-  assert.ok(!seed.premium, "a new streaming agent is opted into Premium, which costs ~$30 a film");
+  assert.ok(!seed.premium, "a new agent is opted into Premium, which costs ~$30 a film");
   // …and the window is still OFFERED, or it could never be switched on.
   assert.ok(E.agentWindow("premium", "stream"), "Premium is not on the screen at all");
 });
@@ -765,7 +764,7 @@ test("windows: an agent that asked for premium under the old model gets the prem
 test("critics: the awards rungs nest, so pushing the dial right can only narrow", () => {
   const base = { selCritScore: 0, selAwards: 0 };
   const sets = E.AWARD_STOPS.map((_, i) =>
-    new Set(E.MOVIES.filter(m => E.selCriticsOK(m, { ...base, selAwards: i }))));
+    new Set(E.MOVIES.filter(m => E.awardsListOK(m, { ...base, selAwards: i }))));
   for(let i = 1; i < sets.length; i++){
     for(const m of sets[i]) assert.ok(sets[i - 1].has(m),
       `${m.title} clears ${E.AWARD_STOPS[i].label} but not ${E.AWARD_STOPS[i - 1].label} — the rungs do not nest`);
@@ -777,7 +776,7 @@ test("critics: the awards rungs nest, so pushing the dial right can only narrow"
   const winner = E.MOVIES.find(m => m.award === "won");
   assert.ok(winner, "no winners in the catalogue — this test would prove nothing");
   for(let i = 1; i < E.AWARD_STOPS.length; i++)
-    assert.equal(E.selCriticsOK(winner, { ...base, selAwards: i }), true,
+    assert.equal(E.awardsListOK(winner, { ...base, selAwards: i }), true,
       `a winner fails the ${E.AWARD_STOPS[i].label} rung`);
 });
 
@@ -794,16 +793,9 @@ test("critics: the awards ladder is read off the film's own award line, never in
   }
 });
 
-test("critics: the score floor is continuous and only judges a film that has a score", () => {
-  // Continuous means every value in between is a real, different filter — not four disguised presets.
-  const counts = [50, 55, 60, 65, 70, 75, 80].map(v =>
-    E.MOVIES.filter(m => E.selCriticsOK(m, { selCritScore: v, selAwards: 0 })).length);
-  for(let i = 1; i < counts.length; i++) assert.ok(counts[i] <= counts[i - 1],
-    `the score floor widened between rungs: ${counts.join(" → ")}`);
-  assert.ok(new Set(counts).size > E.CRIT_MARKS.length,
-    `only ${new Set(counts).size} distinct answers across seven settings — the slider is still stepped`);
-  // A film with no critic score is judged by the score dial like any other bar that reads a score: it has
-  // none, so it does not clear one. (The named marks are still exactly reachable.)
+// CAS-879: the Critics score dial itself (selCritScore/selCriticsOK) retired as an admission route — see
+// CAS-724 above — so the score-floor continuity coverage went with it. CRIT_MARKS' own range stays checked.
+test("critics: CRIT_MARKS are valid 0-100 score-track positions", () => {
   for(const r of E.CRIT_MARKS) assert.ok(typeof r.v === "number" && r.v >= 0 && r.v <= 100,
     `${r.label} sits at ${r.v}, off the 0-100 score track`);
 });
@@ -1026,22 +1018,6 @@ test("dates: the day form is compact, unambiguous, and never a fabricated precis
     const html = E.bandHTML(est, "") + E.windowsLineHTML(est);
     assert.ok(html.includes(E.fmtDate(sd.d)) || sd.d < E.TODAY,
       `${est.title}: an estimated streaming date is not printed in its month form`);
-  }
-});
-
-// ---- 3i. THE RECOMMENDED PRESET LEADS ITS LANE (CAS-247) ------------------------------------------------
-test("presets: whichever preset a lane recommends is the one offered first", () => {
-  for(const kind of LANES){
-    const list = E.startersFor(kind);
-    assert.ok(list.length > 1, `${kind} offers ${list.length} presets`);
-    const rec = list.find(s => s.key === E.RECOMMENDED_FOR[kind]);
-    assert.ok(rec, `${kind} recommends a preset it does not offer`);
-    assert.equal(list[0].key, rec.key,
-      `${kind} recommends ${rec.name} and offers ${list[0].name} first`);
-    // Everything else keeps the order it was written in, so lifting one does not reshuffle the rest.
-    const rest = list.slice(1).map(s => s.key);
-    const written = E.STARTERS.filter(s => (s.kinds || LANES).includes(kind) && s.key !== rec.key).map(s => s.key);
-    assert.equal(rest.join(","), written.join(","), `${kind}: the tail was reordered too`);
   }
 });
 

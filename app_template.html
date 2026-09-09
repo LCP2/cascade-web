@@ -4721,7 +4721,6 @@ function setActive(id){
   saveActiveIds();
 }
 const activeCascade = () => cascades.find(c=>c.id===activeId) || null;
-const activeCascades = () => activeIds.map(id=>cascades.find(c=>c.id===id)).filter(Boolean);
 // CAS-566/R2/R7: land on the stored agent(s) if they still exist; otherwise every agent, once there are
 // some. Catches a deleted agent's stale pointer AND a pre-CAS-566 install whose stored id was "__all__" —
 // neither matches a real cascade, so both fall through here.
@@ -5624,9 +5623,9 @@ function byTimelineAsc(a,b){
 }
 // ---- Critics, one recorded figure (CAS-694) ------------------------------------
 // The mean of Metacritic and RT where both are present, whichever one is present otherwise, null when
-// neither is. Read by selCriticsOK — the Critics dial and Mission gate. Cascade 9.7 (2026-09-01) took the
-// score itself back to three separate scale-matched terms (see qScore below) — this figure is admission
-// logic only now. Nothing that admits a film is a term in its score, and this is no longer one.
+// neither is. Cascade 9.7 (2026-09-01) took the score itself back to three separate scale-matched terms
+// (see qScore below). CAS-879: the Critics-score admission dial (selCritScore/selCriticsOK) retired
+// entirely (CAS-724) — critScore() now only feeds selSetAside's onboarding-preview messaging.
 const critScore = m => {
   const mc=m.metacritic, rt=m.rt_critic;
   if(mc!=null && rt!=null) return Math.round((mc+rt)/2);
@@ -5642,8 +5641,7 @@ const critScore = m => {
 // before averaging so all three terms sit on the same 0-100 scale as imdb_rating x10; skipping this step
 // would leave RT/Meta on IMDb's raw 0-10 scale and crush their weight in the average to near nothing.
 // A film scores on whichever of the three terms it actually has (unchanged fallback rule); -1 (rendered as
-// the dash) means it has none. critScore()/selCriticsOK above are UNCHANGED and still drive the Critics
-// dial and Mission gate — this only touches the score.
+// the dash) means it has none. critScore() above is UNCHANGED — this only touches the score.
 const RT_ADJ = 1.0873;    // mean(rt_critic / (gated imdb_rating x10)), 775 films, measured 2026-09-01
 const META_ADJ = 0.9635;  // mean(metacritic / (gated imdb_rating x10)), 764 films, measured 2026-09-01
 function qScore(m){
@@ -8172,13 +8170,6 @@ function activeCount(){
 // ================= My Cascades =================
 // Smart defaults: every template lands pre-filled with a criteria set that already returns films —
 // the user scans and adjusts rather than filling a blank query.
-// CAS-843: the seven alert types this app knows, kept as a static enumeration — ALERT_SHORT/ALERT_MOMENT
-// name and phrase each one, and AGENT_WINDOWS' own `alerts` fields are checked against this key set. No
-// per-cascade field is filled from these values any more (alertLive() reads the account's Where & when
-// Notify switches instead), so only the KEY SET is load-bearing now; the booleans are a leftover shape.
-const ALERT_DEFAULTS = {cinema:false, past_opening:false, announced:false, opens_soon:false,
-                        pvod:false, rental:true, included_streaming:true};
-
 // ---- The availability spine ---------------------------------------------------
 // One row per window a film can be in. "All" is not a window — it's the empty status set, i.e. any window.
 // Each row owns its alert toggle; the window→row map is what the poll sim consults.
@@ -8875,23 +8866,6 @@ const AWARD_STOPS = [
   {label:"3+ noms", thr:"Oscars",      say:"films with three or more nominations", rank:3},
   {label:"Winner",  thr:"🏆 won",      say:"award winners",                       rank:AWARD_WIN_RANK},
 ];
-function selCrowdOK(m,c){
-  const min=c.selCrowd||0; if(!min) return true;
-  // CAS-171: the People's vote dial is a claim about what a crowd thought, so it has to read the gated score.
-  // 22 of the 62 titles at 8.2+ carried fewer than IMDB_MIN_VOTES votes — a third of the results were films
-  // whose own card wouldn't show the number that got them there. ratingOf() is null below the floor, and a
-  // crowd bar is a score, so an unrated film has none and doesn't clear it.
-  const r=ratingOf(m);
-  return r!=null && r>=min;
-}
-// CAS-249: two questions, both under one dial, ANDed — "acclaimed AND nominated" is a coherent thing to
-// ask for and the old single ladder could not express it.
-function selCriticsOK(m,c){
-  const min=c.selCritScore||0, rung=c.selAwards||0;
-  if(min){ const sc=critScore(m); if(!(sc!=null && sc>=min)) return false; }
-  if(rung){ const need=(AWARD_STOPS[rung]||{}).rank||0; if(awardRank(m) < need) return false; }
-  return true;
-}
 // Scale match, boolean: true (clears the floor) · false (does not). Budget is the primary signal, worldwide
 // gross the real fallback — so an unknown-budget film is still placed by what it earned, and only a film
 // with neither is truly unknown.
@@ -8977,15 +8951,6 @@ window.showScaleInfer=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(
 function invalidateComputeCaches(){ _scaleInferCache.clear(); _awardRankCache.clear(); _releasedScoreVals = null; agMetricsCache.clear(); }
 // ---- Buzz (CAS-145, ladder replaced by CAS-678) --------------------------------
 // How much a film is being talked about right now, off the TMDB popularity figure the pipeline already
-// carries on every title. BUZZ_PCTL/BUZZ_CUTS/buzzStop are defined above (the Scale-tiers section) — the
-// SAME computation the card lozenge reads, so a film clearing "Blockbuster" here is exactly a film badged
-// Blockbuster. CAS-168's IMDb-votes corroboration is gone: CAS-678 is explicit that the ladder is popularity
-// and nothing else, and its cohort (upcoming-and-in-cinema) is mostly films with no audience yet to corroborate
-// against — buzzStop's own cohort gate is what keeps a fully-released, merely-popular streaming title out.
-function selBuzzOK(m,c){
-  const s=c.selBuzz||0; if(!s) return true;
-  return buzzStop(m) >= s;
-}
 function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   // CAS-170: before taste, before anything — an agent can only put a film in front of you if there is a film
   // to watch. This sits here rather than in passes() alone so every derived number (card counts, hub counts,
@@ -11011,17 +10976,6 @@ const stripChannelPrefix = name => {
   for(const w of Object.values(CHANNEL_WORD)){ if(n.startsWith(w+" ")) return n.slice(w.length+1); }
   return n;
 };
-// CAS-247: the RECOMMENDED preset leads its lane. STARTERS is written in one order and offered in two, and
-// that order put Everyday Favourites — the one the streaming lane recommends — third, under two presets a
-// person is being told not to take first. The recommendation and the position now agree, without a second
-// hand-kept list to fall out of step with RECOMMENDED_FOR: the recommended one is lifted, everything else
-// keeps the order it was written in. Cinema is unaffected — its recommendation was already first.
-const startersFor = kind => {
-  const list = STARTERS.filter(s=>(s.kinds||["cinema","stream"]).includes(kind));
-  const rec = RECOMMENDED_FOR[kind];
-  const i = list.findIndex(s=>s.key===rec);
-  return i > 0 ? [list[i], ...list.slice(0,i), ...list.slice(i+1)] : list;
-};
 STARTERS.forEach(s=>normCascade(s.crit, {template:true}));   // CAS-261: a standard, not an agent — no lane yet
 // CAS-143/144: ONE number for a preset, everywhere it is quoted. The card, the hub's hero figure and the
 // reveal must agree, so the card counts the agent it would actually BUILD — the preset's standard laid over
@@ -11036,7 +10990,7 @@ STARTERS.forEach(s=>normCascade(s.crit, {template:true}));   // CAS-261: a stand
 // seeds the same windows pickStarter will, from the same two sources in the same order (a saved answer for
 // this agent, else the priority answer's default), so there is one measurement and the card is quoting it.
 // CAS-532: every new agent, whichever starter or lane, is seeded from the one global Where & when answer —
-// there is no more per-starter/per-kind default to branch on (PRIORITY_WATCH is unused as of this ticket).
+// there is no more per-starter/per-kind default to branch on.
 function starterWatch(s, kind){
   return JSON.parse(JSON.stringify(watchPrefs));
 }
@@ -11070,9 +11024,7 @@ let pendingStarter = null;   // the agent the person chose
 // CAS-188: the cards are the body of the flow's `pickagent` step now, not a screen of their own — so this
 // returns the markup rather than writing it into an overlay that no longer exists.
 // CAS-815: this is the only caller of the card list at creation time, and there is no priority answer any
-// more to narrow it by — every starter is offered, in STARTERS' own order. startersFor() itself stays
-// untouched (the lane-consistency test suite calls it directly, per kind, for cinema/stream presets that
-// are NOT offered here).
+// more to narrow it by — every starter is offered, in STARTERS' own order.
 function starterCardsHTML(kind){
   return STARTERS.map(s=>{
     const recommended = s.key===RECOMMENDED_FOR[kind || flowKind];
@@ -13776,7 +13728,7 @@ let onbStepKey=null;
 // a cinema listing is this month's releases and asking someone to date-limit it would be a control with
 // nothing to do.
 // CAS-229: `watching` is deliberately NOT in either list. Onboarding makes assumptions about where and when
-// the agent watches (PRIORITY_WATCH, below) rather than asking; the per-window List/Notify controls live only
+// the agent watches (watchPrefsDefaults(), above) rather than asking; the per-window List/Notify controls live only
 // in Agent Settings, reached from the Briefing. The one notification question onboarding does ask is
 // `notifysettings`, which is about how we reach YOU (in-app, email) — not about which windows, so it stays.
 // If you are adding a step here, that is the line: onboarding may ask how to reach you, never which windows.
@@ -13828,7 +13780,7 @@ const flowCounted = () => flowList().slice(2).filter(k => k!=="keepfinding" && !
 // CAS-197: a cinema agent starts LISTING both cinema moments — the film reaching a cinema, and the film
 // getting past its opening weekend. They are the two the monitor actually has moments for (hits_cinema,
 // past_opening_weekend), and they answer two different questions: "it's on" and "the crowds have gone".
-// (CAS-427: listing them is still automatic; alerting on them is not — see PRIORITY_WATCH below.)
+// (CAS-427: listing them is still automatic; alerting on them is not — see watchPrefsDefaults() above.)
 // CAS-228/229: these are the defaults onboarding applies WITHOUT asking, in the new per-window shape. A cinema
 // agent lists Upcoming and In cinema; a streaming agent lists Rent and Streaming — the windows a new agent of
 // that kind actually watches, said honestly, before it has been asked to alert on anything.
@@ -13836,22 +13788,13 @@ const flowCounted = () => flowList().slice(2).filter(k => k!=="keepfinding" && !
 // ticks what they want rather than the app pre-arming a bell nobody asked to ring. (wwToggleWin still arms a
 // window's own sub-moments the first time its Notify switch is turned ON, same as it always has — this only
 // changes when that first arming happens: on the user's own tap, not silently at agent creation.)
-const PRIORITY_WATCH = {
-  cinema:{ upcoming:{list:true, notify:false},
-           in_cinema:{list:true, notify:false} },
-  // CAS-243: and a streaming agent starts on the two windows a night in actually means — standard rent and
-  // streaming. Premium is deliberately absent rather than present-and-off: at ~$30 it is the one window
-  // nobody should be opted into by default, and the lane is drawn with both switches off so turning it on
-  // is one tap away.
-  stream:{ rent:{list:true, notify:false},    stream:{list:true, notify:false} },
-};
 let flowOn=false;              // inside the wired flow (vs a standalone ?step= preview)
 // CAS-246: this run of the flow is making a SECOND agent from the deck, so it stops after the agent is
 // picked and hands over to the Briefing rather than walking the linear sharpening screens and finishing on
 // the membership page. Cleared by flowStart/flowStop, so it can never leak into a first run.
 let flowNewAgent=false;
 // CAS-629/CAS-815: no priority screen sets this on any run any more — flowStart() below sets it directly
-// so every lane-dependent read (startersFor/starterBar/starterWatch/starterCardsHTML, PRIORITY_WATCH,
+// so every lane-dependent read (starterBar/starterWatch/starterCardsHTML, watchPrefsDefaults(),
 // etc.) still has a defined value, with nothing left that lets a user set it.
 let flowKind="cinema";
 let flowSlideT=null;
@@ -13906,11 +13849,6 @@ function flowBack(){
   // splash underneath to back out to.
   flowStop(); showSplash();                  // off the front of the flow → back out to the splash
 }
-// CAS-815: no screen calls this any more — the cinema/streaming question is gone from the creation path,
-// so nothing in the app sets flowKind. It stays as a plain setter (not tied to any UI) because laneCrit
-// and the rest of the lane machinery are untouched by this ticket and still need a way to be exercised
-// per-lane — the test suite's pickInLane() calls this directly, with no screen behind it.
-window.flowPriority=kind=>{ flowKind=kind; logEvent("flow_priority",{kind}); flowNext(); };
 // ================= CAS-182 / CAS-208: the Agent Briefing =============================================
 // Editing an agent is the same set of screens the flow used to build it, hung off a hub instead of a line.
 // The draft is a COPY of the saved agent, so backing out changes nothing, and Save is the one moment the
