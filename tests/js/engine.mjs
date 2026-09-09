@@ -260,6 +260,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // first, and movingLedgerTruncated is the 200-row-cap predicate behind the (DOM-only) truncation notice —
   // both exported so a test can assert them directly.
   movingLanes, movingWindowRank, movingLedgerTruncated,
+  // CAS-869: movingSections is the MAJOR (status) grouping layer above movingLanes — one section per
+  // LISTING_ORDER status holding that status's own lanes — exported so a test can assert section order/
+  // membership/emptiness without parsing renderMovingScreen's HTML.
+  movingSections,
   MOVING_WINDOWS, movingSeen,
   // CAS-858: MOVING_EMPTY_NO_OWNER_COPY is the empty-state copy shown when a window's entries were all
   // dropped for having no owning agent, and movingEmptyCopy is the pure decision between it and the

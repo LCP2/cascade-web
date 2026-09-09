@@ -10,6 +10,7 @@ rather than the higher-level `backfill_watchmode_fields` wrapper: the wrapper's 
 just the enriched count, but the four counts this script must report (enriched, budget-skipped,
 no-id, credits spent) need the per-outcome detail only visible at that lower level.
 """
+import argparse
 import json
 import os
 import sys
@@ -44,19 +45,46 @@ def save_catalogue(path, data):
 CACHED_REASON = "every candidate is still inside WATCHMODE_CACHE_TTL_DAYS"
 
 
-def run(catalogue_path=None, max_credits=None):
+def load_ids_from(path):
+    """CAS-889: one tmdb_id per line; blank lines and lines starting `#` are ignored."""
+    ids = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            ids.append(int(line))
+    return ids
+
+
+def run(catalogue_path=None, max_credits=None, ids_from=None):
     catalogue_path = catalogue_path or CATALOGUE
     max_credits = MAX_CREDITS if max_credits is None else max_credits
 
     data, movies = load_catalogue(catalogue_path)
-    candidates = len(movies)
+
+    ids_not_found = []
+    if ids_from:
+        wanted_ids = load_ids_from(ids_from)
+        by_tmdb_id = {m.get("tmdb_id"): m for m in movies}
+        targets = []
+        for tmdb_id in wanted_ids:
+            movie = by_tmdb_id.get(tmdb_id)
+            if movie is None:
+                ids_not_found.append(tmdb_id)
+            else:
+                targets.append(movie)
+    else:
+        targets = movies
+
+    candidates = len(targets)
 
     idmap, idmap_outcome = pp._api_call("Watchmode ID map", pp._fetch_watchmode_idmap)
     wm_idmap = pp._invert_watchmode_idmap(idmap) if idmap_outcome == "ok" and idmap else {}
 
     budget = {"remaining": max_credits, "skipped": 0}
     outcomes = {"ok": 0, "cached": 0, "no-id": 0, "skip": 0, "stop": 0}
-    for movie in movies:
+    for movie in targets:
         result = pp.enrich_watchmode_fields(movie, wm_idmap, budget)
         outcomes[result] = outcomes.get(result, 0) + 1
 
@@ -94,8 +122,13 @@ def run(catalogue_path=None, max_credits=None):
         "titles already cached": outcomes["cached"],
         "credits spent": credits_spent,
     }
+    if ids_from:
+        counts["ids requested"] = len(wanted_ids)
+        counts["ids not found in catalogue"] = len(ids_not_found)
     for label, value in counts.items():
         print(f"{label}: {value}")
+    if ids_not_found:
+        print("ids not found in catalogue: " + ", ".join(str(i) for i in ids_not_found))
     print(f"early exit reason: {reason or 'n/a — titles were resolved'}")
     counts["early exit reason"] = reason
     return counts
@@ -111,6 +144,13 @@ def _exit_code_for(counts: dict) -> int:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ids-from", dest="ids_from", default=None,
+                         help="CAS-889: restrict the run to the tmdb_ids listed in this file "
+                              "(one per line, `#` comments and blank lines ignored) instead of "
+                              "walking the whole catalogue")
+    args = parser.parse_args()
+
     # CAS-859: a missing key is not a per-title failure `_api_call` can degrade around — every
     # call this run would fail the same way. Check up front so a bad dispatch (trial key expired,
     # secret not configured) exits with a clear message instead of a traceback or a wasted run
@@ -118,4 +158,4 @@ if __name__ == "__main__":
     if not os.environ.get("WATCHMODE_API_KEY"):
         print("WATCHMODE_API_KEY is not set — nothing to do, skipping the Watchmode fields backfill.")
         sys.exit(0)
-    sys.exit(_exit_code_for(run()))
+    sys.exit(_exit_code_for(run(ids_from=args.ids_from)))
