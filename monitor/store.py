@@ -25,6 +25,8 @@ Interface:
   fetch_unsent_contact_messages() -> [contact_messages row, sent_at is null]                # CAS-836
   mark_contact_messages_sent(ids, sent_at) -> int                                           # CAS-836
   sign_attachment_url(path) -> signed URL string | None                                     # CAS-864
+  fetch_unsent_recommendations() -> [recommendations row, sent_at is null]                  # CAS-884
+  mark_recommendations_sent(ids, sent_at) -> int                                            # CAS-884
 """
 from __future__ import annotations
 
@@ -67,7 +69,7 @@ class InMemoryStore:
 
     def __init__(self, cascades=None, notifications=None, emails=None, prefs=None, picks=None,
                  push_tokens=None, watches=None, user_prefs=None, user_films=None,
-                 contact_messages=None):
+                 contact_messages=None, recommendations=None):
         self._cascades = list(cascades or [])
         self._notifications = list(notifications or [])
         self._emails = dict(emails or {})
@@ -78,6 +80,7 @@ class InMemoryStore:
         self._user_prefs = dict(user_prefs or {})
         self._user_films = list(user_films or [])
         self._contact_messages = [dict(r) for r in (contact_messages or [])]
+        self._recommendations = [dict(r) for r in (recommendations or [])]
 
     def fetch_active_cascades(self) -> list:
         return [c for c in self._cascades if c.get("active", True)]
@@ -157,6 +160,18 @@ class InMemoryStore:
         if not path:
             return None
         return f"https://fake-signed.example.test/{CONTACT_ATTACHMENTS_BUCKET}/{path}"
+
+    def fetch_unsent_recommendations(self) -> list:
+        return [dict(r) for r in self._recommendations if not r.get("sent_at")]
+
+    def mark_recommendations_sent(self, ids, sent_at) -> int:
+        ids = set(ids)
+        n = 0
+        for r in self._recommendations:
+            if r.get("id") in ids:
+                r["sent_at"] = sent_at
+                n += 1
+        return n
 
 
 class SupabaseStore:
@@ -268,6 +283,36 @@ class SupabaseStore:
         data = json.dumps({"sent_at": sent_at}).encode("utf-8")
         req = urllib.request.Request(
             self._base + f"/contact_messages?id=in.({quoted})",
+            data=data,
+            headers=self._headers({"Prefer": "return=representation"}),
+            method="PATCH",
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            body = resp.read().decode("utf-8")
+        try:
+            return len(json.loads(body))
+        except (json.JSONDecodeError, TypeError):
+            return 0
+
+    def fetch_unsent_recommendations(self) -> list:
+        """Every recommendations row not yet emailed (CAS-884), oldest first — read with
+        service_role, since the authenticated-only RLS policy scopes a normal client to its own
+        sender_id, never every user's."""
+        return self._get(
+            "/recommendations?sent_at=is.null&order=created_at.asc"
+            "&select=id,sender_id,sender_name,to_name,to_email,message,created_at"
+        )
+
+    def mark_recommendations_sent(self, ids, sent_at) -> int:
+        """Stamp sent_at on exactly these rows, after each email has actually been sent
+        (send-before-ledger, same ordering as mark_contact_messages_sent above)."""
+        ids = list(ids)
+        if not ids:
+            return 0
+        quoted = ",".join(str(i) for i in ids)
+        data = json.dumps({"sent_at": sent_at}).encode("utf-8")
+        req = urllib.request.Request(
+            self._base + f"/recommendations?id=in.({quoted})",
             data=data,
             headers=self._headers({"Prefer": "return=representation"}),
             method="PATCH",

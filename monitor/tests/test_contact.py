@@ -1,4 +1,4 @@
-"""Unit tests for the Contact-us digest (CAS-836).
+"""Unit tests for the Contact-us digest (CAS-836, redesigned CAS-892).
 
 Run:  python -m unittest monitor.tests.test_contact
 """
@@ -8,20 +8,68 @@ from unittest import mock
 from monitor.contact import digest_subject, main, render_digest
 from monitor.store import InMemoryStore
 
+# A realistic diagReportText() block (app_template.html), including two rows the panel's
+# recognised fields don't cover (Built at / Protocol / offsetTop / clientHeight), a sync line
+# with no colon at all, and created_at-style microsecond precision nowhere but the row itself.
+DIAG_BLOCK = """=== Cascade diagnostics ===
+
+-- Identity --
+Version: v1.0.0
+Build: 1025
+Commit: 9c75c67
+Built at: 2026-07-15T04:00:00.000Z
+Protocol: https:
+Origin: https://cascademovies.com
+Capacitor bridge: yes (web)
+User agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36
+
+-- Geometry --
+innerWidth × innerHeight: 1830 × 896
+visualViewport w × h: 1829.5 × 896.2
+visualViewport offsetTop: 0
+documentElement clientHeight: 896
+safe-area-inset T/R/B/L: 0 / 0 / 0 / 0
+devicePixelRatio: 1.05
+orientation: landscape-primary
+
+-- Account sync --
+cascades: OK (2026-07-16T09:00:00.000Z)
+user_films: not yet attempted
+notify_prefs: FAILED (2026-07-16T09:05:00.000Z) — Could not find the 'excluded_moments' column of 'notify_prefs' in the schema cache
+weird sync line with no colon at all
+
+-- Log tail (2) --
+[2026-07-16T09:06:00.000Z] warn: retry scheduled for notify_prefs
+[2026-07-16T09:06:05.000Z] info: sync queue drained
+"""
+
 
 def _row(id=1, user_id=None, category="bug", email="guest@example.test",
-         message="It broke.", diagnostics=None, build="1.0.0",
-         created_at="2026-07-16T09:00:00+00:00", sent_at=None, attachment_path=None):
+         message="It broke.", diagnostics=None, build="v1.0.0 · build 1025 · 9c75c67",
+         created_at="2026-07-16T09:12:00.123456+00:00", sent_at=None, attachment_path=None):
     return {"id": id, "user_id": user_id, "client_key": f"device-{id}", "category": category,
             "email": email, "message": message, "diagnostics": diagnostics, "build": build,
             "created_at": created_at, "sent_at": sent_at, "attachment_path": attachment_path}
 
 
-class RenderTests(unittest.TestCase):
-    def test_subject_counts_messages(self):
-        self.assertEqual(digest_subject([_row()]), "Cascade contact — 1 message")
+class SubjectTests(unittest.TestCase):
+    def test_single_bug_report(self):
+        self.assertEqual(digest_subject([_row(category="bug")]), "Cascade contact — 1 bug report")
+
+    def test_single_suggestion(self):
+        self.assertEqual(digest_subject([_row(category="suggestion")]), "Cascade contact — 1 suggestion")
+
+    def test_single_account_question(self):
+        self.assertEqual(digest_subject([_row(category="account")]), "Cascade contact — 1 account question")
+
+    def test_single_other_is_a_message(self):
+        self.assertEqual(digest_subject([_row(category="other")]), "Cascade contact — 1 message")
+
+    def test_multiple_messages_keeps_count_form(self):
         self.assertEqual(digest_subject([_row(1), _row(2)]), "Cascade contact — 2 messages")
 
+
+class RenderTests(unittest.TestCase):
     def test_digest_lists_every_message(self):
         store = InMemoryStore()
         rows = [_row(1, category="bug", message="Bug body"),
@@ -32,6 +80,13 @@ class RenderTests(unittest.TestCase):
             self.assertIn("Bug body", part)
             self.assertIn("Suggestion body", part)
             self.assertIn("Account body", part)
+
+    def test_two_message_fixture_gets_two_cards_and_count_subject(self):
+        store = InMemoryStore()
+        rows = [_row(1, message="First message"), _row(2, message="Second message")]
+        d = render_digest(rows, store)
+        self.assertEqual(d["subject"], "Cascade contact — 2 messages")
+        self.assertEqual(d["html"].count("First message") + d["html"].count("Second message"), 2)
 
     def test_who_prefers_account_email_over_supplied_email(self):
         store = InMemoryStore(emails={"u1": "account@example.test"})
@@ -50,21 +105,7 @@ class RenderTests(unittest.TestCase):
         store = InMemoryStore()
         row = _row(user_id=None, email=None)
         d = render_digest([row], store)
-        self.assertIn("not given", d["text"])
-
-    def test_diagnostics_rendered_verbatim_in_a_pre_block(self):
-        store = InMemoryStore()
-        row = _row(diagnostics="stack trace line 1\nstack trace line 2")
-        d = render_digest([row], store)
-        self.assertIn("<pre", d["html"])
-        self.assertIn("stack trace line 1", d["html"])
-        self.assertIn("stack trace line 2", d["html"])
-
-    def test_no_diagnostics_no_pre_block(self):
-        store = InMemoryStore()
-        row = _row(diagnostics=None)
-        d = render_digest([row], store)
-        self.assertNotIn("<pre", d["html"])
+        self.assertIn("no address given", d["text"])
 
     def test_html_escapes_message_content(self):
         store = InMemoryStore()
@@ -73,20 +114,102 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("<script>alert(1)</script>", d["html"])
         self.assertIn("&lt;script&gt;", d["html"])
 
-    def test_attachment_path_produces_a_signed_link_in_the_digest(self):
+    def test_attachment_path_produces_a_named_signed_link(self):
         store = InMemoryStore()
-        row = _row(attachment_path="device-1/123-shot.png")
+        row = _row(attachment_path="device-1/1725900000-shot.png")
         d = render_digest([row], store)
         url = store.sign_attachment_url(row["attachment_path"])
         self.assertIn(url, d["html"])
         self.assertIn(url, d["text"])
+        # The link text is the filename, with the upload's timestamp prefix stripped — not the
+        # words "View attachment".
+        self.assertIn(">shot.png<", d["html"])
+        self.assertNotIn("View attachment", d["html"])
 
-    def test_no_attachment_path_no_link(self):
+    def test_no_attachment_path_no_panel(self):
         store = InMemoryStore()
         row = _row(attachment_path=None)
         d = render_digest([row], store)
+        self.assertNotIn("Attached", d["html"])
         self.assertNotIn("Attachment", d["text"])
-        self.assertNotIn("View attachment", d["html"])
+
+    # ---- AC2 (a): Sydney time, never the raw microsecond ISO timestamp ----
+    def test_created_at_renders_in_sydney_time_not_raw_iso(self):
+        store = InMemoryStore()
+        row = _row(created_at="2026-07-16T09:12:00.123456+00:00")
+        d = render_digest([row], store)
+        self.assertNotIn("2026-07-16T09:12:00.123456+00:00", d["html"])
+        self.assertNotIn("T09:12:00.123456", d["html"])
+        # UTC 2026-07-16T09:12 -> Sydney (AEST, +10) 2026-07-16 7:12pm.
+        self.assertIn("Thu 16 Jul, 7:12pm", d["html"])
+
+    def test_unparseable_created_at_prints_verbatim(self):
+        store = InMemoryStore()
+        row = _row(created_at="not-a-real-timestamp")
+        d = render_digest([row], store)
+        self.assertIn("not-a-real-timestamp", d["html"])
+
+    # ---- AC2 (c)/(d): reply mailto ----
+    def test_reply_button_links_to_the_row_address(self):
+        store = InMemoryStore()
+        row = _row(email="guest@example.test")
+        d = render_digest([row], store)
+        self.assertIn("mailto:guest@example.test", d["html"])
+
+    def test_no_address_no_mailto_at_all(self):
+        store = InMemoryStore()
+        row = _row(user_id=None, email=None)
+        d = render_digest([row], store)
+        self.assertNotIn("mailto:", d["html"])
+        self.assertIn("no address given", d["html"])
+
+    # ---- AC2 (e)/(f): diagnostics — nothing silently dropped, raw text kept verbatim ----
+    def test_diagnostics_every_value_represented_in_html(self):
+        store = InMemoryStore()
+        row = _row(diagnostics=DIAG_BLOCK)
+        d = render_digest([row], store)
+        html = d["html"]
+        for token in (
+            "https://cascademovies.com",           # Origin
+            "yes (web)",                            # Capacitor bridge
+            "1830 × 896", "1829.5 × 896.2", "DPR 1.05",  # Viewport, combined
+            "0 / 0 / 0 / 0",                        # Safe-area insets
+            "landscape-primary",                    # Orientation
+            "Chrome 151", "Windows 10",              # Browser, readable rendering
+            "user_films", "not yet attempted",      # Account sync — pending, named
+            "notify_prefs", "FAILED",
+            "Could not find the", "excluded_moments", "schema cache",  # Account sync — failure detail (html-escaped quotes)
+            "retry scheduled for notify_prefs",     # Console tail (log line)
+            "sync queue drained",
+            "weird sync line with no colon at all", # unrecognised line -> Other, verbatim
+            "Built at", "2026-07-15T04:00:00.000Z", # unconsumed Identity field -> Other
+            "Protocol", "https:",                   # unconsumed Identity field -> Other
+            "visualViewport offsetTop",              # unconsumed Geometry field -> Other
+            "documentElement clientHeight",
+        ):
+            self.assertIn(token, html, f"missing token: {token!r}")
+
+    def test_diagnostics_raw_block_kept_byte_for_byte_in_text_part(self):
+        store = InMemoryStore()
+        row = _row(diagnostics=DIAG_BLOCK)
+        d = render_digest([row], store)
+        self.assertIn(DIAG_BLOCK, d["text"])
+
+    def test_no_diagnostics_no_diagnostics_panel(self):
+        store = InMemoryStore()
+        row = _row(category="suggestion", diagnostics=None)
+        d = render_digest([row], store)
+        self.assertNotIn("Diagnostics", d["html"])
+
+    def test_diagnostics_account_sync_all_ok_when_nothing_failed_or_pending(self):
+        store = InMemoryStore()
+        clean_block = ("=== Cascade diagnostics ===\n\n-- Identity --\nOrigin: https://cascademovies.com\n"
+                       "\n-- Account sync --\ncascades: OK (2026-07-16T09:00:00.000Z)\n"
+                       "\n-- Log tail (0) --\n(empty)\n")
+        row = _row(diagnostics=clean_block)
+        d = render_digest([row], store)
+        self.assertIn("All OK", d["html"])
+        self.assertIn("empty", d["html"])
 
 
 class MainDryRunTests(unittest.TestCase):

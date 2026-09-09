@@ -22,7 +22,7 @@ E.CascadePersistence.ACCT_READ_DELAYS = [0, 0];
 
 // Every preset in every lane it is offered in — the real matrix a person can walk into.
 const LANES = ["cinema", "stream"];
-const CASES = LANES.flatMap(kind => E.startersFor(kind).map(s => ({ kind, s, label: `${kind}/${s.key}` })));
+const CASES = LANES.flatMap(kind => E.STARTERS.filter(s => (s.kinds || LANES).includes(kind)).map(s => ({ kind, s, label: `${kind}/${s.key}` })));
 
 test("the harness is holding the real, built catalogue", () => {
   assert.ok(E.MOVIES.length > 500, `only ${E.MOVIES.length} films — index.html looks unbuilt`);
@@ -391,9 +391,7 @@ test("cascade score: scored from IMDb/RT/Metacritic (scale-matched), never from 
 });
 
 // ---- 9b. CRITICS IS ONE RECORDED FIGURE (CAS-694) -----------------------------------------------------------
-// AC1: critScore has exactly one definition, and AC2: it's the same figure both selCriticsOK (the dial) and
-// qScore (the score) read — the defect this fixes is a dial that tested one source while the score averaged
-// two, which meant the two disagreed about what "the critics" said.
+// AC1: critScore has exactly one definition.
 test("critScore: the mean of Metacritic and RT where both are present, whichever is present otherwise, null when neither is", () => {
   assert.equal(E.critScore({ metacritic: 60, rt_critic: 90 }), 75, "both present should average to their mean");
   assert.equal(E.critScore({ metacritic: 61, rt_critic: null }), 61, "Metacritic alone should read as itself");
@@ -402,14 +400,42 @@ test("critScore: the mean of Metacritic and RT where both are present, whichever
   // rt_critic: 0 is a present (if extreme) score, not an absent one — a truthy-only check would wrongly treat
   // it as missing, exactly the asymmetry this ticket fixes.
   assert.equal(E.critScore({ metacritic: null, rt_critic: 0 }), 0, "an RT score of exactly 0 should still read as present");
+});
 
-  // AC2, whole catalogue: selCriticsOK's dial must never disagree with critScore() about a film's own figure.
-  for(const m of E.MOVIES){
-    const cs = E.critScore(m);
-    if(cs == null) continue;
-    assert.equal(E.selCriticsOK(m, E.normCascade({ selCritScore: cs }, { template: true })), true,
-      `${m.title}: selCriticsOK read a different Critics figure than critScore()`);
-  }
+// ---- 9c. THE WATCHMODE COMPARISON SCORES ARE TEMPORARY MIRRORS OF qScore/cascadeScore (CAS-895) -------------
+// wmQScore mirrors qScore over the wm_user_rating/wm_critic_score fields (scale-matched via the existing
+// META_ADJ ratio, no RT_ADJ equivalent — Watchmode carries no RT-shaped field). wmCascadeScore mirrors
+// cascadeScore's three primaryStatus branches exactly, but blends cinemaScore with wmQScore instead of qScore.
+test("wmQScore: the rounded mean of whichever Watchmode terms are present, scale-matched like qScore", () => {
+  const both  = { wm_user_rating: 7.6, wm_critic_score: 91 };
+  const userOnly = { wm_user_rating: 8.0, wm_critic_score: null };
+  const critOnly = { wm_user_rating: null, wm_critic_score: 91 };
+  const neither = { wm_user_rating: null, wm_critic_score: null };
+  assert.equal(E.wmQScore(both), Math.round((7.6*10 + 91/META_ADJ)/2), "both present should average the two scale-matched terms");
+  assert.equal(E.wmQScore(userOnly), 80, "wm_user_rating alone should score as itself x10");
+  assert.equal(E.wmQScore(critOnly), Math.round(91/META_ADJ), "wm_critic_score alone should scale-match against IMDb via META_ADJ");
+  assert.equal(E.wmQScore(neither), -1, "a film with neither Watchmode term should not score");
+});
+
+test("wmCascadeScore: follows cascadeScore's three primaryStatus branches, over wmQScore instead of qScore", () => {
+  const upcoming = E.MOVIES.find(m => E.primaryStatus(m) === "upcoming");
+  assert.ok(upcoming, "no upcoming film found — this test would prove nothing");
+  assert.equal(E.wmCascadeScore(upcoming), E.cinemaScore(upcoming), "upcoming should return cinemaScore unchanged");
+
+  const released = E.MOVIES.find(m => !E.isPreRelease(m));
+  assert.ok(released, "no released film found — this test would prove nothing");
+  assert.equal(E.wmCascadeScore(released), E.wmQScore(released), "released (not in_cinema/opening_week) should return wmQScore unchanged");
+
+  // A film in cinemas (or its opening week) whose wmQScore is -1 falls back to cinemaScore rather than
+  // returning a negative number, exactly like cascadeScore falls back to buzz when qScore is -1.
+  const cinemaFilm = E.MOVIES.find(m => (E.primaryStatus(m)==="in_cinema" || E.primaryStatus(m)==="opening_week"));
+  assert.ok(cinemaFilm, "no in_cinema/opening_week film found — this test would prove nothing");
+  const noWm = { ...cinemaFilm, wm_user_rating: null, wm_critic_score: null };
+  assert.equal(E.wmCascadeScore(noWm), E.cinemaScore(noWm), "in_cinema/opening_week with no Watchmode terms should fall back to cinemaScore, not a negative number");
+
+  const withWm = { ...cinemaFilm, wm_user_rating: 8.0, wm_critic_score: 90 };
+  const expectedBuzz = E.cinemaScore(withWm), expectedWm = E.wmQScore(withWm);
+  assert.equal(E.wmCascadeScore(withWm), Math.round((expectedBuzz+expectedWm)/2), "in_cinema/opening_week with a real wmQScore should blend it with cinemaScore");
 });
 
 // ---- 9d. qScoreSourcesText NAMES THE THREE RAW SOURCES (CAS-706) -------------------------------------------
@@ -1463,8 +1489,8 @@ test("CAS-678 AC2: a film displays a band's lozenge if and only if the Buzz dial
     const badge = E.scaleTier(m);
     if(badge === "landmark") continue;   // Landmark outranks the ladder — its own axis, tested separately
     for(const [band, stop] of Object.entries(BAND_KEY)){
-      const dialReturnsExactlyThisBand = E.selBuzzOK(m, { selBuzz: stop })
-        && (stop === 3 || !E.selBuzzOK(m, { selBuzz: stop + 1 }));
+      const dialReturnsExactlyThisBand = E.buzzStop(m) >= stop
+        && (stop === 3 || !(E.buzzStop(m) >= stop + 1));
       assert.equal(badge === band, dialReturnsExactlyThisBand,
         `${m.title}: badge is ${badge || "none"}, dial-at-${band} says ${dialReturnsExactlyThisBand}`);
     }
@@ -1484,10 +1510,10 @@ test("CAS-678 AC4: the three bands are disjoint and ordered — a film's band is
     assert.ok(stop >= 0 && stop <= 3, `${m.title}: buzzStop ${stop} out of range`);
     // Every lower stop must also be cleared (a floor, not a band) — otherwise "highest cleared" is undefined.
     for(let s = 1; s <= stop; s++){
-      assert.equal(E.selBuzzOK(m, { selBuzz: s }), true, `${m.title}: clears stop ${stop} but not the lower stop ${s}`);
+      assert.equal(E.buzzStop(m) >= s, true, `${m.title}: clears stop ${stop} but not the lower stop ${s}`);
     }
     for(let s = stop + 1; s <= 3; s++){
-      assert.equal(E.selBuzzOK(m, { selBuzz: s }), false, `${m.title}: buzzStop says ${stop} but also clears the higher stop ${s}`);
+      assert.equal(E.buzzStop(m) >= s, false, `${m.title}: buzzStop says ${stop} but also clears the higher stop ${s}`);
     }
   }
 });

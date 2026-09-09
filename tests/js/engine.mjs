@@ -170,13 +170,13 @@ if(typeof window.CascadeAuth === "undefined"){
   // a test can assert their .size directly, plus the one function that clears both — the real invalidation
   // point wired into the catalogue swap.
   _scaleInferCache, _awardRankCache, invalidateComputeCaches,
-  agentWindow, winOn, subOn, winSubs, PRIORITY_WATCH, ALERT_DEFAULTS, ALERT_SHORT, ALERT_MOMENT,
+  agentWindow, winOn, subOn, winSubs, ALERT_SHORT, ALERT_MOMENT,
   alertLive, reachableRows, liveAlerts, drawWatchLanes,
   // CAS-847: accountAlertKeysOn is the account-wide Notify answer the Upcoming lozenge now reads (via
   // upcomingCapLabel) instead of always saying "Upcoming" — exported alongside it so a test can drive the
   // sub-switches directly rather than only asserting the label they produce.
   accountAlertKeysOn, upcomingCapLabel,
-  selScaleMatch, selCrowdOK, selCriticsOK, selBuzzOK, voteReadout, critScoreReadout, scaleReadout,
+  selScaleMatch, voteReadout, critScoreReadout, scaleReadout,
   // CAS-694: critScore (the one recorded critics figure) and qScore's own text (qScoreSourcesText), so a test
   // can assert both independently rather than re-deriving them from qScore's output alone.
   qScore, critScore, qScoreSourcesText, sortMoviesBy, ratingOf, IMDB_MIN_VOTES, imdbReliable,
@@ -187,6 +187,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // CINEMA_BUDGET_MIN survive — CAS-724's legacyMissionFloorDefault still reads them for a cinema agent's
   // one-time scoreFloor migration.
   cascadeScore, cascadeScoreSourcesText, cinemaScore, isPreRelease, buzzPctlOf, pctRankOf,
+  // CAS-895: wmQScore/wmCascadeScore, the TEMPORARY Watchmode-mirrored pair of qScore/cascadeScore — exported
+  // the same way so a test can assert each stage directly rather than only the rendered row.
+  wmQScore, wmCascadeScore,
   BUZZ_POP_VALS, CINEMA_BUDGET_VALS, CINEMA_BUDGET_MIN,
   // CAS-748: the released-cohort quantile map's own lookup table, so a test can assert the mapping formula
   // directly rather than only cinemaScore's output.
@@ -206,19 +209,19 @@ if(typeof window.CascadeAuth === "undefined"){
   YEARS_STOPS, YEARS_STOP_POS, yearsForPos, posForYears, yearsCutoff, releasedSince,
   yearsFromLegacy, yearsLabel, yearsReadout, flowYearsBack, baseYearsBack, yearOf,
   MIN_INITIAL_MATCHES, autoRelaxBar, barDialSnapshot,
-  STARTERS, startersFor, starterPreview, starterCount, starterAgentName, starterWatch, RECOMMENDED_FOR,
+  STARTERS, starterPreview, starterCount, starterAgentName, starterWatch, RECOMMENDED_FOR,
   AGENT_WINDOWS, agentWindows, watchToStatuses, listToStatuses, migrateWatch,
   MISSION_DIALS, MISSION_DIALS_USED, missionRest, missionKind, laneCrit,
   axisCountsNow, genreCountsNow,
-  onbApply, onbCount, pickStarter, flowStart, flowPriority, flowStop, FLOWS,
+  onbApply, onbCount, pickStarter, flowStart, flowStop, FLOWS,
   tasteBase, cascades,
   get onbFlow(){ return onbFlow; },
   get flowKind(){ return flowKind; },
   setFlowKind(k){ flowKind = k; },
-  // CAS-863: activeCascades/activeIds are what the live listing (watchScopeRows) and the empty state
-  // (emptyResultsHTML) both read — seeded straight from the agents themselves now that the watch-list
-  // model (and the list editor's own ymCascOff/ymCascToggle/leOpen scratch state) is retired.
-  activeCascades, emptyResultsHTML,
+  // CAS-863: activeIds is what the live listing (watchScopeRows) and the empty state (emptyResultsHTML)
+  // both read — seeded straight from the agents themselves now that the watch-list model (and the list
+  // editor's own ymCascOff/ymCascToggle/leOpen scratch state) is retired.
+  emptyResultsHTML,
   get activeIds(){ return activeIds; },
   // CAS-667: movingData is wire-adjacent (it reads window.CascadePersistence.accountActive()) but its
   // row-selection arithmetic is exactly the kind of decision this harness exists to test. realAlerts and
@@ -322,6 +325,7 @@ if(typeof window.CascadeAuth === "undefined"){
   setOpinion: (id, kind) => window.setOpinion(id, kind),
   get watchPrefs(){ return watchPrefs; },
   setWatchPrefs(w){ watchPrefs = w; },
+  watchPrefsDefaults,
   // CAS-602: the bell's own moment-copy lookup, so a test can assert a monitor moment key can never
   // render as its raw string (see REAL_MOMENT_SAID's own use at the ntfrow render site).
   REAL_MOMENT_SAID,
@@ -419,7 +423,7 @@ export function loadEngine({ htmlPath = path.join(ROOT, "index.html") } = {}){
 /** A fresh flow, seeded exactly the way a person walking the app seeds it. */
 export function pickInLane(E, kind, presetKey){
   E.flowStart();
-  E.flowPriority(kind);
+  E.setFlowKind(kind);
   E.pickStarter(presetKey);
   return E;
 }

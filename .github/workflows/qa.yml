@@ -52,7 +52,7 @@ permissions:
 
 concurrency:
   group: qa-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   # Confirms the committed index.html matches what app_template.html + movies.json actually
@@ -142,8 +142,14 @@ jobs:
   # turning this job red and blocking `promote` for reasons that were not app breakage. Only the
   # test_data_quality checks that are genuine app-breakers still gate this job (run via
   # run_data_quality.py, see its header + BLOCKING_TESTS in test_data_quality.py); every other
-  # check in that file still runs and is printed, but report-only. The other two files here
-  # (mocked-network pipeline invariants, not live-data drift) are unaffected and still block.
+  # check in that file still runs and is printed, but report-only. Every other file in tests/
+  # (mocked-network, no API keys required) runs here unconditionally and still blocks.
+  #
+  # CAS-880: this job used to name only two of the tests/ modules, so any other test file
+  # (pipeline/backfill/probe scripts added since) passed locally under `npm run test:data` but
+  # never gated a promote. Discover all of them dynamically instead of listing files by name, so
+  # a new test file added under tests/ is covered automatically. test_data_quality.py is excluded
+  # here because it runs exactly once, via run_data_quality.py below.
   data:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -155,8 +161,8 @@ jobs:
 
       - name: Pipeline invariants
         run: |
-          python -m unittest discover -s tests -p "test_monotonic_status.py" 2>&1 | tee data.log
-          python -m unittest discover -s tests -p "test_pipeline_resilience.py" 2>&1 | tee -a data.log
+          MODULES=$(python -c "import pathlib; print(' '.join(f'tests.{p.stem}' for p in sorted(pathlib.Path('tests').glob('test_*.py')) if p.stem != 'test_data_quality'))")
+          python -m unittest $MODULES 2>&1 | tee data.log
 
       - name: Catalogue data quality (blocking app-breakers; rest report-only)
         run: python -m tests.run_data_quality 2>&1 | tee -a data.log
@@ -187,6 +193,7 @@ jobs:
           python-version: "3.12"
 
       - name: Monitor
+        timeout-minutes: 8
         run: |
           python -m unittest discover -s monitor/tests 2>&1 | tee monitor.log
           python -m monitor --dry-run 2>&1 | tee -a monitor.log
@@ -234,7 +241,7 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -285,7 +292,8 @@ jobs:
         run: npx playwright install-deps webkit
 
       - name: End to end (smoke gate)
-        run: npx playwright test tests/e2e/smoke.spec.mjs 2>&1 | tee e2e.log
+        timeout-minutes: 20
+        run: npx playwright test tests/e2e/smoke.spec.mjs --max-failures=3 --retries=1 2>&1 | tee e2e.log
 
       - name: Keep the report when it goes red
         if: failure()

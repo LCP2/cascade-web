@@ -46,6 +46,13 @@
 --                   trigger from day one. Insert-only, unreadable through the anon key — the
 --                   daily monitor reads unsent rows with service_role and stamps sent_at once
 --                   its digest email has gone out.
+--   invites       — one row per Invite send (CAS-883/M12). A real record, not a stateless
+--                   ref-code link: a per-send token, the sender, the film, and the name the
+--                   sender gave the recipient. Readable by anon (token only) so a signed-out
+--                   recipient can open the invite they were sent.
+--   invite_replies — one row per (invite, client_key) Yes/No reply. Insertable by anon so a
+--                   signed-out recipient can answer; readable/updatable only by the invite's
+--                   own sender.
 
 -- gen_random_uuid() lives in pgcrypto. It is pre-installed on Supabase, but declaring the
 -- dependency keeps this file self-contained and portable to a plain Postgres.
@@ -549,6 +556,118 @@ drop policy if exists contact_attachments_insert on storage.objects;
 create policy contact_attachments_insert on storage.objects
   for insert to anon, authenticated
   with check (bucket_id = 'contact-attachments');
+
+-- ---------------------------------------------------------------------------
+-- invites / invite_replies — Invite to a movie (CAS-883/M12)
+-- ---------------------------------------------------------------------------
+create table if not exists public.invites (
+  token       text primary key,
+  sender_id   uuid not null references auth.users(id) on delete cascade,
+  sender_name text,
+  tmdb_id     bigint not null,
+  film_title  text,
+  to_name     text,
+  created_at  timestamptz not null default now()
+);
+create index if not exists invites_sender_idx on public.invites (sender_id, created_at desc);
+
+alter table public.invites enable row level security;
+
+drop policy if exists invites_owner on public.invites;
+create policy invites_owner on public.invites
+  for all using (auth.uid() = sender_id) with check (auth.uid() = sender_id);
+
+-- A signed-out recipient must be able to READ the invite they were sent, by token only.
+-- Never listable: a select without a token filter returns nothing useful because the
+-- policy is satisfied per-row and the table is only ever queried by primary key.
+drop policy if exists invites_read_by_token on public.invites;
+create policy invites_read_by_token on public.invites
+  for select to anon, authenticated using (true);
+
+create table if not exists public.invite_replies (
+  id           bigserial primary key,
+  token        text not null references public.invites(token) on delete cascade,
+  client_key   text not null,
+  replier_id   uuid references auth.users(id) on delete set null,
+  answer       text not null check (answer in ('yes','no')),
+  created_at   timestamptz not null default now(),
+  seen_at      timestamptz,
+  unique (token, client_key)
+);
+create index if not exists invite_replies_token_idx on public.invite_replies (token, created_at desc);
+
+alter table public.invite_replies enable row level security;
+
+drop policy if exists invite_replies_insert on public.invite_replies;
+create policy invite_replies_insert on public.invite_replies
+  for insert to anon, authenticated with check (answer in ('yes','no'));
+
+drop policy if exists invite_replies_sender_read on public.invite_replies;
+create policy invite_replies_sender_read on public.invite_replies
+  for select to authenticated using (
+    exists (select 1 from public.invites i
+            where i.token = invite_replies.token and i.sender_id = auth.uid()));
+
+drop policy if exists invite_replies_sender_update on public.invite_replies;
+create policy invite_replies_sender_update on public.invite_replies
+  for update to authenticated using (
+    exists (select 1 from public.invites i
+            where i.token = invite_replies.token and i.sender_id = auth.uid()));
+
+-- ---------------------------------------------------------------------------
+-- recommendations — Recommend Cascade, the send half of Refer a friend (CAS-884/M11)
+-- ---------------------------------------------------------------------------
+-- Signed-in only (no anonymous path here removes it as an open mail relay). A new hourly
+-- workflow (.github/workflows/recommend.yml) reads unsent rows with the service_role key and
+-- emails them via monitor/recommend.py; CAS-808 still owns attribution and any reward.
+create table if not exists public.recommendations (
+  id          bigserial primary key,
+  sender_id   uuid not null references auth.users(id) on delete cascade,
+  sender_name text,
+  to_name     text,
+  to_email    text not null,
+  message     text not null,
+  created_at  timestamptz not null default now(),
+  sent_at     timestamptz
+);
+create index if not exists recommendations_unsent_idx
+  on public.recommendations (created_at) where sent_at is null;
+
+alter table public.recommendations enable row level security;
+
+drop policy if exists recommendations_owner on public.recommendations;
+create policy recommendations_owner on public.recommendations
+  for all to authenticated using (auth.uid() = sender_id)
+  with check (auth.uid() = sender_id
+    and length(to_email) between 3 and 200
+    and length(message) between 1 and 2000);
+
+-- security definer: counts every sender_id's own rows to enforce the rate limit, the same
+-- 5/hour + 20/day shape as contact_messages_rate_limit above, keyed on sender_id since every
+-- row here is authenticated (no client_key to fall back on).
+create or replace function public.recommendations_rate_limit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if (select count(*) from public.recommendations
+      where sender_id = new.sender_id and created_at > now() - interval '1 hour') >= 5 then
+    raise exception 'recommendations: rate limit exceeded (5/hour)';
+  end if;
+  if (select count(*) from public.recommendations
+      where sender_id = new.sender_id and created_at > now() - interval '24 hours') >= 20 then
+    raise exception 'recommendations: rate limit exceeded (20/day)';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists recommendations_rate_limit on public.recommendations;
+create trigger recommendations_rate_limit
+  before insert on public.recommendations
+  for each row execute function public.recommendations_rate_limit();
 
 -- ---------------------------------------------------------------------------
 -- keep cascades.updated_at honest on every write

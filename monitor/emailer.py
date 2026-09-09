@@ -198,7 +198,8 @@ def _row_html(hit, esc, site_url) -> str:
     is_new = is_new_moment(t.moment)
     pill_bg, pill_fg = ("#E6F9EE", "#1A9C5C") if is_new else ("#E8ECFF", "#3B4FE0")
     note = _MOMENT_NOTE.get(t.moment, "")
-    # CAS-524: same #/film/<id> hash route shareUrlFor() builds in the app itself, so the link
+    # CAS-524: same #/film/<id> hash route inviteUrlFor() builds in the app itself (CAS-883 renamed it
+    # from shareUrlFor), so the link
     # is the real, permanent film page — tapping it on a device with the app installed is what
     # the universal-link/AASA setup turns into an in-app open instead of a browser tab.
     film_url = f"{site_url}#/film/{t.movie_id}"
