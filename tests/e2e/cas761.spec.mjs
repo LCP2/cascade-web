@@ -31,12 +31,13 @@ async function toWatchScreen(page){
   return page.evaluate(() => cascades.slice(0, 2).map(c => c.id));
 }
 
-/** Rank the two cascades used here 1/2 (order 10/20) so block order is deterministic — same technique
- * cas760.spec.mjs's rankCascades uses. */
+/** Rank the two cascades used here 1/2 (order 10/20) so block order is deterministic, and make them
+ * status-permissive — same technique cas760.spec.mjs's rankCascades uses. */
 async function rankCascades(page, cascadeIds){
   await page.evaluate((cascadeIds) => {
     cascades.find(c => c.id === cascadeIds[0]).order = 10;
     cascades.find(c => c.id === cascadeIds[1]).order = 20;
+    cascadeIds.forEach(id => { const c = cascades.find(x => x.id === id); c.status = []; c.listStatus = []; });
   }, cascadeIds);
 }
 
@@ -57,21 +58,37 @@ async function toStreamTab(page){
 }
 
 /** Scroll so `el`'s natural ("static") position sits `offset` px past where it would first become stuck at
- * --stickyh — computed from THIS MOMENT's live layout, not a value captured earlier. */
+ * --stickyh — computed from THIS MOMENT's live layout, not a value captured earlier. Re-aims a few times
+ * (same "aim, then correct" discipline jumpToSection's own comment describes) because content-visibility:auto
+ * cards between the old and new scroll position can still grow once the jump reveals them, undershooting a
+ * single-shot calculation. */
 async function scrollPastStick(page, sel, nth, offset){
-  await page.evaluate(({ sel, nth, offset }) => {
-    const el = document.querySelectorAll(sel)[nth];
-    const stickyh = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--stickyh")) || 0;
-    const absTop = window.scrollY + el.getBoundingClientRect().top;
-    window.scrollTo(0, Math.max(0, absTop - stickyh + offset));
-  }, { sel, nth, offset });
-  await page.waitForTimeout(300);   // let content-visibility:auto reveal + sticky settle before reading rects
+  let lastTarget = null;
+  for(let i = 0; i < 4; i++){
+    const target = await page.evaluate(({ sel, nth, offset }) => {
+      const el = document.querySelectorAll(sel)[nth];
+      // CAS-857 (post-dates this spec): --stickyh is PRE-zoom; scrollY/getBoundingClientRect() are POST-zoom
+      // (CSS zoom scales the whole scroll space) — bring --stickyh onto that same basis before using it here.
+      const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-scale")) || 1;
+      const stickyh = (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--stickyh")) || 0) * scale;
+      const absTop = window.scrollY + el.getBoundingClientRect().top;
+      const t = Math.max(0, absTop - stickyh + offset);
+      window.scrollTo(0, t);
+      return t;
+    }, { sel, nth, offset });
+    await page.waitForTimeout(200);   // let content-visibility:auto reveal + sticky settle before re-checking
+    if(lastTarget !== null && Math.abs(target - lastTarget) < 1) break;
+    lastTarget = target;
+  }
 }
 
+// CAS-857 (post-dates this spec): --stickyh is PRE-zoom (offsetHeight-based); getBoundingClientRect() is
+// POST-zoom — convert tops onto --stickyh's own basis before comparing (see AC5's comment for the mechanism).
 const stickyState = sel => page => page.evaluate((sel) => {
   const stickyh = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--stickyh")) || 0;
+  const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-scale")) || 1;
   const subs = [...document.querySelectorAll(sel)];
-  return { stickyh, tops: subs.map(el => el.getBoundingClientRect().top) };
+  return { stickyh, tops: subs.map(el => el.getBoundingClientRect().top / scale) };
 }, sel);
 
 test.afterEach(async ({ page }) => {
@@ -92,7 +109,9 @@ test("CAS-761 AC1/AC2/AC3/AC4: sub-heading pins at --stickyh, the next agent's h
     await seedFilm(page, { id: 900761200 + i, title: `CAS-761 B2-${i}`, status: "upcoming", cascadeId: cascadeIds[1] });
   for(let i = 0; i < N_NEXTGROUP; i++)
     await seedFilm(page, { id: 900761300 + i, title: `CAS-761 Next-${i}`, status: "opening_week", cascadeId: cascadeIds[0] });
-  await page.evaluate(() => render());
+  // CAS-823 (post-dates this spec) restricts the Streaming tab to its own standing (included_streaming)
+  // unless widened — real account state, set the way the Filters sheet itself would.
+  await page.evaluate(() => { watchAlsoShow.stream.add("upcoming"); watchAlsoShow.stream.add("opening_week"); render(); });
   await toStreamTab(page);
 
   const subsSel = '#groups .group[data-g="upcoming"] .grouphead.sub';
@@ -114,10 +133,17 @@ test("CAS-761 AC1/AC2/AC3/AC4: sub-heading pins at --stickyh, the next agent's h
     return sub === hit || sub.contains(hit);
   }, subsSel);
   expect(topmostIsSub).toBe(true);
+  // CAS-763 (post-dates this spec): the tinted background is a color-mix() of two opaque colours, which
+  // WebKit's computed style resolves to `color(srgb r g b)` — a different function name than rgb()/rgba(),
+  // and with no alpha component at all when (as here) it's fully opaque. Parse either shape: an explicit
+  // `/ alpha` segment (either function can carry one) wins; its absence means fully opaque.
   const bgAlpha = await page.evaluate((sel) => {
     const c = getComputedStyle(document.querySelectorAll(sel)[0]).backgroundColor;
-    const m = c.match(/rgba?\(([^)]+)\)/)[1].split(",").map(s => s.trim());
-    return m.length === 4 ? Number(m[3]) : 1;
+    const alphaSeg = c.match(/\/\s*([\d.]+)\s*\)/);
+    if(alphaSeg) return Number(alphaSeg[1]);
+    const rgba = c.match(/^rgba\(([^)]+)\)/);
+    if(rgba){ const parts = rgba[1].split(",").map(s => s.trim()); return parts.length === 4 ? Number(parts[3]) : 1; }
+    return 1;
   }, subsSel);
   expect(bgAlpha).toBe(1);
 
@@ -137,15 +163,20 @@ test("CAS-761 AC1/AC2/AC3/AC4: sub-heading pins at --stickyh, the next agent's h
 
 test("CAS-761 AC5: --stickyh equals the measured header+cascbar chrome height, and jumpToSection still lands its target clear of it", async ({ page }) => {
   const cascadeIds = await toWatchScreen(page);
+  await rankCascades(page, cascadeIds);
   await seedFilm(page, { id: 900761401, title: "CAS-761 target", status: "opening_week", cascadeId: cascadeIds[0] });
   await seedFilm(page, { id: 900761402, title: "CAS-761 other", status: "upcoming", cascadeId: cascadeIds[0] });
-  await page.evaluate(() => render());
+  await page.evaluate(() => { watchAlsoShow.stream.add("upcoming"); watchAlsoShow.stream.add("opening_week"); render(); });
   await toStreamTab(page);
 
+  // CAS-857 (post-dates this spec): --stickyh is deliberately measured PRE-zoom (offsetHeight, via
+  // syncHeaderHeight) because .grouphead.sub's own sticky `top` is CSS, which the html `zoom:var(--ui-scale)`
+  // already scales for it — comparing it to a POST-zoom getBoundingClientRect() reads off by the zoom factor.
+  // Match syncHeaderHeight's own measurement instead of re-deriving a post-zoom one.
   const measured = await page.evaluate(() => {
     const stickyh = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--stickyh")) || 0;
-    const hdr = document.querySelector("header").getBoundingClientRect().height;
-    const bar = document.getElementById("cascbar").getBoundingClientRect().height;
+    const hdr = document.querySelector("header").offsetHeight;
+    const bar = document.getElementById("cascbar").offsetHeight;
     return { stickyh, chrome: hdr + bar };
   });
   expect(Math.abs(measured.stickyh - measured.chrome)).toBeLessThanOrEqual(1);
@@ -154,7 +185,9 @@ test("CAS-761 AC5: --stickyh equals the measured header+cascbar chrome height, a
   await page.waitForTimeout(1200);   // smooth scroll + the settle loop's re-aim corrections
   const landed = await page.evaluate(() => {
     const stickyh = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--stickyh")) || 0;
-    const top = document.querySelector('#groups .group[data-g="opening_week"]').getBoundingClientRect().top;
+    const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-scale")) || 1;
+    // getBoundingClientRect() is POST-zoom; convert to the same PRE-zoom basis as --stickyh (CAS-857).
+    const top = document.querySelector('#groups .group[data-g="opening_week"]').getBoundingClientRect().top / scale;
     return top - stickyh;
   });
   // Clear of the chrome (not hidden under it) and not overshot far past it — jumpToSection's own "-8" aim.

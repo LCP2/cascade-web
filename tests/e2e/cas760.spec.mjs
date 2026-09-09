@@ -91,7 +91,9 @@ test("CAS-760 AC1/AC2: three ranked agents get three distinct tints, rank 1 gets
   await seedFilm(page, { id: FILM_A2, title: "CAS-760 A2", status: "included_streaming", cascadeId: cascadeIds[0] });
   await seedFilm(page, { id: FILM_B, title: "CAS-760 B", status: "upcoming", cascadeId: cascadeIds[1] });
   await seedFilm(page, { id: FILM_C, title: "CAS-760 C", status: "upcoming", cascadeId: cascadeIds[2] });
-  await page.evaluate(() => render());
+  // CAS-823 (post-dates this spec) restricts the Streaming tab to its own standing (included_streaming)
+  // unless widened — real account state, set the way the Filters sheet itself would.
+  await page.evaluate(() => { watchAlsoShow.stream.add("upcoming"); render(); });
   await toStreamTab(page);
 
   const subs = await subHeadings(page);
@@ -118,7 +120,7 @@ test("CAS-760 AC3: reordering agents so a different cascade holds rank 1 gives t
   await seedFilm(page, { id: FILM_A, title: "CAS-760 A", status: "upcoming", cascadeId: cascadeIds[0] });
   await seedFilm(page, { id: FILM_B, title: "CAS-760 B", status: "upcoming", cascadeId: cascadeIds[1] });
   await seedFilm(page, { id: FILM_C, title: "CAS-760 C", status: "upcoming", cascadeId: cascadeIds[2] });
-  await page.evaluate(() => render());
+  await page.evaluate(() => { watchAlsoShow.stream.add("upcoming"); render(); });
   await toStreamTab(page);
 
   const before = await subHeadings(page);
@@ -145,7 +147,7 @@ test("CAS-760 AC4: a block with no owning cascade renders untinted, and no .gdot
   // Pinned only to the paused clone — listedBy() (never checks .paused) still lists it, but recomputeFound
   // excludes a paused cascade from its candidates, so it gets no owner (CAS-682's real stub divergence).
   await seedFilm(page, { id: FILM_OTHER, title: "CAS-760 Other", status: "upcoming", cascadeId: PAUSED_CLONE_ID });
-  await page.evaluate(() => render());
+  await page.evaluate(() => { watchAlsoShow.stream.add("upcoming"); render(); });
   await toStreamTab(page);
 
   const subs = await subHeadings(page);

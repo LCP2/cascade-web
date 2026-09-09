@@ -75,7 +75,9 @@ test("CAS-763 AC1/AC2/AC3: the tinted .ablock spans heading-to-last-card carryin
   await rankCascades(page, cascadeIds);
   for(let i = 0; i < 4; i++)
     await seedFilm(page, { id: 900763100 + i, title: `CAS-763 A${i}`, status: "upcoming", cascadeId: cascadeIds[0] });
-  await page.evaluate(() => render());
+  // CAS-823 (post-dates this spec) restricts the Streaming tab to its own standing (included_streaming)
+  // unless widened — real account state, set the way the Filters sheet itself would.
+  await page.evaluate(() => { watchAlsoShow.stream.add("upcoming"); render(); });
   await toStreamTab(page);
 
   const result = await page.evaluate(() => {
@@ -102,7 +104,9 @@ test("CAS-763 AC1/AC2/AC3: the tinted .ablock spans heading-to-last-card carryin
   // margin), and carries the strip's left border plus the wash background — painted at BLOCK height.
   expect(Math.abs(result.topDelta)).toBeLessThanOrEqual(1);
   expect(Math.abs(result.bottomDelta)).toBeLessThanOrEqual(1);
-  expect(result.ablockBorderLeft).toBe("3px");
+  // CAS-857 (post-dates this spec): `zoom:var(--ui-scale)` on <html> makes a computed border width report
+  // slightly off its declared CSS px (rounding at the zoom factor) — a tolerance, not an exact string match.
+  expect(parseFloat(result.ablockBorderLeft)).toBeCloseTo(3, 0);
   expect(result.ablockBg).not.toBe("rgba(0, 0, 0, 0)");
   const bgAsRgb = await page.evaluate((hex) => {
     const m = hex.replace("#", "").match(/.{2}/g).map(x => parseInt(x, 16));
@@ -113,7 +117,15 @@ test("CAS-763 AC1/AC2/AC3: the tinted .ablock spans heading-to-last-card carryin
   expect(result.subBorderLeft).toBe("0px");
   expect(result.subBg).toBe(result.ablockBg);
   // AC3: that shared background is fully opaque — a card scrolling under it while pinned stays hidden.
-  const alphaOf = c => { const m = c.match(/rgba?\(([^)]+)\)/)[1].split(",").map(s => s.trim()); return m.length === 4 ? Number(m[3]) : 1; };
+  // CAS-763's color-mix() background resolves (in WebKit's computed style) to `color(srgb r g b)`, not
+  // rgb()/rgba() — no alpha segment at all when, as here, it's fully opaque (see cas761.spec.mjs's own note).
+  const alphaOf = c => {
+    const alphaSeg = c.match(/\/\s*([\d.]+)\s*\)/);
+    if(alphaSeg) return Number(alphaSeg[1]);
+    const rgba = c.match(/^rgba\(([^)]+)\)/);
+    if(rgba){ const parts = rgba[1].split(",").map(s => s.trim()); return parts.length === 4 ? Number(parts[3]) : 1; }
+    return 1;
+  };
   expect(alphaOf(result.subBg)).toBe(1);
 });
 
@@ -125,20 +137,37 @@ test("CAS-763 AC4: CAS-761's pin/release still holds — a heading pins at --sti
     await seedFilm(page, { id: 900763200 + i, title: `CAS-763 B1-${i}`, status: "upcoming", cascadeId: cascadeIds[0] });
   for(let i = 0; i < 10; i++)
     await seedFilm(page, { id: 900763300 + i, title: `CAS-763 B2-${i}`, status: "upcoming", cascadeId: cascadeIds[1] });
-  await page.evaluate(() => render());
+  // CAS-823 (post-dates this spec) restricts the Streaming tab to its own standing (included_streaming)
+  // unless widened — real account state, set the way the Filters sheet itself would.
+  await page.evaluate(() => { watchAlsoShow.stream.add("upcoming"); render(); });
   await toStreamTab(page);
 
   const subsSel = '#groups .group[data-g="upcoming"] .grouphead.sub';
+  // CAS-857 (post-dates this spec): --stickyh is PRE-zoom; scrollY/getBoundingClientRect() are POST-zoom
+  // (CSS zoom scales the whole scroll space) — bring --stickyh onto that same basis (cas761.spec.mjs's own
+  // note has the full mechanism). Re-aims a few times, same as cas761's scrollPastStick: content-
+  // visibility:auto cards between the old and new scroll position can still grow once the jump reveals
+  // them, undershooting a single-shot calculation.
   const scrollPastStick = async (nth, offset) => {
-    await page.evaluate(({ sel, nth, offset }) => {
-      const el = document.querySelectorAll(sel)[nth];
-      const stickyh = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--stickyh")) || 0;
-      const absTop = window.scrollY + el.getBoundingClientRect().top;
-      window.scrollTo(0, Math.max(0, absTop - stickyh + offset));
-    }, { sel: subsSel, nth, offset });
-    await page.waitForTimeout(300);
+    let lastTarget = null;
+    for(let i = 0; i < 4; i++){
+      const target = await page.evaluate(({ sel, nth, offset }) => {
+        const el = document.querySelectorAll(sel)[nth];
+        const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-scale")) || 1;
+        const stickyh = (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--stickyh")) || 0) * scale;
+        const absTop = window.scrollY + el.getBoundingClientRect().top;
+        const t = Math.max(0, absTop - stickyh + offset);
+        window.scrollTo(0, t);
+        return t;
+      }, { sel: subsSel, nth, offset });
+      await page.waitForTimeout(200);
+      if(lastTarget !== null && Math.abs(target - lastTarget) < 1) break;
+      lastTarget = target;
+    }
   };
-  const tops = () => page.evaluate((sel) => [...document.querySelectorAll(sel)].map(el => el.getBoundingClientRect().top), subsSel);
+  const scale = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-scale")) || 1);
+  const tops = () => page.evaluate((sel) => [...document.querySelectorAll(sel)].map(el => el.getBoundingClientRect().top), subsSel)
+    .then(vals => vals.map(v => v / scale));
   const stickyh = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--stickyh")) || 0);
 
   // Deep into block 1 — its heading sits pinned at --stickyh.
@@ -162,7 +191,7 @@ test("CAS-763 AC5: an untinted \"Other\" block gets no lane strip and no wash", 
   // Pinned only to the paused clone — listedBy() still lists it, recomputeFound excludes it from ownership
   // (CAS-682's real "Other" divergence, reused by cas760's own addPausedClone).
   await seedFilm(page, { id: 900763402, title: "CAS-763 Other", status: "upcoming", cascadeId: PAUSED_CLONE_ID });
-  await page.evaluate(() => render());
+  await page.evaluate(() => { watchAlsoShow.stream.add("upcoming"); render(); });
   await toStreamTab(page);
 
   const other = await page.evaluate(() => {
@@ -186,7 +215,7 @@ test("CAS-763 AC6: the card border and card text keep their own computed colours
   await addPausedClone(page, cascadeIds);
   await seedFilm(page, { id: 900763501, title: "CAS-763 Tinted card", status: "upcoming", cascadeId: cascadeIds[0] });
   await seedFilm(page, { id: 900763502, title: "CAS-763 Other card", status: "upcoming", cascadeId: PAUSED_CLONE_ID });
-  await page.evaluate(() => render());
+  await page.evaluate(() => { watchAlsoShow.stream.add("upcoming"); render(); });
   await toStreamTab(page);
 
   const styles = await page.evaluate(() => {

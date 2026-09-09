@@ -29,8 +29,12 @@ async function toWatchScreen(page){
 
 async function seedFilms(page, cascadeId){
   await page.evaluate(({ cascadeId, a, b }) => {
-    MOVIES.push({ tmdb_id: a, title: "CAS-752 — A", status: ["included_streaming"], offers: [] });
-    MOVIES.push({ tmdb_id: b, title: "CAS-752 — B", status: ["included_streaming"], offers: [] });
+    // CAS-788 (post-dates this spec): a verdict now clears wins/winsSource outright and leaves recomputeFound's
+    // own auto re-arm to put them back — which needs a real score to clear the owning agent's watchMarkers
+    // (CAS-752's AC1 dislikes FILM_A, so this isn't optional here the way it is for cas760's own copy of this
+    // fixture, which never calls setOpinion). rt_critic is the least-fussy path to a qualifying cascadeScore.
+    MOVIES.push({ tmdb_id: a, title: "CAS-752 — A", status: ["included_streaming"], offers: [], rt_critic: 85 });
+    MOVIES.push({ tmdb_id: b, title: "CAS-752 — B", status: ["included_streaming"], offers: [], rt_critic: 85 });
     [a, b].forEach(id => {
       const e = entryFor(id);
       e.pinnedTo = [cascadeId];

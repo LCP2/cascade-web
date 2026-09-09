@@ -1,0 +1,40 @@
+# .github/workflows/e2e-full.yml — Codynamics Development Standard (Cascade web)
+# CAS-878: the full per-ticket Playwright suite (all specs under tests/e2e/, via `npm run
+# test:e2e:full` / bare `playwright test`), reachable on demand. Not part of the `qa.yml` gate —
+# CAS-385's reasoning still holds: per-ticket specs pinned to one commit's exact copy/DOM would
+# turn the gate red for approved UI changes that are not regressions. This workflow exists so
+# that suite is still runnable, and its result inspectable, without running it by hand.
+name: e2e-full
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: npm ci
+      - run: npx playwright install --with-deps webkit
+      - run: npm run build
+      - run: npm run test:e2e:full
+
+      - name: Keep the HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-full
+          path: playwright-report/
+          retention-days: 7
