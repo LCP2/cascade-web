@@ -2333,21 +2333,31 @@
      scope bar's own pills: these pick which films are even eligible before the scope bar narrows them
      further, so they read as one higher-level control, not a fourth pile alongside Notify/For review/
      Watched. Same on-colour (--brand-blue) as the scope bar's own lit state, for the same reason. */
-  /* CAS-828: the window strip is the header's own bottom edge, not a control floating under it.
-     Full-bleed: the negative margins cancel the header's 16px side padding and its 10px bottom
-     padding, so the strip runs edge to edge and sits directly on the header's border-bottom. It
-     therefore costs no height of its own beyond its content — it consumes the padding it replaces. */
-  .watchtabs{display:flex;margin:10px -16px -10px;border-top:1px solid var(--line);
-    background:rgba(0,0,0,.22)}
+  /* CAS-893: the strip is now a tray hanging off the Watch chip, not the header's own bottom edge — inset
+     to the header's horizontal gutter (no more negative side margins), with its own blue-tinted background
+     and border standing in for CAS-828's full-bleed treatment. The 9px top margin is exactly the connector
+     stem's height (see .watchstem/syncWatchStem below), so the tray's top edge sits right where the stem
+     ends — there is no other gap to tune. */
+  .watchtabs{display:flex;margin:9px 0 0;padding:3px;border-radius:13px;
+    border:1px solid rgba(76,125,255,.5);
+    background:linear-gradient(to bottom, rgba(76,125,255,.30), rgba(76,125,255,.08))}
   .watchtabs[hidden]{display:none}   /* CAS-725: no enabled window, no strip — not an empty one */
-  .wtabbtn{flex:1;min-width:0;padding:9px 6px;background:transparent;border:0;
-    border-right:1px solid var(--line);color:var(--dim);font-family:inherit;font-size:11.5px;
+  .wtabbtn{flex:1;min-width:0;padding:9px 6px;background:transparent;border:0;border-radius:10px;
+    color:#c7d4f5;font-family:inherit;font-size:11.5px;
     font-weight:800;letter-spacing:.03em;text-transform:uppercase;cursor:pointer;
     -webkit-tap-highlight-color:transparent;transition:.15s}
-  .wtabbtn:last-child{border-right:0}
-  .wtabbtn.on{background:var(--brand-blue);color:#fff}
+  /* CAS-893: selected fill is deliberately #7FA6FF, not white — it has to read as the same blue family as
+     the Watch chip above it. */
+  .wtabbtn.on{background:#7FA6FF;color:#0A1330}
   .wtabbtn:active{opacity:.75}
   .wtabbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+  /* CAS-893: the connector stem bridging the Watch chip and the tray below it. Absolutely positioned
+     against <header> (a position:sticky ancestor, so it establishes the containing block) — its left/top
+     are set by syncWatchStem() from the chip's own measured bounding box, never a hardcoded offset, since
+     the chip row's width shifts with the label set and with font loading. */
+  .watchstem{position:absolute;width:2px;height:9px;border-radius:1px;background:rgba(76,125,255,.75);
+    pointer-events:none}
+  .watchstem[hidden]{display:none}
   /* ---- GENRE FILTER (CAS-714): the styles present in the open tab's own current results, each a plain
      .chip (the same visual pattern the Mission editor's own genre chips already use) — reuses the look,
      not the wiring, since this filter must never touch a cascade's stored c.genre. Margins mirror
@@ -3202,9 +3212,10 @@
       </div>
     </div>
     <!-- CAS-713: Cascade 9.7's fixed sub-tabs (Cinema/Premium/Rental/Streaming) — a sibling of .brandrow in
-         <header>, welded full-bleed to the header's own bottom edge (CAS-828: restored after CAS-821's
-         .navblock container made the header taller and inset the strip). id/role/aria and
-         renderWatchTabs()/ensureWatchTab() are unchanged; only the element's box and where it sits moved. -->
+         <header>. CAS-893: no longer full-bleed (CAS-828) — now an inset tray hanging off the Watch chip,
+         with #watchStem as its connector. id/role/aria and renderWatchTabs()/ensureWatchTab() are unchanged;
+         only the element's box and where it sits moved. -->
+    <div class="watchstem" id="watchStem" hidden></div>
     <div class="wtabs2 watchtabs" id="watchTabs" role="tablist" aria-label="Watch nav"></div>
     <!-- CAS-656: a persistent, non-dismissing state for "the account failed to load and you're looking at
          on-device data" — a toast was the wrong weight (it scrolls away; this stays until a load succeeds).
@@ -3226,8 +3237,8 @@
   <div class="cascbar blue" id="cascbar">
     <!-- CAS-371: the "AGENTS" heading is gone — the agent box is the first thing in the bar now, so
          everything below it sits that much higher. -->
-    <!-- CAS-713/828 — Cascade 9.7's fixed sub-tabs (Cinema/Premium/Rental/Streaming): #watchTabs itself
-         lives in <header>, welded full-bleed to the header's bottom edge — see the .watchtabs comment there. -->
+    <!-- CAS-713/828/893 — Cascade 9.7's fixed sub-tabs (Cinema/Premium/Rental/Streaming): #watchTabs itself
+         lives in <header>, as an inset tray hanging off the Watch chip — see the .watchtabs comment there. -->
     <!-- CAS-718: replaces the old WATCH ON/For review/Watched pills, the standalone genre row, and the
          deck's per-list search/funnel with ONE consolidated per-tab control: a search box, a Filters
          button (opens #watchSheet — Watched + Styles), and the sort control, unchanged, moved in from the
@@ -9307,10 +9318,33 @@ const phoneHeader = document.querySelector("header");
 // offset (CAS-717's per-agent divider) never has to compute it separately. Re-measured everywhere --hdrh
 // already is, plus everywhere #cascbar's own height can change (render()'s end, after tabs/filters/jump
 // bar are painted) — see the render() call below.
+// CAS-893: the tray's connector stem has to stay centred on the Watch chip however the chip row's own
+// width shifts (label set, font swap) — measured from the chip's live bounding box, never a hardcoded
+// offset. Hung off syncHeaderHeight rather than a second observer: every call site below (render(),
+// syncWatchChip(), resize, the header/cascbar ResizeObserver, the fonts-ready hook) already covers every
+// moment the chip row or the tray can change size.
+function syncWatchStem(){
+  const stem=document.getElementById("watchStem");
+  if(!stem) return;
+  const tray=document.getElementById("watchTabs");
+  const chip=document.getElementById("moviesBtn");
+  if(!phoneHeader || !tray || !chip || tray.hidden){ stem.hidden=true; return; }
+  const chipRect=chip.getBoundingClientRect();
+  const headerRect=phoneHeader.getBoundingClientRect();
+  const stemWidth=stem.offsetWidth||2;
+  // CAS-857's gotcha applies here too: getBoundingClientRect() is post-zoom, viewport-relative px, but
+  // style.left/top on a descendant of the zoomed <html> are read back pre-zoom — dividing the rect-derived
+  // delta by --ui-scale is what makes the two agree (see the CAS-857 comment above jumpOccludedBottom).
+  const uiScale=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-scale"))||1;
+  stem.style.left=((chipRect.left+chipRect.width/2-headerRect.left)/uiScale-stemWidth/2)+"px";
+  stem.style.top=((chipRect.bottom-headerRect.top)/uiScale)+"px";
+  stem.hidden=false;
+}
 function syncHeaderHeight(){
   if(!phoneHeader) return;
   const hdrh=phoneHeader.offsetHeight;
   document.documentElement.style.setProperty("--hdrh", hdrh+"px");
+  syncWatchStem();
   // CAS-852: #movingScreen is a bounded .uscreen with its own overflow-y:auto scrollport, sitting BELOW the
   // header (top:var(--hdrh,0px)) rather than sharing the page's own scroll the way #cascbar/the Watch
   // listing do — so a sticky descendant's `top` there is measured from that box's own origin, which already
@@ -9328,6 +9362,9 @@ function syncHeaderHeight(){
 let cascResizeT=0;
 addEventListener("resize",()=>{ clearTimeout(cascResizeT); cascResizeT=setTimeout(syncHeaderHeight,140); });
 syncHeaderHeight();
+// CAS-893: a web font swapping in can reflow the chip row's width without changing the header's own
+// box size, so the ResizeObserver below would miss it — re-measure the stem explicitly once fonts settle.
+if(document.fonts && document.fonts.ready && typeof document.fonts.ready.then==="function") document.fonts.ready.then(syncHeaderHeight);
 // CAS-839: the call sites above only fire at specific known moments, but the chrome can also change size
 // on its own — a web font swapping in, or any layout shift none of those call sites happen to run after.
 // Observing the two boxes directly catches every case instead of chasing another guessed call site.
