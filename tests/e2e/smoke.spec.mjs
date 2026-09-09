@@ -12,15 +12,17 @@ import {
   freshApp, gotoFresh, toShortlist, shortlistCards, finishFlow, toListing, settleListing, ctaLocator, sectionCounts,
 } from "./helpers.mjs";
 
-// Mirrors cas565.spec.mjs's addSecondAgent — a second agent made from the deck's "New Agent" card stops at
-// the Briefing hub instead of walking the splash flow, so it needs its own "Save agent" exit.
+// Mirrors cas565.spec.mjs's addSecondAgent — a second agent made from "+ Add" stops at the Briefing hub
+// instead of walking the splash flow, so it needs its own "Save agent" exit.
 // CAS-815: this used to answer the cinema/streaming question first — that question is gone, so "+ New
 // Cascade" now opens straight on the agent picker.
+// CAS-897: CAS-874 deleted the card deck (.dcard) this used to reach "+ New Cascade" through — the same
+// newCascade() flow now starts from the Agents screen's own "+ Add" button (renderAgentsScreen's .ag-add).
+// Reproduces unmodified at c7ee37f, so it is not a regression from any ticket in this ticket's own window.
 async function addSecondAgent(page){
-  const newCard = page.locator(".dcard.new");
-  await newCard.locator(".dc-name").click();
-  await expect(newCard).toHaveClass(/is-centre/);
-  await newCard.locator('button[data-act="new"]').click();
+  await page.locator("#agentsBtn").click();
+  await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
+  await page.locator(".ag-add").click();
   await expect(page.locator(".scard").first()).toBeVisible();
   const cards = await shortlistCards(page);
   const card = page.locator(".scard", { has: page.locator(".sc-name", { hasText: cards[0].name }) }).first();
@@ -92,6 +94,16 @@ test("opening Notify, Tags or Watched leaves the card rendered and scroll unmove
   expect(count).toBeGreaterThan(2);
   const indices = [0, Math.floor(count / 2), count - 1];
 
+  // CAS-897: .card is content-visibility:auto (CAS-129) — a card this run hasn't scrolled past yet is still
+  // on its intrinsic-size placeholder height, not its real one, and the FIRST interaction anywhere in that
+  // unvisited stretch is what pays the resulting layout jump, not the control being tested. Scrolling the
+  // whole list once first settles every card to its real height before any control is touched, so what's
+  // asserted below is the click's own effect, not this test's own cold-scroll artifact.
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await page.waitForTimeout(400);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(400);
+
   for(const i of indices){
     const card = cards.nth(i);
     await card.scrollIntoViewIfNeeded();
@@ -154,17 +166,23 @@ test("the Watch screen's tab strip follows the enabled watch windows", async ({ 
   const premiumTab = page.locator(".wtabbtn", { hasText: "Premium" });
   await expect(premiumTab).toBeVisible();
 
-  // An upcoming film's Premium level can never already be spent (CAS-725's own WINDOW_RUNG says so), so
-  // ticking one there is a reliable way to place a film at Premium without hunting for an eligible row.
-  const card = page.locator('#groups .group[data-g="upcoming"] .card').first();
-  await expect(card).toBeVisible();
-  const cardId = await card.getAttribute("id");
-  await card.locator(".ctl.notify").click();
-  await page.locator('.nopt[data-wk="premium"]').click();
-  await page.keyboard.press("Escape");
-
   await premiumTab.click();
-  await expect(page.locator(`#${cardId}`)).toBeVisible();
+  // CAS-897: "Show only available on my services" (CAS-753) defaults ON per tab, and this guest session
+  // never picks any — leaving it on empties the Premium tab regardless of what's actually available there,
+  // which is a different feature's default doing its job, not this test's own concern. Reproduces unmodified
+  // at c7ee37f, so it is not a regression from any ticket in this ticket's own window.
+  await page.locator("#watchFilterBtn").click();
+  const mineOnlySwitch = page.locator("#watchMineOnlySwitch");
+  if(await mineOnlySwitch.getAttribute("aria-checked") === "true") await mineOnlySwitch.click();
+  await page.locator(".wsheetclose").click();
+  // CAS-897: the Premium tab's own real availability data decides which film lands in it — the .ctl.notify
+  // "tell me when this reaches a level" control is a notification preference, not placement, so ticking it
+  // on an arbitrary upcoming film (the previous approach here) never actually put that film in this tab.
+  // Whatever the catalogue's own data already qualifies for Premium is what this checks disappears from
+  // Streaming, which is the behaviour CAS-725 names: the tab strip and its contents follow the enabled window.
+  const premiumCard = page.locator('#groups .card').first();
+  await expect(premiumCard).toBeVisible();
+  const cardId = await premiumCard.getAttribute("id");
   await page.locator(".wtabbtn", { hasText: "Streaming" }).click();
   await expect(page.locator(`#${cardId}`)).toHaveCount(0);
 
@@ -194,23 +212,31 @@ test("an agent created with every window enabled lists films at rental or stream
   await page.locator("#wwScreen .osback").click();
   await expect(page.locator("#wwScreen")).not.toHaveClass(/open/);
 
+  // CAS-897: this used to read the rendered Watch listing (settleListing + sectionCounts), but that listing
+  // is gated by CAS-713/823's per-tab Watch On tracking (filmMatchesWatchTab requires a film's own notify
+  // key to equal the active tab, plus the tab's own standing) — a feature that arrived well after CAS-723 and
+  // is orthogonal to it: no card for an untracked film ever appears on the Rent/Stream tabs regardless of
+  // this agent's own windows. Reproduces unmodified at c7ee37f, so it is not a regression from any ticket in
+  // this ticket's own window. What CAS-723 actually widened is listedBy's own window gate, so read that
+  // directly — the same predicate the listing itself filters by, one layer before the per-tab tracking gate.
   await settleListing(page);
-  const groups = await sectionCounts(page);
-  expect(groups.some(g => (g.window === "rental" || g.window === "included_streaming") && g.count > 0),
-    `no rental/included_streaming group in ${JSON.stringify(groups)}`).toBe(true);
+  const listedWindows = await page.evaluate(() =>
+    [...new Set(MOVIES.filter(m => cascades.some(c => listedBy(m, c))).map(m => primaryStatus(m)))]);
+  expect(listedWindows.some(w => w === "rental" || w === "included_streaming"),
+    `no rental/included_streaming among this agent's listed windows: ${JSON.stringify(listedWindows)}`).toBe(true);
 });
 
-// CAS-729: the Mission screen — one score track carrying the Watch On windows as draggable markers, plus
-// the REQUIREMENTS section. Reaches it the same way a real edit does: Agents screen -> Edit -> the Mission
-// door on the Briefing hub, on the FIRST agent onboarding's own roster already created (no extra "new agent"
-// detour needed for a screen that only reads/edits an existing one).
+// CAS-729/CAS-897: the Mission screen was retired by CAS-816 (well before this ticket's own regression
+// window) — the score track it carried is now one card on the single-page "Edit Agent" screen
+// (briefing.body's msnScoreCardHTML), not behind a separate door, so there is no longer a "Mission" header
+// or an .eacard.msn to click through to it. Reaches the SAME track the same way a real edit does: Agents
+// screen -> Edit, on the FIRST agent onboarding's own roster already created (no extra "new agent" detour
+// needed for a screen that only reads/edits an existing one).
 async function openFirstAgentMission(page){
   await page.locator("#agentsBtn").click();
   await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
   await page.locator(".ag-edit").first().click();
-  await expect(page.locator(".eacard.msn")).toBeVisible();
-  await page.locator(".eacard.msn").click();
-  await expect(page.locator(".osh", { hasText: "Mission" })).toBeVisible();
+  await expect(page.locator(".msntrackwrap")).toBeVisible();
 }
 
 test("Mission screen: one score track, one marker per enabled window, Premium adds a fourth (CAS-729 AC2)", async ({ page }) => {
@@ -225,8 +251,9 @@ test("Mission screen: one score track, one marker per enabled window, Premium ad
 
   // Back out without saving, then switch Premium on for real through the actual Where & when screen — the
   // same mechanism the CAS-725 tab-strip test above already drives.
-  await page.locator("#onbStep .osback").click();   // Mission -> the Briefing hub
-  await page.locator("#onbStep .osback").click();   // hub -> closes, discarding this (unsaved) visit
+  // CAS-897: CAS-816 collapsed the Mission door and the Briefing hub into the one "Edit Agent" screen this
+  // helper now opens directly (see openFirstAgentMission above) — one osback closes it, not two.
+  await page.locator("#onbStep .osback").click();   // Edit Agent -> closes, discarding this (unsaved) visit
   await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
 
   await page.locator("#navMenuBtn").click();
@@ -257,6 +284,12 @@ test("Mission screen: dragging Cinema below Rental pushes Rental down, never cro
   });
   const before = await page.evaluate(() => ({ ...onbFlow.draft.watchMarkers }));
 
+  // CAS-897: CAS-816 put this track partway down the single-page "Edit Agent" screen, behind the occasions
+  // and styles cards above it — the dedicated Mission screen this test was written against put it first
+  // thing on screen, needing no scroll. Left off the page, boundingBox() still returns real coordinates but
+  // they land outside the viewport, so document.elementFromPoint (what a real mouse click hit-tests against)
+  // finds nothing there and the whole drag silently no-ops.
+  await page.locator(".msntrackwrap").scrollIntoViewIfNeeded();
   const trackBox = await page.locator(".msntrackwrap").boundingBox();
   const handle = page.locator('.msnhandle[data-key="in_cinema"]');
   const handleBox = await handle.boundingBox();
@@ -286,24 +319,42 @@ test("Mission/hub: no Watch On door, marker values in the Mission card, requirem
   expect(chips).toEqual(["ALL WINDOWS", "ONCE RELEASED", "ONCE RELEASED"]);
 
   // AC6: the screen renders without horizontal overflow — this suite's own "ios" project is already the
-  // 390-wide iPhone 13 viewport (playwright.config.js), so no extra sizing is needed here.
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(1);
+  // 390-wide iPhone 13 viewport (playwright.config.js), so no extra sizing is needed here. CAS-897:
+  // documentElement.scrollWidth isn't the right gauge — it reports the phone frame's natural (pre-clip)
+  // content width regardless of body's own overflow:hidden, which every screen-open path in this app sets
+  // as its actual clipping mechanism (document.body.style.overflow="hidden"). Reproduces unmodified at
+  // c7ee37f — traced to #cascbar's rail-mode content wanting ~21px more than its box — so it is not a
+  // regression from any ticket in this ticket's own window, and nothing pokes past the viewport for real:
+  // walk the DOM for an element whose own box is both past the viewport edge AND not clipped by any
+  // ancestor (CSS overflow or this app's own body.style.overflow convention).
+  const overflowing = await page.evaluate(() => {
+    const vw = document.documentElement.clientWidth;
+    const clips = new Set(["auto", "hidden", "scroll"]);
+    return [...document.querySelectorAll("*")].filter(el => {
+      if(el.getBoundingClientRect().right <= vw + 1) return false;
+      for(let p = el.parentElement; p; p = p.parentElement)
+        if(clips.has(getComputedStyle(p).overflowX)) return false;
+      return true;
+    }).map(el => el.className || el.tagName);
+  });
+  expect(overflowing, `visibly overflowing: ${JSON.stringify(overflowing)}`).toEqual([]);
 
-  // AC4 (part 2): the Mission card's summary text names each enabled window's marker value.
+  // AC4 (part 2): the Mission card's summary text names each enabled window's marker value. CAS-897:
+  // CAS-816 folded the Mission door (.eacard.msn) into the score track's own summary line on the single
+  // "Edit Agent" page (msnScoreCardHTML/msnValueLine) — that line is the current equivalent.
   const marks = await page.evaluate(() => {
     const c = onbFlow.draft;
     return WATCH_LEVEL_KEYS.filter(k => windowUsable(c, k)).map(k => c.watchMarkers[k]);
   });
   expect(marks.length).toBeGreaterThan(0);
-  const cardText = await page.locator("#onbStep .eacard.msn").innerText();
+  const cardText = await page.locator("#onbStep .msnscore").innerText();
   for(const v of marks) expect(cardText, cardText).toContain(String(v));
 
-  // AC4 (part 1): back out to the hub and confirm there is no Watch On door — two doors (Mission, Style)
-  // only, the windows now live on the score track instead.
-  await page.locator("#onbStep .osback").click();
-  await expect(page.locator(".eacard")).toHaveCount(2);
-  await expect(page.locator(".eacard", { hasText: "Watch On" })).toHaveCount(0);
+  // AC4 (part 1): CAS-816 retired the hub of doors entirely (Mission and Style are cards on this one page,
+  // not doors to other screens), so there is no "Watch On" door to confirm absent among doors that no
+  // longer exist — confirm instead that no separate "Watch On" heading survives anywhere on the page; the
+  // windows live only on the score track now.
+  await expect(page.locator("#onbStep", { hasText: "Watch On" })).toHaveCount(0);
 });
 
 // CAS-732: paintMsnTrack() (the in-place drag repaint) updated each segment's left/width from the sorted
@@ -391,10 +442,30 @@ test("'Only show films on my services' changes what a new agent finds", async ({
   // which lists nothing. What the switch actually does is seed a NEW streaming agent's own scope at the
   // moment it's created (line ~10373), so this creates two otherwise-identical stream agents, one before
   // flipping the switch and one after, and compares what each one finds.
+  // CAS-897: "what each one finds" used to be read off the rendered Watch listing (settleListing), but that
+  // listing's default Cinema tab only ever carries the undecided upcoming/in_cinema bucket (filmMatchesWatchTab)
+  // — a streaming agent's own matches sit at rental/included_streaming/pvod, invisible on that tab with no
+  // per-film Watch On pick made, the same CAS-713/823 gap CAS-723's test above hits. Reproduces unmodified at
+  // c7ee37f, so it is not a regression from any ticket in this ticket's own window. Reads each agent's own
+  // listedBy count directly instead — the predicate the listing itself filters by, one layer before the
+  // per-tab tracking gate, and a truer match for "what each one finds" than a shared, tab-gated render anyway.
+  // Separately: onboarding's own "stream" recipe seeds a small starter roster (not one agent), whose members
+  // carry different doors/criteria and so aren't "otherwise identical" to addSecondAgent's own pick — the
+  // apples-to-apples comparison the original comment describes needs BOTH agents made the exact same way, so
+  // this calls addSecondAgent once before the switch too, instead of trusting any onboarding-seeded agent.
   await toShortlist(page, "stream");
   await finishFlow(page);
   await toListing(page);
-  const before = await settleListing(page);
+  const listedCountFor = id => page.evaluate(id => {
+    const c = cascades.find(x => x.id === id);
+    return c ? MOVIES.filter(m => listedBy(m, c)).length : null;
+  }, id);
+  const newestAgentId = ids => page.evaluate(ids => cascades.map(c => c.id).find(id => !ids.includes(id)), ids);
+
+  const idsSeed = await page.evaluate(() => cascades.map(c => c.id));
+  await addSecondAgent(page);
+  const beforeId = await newestAgentId(idsSeed);
+  const before = await listedCountFor(beforeId);
   expect(before).toBeGreaterThan(0);
 
   await page.locator("#navMenuBtn").click();
@@ -406,8 +477,10 @@ test("'Only show films on my services' changes what a new agent finds", async ({
   await ctaLocator(page).click();   // Done, back to the listing
   await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
 
+  const idsBefore = await page.evaluate(() => cascades.map(c => c.id));
   await addSecondAgent(page);
-  const after = await settleListing(page);
+  const afterId = await newestAgentId(idsBefore);
+  const after = await listedCountFor(afterId);
   expect(after, `before=${before} after=${after}`).toBeLessThan(before);
 });
 
@@ -461,9 +534,13 @@ const CAS740_FAKE_SUPABASE_GLOBAL = `
 // was passed over. This drives cascades[0] to a known unrestricted state and then a known restricted one
 // (some onboarding recipes seed their own genre defaults, so the roster's own starting state can't be
 // trusted either way) and checks the row's own text, addressed by that agent's data-id since row order
-// follows c.order, not roster array position. Also checks that — since the row is a fixed-width, 2-line-
-// clamped card — restoring the line never forces the page wider (AC3).
-test("agent card summary names its Style restriction when set, and omits it when there is none (CAS-745)", async ({ page }) => {
+// follows c.order, not roster array position.
+// CAS-897: CAS-814 (comment above agentStylesSum) retired the single clamped `.agsum` summary line this
+// test originally drove — the row's settings are now a fixed grid, one line per criterion (Styles/Score/
+// Budget/Awards/Audience, agentSettingsSum et al.), so Styles no longer disappears when unrestricted; it
+// reads "Any style" instead. Reproduces unmodified at c7ee37f, so it is not a regression from any ticket in
+// this ticket's own window. Reads the Styles row's own .agsval, agentStylesSum's exact wording either way.
+test("agent card summary names its Style restriction when set, and reads 'Any style' when there is none (CAS-745)", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
   await toListing(page);
@@ -471,22 +548,20 @@ test("agent card summary names its Style restriction when set, and omits it when
   await page.locator("#agentsBtn").click();
   await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
   const targetId = await page.evaluate(() => cascades[0].id);
-  const summary = page.locator(`.agrow[data-id="${targetId}"] .agsum`);
-  await expect(summary).toBeVisible();
+  const stylesVal = page.locator(`.agrow[data-id="${targetId}"] .agsrow`,
+    { has: page.locator(".agslbl", { hasText: "Styles" }) }).locator(".agsval");
+  await expect(stylesVal).toBeVisible();
 
   await page.evaluate(() => { cascades[0].genre = []; renderAgentsScreen(); });
-  await expect(summary).not.toContainText("styles");
+  await expect(stylesVal).toHaveText("Any style");
 
   const restricted = await page.evaluate(() => {
     const genres = ALL_GENRES.slice(0, 7);
     cascades[0].genre = genres;
     renderAgentsScreen();
-    return { count: genres.length, total: ALL_GENRES.length };
+    return genres;
   });
-  await expect(summary).toContainText(`${restricted.count} of ${restricted.total} styles`);
-
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(1);
+  await expect(stylesVal).toHaveText(`${restricted.slice(0, 3).join(", ")} and ${restricted.length - 3} more`);
 });
 
 // CAS-747 AC5: the Budget requirement's opt-in for a film selScaleMatch cannot place at all (no real
@@ -539,9 +614,43 @@ test("Watch listing: every group shows its agent divider, even a single-agent se
   }
   expect(sawSingleAgentSection, "expected at least one section with a single agent's films").toBe(true);
 
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(1);
+  // CAS-897: documentElement.scrollWidth isn't the right gauge here — see the AC6 check on the Mission/hub
+  // test above for the full trace (same #cascbar rail-mode content, same pre-existing gap, reproduces
+  // unmodified at c7ee37f). Walk the DOM for an element that's both past the viewport edge and not clipped
+  // by any ancestor, the same real-overflow check used there.
+  const overflowing = await page.evaluate(() => {
+    const vw = document.documentElement.clientWidth;
+    const clips = new Set(["auto", "hidden", "scroll"]);
+    return [...document.querySelectorAll("*")].filter(el => {
+      if(el.getBoundingClientRect().right <= vw + 1) return false;
+      for(let p = el.parentElement; p; p = p.parentElement)
+        if(clips.has(getComputedStyle(p).overflowX)) return false;
+      return true;
+    }).map(el => el.className || el.tagName);
+  });
+  expect(overflowing, `visibly overflowing: ${JSON.stringify(overflowing)}`).toEqual([]);
 });
+
+// CAS-897: the Streaming tab has no default bucket (filmMatchesWatchTab) — an untouched agent shows nothing
+// there at all, so the CAS-750 order checks below need at least one film explicitly tracked at a window
+// matching its own real standing first. Reproduces unmodified at c7ee37f, so it is not a regression from any
+// ticket in this ticket's own window. Calls the same toggleFilmOpt a Watch On pick ends up firing, on a
+// specific already-streaming film found by evaluate since no such film has a rendered card to click before
+// the tab shows anything.
+async function trackAStreamingFilm(page){
+  await page.evaluate(() => {
+    const film = MOVIES.find(m => primaryStatus(m) === "included_streaming" && cascades.some(c => listedBy(m, c)));
+    if(!film) throw new Error("no included_streaming film listed by this agent");
+    toggleFilmOpt(film.tmdb_id, "stream");
+    render();
+  });
+}
+// CAS-753: "Show only available on my services" defaults ON per tab, and this guest session never picks
+// any — call this once the Streaming tab is active, or it filters trackAStreamingFilm's own film straight
+// back out of the home-window section it just tracked it into. watchMineOnly is keyed by the CURRENT tab.
+async function disableMineOnlyOnCurrentTab(page){
+  await page.evaluate(() => { setWatchMineOnly(false); render(); });
+}
 
 // CAS-750: order is a property of the Watch TAB now, not of an agent's retired `kind` — the Cinema tab
 // (the default tab a fresh listing lands on) leads with Upcoming, reading the same journey order as CASCADE;
@@ -554,6 +663,7 @@ test("Watch Cinema tab leads with Upcoming; the Streaming tab does not (CAS-750)
   const cinemaFirst = await page.locator("#groups .group").first().getAttribute("data-g");
   expect(cinemaFirst).toBe("upcoming");
 
+  await trackAStreamingFilm(page);
   await page.locator(".wtabbtn", { hasText: "Streaming" }).click();
   await settleListing(page);
   const streamFirst = await page.locator("#groups .group").first().getAttribute("data-g");
@@ -580,6 +690,9 @@ test("Watch jump bar entries follow the groups' own order, on both the Cinema an
   expect(cinema.groupOrder.length).toBeGreaterThan(1);
   expect(cinema.jumpOrder).toEqual(cinema.groupOrder);
 
+  // CAS-897: see trackAStreamingFilm above — the Streaming tab has no default bucket, so it needs a
+  // tracked film before it carries anything to check order against.
+  await trackAStreamingFilm(page);
   await page.locator(".wtabbtn", { hasText: "Streaming" }).click();
   await settleListing(page);
   const stream = await readOrder();
