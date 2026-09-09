@@ -14,12 +14,10 @@ Tiers:
 """
 import datetime, statistics
 
-JOURNEY = ["upcoming", "opening_week", "in_cinema", "pvod", "rental", "included_streaming"]
 ACTIVE_WINDOW = {"in_cinema", "pvod", "rental"}
 SIX_MONTHS = 180
 
 # --- free-tier budget (locked: stay free) ----------------------------------
-FREE_MONTHLY   = 2500
 DAILY_BUDGET   = 80      # ~2500/31, integer daily ceiling
 ONDEMAND_RESERVE = 15    # calls/day held for user-triggered confirms
 ACTIVE_CAP     = 65      # max daily-active titles (<= free ceiling ~68; keeps headroom)

@@ -50,7 +50,6 @@ CURRENCY = "AUD"
 # requirement → all films" — is a one-line config change, no code edit.
 LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "1095"))   # AU theatrical release lookback (~3 years)
 MAX_TITLES    = int(os.getenv("MAX_TITLES", "5000"))      # ingest breadth: pull the full AU set in the window, not a top-N slice
-OPENING_WEEK_DAYS = 7            # a cinema release this recent counts as "opening week"
 
 # --- and FORWARDS from cinema: films announced for AU cinemas but not out yet ---
 # These fill the stepper's "Upcoming" slot and feed the Blockbuster-radar Cascade.
@@ -623,20 +622,6 @@ def enrich_watchmode_fields(movie: dict, wm_idmap: dict, budget: dict) -> str:
     movie["wm_popularity_percentile"] = _num(detail.get("popularity_percentile"))
     movie["wm_fields_fetched_at"] = _RUN_DATE
     return "ok"
-
-
-def backfill_watchmode_fields(catalogue: list[dict], wm_idmap: dict,
-                               max_credits: int = WM_FIELDS_MAX_CREDITS) -> int:
-    """Run `enrich_watchmode_fields` across `catalogue` under one shared WM_FIELDS_MAX_CREDITS
-    pot, printing how many titles were skipped once it ran out. Returns the count enriched."""
-    budget = {"remaining": max_credits, "skipped": 0}
-    enriched = 0
-    for m in catalogue:
-        if enrich_watchmode_fields(m, wm_idmap, budget) == "ok":
-            enriched += 1
-    if budget["skipped"]:
-        print(f"[watchmode-fields] enriched {enriched} title(s), skipped {budget['skipped']} over budget")
-    return enriched
 
 
 # Map a film's original language (with production country as a tiebreak) to a
