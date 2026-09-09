@@ -605,12 +605,14 @@ create policy invite_replies_insert on public.invite_replies
 drop policy if exists invite_replies_sender_read on public.invite_replies;
 create policy invite_replies_sender_read on public.invite_replies
   for select to authenticated using (
-    exists (select 1 from public.invites i where i.token = token and i.sender_id = auth.uid()));
+    exists (select 1 from public.invites i
+            where i.token = invite_replies.token and i.sender_id = auth.uid()));
 
 drop policy if exists invite_replies_sender_update on public.invite_replies;
 create policy invite_replies_sender_update on public.invite_replies
   for update to authenticated using (
-    exists (select 1 from public.invites i where i.token = token and i.sender_id = auth.uid()));
+    exists (select 1 from public.invites i
+            where i.token = invite_replies.token and i.sender_id = auth.uid()));
 
 -- ---------------------------------------------------------------------------
 -- recommendations — Recommend Cascade, the send half of Refer a friend (CAS-884/M11)
