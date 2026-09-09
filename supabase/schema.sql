@@ -50,9 +50,9 @@
 --                   ref-code link: a per-send token, the sender, the film, and the name the
 --                   sender gave the recipient. Readable by anon (token only) so a signed-out
 --                   recipient can open the invite they were sent.
---   invite_replies — one row per (invite, client_key) Yes/No reply. Insertable by anon so a
---                   signed-out recipient can answer; readable/updatable only by the invite's
---                   own sender.
+--   invite_replies — one row per (invite, client_key) Yes/No reply. Insertable AND updatable by
+--                   anon (CAS-885) so a signed-out recipient can answer, then overwrite their own
+--                   reply on a repeat visit; readable only by the invite's own sender.
 
 -- gen_random_uuid() lives in pgcrypto. It is pre-installed on Supabase, but declaring the
 -- dependency keeps this file self-contained and portable to a plain Postgres.
@@ -613,6 +613,15 @@ create policy invite_replies_sender_update on public.invite_replies
   for update to authenticated using (
     exists (select 1 from public.invites i
             where i.token = invite_replies.token and i.sender_id = auth.uid()));
+
+-- CAS-885: a signed-out recipient re-answering (or switching Yes<->No) upserts onto their own
+-- (token, client_key) row. There is no identity to check an update against here — client_key is a
+-- per-device value the recipient's own browser holds, not an auth subject — so this grants the same
+-- trust level invite_replies_insert above already does for the same table, just extended to UPDATE so the
+-- unique (token, client_key) upsert doesn't fail on a repeat answer.
+drop policy if exists invite_replies_client_update on public.invite_replies;
+create policy invite_replies_client_update on public.invite_replies
+  for update to anon, authenticated using (true) with check (answer in ('yes','no'));
 
 -- ---------------------------------------------------------------------------
 -- recommendations — Recommend Cascade, the send half of Refer a friend (CAS-884/M11)

@@ -385,6 +385,29 @@
      every date, so it scrolls sideways instead of the card's overflow:hidden silently cutting it off. */
   .filmpage .wtw{display:block;margin-bottom:14px;overflow-x:auto}
   .filmpage .mrow{margin-bottom:8px}
+  /* CAS-885: the invite landing — added onto the ordinary film page once its token resolves (see
+     resolveFilmInvite), never present without ?inv=. Sized to fit 390x844 with nothing below the fold: a
+     narrower poster and a 2-line synopsis clamp buy back the room the ask panel needs. Both scoped under
+     .invmode so the everyday film page (no invite) is untouched — same reasoning as CAS-437's own page. */
+  .fpword{font-family:var(--font-body);font-weight:500;letter-spacing:.4em;font-size:13px;color:var(--violet);
+    text-align:center;padding-left:.4em;margin:0 0 10px}
+  .filmpage.invmode .fpposter{max-width:186px}
+  .filmpage.invmode .synopsis{-webkit-line-clamp:2;display:-webkit-box;-webkit-box-orient:vertical;
+    overflow:hidden;margin-bottom:14px}
+  .fpinvite{border:1px solid var(--line);border-radius:14px;padding:18px;margin:14px 0;text-align:center}
+  .fpinvite-ask{font-size:16px;font-weight:700;line-height:1.4;margin:0 0 16px;color:var(--ink)}
+  .fpinvite-ask b{color:var(--violet)}
+  .fpinvite-btns{display:flex;gap:10px}
+  .fpinvite-yes{flex:1;background:var(--grad);color:#fff;border:none;border-radius:12px;padding:14px;
+    font-family:var(--font-display);font-weight:700;font-size:15px;cursor:pointer}
+  .fpinvite-no{flex:1;background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:12px;
+    padding:14px;font-family:var(--font-display);font-weight:700;font-size:15px;cursor:pointer}
+  .fpinvite-yes:focus-visible,.fpinvite-no:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .fpinvite-yes:disabled,.fpinvite-no:disabled{opacity:.5;cursor:default}
+  .fpinvite-confirm{font-size:16px;font-weight:800;color:var(--green);margin:0 0 8px}
+  .fpinvite-confirm.no{color:var(--ink)}
+  .fpinvite-note{font-size:13px;color:var(--dim);line-height:1.5}
+  .fphr{border:none;border-top:1px solid var(--line);margin:18px 0}
   /* CAS-509: same env(safe-area-inset-top) clearance as the header — every .modal (New Cascade, Filters,
      Prefs, Account, Save As, Log, Video) is sticky from the viewport's true top:0. */
   .modalhead{position:sticky;top:0;background:var(--bg);display:flex;justify-content:space-between;align-items:center;
@@ -6393,6 +6416,9 @@ const filmRouteId=()=>{ const m=FILM_ROUTE_RE.exec(location.hash); return m ? +m
 function openFilmPage(id){
   const m=MOVIES.find(x=>x.tmdb_id===id);
   const el=$("filmPage");
+  // #filmPage is one shared element reused for every film opened — CAS-885's invmode class (added only once
+  // resolveFilmInvite confirms this id's own invite) must not bleed into an unrelated film opened afterwards.
+  el.classList.remove("invmode");
   el.innerHTML = m ? filmPageHTML(m)
     : `<div class="fpclose"><button type="button" class="ebtn" onclick="closeFilmPage()">✕</button></div>
        <div class="fptitle">Film not found</div>
@@ -6400,6 +6426,7 @@ function openFilmPage(id){
   el.classList.add("open"); document.body.style.overflow="hidden";
   if(m) document.title = `${m.title} — Cascade`;
   logEvent("film_page_shown",{id, found:!!m});
+  if(m && INVITE_TOKEN) tryResolveFilmInvite(id);
 }
 window.closeFilmPage=()=>{
   $("filmPage").classList.remove("open");
@@ -6423,6 +6450,91 @@ window.addEventListener("hashchange", ()=>{
   if(id!=null) openFilmPage(id);
   else if($("filmPage").classList.contains("open")) closeFilmPage();
 });
+// ---- CAS-885: the invite landing — the recipient's one screen, reached via ?inv=<token> -----------------
+// Read once: the token rides in the URL's query string (inviteUrlFor puts it ahead of the #/film/<id>
+// route), which never changes for the life of the tab.
+let INVITE_TOKEN=null;
+try{ INVITE_TOKEN=new URLSearchParams(location.search).get("inv")||null; }catch(e){}
+// The boot-time openFilmPage() call (below, near the catalogue load) fires before this auth module has run
+// (window.CascadeAuth doesn't exist yet at that point in the file), so a signed-out anon read has nowhere
+// to go the first time. tryResolveFilmInvite is safe to call early — it just no-ops until a client shows
+// up — and the cascade-auth-change listener (fired once CascadeAuth is ready) gives it a second chance.
+// Resolved only once: reading the invite doesn't depend on being signed in (RLS: invites_read_by_token is
+// anon-readable), so the very first client that exists is good enough — no need to wait for a sign-in check
+// to finish first.
+let recvInviteDone=false;
+let recvInviteSender=null;
+function tryResolveFilmInvite(id){
+  if(recvInviteDone || !INVITE_TOKEN) return;
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  if(!c) return;
+  recvInviteDone=true;
+  resolveFilmInvite(INVITE_TOKEN, id, c);
+}
+window.addEventListener("cascade-auth-change", ()=>{
+  const id=filmRouteId();
+  if(id!=null) tryResolveFilmInvite(id);
+});
+// A token that fails to resolve leaves the ordinary film page exactly as openFilmPage already rendered it
+// (Change 3: "render the plain film page with no question rather than an error") — nothing here runs until
+// the row is confirmed to exist, so there is no half-built invite layout to undo.
+async function resolveFilmInvite(token, id, c){
+  let rows;
+  try{
+    const {data,error}=await c.from("invites").select("sender_name").eq("token",token);
+    if(error || !data || !data.length) return;
+    rows=data;
+  }catch(e){ return; }
+  if(filmRouteId()!==id) return;                 // the recipient navigated elsewhere while the read was in flight
+  const el=$("filmPage");
+  if(!el.classList.contains("open")) return;
+  const cta=el.querySelector(".fpcta");
+  if(!cta) return;
+  el.classList.add("invmode");
+  const close=el.querySelector(".fpclose");
+  if(close && !el.querySelector(".fpword")) close.insertAdjacentHTML("afterend", `<div class="fpword">CASCADE</div>`);
+  // A recipient who happens to already have their own Cascade account still gets the ask panel, not this
+  // sender-side control too — inviteFilmHTML(m,true) was rendered on the assumption this was an ordinary
+  // visit before the invite resolved.
+  const bigInvite=el.querySelector(".filminvcta");
+  if(bigInvite){
+    const note=bigInvite.nextElementSibling;
+    bigInvite.remove();
+    if(note && note.classList.contains("pnote")) note.remove();
+  }
+  const sender=esc(rows[0].sender_name || "Someone");
+  recvInviteSender=sender;
+  cta.insertAdjacentHTML("beforebegin", `<div class="fpinvite" id="fpInvite">
+      <div class="fpinvite-ask"><b>${sender}</b> would like to<br>watch this with you</div>
+      <div class="fpinvite-btns">
+        <button type="button" class="fpinvite-yes" onclick="replyFilmInvite('yes')">Yes, I&#8217;m in</button>
+        <button type="button" class="fpinvite-no" onclick="replyFilmInvite('no')">No thanks</button>
+      </div></div><hr class="fphr">`);
+  logEvent("invite_opened",{token});
+}
+// One upsert per tap, keyed on (token, client_key) — a recipient who reloads and answers differently
+// overwrites their own row rather than creating a second one (Change 4). replier_id is set only when this
+// device happens to already be signed in; the reply itself never needs an account.
+window.replyFilmInvite=async answer=>{
+  const panel=$("fpInvite"); if(!panel) return;
+  panel.querySelectorAll("button").forEach(b=>b.disabled=true);
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  const uid=(a && a.session && a.session.user) ? a.session.user.id : null;
+  if(c){
+    try{
+      await c.from("invite_replies").upsert(
+        [{ token:INVITE_TOKEN, client_key:CLIENT_KEY, answer, replier_id:uid }],
+        { onConflict:"token,client_key" });
+    }catch(e){}
+  }
+  logEvent("invite_replied",{answer});
+  const sender=esc(recvInviteSender || "Someone");
+  panel.innerHTML = answer==="yes"
+    ? `<div class="fpinvite-confirm">&#10003; You&#8217;re in</div>
+       <div class="fpinvite-note">${sender} will see that you&#8217;re interested. Nothing else to do.</div>`
+    : `<div class="fpinvite-confirm no">Noted</div>
+       <div class="fpinvite-note">${sender} will see you said no thanks.</div>`;
+};
 // CAS-657: the thumbnail URL is carried in data-yt, not an inline background-image, so a collapsed card
 // (hidden by max-height:0, not display:none) never triggers img.youtube.com fetches for films the user
 // hasn't expanded. A card already expanded at render time is the one exception — see the `expanded` param —
