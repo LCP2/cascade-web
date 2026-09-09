@@ -3802,19 +3802,25 @@ test("CAS-847 AC3: ICON.bell is retired — app_template.html no longer referenc
   assert.equal(count, 0, `ICON.bell must not be referenced anywhere (found ${count}) — the bell icon retired with CAS-847`);
 });
 
-test("CAS-847 AC4: the built index.html gives wsrc-manual/csrc-manual a box-shadow with no .isnew in the selector", () => {
+test("CAS-847 AC4: the built index.html gives wsrc-manual a box-shadow with no .isnew in the selector", () => {
   const src = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
   assert.match(src, /\.ctl\.notify\.wsrc-manual\s*\.cmini\{[^}]*box-shadow/,
     "the built CSS must give .ctl.notify.wsrc-manual .cmini a box-shadow rule with no .isnew qualifier");
   assert.doesNotMatch(src, /\.ctl\.notify\.wsrc-manual\.isnew\s*\.cmini\{[^}]*box-shadow/,
     "the manual Notify glow must no longer be gated on .isnew");
-  assert.match(src, /\.ctl\.casc\.csrc-manual\s*\.cmini\{[^}]*box-shadow/,
-    "the built CSS must give .ctl.casc.csrc-manual .cmini a box-shadow rule with no .isnew qualifier");
-  assert.doesNotMatch(src, /\.ctl\.casc\.csrc-manual\.isnew\s*\.cmini\{[^}]*box-shadow/,
-    "the manual agent-chip glow must no longer be gated on .isnew");
-  // The blue auto glow is unchanged — still gated on .isnew for both chips.
+  // The blue auto glow is unchanged — still gated on .isnew.
   assert.match(src, /\.ctl\.notify\.wsrc-auto\.isnew\s*\.cmini\{[^}]*box-shadow/,
     "the blue agent-set Notify glow must still require .isnew");
-  assert.match(src, /\.ctl\.casc\.csrc-auto\.isnew\s*\.cmini\{[^}]*box-shadow/,
-    "the blue agent-set agent-chip glow must still require .isnew");
+});
+
+test("CAS-877: the built index.html gives the agent chip (.ctl.casc) no box-shadow at all, manual or auto", () => {
+  const src = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  assert.doesNotMatch(src, /\.ctl\.casc\.csrc-manual\s*\.cmini\{[^}]*box-shadow/,
+    "the agent chip's manual glow must be gone — provenance is a border colour only");
+  assert.doesNotMatch(src, /\.ctl\.casc\.csrc-auto\.isnew\s*\.cmini\{[^}]*box-shadow/,
+    "the agent chip's auto glow must be gone — provenance is a border colour only");
+  assert.match(src, /\.ctl\.casc\.csrc-manual\s*\.cmini\{border-color:#ffd54a\}/,
+    "the agent chip keeps its gold border for a hand-placed owner");
+  assert.match(src, /\.ctl\.casc\.csrc-auto\s*\.cmini\{border-color:var\(--brand-blue\)\}/,
+    "the agent chip keeps its blue border for a rank-derived owner");
 });

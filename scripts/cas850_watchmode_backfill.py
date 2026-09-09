@@ -6,9 +6,9 @@ inside .github/workflows/watchmode-backfill.yml, never on a developer machine.
 
 Reuses CAS-830's `_fetch_watchmode_idmap`, `_invert_watchmode_idmap` and
 `enrich_watchmode_fields` from poc_pipeline.py. It loops over `enrich_watchmode_fields` directly
-rather than the higher-level `backfill_watchmode_fields` wrapper: the wrapper's return value is
-just the enriched count, but the four counts this script must report (enriched, budget-skipped,
-no-id, credits spent) need the per-outcome detail only visible at that lower level.
+rather than a higher-level all-in-one wrapper (CAS-876 deleted the unused one that existed
+before): the four counts this script must report (enriched, budget-skipped, no-id, credits
+spent) need the per-outcome detail only visible at that lower level.
 """
 import argparse
 import json

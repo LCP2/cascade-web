@@ -56,22 +56,20 @@ class EnrichWatchmodeFieldsWritesRatings(unittest.TestCase):
 
 
 class EnrichWatchmodeFieldsBudget(unittest.TestCase):
-    """AC3 — with WM_FIELDS_MAX_CREDITS=2 and 5 candidate titles, exactly 2 are enriched and the
-    run reports 3 skipped."""
+    """AC3 — with a shared budget of 2 credits and 5 candidate titles, exactly 2 are enriched and
+    the budget reports 3 skipped."""
 
     def test_the_budget_caps_how_many_titles_are_enriched_and_reports_the_rest_skipped(self):
         catalogue = [{"tmdb_id": i} for i in range(1, 6)]
         wm_idmap = {i: str(100 + i) for i in range(1, 6)}
         detail = {"user_rating": 5.0, "critic_score": 50, "popularity_percentile": 50.0}
-        import io
-        from contextlib import redirect_stdout
-        out = io.StringIO()
+        budget = {"remaining": 2, "skipped": 0}
         with mock.patch.object(pp, "_fetch_watchmode_title_details", return_value=detail):
-            with redirect_stdout(out):
-                enriched = pp.backfill_watchmode_fields(catalogue, wm_idmap, max_credits=2)
+            enriched = sum(1 for m in catalogue
+                           if pp.enrich_watchmode_fields(m, wm_idmap, budget) == "ok")
         self.assertEqual(enriched, 2)
         self.assertEqual(sum(1 for m in catalogue if "wm_user_rating" in m), 2)
-        self.assertIn("skipped 3", out.getvalue())
+        self.assertEqual(budget["skipped"], 3)
 
 
 class EnrichWatchmodeFieldsRefetchPolicy(unittest.TestCase):
