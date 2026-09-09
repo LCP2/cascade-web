@@ -52,7 +52,10 @@
 --                   recipient can open the invite they were sent.
 --   invite_replies — one row per (invite, client_key) Yes/No reply. Insertable AND updatable by
 --                   anon (CAS-885) so a signed-out recipient can answer, then overwrite their own
---                   reply on a repeat visit; readable only by the invite's own sender.
+--                   reply on a repeat visit; readable only by the invite's own sender. `digested_at`
+--                   (CAS-887) is stamped by the daily monitor once a reply has led an email digest —
+--                   a separate column from `seen_at`, which stays the app's alone (opening the
+--                   Invites screen), so a digest run can never clear a badge nobody has actually seen.
 
 -- gen_random_uuid() lives in pgcrypto. It is pre-installed on Supabase, but declaring the
 -- dependency keeps this file self-contained and portable to a plain Postgres.
@@ -595,6 +598,11 @@ create table if not exists public.invite_replies (
   unique (token, client_key)
 );
 create index if not exists invite_replies_token_idx on public.invite_replies (token, created_at desc);
+
+-- CAS-887: the daily monitor's own "already led a digest" marker, stamped with the service_role
+-- key (which bypasses RLS, same as every other table the monitor writes) — never by the anon/
+-- authenticated policies below, and never the same column as `seen_at`.
+alter table public.invite_replies add column if not exists digested_at timestamptz;
 
 alter table public.invite_replies enable row level security;
 

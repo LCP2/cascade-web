@@ -55,6 +55,7 @@ from .emailer import (  # noqa: E402
     moment_phrase,
     digest_subject,
     send_via_resend,
+    format_invite_reply,
 )
 from .pusher import (  # noqa: E402
     send_via_apns,
@@ -68,6 +69,6 @@ __all__ = [
     "PREFS_DEFAULT", "match_film_watches", "WINDOW_TO_MOMENT", "match_newly_qualified",
     "match_new_to_agent",
     "InMemoryStore", "SupabaseStore", "store_from_env",
-    "render_digest", "moment_phrase", "digest_subject", "send_via_resend",
+    "render_digest", "moment_phrase", "digest_subject", "send_via_resend", "format_invite_reply",
     "send_via_apns", "push_copy",
 ]

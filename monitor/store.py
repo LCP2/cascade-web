@@ -27,6 +27,9 @@ Interface:
   sign_attachment_url(path) -> signed URL string | None                                     # CAS-864
   fetch_unsent_recommendations() -> [recommendations row, sent_at is null]                  # CAS-884
   mark_recommendations_sent(ids, sent_at) -> int                                            # CAS-884
+  fetch_undigested_invite_replies() -> [{id, token, sender_id, to_name, film_title, tmdb_id,
+                                          answer, created_at}, digested_at is null]          # CAS-887
+  mark_invite_replies_digested(ids, digested_at) -> int                                      # CAS-887
 """
 from __future__ import annotations
 
@@ -69,7 +72,7 @@ class InMemoryStore:
 
     def __init__(self, cascades=None, notifications=None, emails=None, prefs=None, picks=None,
                  push_tokens=None, watches=None, user_prefs=None, user_films=None,
-                 contact_messages=None, recommendations=None):
+                 contact_messages=None, recommendations=None, invite_replies=None):
         self._cascades = list(cascades or [])
         self._notifications = list(notifications or [])
         self._emails = dict(emails or {})
@@ -81,6 +84,7 @@ class InMemoryStore:
         self._user_films = list(user_films or [])
         self._contact_messages = [dict(r) for r in (contact_messages or [])]
         self._recommendations = [dict(r) for r in (recommendations or [])]
+        self._invite_replies = [dict(r) for r in (invite_replies or [])]
 
     def fetch_active_cascades(self) -> list:
         return [c for c in self._cascades if c.get("active", True)]
@@ -170,6 +174,20 @@ class InMemoryStore:
         for r in self._recommendations:
             if r.get("id") in ids:
                 r["sent_at"] = sent_at
+                n += 1
+        return n
+
+    def fetch_undigested_invite_replies(self) -> list:
+        return [dict(r) for r in self._invite_replies if not r.get("digested_at")]
+
+    def mark_invite_replies_digested(self, ids, digested_at) -> int:
+        """Stamps `digested_at`, never `seen_at` — item 5 (CAS-887): that column stays the app's
+        alone, so a digest run can never clear a badge the recipient never saw."""
+        ids = set(ids)
+        n = 0
+        for r in self._invite_replies:
+            if r.get("id") in ids:
+                r["digested_at"] = digested_at
                 n += 1
         return n
 
@@ -313,6 +331,48 @@ class SupabaseStore:
         data = json.dumps({"sent_at": sent_at}).encode("utf-8")
         req = urllib.request.Request(
             self._base + f"/recommendations?id=in.({quoted})",
+            data=data,
+            headers=self._headers({"Prefer": "return=representation"}),
+            method="PATCH",
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            body = resp.read().decode("utf-8")
+        try:
+            return len(json.loads(body))
+        except (json.JSONDecodeError, TypeError):
+            return 0
+
+    def fetch_undigested_invite_replies(self) -> list:
+        """Every invite_replies row not yet folded into a digest (CAS-887), each flattened with the
+        sender/film context it needs from its own invite via the FK resource-embed (invite_replies.
+        token -> invites.token) — read with service_role, the same bypass-RLS convention as every
+        other digest source here. Never reads or writes `seen_at`; that column belongs to the app."""
+        rows = self._get(
+            "/invite_replies?digested_at=is.null&select="
+            "id,token,answer,created_at,invites(sender_id,to_name,film_title,tmdb_id)"
+        )
+        out = []
+        for r in rows:
+            inv = r.get("invites") or {}
+            out.append({
+                "id": r.get("id"), "token": r.get("token"), "answer": r.get("answer"),
+                "created_at": r.get("created_at"), "sender_id": inv.get("sender_id"),
+                "to_name": inv.get("to_name"), "film_title": inv.get("film_title"),
+                "tmdb_id": inv.get("tmdb_id"),
+            })
+        return out
+
+    def mark_invite_replies_digested(self, ids, digested_at) -> int:
+        """Stamps `digested_at`, after the digest carrying these replies has actually sent
+        (send-before-ledger, same ordering as mark_contact_messages_sent above). Never touches
+        `seen_at` (item 5, CAS-887) — a different column, written only by the app itself."""
+        ids = list(ids)
+        if not ids:
+            return 0
+        quoted = ",".join(str(i) for i in ids)
+        data = json.dumps({"digested_at": digested_at}).encode("utf-8")
+        req = urllib.request.Request(
+            self._base + f"/invite_replies?id=in.({quoted})",
             data=data,
             headers=self._headers({"Prefer": "return=representation"}),
             method="PATCH",

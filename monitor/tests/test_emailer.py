@@ -2,13 +2,17 @@
 
 Run:  python -m unittest monitor.tests.test_emailer
 """
+import datetime as _dt
 import io
 import unittest
 import urllib.error
 from unittest import mock
 
 from monitor import render_digest, moment_phrase, digest_subject
-from monitor.emailer import USER_AGENT, send_via_resend
+from monitor.emailer import (
+    USER_AGENT, send_via_resend, format_invite_reply, _invite_window_text, _invite_age_text,
+    _format_short_date,
+)
 from monitor.matching import Hit, _rank_key
 from monitor.transitions import Transition
 
@@ -261,6 +265,132 @@ class InlineStylingTests(unittest.TestCase):
         self.assertNotIn("<style", d["html"])
         self.assertNotIn("class=", d["html"])
         self.assertNotIn("display:flex", d["html"])
+
+
+class InviteRepliesRenderTests(unittest.TestCase):
+    """CAS-887 AC1a/AC3d: the replies block, as render_digest itself renders it. Pipeline-level
+    questions (which users get an email at all) live in monitor/tests/test_invite_replies.py."""
+
+    def _reply(self, to_name="Sam", answer="yes", film_title="Practical Magic 2"):
+        return {"to_name": to_name, "answer": answer, "film_title": film_title,
+                "window_text": "In cinemas 17 Sep", "when_text": "replied yesterday"}
+
+    def test_subject_reflects_reply_count_alone(self):
+        self.assertEqual(digest_subject([], [self._reply()]), "1 reply to your invites")
+        self.assertEqual(digest_subject([], [self._reply(), self._reply()]),
+                         "2 replies to your invites")
+
+    def test_subject_reflects_replies_and_updates_together(self):
+        subject = digest_subject([_hit("A", "hits_cinema", "x")], [self._reply()])
+        self.assertIn("1 reply to your invites", subject)
+        self.assertIn("1 update", subject)
+
+    def test_subject_unaffected_when_no_replies(self):
+        self.assertEqual(digest_subject([_hit("A", "hits_cinema", "x")]),
+                         "Cascade found 1 update for you")
+
+    def test_replies_block_leads_film_entries_html_and_text(self):
+        hits = [_hit("Rent Riser", "hits_rent", "Drama rentals", price=6.99)]
+        replies = [self._reply(to_name="Sam", film_title="Practical Magic 2")]
+        d = render_digest(hits, site_url="https://x.test/", replies=replies)
+        for part in (d["html"], d["text"]):
+            self.assertIn("Replies to your invites", part)
+            self.assertLess(part.index("Replies to your invites"), part.index("Rent Riser"))
+
+    def test_replies_block_contains_recipient_answer_film_and_subline(self):
+        replies = [self._reply(to_name="Sam", answer="yes", film_title="Practical Magic 2")]
+        d = render_digest([], site_url="https://x.test/", replies=replies)
+        for part in (d["html"], d["text"]):
+            self.assertIn("Sam", part)
+            self.assertIn("Practical Magic 2", part)
+            self.assertIn("In cinemas 17 Sep", part)
+            self.assertIn("replied yesterday", part)
+
+    def test_replies_only_digest_has_no_film_transitions_heading(self):
+        # AC2: a replies-only digest must not claim "here's what changed" over an empty list.
+        d = render_digest([], site_url="https://x.test/", replies=[self._reply()])
+        for part in (d["html"], d["text"]):
+            self.assertNotIn("Your agents have been watching", part)
+
+    def test_no_replies_leaves_shape_unchanged(self):
+        hits = [_hit("Rent Riser", "hits_rent", "Drama rentals", price=6.99)]
+        d = render_digest(hits, site_url="https://x.test/")
+        self.assertNotIn("Replies to your invites", d["html"])
+        self.assertNotIn("Replies to your invites", d["text"])
+        self.assertIn("Your agents have been watching", d["html"])
+
+    def test_replies_block_html_escapes_user_content(self):
+        replies = [self._reply(to_name="<script>", film_title="A & B")]
+        d = render_digest([], site_url="https://x.test/", replies=replies)
+        self.assertNotIn("<script>", d["html"])
+        self.assertIn("&lt;script&gt;", d["html"])
+        self.assertIn("A &amp; B", d["html"])
+
+    def test_no_class_or_flex_in_replies_block(self):
+        d = render_digest([], site_url="https://x.test/", replies=[self._reply()])
+        self.assertNotIn("class=", d["html"])
+        self.assertNotIn("display:flex", d["html"])
+
+
+class InviteReplyFormattingTests(unittest.TestCase):
+    """CAS-887: the pure helpers that turn a raw invite_replies row + today's catalogue record
+    into the shape render_digest's `replies` wants."""
+
+    def test_format_short_date(self):
+        self.assertEqual(_format_short_date("2026-09-17"), "17 Sep")
+        self.assertEqual(_format_short_date(None), "")
+        self.assertEqual(_format_short_date("not-a-date"), "")
+
+    def test_window_text_in_cinema_falls_back_to_cinema_date(self):
+        movie = {"status": ["in_cinema"], "cinema_date": "2026-09-17"}
+        self.assertEqual(_invite_window_text(movie), "In cinemas 17 Sep")
+
+    def test_window_text_upcoming_prefers_window_dates(self):
+        movie = {"status": ["upcoming"], "cinema_date": "2026-01-01",
+                 "window_dates": {"upcoming": "2026-09-24"}}
+        self.assertEqual(_invite_window_text(movie), "Upcoming 24 Sep")
+
+    def test_window_text_home_window_with_no_date_is_label_only(self):
+        # Honesty guardrail: never invent a date pvod/rental/streaming don't actually carry.
+        self.assertEqual(_invite_window_text({"status": ["rental"]}), "Rent")
+
+    def test_window_text_no_movie_is_empty(self):
+        self.assertEqual(_invite_window_text(None), "")
+        self.assertEqual(_invite_window_text({}), "")
+
+    def test_window_text_picks_the_furthest_along_tier_held(self):
+        movie = {"status": ["rental", "included_streaming"],
+                 "window_dates": {"included_streaming": "2026-09-10"}}
+        self.assertEqual(_invite_window_text(movie), "Streaming 10 Sep")
+
+    def test_age_text_buckets(self):
+        now = _dt.datetime(2026, 9, 10, 12, 0, tzinfo=_dt.timezone.utc)
+        self.assertEqual(_invite_age_text("2026-09-10T11:59:30Z", now=now), "just now")
+        self.assertEqual(_invite_age_text("2026-09-10T11:30:00Z", now=now), "30 min ago")
+        self.assertEqual(_invite_age_text("2026-09-10T02:00:00Z", now=now), "10h ago")
+        self.assertEqual(_invite_age_text("2026-09-09T12:00:00Z", now=now), "yesterday")
+        self.assertEqual(_invite_age_text("2026-09-05T12:00:00Z", now=now), "5 days ago")
+
+    def test_age_text_missing_is_empty(self):
+        self.assertEqual(_invite_age_text(None), "")
+        self.assertEqual(_invite_age_text(""), "")
+
+    def test_format_invite_reply_resolves_window_and_age(self):
+        row = {"to_name": "Sam", "answer": "yes", "film_title": "Practical Magic 2",
+               "created_at": "2026-09-09T12:00:00Z"}
+        movie = {"status": ["in_cinema"], "cinema_date": "2026-09-17"}
+        now = _dt.datetime(2026, 9, 10, 12, 0, tzinfo=_dt.timezone.utc)
+        self.assertEqual(format_invite_reply(row, movie, now=now), {
+            "to_name": "Sam", "answer": "yes", "film_title": "Practical Magic 2",
+            "window_text": "In cinemas 17 Sep", "when_text": "yesterday",
+        })
+
+    def test_format_invite_reply_defaults_missing_name_and_movie(self):
+        row = {"answer": "no", "film_title": "X", "created_at": None}
+        out = format_invite_reply(row, None)
+        self.assertEqual(out["to_name"], "Someone")
+        self.assertEqual(out["window_text"], "")
+        self.assertEqual(out["when_text"], "")
 
 
 class SendViaResendTests(unittest.TestCase):

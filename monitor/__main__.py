@@ -33,7 +33,7 @@ from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notificat
                render_digest, send_via_resend, excluded_moments,
                prefs_for, excludes_from_prefs, delivery_plan, send_via_apns, push_copy,
                match_film_watches, match_newly_qualified, match_new_to_agent, suppressed_pairs,
-               compute_admission)
+               compute_admission, format_invite_reply)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
 from .store import InMemoryStore, store_from_env
 
@@ -75,6 +75,10 @@ def _parse_args(argv):
                         "{user_id, excluded_moments}). A muted TYPE never fires for that user, "
                         "whatever their Cascades say (CAS-103 AC4). Since CAS-185 this also comes "
                         "from notify_prefs.excluded_moments; this flag adds to that.")
+    p.add_argument("--replies", metavar="PATH",
+                   help="Undigested invite_replies JSON: [{id, sender_id, to_name, film_title, "
+                        "tmdb_id, answer, created_at}] (CAS-887). Overrides the "
+                        "fetch_undigested_invite_replies() store call.")
     p.add_argument("--print-html", action="store_true",
                    help="With --dry-run, print the full digest HTML (default: subject + text preview).")
     p.add_argument("--target-user", metavar="USER_ID",
@@ -126,7 +130,8 @@ def main(argv=None) -> int:
                               emails=_load_json(args.emails) if args.emails else {},
                               prefs=_load_json(args.prefs) if args.prefs else {},
                               picks=_load_json(args.picks) if args.picks else [],
-                              watches=_load_json(args.watches) if args.watches else [])
+                              watches=_load_json(args.watches) if args.watches else [],
+                              invite_replies=_load_json(args.replies) if args.replies else [])
         source = "fixtures"
     else:
         store = store_from_env()
@@ -271,17 +276,39 @@ def main(argv=None) -> int:
         by_user = {u: hits for u, hits in by_user.items() if str(u) == args.target_user}
 
     total_hits = sum(len(v) for v in by_user.values())
+
+    # CAS-887: undigested invite replies, grouped by the SENDER (the account that gets told "X
+    # replied to your invite" — there is no account on the recipient side here). Each is resolved
+    # against today's catalogue for its window text; a film that has since left the catalogue just
+    # renders with no window line rather than inventing one (honesty guardrail). `replies_rows`
+    # follows the same override-else-store pattern as --picks/--watches above.
+    replies_rows = (_load_json(args.replies) if args.replies
+                    else _store_call(store, "fetch_undigested_invite_replies", []))
+    if args.target_user:
+        replies_rows = [r for r in replies_rows if str(r.get("sender_id")) == args.target_user]
+    movies_by_id = {str(m.get("tmdb_id")): m for m in today_movies}
+    _digest_now = _dt.datetime.now(_dt.timezone.utc)
+    replies_by_user: dict = {}
+    for row in replies_rows:
+        uid = str(row.get("sender_id"))
+        movie = movies_by_id.get(str(row.get("tmdb_id")))
+        replies_by_user.setdefault(uid, []).append(
+            (row.get("id"), format_invite_reply(row, movie, now=_digest_now)))
+    total_replies = sum(len(v) for v in replies_by_user.values())
+
     print(f"[monitor] matching against {len(cascades)} active cascade(s) from {source} "
           f"and {len(watches)} per-film Watch-it row(s); "
           f"{sum(len(v) for v in muted.values())} global alert-type exclude(s) across "
-          f"{len(muted)} user(s); {total_hits} new alert(s).")
+          f"{len(muted)} user(s); {total_hits} new alert(s); {total_replies} undigested invite "
+          f"reply(s) across {len(replies_by_user)} user(s).")
     if args.dry_run:
         # CAS-825 AC4: the pre/post-change hit count against the committed catalogue, for the
         # ticket's own before/after comparison — written even when it's zero, so a dry-run always
         # leaves a real answer rather than only a log line a caller has to scrape.
         with open("monitor-dryrun-hits.txt", "w", encoding="utf-8") as fh:
             fh.write(f"{total_hits}\n")
-    if not by_user:
+    all_user_ids = set(by_user) | set(replies_by_user)
+    if not all_user_ids:
         print("[monitor] no new alerts for anyone — no email will be sent.")
         return 0
 
@@ -293,14 +320,20 @@ def main(argv=None) -> int:
     #            has in-app on, whether or not an email went with it.
     # A user with both switched off gets nothing and no row: turning notifications on later must
     # not be met with silence about the very thing that just happened.
+    # CAS-887 AC2: a user with replies but no film transitions still reaches this loop (from
+    # replies_by_user) and still gets an email — the replies alone are worth sending.
     sent, written_total, inapp, pushed_total = 0, 0, 0, 0
-    for user_id, hits in by_user.items():
-        digest = render_digest(hits)
+    for user_id in sorted(all_user_ids):
+        hits = by_user.get(user_id, [])
+        reply_pairs = replies_by_user.get(user_id, [])
+        replies = [f for _, f in reply_pairs]
+        digest = render_digest(hits, replies=replies)
         pref = prefs_for(prefs, user_id)
         email = pref["email_address"] or store.fetch_user_email(user_id)
         print(f"[monitor] user {user_id} ({email or 'email unknown'}): "
-              f"{len(hits)} alert(s) — in-app {'on' if pref['in_app'] else 'off'}, "
-              f"email {'on' if pref['email_on'] else 'off'} — subject: {digest['subject']!r}")
+              f"{len(hits)} alert(s), {len(replies)} invite reply(s) — in-app "
+              f"{'on' if pref['in_app'] else 'off'}, email {'on' if pref['email_on'] else 'off'} "
+              f"— subject: {digest['subject']!r}")
         for h in hits:
             print(f"    • [{h.cascade_name}] {h.transition.summary()}")
 
@@ -329,7 +362,11 @@ def main(argv=None) -> int:
         # `appable` above, and only fires where the user actually has a live device registered.
         tokens = push_tokens.get(str(user_id)) or []
         pushable = [h for h in hits if h.wants("push")] if (pref["in_app"] and tokens) else []
-        if not mailable and not appable:
+        # CAS-887: a reply has no per-agent channel — it rides the account's own email plan alone.
+        # There is no in-app/push delivery for a reply here; the Invites screen and its own Moving
+        # alert already cover that, live, straight off invite_replies.
+        mail_replies = reply_pairs if plan == "email" else []
+        if not mailable and not appable and not mail_replies:
             print(f"[monitor] {user_id}: every matching agent has its channels off — nothing sent or written.")
             continue
 
@@ -337,13 +374,14 @@ def main(argv=None) -> int:
         # failure here is a logged outcome for THIS channel only, never a `continue` that skips the
         # in-app/push delivery and the ledger write still owed to this user.
         email_ok = False
-        if mailable:
-            digest = render_digest(mailable)      # the email says only what the email is delivering
+        if mailable or mail_replies:
+            digest = render_digest(mailable, replies=[f for _, f in mail_replies])  # only what's delivered
             try:
                 send_via_resend(email, digest["subject"], digest["html"], digest["text"])
                 email_ok = True
                 sent += 1
-                print(f"[monitor] {user_id}: email channel — sent ({len(mailable)} alert(s)).")
+                print(f"[monitor] {user_id}: email channel — sent ({len(mailable)} alert(s), "
+                      f"{len(mail_replies)} invite reply(s)).")
             except Exception as err:  # noqa: BLE001 — never let one bad send abort the run
                 print(f"[monitor] {user_id}: email channel — failed: {err} — ledger not written for "
                       "it, will retry; in-app/push are unaffected.")
@@ -382,11 +420,22 @@ def main(argv=None) -> int:
         except Exception as err:  # noqa: BLE001 — a ledger-write failure must not abort the run
             print(f"[monitor] could not write ledger for {user_id}: {err} — delivery stands, will "
                   "retry the ledger row next run.")
+        # CAS-887: mark digested only once the send actually succeeded (send-before-ledger, same
+        # ordering as insert_notifications above) — stamps digested_at, never seen_at (item 5):
+        # that column stays the app's alone, so this can never clear a badge nobody has seen yet.
+        if email_ok and mail_replies:
+            try:
+                store.mark_invite_replies_digested(
+                    [rid for rid, _ in mail_replies], _dt.datetime.now(_dt.timezone.utc).isoformat())
+            except Exception as err:  # noqa: BLE001 — a ledger-write failure must not abort the run
+                print(f"[monitor] could not mark invite replies digested for {user_id}: {err} — "
+                      "delivery stands, will retry next run.")
 
     if args.dry_run:
         would = sum(len(h) for h in by_user.values())
-        print(f"[monitor] --dry-run: rendered {len(by_user)} digest(s) covering {would} alert(s); "
-              "sent NOTHING, wrote NOTHING.")
+        would_replies = sum(len(v) for v in replies_by_user.values())
+        print(f"[monitor] --dry-run: rendered {len(all_user_ids)} digest(s) covering {would} "
+              f"alert(s) and {would_replies} invite reply(s); sent NOTHING, wrote NOTHING.")
     else:
         print(f"[monitor] sent {sent} email digest(s), {inapp} in-app-only, {pushed_total} push "
               f"notification(s); wrote {written_total} notification row(s).")
