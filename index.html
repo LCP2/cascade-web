@@ -5163,7 +5163,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1039, "commit": "3be0fdb", "builtAt": "2026-09-09T00:01:57Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1040, "commit": "fb3d993", "builtAt": "2026-09-09T00:07:29Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8050,7 +8050,7 @@ function renderOccBar(regEntries){
 // CAS-840: same repaint, for the Picked by pill — moved in from the Filters sheet's `.pickedbyseg`.
 function renderPickedByPill(){
   const btn=$("pickedByBtn"), name=$("pickedByName"); if(!btn||!name) return;
-  const key=watchPickedBy[watchTab];
+  const key=watchPickedBySafe(watchTab);
   name.textContent = PICKED_BY_OPTS.find(o=>o.key===key).label;
   btn.classList.toggle("on", key!=="all");
 }
@@ -8080,7 +8080,7 @@ window.clearAllWatchStyles = () => {
 // selection hides tagged-out films entirely, exactly the old scope.watched=false default.
 const watchSearch = {in_cinema:"", premium:"", rent:"", stream:""};
 const watchWatchedSel = {in_cinema:new Set(), premium:new Set(), rent:new Set(), stream:new Set()};
-// CAS-719: who set the current tab's Watch On level — All/Agent (auto)/Me (manual)/Unset, single-select,
+// CAS-719: who set the current tab's Watch On level — All/Agent (auto)/Me (manual), single-select,
 // same per-tab session-only shape as watchGenreOff/watchWatchedSel above. Values other than "all" match
 // filmWatchSource(id)'s own return values directly ("auto"/"manual"), so there is no translation layer
 // between the control and the field it reads.
@@ -8089,8 +8089,13 @@ const PICKED_BY_OPTS = [
   {key:"all",    label:"All"},
   {key:"auto",   label:"Agent"},
   {key:"manual", label:"Me"},
-  {key:"unset",  label:"Unset"},
 ];
+// CAS-871: a value not among PICKED_BY_OPTS (e.g. a still-open tab's in-memory state predating this
+// ticket) reads as "all" rather than crashing the pill/chip's PICKED_BY_OPTS.find(...).
+function watchPickedBySafe(tab){
+  const v=watchPickedBy[tab];
+  return PICKED_BY_OPTS.some(o=>o.key===v) ? v : "all";
+}
 window.setWatchPickedBy = key => { watchPickedBy[watchTab]=key; render(); };
 window.clearWatchPickedBy = () => { watchPickedBy[watchTab]="all"; render(); scrollWatchListingToTop(); };   // CAS-857
 // CAS-840: ONE listbox popover shared by the Occasion and Picked by pills — an anchored panel in the app's
@@ -8106,7 +8111,7 @@ const PICKER_KINDS = {
   },
   pickedby: {
     items: () => PICKED_BY_OPTS,
-    current: () => watchPickedBy[watchTab],
+    current: () => watchPickedBySafe(watchTab),
     pick: key => setWatchPickedBy(key),
   },
 };
@@ -8165,13 +8170,10 @@ document.addEventListener("pointerdown", e=>{
   closePickerPop();
 }, true);
 addEventListener("scroll", ()=>{ if(document.querySelector(".cpop.pickpop")) closePickerPop(); }, {passive:true});
-// A film not currently on the picked level (filmWatchSource reads whichever level is driving the chip)
-// falls to Unset, the same "nothing recorded" reading filmWatchSource itself already gives that film.
 function filmMatchesPickedBy(m){
-  const sel=watchPickedBy[watchTab];
+  const sel=watchPickedBySafe(watchTab);
   if(sel==="all") return true;
-  const src=filmWatchSource(m.tmdb_id);
-  return sel==="unset" ? !src : src===sel;
+  return filmWatchSource(m.tmdb_id)===sel;
 }
 // CAS-823: the widener for filmMatchesWatchTab's own-standing restriction above — one chip per window in
 // ladder order, following the same four windows Part A itself tests (upcoming/in_cinema/rental/
@@ -8318,7 +8320,7 @@ function renderWatchSheet(rows, shownCount){
   const genres=[...new Set(rows.flatMap(m=>m.genres||[]))].sort();
   watchSheetGenres[watchTab]=genres;
   const watchedSel=watchWatchedSel[watchTab];
-  const pickedBy=watchPickedBy[watchTab];
+  const pickedBy=watchPickedBySafe(watchTab);
   const alsoShowSet=watchAlsoShow[watchTab];
   const agentOff=watchAgentOff[watchTab];
   // CAS-753: default is ON, so — unlike every set/off field above — it counts as a deviation when it's OFF.
