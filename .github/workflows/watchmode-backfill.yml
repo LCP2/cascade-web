@@ -15,6 +15,11 @@ on:
         required: false
         type: string
         default: '1000'
+      manifest:
+        description: 'CAS-889: path to a manifest file (one tmdb_id per line) to restrict this run to, passed as --ids-from. Empty runs the full catalogue.'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -36,7 +41,13 @@ jobs:
           WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
           CASCADE_CATALOGUE: movies.json
           WM_FIELDS_MAX_CREDITS: ${{ inputs.max_credits }}
-        run: python scripts/cas850_watchmode_backfill.py
+          WM_IDS_FROM: ${{ inputs.manifest }}
+        run: |
+          if [ -n "$WM_IDS_FROM" ]; then
+            python scripts/cas850_watchmode_backfill.py --ids-from "$WM_IDS_FROM"
+          else
+            python scripts/cas850_watchmode_backfill.py
+          fi
 
       - name: Commit and push (CAS-758 reset-soft-and-push retry — never to main)
         # Pushes via scripts/reset_soft_and_push.sh's `git push origin HEAD:staging`, the same
