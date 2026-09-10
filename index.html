@@ -1209,9 +1209,12 @@
      same colour language as the status chips elsewhere (--green/--blue). */
   .mvchip.new{background:rgba(72,199,142,.16);border-color:var(--green);color:#a7eccb}
   .mvchip.changed{background:rgba(90,169,240,.16);border-color:var(--blue);color:#bcdcff}
-  /* CAS-650: the window chip row — reuses .chip.gen, the same single-select pill already used for
-     other filter rows, so the new control matches the app's existing chip language. */
-  .mvwindows{display:flex;flex-wrap:wrap;gap:6px;padding:0 2px 12px}
+  /* CAS-904: the period row — one full-width labelled pill (the same .pickerwrap/.pickerbtn component
+     Watch's OCCASION/PICKED BY pills use, CAS-840), replacing the CAS-650 .chip.gen row so period
+     ("filters the list") and the status rail below ("jumps to a section") no longer read as two stacked
+     filter rows. */
+  .mvwindows{padding:0 2px 12px}
+  .mvwindows .pickerwrap{width:100%}
   /* CAS-852: the "Moving" heading, its sub-line and the window chip row, sticky under the header the same
      way #cascbar sticks under it for the Watch listing — .grouphead.sub's lane heading (CAS-761) is sticky
      chrome with nothing above it to release against otherwise. #movingScreen is its own bounded scroll box
@@ -2538,13 +2541,17 @@
   .listctl{display:flex;align-items:stretch;gap:8px;margin:8px 12px 0}
   /* CAS-839: display:flex above beats a bare [hidden] — same restatement as .watchactivefilters (~2696). */
   .listctl[hidden]{display:none}
+  /* CAS-904: Moving's rail only — a hairline above and below so it reads as its own band ("Jump to") rather
+     than a third row stacked under the period pill above it. Scoped to #movingListCtl's own id, not
+     .listctl, so the Watch listing's identical-looking rail is untouched. */
+  #movingListCtl{border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-top:12px;padding:10px 0}
   /* CAS-823: replaces the CAS-275 scrolling rail — at real width the chips overflowed and landed mid-scroll,
      cut at both edges, so the first section was unreachable without a flick. This version never scrolls: a
      short "Now" label, then one stop per section actually on screen, spaced across the width it has. */
   .jumpbar{flex:1;min-width:0;display:flex;align-items:flex-start;gap:10px}
   .jumpbar[hidden]{display:none}
   .jumpbar .nowlbl{flex:none;font-size:10.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
-    color:var(--faint);padding-top:15px}
+    color:var(--faint);padding-top:15px;white-space:nowrap}
   .jumpbar .nowtrack{flex:1;min-width:0;position:relative;display:flex;justify-content:space-between}
   .jumpbar .nowtrack::before{content:"";position:absolute;left:0;right:0;top:15px;height:1px;background:var(--line)}
   .nowstop{flex:0 1 auto;min-width:0;position:relative;display:flex;flex-direction:column;align-items:center;
@@ -5020,7 +5027,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1070, "commit": "cf8f94d", "builtAt": "2026-09-09T23:54:43Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1071, "commit": "2811bdd", "builtAt": "2026-09-10T00:53:39Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8159,6 +8166,12 @@ const PICKER_KINDS = {
     items: () => PICKED_BY_OPTS,
     current: () => watchPickedBySafe(watchTab),
     pick: key => setWatchPickedBy(key),
+  },
+  // CAS-904: Moving's period pill, same shared listbox.
+  moving: {
+    items: () => MOVING_WINDOWS,
+    current: () => movingWindow,
+    pick: key => setMovingWindow(key),
   },
 };
 function closePickerPop(){
@@ -14785,7 +14798,7 @@ function renderAgentsScreen(){
 // ================= CAS-636: Moving — the alert feed made visible =================
 // CAS-848: the screen's own subtitle, shared by the loading state and the real one so they never say two
 // different things about what this screen covers.
-const MOVING_SUBTITLE = "What your agents found and what moved, over the last 2 weeks.";
+const MOVING_SUBTITLE = "What your agents found and what moved.";
 // CAS-848: the shared classification rule (also used by monitor/emailer.py's daily digest) — New = the
 // film's first appearance for this agent; Changed = anything else (a window move on a film the agent
 // already had). Nothing is both.
@@ -15027,15 +15040,23 @@ function renderMovingScreen(){
   shownRows.forEach(r=>{ movingSeen[r.filmId]=r.tag; });
   saveMovingSeen();
   updateMovingBadge();
-  const chipsHTML=MOVING_WINDOWS.map(w=>
-    `<button type="button" class="chip gen${movingWindow===w.key?" on":""}" aria-pressed="${movingWindow===w.key}" onclick="setMovingWindow('${w.key}')">${esc(w.label)}</button>`
-  ).join("");
+  // CAS-904: one full-width labelled pill (Watch's OCCASION/PICKED BY pattern, CAS-840) opening the same
+  // shared listbox (.cpop.pickpop via togglePickerFor) — replaces the CAS-650 chip row. MOVING_WINDOWS
+  // itself, its keys/labels and setMovingWindow are unchanged; this only changes the control's shape.
+  const curWindow=MOVING_WINDOWS.find(w=>w.key===movingWindow);
+  const pillHTML=`<div class="pickerwrap">
+    <button type="button" class="pickerbtn" id="movingWindowBtn" aria-haspopup="listbox" aria-expanded="false"
+            onclick="togglePickerFor('moving',this)">
+      <span class="pblbl">Period</span>
+      <span class="pbval"><span class="pbtext" id="movingWindowName">${esc(curWindow?curWindow.label:movingWindow)}</span><span class="pbchev" aria-hidden="true">▾</span></span>
+    </button>
+  </div>`;
   // CAS-852: wrapped in #movingHead/.mvhead so it can pin under the header — see syncHeaderHeight and
   // .mvhead's own comment for why the lane heading below it (.grouphead.sub) was floating with nothing to
   // release against otherwise. CAS-869: the truncation notice that used to sit here is gone — the status
   // nav below takes its place; the 200-row ledger fetch cap itself (movingLedgerTruncated) is unchanged.
   const head=`<div class="mvhead" id="movingHead"><h2 class="osh">Moving</h2><p class="ossub">${MOVING_SUBTITLE}</p>
-    <div class="mvwindows">${chipsHTML}</div></div>`;
+    <div class="mvwindows">${pillHTML}</div></div>`;
   // CAS-886: the reply alert is IN THE FLOW, not sticky with #movingHead and not a floating toast — it
   // scrolls away with the rest of the content, the same as everything else here.
   const alertHTML=inviteAlertHTML();
@@ -15072,7 +15093,7 @@ function renderMovingScreen(){
   // see those functions' own comments for how they were generalised to take a container.
   const jumpCtl=`<div class="listctl" id="movingListCtl"><div class="jumpbar" id="movingJumpBar" hidden></div></div>`;
   $("movingBody").innerHTML = head + alertHTML + jumpCtl + `<div id="movingGroups">${sectionsHTML}</div>`;
-  renderJumpBar({jumpBarId:"movingJumpBar", listCtlId:"movingListCtl", groupsSel:"#movingGroups .group", isOwn:()=>false});
+  renderJumpBar({jumpBarId:"movingJumpBar", listCtlId:"movingListCtl", groupsSel:"#movingGroups .group", isOwn:()=>false, label:"Jump to"});
   syncHeaderHeight();   // CAS-852: #movingHead's height can change (window switch) — re-measure so the lane heading's --stickyh offset never drifts
 }
 // CAS-650: switching the window re-renders in place.
@@ -16479,7 +16500,7 @@ function jumpStopIsOwn(k){
 // selector scoped to #movingGroups, plus isOwn:()=>false since "own standing" is a Watch-tab idea Moving
 // has no equivalent of.
 function renderJumpBar(opts){
-  const {jumpBarId="jumpBar", listCtlId="listCtl", groupsSel="#groups .group", isOwn=jumpStopIsOwn} = opts||{};
+  const {jumpBarId="jumpBar", listCtlId="listCtl", groupsSel="#groups .group", isOwn=jumpStopIsOwn, label="Now"} = opts||{};
   const el=$(jumpBarId); if(!el) return;
   const wrap=$(listCtlId);   // CAS-839: #listCtl's only child is #jumpBar — hide the wrapper too, or its
                               // own margin still draws an empty band when the bar inside it is hidden.
@@ -16496,7 +16517,7 @@ function renderJumpBar(opts){
       <span class="gdot ${k}" aria-hidden="true"></span>
       <span class="nowword">${esc(SECTION_SHORT[k]||STATUS_LABEL[k]||k)}</span></button>`;
   }).join("");
-  el.innerHTML = `<span class="nowlbl">Now</span><div class="nowtrack">${stopsHTML}</div>`;
+  el.innerHTML = `<span class="nowlbl">${esc(label)}</span><div class="nowtrack">${stopsHTML}</div>`;
 }
 // The bar is STICKY, so scrolling a section to y=0 hides its heading behind the bar. The offset is the
 // header plus the band, measured rather than guessed — both change height with their contents.
