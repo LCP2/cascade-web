@@ -5060,7 +5060,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1078, "commit": "10f99a1", "builtAt": "2026-09-10T02:48:04Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1079, "commit": "d44e699", "builtAt": "2026-09-10T04:15:53Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -11429,146 +11429,12 @@ const STARTERS = [
    crit:{status:[], genre:[], age:[], lang:[], imdb:0, rt:0, awards:false,
          myServices:false, selCrowd:0, selCritics:0, selScale:0, selBuzz:0}},
 ];
-// ================= ONBOARDING AGENT GENERATOR (CAS-A) =================================
-// The new onboarding asks about the PERSON and generates the agents. One recipe per agent
-// Cascade can create; `when` decides whether the answers call for it. Every field here is a
-// real field on the cascade object — see normCascade() — and every value was chosen against
-// the lane rule below, not invented.
-//
-// THE LANE RULE. laneCrit(c, kind) zeroes selCrowd / selCritScore / selAwards on a CINEMA
-// agent and zeroes selBuzz on a STREAM agent. A recipe must never set a dial its own lane
-// discards: the Mission screen would not show it and auto-relax could not loosen it. That is
-// why the cinema recipes carry selBuzz/selScale and the stream recipes carry selCrowd/
-// selCritScore/selAwards, and why NEITHER carries the volume answer — see onbDepth in A2.
-const ONB_AGENTS = [
-  {key:"onb_cinema", icon:"🎬", name:"Must see at the cinema", kind:"cinema",
-   when:a => a.cinema==="special" || a.cinema==="often",
-   // A cinema trip is scarce for someone who goes "for special films", so that list stays short
-   // whatever the depth answer says. Someone who answered "often" told us the opposite, so they
-   // get the account-wide depth like every other agent. capOverride is the only place a recipe
-   // overrides that depth.
-   capOverride:a => a.cinema==="often" ? null : 3,
-   crit:{status:["upcoming","opening_week","in_cinema"], selScale:0, selBuzz:1,
-         myServices:false, yearsBack:20},
-   watchWindows:{upcoming:{list:true, notify:false}, in_cinema:{list:true, notify:true}}},
-
-  {key:"onb_stream", icon:"📺", name:"Streaming tonight", kind:"stream",
-   when:a => true,   // unconditional, same reason as onb_home above
-   // Deliberately a lower bar than Watch at home — this is the everyday list.
-   crit:{status:["included_streaming"], selCrowd:6.0, selCritScore:0, selAwards:0, selScale:0,
-         myServices:{pvod:false, rental:false, included_streaming:true}, yearsBack:20},
-   watchWindows:{stream:{list:true, notify:true}}},
-
-  {key:"onb_awards", icon:"🏆", name:"Awards watch", kind:"stream",
-   when:a => a.awards==="closely" || a.awards==="big",
-   // AWARD_STOPS: 1 = "1 nom", 4 = "Winner". yearsBack 0 because an award list is explicitly
-   // all-era, and myServices false because you want to know a winner exists wherever it is.
-   crit:{status:[], selCrowd:0, selCritScore:0, selScale:0, myServices:false, yearsBack:0},
-   awardsRung:a => a.awards==="closely" ? 1 : 4,
-   watchWindows:{rent:{list:true, notify:true}, stream:{list:true, notify:true}}},
-
-  {key:"onb_family", icon:"👨‍👩‍👧", name:"Family night", kind:"stream",
-   when:a => a.who.includes("kids"),
-   taste:"kids", tasteDefault:["Family","Animation","Adventure"],
-   // The age cap is the expression the existing Family Movies preset uses. Do not re-derive it.
-   crit:{status:["rental","included_streaming"], selCrowd:6.5, selCritScore:0, selAwards:0,
-         selScale:0, extraExclude:["Horror","Crime"],
-         myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
-   ageCap:true,
-   watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
-
-  {key:"onb_partner", icon:"❤️", name:"With your partner", kind:"stream",
-   when:a => a.who.includes("partner"),
-   // Higher crowd bar than the solo streaming agent: a bad pick costs two people's evening.
-   taste:"partner",
-   crit:{status:["rental","included_streaming"], selCrowd:7.0, selCritScore:0, selAwards:0,
-         selScale:0, myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
-   watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
-
-  {key:"onb_cinema_wide", icon:"🎟️", name:"At the cinema now", kind:"cinema",
-   when:a => a.cinema==="often",
-   // No buzz floor — this is the broad "what's on" list, and 3 years back because a film in
-   // cinemas now is recent by definition.
-   crit:{status:["in_cinema"], selScale:0, selBuzz:0, myServices:false, yearsBack:3},
-   watchWindows:{in_cinema:{list:true, notify:false}}},
-
-  {key:"onb_home", icon:"📼", name:"Watch at home", kind:"stream",
-   // "me" is pre-selected and cannot be deselected (Lee, 27 Aug 2026), so the two solo agents are
-   // unconditional. Kept as a `when` for shape consistency with the rest of the table.
-   when:a => true,
-   // Cinema-grade but not trip-worthy. The crowd + critic pair is what makes this the quality lane.
-   crit:{status:["pvod","rental"], selCrowd:7.0, selCritScore:70, selAwards:0, selScale:0,
-         myServices:{pvod:false, rental:true, included_streaming:false}, yearsBack:20},
-   watchWindows:{rent:{list:true, notify:true}}},
-
-  {key:"onb_friends", icon:"🍿", name:"Big nights in", kind:"stream",
-   when:a => a.who.includes("friends"),
-   // selScale 50e6 is the crowd-pleaser signal — the same floor Family Movies uses. Scale is the
-   // one selectivity dial that survives laneCrit on BOTH lanes.
-   crit:{status:["rental","included_streaming"], selCrowd:6.5, selCritScore:0, selAwards:0,
-         selScale:50e6, myServices:{pvod:false, rental:true, included_streaming:true}, yearsBack:20},
-   watchWindows:{rent:{list:true, notify:false}, stream:{list:true, notify:true}}},
-];
-
 // The briefing answers, in the shape every recipe's `when` expects. This is also the shape the
 // onboarding screens write and the shape stored under ONB_ANSWERS_KEY.
 function onbAnswersDefault(){
   return {who:["me"], cinema:"special", awards:"big", depth:"best", never:[], taste:{partner:[], kids:[]}};
 }
 
-// Build the agents from a set of answers. Returns fully normalised cascade objects, in recipe
-// order, ready for the caller to assign ids and push onto `cascades`. It does NOT save, does not
-// set ids, and does not touch the live array — that is the caller's job, so this stays testable.
-function buildOnbAgents(a){
-  const ans = {...onbAnswersDefault(), ...(a||{})};
-  ans.who = Array.isArray(ans.who) ? ans.who : [];
-  ans.never = Array.isArray(ans.never) ? ans.never : [];
-  ans.taste = ans.taste || {};
-  return ONB_AGENTS.filter(r => { try { return !!r.when(ans); } catch(e){ return false; } }).map(r => {
-    const c = {...r.crit};
-    c.template = r.key; c.icon = r.icon; c.name = r.name; c.kind = r.kind;
-    // The shared exclusion rides every agent; a recipe may add its own on top.
-    c.exclude = [...new Set([...(ans.never||[]), ...(r.crit.extraExclude||[])])];
-    delete c.extraExclude;
-    // Genre comes from the together-tastes screen where the recipe asks for it, and falls back to
-    // the recipe's own default (not to "everything") so a skipped screen still means something.
-    if(r.taste){
-      const picked = (ans.taste[r.taste]||[]).filter(g => ALL_GENRES.includes(g));
-      c.genre = picked.length ? picked : (r.tasteDefault||[]);
-    } else {
-      c.genre = [];
-    }
-    c.age = r.ageCap ? AGE_LEVELS.filter(x => !MATURE.has(x)) : [];
-    if(r.awardsRung) c.selAwards = r.awardsRung(ans);
-    c.watchWindows = JSON.parse(JSON.stringify(r.watchWindows||{}));
-    c.sort = DEFAULT_SORT;                    // CAS-618: the Cascade score is the default order
-    // Resolved here, against the answers, so the agent on disk carries a number and onbDepthFor
-    // never has to know what the user said. A recipe may supply a function or a plain number.
-    c.onbCap = (typeof r.capOverride==="function") ? (r.capOverride(ans) || null)
-                                                   : (r.capOverride || null);
-    // CAS-643: who the recipe is for — the row's who-line reads this straight off the agent.
-    c.who = r.key==="onb_partner" ? "partner" : r.key==="onb_family" ? "everyone"
-          : r.key==="onb_friends" ? "friends" : "me";
-    normCascade(c);
-    laneCrit(c, c.kind);                      // belt and braces: a recipe must not carry a dead dial
-    return c;
-  });
-}
-// The strip under every briefing screen. `lit` is the set of agent keys this screen briefs —
-// null means "all of them", which is what a screen that changes every agent passes. A key that
-// was not in the previous render animates in, which is what makes S1 read as construction
-// rather than as a form.
-let obLastKeys = [];
-function obStripHTML(agents, lit, label){
-  const keys = agents.map(a=>a.template);
-  const html = agents.map(a=>{
-    const on   = !lit || lit.includes(a.template);
-    const fresh= !obLastKeys.includes(a.template);
-    return `<span class="obag ${on?"lit":"dim"}${fresh?" pop":""}">${esc(a.name)}</span>`;
-  }).join("");
-  obLastKeys = keys;
-  return `<div class="obstrip"><div class="obsl">${label}</div>${html}</div>`;
-}
 // The newest film IN THIS LIST, in days. Deliberately not "when this agent last found something":
 // firstFound is account-wide, so that claim is not one the data can support. A dead agent is still
 // detected — if nothing new lands, the maximum stays old.
@@ -11600,10 +11466,11 @@ function onbAnswersSave(a){
   try{ localStorage.setItem(ONB_ANSWERS_KEY, JSON.stringify(a)); }catch(e){}
 }
 
-// ---- CAS-908: onboarding v2 answers + four-agent generator, ADDITIVE only ---------------------
-// Sits beside onbAnswersDefault/ONB_AGENTS/buildOnbAgents above: none of those are touched, and
-// nothing here is called by the live flow yet (CAS-629's FLOWS/briefing1/briefing2 keep reading
-// the old shape). CAS-910 renders from these; CAS-911 wires them in and retires the old symbols.
+// ---- CAS-908: onboarding v2 answers + four-agent generator ------------------------------------
+// onbAnswersDefault/ONB_ANSWERS_KEY above stay — the account-level sync path (userPrefsRow/
+// loadUserPrefs) still reads them for the never-show/depth fields, unrelated to onboarding itself.
+// ONB_AGENTS/buildOnbAgents (the old per-answer recipe table) and obStripHTML/obLastKeys (the old
+// roster strip) are gone — CAS-911 retired them once FLOWS below stopped calling either.
 function onbAnswersV2Default(){
   return {cinema:null, rent:null, styles:[], selScale:0, ages:["M","MA 15+"],
           partner:null, partnerDiff:null, partnerStyles:[], kids:null, kidAges:["G","PG"],
@@ -13829,215 +13696,6 @@ const SHARP_STEPS = {
     refresh(){ paintMsnTrack(); },   // CAS-729: keeps the track's own DOM in step with onbRefresh()'s beat
     wire(){ wireMsnTrack(); wireReqCards(); wireCinemaReleaseToggle(); wireIncludeUnbudgetedToggle(); },
   },
-  // ---- CAS-626 Onboarding S1: the briefing screen that creates the roster ---------------------------
-  // Step 2 of the new A→B→C→D→E briefing sequence (CAS-626). All three questions here create agents, so
-  // by the end of this screen the whole roster exists and the strip has shown every one of them appear.
-  // Preview-only (`?step=briefing1`) until every screen in the sequence exists — see CAS-629, which cuts
-  // FLOWS over. `me` is pre-selected and LOCKED (Lee, 27 Aug 2026): the roster can never be empty, so
-  // there is no empty state and no disabled Continue on this screen.
-  briefing1: {
-    noAgent: true,
-    body(){
-      return `<div class="obwrap">
-  <h2 class="obhd">Set your agents</h2>
-  <p class="obsub">Every answer puts one on the job.</p>
-
-  <p class="obq">Who do you watch with?</p>
-  <div class="chips" id="obWho"></div>
-
-  <p class="obq">Do you go to the cinema?</p>
-  <div class="chips" id="obCinema"></div>
-
-  <p class="obq">Do you follow the Oscars?</p>
-  <div class="chips" id="obAwards"></div>
-</div>`;
-    },
-    wire(){
-      if(!onbFlow.answers) onbFlow.answers = onbAnswersDefault();
-      const ans = onbFlow.answers;
-      // One chip factory for all three groups: `locked` renders selected and inert (CAS-626 §B2.3 — the
-      // `me` chip must not respond to a tap, not even to no-op the same value back in).
-      const obChip = (label, on, locked, onTap) => {
-        const b=document.createElement("button");
-        b.type="button";
-        b.className="chip gen"+(on?" on":"");
-        b.textContent=label;
-        b.setAttribute("aria-pressed", String(on));
-        if(locked) b.setAttribute("aria-disabled","true");
-        else b.onclick=onTap;
-        return b;
-      };
-      const who=$("obWho");
-      if(who){
-        who.innerHTML="";
-        [["me","me"],["partner","partner"],["kids","kids"],["friends","friends"]].forEach(([label,val])=>{
-          who.appendChild(obChip(label, ans.who.includes(val), val==="me", ()=>{
-            const i=ans.who.indexOf(val);
-            i<0 ? ans.who.push(val) : ans.who.splice(i,1);
-            renderOnbStep("briefing1");
-          }));
-        });
-      }
-      const cinema=$("obCinema");
-      if(cinema){
-        cinema.innerHTML="";
-        [["for special films","special"],["often","often"],["never","never"]].forEach(([label,val])=>{
-          cinema.appendChild(obChip(label, ans.cinema===val, false, ()=>{
-            ans.cinema=val; renderOnbStep("briefing1");
-          }));
-        });
-      }
-      const awards=$("obAwards");
-      if(awards){
-        awards.innerHTML="";
-        [["closely","closely"],["the big ones","big"],["no","no"]].forEach(([label,val])=>{
-          awards.appendChild(obChip(label, ans.awards===val, false, ()=>{
-            ans.awards=val; renderOnbStep("briefing1");
-          }));
-        });
-      }
-      // The strip is not part of the EXACT body markup above — it lives outside it, as a sticky sibling,
-      // same as every other briefing screen (shared context, CAS-626).
-      const agents = buildOnbAgents(ans);
-      const wrap = document.querySelector("#onbStepInner .obwrap");
-      if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, null, `<b>${agents.length}</b> AGENTS ON THE JOB`));
-    },
-  },
-  // ---- CAS-627 Onboarding S2: standing orders, and the listing depth --------------------------------
-  // Step 3 of the new A→B→C→D→E briefing sequence. Two briefs that apply to every agent already on the
-  // roster: how selective they are (CAS-662 dropped its use from the Find listing itself, and CAS-664
-  // dropped the Agents screen's own match-preview cap in favour of real metrics, so this answer
-  // currently only reaches a recipe's onbCap floor/cap at generation time) and what they must
-  // never bring back (written into every agent's own `exclude`, same field buildOnbAgents already merges
-  // `ans.never` into). Preview-only (`?step=briefing2`) until CAS-629 cuts FLOWS over.
-  briefing2: {
-    noAgent: true,
-    body(){
-      return `<div class="obwrap">
-  <h2 class="obhd">Standing orders</h2>
-  <p class="obsub">Every agent works to these.</p>
-
-  <p class="obq">When you sit down to watch</p>
-  <div class="chips" id="obDepth"></div>
-  <p class="obhint">One selectivity value they all inherit. Change it any time from Preferences.</p>
-
-  <p class="obq">Anything they should never bring you?</p>
-  <div class="chips" id="obNever"></div>
-</div>`;
-    },
-    wire(){
-      if(!onbFlow.answers) onbFlow.answers = onbAnswersDefault();
-      const ans = onbFlow.answers;
-      const obChip = (label, on, onTap) => {
-        const b=document.createElement("button");
-        b.type="button";
-        b.className="chip gen"+(on?" on":"");
-        b.textContent=label;
-        b.setAttribute("aria-pressed", String(on));
-        b.onclick=onTap;
-        return b;
-      };
-      const depth=$("obDepth");
-      if(depth){
-        depth.innerHTML="";
-        [["show me the absolute best only","best"],["give me a wide selection","wide"]].forEach(([label,val])=>{
-          depth.appendChild(obChip(label, ans.depth===val, ()=>{
-            ans.depth=val; renderOnbStep("briefing2");
-          }));
-        });
-      }
-      // Only a value ALL_GENRES actually carries is offered — same rule buildOnbAgents already applies
-      // to the together-tastes screen's genre picks (line ~10372).
-      const never=$("obNever");
-      if(never){
-        never.innerHTML="";
-        [["horror","Horror"],["musicals","Music"],["anime","Animation"],["rom-com","Romance"]]
-          .filter(([,g])=>ALL_GENRES.includes(g))
-          .forEach(([label,val])=>{
-            never.appendChild(obChip(label, ans.never.includes(val), ()=>{
-              const i=ans.never.indexOf(val);
-              i<0 ? ans.never.push(val) : ans.never.splice(i,1);
-              renderOnbStep("briefing2");
-            }));
-          });
-        never.appendChild(obChip("nothing", ans.never.length===0, ()=>{
-          ans.never = [];
-          renderOnbStep("briefing2");
-        }));
-      }
-      // The strip is not part of the EXACT body markup above — it lives outside it, same as briefing1.
-      const agents = buildOnbAgents(ans);
-      const wrap = document.querySelector("#onbStepInner .obwrap");
-      if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, null, `ALL <b>${agents.length}</b> TAKE THIS BRIEF`));
-    },
-  },
-  // ---- CAS-628 Onboarding S3: together tastes (conditional) --------------------------------------------
-  // Step 4 of the new A→B→C→D→E briefing sequence, and the only one that is skipped: with neither a
-  // partner nor kids on the roster (`who`, from briefing1) there is no companion agent to steer, so
-  // `stepSkipped`/flowNext walk straight past it once CAS-629 wires this key into FLOWS. Preview-only
-  // (`?step=together`) until then.
-  together: {
-    noAgent: true,
-    // Read by flowNext/flowCounted (below FLOWS) once this key is wired in — a screen with nothing to ask
-    // is neither walked nor counted.
-    skip: ans => !((ans.who||[]).includes("partner") || (ans.who||[]).includes("kids")),
-    body(){
-      const ans = onbFlow.answers || onbAnswersDefault();
-      const who = ans.who||[];
-      return `<div class="obwrap">
-  <h2 class="obhd">Watching together</h2>
-  <p class="obsub">These agents need a steer.</p>
-  <p class="obhint" style="margin:0 0 16px">Skip and they'll work it out from what you watch.</p>
-${who.includes("partner") ? `
-  <div class="obgrp">THE PARTNER AGENT</div>
-  <div class="chips" id="obTastePartner"></div>` : ""}
-${who.includes("kids") ? `
-  <div class="obgrp">THE FAMILY AGENT</div>
-  <div class="chips" id="obTasteKids"></div>` : ""}
-</div>`;
-    },
-    wire(){
-      if(!onbFlow.answers) onbFlow.answers = onbAnswersDefault();
-      const ans = onbFlow.answers;
-      const obChip = (label, on, onTap) => {
-        const b=document.createElement("button");
-        b.type="button";
-        b.className="chip gen"+(on?" on":"");
-        b.textContent=label;
-        b.setAttribute("aria-pressed", String(on));
-        b.onclick=onTap;
-        return b;
-      };
-      // One wiring for both groups: `taste` is the ans.taste sub-key this group edits, `defs` the
-      // label/genre pairs. Only a value ALL_GENRES actually carries is offered — same rule briefing2's
-      // "never" chips apply.
-      const wireGroup = (boxId, tasteKey, defs) => {
-        const box=$(boxId); if(!box) return;
-        const set = ans.taste[tasteKey] || (ans.taste[tasteKey]=[]);
-        box.innerHTML="";
-        defs.filter(([,g])=>ALL_GENRES.includes(g)).forEach(([label,g])=>{
-          box.appendChild(obChip(label, set.includes(g), ()=>{
-            const i=set.indexOf(g);
-            i<0 ? set.push(g) : set.splice(i,1);
-            renderOnbStep("together");
-          }));
-        });
-        box.appendChild(obChip("anything", set.length===0, ()=>{
-          set.length=0;
-          renderOnbStep("together");
-        }));
-      };
-      wireGroup("obTastePartner","partner",[["drama","Drama"],["thriller","Thriller"],["comedy","Comedy"],["true story","History"]]);
-      wireGroup("obTasteKids","kids",[["animation","Animation"],["adventure","Adventure"],["comedy","Comedy"],["family","Family"]]);
-      // The strip lights only the two companion agents this screen briefs — everything else (including a
-      // companion not on the roster, so absent from `agents` entirely) renders dim or isn't there at all.
-      const agents = buildOnbAgents(ans);
-      const companionKeys = ["onb_partner","onb_family"];
-      const n = agents.filter(a=>companionKeys.includes(a.template)).length;
-      const wrap = document.querySelector("#onbStepInner .obwrap");
-      if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, companionKeys, `<b>${n}</b> AGENTS TAKE THIS BRIEF`));
-    },
-  },
   // ---- CAS-188 #2: pick an agent --------------------------------------------------------------------
   // The same cards, the same live counts, in the flow's own frame rather than an overlay of their own.
   pickagent: {
@@ -14203,11 +13861,9 @@ ${who.includes("kids") ? `
   // The switch is the honest half. Naming your services does not, on its own, mean "hide everything else";
   // that is a second decision, and until it is made the count must not move.
   services: {
-    // CAS-628 D2: reframed as S4 of the briefing sequence — "reused unchanged in behaviour" — everywhere
-    // this step is NOT the top-menu's own bare spoke (menuStepOn). The chips/toggle/count machinery below
-    // is untouched; only the heading, the ossub→obsub subline and the roster strip are new, and only in
-    // that context — body() draws its own obhd there, so the generic mirror stays empty rather than
-    // printing the heading twice. Preview-only (`?step=services`) until CAS-629 wires this key into FLOWS.
+    // CAS-475/CAS-911: reached only via the top-menu's own bare spoke (openMenuServices sets
+    // menuStepOn) — the account-level "My services" screen, shared with (but no longer briefed by)
+    // onboarding.
     title(){ return menuStepOn ? "My services" : ""; },
     progress: 95,
     noAgent: true,
@@ -14232,24 +13888,13 @@ ${who.includes("kids") ? `
       return `<b>${k} service${k===1?"":"s"}</b> · <span class="cnt">${mine}</span> of your agent's
         ${total} film${total===1?"":"s"} ${mine===1?"is":"are"} on ${k===1?"it":"them"} right now.`;
     },
+    // CAS-911: this step is now reached ONLY via the top-menu's own bare spoke (openMenuServices sets
+    // menuStepOn — CAS-475 already made that "the ONLY door"); the briefing-flow copy of this screen
+    // (the v1 onboarding sequence's own S4) is retired along with the rest of FLOWS below, so the body
+    // no longer branches on menuStepOn at all.
     body(){
-      // CAS-628: the briefing context's own opening line — which agents this screen is FOR — replaces the
-      // generic ossub everywhere except the top-menu's bare spoke. Same roster/scope rule as wire()'s strip
-      // below (an agent whose myServices carries any true key), so the number here and the strip's lit
-      // count are the same measurement.
-      const briefing = !menuStepOn;
-      const scopedCount = briefing
-        ? buildOnbAgents(onbFlow.answers||onbAnswersDefault()).filter(a=>Object.values(scopeOf(a)).some(Boolean)).length
-        : 0;
-      const head = briefing
-        ? `<h2 class="obhd">What you already pay for</h2>
-           <p class="obsub">${scopedCount} agent${scopedCount===1?"":"s"} need to know.</p>`
-        : `<p class="ossub">Which do you already pay for? Your agent uses this to tell you what a film is
-          costing you — and, if you want, to leave out what you'd have to buy.</p>`;
-      // CAS-251: two sections, because renting and subscribing are two different things you pay for and a
-      // person knows exactly which of each they have. Each leads with the services carrying the most of
-      // THIS catalogue and hides the tail behind "more", so the screen opens at a size you can answer.
-      const body = `${head}
+      return `<p class="ossub">Which do you already pay for? Your agent uses this to tell you what a film is
+          costing you — and, if you want, to leave out what you'd have to buy.</p>
         <div class="svcsec"><div class="svcsech">My Rental Services</div>
           <div class="chips" id="onbStepStores"></div></div>
         <div class="svcsec"><div class="svcsech">My Streaming Services</div>
@@ -14258,15 +13903,7 @@ ${who.includes("kids") ? `
           <span class="btmain">Only show films on my services</span><span class="btcheck">✓</span></button>
         <p class="osexplain">Your agent keeps watching everything either way — this only changes what
           the list shows you.</p>
-        ${(menuStepOn || onbFlow.draft) ? `<p class="ossumline" id="onbStepSay">${SHARP_STEPS.services.say(stepCount(SHARP_STEPS.services))}</p>` : ""}`;
-      // CAS-377/CAS-451: the "N of your agent's M films" clause only makes sense with ONE agent open
-      // (onboarding or a Briefing draft) — the top-menu's own spoke is a global settings screen with no
-      // single agent in view, so say() above drops the film clause there rather than quoting whichever
-      // agent's draft happens to still be sitting in onbFlow (draft is only cleared by the next
-      // flowStart/briefOpen, so it can be stale here). The line itself still prints, just service-count only.
-      // CAS-628: the briefing context wraps the whole thing in .obwrap, same shared skin as every other
-      // B-E screen, so wire()'s strip (a sibling, never part of this markup) can anchor off it.
-      return briefing ? `<div class="obwrap">${body}</div>` : body;
+        <p class="ossumline" id="onbStepSay">${SHARP_STEPS.services.say(stepCount(SHARP_STEPS.services))}</p>`;
     },
     wire(){
       // Each section draws itself, so the two are the same control twice rather than two that can drift.
@@ -14325,14 +13962,6 @@ ${who.includes("kids") ? `
         // until some unrelated action re-renders, same bug $("prefSwitch").onclick already avoids below.
         render();
       };
-      // CAS-628: the strip is not part of the EXACT-reused body above — it lives outside it, same as every
-      // other briefing screen, and only in the briefing context (never the top-menu's own bare spoke).
-      if(!menuStepOn){
-        const agents = buildOnbAgents(onbFlow.answers||onbAnswersDefault());
-        const scoped = agents.filter(a=>Object.values(scopeOf(a)).some(Boolean)).map(a=>a.template);
-        const wrap = document.querySelector("#onbStepInner .obwrap");
-        if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, scoped, `<b>${scoped.length}</b> AGENTS TAKE THIS BRIEF`));
-      }
     },
   },
   // ---- CAS-188 #6: keep finding ---------------------------------------------------------------------
@@ -14379,94 +14008,6 @@ ${who.includes("kids") ? `
         ${notifyControlsHTML()}`;
     },
     wire(){ wireNotifyControls(); },
-  },
-  // ---- CAS-629 Onboarding S5: working — the roster commits here, the ONLY place onboarding writes
-  // agents (Change E1). Each row starts on a spinner and resolves to its real countCriteria() match
-  // count; the screen then advances itself, so there is no Continue to wait on.
-  working: {
-    noAgent: true,
-    hub: true,   // auto-advancing — no Back/Skip/Continue chrome to race against the timer
-    body(){
-      const agents = onbFlow.workingAgents || buildOnbAgents(onbFlow.answers||onbAnswersDefault());
-      return `<div class="obwrap">
-  <h2 class="obhd">Setting your agents to work</h2>
-  <div class="obworklist" id="obWorkList">${agents.map(a=>`
-    <div class="obwrow">
-      <span class="obwic">${a.icon}</span><span class="obwnm">${esc(a.name)}</span>
-      <span class="obwst"><span class="obwspin"></span></span>
-    </div>`).join("")}</div>
-  <p class="obhint">They keep looking, and tell you the moment something lands.</p>
-</div>`;
-    },
-    wire(){
-      const ans = onbFlow.answers || onbAnswersDefault();
-      let agents = onbFlow.workingAgents;
-      const firstRun = !agents;
-      if(firstRun){
-        agents = buildOnbAgents(ans);
-        agents.forEach(c=>{ c.id=cascadeNewId(); });
-        cascades.push(...agents);
-        saveCascades();
-        setActive(agents[0].id);
-        onbAnswersSave(ans);
-        onbFlow.workingAgents = agents;
-      }
-      const rows=[...$("obWorkList").children];
-      const reveal=i=>{
-        const row=rows[i]; if(!row) return;
-        const n=countCriteria(agents[i]);
-        const st=row.querySelector(".obwst");
-        if(st){ st.innerHTML=`<b>${n}</b> found`; st.classList.add("done"); }
-      };
-      const wrap = document.querySelector("#onbStepInner .obwrap");
-      if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, null, `<b>${agents.length}</b> AGENTS ON THE JOB`));
-      if(!firstRun){ agents.forEach((_,i)=>reveal(i)); return; }
-      const DELAY=400, CAP=6000;
-      agents.forEach((c,i)=>setTimeout(()=>reveal(i), Math.min(DELAY*(i+1), CAP)));
-      setTimeout(()=>{ if(flowOn && onbStepKey==="working") flowNext(); }, Math.min(DELAY*agents.length, CAP));
-    },
-  },
-  // ---- CAS-629 Onboarding S6: report back — the proof (three real films, scored) and the one question
-  // onboarding still asks: how to reach you (Change E3). N/M/K feed straight into S7's recap (Change E4)
-  // so the two screens can never disagree.
-  report: {
-    progress: 80,
-    noAgent: true,
-    cta: "Continue",
-    body(){
-      const top = onbTopFilms(3);
-      return `<div class="obwrap">
-  <h2 class="obhd">Your agents reported back</h2>
-  <div class="obpanel">
-    <div class="obgrp">BEST OF WHAT THEY FOUND</div>
-    <div class="obtop3">${top.map(({m,q,agent})=>{
-      const bg=m.poster?` style="background-image:url(https://image.tmdb.org/t/p/w185${m.poster})"`:"";
-      const where=STATUS_LABEL[primaryStatus(m)]||"";
-      return `<div class="obtopcard">
-        <div class="obtopposter"${bg}></div>
-        <div class="obtopinfo">
-          <span class="obtoptitle">${esc(m.title)}</span>
-          <span class="obtopsrc">${esc(agent.name)} · ${esc(where)}</span>
-        </div>
-        ${qScoreHTML(m)}
-      </div>`;
-    }).join("")}</div>
-  </div>
-  <p class="obhint" id="obReportLine"></p>
-  <div class="obgrp">HOW THEY REACH YOU</div>
-  ${notifyControlsHTML()}
-</div>`;
-    },
-    wire(){
-      if(!onbFlow.reportStats) onbFlow.reportStats = onbComputeReportStats();
-      const {n,m,k} = onbFlow.reportStats;
-      const line=$("obReportLine");
-      if(line) line.innerHTML = `${n} agent${n===1?"":"s"} watched <b>${m}</b> film${m===1?"":"s"}. <b>${k}</b> ${k===1?"is":"are"} worth your time — and they never stop looking.`;
-      wireNotifyControls();
-      const agents = onbFlow.workingAgents || [];
-      const wrap = document.querySelector("#onbStepInner .obwrap");
-      if(wrap) wrap.insertAdjacentHTML("afterend", obStripHTML(agents, null, `<b>${agents.length}</b> AGENTS ON THE JOB`));
-    },
   },
   years: {
     title: "How far back?",
@@ -14847,6 +14388,34 @@ ${who.includes("kids") ? `
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
+  // ---- CAS-911: the roster commits HERE, the only place onboarding writes agents — every earlier
+  // reveal screen renders from the same buildOnbAgentsV2 call but commits nothing (see FLOWS below).
+  // A reload before this step lands on a fresh run with nothing to clean up; re-entering this step
+  // (Back from here, then Continue again) must not commit a second time, so wire() only builds once,
+  // guarded by onbFlow.workingAgents — same shape "working" used for the old flow.
+  v2_done: {
+    noAgent: true, noSkip: true,
+    cta: "Open my lists",
+    body(){
+      const agents = onbFlow.workingAgents || buildOnbAgentsV2(onbFlow.answersV2);
+      const n = agents.length;
+      return `<div class="obwrap">
+  <h2 class="obhd">${n} agent${n===1?"":"s"}, set to work.</h2>
+  <p class="obintrotext">Each one is watching the whole catalogue for you, every day.</p>
+</div>${agents.map((c,i)=>onbAgentRevealHTML(c, i+1, "")).join("")}`;
+    },
+    wire(){
+      onbFlow.answersV2=onbAnswersV2Load();
+      if(!onbFlow.workingAgents){
+        const agents=buildOnbAgentsV2(onbFlow.answersV2);
+        agents.forEach(c=>{ c.id=cascadeNewId(); });
+        cascades.push(...agents);
+        saveCascades();
+        setActive(agents[0].id);
+        onbFlow.workingAgents=agents;
+      }
+    },
+  },
 };
 let onbStepKey=null;
 // ================= CAS-188: the linear signup flow =================================================
@@ -14896,23 +14465,29 @@ let onbStepKey=null;
 // (flowNewAgent) path still walks its own pickagent → Briefing hop — see flowNext/flowBack — since that
 // path is deliberately untouched by this ticket (CAS-246). CAS-815 dropped the priority question that
 // used to precede pickagent on that path.
+// CAS-911: cut over to the v2 sequence — both lanes identical, no cinema/streaming split left to make
+// (v2_cinema itself is the only lane-flavoured question now). The old briefing1/briefing2/together/
+// services/working/report sequence is retired below along with the v1-only helpers it alone called.
 const FLOWS = {
-  cinema: ["briefing1","briefing2","together","services","working","report"],
-  stream: ["briefing1","briefing2","together","services","working","report"],
+  cinema: ["v2_intro","v2_cinema","v2_rent","v2_massive","v2_handoff",
+           "v2_styles","v2_budget","v2_ages","v2_favs",
+           "v2_partner","v2_date","v2_kids","v2_family","v2_services","v2_done"],
+  stream: ["v2_intro","v2_cinema","v2_rent","v2_massive","v2_handoff",
+           "v2_styles","v2_budget","v2_ages","v2_favs",
+           "v2_partner","v2_date","v2_kids","v2_family","v2_services","v2_done"],
 };
 const flowList    = () => FLOWS[flowKind] || FLOWS.cinema;
-// CAS-628: a step may declare `skip(ans)` to say it has nothing to ask given the briefing answers so far
-// (the `together` step, with neither a partner nor kids on the roster). flowNext/flowCounted read it off
-// the live onbFlow.answers, so a step like that is neither walked nor counted once a future ticket lists
-// it in FLOWS — this ticket adds the mechanism only; FLOWS itself is untouched.
+// CAS-628: a step may declare `skip(ans)` to say it has nothing to ask given the answers so far.
+// flowNext/flowCounted read it off the live answers, so a step like that is neither walked nor counted.
+// CAS-911: the only steps left declaring `skip` (v2_date/v2_family) read onbFlow.answersV2 — same
+// generalisation applyStepBlock's `blocked` already made for the v2 screens (see below).
 const stepSkipped = key => {
   const s=SHARP_STEPS[key];
-  return !!(s && typeof s.skip==="function" && s.skip(onbFlow.answers||onbAnswersDefault()));
+  return !!(s && typeof s.skip==="function" && s.skip(onbFlow.answersV2||onbAnswersV2Default()));
 };
 // CAS-910: a step may declare `blocked(ans)` — Continue stays disabled, on whichever CTA is currently on
-// screen (the standalone preview's own #onbStepCta, or the wired flow's #flowCta once a future ticket
-// lists the step in FLOWS), while it returns true. So far only the v2_* screens declare this, so `ans` is
-// always onbFlow.answersV2 — same generalisation stepSkipped would need if a v1 step ever wanted it too.
+// screen (the standalone preview's own #onbStepCta, or the wired flow's #flowCta), while it returns true.
+// Only the v2_* screens declare this, so `ans` is always onbFlow.answersV2.
 function applyStepBlock(step, cta){
   if(!cta || typeof step.blocked!=="function") return;
   const gated = !!step.blocked(onbFlow.answersV2 || onbAnswersV2Default());
@@ -14963,7 +14538,7 @@ function flowStart(startKey){
   onbFlow.workingAgents=null; onbFlow.reportStats=null;   // CAS-629: a fresh roster commits fresh every run
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("flow_start");
-  gotoStep(startKey||"briefing1","none");
+  gotoStep(startKey||"v2_intro","none");   // CAS-911: the first-run entry is the v2 sequence now
 }
 function flowStop(){
   flowOn=false; flowNewAgent=false; briefOn=false; menuStepOn=false;
@@ -16330,7 +15905,6 @@ function openOnbStep(key, agentKey){
   // "above average+" for a bar that is no longer there, which is a claim nothing enforces.
   onbFlow.draft.imdb=0; onbFlow.draft.ratingStop=0;
   if(key==="selectivity") autoRelaxBar();
-  if(key==="briefing1") onbFlow.answers = onbAnswersDefault();   // CAS-626: fresh roster on every preview open
   const picked = agentKey && STARTERS.find(x=>x.key===agentKey);
   // CAS-222: the preview offers the same channel+preset name the wired flow does, so a ?step=name preview
   // doesn't show a different default from the real thing.
@@ -16586,13 +16160,14 @@ function openOnbMembership(){
   $("membScreen").classList.add("open"); document.body.style.overflow="hidden";
   logEvent("membership_shown",{onboarding:true, agents:n});
 }
-// Change E4: the one back door this page has ever had — S7 is the only membership context with an S6 to
-// return to. Re-opens the flow on "report" with flowOn restored, exactly like any other flowBack() hop;
-// notifyPrefs (and so the email field) is untouched by any of this, so it comes back populated (AC7).
+// Change E4: the one back door this page has ever had — membership is the only context with a last
+// onboarding step to return to. Re-opens the flow on v2_done (CAS-911) with flowOn restored, exactly
+// like any other flowBack() hop; notifyPrefs (and so the email field) is untouched by any of this, so
+// it comes back populated (AC7).
 window.onbMembBack=()=>{
   closeMembership();
   flowOn=true;
-  gotoStep("report","back");
+  gotoStep("v2_done","back");
   $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
 };
 // Starting the free month goes straight to the #12 listing with the finish-setup bar (CAS-121) — no invite,
