@@ -333,6 +333,81 @@ class WindowPlacementTests(unittest.TestCase):
         self.assertEqual(counts, {"no_placement": 1})
 
 
+class ForwardWindowMatchTests(unittest.TestCase):
+    """CAS-918: an auto placement forward-matches a moment for the film's NEXT window even
+    though film_watch.windows hasn't caught up yet — the overnight Rent -> Stream rollover this
+    ticket exists for (an auto Watch On that reached the next window unwatched still alerts). A
+    manual placement, or a moment for a window BEHIND the one already placed, never
+    forward-matches — CAS-841's original fail-closed behaviour stands for both."""
+
+    def _movie(self, tmdb_id=8001, title="Rolled-Over Film", status=("rental",)):
+        return {"tmdb_id": tmdb_id, "title": title, "genres": ["Drama"], "status": list(status),
+                "cinema_date": "2026-01-01", "language": "en", "rt_critic": 70, "popularity": 50,
+                "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}],
+                "imdb_rating": 7.5, "imdb_votes": 5000}
+
+    def _cascade(self, moments):
+        return [{"id": "c1", "user_id": "u1", "name": "Everything", "active": True,
+                 "alert_moments": list(moments), "criteria": _criteria(genre=["Drama"], imdb=7.0)}]
+
+    def _match(self, cascades, transitions, film_watches, movie, placement_counts=None):
+        admission = _admit(cascades, today=[movie])
+        return match(cascades, transitions, admission=admission, film_watches=film_watches,
+                    placement_counts=placement_counts)
+
+    # ---- row 1: auto placement climbs forward to the next window ----
+    def test_auto_placement_forward_matches_the_next_window(self):
+        movie = self._movie()
+        cascades = self._cascade(["hits_stream"])
+        watches = [{"user_id": "u1", "movie_id": "8001", "windows": ["rent"],
+                    "sources": {"rent": "auto"}}]
+        t = Transition("8001", movie["title"], "hits_stream", movie=movie)
+        hits = self._match(cascades, [t], watches, movie)
+        self.assertEqual(len(hits.get("u1", [])), 1)
+        self.assertEqual(hits["u1"][0].transition.moment, "hits_stream")
+
+    # ---- row 2: a manual placement never forward-matches ----
+    def test_manual_placement_never_forward_matches(self):
+        movie = self._movie()
+        cascades = self._cascade(["hits_stream"])
+        watches = [{"user_id": "u1", "movie_id": "8001", "windows": ["rent"],
+                    "sources": {"rent": "manual"}}]
+        t = Transition("8001", movie["title"], "hits_stream", movie=movie)
+        counts = {}
+        hits = self._match(cascades, [t], watches, movie, placement_counts=counts)
+        self.assertEqual(hits, {})
+        self.assertEqual(counts, {"wrong_window": 1})
+
+    # ---- row 3: a moment behind the film's own placement never matches ----
+    def test_a_moment_behind_the_placement_never_matches(self):
+        movie = self._movie()
+        cascades = self._cascade(["hits_rent"])
+        watches = [{"user_id": "u1", "movie_id": "8001", "windows": ["stream"],
+                    "sources": {"stream": "auto"}}]
+        t = Transition("8001", movie["title"], "hits_rent", movie=movie)
+        self.assertEqual(self._match(cascades, [t], watches, movie), {})
+
+    # ---- row 4: no placement row at all still fails closed ----
+    def test_no_placement_row_still_fails_closed(self):
+        movie = self._movie()
+        cascades = self._cascade(["hits_stream"])
+        t = Transition("8001", movie["title"], "hits_stream", movie=movie)
+        counts = {}
+        hits = self._match(cascades, [t], [], movie, placement_counts=counts)
+        self.assertEqual(hits, {})
+        self.assertEqual(counts, {"no_placement": 1})
+
+    # ---- row 5: in_cinema auto placement climbs forward to hits_rent ----
+    def test_in_cinema_auto_forward_matches_hits_rent(self):
+        movie = self._movie()
+        cascades = self._cascade(["hits_rent"])
+        watches = [{"user_id": "u1", "movie_id": "8001", "windows": ["in_cinema"],
+                    "sources": {"in_cinema": "auto"}}]
+        t = Transition("8001", movie["title"], "hits_rent", movie=movie)
+        hits = self._match(cascades, [t], watches, movie)
+        self.assertEqual(len(hits.get("u1", [])), 1)
+
+
 class OneAgentPerFilmTests(unittest.TestCase):
     """CAS-784: two of a user's active Cascades both catching the same film at the same moment
     collapse to one hit — the single lowest-`criteria.order` cascade — on email same as on screen
