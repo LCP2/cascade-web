@@ -4746,8 +4746,11 @@ function recomputeFound(){
     let standing=null;
     if(rung>0){
       const si=WATCH_LEVEL_KEYS.findIndex(k=>WINDOW_RUNG[k]===rung);
+      // CAS-917: windowFollowed, not windowUsable — a later window an admitted film has reached is always
+      // followed even with no marker of its own (the start-window model), so Watch On moves forward into it
+      // instead of freezing at the earlier marker-carrying window.
       for(let j=si; j>=0 && j<WATCH_LEVEL_KEYS.length; j++){
-        if(windowUsable(owner,WATCH_LEVEL_KEYS[j])){ standing=WATCH_LEVEL_KEYS[j]; break; }
+        if(windowFollowed(owner,WATCH_LEVEL_KEYS[j])){ standing=WATCH_LEVEL_KEYS[j]; break; }
       }
     }
     const finalKey=(standing && WINDOW_RUNG[standing]>WINDOW_RUNG[earned]) ? standing : earned;
@@ -7105,6 +7108,17 @@ function windowEnabled(key){
 // Usable for placement: switched on AND its own marker isn't Never (null) — the "removed from the track" case.
 function windowUsable(c, key){
   return windowEnabled(key) && c.watchMarkers && c.watchMarkers[key]!=null;
+}
+// CAS-917: the start-window model. An agent's start window is its earliest (lowest-rung) usable window — the
+// one carrying its entry bar. Every enabled window AFTER the start window is always followed, marker or not:
+// an admitted, unwatched film's auto Watch On moves forward into it when the film arrives there. A window
+// before the start window is not followed — it stays Never and placement snaps forward over it, unchanged.
+// No start window at all (nothing usable) means nothing is followed either.
+function windowFollowed(c, key){
+  if(!windowEnabled(key)) return false;
+  if(windowUsable(c, key)) return true;
+  const start = WATCH_LEVEL_KEYS.find(k=>windowUsable(c,k));
+  return !!start && WINDOW_RUNG[key] > WINDOW_RUNG[start];
 }
 // The admission floor is the lowest marker among an agent's usable windows — there is no separate floor
 // control any more (design record §5, CAS-727). No usable window at all means nothing can ever clear it.
@@ -12587,7 +12601,10 @@ function stepCountLine(step, n){
 // listedBy()-built headline above them (CAS-680/CAS-682: a split that doesn't sum is the repeat bug here).
 const PLACEMENT_LABEL = {in_cinema:"Cinema", premium:"Premium", rent:"Rental", stream:"Streaming"};
 function placementSplitHTML(c){
-  const marks=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k)); if(!marks.length) return "";
+  // CAS-917: windowFollowed, not windowUsable — a film auto-placed forward into a marker-less followed window
+  // (the start-window model) is genuinely placed, not unplaced; counting only marker-carrying windows here
+  // would have pushed it into the trailing "unplaced" bucket even though it has a real Watch On value.
+  const marks=WATCH_LEVEL_KEYS.filter(k=>windowFollowed(c,k)); if(!marks.length) return "";
   const listed=MOVIES.filter(m=>listedBy(m,c) && !taggedOut(m));
   const parts=marks.map(k=>{
     const n=listed.filter(m=>filmNotifyState(m.tmdb_id).key===k).length;
@@ -12925,15 +12942,30 @@ const msnLastValue = {};
 // on Streaming · under 60, don't list". A window with no phrase below can never print "undefined".
 const WATCH_LEVEL_PHRASE = {in_cinema:"watch it at the Cinema", premium:"watch it on Premium", rent:"rent it",
   stream:"watch it on Streaming"};
+// CAS-917: the phrase a FOLLOWED (marker-less) window takes in the "then …" suffix — its own short verb,
+// not the marked-clause wording above (stream's marked clause reads "watch it on Streaming"; followed it
+// reads "stream it", per the ticket's own copy).
+const WATCH_LEVEL_FOLLOW_PHRASE = {premium:"watch it on Premium", rent:"rent it", stream:"stream it"};
 function msnValueLine(c){
   const marks=WATCH_LEVEL_KEYS.filter(k=>windowUsable(c,k));
   if(!marks.length) return "No window is armed — nothing will ever qualify.";
   const byScore=[...marks].sort((a,b)=>c.watchMarkers[b]-c.watchMarkers[a]);
   const phrase = k => WATCH_LEVEL_PHRASE[k] || `watch it on ${WATCH_LEVEL_SHORT_LABEL[k]}`;
+  // CAS-917: marks is in ladder order (WATCH_LEVEL_KEYS' own order), so marks[0] is the earliest — the start
+  // window. Every enabled window after it with no marker of its own is followed, not Never, so its clause
+  // ("then rent it") rides on the start window's own sentence, in ladder order.
+  const startKey=marks[0];
+  const followPhrase = k => WATCH_LEVEL_FOLLOW_PHRASE[k] || phrase(k);
+  const followSuffix=WATCH_LEVEL_KEYS
+    .filter(k=>windowEnabled(k) && c.watchMarkers[k]==null && WINDOW_RUNG[k]>WINDOW_RUNG[startKey])
+    .map(k=>`, then ${followPhrase(k)}`).join("");
   // CAS-762: an Off window reads as its own label plus "Off — any score" rather than a numeric floor.
-  const parts=byScore.map(k=>c.watchMarkers[k]===0
-    ? `${WATCH_LEVEL_SHORT_LABEL[k]} Off — any score`
-    : `${c.watchMarkers[k]}+, ${phrase(k)}`);
+  const parts=byScore.map(k=>{
+    const base = c.watchMarkers[k]===0
+      ? `${WATCH_LEVEL_SHORT_LABEL[k]} Off — any score`
+      : `${c.watchMarkers[k]}+, ${phrase(k)}`;
+    return k===startKey ? base+followSuffix : base;
+  });
   const floor=Math.min(...marks.map(k=>c.watchMarkers[k]));
   // CAS-762: a floor of 0 excludes nothing by score, so the trailing floor clause is dropped, not printed as 0.
   return floor>0 ? `${parts.join(" · ")} · under ${floor}, don't list` : parts.join(" · ");
@@ -12944,13 +12976,22 @@ function msnValueLine(c){
 function msnChipsHTML(c){
   const keys=WATCH_LEVEL_KEYS.filter(k=>windowEnabled(k));
   if(!keys.length) return "";
+  // CAS-917: the start window — the earliest enabled+marked one. A window after it with no marker of its own
+  // now follows rather than reading Never (the start-window model), so its chip names what it follows instead.
+  const startKey=WATCH_LEVEL_KEYS.find(k=>windowUsable(c,k));
   const chips=keys.map(k=>{
     const dot=`<span class="agdot" style="background:${WINDOW_COLOR[k]}"></span>`;
     const onVal = c.watchMarkers[k]===0 ? "Off" : `${c.watchMarkers[k]}+`;   // CAS-762: never a literal "0+"
-    return windowUsable(c,k)
-      ? `<span class="msnchip on">${dot}<span class="msnchiplbl" data-key="${k}">${esc(WATCH_LEVEL_SHORT_LABEL[k])} ${onVal}</span>
+    if(windowUsable(c,k)){
+      return `<span class="msnchip on">${dot}<span class="msnchiplbl" data-key="${k}">${esc(WATCH_LEVEL_SHORT_LABEL[k])} ${onVal}</span>
           <button type="button" class="msnchipx" data-act="never" data-key="${k}"
-            aria-label="Set ${escA(WATCH_LEVEL_SHORT_LABEL[k])} to Never">✕</button></span>`
+            aria-label="Set ${escA(WATCH_LEVEL_SHORT_LABEL[k])} to Never">✕</button></span>`;
+    }
+    const follows = startKey && WINDOW_RUNG[k]>WINDOW_RUNG[startKey];
+    return follows
+      ? `<span class="msnchip off">${dot}<span class="msnchiplbl">${esc(WATCH_LEVEL_SHORT_LABEL[k])} — follows ${esc(WATCH_LEVEL_SHORT_LABEL[startKey])}</span>
+          <button type="button" class="msnchipplus" data-act="restore" data-key="${k}"
+            aria-label="Add a ${escA(WATCH_LEVEL_SHORT_LABEL[k])} score">＋</button></span>`
       : `<span class="msnchip off">${dot}<span class="msnchiplbl">${esc(WATCH_LEVEL_SHORT_LABEL[k])} — never</span>
           <button type="button" class="msnchipplus" data-act="restore" data-key="${k}"
             aria-label="Restore ${escA(WATCH_LEVEL_SHORT_LABEL[k])}">＋</button></span>`;
