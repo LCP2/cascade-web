@@ -418,24 +418,110 @@ test("wmQScore: the rounded mean of whichever Watchmode terms are present, scale
 });
 
 test("wmCascadeScore: follows cascadeScore's three primaryStatus branches, over wmQScore instead of qScore", () => {
+  // CAS-907: the pre-release/blended branches now dispatch to wmCinemaScore (the Watchmode-sourced buzz
+  // chain), not cinemaScore (TMDB-sourced) — that shared call was the defect this ticket fixes, so pinning
+  // cinemaScore here would re-pin the bug.
   const upcoming = E.MOVIES.find(m => E.primaryStatus(m) === "upcoming");
   assert.ok(upcoming, "no upcoming film found — this test would prove nothing");
-  assert.equal(E.wmCascadeScore(upcoming), E.cinemaScore(upcoming), "upcoming should return cinemaScore unchanged");
+  assert.equal(E.wmCascadeScore(upcoming), E.wmCinemaScore(upcoming), "upcoming should return wmCinemaScore unchanged");
 
   const released = E.MOVIES.find(m => !E.isPreRelease(m));
   assert.ok(released, "no released film found — this test would prove nothing");
   assert.equal(E.wmCascadeScore(released), E.wmQScore(released), "released (not in_cinema/opening_week) should return wmQScore unchanged");
 
-  // A film in cinemas (or its opening week) whose wmQScore is -1 falls back to cinemaScore rather than
+  // A film in cinemas (or its opening week) whose wmQScore is -1 falls back to wmCinemaScore rather than
   // returning a negative number, exactly like cascadeScore falls back to buzz when qScore is -1.
   const cinemaFilm = E.MOVIES.find(m => (E.primaryStatus(m)==="in_cinema" || E.primaryStatus(m)==="opening_week"));
   assert.ok(cinemaFilm, "no in_cinema/opening_week film found — this test would prove nothing");
   const noWm = { ...cinemaFilm, wm_user_rating: null, wm_critic_score: null };
-  assert.equal(E.wmCascadeScore(noWm), E.cinemaScore(noWm), "in_cinema/opening_week with no Watchmode terms should fall back to cinemaScore, not a negative number");
+  assert.equal(E.wmCascadeScore(noWm), E.wmCinemaScore(noWm), "in_cinema/opening_week with no Watchmode terms should fall back to wmCinemaScore, not a negative number");
 
   const withWm = { ...cinemaFilm, wm_user_rating: 8.0, wm_critic_score: 90 };
-  const expectedBuzz = E.cinemaScore(withWm), expectedWm = E.wmQScore(withWm);
-  assert.equal(E.wmCascadeScore(withWm), Math.round((expectedBuzz+expectedWm)/2), "in_cinema/opening_week with a real wmQScore should blend it with cinemaScore");
+  const expectedBuzz = E.wmCinemaScore(withWm), expectedWm = E.wmQScore(withWm);
+  assert.equal(E.wmCascadeScore(withWm), Math.round((expectedBuzz+expectedWm)/2), "in_cinema/opening_week with a real wmQScore should blend it with wmCinemaScore");
+});
+
+// ---- CAS-907: THE WATCHMODE BUZZ CHAIN — a real mirror of buzzPctlOf/cinemaScore, not a shared call --------
+// Before this ticket wmCascadeScore's pre-release/blended branches called the same cinemaScore(m) as
+// cascadeScore, so every pre-release film's "WM" figure was the TMDB/OMDb score under a Watchmode label —
+// worse than a duplicate, since it read as the two sources agreeing when the second had not been consulted.
+// WM_BUZZ_POP_VALS/wmBuzzPctlOf/wmReleasedScoreVals/wmCinemaScore are the real Watchmode-sourced mirror.
+// They are plain module-level arrays/functions exported by reference (the same "mutate in place, restore in
+// `finally`" pattern CAS-742 AC2/CAS-748 AC6 already use on BUZZ_POP_VALS/MOVIES), which is required here
+// because this checkout's real catalogue currently carries no wm_popularity_percentile data at all — the
+// backfill that populates it is CAS-906's job, not this ticket's (see its "Do not re-raise" list).
+test("CAS-907 AC2: wmCascadeScore differs from cascadeScore for an upcoming film ranked differently on the TMDB and Watchmode buzz axes", () => {
+  const originalMovies = E.MOVIES.slice();
+  const savedBuzz = E.BUZZ_POP_VALS.slice();
+  const savedWmBuzz = E.WM_BUZZ_POP_VALS.slice();
+  try {
+    // Ranks top of the TMDB cohort (popularity 50 of [5,50]) but bottom of the Watchmode one
+    // (wm_popularity_percentile 5 of [5,50]) — the two axes deliberately disagree.
+    const upcoming = { status: ["upcoming"], popularity: 50, wm_popularity_percentile: 5 };
+    const released = { status: ["included_streaming"], imdb_rating: 9.0, imdb_votes: 100000,
+      rt_critic: null, metacritic: null, wm_user_rating: 2.0, wm_critic_score: null };
+    E.MOVIES.length = 0; E.MOVIES.push(upcoming, released);
+    E.BUZZ_POP_VALS.length = 0; E.BUZZ_POP_VALS.push(5, 50);
+    E.WM_BUZZ_POP_VALS.length = 0; E.WM_BUZZ_POP_VALS.push(5, 50);
+    E.invalidateComputeCaches();
+    assert.equal(E.buzzPctlOf(upcoming), 100, "setup: upcoming should rank top of the TMDB buzz cohort");
+    assert.equal(E.wmBuzzPctlOf(upcoming), 50, "setup: upcoming should rank mid of the Watchmode buzz cohort");
+    assert.notEqual(E.cascadeScore(upcoming), E.wmCascadeScore(upcoming),
+      "wmCascadeScore must not silently mirror cascadeScore once the TMDB and Watchmode buzz signals disagree");
+  } finally {
+    E.MOVIES.length = 0; E.MOVIES.push(...originalMovies);
+    E.BUZZ_POP_VALS.length = 0; E.BUZZ_POP_VALS.push(...savedBuzz);
+    E.WM_BUZZ_POP_VALS.length = 0; E.WM_BUZZ_POP_VALS.push(...savedWmBuzz);
+    E.invalidateComputeCaches();
+  }
+});
+
+test("CAS-907 AC3: wmBuzzPctlOf returns null with no wm_popularity_percentile, and wmCinemaScore falls back to -1", () => {
+  const noWm = { status: ["upcoming"], popularity: 50 };
+  assert.equal(E.wmBuzzPctlOf(noWm), null, "a film with no wm_popularity_percentile should not rank");
+  assert.equal(E.wmCinemaScore(noWm), -1, "with no buzz percentile to map, wmCinemaScore should return -1");
+});
+
+test("CAS-907 AC4: wmReleasedScoreVals is derived from wmQScore, not qScore, and wmCinemaScore maps onto it", () => {
+  const originalMovies = E.MOVIES.slice();
+  const savedBuzz = E.BUZZ_POP_VALS.slice();
+  const savedWmBuzz = E.WM_BUZZ_POP_VALS.slice();
+  try {
+    const upcoming = { status: ["upcoming"], popularity: 100, wm_popularity_percentile: 5 };
+    // qScore and wmQScore deliberately land far apart (90 vs 20) so a wrong lookup is unmissable.
+    const released = { status: ["included_streaming"], imdb_rating: 9.0, imdb_votes: 100000,
+      rt_critic: null, metacritic: null, wm_user_rating: 2.0, wm_critic_score: null };
+    E.MOVIES.length = 0; E.MOVIES.push(upcoming, released);
+    E.BUZZ_POP_VALS.length = 0; E.BUZZ_POP_VALS.push(100);
+    E.WM_BUZZ_POP_VALS.length = 0; E.WM_BUZZ_POP_VALS.push(5);
+    E.invalidateComputeCaches();
+    assert.equal(E.qScore(released), 90, "setup: qScore should read the OMDb-derived figure");
+    assert.equal(E.wmQScore(released), 20, "setup: wmQScore should read the Watchmode-derived figure");
+    assert.deepEqual([...E.releasedScoreVals()], [90], "setup: releasedScoreVals should carry qScore, not wmQScore");
+    assert.deepEqual([...E.wmReleasedScoreVals()], [20], "setup: wmReleasedScoreVals should carry wmQScore, not qScore");
+    assert.equal(E.cinemaScore(upcoming), 90, "sanity: cinemaScore maps buzz onto qScore's distribution");
+    assert.equal(E.wmCinemaScore(upcoming), 20, "wmCinemaScore should map buzz onto wmQScore's distribution, not qScore's");
+  } finally {
+    E.MOVIES.length = 0; E.MOVIES.push(...originalMovies);
+    E.BUZZ_POP_VALS.length = 0; E.BUZZ_POP_VALS.push(...savedBuzz);
+    E.WM_BUZZ_POP_VALS.length = 0; E.WM_BUZZ_POP_VALS.push(...savedWmBuzz);
+    E.invalidateComputeCaches();
+  }
+});
+
+test("CAS-907 AC5: tied wm_popularity_percentile values produce tied wmBuzzPctlOf results", () => {
+  const savedWmBuzz = E.WM_BUZZ_POP_VALS.slice();
+  try {
+    E.WM_BUZZ_POP_VALS.length = 0;
+    E.WM_BUZZ_POP_VALS.push(10, 50, 50, 50, 90);
+    const a = { status: ["upcoming"], wm_popularity_percentile: 50 };
+    const b = { status: ["in_cinema"], wm_popularity_percentile: 50 };
+    assert.equal(E.wmBuzzPctlOf(a), E.wmBuzzPctlOf(b),
+      "identical wm_popularity_percentile values must rank identically, not be broken apart");
+  } finally {
+    E.WM_BUZZ_POP_VALS.length = 0;
+    E.WM_BUZZ_POP_VALS.push(...savedWmBuzz);
+  }
 });
 
 // ---- 9d. qScoreSourcesText NAMES THE THREE RAW SOURCES (CAS-706) -------------------------------------------
