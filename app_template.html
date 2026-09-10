@@ -2891,6 +2891,25 @@
     font-family:var(--font-display);letter-spacing:-.02em;padding:0 1px}
   .agmrow.b{font-size:10.5px;color:var(--faint);gap:10px;padding-top:5px}
   .agmrow.b b{color:var(--dim);font-weight:700}
+  /* Onboarding agent reveal — the Agents row, assembled in front of you. */
+  .eyebrow{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--faint);margin:14px 0 12px}
+  .onbreveal .agrow{box-shadow:0 18px 40px rgba(0,0,0,.45)}
+  @keyframes onbrise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+  @keyframes onbglow{0%{box-shadow:0 0 0 0 rgba(124,92,255,.55)}
+                     100%{box-shadow:0 0 0 16px rgba(124,92,255,0)}}
+  .onbreveal .agrow{animation:onbrise .42s cubic-bezier(.2,.7,.3,1) both}
+  .onbreveal .agicon{animation:onbglow .9s ease-out .25s both}
+  .onbreveal .agsrow{animation:onbrise .34s cubic-bezier(.2,.7,.3,1) both}
+  .onbreveal .agsrow:nth-child(1){animation-delay:.20s}
+  .onbreveal .agsrow:nth-child(2){animation-delay:.29s}
+  .onbreveal .agsrow:nth-child(3){animation-delay:.38s}
+  .onbreveal .agsrow:nth-child(4){animation-delay:.47s}
+  .onbreveal .agsrow:nth-child(5){animation-delay:.56s}
+  .onbreveal .agmetrics{animation:onbrise .4s cubic-bezier(.2,.7,.3,1) .74s both}
+  @media (prefers-reduced-motion: reduce){
+    .onbreveal .agrow,.onbreveal .agicon,.onbreveal .agsrow,.onbreveal .agmetrics{animation:none}
+  }
 
   .agwarn{font-size:11px;color:var(--amber);border-top:1px solid var(--line);padding-top:6px;margin-top:2px;
     display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -14451,6 +14470,42 @@ ${who.includes("kids") ? `
       });
     },
   },
+  // ---- CAS-909: onboarding v2's agent reveal — four preview-only steps, reachable via ?step=<key> only.
+  // Not listed in FLOWS: the cutover (wiring these in, retiring the old sequence) is CAS-911.
+  v2_massive: {
+    noAgent: true, noSkip: true,
+    body(){
+      const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_massive");
+      return c ? onbAgentRevealHTML(c, 1, "Your first agent") : "";
+    },
+    wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
+  },
+  v2_favs: {
+    noAgent: true, noSkip: true,
+    body(){
+      const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_favs");
+      return c ? onbAgentRevealHTML(c, 2, "Your second agent") : "";
+    },
+    wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
+  },
+  v2_date: {
+    noAgent: true, noSkip: true,
+    skip: ans => ans.partner !== "yes",
+    body(){
+      const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_date");
+      return c ? onbAgentRevealHTML(c, 3, "One for the two of you") : "";
+    },
+    wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
+  },
+  v2_family: {
+    noAgent: true, noSkip: true,
+    skip: ans => ans.kids !== "yes",
+    body(){
+      const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_family");
+      return c ? onbAgentRevealHTML(c, 4, "And one for the whole house") : "";
+    },
+    wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
+  },
 };
 let onbStepKey=null;
 // ================= CAS-188: the linear signup flow =================================================
@@ -14934,6 +14989,53 @@ function renderAgentsScreen(){
     </div>`;
   wireAgentsDrag();
   console.log('[CAS-664] renderAgentsScreen took', (performance.now()-_t664).toFixed(1), 'ms for', n, 'agents');
+}
+// ---- CAS-909: onboarding v2's agent reveal — the app's own Agents-screen row, assembled in front of the
+// user as each agent is created (buildOnbAgentsV2, CAS-908). Every value below reads off the SAME
+// functions renderAgentsScreen() calls above; a second set of summary functions is how onboarding and the
+// Agents screen would end up describing the same agent two different ways.
+// The NOTIFY row has no Agents-screen counterpart — the one new value function this ticket adds.
+function onbNotifySum(c){
+  const ww=c.watchWindows||{};
+  if(ww.upcoming && ww.upcoming.notify) return "On announcement · when it hits cinema";
+  const words=WATCH_LEVEL_KEYS.filter(k=>ww[k] && ww[k].notify).map(k=>AGROW_WINDOW_WORD[k]);
+  return words.length ? `When it hits ${words.join(" · ")}` : null;
+}
+// Mirrors renderAgentsScreen()'s row markup, minus .aggrip and .ag-edit — there is nothing to reorder or
+// edit yet. A row whose value would read Any is omitted entirely, so onboarding never teaches a new user
+// to read past an empty row; the AWARDS row is never rendered here (every generated agent carries
+// selAwards: 0). N (watchCount) is always live, never a stored or constant figure.
+function onbAgentRevealHTML(c, rank, eyebrow){
+  const rows=[];
+  const styles=agentStylesSum(c);
+  if(styles!=="Any style") rows.push(`<span class="agsrow"><span class="agslbl">STYLES</span><span class="agsval">${esc(styles)}</span></span>`);
+  rows.push(`<span class="agsrow"><span class="agslbl">SCORE</span><span class="agsval">${agentCascadeSumHTML(c)}</span></span>`);
+  const budget=agentBudgetSum(c);
+  if(budget!=="Any") rows.push(`<span class="agsrow"><span class="agslbl">BUDGET</span><span class="agsval">${esc(budget)}</span></span>`);
+  const audience=agentAudienceSum(c);
+  if(audience!=="any age, any year") rows.push(`<span class="agsrow"><span class="agslbl">AUDIENCE</span><span class="agsval">${esc(audience)}</span></span>`);
+  const notify=onbNotifySum(c);
+  if(notify) rows.push(`<span class="agsrow"><span class="agslbl">NOTIFY</span><span class="agsval">${esc(notify)}</span></span>`);
+  const n=watchCount(c);
+  const rowB = n===0 ? `<span class="agmstat">Nothing matching that yet</span>`
+    : `<span class="agmstat">Found <b>${n}</b> already</span>`;
+  return `<p class="eyebrow">${esc(eyebrow)}</p>
+    <div class="onbreveal">
+      <div class="agrow agrank-${Math.min(rank,6)}">
+        <span class="agranker"><span class="agrank" aria-hidden="true">${rank}</span></span>
+        <span class="agbody">
+          <span class="agtop">
+            <span class="agicon" aria-hidden="true">${c.icon}</span>
+            <span class="agnamewrap">
+              <span class="agname">${esc(c.name)}</span>
+              <span class="agwho">${esc(WHO_LABELS[c.who])}</span>
+            </span>
+          </span>
+          <span class="agsettings">${rows.join("")}</span>
+          <span class="agmetrics"><span class="agmrow a"><span class="agmstat">watching for you from today</span><span class="agmstat total"><b>${n}</b> movies</span></span><span class="agmrow b">${rowB}</span></span>
+        </span>
+      </div>
+    </div>`;
 }
 // ================= CAS-636: Moving — the alert feed made visible =================
 // CAS-848: the screen's own subtitle, shared by the loading state and the real one so they never say two
