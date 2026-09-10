@@ -2615,6 +2615,8 @@
   .stepprog i{display:block;height:100%;width:0;border-radius:0;background:var(--grad);
     transition:width var(--slidedur) cubic-bezier(.4,0,.2,1)}
   .steplbl{flex:0 0 auto;font-size:11.5px;font-weight:700;color:var(--dim);white-space:nowrap}
+  /* CAS-910: the step counter text is gone (Change 4) — the rail alone still fills. */
+  #stepLbl{display:none}
   /* The one Continue. Pinned to the bottom so it is in the same place on every step — you never hunt
      for it, and a long step never hides it below the fold. */
   .stepnav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:var(--flow-w);
@@ -2707,6 +2709,25 @@
   .obag.dim{border-color:var(--line);background:none;color:var(--faint)}
   .obag.pop{animation:obpop .28s ease-out}
   @keyframes obpop{0%{transform:scale(.82);opacity:0}60%{transform:scale(1.06)}100%{transform:scale(1);opacity:1}}
+  /* ==== CAS-910: the v2 onboarding question screens' own option row — a radio card with an optional
+     sub-line, since more than one screen here needs to say more than the label ("Often enough to plan
+     around it"). Same select skin family as .bigtoggle (border+tint on select) but a filled dot on the
+     left rather than a check on the right. */
+  .obopt{display:flex;align-items:flex-start;gap:12px;width:100%;text-align:left;cursor:pointer;
+    background:var(--panel);border:1.5px solid var(--line);border-radius:16px;padding:16px 18px;
+    margin-bottom:10px;color:var(--ink);transition:border-color .12s,background .12s}
+  .obopt .obradio{flex:0 0 auto;width:22px;height:22px;margin-top:1px;border-radius:50%;
+    border:2px solid var(--line);position:relative}
+  .obopt.on{border-color:var(--accent);background:rgba(124,92,255,.12)}
+  .obopt.on .obradio{border-color:var(--accent)}
+  .obopt.on .obradio::after{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--accent)}
+  .obopttitle{font-size:15px;font-weight:650}
+  .oboptsub{font-size:12px;color:var(--faint);margin-top:2px}
+  .obopt:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* The two statement-only screens (v2_intro/v2_handoff) — a headline with one highlighted phrase, same
+     copy weight as .obhd, plus a longer explanatory paragraph .obsub is too small a font for. */
+  .obintrotext{font-size:14px;line-height:1.55;color:var(--dim);margin:10px 2px 0}
+  .obhi{color:var(--brand-blue)}
   /* ==== CAS-629 Onboarding S5/S6: the roster commits (S5) and reports back (S6) — both are read-only
      rows/cards inside the shared .obwrap skin above, nothing here is a control. */
   .obworklist{display:flex;flex-direction:column;gap:10px;margin:18px 0 4px}
@@ -5039,7 +5060,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1077, "commit": "f5202ef", "builtAt": "2026-09-10T02:22:12Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1078, "commit": "10f99a1", "builtAt": "2026-09-10T02:48:04Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -13642,6 +13663,27 @@ const TB_BODIES = {
     paint();
   },
 };
+// CAS-910: shared little renderers for the v2 question screens' own option rows (a radio card with an
+// optional sub-line — see .obopt in the stylesheet) and multi-select chips (the same .chip.gen look
+// briefing1/briefing2/together already use, over a plain ansV2 array field instead of ans.who/never).
+function obOptHTML(defs, current){
+  return defs.map(([val,label,sub])=>`<button type="button" class="obopt${current===val?" on":""}" role="radio"
+      aria-checked="${current===val}" data-val="${escA(val)}">
+    <span class="obradio" aria-hidden="true"></span>
+    <span class="obopttext"><span class="obopttitle">${esc(label)}</span>${sub?`<span class="oboptsub">${esc(sub)}</span>`:""}</span>
+  </button>`).join("");
+}
+function wireObOpt(container, onPick){
+  if(!container) return;
+  container.querySelectorAll(".obopt[data-val]").forEach(b=>{ b.onclick=()=>onPick(b.dataset.val); });
+}
+function obGenChip(label, on, onTap){
+  const b=document.createElement("button");
+  b.type="button"; b.className="chip gen"+(on?" on":"");
+  b.textContent=label; b.setAttribute("aria-pressed", String(on));
+  b.onclick=onTap;
+  return b;
+}
 // Step registry — each ticket adds one entry. `progress` is the mock's fill %; `body()` builds the control;
 // `wire()` attaches the live control once it's in the DOM.
 const SHARP_STEPS = {
@@ -14470,6 +14512,305 @@ ${who.includes("kids") ? `
       });
     },
   },
+  // ---- CAS-910: onboarding v2's ten question screens, preview-only, reachable via ?step=<key> only. Not
+  // listed in FLOWS: the cutover (wiring these in, retiring the old sequence) is CAS-911. Every screen here
+  // writes onbFlow.answersV2 and persists through onbAnswersV2Save() — onbFlow.answers/onbAnswersDefault()/
+  // ONB_ANSWERS_KEY (the live sequence's own) are untouched.
+  v2_intro: {
+    noAgent: true, noSkip: true,
+    body(){
+      return `<div class="obwrap">
+  <h2 class="obhd">First, we'll build you a <span class="obhi">Massive Movies</span> agent.</h2>
+  <p class="obintrotext">It watches for the biggest movies of each year — the ones with a Cascade score of
+    90 or more — and tells you the moment one lands somewhere you can watch it.</p>
+</div>`;
+    },
+    wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
+  },
+  v2_cinema: {
+    noAgent: true, noSkip: true,
+    title: "Do you ever go to the cinema?",
+    blocked: ans => ans.cinema==null,
+    body(){
+      const ans = onbFlow.answersV2 || onbAnswersV2Default();
+      return `<div class="obopts" id="obCinemaOpts">${obOptHTML([
+        ["yes","Yes","Often enough to plan around it"],
+        ["no","No","I wait for it to come home"],
+      ], ans.cinema)}</div>`;
+    },
+    wire(){
+      onbFlow.answersV2=onbAnswersV2Load();
+      wireObOpt($("obCinemaOpts"), val=>{
+        onbFlow.answersV2.cinema=val;
+        onbAnswersV2Save(onbFlow.answersV2);
+        renderOnbStep("v2_cinema");
+      });
+    },
+  },
+  v2_rent: {
+    noAgent: true, noSkip: true,
+    title: "Do you ever rent movies?",
+    blocked: ans => ans.rent==null,
+    body(){
+      const ans = onbFlow.answersV2 || onbAnswersV2Default();
+      return `<div class="obopts" id="obRentOpts">${obOptHTML([
+        ["yes","Yes","Happy to pay for the right film"],
+        ["no","No","Streaming only"],
+      ], ans.rent)}</div>`;
+    },
+    wire(){
+      onbFlow.answersV2=onbAnswersV2Load();
+      wireObOpt($("obRentOpts"), val=>{
+        onbFlow.answersV2.rent=val;
+        onbAnswersV2Save(onbFlow.answersV2);
+        renderOnbStep("v2_rent");
+      });
+    },
+  },
+  v2_handoff: {
+    noAgent: true, noSkip: true,
+    body(){
+      return `<div class="obwrap">
+  <h2 class="obhd">… next, an agent to find your <span class="obhi">personal favourite movies</span>.</h2>
+  <p class="obintrotext">Three questions, and it goes to work.</p>
+</div>`;
+    },
+    wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
+  },
+  v2_styles: {
+    noAgent: true, noSkip: true,
+    title: "What are your favourite styles of movie?",
+    body(){
+      return `<p class="ossub">Pick as many as you like.</p><div class="chips" id="obStylesChips"></div>`;
+    },
+    wire(){
+      onbFlow.answersV2=onbAnswersV2Load();
+      const ans=onbFlow.answersV2;
+      const box=$("obStylesChips");
+      if(box){
+        box.innerHTML="";
+        ONB_GENRES.forEach(g=>{
+          box.appendChild(obGenChip(g, ans.styles.includes(g), ()=>{
+            const i=ans.styles.indexOf(g);
+            i<0 ? ans.styles.push(g) : ans.styles.splice(i,1);
+            onbAnswersV2Save(ans);
+            renderOnbStep("v2_styles");
+          }));
+        });
+      }
+    },
+  },
+  // CAS-910 Change 2: budgetCardHTML()'s own control (CONT_DIALS.scale/SCALE_REF/.vslider/scaleReadout),
+  // minus the ALL WINDOWS scope chip and the "budget isn't known yet" switch — both confuse a first-run
+  // user with no mental model of windows yet. Built by hand rather than via reqCardHTML/budgetCardHTML
+  // themselves, since neither takes an option to omit either piece — everything else about the control
+  // (the dial state, the ladder, the readout) is theirs, unchanged.
+  v2_budget: {
+    noAgent: true, noSkip: true,
+    title: "Do you go for big Budget Movies?",
+    body(){
+      onbFlow.answersV2 = onbFlow.answersV2 || onbAnswersV2Load();
+      onbFlow.scaleVal = onbFlow.answersV2.selScale || 0;
+      const cont=CONT_DIALS.scale, v=cont.get(), marks=cont.marks(v);
+      const slider=`<div class="vslider">
+          <div class="vtrack"><div class="vfillbar" style="width:${cont.pos(v)}%"></div></div>
+          <div class="vnotches">${marks.map(mk=>`<span class="vnotch ${mk.lit?"lit":""}" style="left:${mk.pos}%"></span>`).join("")}</div>
+          <input type="range" id="onbDial_scale" min="${cont.min}" max="${cont.max}" step="${cont.step}"
+                 value="${cont.rawOf(v)}" aria-label="${escA(cont.aria)}">
+        </div>
+        <div class="vlabels stag">${marks.map((mk,i)=>`<button type="button" class="vsnap ${mk.lit?"on":""} ${i%2?"lo":""}" data-snap="${mk.snap}"
+          style="left:${mk.pos}%;transform:${mk.pos<=0?"translateX(0)":mk.pos>=100?"translateX(-100%)":"translateX(-50%)"}">${esc(mk.label)}${mk.sub?`<small>${esc(mk.sub)}</small>`:""}</button>`).join("")}</div>`;
+      return `<div class="osdial reqcard">
+        <div class="osdh"><span class="em">🎬</span><span class="dl">Movie Budget</span></div>
+        <p class="oscap">How big the film is — budget or worldwide gross.</p>
+        <p class="reqval" id="reqBudgetVal">${esc(cont.read(v))}</p>
+        ${slider}
+      </div>`;
+    },
+    wire(){
+      onbFlow.answersV2=onbAnswersV2Load();
+      wireReqCards();
+      const persist=()=>{
+        onbFlow.answersV2.selScale = onbFlow.scaleVal||0;
+        onbAnswersV2Save(onbFlow.answersV2);
+      };
+      const r=$("onbDial_scale");
+      if(r){
+        r.addEventListener("input", persist);
+        r.closest(".osdial").querySelectorAll(".vsnap[data-snap]").forEach(b=>b.addEventListener("click", persist));
+      }
+    },
+  },
+  v2_ages: {
+    noAgent: true, noSkip: true,
+    title: "What age ratings should it bring you?",
+    body(){
+      return `<div class="chips" id="obAgesChips"></div>`;
+    },
+    wire(){
+      onbFlow.answersV2=onbAnswersV2Load();
+      const ans=onbFlow.answersV2;
+      const box=$("obAgesChips");
+      if(box){
+        box.innerHTML="";
+        AGE_LEVELS.forEach(a=>{
+          box.appendChild(obGenChip(a, ans.ages.includes(a), ()=>{
+            const i=ans.ages.indexOf(a);
+            i<0 ? ans.ages.push(a) : ans.ages.splice(i,1);
+            onbAnswersV2Save(ans);
+            renderOnbStep("v2_ages");
+          }));
+        });
+      }
+    },
+  },
+  v2_partner: {
+    noAgent: true, noSkip: true,
+    title: "Do you watch movies with a partner?",
+    blocked: ans => ans.partner==null || (ans.partner==="yes" && ans.partnerDiff==null),
+    body(){
+      const ans = onbFlow.answersV2 || onbAnswersV2Default();
+      let html = `<div class="obopts" id="obPartnerOpts">${obOptHTML([["yes","Yes"],["no","No"]], ans.partner)}</div>`;
+      if(ans.partner==="yes"){
+        html += `<p class="obq" style="margin-top:20px">Different styles with them?</p>
+          <div class="obopts" id="obPartnerDiffOpts">${obOptHTML([
+            ["yes","Yes — let me pick"],
+            ["no","No — same as mine"],
+          ], ans.partnerDiff)}</div>`;
+        if(ans.partnerDiff==="yes") html += `<div class="chips" id="obPartnerStylesChips"></div>`;
+      }
+      return html;
+    },
+    wire(){
+      onbFlow.answersV2=onbAnswersV2Load();
+      const ans=onbFlow.answersV2;
+      wireObOpt($("obPartnerOpts"), val=>{
+        ans.partner=val;
+        if(val!=="yes"){ ans.partnerDiff=null; ans.partnerStyles=[]; }
+        onbAnswersV2Save(ans);
+        renderOnbStep("v2_partner");
+      });
+      wireObOpt($("obPartnerDiffOpts"), val=>{
+        ans.partnerDiff=val;
+        if(val!=="yes") ans.partnerStyles=[];
+        onbAnswersV2Save(ans);
+        renderOnbStep("v2_partner");
+      });
+      const box=$("obPartnerStylesChips");
+      if(box){
+        box.innerHTML="";
+        ONB_GENRES.forEach(g=>{
+          box.appendChild(obGenChip(g, ans.partnerStyles.includes(g), ()=>{
+            const i=ans.partnerStyles.indexOf(g);
+            i<0 ? ans.partnerStyles.push(g) : ans.partnerStyles.splice(i,1);
+            onbAnswersV2Save(ans);
+            renderOnbStep("v2_partner");
+          }));
+        });
+      }
+    },
+  },
+  v2_kids: {
+    noAgent: true, noSkip: true,
+    title: "Do you watch movies with children?",
+    blocked: ans => ans.kids==null,
+    body(){
+      const ans = onbFlow.answersV2 || onbAnswersV2Default();
+      let html = `<div class="obopts" id="obKidsOpts">${obOptHTML([["yes","Yes"],["no","No"]], ans.kids)}</div>`;
+      if(ans.kids==="yes"){
+        html += `<p class="obq" style="margin-top:20px">Which age ratings are OK?</p>
+          <p class="oboptsub" style="margin:-4px 0 9px">This applies to the Family agent only.</p>
+          <div class="chips" id="obKidAgesChips"></div>`;
+      }
+      return html;
+    },
+    wire(){
+      onbFlow.answersV2=onbAnswersV2Load();
+      const ans=onbFlow.answersV2;
+      wireObOpt($("obKidsOpts"), val=>{
+        ans.kids=val;
+        onbAnswersV2Save(ans);
+        renderOnbStep("v2_kids");
+      });
+      const box=$("obKidAgesChips");
+      if(box){
+        box.innerHTML="";
+        AGE_LEVELS.forEach(a=>{
+          box.appendChild(obGenChip(a, ans.kidAges.includes(a), ()=>{
+            const i=ans.kidAges.indexOf(a);
+            i<0 ? ans.kidAges.push(a) : ans.kidAges.splice(i,1);
+            onbAnswersV2Save(ans);
+            renderOnbStep("v2_kids");
+          }));
+        });
+      }
+    },
+  },
+  // CAS-910 Change 1 (services row): reuses the account-level My-services screen's OWN store (prefs.sub/
+  // prefs.store, "cascade_prefs") — not a new list. The chip-drawing below is a copy of SHARP_STEPS.services'
+  // internal draw() (kept separate rather than calling that step directly, since its own wire() also reads/
+  // writes onbFlow.answers and menuStepOn — the v1 briefing plumbing this ticket must not touch).
+  v2_services: {
+    noAgent: true, noSkip: true,
+    title: "Which streaming services do you have?",
+    body(){
+      return `<p class="ossub">Your agents only offer you what you can actually press play on.</p>
+        <div class="svcsec"><div class="svcsech">My Rental Services</div>
+          <div class="chips" id="obSvcStores"></div></div>
+        <div class="svcsec"><div class="svcsech">My Streaming Services</div>
+          <div class="chips" id="obSvcSubs"></div></div>
+        <button type="button" class="bigtoggle svconly${prefs.on?" on":""}" id="obSvcOnly">
+          <span class="btmain">Only show films on my services</span><span class="btcheck">✓</span></button>`;
+    },
+    wire(){
+      onbFlow.answersV2=onbAnswersV2Load();
+      const draw=(boxId, list, set, primary)=>{
+        const box=$(boxId); if(!box) return;
+        const open = !!svcMore[boxId];
+        const alpha=[...list].sort((a,b)=>svcName(a).localeCompare(svcName(b)));
+        let shown, moreCount;
+        if(primary){
+          const rest=alpha.filter(s=>!primary.includes(s));
+          shown = open ? [...primary, ...rest] : primary;
+          moreCount = rest.length;
+        } else {
+          shown = open ? alpha : alpha.slice(0, SVC_LEAD);
+          moreCount = alpha.length - SVC_LEAD;
+        }
+        box.innerHTML="";
+        shown.forEach(svc=>{
+          const c=document.createElement("button");
+          c.type="button";
+          c.className="chip svc"+(set.has(svc)?" on":"");
+          c.setAttribute("aria-pressed", String(set.has(svc)));
+          c.textContent=svcName(svc);
+          c.onclick=()=>{
+            set.has(svc) ? set.delete(svc) : set.add(svc);
+            const on=set.has(svc);
+            c.classList.toggle("on", on); c.setAttribute("aria-pressed", String(on));
+            onChipToggle("svc"); updatePrefSwitch(); updatePrefBtn();
+          };
+          box.appendChild(c);
+        });
+        if(moreCount > 0){
+          const more=document.createElement("button");
+          more.type="button"; more.className="chip svcmore";
+          more.textContent = open ? "− less" : `+ ${moreCount} more`;
+          more.onclick=()=>{ svcMore[boxId]=!open; draw(boxId, list, set, primary); };
+          box.appendChild(more);
+        }
+      };
+      draw("obSvcStores", STORE_SERVICES, prefs.store);
+      draw("obSvcSubs",   SUB_SERVICES,   prefs.sub, PRIMARY_SUB_SERVICES);
+      const tog=$("obSvcOnly");
+      if(tog) tog.onclick=()=>{
+        prefs.on=!prefs.on; savePrefs();
+        tog.classList.toggle("on", prefs.on);
+        updatePrefSwitch(); updatePrefBtn();
+        render();
+      };
+    },
+  },
   // ---- CAS-909: onboarding v2's agent reveal — four preview-only steps, reachable via ?step=<key> only.
   // Not listed in FLOWS: the cutover (wiring these in, retiring the old sequence) is CAS-911.
   v2_massive: {
@@ -14568,6 +14909,16 @@ const stepSkipped = key => {
   const s=SHARP_STEPS[key];
   return !!(s && typeof s.skip==="function" && s.skip(onbFlow.answers||onbAnswersDefault()));
 };
+// CAS-910: a step may declare `blocked(ans)` — Continue stays disabled, on whichever CTA is currently on
+// screen (the standalone preview's own #onbStepCta, or the wired flow's #flowCta once a future ticket
+// lists the step in FLOWS), while it returns true. So far only the v2_* screens declare this, so `ans` is
+// always onbFlow.answersV2 — same generalisation stepSkipped would need if a v1 step ever wanted it too.
+function applyStepBlock(step, cta){
+  if(!cta || typeof step.blocked!=="function") return;
+  const gated = !!step.blocked(onbFlow.answersV2 || onbAnswersV2Default());
+  cta.disabled = gated;
+  cta.classList.toggle("blocked", gated);
+}
 // CAS-339: keepfinding is walked (it's still in FLOWS, still gets a Back/Continue) but is not one of the
 // COUNTED steps the meter reports — same reason priority/pickagent aren't: it isn't a question with an
 // answer, so putting a number on it would make the header lie about how many are left.
@@ -15855,11 +16206,12 @@ function paintFlowChrome(key, step, n){
   if(!on) return;
   $("stepFill").style.width = Math.round((i+1)/counted.length*100)+"%";
   $("stepProg").setAttribute("aria-valuenow", String(i+1));
-  $("stepLbl").textContent = `Step ${i+1} of ${counted.length}`;
+  $("stepLbl").textContent = "";
   // CAS-628: a step's title may be a function — services now reads menuStepOn to say "My services" only
   // on the top-menu's bare spoke, since the briefing context draws its own obhd inside body() instead.
   $("stepTitle").textContent = (typeof step.title==="function" ? step.title() : step.title) || "";
-  const cta=$("flowCta"); if(cta) cta.textContent=stepCtaText(step, n);
+  const cta=$("flowCta");
+  if(cta){ cta.textContent=stepCtaText(step, n); applyStepBlock(step, cta); }
 }
 function renderOnbStep(key){
   const step=SHARP_STEPS[key]; if(!step) return;
@@ -15900,6 +16252,7 @@ function renderOnbStep(key){
     </div>`}`;
   placeStepCount(step, n);
   if(step.wire) step.wire();
+  applyStepBlock(step, $("onbStepCta"));
   paintFlowChrome(key, step, n);
 }
 // CAS-180: the count belongs immediately above the FIRST thing you select, not above the screen's title —
