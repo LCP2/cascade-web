@@ -46,9 +46,14 @@ jobs:
           git config user.email "ci@codynamics.com.au"
           before=$(git rev-parse HEAD)
           echo "before=$before" >> "$GITHUB_OUTPUT"
-          git fetch origin staging
-          git merge --no-ff -X theirs origin/staging \
-            -m "promote: staging@$(git rev-parse origin/staging)"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git fetch origin staging
+            sha=$(git rev-parse origin/staging)
+          else
+            sha="${{ github.event.workflow_run.head_sha }}"
+          fi
+          git fetch origin "$sha"
+          git merge --no-ff -X theirs FETCH_HEAD -m "promote: staging@$sha"
 
       - name: Read the shipped release version
         id: ver
