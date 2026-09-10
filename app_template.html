@@ -1905,6 +1905,9 @@
     border-top:1px solid rgba(124,92,255,.28);color:var(--ink);font-size:12.5px;font-weight:600}
   .membhero .cancel svg{flex:0 0 auto}
 
+  /* A field and the button that submits it must not touch — the email input reads as part of the
+     button without this. */
+  .memb #membEmail{margin-bottom:14px}
   .membcta{width:100%;border:0;border-radius:13px;padding:15px;font-family:var(--font-display);font-weight:700;
     font-size:16px;color:#fff;background:var(--grad);cursor:pointer;box-shadow:0 10px 30px rgba(124,92,255,.32);
     display:flex;align-items:center;justify-content:center;gap:9px;
@@ -2685,7 +2688,11 @@
   /* ==== ONBOARDING BRIEFING (CAS-B) =========================================
      The briefing screens share one skin. Chips are the existing .chips/.chip
      pattern; only the roster strip is new. */
-  .obwrap{padding:18px 20px 26px;max-width:390px;margin:0 auto}
+  /* No horizontal padding of its own: every other control in the flow (.obopt, .ossub, .bigtoggle,
+     the CTA) spans the pane's own gutter, and this was the one element inset a further 20px, which
+     read as the button being too wide. Top padding lifted so a chromed step's heading clears the
+     progress rail. */
+  .obwrap{padding:32px 0 26px;max-width:390px;margin:0 auto}
   .obhd{font-size:22px;font-weight:800;color:var(--ink);margin:0 0 3px;letter-spacing:-.01em}
   .obsub{font-size:12.5px;color:var(--accent);margin:0 0 18px}
   .obq{font-size:15px;font-weight:750;color:var(--ink);margin:0 0 9px}
@@ -2721,12 +2728,15 @@
   .obopt.on{border-color:var(--accent);background:rgba(124,92,255,.12)}
   .obopt.on .obradio{border-color:var(--accent)}
   .obopt.on .obradio::after{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--accent)}
+  /* The label and its sub-line are two rows, not two inline spans — without this they render as
+     "YesOften enough to plan around it". .oboptsub's own margin-top only applies once it is a block. */
+  .obopttext{display:flex;flex-direction:column;min-width:0}
   .obopttitle{font-size:15px;font-weight:650}
   .oboptsub{font-size:12px;color:var(--faint);margin-top:2px}
   .obopt:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   /* The two statement-only screens (v2_intro/v2_handoff) — a headline with one highlighted phrase, same
      copy weight as .obhd, plus a longer explanatory paragraph .obsub is too small a font for. */
-  .obintrotext{font-size:14px;line-height:1.55;color:var(--dim);margin:10px 2px 0}
+  .obintrotext{font-size:14px;line-height:1.55;color:var(--dim);margin:10px 0 0}
   .obhi{color:var(--brand-blue)}
   /* ==== CAS-629 Onboarding S5/S6: the roster commits (S5) and reports back (S6) — both are read-only
      rows/cards inside the shared .obwrap skin above, nothing here is a control. */
@@ -14399,7 +14409,7 @@ const SHARP_STEPS = {
   // guarded by onbFlow.workingAgents — same shape "working" used for the old flow.
   v2_done: {
     noAgent: true, noSkip: true,
-    cta: "Open my lists",
+    cta: "Continue",
     body(){
       const agents = onbFlow.workingAgents || buildOnbAgentsV2(onbFlow.answersV2);
       const n = agents.length;
@@ -16138,14 +16148,16 @@ function onbTopFilms(limit){
 // key off #membEmail/#membEmailErr/.membcta by id/class, not by which function painted them); only the
 // content differs, and only for this, onboarding's own final step. The poster wall is gone (Change E4) —
 // three real films already made the case on S6, immediately before this screen.
-const OB_MEMB_BENEFITS = ["Film alerts","Your services only","Sharper every week","As many agents as you like"];
+const OB_MEMB_BENEFITS = ["Something to watch for every occasion.",
+                          "Alerts for the movies you care about.",
+                          "Agents working for you.",
+                          "Streaming service advice."];
 function openOnbMembership(){
   const {n,m,k} = onbFlow.reportStats || onbComputeReportStats();
   const needsEmail = membNeedsEmail();
   $("membBody").innerHTML = `
-    <button class="osback" type="button" onclick="onbMembBack()" aria-label="Back">←</button>
     <span class="cascpill">CASCADE</span>
-    <h2 class="membh">Keep them working</h2>
+    <h2 class="membh">Membership benefits</h2>
     <p class="membhaul">${n} agent${n===1?"":"s"} · <span class="cnt">${k}</span> film${k===1?"":"s"} worth your time · watching ${m}</p>
     <div class="membenefits">
       ${OB_MEMB_BENEFITS.map(b=>`<div class="mbrow"><span class="mbic">✓</span>
