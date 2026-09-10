@@ -98,18 +98,44 @@ WINDOW_TO_MOMENT = {
 MOMENT_TO_WINDOW = {moment: window for window, moment in WINDOW_TO_MOMENT.items()}
 WINDOW_ARRIVAL_MOMENTS = frozenset(WINDOW_TO_MOMENT.values())
 
+# CAS-918: the rung ladder a film's Watch On climbs, lowest first — used to tell a genuine
+# forward move (Rent -> Stream overnight) from a moment for a window the film hasn't reached yet.
+WINDOW_RANK = {"in_cinema": 1, "premium": 2, "rent": 3, "stream": 4}
+
 
 def _film_watch_placements(film_watches) -> dict:
-    """{(user_id, movie_id): {window_key, ...}} from film_watch rows, both stringified so lookups
-    match however `transitions`/`cascades` already key their own ids. A row with an empty (or
-    absent) `windows` contributes nothing — CAS-841 treats that the same as no row at all."""
+    """{(user_id, movie_id): {"windows": {window_key, ...}, "sources": {window_key: "auto"|
+    "manual"}}} from film_watch rows, both id parts of the key stringified so lookups match
+    however `transitions`/`cascades` already key their own ids. A row with an empty (or absent)
+    `windows` contributes nothing — CAS-841 treats that the same as no row at all. `sources`
+    (CAS-918) rides alongside, defaulting to {} for a row that predates it or never set it."""
     out: dict = {}
     for w in film_watches or ():
         windows = set(w.get("windows") or ())
         if not windows:
             continue
-        out.setdefault((str(w.get("user_id")), str(w.get("movie_id"))), set()).update(windows)
+        row = out.setdefault((str(w.get("user_id")), str(w.get("movie_id"))),
+                              {"windows": set(), "sources": {}})
+        row["windows"].update(windows)
+        row["sources"].update(w.get("sources") or {})
     return out
+
+
+def _forward_matches(windows_here: set, sources: dict, target: str) -> bool:
+    """CAS-918: a window-arrival moment for `target` also matches when the film's placement
+    hasn't reached `target` yet but every window it HAS reached is an auto placement strictly
+    earlier than `target` on WINDOW_RANK — the overnight-rollover case where a film moved
+    Rent -> Stream because it reached Stream unwatched, but the app's own placement pass (which
+    writes `film_watch`) hasn't caught up yet. A manual placement never forward-matches, and
+    neither does a window at or after `target` (that is either the direct-match case above, or a
+    moment for a window the film hasn't reached — CAS-841's existing fail-closed behaviour)."""
+    target_rank = WINDOW_RANK[target]
+    for w in windows_here:
+        if sources.get(w) != "auto":
+            return False
+        if WINDOW_RANK.get(w, target_rank) >= target_rank:
+            return False
+    return True
 
 
 # --------------------------------------------------------------------------- #
@@ -278,10 +304,15 @@ def match(cascades: list, transitions: list, already=None, admission=None, suppr
                   Preferences (see ``excluded_moments``). Like `suppressed`, it outranks the
                   Cascade — a muted type never fires for that user, whatever their Cascades say.
                   Empty/None -> nothing is globally muted.
-    film_watches : iterable of {user_id, movie_id, windows} — the `film_watch` table (CAS-484/
-                  CAS-726). CAS-841: a window-arrival moment (hits_cinema/hits_pvod/hits_rent/
-                  hits_stream) only fires when that moment's own window is present in the film's
-                  placement for that user; any other window-arrival moment for that film is
+    film_watches : iterable of {user_id, movie_id, windows, sources} — the `film_watch` table
+                  (CAS-484/CAS-726). CAS-841: a window-arrival moment (hits_cinema/hits_pvod/
+                  hits_rent/hits_stream) fires when that moment's own window is present in the
+                  film's placement for that user, OR (CAS-918) every window the film IS placed in
+                  is an auto placement (`sources`, `{window: "auto"|"manual"}`, CAS-726) strictly
+                  earlier than that moment's window — the overnight-rollover case where a film
+                  moved e.g. Rent -> Stream because it reached Stream unwatched, but the app's own
+                  placement pass hasn't written the new window yet. A manual placement never
+                  forward-matches this way. Any other window-arrival moment for the film is
                   skipped. A film with no row here (or an empty `windows`) skips EVERY
                   window-arrival moment for it — fail closed, the app would not have shown it in
                   that tab either. Non-window moments (announced, opens_soon,
@@ -322,12 +353,14 @@ def match(cascades: list, transitions: list, already=None, admission=None, suppr
             if not service_ok(t, criteria):
                 continue
             if t.moment in WINDOW_ARRIVAL_MOMENTS:
-                windows_here = placements.get((str(c["user_id"]), str(t.movie_id)))
-                if not windows_here:
+                row = placements.get((str(c["user_id"]), str(t.movie_id)))
+                if not row:
                     if placement_counts is not None:
                         placement_counts["no_placement"] = placement_counts.get("no_placement", 0) + 1
                     continue
-                if MOMENT_TO_WINDOW[t.moment] not in windows_here:
+                target_window = MOMENT_TO_WINDOW[t.moment]
+                if target_window not in row["windows"] and \
+                        not _forward_matches(row["windows"], row["sources"], target_window):
                     if placement_counts is not None:
                         placement_counts["wrong_window"] = placement_counts.get("wrong_window", 0) + 1
                     continue

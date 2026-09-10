@@ -17,7 +17,7 @@ Interface:
   fetch_picks() -> [{user_id, movie_id, state}]                                           # CAS-185
   fetch_push_tokens() -> {user_id: [device_token, ...]}                                   # CAS-465
   fetch_unread_counts() -> {user_id: int}                                                 # CAS-465
-  fetch_film_watches() -> [{user_id, movie_id, windows}]                                  # CAS-484
+  fetch_film_watches() -> [{user_id, movie_id, windows, sources}]                # CAS-484/CAS-918
   fetch_watch_notification_keys() -> set[(user_id, movie_id, moment)]  # de-dupe, null-cascade rows
   delete_notifications_for_movie_ids(ids) -> int          # CAS-486: fixture-range-only, for notify-test
   fetch_user_prefs() -> {user_id: {sub_services, store_services, taste, services_only}}    # CAS-825/CAS-853
@@ -253,8 +253,11 @@ class SupabaseStore:
         return out
 
     def fetch_film_watches(self) -> list:
-        """Every user's per-film Watch-it ticks (CAS-484): {user_id, movie_id, windows}."""
-        return self._get("/film_watch?select=user_id,movie_id,windows")
+        """Every user's per-film Watch-it ticks (CAS-484): {user_id, movie_id, windows,
+        sources}. `sources` (CAS-918) is read alongside `windows` so matching.match() can tell
+        an auto placement from a manual one when deciding whether a window-arrival moment
+        forward-matches a film that has moved on but hasn't been re-placed yet."""
+        return self._get("/film_watch?select=user_id,movie_id,windows,sources")
 
     def fetch_watch_notification_keys(self) -> set:
         """(user_id, movie_id, moment) already delivered via the per-film-watch path — the rows in
