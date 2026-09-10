@@ -37,14 +37,13 @@ test("the app loads and onboarding renders", async ({ page }) => {
   await freshApp(page);
   await expect(page.locator("#splashCta")).toBeVisible();
   await page.locator("#splashCta").click();
-  await expect(page.locator("#obWho")).toBeVisible();
+  await expect(page.locator(".obhd")).toContainText("Massive Movies");   // v2_intro (CAS-911)
 });
 
-// CAS-629: onboarding no longer sharpens one hand-named agent — it generates a whole roster from the
-// briefing answers (buildOnbAgents) and commits it on entering "working" (Change E1). This replaces the
-// old "type a name, expect it back" check with the same acceptance criterion CAS-629 itself states (AC1):
-// a non-empty roster, every id distinct, every one a real Cascade — plus one of the two unconditional
-// agents (onb_home fires for any roster, whatever the briefing answers were) actually landing by name.
+// CAS-911: onboarding generates its roster from the v2 sequence's own four-agent generator
+// (buildOnbAgentsV2) and commits it on entering v2_done, the flow's last step. This keeps the
+// acceptance criterion CAS-629 originally stated (AC1) — a non-empty roster, every id distinct,
+// every one a real Cascade — over the v2 roster a partner-no/kids-no run actually produces.
 test("onboarding commits a real, de-duplicated agent roster", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
@@ -53,7 +52,7 @@ test("onboarding commits a real, de-duplicated agent roster", async ({ page }) =
   expect(roster.length).toBeGreaterThan(0);
   expect(new Set(roster.map(c => c.id)).size).toBe(roster.length);
   expect(roster.every(c => c.sort === "cascade")).toBe(true);
-  expect(roster.map(c => c.name)).toContain("Watch at home");
+  expect(roster.map(c => c.name)).toEqual(["Massive Movies", "Personal Favs"]);
 });
 
 test("recommendations render as a results list with items", async ({ page }) => {
@@ -740,7 +739,7 @@ test("CAS-740 AC4: a signed-in user whose account already holds agents is never 
 
   await expect(page.locator("#splashCta")).toBeVisible();
   await page.locator("#splashCta").click();
-  await expect(page.locator("#obWho")).toBeVisible();
+  await expect(page.locator(".obhd")).toContainText("Massive Movies");   // v2_intro (CAS-911) — proves the wizard actually opened
   expect(await page.evaluate(() => flowOn)).toBe(true);   // genuinely inside the wizard before the race resolves
 
   // Now let the session restore resolve to an account that already holds an agent.

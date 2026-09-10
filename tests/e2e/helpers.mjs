@@ -43,23 +43,40 @@ export const numberIn = s => {
   return m ? Number(m[0]) : null;
 };
 
-/** CAS-629: click through the splash and the two roster-briefing screens (S1/S2 — the questions that
- * generate the WHOLE first-run roster at once, not one agent to sharpen), landing on "services" (S4),
- * the new sequence's first counted step. "together" (S3) is walked straight past on the way, since the
- * default answers (`who: ["me"]`) name no partner/kids for it to steer. Kept the name from the old
- * flow's shortlist-of-agents screen this replaces; `kind` only nudges the cinema question now, since
- * every roster this builds is a MIX of agents — there is no lane left to choose. */
+/** CAS-911: click through the splash and the v2 sequence's own opening questions (cinema, rent),
+ * then straight through every free-standing screen in between (the two agent reveals, styles, budget,
+ * ages), answering "No" to partner and kids so v2_date/v2_family skip themselves — landing on
+ * "v2_services", the same relative point in the flow "services" (S4) used to be the old sequence's
+ * first counted step. Kept the name from the old flow's shortlist-of-agents screen this replaces;
+ * `kind` only nudges the cinema question now, since every roster this builds is a MIX of agents —
+ * there is no lane left to choose. */
 export async function toShortlist(page, kind){
   await freshApp(page);
   await page.locator("#splashCta").click();
-  await expect(page.locator("#obWho")).toBeVisible();
-  if(kind === "stream") await page.locator("#obCinema .chip", { hasText: "never" }).click();
+  await expect(page.locator(".obhd")).toContainText("Massive Movies");   // v2_intro
   await ctaLocator(page).click();
   await page.waitForTimeout(120);              // the flow slides between steps
-  await expect(page.locator("#obDepth")).toBeVisible();
+  await expect(page.locator("#obCinemaOpts")).toBeVisible();             // v2_cinema
+  await page.locator(`#obCinemaOpts .obopt[data-val="${kind === "stream" ? "no" : "yes"}"]`).click();
   await ctaLocator(page).click();
   await page.waitForTimeout(120);
-  await expect(page.locator("#onbStepStores")).toBeVisible();
+  await expect(page.locator("#obRentOpts")).toBeVisible();               // v2_rent
+  await page.locator('#obRentOpts .obopt[data-val="yes"]').click();
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);
+  for(const marker of ["v2_massive", "v2_handoff", "v2_styles", "v2_budget", "v2_ages", "v2_favs"]){
+    await ctaLocator(page).click();
+    await page.waitForTimeout(120);
+  }
+  await expect(page.locator("#obPartnerOpts")).toBeVisible();            // v2_partner
+  await page.locator('#obPartnerOpts .obopt[data-val="no"]').click();
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);
+  await expect(page.locator("#obKidsOpts")).toBeVisible();               // v2_kids — v2_date skipped
+  await page.locator('#obKidsOpts .obopt[data-val="no"]').click();
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);                                       // v2_family skipped
+  await expect(page.locator("#obSvcStores")).toBeVisible();              // v2_services
 }
 
 /** Every card on the shortlist, as {name, countText, count}. */
@@ -86,11 +103,10 @@ export function ctaLocator(page){
 }
 export const ctaCount = page => ctaLocator(page).textContent().then(numberIn);
 
-/** Press Continue until the flow ends, landing on the membership page (S7). CAS-629: this now walks
- * services → working (the roster commits here, no click required, but Continue still advances it early)
- * → report → membership — generic enough that no step name needs to be known here. Returns S7's own
- * "worth your time" count (`.membhaul .cnt`, CAS-629 Change E4) — a roster-wide figure now, not one
- * agent's haul. */
+/** Press Continue until the flow ends, landing on the membership page. CAS-911: this now walks
+ * v2_services → v2_done (the roster commits here) → membership — generic enough that no step name
+ * needs to be known here. Returns the membership recap's own "worth your time" count (`.membhaul .cnt`),
+ * a roster-wide figure read off onbFlow.workingAgents, whichever generator committed it. */
 export async function finishFlow(page){
   for(let i = 0; i < 15; i++){
     const stillInFlow = await page.evaluate(() => flowOn === true);
