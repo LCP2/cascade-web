@@ -352,7 +352,7 @@ test("Mission/hub: no Watch On door, marker values in the Mission card, requirem
   // ancestor (CSS overflow or this app's own body.style.overflow convention).
   const overflowing = await page.evaluate(() => {
     const vw = document.documentElement.clientWidth;
-    const clips = new Set(["auto", "hidden", "scroll"]);
+    const clips = new Set(["auto", "hidden", "scroll", "clip"]);   // CAS-916: lockBodyScroll's own progressive pair
     return [...document.querySelectorAll("*")].filter(el => {
       if(el.getBoundingClientRect().right <= vw + 1) return false;
       for(let p = el.parentElement; p; p = p.parentElement)
@@ -643,7 +643,7 @@ test("Watch listing: every group shows its agent divider, even a single-agent se
   // by any ancestor, the same real-overflow check used there.
   const overflowing = await page.evaluate(() => {
     const vw = document.documentElement.clientWidth;
-    const clips = new Set(["auto", "hidden", "scroll"]);
+    const clips = new Set(["auto", "hidden", "scroll", "clip"]);   // CAS-916: lockBodyScroll's own progressive pair
     return [...document.querySelectorAll("*")].filter(el => {
       if(el.getBoundingClientRect().right <= vw + 1) return false;
       for(let p = el.parentElement; p; p = p.parentElement)
