@@ -5070,7 +5070,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1084, "commit": "b97644c", "builtAt": "2026-09-10T05:07:51Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1084, "commit": "9549e9f", "builtAt": "2026-09-10T05:16:54Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -11562,7 +11562,7 @@ const ONB_AGENTS_V2 = [
        kind: ans.cinema==="yes" ? "cinema" : "stream",
        watchMarkers: marks,
        status: ["upcoming","opening_week","in_cinema","pvod","rental","included_streaming"],
-       genre: [], exclude: [], age: [], yearsBack: 3, selBuzz: 1,
+       genre: [], exclude: [], age: ["M","MA 15+","R 18+"], includeUnrated: true, yearsBack: 3, selBuzz: 1,
        selCrowd: 0, selCritScore: 0, selAwards: 0, selScale: 0,
        myServices: {pvod:false, rental:false, included_streaming:false},
        watchWindows: ww,
@@ -14319,6 +14319,9 @@ const SHARP_STEPS = {
     },
     wire(){
       onbFlow.answersV2=onbAnswersV2Load();
+      // CAS-915: reuse onChipToggle('svc')'s own auto-arm condition (minus its servicesPicked() gate —
+      // this screen arms on entry, not only once a service is picked) rather than a second copy of the rule.
+      if(!prefs.touched && !prefs.on){ prefs.on=true; savePrefs(); }
       const draw=(boxId, list, set, primary)=>{
         const box=$(boxId); if(!box) return;
         const open = !!svcMore[boxId];
@@ -14358,12 +14361,15 @@ const SHARP_STEPS = {
       draw("obSvcStores", STORE_SERVICES, prefs.store);
       draw("obSvcSubs",   SUB_SERVICES,   prefs.sub, PRIMARY_SUB_SERVICES);
       const tog=$("obSvcOnly");
-      if(tog) tog.onclick=()=>{
-        prefs.on=!prefs.on; savePrefs();
+      if(tog){
         tog.classList.toggle("on", prefs.on);
-        updatePrefSwitch(); updatePrefBtn();
-        render();
-      };
+        tog.onclick=()=>{
+          prefs.on=!prefs.on; prefs.touched=true; savePrefs();
+          tog.classList.toggle("on", prefs.on);
+          updatePrefSwitch(); updatePrefBtn();
+          render();
+        };
+      }
     },
   },
   // ---- CAS-909: onboarding v2's agent reveal — four preview-only steps, reachable via ?step=<key> only.
@@ -14423,6 +14429,17 @@ const SHARP_STEPS = {
       if(!onbFlow.workingAgents){
         const agents=buildOnbAgentsV2(onbFlow.answersV2);
         agents.forEach(c=>{ c.id=cascadeNewId(); });
+        // CAS-915: the occasions these answers imply, created only now — at commit — via createOccasion()
+        // (idempotent by name, writes the register immediately) so backing out of the flow before this
+        // screen never leaves an orphan register entry.
+        const justMe=createOccasion("Just me");
+        const dateNight = onbFlow.answersV2.partner==="yes" ? createOccasion("Date night") : null;
+        const family = onbFlow.answersV2.kids==="yes" ? createOccasion("Family") : null;
+        agents.forEach(c=>{
+          if(c.template==="onb_massive" || c.template==="onb_favs") c.occasions=[justMe.id];
+          else if(c.template==="onb_date" && dateNight) c.occasions=[dateNight.id];
+          else if(c.template==="onb_family" && family) c.occasions=[family.id];
+        });
         cascades.push(...agents);
         saveCascades();
         setActive(agents[0].id);
@@ -16261,6 +16278,10 @@ function membStartWork(){
   }
   showFoundList();
   render();
+  // CAS-915: reset after the listing has laid out — the Watch listing scrolls the page itself
+  // (jumpToSection's own scroller:window, CAS-869), and a reset before render() would be undone
+  // by the thousands of nodes the build inserts.
+  window.scrollTo(0,0);
   closeMembership();
 }
 // ================= CAS-205: the membership setup bar is gone ==========================================
