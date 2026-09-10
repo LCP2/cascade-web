@@ -11504,8 +11504,12 @@ function onbFavsMarkersV2(big, s){
 // score) and by onbFavsSolve (at each candidate score), so the two can never disagree about what
 // counts as "the onb_favs agent at score s".
 function onbFavsCritV2(ans, s){
-  const marks = onbFavsMarkersV2(onbBigWindowV2(ans), s);
-  const ww={}; WATCH_LEVEL_KEYS.forEach(k=>{ if(marks[k]!=null) ww[k]={list:true, notify:true}; });
+  const big = onbBigWindowV2(ans);
+  const marks = onbFavsMarkersV2(big, s);
+  // CAS-912: only the BIG window rings. The trailing windows still admit and list films — they exist
+  // so a film that has fallen off BIG still qualifies — but ringing on each one told the user about
+  // the same film up to four times.
+  const ww={}; WATCH_LEVEL_KEYS.forEach(k=>{ if(marks[k]!=null) ww[k]={list:true, notify:k===big}; });
   return {
     kind: ans.cinema==="yes" ? "cinema" : "stream",
     watchMarkers: marks, status: watchToStatuses(ww),
