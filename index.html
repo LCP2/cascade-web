@@ -5020,7 +5020,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1075, "commit": "ce6a462", "builtAt": "2026-09-10T01:39:01Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1076, "commit": "f3f65d2", "builtAt": "2026-09-10T02:04:14Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -11559,6 +11559,147 @@ function onbAnswersLoad(){
 function onbAnswersSave(a){
   try{ localStorage.setItem(ONB_ANSWERS_KEY, JSON.stringify(a)); }catch(e){}
 }
+
+// ---- CAS-908: onboarding v2 answers + four-agent generator, ADDITIVE only ---------------------
+// Sits beside onbAnswersDefault/ONB_AGENTS/buildOnbAgents above: none of those are touched, and
+// nothing here is called by the live flow yet (CAS-629's FLOWS/briefing1/briefing2 keep reading
+// the old shape). CAS-910 renders from these; CAS-911 wires them in and retires the old symbols.
+function onbAnswersV2Default(){
+  return {cinema:null, rent:null, styles:[], selScale:0, ages:["M","MA 15+"],
+          partner:null, partnerDiff:null, partnerStyles:[], kids:null, kidAges:["G","PG"],
+          services:[]};
+}
+// Deliberately its own storage key — a half-migrated device must not have this loader read the
+// old shape, or the old loader read this one.
+const ONB_ANSWERS_V2_KEY = "cascade_onb_answers_v2";
+function onbAnswersV2Load(){
+  try{ const raw=localStorage.getItem(ONB_ANSWERS_V2_KEY);
+       return raw ? {...onbAnswersV2Default(), ...JSON.parse(raw)} : onbAnswersV2Default(); }
+  catch(e){ return onbAnswersV2Default(); }
+}
+function onbAnswersV2Save(a){
+  try{ localStorage.setItem(ONB_ANSWERS_V2_KEY, JSON.stringify(a)); }catch(e){}
+}
+// Recipes 1 and 2 both open on this: the furthest-forward window the account can actually use.
+function onbBigWindowV2(ans){
+  return ans.cinema==="yes" ? "in_cinema" : (ans.rent==="yes" ? "rent" : "stream");
+}
+// Personal Favs' marker ladder for a trial score `s` at a given BIG window — every rung before BIG
+// (ladder order) is Never, BIG itself is `s`, every rung after steps down by 6 per rung (floored at
+// 60). Shared by the recipe's own build and onbFavsSolve, which has to build this exact shape at
+// each candidate score to count it.
+function onbFavsMarkersV2(big, s){
+  const marks={}, i=WATCH_LEVEL_KEYS.indexOf(big);
+  WATCH_LEVEL_KEYS.forEach((k,j)=>{ marks[k] = j<i ? null : (j===i ? s : Math.max(60, s-6*(j-i))); });
+  return marks;
+}
+// Personal Favs' full criteria at a given trial score — used both by the recipe (at the solved
+// score) and by onbFavsSolve (at each candidate score), so the two can never disagree about what
+// counts as "the onb_favs agent at score s".
+function onbFavsCritV2(ans, s){
+  const marks = onbFavsMarkersV2(onbBigWindowV2(ans), s);
+  const ww={}; WATCH_LEVEL_KEYS.forEach(k=>{ if(marks[k]!=null) ww[k]={list:true, notify:true}; });
+  return {
+    kind: ans.cinema==="yes" ? "cinema" : "stream",
+    watchMarkers: marks, status: watchToStatuses(ww),
+    genre: ans.styles||[], exclude: [], age: ans.ages||[],
+    // yearsBack:0 is a decision, not an omission — "how far back" left onboarding, and the score
+    // solve below absorbs the extra breadth.
+    yearsBack: 0, selScale: ans.selScale||0,
+    selCrowd: 0, selCritScore: 0, selAwards: 0, selBuzz: 0,
+    myServices: {pvod:false, rental:true, included_streaming:true},
+    watchWindows: ww,
+  };
+}
+// The "around 30-40 films" the Personal Favs card promises can't be a fixed score — a narrow answer
+// set would return a handful, a wide one hundreds — so it is solved against the live catalogue.
+// Walks the score down from 90 to 60 and returns the first that seats at least 30, counted with
+// watchCount (the same counter the Agents screen and the listing itself use, never a re-
+// implementation). Never widens the criteria to reach the target; 60 if nothing gets there.
+function onbFavsSolve(ans){
+  for(let s=90; s>=60; s--){
+    const c = onbFavsCritV2(ans, s);
+    normCascade(c); laneCrit(c, c.kind);
+    if(watchCount(c) >= 30) return s;
+  }
+  return 60;
+}
+// order follows array position: Massive Movies is rank 0, and is therefore the default owner of a
+// contested film — deliberate, not incidental.
+const ONB_AGENTS_V2 = [
+  {key:"onb_massive", icon:"🎬", name:"Massive Movies", who:"me", when:a=>true,
+   build(ans){
+     const big = onbBigWindowV2(ans);
+     const marks={}; WATCH_LEVEL_KEYS.forEach(k=>{ marks[k] = (k===big) ? 90 : null; });
+     const ww={ [big]:{list:true, notify:true} };
+     // CAS-854: matchesCriteria denies any "upcoming" film to an agent whose in_cinema marker is
+     // null — arming the announcement bell there would promise something the engine will never do.
+     ww.upcoming = (big==="in_cinema")
+       ? {list:true, notify:true, subs:{announced:true, opens_soon:true}}
+       : {list:false, notify:false};
+     return {
+       kind: ans.cinema==="yes" ? "cinema" : "stream",
+       watchMarkers: marks,
+       status: ["upcoming","opening_week","in_cinema","pvod","rental","included_streaming"],
+       genre: [], exclude: [], age: [], yearsBack: 3, selBuzz: 1,
+       selCrowd: 0, selCritScore: 0, selAwards: 0, selScale: 0,
+       myServices: {pvod:false, rental:false, included_streaming:false},
+       watchWindows: ww,
+     };
+   }},
+
+  {key:"onb_favs", icon:"⭐", name:"Personal Favs", who:"me", when:a=>true,
+   build(ans){ return onbFavsCritV2(ans, onbFavsSolve(ans)); }},
+
+  {key:"onb_date", icon:"❤️", name:"Date Night", who:"partner", when:a=>a.partner==="yes",
+   // Lifted from Lee's live Partner Date Night, score dropped to 70.
+   build(ans){
+     return {
+       kind:"stream",
+       watchMarkers: {in_cinema:null, premium:null, rent:null, stream:70},
+       status: ["rental","included_streaming"],
+       genre: ans.partnerDiff==="yes" ? ans.partnerStyles : ans.styles,
+       exclude: [], age: ["M","MA 15+"], yearsBack: 10,
+       selCrowd: 6.95, selCritScore: 51, selAwards: 0, selScale: 0, selBuzz: 0,
+       myServices: {pvod:true, rental:true, included_streaming:true},
+       watchWindows: {rent:{list:true, notify:false}, stream:{list:true, notify:true}},
+     };
+   }},
+
+  {key:"onb_family", icon:"👨‍👩‍👧", name:"Family Movies", who:"everyone", when:a=>a.kids==="yes",
+   // Lifted from Lee's live Boys, with one correction: the source agent's genre:null means
+   // "nothing qualifies" (CAS-182), not "no filter" — copied verbatim it would match nothing.
+   build(ans){
+     return {
+       kind:"stream",
+       watchMarkers: {in_cinema:90, premium:null, rent:80, stream:73},
+       status: ["in_cinema","rental","included_streaming"],
+       genre: [], exclude: [], age: ans.kidAges, yearsBack: 20,
+       selScale: 18000000, selCrowd: 0, selCritScore: 0, selAwards: 0, selBuzz: 0,
+       myServices: {pvod:true, rental:true, included_streaming:true},
+       watchWindows: {in_cinema:{list:true, notify:false}, rent:{list:true, notify:false},
+                      stream:{list:true, notify:true}},
+     };
+   }},
+];
+// Build the v2 agents from a set of answers. Same contract as buildOnbAgents above: normalised
+// cascade objects, in recipe order, ready for the caller to assign ids and push onto `cascades` —
+// this does not save, does not set ids, and does not touch the live array. Agents from here never
+// carry onbCap; ONB_DEPTH/onbDepthFor keep their existing callers and this path doesn't feed them.
+function buildOnbAgentsV2(a){
+  const ans = {...onbAnswersV2Default(), ...(a||{})};
+  let order=0;
+  return ONB_AGENTS_V2.filter(r => { try{ return !!r.when(ans); }catch(e){ return false; } }).map(r => {
+    const c = r.build(ans);
+    c.template = r.key; c.icon = r.icon; c.name = r.name; c.who = r.who;
+    c.sort = DEFAULT_SORT; c.budget = 0;
+    c.order = order++;
+    normCascade(c);
+    laneCrit(c, c.kind);
+    return c;
+  });
+}
+
 // One recommendation per lane, and it is the preset that answers the question they just asked rather than
 // a fixed favourite. RECOMMENDED is a badge on a card, so it has to move with the list the card is in.
 const RECOMMENDED_FOR = {cinema:"cinema", stream:"streaming"};
