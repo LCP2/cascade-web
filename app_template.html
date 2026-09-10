@@ -18609,11 +18609,7 @@ else if(dedupedN)
   const toastSafe = m => { try{ if(typeof window.toast === 'function') window.toast(m); }catch(e){} };
 
   const openAuth  = () => { modal.classList.add('open'); document.body.style.overflow = 'hidden'; };
-  // CAS-733: set while a returning, signed-out device is being routed back through #authSignedOut as a
-  // mandatory gate (Change 3) — there is no cancelling out of it, only signing in.
-  let signedOutGate = false;
   const closeAuth = () => {
-    if(signedOutGate) return;
     modal.classList.remove('open');
     if(!document.querySelector('.modal.open')) document.body.style.overflow = ''; };
   const showPanel = which => ['authGuest','authSignedOut','authSignedIn']
@@ -18652,26 +18648,36 @@ else if(dedupedN)
   // a blank modal. Account status now shows only via renderAccount() / the top-menu Account item, per
   // CAS-345, so there is nothing left for this module to toggle a class on.
   const setSignedIn = user => {
-    signedOutGate = false;   // CAS-733: the mandatory gate (if any) lifts the moment a session lands
     api.user = user; api.status = 'signed-in';
     gid('authWho').textContent = (user && user.email) || 'your account';
     gid('authDone').textContent = 'Done';
     showPanel('authSignedIn');
   };
   const setSignedOut = () => {
+    // A real sign-OUT, as distinct from a cold boot that simply has no session. Only the former should
+    // clear the first-run flag; a device that onboarded and never signed in keeps its flag and its app.
+    const wasSignedIn = api.status === 'signed-in';
     api.user = null; api.session = null; api.status = 'signed-out';
     // CAS-402: this panel is the login form, not a confirmed state — "Cancel" says nothing has
     // happened yet and there's a way out, where "Done" implied a completed action.
     gid('authDone').textContent = 'Cancel';
     showPanel('authSignedOut');
-    // CAS-733 Change 3: signed-out stopped being a usable state. A device that has never onboarded
-    // still gets the first-run splash — its own front door, sign up or log in, unchanged (CAS-401). A
-    // RETURNING device (onboardingSeen()) is routed straight to this panel instead: it is the mandatory
-    // way back in, not an optional modal a "Cancel" can dismiss back onto a working app.
-    if(typeof window.onboardingSeen === 'function' && window.onboardingSeen()){
-      signedOutGate = true;
-      openAuth();
-    } else if(!gid('splash').classList.contains('open') && typeof window.showSplash === 'function'){
+    // Signing out returns you to the front door (Lee, 2026-09-10). CAS-733 Change 3's mandatory gate is
+    // withdrawn: the splash has carried both doors since CAS-186 — Sign up (#splashCta) and Log in
+    // (#splashLogin) — so a returning device has a way back in without being held in a panel whose
+    // Cancel did nothing.
+    //
+    // Clearing cascade_onboarded is what makes a REFRESH land on the splash too: boot's own
+    // `!onboardingSeen()` routing then does the rest, so there is no second copy of that decision to
+    // keep in step. afterSignIn() re-sets the flag, so signing back in never replays onboarding.
+    //
+    // Only on a real sign-out. A cold boot with no session must not clear the flag, or a device that
+    // onboarded without ever signing in would be sent back to the splash on every visit.
+    if(wasSignedIn){
+      try{ localStorage.removeItem('cascade_onboarded'); }catch(e){}
+    }
+    if(!gid('splash').classList.contains('open') && typeof window.showSplash === 'function'){
+      closeAuth();
       window.showSplash();
     }
   };

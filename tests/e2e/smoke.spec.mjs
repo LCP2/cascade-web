@@ -777,6 +777,159 @@ test("CAS-765 AC5: reaches signed-in state for a stored session with every non-a
   expect(await page.evaluate(() => window.CascadeAuth.user && window.CascadeAuth.user.email)).toBe("cas740@example.com");
 });
 
+// CAS-913: signing out from the Account screen must return the device to the splash, not trap it back on
+// the signed-out panel — reverses CAS-733 Change 3's mandatory gate (see app_template.html's setSignedOut).
+// Needs a REAL (fake) Supabase config from page load, not freshApp's guest-mode 404: with no config,
+// `configured` is false and the whole auth module returns early after setGuest(), so #authSignOut's click
+// listener is never even wired — CAS-883's direct window.CascadeAuth mutation can't stand in for that.
+// Can't reuse helpers.mjs's toShortlist either, for the same reason gotoFresh's own comment gives for
+// cas317.spec.mjs: a route registered later always wins, so toShortlist's inner freshApp() would silently
+// overwrite this test's own config.js/supabase-js.js fakes with the guest-mode 404. So the walk to
+// v2_services is duplicated here, same technique CAS-911.spec.mjs's own walkToFavs uses for its
+// config-reset variant. Signs in AFTER completing first run rather than before, as the ticket's scenario
+// narrates it — the header (and so the Account screen) isn't reachable until onboarding finishes, and the
+// bug's own code path (setSignedOut() on a device with onboardingSeen()===true) doesn't care which order
+// those two happened in, only that both are true by the time sign-out fires.
+const CAS913_FAKE_SUPABASE_GLOBAL = `
+  const SESSION_KEY = "cas913-fake-session";
+  const readSession = () => {
+    try{ const raw = localStorage.getItem(SESSION_KEY); return raw ? JSON.parse(raw) : null; }catch(e){ return null; }
+  };
+  const writeSession = session => {
+    try{ session ? localStorage.setItem(SESSION_KEY, JSON.stringify(session)) : localStorage.removeItem(SESSION_KEY); }catch(e){}
+  };
+  let listeners = [];
+  function chain(){
+    return new Proxy(() => {}, {
+      get: (_t, prop) => prop === "then" ? (resolve) => resolve({ data: [], error: null }) : () => chain(),
+      apply: () => chain(),
+    });
+  }
+  window.supabase = { createClient(){
+    return {
+      auth: {
+        getSession: async () => ({ data: { session: readSession() } }),
+        onAuthStateChange: (cb) => {
+          listeners.push(cb);
+          return { data: { subscription: { unsubscribe(){ listeners = listeners.filter(f => f !== cb); } } } };
+        },
+        signInWithPassword: async ({ email }) => {
+          const session = { user: { id: "cas913-user", email }, access_token: "fake" };
+          writeSession(session);
+          listeners.forEach(cb => cb("SIGNED_IN", session));
+          return { data: { session }, error: null };
+        },
+        signUp: async () => ({ data: {}, error: null }),
+        signOut: async () => {
+          writeSession(null);
+          listeners.forEach(cb => cb("SIGNED_OUT", null));
+          return { error: null };
+        },
+      },
+      from: () => chain(),
+    };
+  } };
+`;
+
+async function cas913GotoConfigured(page){
+  await page.route("**/config.js", route => route.fulfill({
+    contentType: "application/javascript",
+    body: `window.CASCADE_CONFIG = { SUPABASE_URL: "https://fake-project.supabase.test", SUPABASE_ANON_KEY: "fake-anon-key-not-a-real-secret" };`,
+  }));
+  await page.route("**/supabase-js.js", route => route.fulfill({
+    contentType: "application/javascript",
+    body: CAS913_FAKE_SUPABASE_GLOBAL,
+  }));
+  await gotoFresh(page);
+  await page.waitForFunction(() => window.CascadeAuth && window.CascadeAuth.client);
+}
+
+// Mirrors helpers.mjs's toShortlist body exactly (see this test's own comment above for why it can't just
+// call toShortlist).
+async function cas913WalkToShortlist(page){
+  await expect(page.locator("#splashCta")).toBeVisible();
+  await page.locator("#splashCta").click();
+  await expect(page.locator(".obhd")).toContainText("Massive Movies");            // v2_intro
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);
+  await expect(page.locator("#obCinemaOpts")).toBeVisible();                      // v2_cinema
+  await page.locator('#obCinemaOpts .obopt[data-val="yes"]').click();
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);
+  await expect(page.locator("#obRentOpts")).toBeVisible();                        // v2_rent
+  await page.locator('#obRentOpts .obopt[data-val="yes"]').click();
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);
+  for(const marker of ["v2_massive", "v2_handoff", "v2_styles", "v2_budget", "v2_ages", "v2_favs"]){
+    await ctaLocator(page).click();
+    await page.waitForTimeout(120);
+  }
+  await expect(page.locator("#obPartnerOpts")).toBeVisible();                     // v2_partner
+  await page.locator('#obPartnerOpts .obopt[data-val="no"]').click();
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);
+  await expect(page.locator("#obKidsOpts")).toBeVisible();                        // v2_kids — v2_date skipped
+  await page.locator('#obKidsOpts .obopt[data-val="no"]').click();
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);                                                 // v2_family skipped
+  await expect(page.locator("#obSvcStores")).toBeVisible();                       // v2_services
+}
+
+test("CAS-913: signing out from the Account screen returns to the splash and survives a reload", async ({ page }) => {
+  await cas913GotoConfigured(page);
+  await cas913WalkToShortlist(page);
+  await finishFlow(page);
+  await toListing(page);
+
+  // Sign in, from the Account screen's "Not signed in" row.
+  await page.locator("#navMenuBtn").click();
+  await page.locator("#navMenu .navitem", { hasText: "Account" }).click();
+  await expect(page.locator("#accountScreen")).toHaveClass(/open/);
+  await page.locator(".urow", { has: page.locator(".ut", { hasText: "Not signed in" }) }).click();
+  await expect(page.locator("#authModal")).toHaveClass(/open/);
+  await page.locator("#authEmail").fill("cas913@example.com");
+  await page.locator("#authContinue").click();
+  await page.waitForFunction(() => window.CascadeAuth.status === "signed-in", null, { timeout: 5000 });
+  await expect(page.locator("#authModal")).not.toHaveClass(/open/);   // SIGNED_IN auto-closes the modal
+
+  // Sign out again, from the same panel, reached the same way.
+  await page.locator("#navMenuBtn").click();
+  await page.locator("#navMenu .navitem", { hasText: "Account" }).click();
+  await expect(page.locator("#accountScreen")).toHaveClass(/open/);
+  await page.locator(".urow", { has: page.locator(".ut", { hasText: "Signed in" }) }).click();
+  await expect(page.locator("#authModal")).toHaveClass(/open/);
+  await page.locator("#authSignOut").click();
+
+  await expect(page.locator("#splash")).toHaveClass(/open/);
+  await expect(page.locator("#authModal")).not.toHaveClass(/open/);
+  expect(await page.evaluate(() => localStorage.getItem("cascade_onboarded"))).toBeNull();
+
+  // This is the exact symptom reported: a refresh must not re-trap the device behind the signed-out panel.
+  await page.reload();
+  await expect(page.locator("#splash")).toHaveClass(/open/);
+  await expect(page.locator("#authModal")).not.toHaveClass(/open/);
+
+  // The splash's own front door must still work, and be dismissible — no new mandatory gate in its place.
+  await page.locator("#splashLogin").click();
+  await expect(page.locator("#authModal")).toHaveClass(/open/);
+  await page.locator("#authDone").click();
+  await expect(page.locator("#authModal")).not.toHaveClass(/open/);
+});
+
+// CAS-913 AC6: a device that onboarded and never signed in keeps its flag and its app — only a REAL
+// sign-out clears cascade_onboarded (see setSignedOut's own wasSignedIn guard), so a plain cold boot with
+// no session must not be sent to the splash just because Supabase happens to be configured.
+test("CAS-913: a device that has onboarded but never signed in boots into the app, not the splash", async ({ page }) => {
+  await page.route("**/config.js", route => route.fulfill({ status: 404, body: "" }));
+  await page.goto("/index.html");
+  await page.evaluate(() => { try{ localStorage.clear(); localStorage.setItem("cascade_onboarded", "1"); }catch(e){} });
+  await page.goto("/index.html");
+  await page.waitForFunction(() => typeof flowStart === "function" && Array.isArray(MOVIES));
+
+  await expect(page.locator("#splash")).not.toHaveClass(/open/);
+  await expect(page.locator("#authModal")).not.toHaveClass(/open/);
+});
+
 // CAS-831: a temporary Watchmode-vs-OMDb/TMDB comparison row (wmScoresRowHTML), expanded card only. Values
 // are pushed onto a live MOVIES entry and the card re-rendered via fastPatchFindRow — the same targeted
 // re-render the app's own opinion/notify flows already use — because expanding a card only toggles a CSS
