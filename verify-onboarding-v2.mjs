@@ -96,7 +96,7 @@ function makeContext(){
 // engine needs stays reachable to IT (lexical scope inside the evaluated script), just not handed
 // out to this file.
 const EXPORTS = `
-;globalThis.__ONB_V2__ = { onbAnswersV2Default, ONB_AGENTS_V2, buildOnbAgentsV2, onbFavsSolve };
+;globalThis.__ONB_V2__ = { onbAnswersV2Default, ONB_AGENTS_V2, buildOnbAgentsV2, onbFavsSolve, onbNotifySum };
 `;
 
 function loadOnbV2({ htmlPath = path.join(ROOT, "index.html") } = {}){
@@ -194,6 +194,46 @@ check("AC11", () => {
       assert.ok(!("onbCap" in a) || a.onbCap === undefined, `${a.name} carries onbCap`);
     }
   }
+});
+
+// CAS-912: onb_favs must ring on its BIG window only — the trailing windows still admit and list
+// films but do not notify. Massive Movies/Date Night/Family Movies are explicitly untouched.
+check("CAS912-AC2", () => {
+  const favs = E.buildOnbAgentsV2(BASE_A).find(a => a.name === "Personal Favs");
+  const notifying = Object.entries(favs.watchWindows).filter(([, w]) => w.notify).map(([k]) => k);
+  same(notifying, ["in_cinema"]);
+});
+
+check("CAS912-AC3", () => {
+  const rentFavs = E.buildOnbAgentsV2({ ...BASE_A, cinema:"no", rent:"yes" }).find(a => a.name === "Personal Favs");
+  same(Object.entries(rentFavs.watchWindows).filter(([, w]) => w.notify).map(([k]) => k), ["rent"]);
+  const streamFavs = E.buildOnbAgentsV2({ ...BASE_A, cinema:"no", rent:"no" }).find(a => a.name === "Personal Favs");
+  same(Object.entries(streamFavs.watchWindows).filter(([, w]) => w.notify).map(([k]) => k), ["stream"]);
+});
+
+check("CAS912-AC4", () => {
+  for(const ans of [BASE_A, { ...BASE_A, cinema:"no", rent:"yes" }, { ...BASE_A, cinema:"no", rent:"no" }]){
+    const favs = E.buildOnbAgentsV2(ans).find(a => a.name === "Personal Favs");
+    for(const [k, marker] of Object.entries(favs.watchMarkers)){
+      if(marker == null) continue;
+      assert.equal(favs.watchWindows[k].list, true, `${k} not listed for answers ${JSON.stringify(ans)}`);
+    }
+  }
+});
+
+check("CAS912-AC5", () => {
+  const agents = E.buildOnbAgentsV2(BASE_B);
+  same(agents.find(a => a.name === "Massive Movies").watchWindows,
+    { in_cinema:{list:true, notify:true}, upcoming:{list:true, notify:true, subs:{announced:true, opens_soon:true}} });
+  same(agents.find(a => a.name === "Date Night").watchWindows,
+    { rent:{list:true, notify:false}, stream:{list:true, notify:true} });
+  same(agents.find(a => a.name === "Family Movies").watchWindows,
+    { in_cinema:{list:true, notify:false}, rent:{list:true, notify:false}, stream:{list:true, notify:true} });
+});
+
+check("CAS912-AC6", () => {
+  const favs = E.buildOnbAgentsV2(BASE_A).find(a => a.name === "Personal Favs");
+  assert.equal(E.onbNotifySum(favs), "When it hits in cinema");
 });
 
 for(const line of results) fs.appendFileSync(REPORT_PATH, line + "\n");

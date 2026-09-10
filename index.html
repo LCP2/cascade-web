@@ -5060,7 +5060,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1079, "commit": "d44e699", "builtAt": "2026-09-10T04:15:53Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1080, "commit": "d6f29d5", "builtAt": "2026-09-10T04:20:29Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -11504,8 +11504,12 @@ function onbFavsMarkersV2(big, s){
 // score) and by onbFavsSolve (at each candidate score), so the two can never disagree about what
 // counts as "the onb_favs agent at score s".
 function onbFavsCritV2(ans, s){
-  const marks = onbFavsMarkersV2(onbBigWindowV2(ans), s);
-  const ww={}; WATCH_LEVEL_KEYS.forEach(k=>{ if(marks[k]!=null) ww[k]={list:true, notify:true}; });
+  const big = onbBigWindowV2(ans);
+  const marks = onbFavsMarkersV2(big, s);
+  // CAS-912: only the BIG window rings. The trailing windows still admit and list films — they exist
+  // so a film that has fallen off BIG still qualifies — but ringing on each one told the user about
+  // the same film up to four times.
+  const ww={}; WATCH_LEVEL_KEYS.forEach(k=>{ if(marks[k]!=null) ww[k]={list:true, notify:k===big}; });
   return {
     kind: ans.cinema==="yes" ? "cinema" : "stream",
     watchMarkers: marks, status: watchToStatuses(ww),
