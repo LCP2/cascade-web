@@ -96,7 +96,8 @@ function makeContext(){
 // engine needs stays reachable to IT (lexical scope inside the evaluated script), just not handed
 // out to this file.
 const EXPORTS = `
-;globalThis.__ONB_V2__ = { onbAnswersV2Default, ONB_AGENTS_V2, buildOnbAgentsV2, onbFavsSolve, onbNotifySum };
+;globalThis.__ONB_V2__ = { onbAnswersV2Default, ONB_AGENTS_V2, buildOnbAgentsV2, onbFavsSolve, onbNotifySum,
+  MOVIES, watchesFilm };
 `;
 
 function loadOnbV2({ htmlPath = path.join(ROOT, "index.html") } = {}){
@@ -234,6 +235,41 @@ check("CAS912-AC5", () => {
 check("CAS912-AC6", () => {
   const favs = E.buildOnbAgentsV2(BASE_A).find(a => a.name === "Personal Favs");
   assert.equal(E.onbNotifySum(favs), "When it hits in cinema");
+});
+
+// CAS-915: Massive Movies becomes an adult-blockbuster agent (age-capped, unrated admitted so the
+// upcoming/opening_week titles it exists for don't vanish — see the ticket's own trap warning).
+check("CAS915-AC2", () => {
+  for(const ans of [BASE_A, BASE_B]){
+    const m = E.buildOnbAgentsV2(ans).find(a => a.name === "Massive Movies");
+    same(m.age, ["M","MA 15+","R 18+"]);
+    assert.equal(m.includeUnrated, true);
+  }
+});
+
+check("CAS915-AC3", () => {
+  for(const ans of [BASE_A, BASE_B]){
+    const m = E.buildOnbAgentsV2(ans).find(a => a.name === "Massive Movies");
+    const films = E.MOVIES.filter(f => E.watchesFilm(f, m));
+    assert.ok(films.every(f => f.age_rating !== "G" && f.age_rating !== "PG"),
+      "Massive Movies film list contains a G/PG title");
+  }
+});
+
+check("CAS915-AC4", () => {
+  for(const ans of [BASE_A, BASE_B]){
+    const m = E.buildOnbAgentsV2(ans).find(a => a.name === "Massive Movies");
+    const films = E.MOVIES.filter(f => E.watchesFilm(f, m));
+    assert.ok(films.length > 0, "Massive Movies film list is empty");
+    assert.ok(films.some(f => f.status.includes("upcoming")), "Massive Movies has no upcoming film");
+  }
+});
+
+check("CAS915-AC5", () => {
+  const favsA = E.buildOnbAgentsV2(BASE_A).find(a => a.name === "Personal Favs");
+  same(favsA.age, BASE_A.ages);
+  const famB = E.buildOnbAgentsV2(BASE_B).find(a => a.name === "Family Movies");
+  same(famB.age, BASE_B.kidAges);
 });
 
 for(const line of results) fs.appendFileSync(REPORT_PATH, line + "\n");
