@@ -9,6 +9,12 @@ Reuses CAS-830's `_fetch_watchmode_idmap`, `_invert_watchmode_idmap` and
 rather than a higher-level all-in-one wrapper (CAS-876 deleted the unused one that existed
 before): the four counts this script must report (enriched, budget-skipped, no-id, credits
 spent) need the per-outcome detail only visible at that lower level.
+
+CAS-906: this script's writes must also land in `state/last_snapshot.json`, not just
+`movies.json`. The nightly run (`poc_pipeline.py`'s `run()`, `poc_pipeline.py:1595`) rebuilds
+the WHOLE catalogue from that snapshot, never from `movies.json` — `movies.json` is an output,
+not a source of truth. A backfill that only wrote `movies.json` had every field it wrote erased
+by the next nightly run. Do not "simplify" this back to a single-file write.
 """
 import argparse
 import json
@@ -26,7 +32,13 @@ if _REPO_ROOT not in sys.path:
 import poc_pipeline as pp  # noqa: E402
 
 CATALOGUE = os.environ.get("CASCADE_CATALOGUE", "movies.json")
+SNAPSHOT = os.environ.get("CASCADE_SNAPSHOT", pp.SNAPSHOT_FILE)
 MAX_CREDITS = int(os.environ.get("WM_FIELDS_MAX_CREDITS", str(pp.WM_FIELDS_MAX_CREDITS)))
+
+# CAS-906: the exact set of fields this backfill ever writes onto a record. Mirrored onto the
+# snapshot record for the same tmdb_id — never any other key.
+WM_FIELD_NAMES = ("wm_user_rating", "wm_critic_score", "wm_popularity_percentile",
+                   "wm_fields_fetched_at")
 
 
 def load_catalogue(path):
@@ -40,6 +52,42 @@ def save_catalogue(path, data):
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
+
+
+def load_snapshot(path):
+    """None when the file does not exist — distinct from `[]`, so the caller can tell "nothing to
+    merge into" apart from "an empty snapshot"."""
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def save_snapshot(path, records):
+    """Same shape `poc_pipeline.py`'s own `diff_and_alert` writes with (a bare JSON list, no
+    `ensure_ascii=False`) — this is the same file, so it stays byte-shaped the same way."""
+    with open(path, "w") as fh:
+        json.dump(records, fh, indent=2)
+
+
+def merge_wm_fields_into_snapshot(snapshot_records, enriched_movies):
+    """Mirror this run's OWN writes (`WM_FIELD_NAMES`) onto the matching snapshot record by
+    `tmdb_id` — a MERGE onto the existing record, adding only those four keys. A title present in
+    `movies.json` but absent from the snapshot is the daily run's business, not this script's: it
+    is counted as skipped, never appended. Mutates `snapshot_records`' own dicts in place so the
+    list's identity and order are untouched. Returns (updated, skipped)."""
+    by_tmdb_id = {r.get("tmdb_id"): r for r in snapshot_records}
+    updated = 0
+    skipped = 0
+    for movie in enriched_movies:
+        record = by_tmdb_id.get(movie.get("tmdb_id"))
+        if record is None:
+            skipped += 1
+            continue
+        for field in WM_FIELD_NAMES:
+            record[field] = movie[field]
+        updated += 1
+    return updated, skipped
 
 
 CACHED_REASON = "every candidate is still inside WATCHMODE_CACHE_TTL_DAYS"
@@ -57,8 +105,9 @@ def load_ids_from(path):
     return ids
 
 
-def run(catalogue_path=None, max_credits=None, ids_from=None):
+def run(catalogue_path=None, max_credits=None, ids_from=None, snapshot_path=None):
     catalogue_path = catalogue_path or CATALOGUE
+    snapshot_path = snapshot_path or SNAPSHOT
     max_credits = MAX_CREDITS if max_credits is None else max_credits
 
     data, movies = load_catalogue(catalogue_path)
@@ -84,9 +133,23 @@ def run(catalogue_path=None, max_credits=None, ids_from=None):
 
     budget = {"remaining": max_credits, "skipped": 0}
     outcomes = {"ok": 0, "cached": 0, "no-id": 0, "skip": 0, "stop": 0}
+    newly_enriched = []
     for movie in targets:
         result = pp.enrich_watchmode_fields(movie, wm_idmap, budget)
         outcomes[result] = outcomes.get(result, 0) + 1
+        if result == "ok":
+            newly_enriched.append(movie)
+
+    # CAS-906: write the snapshot FIRST — if it raises, `movies.json` below must never be
+    # written either, so this run's credits do not spend into a half-write that reproduces the
+    # exact silent divergence this ticket exists to close.
+    snapshot_records = load_snapshot(snapshot_path)
+    if snapshot_records is None:
+        snapshot_updated, snapshot_skipped = 0, len(newly_enriched)
+    else:
+        snapshot_updated, snapshot_skipped = merge_wm_fields_into_snapshot(
+            snapshot_records, newly_enriched)
+        save_snapshot(snapshot_path, snapshot_records)
 
     save_catalogue(catalogue_path, data)
 
@@ -117,6 +180,8 @@ def run(catalogue_path=None, max_credits=None, ids_from=None):
         "candidate records considered": candidates,
         "titles enriched": enriched,
         "records written": enriched,
+        "snapshot records updated": snapshot_updated,
+        "snapshot records skipped (not in snapshot)": snapshot_skipped,
         "titles skipped for budget": budget["skipped"],
         "titles with no Watchmode id": outcomes["no-id"],
         "titles already cached": outcomes["cached"],
