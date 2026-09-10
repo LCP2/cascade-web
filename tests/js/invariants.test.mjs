@@ -1268,7 +1268,7 @@ test("CAS-727 AC2(b): in cinemas, a score between the Rental and Cinema markers 
   }
 });
 
-test("CAS-727 AC2(c)/(d)/AC3-in-miniature: earned is fixed at admission — a film travels forward with its status, and Never skips a window", () => {
+test("CAS-727 AC2(c)/(d)/AC3-in-miniature: earned is fixed at admission — a film travels forward with its status, and a marker-less window after the start still follows", () => {
   const film = scoredUnwatchedFilm(["upcoming"]);
   const id = film.tmdb_id;
   const savedStatus = film.status;
@@ -1288,14 +1288,17 @@ test("CAS-727 AC2(c)/(d)/AC3-in-miniature: earned is fixed at admission — a fi
       assert.equal(E.notify[id].wins.rent, true, "AC2(c): standing overtakes earned once the film reaches rental");
       assert.equal(E.notify[id].wins.in_cinema, false);
 
-      // (d): same again, but this agent has set Rental to Never — standing must snap forward past it to
-      // the next enabled window (Streaming), not fall back to earned (Cinema).
+      // (d), CAS-917 start-window model: this agent's start window is Cinema (its earliest marker-carrying
+      // window), so Rental — later than the start — is a FOLLOWED window regardless of whether it carries
+      // its own marker. Setting it to Never (no marker) no longer skips it forward to the next real marker
+      // (Streaming) the way it did before CAS-917 — a null marker on a window after the start now means
+      // "follows", not "excluded". Removing Rental's marker must still land the film at Rental.
       const c = E.cascades.find(x => x.id === cId);
       c.watchMarkers.rent = null;
       E.recomputeFound();
-      assert.equal(E.notify[id].wins.stream, true, "AC2(d): Rental set to Never snaps standing forward to Streaming");
+      assert.equal(E.notify[id].wins.rent, true, "AC2(d): a marker-less Rental after the start window still follows");
       assert.equal(E.notify[id].wins.in_cinema, false);
-      assert.equal(E.notify[id].wins.rent, false);
+      assert.equal(E.notify[id].wins.stream, false);
     });
   } finally {
     delete E.notify[id];

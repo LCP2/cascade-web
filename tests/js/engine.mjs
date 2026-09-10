@@ -392,6 +392,10 @@ if(typeof window.CascadeAuth === "undefined"){
   // mutator and render helpers) and notifyChipHTML (the Watch On chip's own render, alongside agentChipHTML
   // above) — plain top-level functions, exported directly like the rest of this file.
   windowEnabled, restoreWatchMarker, msnTrackAreaHTML, msnValueLine, notifyChipHTML,
+  // CAS-917: windowFollowed (the start-window model's own predicate) and msnChipsHTML (the "On this
+  // track" chip row, alongside msnValueLine/msnTrackAreaHTML above) — exported so a test can assert both
+  // the placement decision and its two render surfaces directly.
+  windowFollowed, msnChipsHTML,
   // CAS-762: msnLastValue — the module-level "value a window carried before Never" map — exported by
   // reference (like watched/blocked/found above) so a test can seed the exact Off-round-trip restoreWatchMarker
   // now has to handle without driving the real click handlers.
