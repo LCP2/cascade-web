@@ -5027,7 +5027,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1072, "commit": "99eaaa9", "builtAt": "2026-09-10T01:00:12Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1073, "commit": "0b3894c", "builtAt": "2026-09-10T01:09:57Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -8856,6 +8856,15 @@ function buzzPctlOf(m){
   if(!inLadderCohort(m) || typeof m.popularity!=="number") return null;
   return pctRankOf(BUZZ_POP_VALS, m.popularity);
 }
+// CAS-907: the Watchmode-sourced mirror of BUZZ_POP_VALS/buzzPctlOf — same cohort, same rank-lookup shape,
+// but over m.wm_popularity_percentile instead of m.popularity. Watchmode's figure is a global percentile, so
+// re-ranking it against our own AU cohort is what makes it comparable to the TMDB-derived percentile it
+// stands in for.
+const WM_BUZZ_POP_VALS = MOVIES.filter(inLadderCohort).map(m=>m.wm_popularity_percentile).filter(v=>typeof v==="number").sort((a,b)=>a-b);
+function wmBuzzPctlOf(m){
+  if(!inLadderCohort(m) || typeof m.wm_popularity_percentile!=="number") return null;
+  return pctRankOf(WM_BUZZ_POP_VALS, m.wm_popularity_percentile);
+}
 // CAS-748: the released cohort's own cascadeScore values, sorted once — the lookup table cinemaScore's
 // quantile map reads from. Lazily built (isPreRelease/qScore are defined further down this file) and cached
 // like _scaleInferCache/_awardRankCache, cleared by the same invalidateComputeCaches hook below rather than a
@@ -8864,6 +8873,14 @@ let _releasedScoreVals = null;
 function releasedScoreVals(){
   if(_releasedScoreVals) return _releasedScoreVals;
   return _releasedScoreVals = MOVIES.filter(m=>!isPreRelease(m)).map(qScore).filter(v=>v>=0).sort((a,b)=>a-b);
+}
+// CAS-907: the Watchmode-sourced mirror of releasedScoreVals, over wmQScore instead of qScore — mapping the
+// Watchmode buzz percentile onto qScore's distribution would calibrate it against OMDb's scale and
+// contaminate the comparison. Memoised and cleared the same way by invalidateComputeCaches.
+let _wmReleasedScoreVals = null;
+function wmReleasedScoreVals(){
+  if(_wmReleasedScoreVals) return _wmReleasedScoreVals;
+  return _wmReleasedScoreVals = MOVIES.filter(m=>!isPreRelease(m)).map(wmQScore).filter(v=>v>=0).sort((a,b)=>a-b);
 }
 // CAS-748: cinemaScore is a QUANTILE MAP, not a raw percentile — a marker set on this score and one set on
 // qScore's released-side score now mean the same thing, because a film's buzz percentile p is looked up
@@ -8876,6 +8893,15 @@ function cinemaScore(m){
   if(p==null) return -1;
   const vals=releasedScoreVals();
   if(!vals.length) return p;   // catalogue not loaded yet — nothing to map onto, so fall back rather than divide by zero
+  return Math.round(vals[Math.min(vals.length-1, Math.floor(vals.length*p/100))]);
+}
+// CAS-907: the Watchmode-sourced mirror of cinemaScore, over wmBuzzPctlOf/wmReleasedScoreVals instead of
+// buzzPctlOf/releasedScoreVals — same quantile-map shape, same -1/empty-array fallbacks.
+function wmCinemaScore(m){
+  const p=wmBuzzPctlOf(m);
+  if(p==null) return -1;
+  const vals=wmReleasedScoreVals();
+  if(!vals.length) return p;
   return Math.round(vals[Math.min(vals.length-1, Math.floor(vals.length*p/100))]);
 }
 // The boundary reused verbatim from matchesCriteria's own preRelease check — quality signals (People's
@@ -8904,11 +8930,14 @@ function cascadeScore(m){
 // CAS-895: TEMPORARY — mirrors cascadeScore exactly, but over wmQScore instead of qScore, so the two
 // Cascade figures can be compared side by side. See wmQScore's own comment; not read by any scoring,
 // sorting, filtering or agent-matching code.
+// CAS-907: the pre-release/blended branches now call wmCinemaScore, not cinemaScore — the two had been
+// calling the identical TMDB-only function, so every pre-release film showed the same figure under both
+// labels with no Watchmode data behind the "WM" side at all.
 function wmCascadeScore(m){
   const ps=primaryStatus(m);
-  if(ps==="upcoming") return cinemaScore(m);
+  if(ps==="upcoming") return wmCinemaScore(m);
   if(ps==="in_cinema" || ps==="opening_week"){
-    const buzz=cinemaScore(m), q=wmQScore(m);
+    const buzz=wmCinemaScore(m), q=wmQScore(m);
     return q>=0 ? Math.round((buzz+q)/2) : buzz;
   }
   return wmQScore(m);
@@ -9447,7 +9476,7 @@ window.showScaleInfer=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(
 // one that just booted. CAS-748 reuses this same hook for _releasedScoreVals rather than adding a second,
 // separate clearing mechanism. CAS-867: agMetricsCache (declared further down, with agentMetrics) reuses it
 // too — a catalogue swap can change which films an agent lists without touching that agent's own signature.
-function invalidateComputeCaches(){ _scaleInferCache.clear(); _awardRankCache.clear(); _releasedScoreVals = null; agMetricsCache.clear(); }
+function invalidateComputeCaches(){ _scaleInferCache.clear(); _awardRankCache.clear(); _releasedScoreVals = null; _wmReleasedScoreVals = null; agMetricsCache.clear(); }
 // ---- Buzz (CAS-145, ladder replaced by CAS-678) --------------------------------
 // How much a film is being talked about right now, off the TMDB popularity figure the pipeline already
 function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){

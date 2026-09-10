@@ -190,6 +190,11 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-895: wmQScore/wmCascadeScore, the TEMPORARY Watchmode-mirrored pair of qScore/cascadeScore — exported
   // the same way so a test can assert each stage directly rather than only the rendered row.
   wmQScore, wmCascadeScore,
+  // CAS-907: the Watchmode-sourced mirror of the buzz chain (WM_BUZZ_POP_VALS/wmBuzzPctlOf/wmReleasedScoreVals/
+  // wmCinemaScore) that wmCascadeScore's pre-release/blended branches now call instead of the TMDB-only
+  // cinemaScore — exported independently so a test can assert each stage rather than only wmCascadeScore's
+  // combined output.
+  WM_BUZZ_POP_VALS, wmBuzzPctlOf, wmReleasedScoreVals, wmCinemaScore,
   BUZZ_POP_VALS, CINEMA_BUDGET_VALS, CINEMA_BUDGET_MIN,
   // CAS-748: the released-cohort quantile map's own lookup table, so a test can assert the mapping formula
   // directly rather than only cinemaScore's output.
