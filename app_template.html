@@ -5496,13 +5496,29 @@ document.addEventListener("focusout", e => {
   e.target.closest(".modal, .diagpanel")?.classList.remove("kbfocus");
 });
 
-function openModal(el){ el.classList.add("open"); document.body.style.overflow="hidden"; }
+// CAS-916: one choke point for the background-scroll lock every overlay open/close path uses. Writing
+// the old shorthand straight onto the body element's inline style made it a scroll container, and a
+// sticky element sticks within its nearest SCROLLING ancestor — so the header stopped sticking to the
+// viewport and just scrolled away with the overlay. overflow:clip suppresses scrolling without creating
+// a scroll container, so the header survives; hidden is set first so a browser without clip still falls
+// back to the old (if imperfect) lock instead of none at all. catalogueUIBusy() below reads
+// _bodyScrollLocked rather than sniffing the inline style, since that style no longer reads "hidden"
+// once clip wins.
+let _bodyScrollLocked = false;
+function lockBodyScroll(on){
+  _bodyScrollLocked = !!on;
+  if(_bodyScrollLocked){ document.body.style.overflow="hidden"; document.body.style.overflow="clip"; }
+  else document.body.style.overflow="";
+}
+window.lockBodyScroll = lockBodyScroll;   // CAS-733: the auth module is a separate <script type="module">
+
+function openModal(el){ el.classList.add("open"); lockBodyScroll(true); }
 // Modals stack now — the provenance sheet opens on top of the Found list. So the scroll lock is released only
 // when the LAST one closes; releasing it on the first would let the page scroll away underneath a modal that
 // is still open, and the user would come back to a list that had moved.
 function closeModal(el){
   el.classList.remove("open");
-  if(!document.querySelector(".modal.open")) document.body.style.overflow="";
+  if(!document.querySelector(".modal.open")) lockBodyScroll(false);
   if(typeof accountResume==="function") accountResume();   // CAS-206: Account steps aside for a modal, then resumes
 }
 // CAS-150: the Filters button is gone from the header — the selection engine is the Cascade itself, and a
@@ -6520,7 +6536,7 @@ function openFilmPage(id){
     : `<div class="fpclose"><button type="button" class="ebtn" onclick="closeFilmPage()">✕</button></div>
        <div class="fptitle">Film not found</div>
        <div class="fpmeta">This title isn't in Cascade's catalogue right now.</div>`;
-  el.classList.add("open"); document.body.style.overflow="hidden";
+  el.classList.add("open"); lockBodyScroll(true);
   if(m) document.title = `${m.title} — Cascade`;
   logEvent("film_page_shown",{id, found:!!m});
   if(m && INVITE_TOKEN) tryResolveFilmInvite(id);
@@ -6528,7 +6544,7 @@ function openFilmPage(id){
 window.closeFilmPage=()=>{
   $("filmPage").classList.remove("open");
   history.replaceState(null,"",location.pathname+location.search);   // drop #/film/<id> so a refresh doesn't reopen it
-  if(!document.querySelector(".modal.open,.filmpage.open")) document.body.style.overflow="";
+  if(!document.querySelector(".modal.open,.filmpage.open")) lockBodyScroll(false);
   document.title = DEFAULT_TITLE;
 };
 // The page's one action: straight into signup, same as the splash's own CTA (CAS-188's flowStart), not a
@@ -6728,14 +6744,14 @@ window.openInvitesScreen=()=>{
   const unread=invitesUnseenCount();
   renderInvitesScreen();
   $("invitesScreen").scrollTop=0;
-  $("invitesScreen").classList.add("open"); document.body.style.overflow="hidden";
+  $("invitesScreen").classList.add("open"); lockBodyScroll(true);
   syncWatchChip();
   logEvent("invites_opened",{unread});
   // Stamped AFTER render (item 3 of the ticket) — the person has to actually see which rows were new
   // before the badge clears out from under them.
   markInviteRepliesSeen();
 };
-window.closeInvitesScreen=()=>{ $("invitesScreen").classList.remove("open"); document.body.style.overflow=""; syncWatchChip(); };
+window.closeInvitesScreen=()=>{ $("invitesScreen").classList.remove("open"); lockBodyScroll(false); syncWatchChip(); };
 // Stamps seen_at on exactly the unread replies this screen just showed. Mirrors markRealAlertsRead's
 // shape (update local state first so the badge/dot clear immediately, then push the write) but targets by
 // id rather than a blanket "is null" filter, since these ids are already known from what was just rendered.
@@ -7798,14 +7814,14 @@ let catalogueEtag = null, cataloguePolling = false;
 // its same-origin relative fetch (no CORS, unaffected by whatever domain it's served from).
 const CATALOGUE_URL = (typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform())
   ? "https://cascademovies.com/movies.json" : "movies.json";
-// Applied only when nothing is mid-interaction. Every modal/full-screen panel/onboarding step/filmpage sets
-// document.body.style.overflow="hidden" while open (openModal and its siblings all share that convention),
+// Applied only when nothing is mid-interaction. Every modal/full-screen panel/onboarding step/filmpage
+// locks the body via lockBodyScroll(true) while open (openModal and its siblings all share that convention),
 // and a per-card Watch/Notify/Lists popup or the deck's own filter panel (.cpop) lives INSIDE the very DOM
 // render() rebuilds. Landing a full listing rebuild under any of those would close it, or worse, corrupt it
 // mid-tap. Deferring costs nothing — the data below still updates immediately regardless, so the very next
 // quiet poll (or the next return to the tab) paints it in; the tab is never more than one heartbeat stale,
 // and never needs a hand refresh.
-const catalogueUIBusy = () => document.body.style.overflow==="hidden"
+const catalogueUIBusy = () => _bodyScrollLocked
   || !!document.querySelector(".cpop");
 // CAS-503: the device's date can move on (a tab left open across midnight, or simply a catalogue build that
 // lagged the clock) with no catalogue change at all — that must not depend on a successful network fetch,
@@ -8397,14 +8413,14 @@ window.openWatchSheet = () => {
   $("watchSheet").classList.add("open");
   $("watchSheetScrim").classList.add("open");
   $("watchFilterBtn").setAttribute("aria-expanded","true");
-  document.body.style.overflow="hidden";
+  lockBodyScroll(true);
 };
 window.closeWatchSheet = () => {
   watchSheetOpen=false;
   $("watchSheet").classList.remove("open");
   $("watchSheetScrim").classList.remove("open");
   $("watchFilterBtn").setAttribute("aria-expanded","false");
-  document.body.style.overflow="";
+  lockBodyScroll(false);
 };
 document.addEventListener("keydown", e=>{ if(e.key==="Escape" && watchSheetOpen) closeWatchSheet(); });
 const chipSummary = labels => labels.length<=2 ? labels.join(", ") : `${labels.slice(0,2).join(", ")} +${labels.length-2}`;
@@ -10771,11 +10787,11 @@ window.openSvcAnalysis=()=>{
   svcRankBy="most";
   renderSvcAnalysis();
   $("svcAnalysis").scrollTop=0;
-  $("svcAnalysis").classList.add("open"); document.body.style.overflow="hidden";
+  $("svcAnalysis").classList.add("open"); lockBodyScroll(true);
   syncWatchChip();
   logEvent("svc_analysis_opened",{mine:serviceAdvice().mine.length});
 };
-window.closeSvcAnalysis=()=>{ $("svcAnalysis").classList.remove("open"); document.body.style.overflow=""; syncWatchChip(); };
+window.closeSvcAnalysis=()=>{ $("svcAnalysis").classList.remove("open"); lockBodyScroll(false); syncWatchChip(); };
 
 // ================= LANGUAGES (CAS-532, split into its own screen CAS-562) =================
 // The one taste setting that applies to every agent, no per-agent override. Writes straight to
@@ -10896,12 +10912,12 @@ window.openLanguages=()=>{
   langQuery="";
   renderLanguages();
   $("languagesScreen").scrollTop=0;
-  $("languagesScreen").classList.add("open"); document.body.style.overflow="hidden";
+  $("languagesScreen").classList.add("open"); lockBodyScroll(true);
   syncWatchChip();
   logEvent("languages_opened",{});
 };
 window.closeLanguages=()=>{
-  $("languagesScreen").classList.remove("open"); document.body.style.overflow="";
+  $("languagesScreen").classList.remove("open"); lockBodyScroll(false);
   syncWatchChip();
 };
 
@@ -10922,13 +10938,13 @@ function renderWhereWhen(){
 window.openWhereWhen=()=>{
   renderWhereWhen();
   $("wwScreen").scrollTop=0;
-  $("wwScreen").classList.add("open"); document.body.style.overflow="hidden";
+  $("wwScreen").classList.add("open"); lockBodyScroll(true);
   syncWatchChip();
   logEvent("where_when_opened",{});
 };
 window.closeWhereWhen=()=>{
   prefsWatchMode=false;
-  $("wwScreen").classList.remove("open"); document.body.style.overflow="";
+  $("wwScreen").classList.remove("open"); lockBodyScroll(false);
   syncWatchChip();
 };
 
@@ -10950,11 +10966,11 @@ function renderAbout(){
 window.openAbout=()=>{
   renderAbout();
   $("aboutScreen").scrollTop=0;
-  $("aboutScreen").classList.add("open"); document.body.style.overflow="hidden";
+  $("aboutScreen").classList.add("open"); lockBodyScroll(true);
   syncWatchChip();
   logEvent("about_opened",{});
 };
-window.closeAbout=()=>{ $("aboutScreen").classList.remove("open"); document.body.style.overflow=""; syncWatchChip(); };
+window.closeAbout=()=>{ $("aboutScreen").classList.remove("open"); lockBodyScroll(false); syncWatchChip(); };
 window.toggleNavMenu=e=>{
   e && e.stopPropagation();
   const open=!$("navMenu").classList.contains("open");
@@ -11069,7 +11085,7 @@ function paintSplashWall(){
 }
 function showSplash(){
   paintSplashWall();
-  $("splash").classList.add("open"); document.body.style.overflow="hidden";
+  $("splash").classList.add("open"); lockBodyScroll(true);
   logEvent("splash_shown");
 }
 function splashGo(){
@@ -14567,14 +14583,14 @@ function flowStart(startKey){
   onbDone=freshDone(); onbDoor=null; onbDoorIdx=0; onbDonePulse=null;
   onbFlow.draft=null;          // no agent yet — nothing on the first two screens quotes a count
   onbFlow.workingAgents=null; onbFlow.reportStats=null;   // CAS-629: a fresh roster commits fresh every run
-  $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
+  $("onbStep").classList.add("open"); lockBodyScroll(true);
   logEvent("flow_start");
   gotoStep(startKey||"v2_intro","none");   // CAS-911: the first-run entry is the v2 sequence now
 }
 function flowStop(){
   flowOn=false; flowNewAgent=false; briefOn=false; menuStepOn=false;
   if(flowSlideT){ clearTimeout(flowSlideT); flowSlideT=null; endSlide(); }
-  $("onbStep").classList.remove("open","chromed","sliding"); document.body.style.overflow="";
+  $("onbStep").classList.remove("open","chromed","sliding"); lockBodyScroll(false);
   $("stepHdr").hidden=true; $("stepNav").hidden=true;
 }
 function flowNext(){
@@ -14629,7 +14645,7 @@ function briefOpen(id, from){
   // axis) has to read and, on Save, re-write the SAME global answer every other agent carries, or a save
   // would freeze this one agent's status back onto whatever it happened to open with.
   onbFlow.watch = JSON.parse(JSON.stringify(watchPrefs));
-  $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
+  $("onbStep").classList.add("open"); lockBodyScroll(true);
   logEvent("briefing_opened",{id});
   gotoStep("briefing","none");
 }
@@ -14728,11 +14744,11 @@ window.briefDelete=()=>{
 function briefReturn(){
   if(briefFrom==="agents"){ briefFrom=null; return openAgentsScreen(); }
   // CAS-688: #leScreen was never closed under the Briefing (see editListCascRow), so returning is just
-  // repainting its content off the now-current cascades — flowStop() already cleared body.style.overflow,
+  // repainting its content off the now-current cascades — flowStop() already released the scroll lock,
   // which leScreen still needs since it's the screen left showing.
   if(briefFrom==="listEditor"){
     briefFrom=null;
-    document.body.style.overflow="hidden";
+    lockBodyScroll(true);
     return leRebuild();
   }
   briefFrom=null;
@@ -14748,7 +14764,7 @@ function briefClose(){ briefOn=false; flowStop(); briefReturn(); }
 // set the one thing this menu item already sets. Account > My streaming services is the same screen too.
 window.openMenuServices=()=>{
   flowStop(); menuStepOn=true;
-  $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
+  $("onbStep").classList.add("open"); lockBodyScroll(true);
   logEvent("services_opened",{picked:prefs.sub.size+prefs.store.size});
   gotoStep("services","none");
 };
@@ -15308,13 +15324,13 @@ window.openAgentsScreen=()=>{
   if($("movingScreen").classList.contains("open")) closeMovingScreen();
   renderAgentsScreen();
   $("agentsScreen").scrollTop=0;
-  $("agentsScreen").classList.add("open"); document.body.style.overflow="hidden";
+  $("agentsScreen").classList.add("open"); lockBodyScroll(true);
   $("agentsBtn").classList.add("active"); $("agentsBtn").setAttribute("aria-pressed","true");
   syncWatchChip();
   logEvent("agents_screen_opened",{count:cascades.length});
 };
 window.closeAgentsScreen=()=>{
-  $("agentsScreen").classList.remove("open"); document.body.style.overflow="";
+  $("agentsScreen").classList.remove("open"); lockBodyScroll(false);
   $("agentsBtn").classList.remove("active"); $("agentsBtn").setAttribute("aria-pressed","false");
   syncWatchChip();
 };
@@ -15329,14 +15345,14 @@ window.openMovingScreen=()=>{
   movingWindow="2weeks";   // CAS-848: always opens pinned to 2 weeks; a tap (setMovingWindow) still overrides it
   renderMovingScreen();
   $("movingScreen").scrollTop=0;
-  $("movingScreen").classList.add("open"); document.body.style.overflow="hidden";
+  $("movingScreen").classList.add("open"); lockBodyScroll(true);
   $("movingBtn").classList.add("active"); $("movingBtn").setAttribute("aria-pressed","true");
   syncWatchChip();
   logEvent("moving_screen_opened",{});
 };
 window.closeMovingScreen=()=>{
   movingIsOpen=false;
-  $("movingScreen").classList.remove("open"); document.body.style.overflow="";
+  $("movingScreen").classList.remove("open"); lockBodyScroll(false);
   $("movingBtn").classList.remove("active"); $("movingBtn").setAttribute("aria-pressed","false");
   syncWatchChip();
 };
@@ -15422,12 +15438,12 @@ function renderManageOccasionsScreen(){
 window.openManageOccasionsScreen=()=>{
   renderManageOccasionsScreen();
   $("manageOccasionsScreen").scrollTop=0;
-  $("manageOccasionsScreen").classList.add("open"); document.body.style.overflow="hidden";
+  $("manageOccasionsScreen").classList.add("open"); lockBodyScroll(true);
   syncWatchChip();
   logEvent("manage_occasions_screen_opened",{count:occasionReg.length});
 };
 window.closeManageOccasionsScreen=()=>{
-  $("manageOccasionsScreen").classList.remove("open"); document.body.style.overflow="";
+  $("manageOccasionsScreen").classList.remove("open"); lockBodyScroll(false);
   syncWatchChip();
 };
 window.startRenameOccasion=(id)=>{
@@ -15616,11 +15632,11 @@ function renderAccount(){
 window.openAccount=()=>{
   renderAccount();
   $("accountScreen").scrollTop=0;
-  $("accountScreen").classList.add("open"); document.body.style.overflow="hidden";
+  $("accountScreen").classList.add("open"); lockBodyScroll(true);
   syncWatchChip();
   logEvent("account_opened",{signedIn:accountWho().in});
 };
-window.closeAccount=()=>{ $("accountScreen").classList.remove("open"); document.body.style.overflow=""; syncWatchChip(); };
+window.closeAccount=()=>{ $("accountScreen").classList.remove("open"); lockBodyScroll(false); syncWatchChip(); };
 // A defaults row opens the very screen the flow uses for that setting, rather than a second copy of it.
 // The step frame sits above this one, so Account steps aside and comes back when the step closes.
 let acctResume=false;
@@ -15941,7 +15957,7 @@ function openOnbStep(key, agentKey){
   // doesn't show a different default from the real thing.
   if(picked){ onbFlow.name=starterAgentName(picked); onbFlow.defaultName=onbFlow.name;
               onbFlow.draft.icon=picked.icon; }
-  $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
+  $("onbStep").classList.add("open"); lockBodyScroll(true);
   logEvent("onbstep_shown",{step:key, agent:agentKey||null});
   renderOnbStep(key);
   return true;
@@ -16135,11 +16151,11 @@ function openMembership(agentKey, nameOverride, cascade){
     ${posters?`<div class="rvgrid membgrid">${posters}</div>`:""}
     <p class="membproto">Prototype — no account, no payment, no real charge.</p>`;
   $("membScreen").scrollTop=0;
-  $("membScreen").classList.add("open"); document.body.style.overflow="hidden";
+  $("membScreen").classList.add("open"); lockBodyScroll(true);
   logEvent("membership_shown",{agent:agentKey||null, haul:n});
   return true;
 }
-function closeMembership(){ $("membScreen").classList.remove("open"); document.body.style.overflow=""; }
+function closeMembership(){ $("membScreen").classList.remove("open"); lockBodyScroll(false); }
 // ---- CAS-629 Changes E3/E4: the roster's own numbers, read off onbFlow.workingAgents ------------------
 // N/M/K are computed once (S6's wire() caches them onto onbFlow.reportStats) and read a second time by
 // S7's recap (Change E4 AC5), so the two screens can never print different numbers for the same roster.
@@ -16190,7 +16206,7 @@ function openOnbMembership(){
     <button class="membcta" type="button" onclick="membStart()">Start my free month</button>
     <p class="membproto">Prototype — no account, no payment, no real charge.</p>`;
   $("membScreen").scrollTop=0;
-  $("membScreen").classList.add("open"); document.body.style.overflow="hidden";
+  $("membScreen").classList.add("open"); lockBodyScroll(true);
   logEvent("membership_shown",{onboarding:true, agents:n});
 }
 // Change E4: the one back door this page has ever had — membership is the only context with a last
@@ -16201,7 +16217,7 @@ window.onbMembBack=()=>{
   closeMembership();
   flowOn=true;
   gotoStep("v2_done","back");
-  $("onbStep").classList.add("open"); document.body.style.overflow="hidden";
+  $("onbStep").classList.add("open"); lockBodyScroll(true);
 };
 // Starting the free month goes straight to the #12 listing with the finish-setup bar (CAS-121) — no invite,
 // no learn step. In the real flow the sharpened agent is already committed; on the ?step=membership preview we
@@ -16363,7 +16379,7 @@ function openInvite(){
   inviteStep=0;
   // Fresh, spec defaults each time the invite is opened: alerts + learning ON, email OFF.
   agentState.alerts=true; agentState.learning=true; agentState.email=false;
-  $("invite").classList.add("open"); document.body.style.overflow="hidden";
+  $("invite").classList.add("open"); lockBodyScroll(true);
   logEvent("invite_opened");
   renderInvite();
 }
@@ -16435,7 +16451,7 @@ function inviteFinish(){
   cascades.forEach(c=>{ if(c.paused){ c.paused=false; unpaused=true; } });
   if(unpaused) saveCascades();
   try{ localStorage.removeItem("cascade_guest"); }catch(e){}
-  $("invite").classList.remove("open"); document.body.style.overflow="";
+  $("invite").classList.remove("open"); lockBodyScroll(false);
   showFoundList();
   render();
   const c=inviteCascade;
@@ -17118,7 +17134,7 @@ function afterSignIn(){
   // the wizard are never both up at once (splashGo closes the splash before opening the wizard), so this is
   // the same flowStop() either way, just no longer conditioned on which of the two happened to be showing.
   if(splashUp || flowOn) flowStop();
-  document.body.style.overflow="";
+  lockBodyScroll(false);
   if(cascades.length){
     // CAS-420/CAS-409/CAS-566: arrival at an account with agents already made is arrival at the FIRST one.
     // Always land there, not only when the incoming view happened to lack a real filtered listing: CAS-420's
@@ -18641,10 +18657,12 @@ else if(dedupedN)
   const modal = gid('authModal');
   const toastSafe = m => { try{ if(typeof window.toast === 'function') window.toast(m); }catch(e){} };
 
-  const openAuth  = () => { modal.classList.add('open'); document.body.style.overflow = 'hidden'; };
+  // CAS-916: lockBodyScroll lives in the classic <script> above — this module shares window but not
+  // that script's own let/const bindings (same reason onboardingSeen is exposed the same way).
+  const openAuth  = () => { modal.classList.add('open'); if(typeof window.lockBodyScroll==='function') window.lockBodyScroll(true); };
   const closeAuth = () => {
     modal.classList.remove('open');
-    if(!document.querySelector('.modal.open')) document.body.style.overflow = ''; };
+    if(!document.querySelector('.modal.open') && typeof window.lockBodyScroll==='function') window.lockBodyScroll(false); };
   const showPanel = which => ['authGuest','authSignedOut','authSignedIn']
     .forEach(p => gid(p).style.display = (p === which ? 'block' : 'none'));
 
