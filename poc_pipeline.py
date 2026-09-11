@@ -567,6 +567,13 @@ def enrich_omdb(movie: dict) -> dict:
 # ---------------------------------------------------------------------------
 WM_FIELDS_MAX_CREDITS = int(os.getenv("WM_FIELDS_MAX_CREDITS", "500"))
 
+# CAS-921: the nightly poc_pipeline.py run's own budget for the same fields, spent independently
+# of WM_FIELDS_MAX_CREDITS above (the manual watchmode-backfill.yml dispatch's budget).
+WM_NIGHTLY_MAX_CREDITS = int(os.getenv("WM_NIGHTLY_MAX_CREDITS", "400"))
+# A ladder-cohort title (upcoming/in_cinema) refreshes on a shorter TTL than WATCHMODE_CACHE_TTL_
+# DAYS: Watchmode popularity is the whole score for a title with no other window's data yet.
+WM_NIGHTLY_COHORT_TTL_DAYS = 7
+
 
 def _invert_watchmode_idmap(idmap: dict) -> dict:
     """`_fetch_watchmode_idmap` returns {wm_id: tmdb_id}; this backfill looks the other way
@@ -591,7 +598,8 @@ def _watchmode_fields_stale(movie: dict, ttl_days: int = WATCHMODE_CACHE_TTL_DAY
     return (datetime.date.fromisoformat(_RUN_DATE) - stamped).days >= ttl_days
 
 
-def enrich_watchmode_fields(movie: dict, wm_idmap: dict, budget: dict) -> str:
+def enrich_watchmode_fields(movie: dict, wm_idmap: dict, budget: dict,
+                             ttl_days: int = WATCHMODE_CACHE_TTL_DAYS) -> str:
     """Backfill wm_user_rating / wm_critic_score / wm_popularity_percentile from Watchmode's
     /title/{id}/details/ endpoint. `wm_idmap` is the INVERSE map (tmdb_id -> wm_id) from
     `_invert_watchmode_idmap`, built once per run. `budget` is a shared, mutable counter —
@@ -602,10 +610,14 @@ def enrich_watchmode_fields(movie: dict, wm_idmap: dict, budget: dict) -> str:
     unresolvable title must cost nothing while a stale one that finds the budget empty still
     counts. An absent field is stored as None — never guessed, never defaulted to 0.
 
+    `ttl_days` lets a caller apply a shorter staleness window than the default
+    WATCHMODE_CACHE_TTL_DAYS — CAS-921's nightly ladder-cohort tier passes
+    WM_NIGHTLY_COHORT_TTL_DAYS so an upcoming/in_cinema title refreshes weekly, not monthly.
+
     Returns 'ok' (fetched and wrote fields), 'cached' (already fresh, no credit spent), 'no-id'
     (no Watchmode id resolves for this title), 'skip' (budget exhausted), or an `_api_call`
     outcome ('skip'/'stop') on a failed fetch."""
-    if not _watchmode_fields_stale(movie):
+    if not _watchmode_fields_stale(movie, ttl_days):
         return "cached"
     wm_id = wm_idmap.get(movie.get("tmdb_id"))
     if wm_id is None:
@@ -622,6 +634,75 @@ def enrich_watchmode_fields(movie: dict, wm_idmap: dict, budget: dict) -> str:
     movie["wm_popularity_percentile"] = _num(detail.get("popularity_percentile"))
     movie["wm_fields_fetched_at"] = _RUN_DATE
     return "ok"
+
+
+def _is_ladder_cohort(movie: dict) -> bool:
+    """Upcoming/in_cinema — the two windows where Watchmode popularity IS the whole score
+    (CAS-921's Observation), so these get the shorter WM_NIGHTLY_COHORT_TTL_DAYS refresh."""
+    return bool({"upcoming", "in_cinema"} & set(movie.get("status") or []))
+
+
+def enrich_watchmode_fields_nightly(movies: list, budget: dict | None = None) -> dict:
+    """CAS-921: the nightly poc_pipeline.py run's own Watchmode fields pass. The earlier CAS-830/
+    850 backfill only ever fires from the manual watchmode-backfill.yml dispatch, so a title added
+    to the catalogue since the last manual run carried no Cascade score at all, and an upcoming
+    title's popularity went stale until someone remembered to dispatch it.
+
+    Spends one shared budget, WM_NIGHTLY_MAX_CREDITS by default, across three priority tiers,
+    highest first:
+      1. titles with no wm_fields_fetched_at at all (never fetched);
+      2. upcoming/in_cinema titles stale past WM_NIGHTLY_COHORT_TTL_DAYS (7 days);
+      3. every other title stale past WATCHMODE_CACHE_TTL_DAYS (30 days).
+    Each tier is spent in full before the next one starts, so an empty budget always favours the
+    higher tier — the same discipline `enrich_watchmode_fields`'s own {"remaining", "skipped"}
+    shape already gives every other bounded backfill in this module.
+
+    A missing or rejected WATCHMODE_API_KEY must not fail the nightly run: this prints a [warn]
+    line and returns the zeroed outcome dict immediately, the same tolerance `check_provider_
+    health` gives a throttled provider elsewhere in this module — `_api_call` already prints its
+    own [warn]/[error] line and returns 'stop' for a rejected key encountered mid-run.
+
+    Returns an {'ok', 'cached', 'no-id', 'skip', 'stop'} outcome-count dict."""
+    outcomes = {"ok": 0, "cached": 0, "no-id": 0, "skip": 0, "stop": 0}
+    if not WATCHMODE_KEY:
+        print("[warn] Watchmode: WATCHMODE_API_KEY not set — skipping the nightly Watchmode "
+              "fields step.")
+        return outcomes
+
+    idmap, idmap_outcome = _api_call("Watchmode ID map", _fetch_watchmode_idmap)
+    if idmap_outcome != "ok" or not idmap:
+        print("[warn] Watchmode: no usable ID map this run — skipping the nightly Watchmode "
+              "fields step.")
+        return outcomes
+    wm_idmap = _invert_watchmode_idmap(idmap)
+
+    if budget is None:
+        budget = {"remaining": WM_NIGHTLY_MAX_CREDITS, "skipped": 0}
+
+    seen = set()
+    unfetched = []
+    for m in movies:
+        if not m.get("wm_fields_fetched_at"):
+            unfetched.append(m)
+            seen.add(id(m))
+
+    cohort = []
+    for m in movies:
+        if id(m) in seen:
+            continue
+        if _is_ladder_cohort(m) and _watchmode_fields_stale(m, WM_NIGHTLY_COHORT_TTL_DAYS):
+            cohort.append(m)
+            seen.add(id(m))
+
+    rest = [m for m in movies if id(m) not in seen and _watchmode_fields_stale(m)]
+
+    for m in unfetched:
+        outcomes[enrich_watchmode_fields(m, wm_idmap, budget)] += 1
+    for m in cohort:
+        outcomes[enrich_watchmode_fields(m, wm_idmap, budget, WM_NIGHTLY_COHORT_TTL_DAYS)] += 1
+    for m in rest:
+        outcomes[enrich_watchmode_fields(m, wm_idmap, budget)] += 1
+    return outcomes
 
 
 # Map a film's original language (with production country as a tiebreak) to a
@@ -1618,6 +1699,14 @@ def run(simulate_day: bool = False):
         for m in records:
             m["status"] = derive_status(m, m.get("offers", []), today)
             m.setdefault("cache_stamped_at", today.isoformat())   # CAS-772: no real vendor stamp on sample data
+
+    # CAS-921: the nightly run's own Watchmode fields pass — see enrich_watchmode_fields_nightly's
+    # docstring. Runs every night, live or sample; a missing/rejected key is tolerated so this
+    # never fails the build.
+    wm_outcomes = enrich_watchmode_fields_nightly(records)
+    print(f"[watchmode] nightly fields: {wm_outcomes['ok']} enriched, {wm_outcomes['cached']} "
+          f"cached, {wm_outcomes['no-id']} no-id, {wm_outcomes['skip']} skipped, "
+          f"{wm_outcomes['stop']} stopped")
 
     # CAS-772: cache-health report (change item 4) — a limit nobody can see is a limit nobody
     # keeps. Printed every run, live or sample, since the sample branch never touches build_live_

@@ -103,5 +103,55 @@ class EnrichWatchmodeFieldsRefetchPolicy(unittest.TestCase):
         self.assertEqual(movie["wm_fields_fetched_at"], pp._RUN_DATE)
 
 
+class EnrichWatchmodeFieldsNightlyPriorityOrder(unittest.TestCase):
+    """CAS-921 AC2 — 3 new titles, 3 stale ladder-cohort titles and 3 stale other titles, with a
+    budget of 4: exactly the 3 new titles and 1 cohort title are fetched, highest priority first."""
+
+    def test_new_titles_then_cohort_titles_spend_the_budget_first(self):
+        import datetime
+        today = datetime.date.fromisoformat(pp._RUN_DATE)
+        cohort_stamp = (today - datetime.timedelta(days=10)).isoformat()   # >=7, <30
+        other_stamp = (today - datetime.timedelta(days=40)).isoformat()    # >=30
+
+        new_titles = [{"tmdb_id": i, "status": []} for i in range(1, 4)]
+        cohort_titles = [{"tmdb_id": i, "status": ["upcoming"], "wm_fields_fetched_at": cohort_stamp}
+                          for i in range(4, 7)]
+        other_titles = [{"tmdb_id": i, "status": [], "wm_fields_fetched_at": other_stamp}
+                         for i in range(7, 10)]
+        movies = new_titles + cohort_titles + other_titles
+        wm_idmap = {i: str(100 + i) for i in range(1, 10)}
+        detail = {"user_rating": 5.0, "critic_score": 50, "popularity_percentile": 50.0}
+        budget = {"remaining": 4, "skipped": 0}
+
+        with mock.patch.object(pp, "WATCHMODE_KEY", "test-key"), \
+             mock.patch.object(pp, "_fetch_watchmode_idmap",
+                                return_value={v: k for k, v in wm_idmap.items()}), \
+             mock.patch.object(pp, "_fetch_watchmode_title_details", return_value=detail):
+            outcomes = pp.enrich_watchmode_fields_nightly(movies, budget=budget)
+
+        self.assertEqual(outcomes["ok"], 4)
+        self.assertTrue(all("wm_user_rating" in m for m in new_titles))
+        self.assertEqual(sum(1 for m in cohort_titles if "wm_user_rating" in m
+                              and m["wm_fields_fetched_at"] == pp._RUN_DATE), 1)
+        self.assertTrue(all("wm_user_rating" not in m for m in other_titles))
+        self.assertEqual(budget["remaining"], 0)
+
+
+class EnrichWatchmodeFieldsNightlyMissingKey(unittest.TestCase):
+    """CAS-921 AC3 — with WATCHMODE_API_KEY unset, the nightly step returns without raising and
+    prints a line starting [warn]."""
+
+    def test_missing_key_warns_and_returns_without_raising(self):
+        movies = [{"tmdb_id": 1, "status": []}]
+        with mock.patch.object(pp, "WATCHMODE_KEY", None), \
+             mock.patch.object(pp, "_fetch_watchmode_idmap",
+                                side_effect=AssertionError("must not call Watchmode")), \
+             mock.patch("builtins.print") as mock_print:
+            outcomes = pp.enrich_watchmode_fields_nightly(movies)
+        self.assertEqual(outcomes, {"ok": 0, "cached": 0, "no-id": 0, "skip": 0, "stop": 0})
+        printed = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any(line.startswith("[warn]") for line in printed))
+
+
 if __name__ == "__main__":
     unittest.main()
