@@ -2296,10 +2296,11 @@ test("CAS-728 AC4: a floor below the stored admission_score keeps the film — t
   withWatchPrefs(STICKY_WATCH_PREFS, () => {
     const film = pastCinemaUnwatchedFilm();
     const id = film.tmdb_id;
-    const saved = { rt_critic: film.rt_critic, metacritic: film.metacritic, imdb_votes: film.imdb_votes };
-    // Zero the film's LIVE cascadeScore to -1 — no review signal at all — so a re-test that wrongly read the
-    // live score would fail at ANY floor. Only a re-test against the stored admission_score of 90 can pass.
-    film.rt_critic = null; film.metacritic = null; film.imdb_votes = 0;
+    const saved = { wm_user_rating: film.wm_user_rating, wm_critic_score: film.wm_critic_score };
+    // Zero the film's LIVE cascadeScore to -1 — no Watchmode signal at all (CAS-919: cascadeScore now reads
+    // wm_user_rating/wm_critic_score, not rt_critic/metacritic/imdb_votes) — so a re-test that wrongly read
+    // the live score would fail at ANY floor. Only a re-test against the stored admission_score of 90 can pass.
+    film.wm_user_rating = null; film.wm_critic_score = null;
     assert.equal(E.cascadeScore(film), -1, "this test's own setup must actually zero out the live score");
     const c = stickyTestCascade("cas728-ac4", 99);
     E.cascades.push(c);
