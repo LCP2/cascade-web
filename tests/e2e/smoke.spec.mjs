@@ -930,13 +930,12 @@ test("CAS-913: a device that has onboarded but never signed in boots into the ap
   await expect(page.locator("#authModal")).not.toHaveClass(/open/);
 });
 
-// CAS-831: a temporary Watchmode-vs-OMDb/TMDB comparison row (wmScoresRowHTML), expanded card only. Values
-// are pushed onto a live MOVIES entry and the card re-rendered via fastPatchFindRow — the same targeted
-// re-render the app's own opinion/notify flows already use — because expanding a card only toggles a CSS
-// class (toggleExpand) and never re-runs cardHTML, so the row has to exist in the initial markup, hidden on
-// the collapsed card by CSS exactly like r-money/r-badge/r-awards already are, or a real tap-to-expand would
-// never reveal it. This suite's own "ios" project is already the 390x844 reference frame (playwright.config.mjs).
-test("CAS-831: the expanded card's Watchmode row shows its values, a missing one is a muted en-dash, and a collapsed card never shows the row", async ({ page }) => {
+// CAS-919: Watchmode is now the Cascade score, and the card is back to one score row — People
+// (wm_user_rating) and Critics (wm_critic_score). There is no separate Watchmode comparison row any more
+// (CAS-831/CAS-895/CAS-900 are retired). Values are pushed onto a live MOVIES entry and the card
+// re-rendered via fastPatchFindRow, the same targeted re-render the app's own opinion/notify flows already
+// use. This suite's own "ios" project is already the 390x844 reference frame (playwright.config.mjs).
+test("CAS-919: the score row reads Watchmode fields as People/Critics, a missing one is a muted en-dash, and there is no separate Watchmode row", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
   await toListing(page);
@@ -948,41 +947,36 @@ test("CAS-831: the expanded card's Watchmode row shows its values, a missing one
 
   await page.evaluate((filmId) => {
     const m = MOVIES.find(x => x.tmdb_id === filmId);
-    m.wm_user_rating = 7.6; m.wm_popularity_percentile = 82.3; m.wm_critic_score = 91;
+    m.wm_user_rating = 7.6; m.wm_critic_score = 91;
     fastPatchFindRow(filmId);
   }, id);
 
-  const wmRow = page.locator(`#card-${id} .r-wmscores`);
-  await expect(wmRow).toBeHidden();   // still collapsed — AC4, same collapsed card
+  await expect(page.locator(`#card-${id} .r-wmscores`)).toHaveCount(0);
 
-  await card.locator(".metaline").click();
-  await expect(page.locator(`#card-${id}`)).toHaveClass(/expanded/);
-  await expect(wmRow).toBeVisible();
-  await expect(wmRow).toContainText("7.6");
-  await expect(wmRow).toContainText("82.3");
-  await expect(wmRow).toContainText("91");
+  const scoresRow = page.locator(`#card-${id} .mrow.r-scores`);
+  await expect(scoresRow).toBeVisible();
+  const peopleCell = scoresRow.locator(".m", { hasText: "People" });
+  const criticsCell = scoresRow.locator(".m", { hasText: "Critics" });
+  await expect(peopleCell.locator(".dot")).toHaveClass(/imdb/);
+  await expect(criticsCell.locator(".dot")).toHaveClass(/meta/);
+  await expect(peopleCell).toContainText("7.6");
+  await expect(criticsCell).toContainText("91");
 
   await page.evaluate((filmId) => {
     const m = MOVIES.find(x => x.tmdb_id === filmId);
     m.wm_critic_score = null;
     fastPatchFindRow(filmId);
   }, id);
-  // CAS-900: the Watchmode-critic label was shortened from "WM crit" to "Crit".
-  const critCell = wmRow.locator(".m", { hasText: "Crit" });
-  await expect(critCell).toHaveClass(/muted/);
-  await expect(critCell).toContainText("–");
-  await expect(wmRow).toContainText("7.6");     // the other two cells are unaffected
-  await expect(wmRow).toContainText("82.3");
-
-  // AC4: an untouched, still-collapsed card carries no visible Watchmode row.
-  await expect(cards.nth(1).locator(".r-wmscores")).toBeHidden();
+  await expect(criticsCell).toHaveClass(/muted/);
+  await expect(criticsCell).toContainText("–");
+  await expect(peopleCell).toContainText("7.6");     // the other cell is unaffected
 });
 
-// CAS-895: a second, TEMPORARY comparison instrument — a Cascade score appended to both the OMDb/TMDB
-// scores line and the CAS-831 Watchmode line, visible on a COLLAPSED card (unlike CAS-831's row, which
-// only surfaces once expanded), so the two figures can be scanned across the catalogue without tapping
-// into every card. This suite's own "ios" project is already the 390x844 reference frame (playwright.config.mjs).
-test("CAS-895: a collapsed card shows a Cascade score on both the OMDb and Watchmode lines, reading its own source", async ({ page }) => {
+// CAS-919: cascadeScore now reads the Watchmode chain directly (AC4: cascadeScore(m) === wmCascadeScore(m)
+// for every film), so there is nothing left to compare between two lines — the in-row Cascade cell is gone
+// and the score lives only in the title badge. Pop is removed, not relabelled (there was no popularity cell
+// before Watchmode).
+test("CAS-919: a collapsed card's score row has no Cascade cell and no Pop cell, only People/Critics", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
   await toListing(page);
@@ -994,45 +988,26 @@ test("CAS-895: a collapsed card shows a Cascade score on both the OMDb and Watch
 
   await page.evaluate((filmId) => {
     const m = MOVIES.find(x => x.tmdb_id === filmId);
-    // CAS-895: force the released path so cascadeScore/wmCascadeScore each read straight off qScore/
-    // wmQScore rather than blending in cinemaScore — an upcoming film would score the same on both lines
-    // (neither term applies pre-release), which would prove nothing about AC5.
     m.status = ["included_streaming"];
-    m.imdb_rating = 8.3; m.imdb_votes = 1000000; m.metacritic = 89; m.rt_critic = null;
-    m.wm_user_rating = 4.0; m.wm_popularity_percentile = 100; m.wm_critic_score = 40;
+    m.wm_user_rating = 4.0; m.wm_critic_score = 40;
     fastPatchFindRow(filmId);
   }, id);
 
   const card2 = page.locator(`#card-${id}`);
-  await expect(card2).not.toHaveClass(/expanded/);   // AC4/AC6: still collapsed
+  await expect(card2).not.toHaveClass(/expanded/);
 
   const scoresRow = card2.locator(".mrow.r-scores");
-  const wmRow = card2.locator(".mrow.r-wmscores");
   await expect(scoresRow).toBeVisible();
-  await expect(wmRow).toBeVisible();
-
-  const scoresCascade = scoresRow.locator(".m", { hasText: "Cascade" });
-  const wmCascade = wmRow.locator(".m", { hasText: "Cascade" });
-  await expect(scoresCascade).toBeVisible();
-  await expect(wmCascade).toBeVisible();
-
-  // AC5: the two Cascade cells read different sources — proven by different values for a fixture where
-  // the OMDb and Watchmode figures disagree.
-  const omdbVal = await scoresCascade.locator("b").innerText();
-  const wmVal = await wmCascade.locator("b").innerText();
-  expect(omdbVal).not.toBe(wmVal);
-
-  // AC6: the collapsed grid actually reserves a row for the new line, and the line itself is not hidden.
-  const gridAreas = await card2.locator(".ctop").evaluate(el => getComputedStyle(el).gridTemplateAreas);
-  expect(gridAreas).toContain("wmscores");
-  const wmDisplay = await wmRow.evaluate(el => getComputedStyle(el).display);
-  expect(wmDisplay).not.toBe("none");
+  await expect(card2.locator(".mrow.r-wmscores")).toHaveCount(0);
+  await expect(scoresRow.locator(".m", { hasText: "Cascade" })).toHaveCount(0);
+  await expect(scoresRow.locator(".m", { hasText: "Pop" })).toHaveCount(0);
+  await expect(scoresRow.locator(".m", { hasText: "People" })).toBeVisible();
+  await expect(scoresRow.locator(".m", { hasText: "Critics" })).toBeVisible();
 });
 
-// CAS-900: CAS-895's second collapsed-card score row doubled the 10-11px compact type CAS-655 tuned for a
-// single row, reviewed on device as too small. Raises both rows to 12px cells/values and 11px labels, and
-// shortens "WM pop"/"WM crit" to "Pop"/"Crit" so the Watchmode row still fits one line at the larger size.
-test("CAS-900: collapsed-card score rows are 12px/11px type and the Watchmode row uses short labels", async ({ page }) => {
+// CAS-900 (kept, re-targeted for CAS-919): the collapsed-card score row is 12px cells/values and 11px
+// labels, now over the single People/Critics row rather than two rows.
+test("CAS-900: collapsed-card score row is 12px/11px type with People/Critics labels", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
   await toListing(page);
@@ -1045,8 +1020,7 @@ test("CAS-900: collapsed-card score rows are 12px/11px type and the Watchmode ro
   await page.evaluate((filmId) => {
     const m = MOVIES.find(x => x.tmdb_id === filmId);
     m.status = ["included_streaming"];
-    m.imdb_rating = 8.3; m.imdb_votes = 1000000; m.metacritic = 89; m.rt_critic = null;
-    m.wm_user_rating = 4.0; m.wm_popularity_percentile = 100; m.wm_critic_score = 40;
+    m.wm_user_rating = 4.0; m.wm_critic_score = 40;
     fastPatchFindRow(filmId);
   }, id);
 
@@ -1054,22 +1028,16 @@ test("CAS-900: collapsed-card score rows are 12px/11px type and the Watchmode ro
   await expect(cardEl).not.toHaveClass(/expanded/);
 
   const scoresRow = cardEl.locator(".mrow.r-scores");
-  const wmRow = cardEl.locator(".mrow.r-wmscores");
   await expect(scoresRow).toBeVisible();
-  await expect(wmRow).toBeVisible();
 
-  // AC3: computed font-size on the collapsed card's score cells and labels.
   expect(await scoresRow.locator(".m").first().evaluate(el => getComputedStyle(el).fontSize)).toBe("12px");
-  expect(await wmRow.locator(".m").first().evaluate(el => getComputedStyle(el).fontSize)).toBe("12px");
   expect(await scoresRow.locator(".lab").first().evaluate(el => getComputedStyle(el).fontSize)).toBe("11px");
-  expect(await wmRow.locator(".lab").first().evaluate(el => getComputedStyle(el).fontSize)).toBe("11px");
 
-  // AC4: the Watchmode row's labels are the shortened "Pop"/"Crit", not "WM pop"/"WM crit".
-  const wmRowText = await wmRow.innerText();
-  expect(wmRowText).toContain("Pop");
-  expect(wmRowText).toContain("Crit");
-  expect(wmRowText).not.toContain("WM pop");
-  expect(wmRowText).not.toContain("WM crit");
+  const rowText = await scoresRow.innerText();
+  expect(rowText).toContain("People");
+  expect(rowText).toContain("Critics");
+  expect(rowText).not.toContain("Pop");
+  expect(rowText).not.toContain("WM");
 });
 
 // CAS-765 AC7: the silent guest-mode drop is gone. If the vendored client library ever fails to define

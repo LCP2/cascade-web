@@ -187,9 +187,15 @@ if(typeof window.CascadeAuth === "undefined"){
   // CINEMA_BUDGET_MIN survive — CAS-724's legacyMissionFloorDefault still reads them for a cinema agent's
   // one-time scoreFloor migration.
   cascadeScore, cascadeScoreSourcesText, cinemaScore, isPreRelease, buzzPctlOf, pctRankOf,
+  // CAS-919: wmQScoreSourcesText is wmQScore's own text (alongside qScoreSourcesText above), exported so a
+  // test can assert the blended cascadeScoreSourcesText's Watchmode half directly.
+  wmQScoreSourcesText,
   // CAS-895: wmQScore/wmCascadeScore, the TEMPORARY Watchmode-mirrored pair of qScore/cascadeScore — exported
   // the same way so a test can assert each stage directly rather than only the rendered row.
-  wmQScore, wmCascadeScore,
+  // CAS-919: WM_SCALE/wmScaled are the frozen piecewise-linear map wmQScore now runs its raw mean through,
+  // and scoresRowHTML is the card's own People/Critics render — all exported so a test can assert each
+  // directly rather than only the rendered card.
+  wmQScore, wmCascadeScore, WM_SCALE, wmScaled, scoresRowHTML,
   // CAS-907: the Watchmode-sourced mirror of the buzz chain (WM_BUZZ_POP_VALS/wmBuzzPctlOf/wmReleasedScoreVals/
   // wmCinemaScore) that wmCascadeScore's pre-release/blended branches now call instead of the TMDB-only
   // cinemaScore — exported independently so a test can assert each stage rather than only wmCascadeScore's
