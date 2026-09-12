@@ -108,6 +108,29 @@ test("CAS-941: switching Watch tab logs watch_tab; re-tapping the active tab log
   expect(tabs.length).toBe(1);
 });
 
+test("CAS-955: every onboarding step fires onbstep_shown once per entry, ahead of its own continue", async ({ page }) => {
+  await toShortlist(page, "stream");
+  await finishFlow(page);
+
+  const log = await readLog(page);
+  const shown = log.filter(e => e.type === "onbstep_shown");
+  const continues = log.filter(e => e.type === "onbstep_continue");
+
+  // AC(b): the flow's first step shows before any continue exists in the log at all.
+  const firstRelevant = log.find(e => e.type === "onbstep_shown" || e.type === "onbstep_continue");
+  expect(firstRelevant.type).toBe("onbstep_shown");
+  expect(firstRelevant.step).toBe("v2_intro");
+
+  // AC(a): every step that produced a continue also produced a shown with the identical step value.
+  const shownSteps = new Set(shown.map(e => e.step));
+  for(const c of continues) expect(shownSteps.has(c.step)).toBe(true);
+
+  // AC(c): a straight run through never re-enters a step, so no step key shows more than once.
+  const counts = {};
+  shown.forEach(e => { counts[e.step] = (counts[e.step] || 0) + 1; });
+  for(const step of Object.keys(counts)) expect(counts[step]).toBe(1);
+});
+
 test("CAS-943: signed out, the Metrics nav entry is hidden and no analytics_ view is ever requested", async ({ page }) => {
   const analyticsRequests = [];
   page.on("request", req => { if (req.url().includes("analytics_")) analyticsRequests.push(req.url()); });
