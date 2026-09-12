@@ -725,6 +725,30 @@
     box-shadow:0 10px 30px rgba(124,92,255,.3);margin-top:16px}
   .filminvcta:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
   .filminvcta:disabled{opacity:.5;cursor:default}
+  /* CAS-928: the shared friend row — avatar, name/subline, per-recipient channel icons, and (when
+     selectable) a checkbox. The same row markup powers the Invite sheet's picker and the Friends
+     screen; only the presence of .fcheck and interactive .fchan buttons differs between the two. */
+  .frow{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line)}
+  .frow[onclick]{cursor:pointer}
+  .frow.fsel{background:rgba(76,125,255,.10);border-radius:10px}
+  .favatar{flex:0 0 auto;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+    color:#fff;font-size:12.5px;font-weight:800}
+  .fmeta{flex:1 1 auto;min-width:0}
+  .fname{font-size:15px;font-weight:700;color:var(--ink)}
+  .fsub{font-size:12px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fchannels{display:flex;gap:6px;flex:0 0 auto}
+  .fchan{width:28px;height:28px;border-radius:8px;border:1px solid var(--line);background:transparent;
+    color:var(--faint);display:grid;place-items:center;cursor:pointer;padding:0}
+  .fchan svg{width:15px;height:15px}
+  .fchan.on{background:rgba(76,125,255,.18);border-color:var(--brand-blue);color:var(--brand-blue)}
+  .fchanstatic{width:24px;height:24px;color:var(--brand-blue);display:grid;place-items:center;flex:0 0 auto}
+  .fchanstatic svg{width:14px;height:14px}
+  .fcheck{flex:0 0 auto;width:26px;height:26px;border-radius:50%;border:1px solid var(--line);
+    background:transparent;color:#fff;font-size:13px;display:grid;place-items:center;cursor:pointer;padding:0}
+  .fcheck.on{background:var(--brand-blue);border-color:var(--brand-blue)}
+  .fempty{padding:18px 4px;color:var(--faint);font-size:13.5px}
+  .fnewbtn{display:block;width:100%;text-align:left;background:transparent;border:none;color:var(--brand-blue);
+    font-weight:700;font-size:14px;padding:10px 4px;cursor:pointer;border-bottom:1px solid var(--line);margin-bottom:4px}
   /* CAS-883: the invite sheet's compact film row — poster thumb, title, window line — so the sender can
      see which film they're inviting to before they type a name. */
   .filminvrow{display:flex;align-items:center;gap:12px;background:var(--panel2);border:1px solid var(--line);
@@ -3322,6 +3346,8 @@
                  folded that surface into Moving, and the position the design image gives Invites now. -->
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('invites')">Invites
               <span class="navitem-badge" id="invitesNavBadge" style="display:none">0</span></button>
+            <!-- CAS-928: Friends sits directly below Invites, the slot the design image gives it. -->
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('friends')">Friends</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('languages')">Languages</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('whereWhen')">Where &amp; when you'll watch</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('services')">My services</button>
@@ -3861,6 +3887,12 @@
   <div class="uwrap" id="invitesBody"></div>
 </div>
 
+<!-- FRIENDS (CAS-928) — the people Cascade remembers, and the shared recipient picker's manage-mode
+     home. Body rendered by renderFriendsScreen(). Reached from the top menu, directly below Invites. -->
+<div class="uscreen" id="friendsScreen" role="dialog" aria-modal="true" aria-label="Friends">
+  <div class="uwrap" id="friendsBody"></div>
+</div>
+
 <!-- SERVICE ANALYSIS (CAS-344) — the "which service covers what your agents found" view, given its own
      page instead of living inside Preferences. Body rendered by renderSvcAnalysis(). Reached from the top
      menu (CAS-345), its permanent entry point. -->
@@ -4062,6 +4094,12 @@ const ICON = {
   // as the rest of the set; the centre dot is the one filled mark in ICON, deliberately, so it reads as a
   // sensor rather than another outline badge.
   learn:   svgIcon(`<circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>`),
+  // CAS-928: the friend picker's three channel marks — envelope (Cascade sends this one itself),
+  // and two generic outlines for WhatsApp/SMS (device-opened, never sent server-side) that read as
+  // distinct shapes from the envelope and from each other without borrowing a trademarked logo.
+  mail:     svgIcon(`<rect x="3.4" y="5.6" width="17.2" height="12.8" rx="2"/><path d="m4.2 6.4 7.8 6 7.8-6"/>`),
+  whatsapp: svgIcon(`<path d="M12 3.6a8.2 8.2 0 0 0-7 12.4L3.6 20.4l4.5-1.4A8.2 8.2 0 1 0 12 3.6z"/><path d="M9 9.4c.2 2.6 2.9 5.3 5.5 5.5.9.1 1-.6.7-1.1l-1-1.5c-.2-.3-.6-.4-.9-.2l-.7.4c-.5-.3-1.4-1.1-1.8-1.8l.4-.7c.2-.3.1-.7-.2-.9l-1.5-1c-.5-.3-1.2-.2-1.1.7z"/>`),
+  sms:      svgIcon(`<path d="M4.2 5.6h15.6v10.4H9.4l-4 3.2v-3.2H4.2z"/><path d="M8.4 9.6h.01M12 9.6h.01M15.6 9.6h.01"/>`),
 };
 // Journey order — Upcoming leads (a film reaches cinemas before any home window).
 // primaryStatus() takes the LAST window a film holds, so "upcoming" sitting first is safe:
@@ -6406,42 +6444,265 @@ function genInviteToken(){
 // CAS-883: the one function in the file that builds an invite URL, replacing the CAS-837 link builder.
 // tmdb_id stays the title key, never a Watchmode id or a row id, same as every other #/film/<id> link.
 const inviteUrlFor = (token, m) => `${location.origin}${location.pathname}?inv=${token}#/film/${m.tmdb_id}`;
-// ---- CAS-883: the Invite sheet -----------------------------------------------------------------------
+// ---- CAS-928: Friends — the shared recipient picker + the standalone Friends screen --------------------
+// Supersedes CAS-883's single free-text name field (the Invite sheet, below) with a real remembered
+// person: a friend is a name plus an email and/or a mobile (one of the two is enough), saved automatically
+// the first time they're picked. Recommend (CAS-884) keeps its own free-text fields for now — its single
+// required-email shape needs its own follow-on decision (CAS-930/931) about which selected friend's email
+// to use, not a guess made here. No sending is wired here beyond what Invite already did (below): still
+// exactly one invites row and one share/clipboard call, just naming its recipient(s) from a selection
+// instead of a typed string.
+let friends = [];
+let friendsReady = true;   // flips false for the span of fireAccountFanout's loadFriends() call, same
+                           // shape as invitesReady — a guest has nothing to wait on, hence true.
+const FRIEND_PALETTE = ["#4C7DFF","#22D3EE","#7C5CFF","#F5A623","#48C78E","#E0574F","#FF7AC6","#8FA8FF"];
+function friendColorFor(name){
+  let h=0; for(let i=0;i<(name||"").length;i++) h=(h*31 + name.charCodeAt(i))>>>0;
+  return FRIEND_PALETTE[h % FRIEND_PALETTE.length];
+}
+function friendInitials(name){
+  const parts=(name||"").trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return "?";
+  return (parts[0][0] + (parts[1]?parts[1][0]:"")).toUpperCase();
+}
+// Only the channels a friend actually has a detail for — no mobile means no WhatsApp and no SMS.
+function friendChannels(f){ return { email: !!(f&&f.email), whatsapp: !!(f&&f.mobile), sms: !!(f&&f.mobile) }; }
+// Most recently used first, then alphabetical — done client-side so it's correct regardless of exactly
+// how the query itself is ordered (nulls-last "never used" friends fall together, then alpha).
+function friendsSorted(){
+  return friends.slice().sort((a,b)=>{
+    const au=a.last_used_at?Date.parse(a.last_used_at):-1, bu=b.last_used_at?Date.parse(b.last_used_at):-1;
+    if(au!==bu) return bu-au;
+    return (a.name||"").localeCompare(b.name||"");
+  });
+}
+// Search is a direct DOM filter (show/hide already-rendered rows) rather than a re-render, so the search
+// field itself is never recreated mid-type and never loses focus/cursor position.
+function filterFriendRows(containerId, q){
+  const root=$(containerId); if(!root) return;
+  const query=(q||"").trim().toLowerCase();
+  root.querySelectorAll(".frow").forEach(row=>{
+    const f=friends.find(x=>String(x.id)===row.dataset.fid);
+    const hay=[f&&f.name, f&&f.email, f&&f.mobile].filter(Boolean).join(" ").toLowerCase();
+    row.style.display=(!query||hay.includes(query))?"":"none";
+  });
+}
+// ---- the shared row + add/edit form --------------------------------------------------------------------
+// selectable=true is the Invite sheet's picker (checkbox + per-recipient channel buttons); selectable=false
+// is the Friends screen (a single static "has email" mark, tap the row to edit). One row renderer, one
+// form renderer, for both — "one implementation, not two" per the ticket.
+function friendRowHTML(f, opts){
+  const selectable=!!(opts && opts.selectable);
+  const sub=[f.email||"", f.mobile||""].filter(Boolean).join(" · ");
+  const chans=friendChannels(f);
+  let chanHTML;
+  if(selectable){
+    const chan=(inviteFriendSel.get(String(f.id))||{}).channel || "email";
+    chanHTML=`
+      ${chans.email?`<button type="button" class="fchan${chan==="email"?" on":""}" onclick="event.stopPropagation();setFriendChannel('${f.id}','email')" aria-label="Email ${escA(f.name)}">${ICON.mail}</button>`:""}
+      ${chans.whatsapp?`<button type="button" class="fchan${chan==="whatsapp"?" on":""}" onclick="event.stopPropagation();setFriendChannel('${f.id}','whatsapp')" aria-label="WhatsApp ${escA(f.name)}">${ICON.whatsapp}</button>`:""}
+      ${chans.sms?`<button type="button" class="fchan${chan==="sms"?" on":""}" onclick="event.stopPropagation();setFriendChannel('${f.id}','sms')" aria-label="SMS ${escA(f.name)}">${ICON.sms}</button>`:""}`;
+  } else {
+    chanHTML = chans.email ? `<span class="fchanstatic" aria-hidden="true">${ICON.mail}</span>` : "";
+  }
+  const checkbox = selectable
+    ? (()=>{ const sel=inviteFriendSel.has(String(f.id));
+        return `<button type="button" class="fcheck${sel?" on":""}" onclick="event.stopPropagation();toggleFriendSelect('${f.id}')" aria-pressed="${sel}" aria-label="${sel?"Selected":"Select"} ${escA(f.name)}">${sel?"✓":""}</button>`; })()
+    : "";
+  const sel = selectable && inviteFriendSel.has(String(f.id));
+  const rowAttr = selectable ? "" : ` onclick="openFriendsEditForm('${f.id}')"`;
+  return `<div class="frow${sel?" fsel":""}" data-fid="${f.id}"${rowAttr}>
+    <div class="favatar" style="background:${friendColorFor(f.name)}">${esc(friendInitials(f.name))}</div>
+    <div class="fmeta"><div class="fname">${esc(f.name)}</div>${sub?`<div class="fsub">${esc(sub)}</div>`:""}</div>
+    <div class="fchannels">${chanHTML}</div>
+    ${checkbox}
+  </div>`;
+}
+function friendFormHTML(existing, ctx){
+  const name=existing?existing.name:"", email=existing?(existing.email||""):"", mobile=existing?(existing.mobile||""):"";
+  const idAttr=existing?escA(String(existing.id)):"";
+  return `
+    <div class="flabel">Name</div>
+    <input type="text" class="namein" id="ffName" maxlength="40" autocomplete="off" value="${escA(name)}" placeholder="e.g. Sam">
+    <div class="flabel">Email</div>
+    <input type="email" class="namein" id="ffEmail" autocomplete="off" value="${escA(email)}" placeholder="e.g. sam@example.com">
+    <div class="flabel">Mobile (optional)</div>
+    <input type="tel" class="namein" id="ffMobile" autocomplete="off" value="${escA(mobile)}" placeholder="e.g. 0412 000 000">
+    <div class="pnote">One of email or mobile is enough. Saved to your friends when you send.</div>
+    <div class="pnote" id="ffErr" style="color:#ffb9a6" hidden></div>
+    <button type="button" class="filminvcta" onclick="submitFriendForm('${ctx}','${idAttr}')">${existing?"Save changes":"Add and select"}</button>
+    ${existing?`<button type="button" class="listact danger" style="width:auto;height:auto;padding:9px 18px;margin-top:10px" onclick="confirmDeleteFriend('${idAttr}')">Delete friend</button>`:""}`;
+}
+// Add (ctx-agnostic) or edit (ctx:"friends" only — the Invite picker never edits, only adds) a friend.
+// Validates locally first (name required, one of email/mobile required, email shape) so a bad add never
+// reaches the network; saved automatically the moment it's submitted, per the ticket's own decision that
+// there is no separate "save" step.
+window.submitFriendForm = async(ctx, idStr)=>{
+  const nameEl=$("ffName"), emailEl=$("ffEmail"), mobileEl=$("ffMobile"), errEl=$("ffErr");
+  const name=(nameEl.value||"").trim();
+  const email=(emailEl.value||"").trim();
+  const mobile=(mobileEl.value||"").trim();
+  errEl.hidden=true;
+  if(!name){ errEl.textContent="A name is required."; errEl.hidden=false; return; }
+  if(!email && !mobile){ errEl.textContent="Add an email or a mobile number — one of the two is enough."; errEl.hidden=false; return; }
+  if(email && typeof emailValid==="function" && !emailValid(email)){ errEl.textContent="That email doesn't look right."; errEl.hidden=false; return; }
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  const owner=(a && a.session && a.session.user) ? a.session.user.id : null;
+  if(!c || !owner){ errEl.textContent="Couldn't save that friend — try again in a moment."; errEl.hidden=false; return; }
+  const editing=idStr||null;
+  try{
+    if(editing){
+      const {data,error}=await c.from("friends").update({name, email:email||null, mobile:mobile||null}).eq("id",editing).select().single();
+      if(error) throw error;
+      const i=friends.findIndex(f=>String(f.id)===String(editing)); if(i>-1) friends[i]=data;
+    } else {
+      const {data,error}=await c.from("friends").insert([{owner_id:owner, name, email:email||null, mobile:mobile||null}]).select().single();
+      if(error) throw error;
+      friends.push(data);
+      if(ctx==="invite") inviteFriendSel.set(String(data.id), {channel:"email"});
+    }
+  }catch(e){
+    errEl.textContent="Couldn't save that friend — try again in a moment.";
+    errEl.hidden=false;
+    return;
+  }
+  if(ctx==="invite"){ inviteFriendAdding=false; renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId)); }
+  else { friendsFormOpen=false; friendsEditingId=null; renderFriendsScreen(); }
+};
+window.confirmDeleteFriend = async(idStr)=>{
+  const f=friends.find(x=>String(x.id)===String(idStr)); if(!f) return;
+  if(!confirm(`Remove ${f.name} from your friends?\n\nThis can't be undone.`)) return;
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  if(c){
+    const {error}=await c.from("friends").delete().eq("id",idStr);
+    if(error){ toast("Couldn't remove that friend"); return; }
+  }
+  friends=friends.filter(x=>String(x.id)!==String(idStr));
+  inviteFriendSel.delete(String(idStr));
+  friendsFormOpen=false; friendsEditingId=null;
+  renderFriendsScreen();
+};
+// ---- the Friends screen (manage mode: no checkboxes, tap a row to edit) --------------------------------
+let friendsFormOpen=false, friendsEditingId=null;
+function renderFriendsScreen(){
+  const el=$("friendsBody"); if(!el) return;
+  if(friendsFormOpen){
+    const existing=friendsEditingId?friends.find(f=>String(f.id)===String(friendsEditingId)):null;
+    el.innerHTML=`
+      <div class="ostop"><h2 class="osh">${existing?"Edit friend":"Add someone"}</h2>
+        <button class="donebtn" type="button" onclick="closeFriendsForm()">Cancel</button></div>
+      ${friendFormHTML(existing,"friends")}`;
+    return;
+  }
+  const list=friendsSorted(), n=list.length;
+  el.innerHTML=`
+    <div class="ostop"><h2 class="osh">Friends</h2>
+      <button class="donebtn" type="button" onclick="closeFriendsScreen()">Close</button></div>
+    <input type="text" class="search" id="friendsSearchInput" placeholder="Search friends" autocomplete="off"
+      oninput="filterFriendRows('friendsRows',this.value)">
+    <div class="flabel">${n} ${n===1?"person":"people"}</div>
+    <div id="friendsRows">${n ? list.map(f=>friendRowHTML(f,{selectable:false})).join("") : `<div class="fempty">No friends yet — add someone below.</div>`}</div>
+    <button type="button" class="listnewbtn" onclick="openFriendsAddForm()">＋ Add someone</button>`;
+}
+window.openFriendsScreen=()=>{
+  friendsFormOpen=false; friendsEditingId=null;
+  renderFriendsScreen();
+  $("friendsScreen").scrollTop=0;
+  $("friendsScreen").classList.add("open"); lockBodyScroll(true);
+  syncWatchChip();
+  logEvent("friends_opened",{count:friends.length});
+};
+window.closeFriendsScreen=()=>{ $("friendsScreen").classList.remove("open"); lockBodyScroll(false); syncWatchChip(); };
+window.openFriendsAddForm=()=>{ friendsFormOpen=true; friendsEditingId=null; renderFriendsScreen(); };
+window.openFriendsEditForm=(id)=>{ friendsFormOpen=true; friendsEditingId=id; renderFriendsScreen(); };
+window.closeFriendsForm=()=>{ friendsFormOpen=false; friendsEditingId=null; renderFriendsScreen(); };
+
+// ---- CAS-883: the Invite sheet, now hosting the picker in select mode -----------------------------------
 // #filmInvite/#filmInviteBody, not #invite/#inviteBody — those ids already belong to the unrelated older
 // "agent invite" mock above (CAS-78, ~line 2214).
 let filmInviteId = null;
-// Rebuilt fresh every open (mirrors renderContactForm()'s own convention) so a prior invite's typed name
+// Per-open selection state: id (string) -> {channel}. Reset every time the sheet opens fresh, same
+// convention renderContactForm()/renderFilmInviteSheet() already followed for the old free-text field.
+let inviteFriendSel = new Map();
+let inviteFriendAdding = false;
+window.toggleFriendSelect=(idStr)=>{
+  if(inviteFriendSel.has(idStr)) inviteFriendSel.delete(idStr);
+  else inviteFriendSel.set(idStr, {channel:"email"});
+  renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId));
+};
+// Tapping WhatsApp/SMS only changes that recipient's channel — it does not itself select or unselect them.
+window.setFriendChannel=(idStr, channel)=>{
+  const cur=inviteFriendSel.get(idStr) || {channel:"email"};
+  inviteFriendSel.set(idStr, {...cur, channel});
+  renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId));
+};
+window.openFriendAddForm=()=>{ inviteFriendAdding=true; renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId)); };
+window.closeFriendAddForm=()=>{ inviteFriendAdding=false; renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId)); };
+function joinNames(list){
+  if(list.length<=1) return list[0]||"";
+  if(list.length===2) return list.join(" and ");
+  return list.slice(0,-1).join(", ")+" and "+list[list.length-1];
+}
+// Rebuilt fresh every open (mirrors renderContactForm()'s own convention) so a prior invite's selection
 // or error never bleeds into the next one.
 function renderFilmInviteSheet(m){
+  if(!m) return;
+  const h3=$("filmInvite").querySelector("h3");
+  if(inviteFriendAdding){
+    if(h3) h3.textContent="Add someone";
+    $("filmInviteBody").innerHTML = friendFormHTML(null,"invite");
+    return;
+  }
+  if(h3) h3.textContent="Invite someone";
   const poster = m.poster
     ? `<img class="filminvthumb" src="https://image.tmdb.org/t/p/w92${esc(m.poster)}" alt="">`
     : `<div class="filminvthumb"></div>`;
+  const list=friendsSorted();
+  const rows = list.length
+    ? list.map(f=>friendRowHTML(f,{selectable:true})).join("")
+    : `<div class="fempty">No friends yet — add someone below.</div>`;
+  const selCount=inviteFriendSel.size;
   $("filmInviteBody").innerHTML = `
     <div class="filminvrow">${poster}<div><div class="filminvtitle">${esc(m.title)}</div>
       <div class="filminvwin">${windowsLineHTML(m)}</div></div></div>
     <div class="flabel">Who are you inviting?</div>
-    <input id="filmInviteName" class="namein" type="text" maxlength="40" autocomplete="off" placeholder="e.g. Sam">
-    <div class="pnote">Just so the reply comes back with a name on it. They never see this.</div>
+    <input type="text" class="search" id="filmInviteSearch" placeholder="Search friends" autocomplete="off"
+      oninput="filterFriendRows('filmInvitePicker',this.value)">
+    <button type="button" class="fnewbtn" onclick="openFriendAddForm()">+ Add someone new</button>
+    <div id="filmInvitePicker">${rows}</div>
     <div class="pnote" id="filmInviteErr" style="color:#ffb9a6" hidden></div>
-    <button type="button" class="filminvcta" id="filmInviteSend" onclick="sendFilmInvite()">Create invite &amp; share…</button>
+    <button type="button" class="filminvcta" id="filmInviteSend" onclick="sendFilmInvite()">${selCount?`Invite ${selCount} ${selCount===1?"person":"people"}`:"Create invite &amp; share…"}</button>
     <div class="pnote" style="text-align:center">Opens your share sheet — send it however you like.</div>`;
 }
 window.openFilmInvite = id => {
   const m=MOVIES.find(x=>x.tmdb_id===id); if(!m) return;
   filmInviteId = id;
+  inviteFriendSel = new Map();
+  inviteFriendAdding = false;
   renderFilmInviteSheet(m);
   openModal($("filmInvite"));
   logEvent("invite_opened",{id});
 };
-$("filmInviteClose").onclick=()=>closeModal($("filmInvite"));
+// While the add-someone form is open, Cancel goes back to the picker list, not out of the sheet entirely —
+// mirrors the design image's own frame 2, whose Cancel returns to frame 1.
+$("filmInviteClose").onclick=()=>{
+  if(inviteFriendAdding){ closeFriendAddForm(); return; }
+  closeModal($("filmInvite"));
+};
 // Mints the token and inserts the invites row FIRST, and only calls the platform share sheet once that
 // insert has actually succeeded — a link whose invite does not exist is a dead end for the recipient.
+// CAS-928: to_name is now the joined names of whoever is ticked in the picker (or null, same as an
+// unnamed invite always was) instead of one typed field — everything past that line is unchanged from
+// CAS-883: still exactly one invites row, still exactly one share/clipboard call.
 window.sendFilmInvite = async()=>{
   const m=MOVIES.find(x=>x.tmdb_id===filmInviteId); if(!m) return;
   const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
   const uid=(a && a.session && a.session.user) ? a.session.user.id : null;
-  const nameEl=$("filmInviteName"), errEl=$("filmInviteErr"), btn=$("filmInviteSend");
-  const to_name=(nameEl.value||"").trim() || null;
+  const errEl=$("filmInviteErr"), btn=$("filmInviteSend");
+  const selectedNames=[...inviteFriendSel.keys()]
+    .map(id=>{ const f=friends.find(x=>String(x.id)===id); return f?f.name:null; })
+    .filter(Boolean);
+  const to_name = selectedNames.length ? joinNames(selectedNames) : null;
   errEl.hidden=true;
   if(!c || !uid){ errEl.textContent="Couldn't create that invite — try again in a moment."; errEl.hidden=false; return; }
   btn.disabled=true;
@@ -10991,6 +11252,7 @@ window.navMenuGo=key=>{
   logEvent("nav_menu_item",{item:key});
   if(key==="find") showAgentsHome();
   else if(key==="invites") openInvitesScreen();
+  else if(key==="friends") openFriendsScreen();
   else if(key==="account") openAccount();
   else if(key==="services") openMenuServices();
   else if(key==="svcAnalysis") openSvcAnalysis();
@@ -17805,9 +18067,10 @@ else if(dedupedN)
     // flips this true on its own success path only, never on a failed load.
     notifyPrefsReady=false;
     invitesReady=false;
+    friendsReady=false;
     Promise.allSettled([
       loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadRealAlerts(),
-      loadFilmPicks(), loadInvites()
+      loadFilmPicks(), loadInvites(), loadFriends()
     ]).then(()=>{
       const t1 = performance.now();
       console.log('[CAS-460] account fan-out end (' + label + ')', t1, 'elapsed_ms', (t1-_t460fanout).toFixed(1));
@@ -18394,6 +18657,19 @@ else if(dedupedN)
     updateInvitesBadge();
     if(typeof renderInvitesScreen==="function" && $("invitesScreen") && $("invitesScreen").classList.contains("open")) renderInvitesScreen();
     if(typeof renderMovingScreen==="function" && $("movingScreen") && $("movingScreen").classList.contains("open")) renderMovingScreen();
+  }
+  // CAS-928: this account's saved friends, for the Invite picker and the Friends screen. Same shape as
+  // loadInvites just above — friendsReady resolves on every exit, including a failed fetch, so a test (or
+  // a device) waiting on it is never left hanging.
+  async function loadFriends(){
+    if(!client()||!accountActive()){ friends=[]; friendsReady=true; return; }
+    const { data, error } = await client().from("friends")
+      .select("id,name,email,mobile,last_used_at")
+      .order("last_used_at", { ascending:false, nullsFirst:false });
+    if(error){ console.warn("friends load", error); friendsReady=true; return; }
+    friends = data || [];
+    friendsReady=true;
+    if(typeof renderFriendsScreen==="function" && $("friendsScreen") && $("friendsScreen").classList.contains("open")) renderFriendsScreen();
   }
   // Opening the bell is reading it. The rows stay — "we told you about this" is a fact about the
   // past — they just stop counting toward the badge.

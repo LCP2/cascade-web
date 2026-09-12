@@ -687,6 +687,31 @@ create trigger recommendations_rate_limit
   for each row execute function public.recommendations_rate_limit();
 
 -- ---------------------------------------------------------------------------
+-- friends — the shared recipient picker's own list of people (CAS-928/M12)
+-- ---------------------------------------------------------------------------
+-- Third-party personal data (someone else's name, email and/or mobile) — never readable by anyone but
+-- its owner (CAS-812). Saved automatically the first time they're picked; there is no separate save step.
+create table if not exists public.friends (
+  id           bigserial primary key,
+  owner_id     uuid not null references auth.users(id) on delete cascade,
+  name         text not null,
+  email        text,
+  mobile       text,
+  created_at   timestamptz not null default now(),
+  last_used_at timestamptz,
+  constraint friends_need_a_channel check (coalesce(email, mobile) is not null)
+);
+create index if not exists friends_owner_idx on public.friends (owner_id, last_used_at desc nulls last);
+create unique index if not exists friends_owner_email_idx
+  on public.friends (owner_id, lower(email)) where email is not null;
+
+alter table public.friends enable row level security;
+
+drop policy if exists friends_owner on public.friends;
+create policy friends_owner on public.friends
+  for all to authenticated using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+
+-- ---------------------------------------------------------------------------
 -- keep cascades.updated_at honest on every write
 -- ---------------------------------------------------------------------------
 create or replace function public.set_updated_at()
