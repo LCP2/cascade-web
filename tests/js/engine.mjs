@@ -417,6 +417,14 @@ if(typeof window.CascadeAuth === "undefined"){
   // exercises the clipboard-fallback branch) — exported so a test can assert the fallback's payload really
   // carries the link, the same guarantee CAS-929 asked for on the now-removed navigator.share path.
   inviteUrlFor, shareTextFor, openNextInviteChannel, openNextRecommendChannel,
+  // CAS-968: the unread-reply badge/pill decision surface. invites is reassigned wholesale by loadInvites
+  // (like watchPrefs/notifyPrefs above), so it's exposed through a getter/setter rather than by reference;
+  // invitesUnseenCount/invitesBadgeText are the pure count -> display-text decision every badge reads, and
+  // inviteRowHTML is the Invites screen's own per-row render, exported so a test can assert the New pill
+  // directly off its HTML rather than driving the DOM.
+  get invites(){ return invites; },
+  setInvites(v){ invites=v; },
+  invitesUnseenCount, invitesBadgeText, inviteRowHTML,
 };
 `;
 
