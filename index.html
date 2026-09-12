@@ -2045,8 +2045,10 @@
     text-transform:uppercase;border-radius:6px;padding:3px 7px;white-space:nowrap}
   .reqscope.accent{background:rgba(124,92,255,.16);border:1px solid var(--accent);color:var(--selink)}
   .reqscope.muted{background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--faint)}
-  /* CAS-816: Styles and Age rating are tappable summary cards in the same osdial shape the score/requirement
-     cards use, rather than their own bespoke door style — a plain button reset plus a resting chevron. */
+  /* CAS-816: Styles (and Occasions) are tappable summary cards in the same osdial shape the score/requirement
+     cards use, rather than their own bespoke door style — a plain button reset plus a resting chevron.
+     CAS-936: Age rating left this shape — its chips are now directly tappable in place, so it is a plain
+     .osdial like Budget/Awards/How-far-back, not a .cardbtn door. */
   .osdial.cardbtn{display:block;width:100%;text-align:left;cursor:pointer;font:inherit;color:inherit;position:relative}
   .osdial.cardbtn:hover{border-color:var(--accent)}
   .osdial.cardbtn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
@@ -3053,20 +3055,6 @@
   .eapenc:hover{border-color:var(--accent);color:var(--ink)}
   .eapenc:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   .eaempty{display:block;font-size:13.5px;color:var(--dim)}
-  /* ---- CAS-195: the ratings segmented control ----
-     ONE gradient is painted across the whole bar, and each segment either lets it through or masks its own
-     slice with the panel colour. That is what makes a run of chosen ratings read as a single continuous
-     sweep rather than as five separately-lit boxes — the ratings ladder IS continuous, and a control that
-     drew it as five independent lights would be describing a different thing from the one it sets.
-     A joined control also has no gaps to mis-tap: at 360px the five segments are the whole width. */
-  .rsegwrap{display:flex;width:100%;border:1px solid var(--line);border-radius:14px;overflow:hidden;
-    background:var(--grad);box-shadow:0 6px 18px rgba(90,80,200,.20)}
-  .rseg{flex:1;border:0;background:#151b28;color:var(--dim);font-family:var(--font-body);
-    font-size:13.5px;font-weight:700;letter-spacing:.01em;padding:16px 4px;cursor:pointer;
-    transition:background .16s,color .16s;-webkit-tap-highlight-color:transparent}
-  .rseg+.rseg{box-shadow:inset 1px 0 0 rgba(255,255,255,.12)}   /* faint separators, never gaps */
-  .rseg.on{background:transparent;color:#fff}                   /* reveals the bar's gradient beneath */
-  .rseg:focus-visible{outline:2px solid var(--cyan);outline-offset:-3px}
   /* ---- keep-finding (CAS-196) ---- */
   .kflead{font-size:16px;line-height:1.5;color:var(--ink);margin:0 0 16px}
   .kflead b{color:#fff}
@@ -5122,7 +5110,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1108, "commit": "b9b6a39", "builtAt": "2026-09-12T05:00:26Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1109, "commit": "d20c8ed", "builtAt": "2026-09-12T05:10:40Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -13101,13 +13089,6 @@ const langCatalogueCount = (() => {
   });
   return code => counts[code] || 0;
 })();
-// ---- Age rating (#8) ------------------------------------------------------------------------------
-// "Up to and including" the chosen level; the top stop (R 18+) includes everything, which is the default.
-// The ladder is the catalogue's real ratings, so the include-list always lines up with the data.
-function onbAgePhrase(){
-  const a=dT().age;
-  return a===null ? "no ratings" : (!a.length || a.length===AGE_LEVELS.length) ? "all ratings" : a.join(", ");
-}
 // The combined "What this does" line (CAS-114, reworked). Honest and live: names only the dials that are set,
 // joins them with "or" (they combine with OR — a film needs to clear only one), and always carries the real
 // count. When a score dial is active it appends a set-aside note, because a score dial can only judge titles
@@ -13663,9 +13644,11 @@ function yearsCardHTML(){
     "How old a released film can be. Cinema and upcoming films are always recent, so this never touches them.",
     "reqYearsVal", yearsLabel(val), slider);
 }
-// CAS-816: Styles and Age rating join the one-page Edit Agent as tappable summary cards — a value line plus
-// the actual chips a picker would show, so each reads its current value without being opened (AC2), tapping
-// straight through to the same genres/age spokes the old doors and sub-row already opened.
+// CAS-816: Styles and Age rating joined the one-page Edit Agent as tappable summary cards — a value line plus
+// the actual chips a picker would show, so each reads its current value without being opened (AC2). Styles
+// still taps straight through to the same genres spoke the old door opened.
+// CAS-936: Age rating's chips are no longer a preview of a door — the door is gone, and tapping a chip here
+// toggles that rating for this agent directly. See ageRatingCardHTML/ageChipToggle below.
 function stylesCardHTML(){
   const g=dT().genre, excl=dExcludeSet();
   const included = g===null ? [] : ONB_GENRES.filter(x=>dGenreSet().has(x) && !excl.has(x));
@@ -13680,15 +13663,27 @@ function stylesCardHTML(){
     <div class="chips">${chips || `<span class="eaempty">Nothing qualifies — pick at least one</span>`}</div>
     <span class="dc">›</span></button>`;
 }
-function ageRatingCardHTML(){
-  return `<button type="button" class="osdial cardbtn" onclick="briefGo('age')">
-    <span class="osdh"><span class="em">🔞</span><span class="dl">Age rating</span></span>
-    <p class="reqval">${esc(trailAge())}</p>
-    <div class="chips">${AGE_LEVELS.map((a,k)=>`<span class="chip gen${dAgeOn(k)?" on":""}">${esc(a)}</span>`).join("")}</div>
-    <span class="dc">›</span></button>`;
+function ageRatingChipsHTML(){
+  return AGE_LEVELS.map((a,k)=>`<button type="button" class="chip gen${dAgeOn(k)?" on":""}"
+    aria-pressed="${dAgeOn(k)}" onclick="ageChipToggle(${k})">${esc(a)}</button>`).join("");
 }
-// CAS-827: Occasions moves to the top of the page as a summary card in the same shape as Styles/Age rating —
-// icon, title, value line, chevron — rather than the two-up .easub row it used to share with a second control.
+function ageRatingCardHTML(){
+  return `<div class="osdial" id="ageRatingCard">
+    <span class="osdh"><span class="em">🔞</span><span class="dl">Age rating</span></span>
+    <p class="reqval" id="ageRatingVal">${esc(trailAge())}</p>
+    <div class="chips" id="ageRatingChips">${ageRatingChipsHTML()}</div>
+  </div>`;
+}
+// CAS-936: tapping a chip toggles that rating for the agent in place — no navigation. Repaints just the
+// chips + value line, same pattern as renderLangChips, rather than re-rendering the whole Briefing screen.
+window.ageChipToggle=k=>{
+  dAgeToggle(k);
+  const box=$("ageRatingChips"); if(box) box.innerHTML=ageRatingChipsHTML();
+  const val=$("ageRatingVal"); if(val) val.textContent=trailAge();
+  selRefresh();
+};
+// CAS-827: Occasions moves to the top of the page as a summary card in the same shape as Styles — icon,
+// title, value line, chevron — rather than the two-up .easub row it used to share with a second control.
 function occasionsCardHTML(){
   const d=onbFlow.draft||{};
   return `<button type="button" class="osdial cardbtn" onclick="briefGo('occasions')">
@@ -14308,33 +14303,6 @@ const SHARP_STEPS = {
       };
       el.oninput=()=>{ onbFlow.name=el.value; paint(); onbRefresh(); };
       paint();
-    },
-  },
-  // ---- Ratings --------------------------------------------------------------------------------------
-  // The age RANGE from the taste baseline (buildspec §6), said as a row of segments rather than a drag
-  // band: the flow asks it as "which of these are in?", and every rating is independently tappable, so a
-  // range with a hole in it is expressible and a single tap can't silently drag a whole edge with it.
-  age: {
-    title: "Ratings",
-    progress: 82,
-    noAgent: true,
-    lead(){ return `watches <b>${onbAgePhrase()}</b>`; },
-    body(){
-      return `<p class="ossub">Which ratings can your agent include? Tap to remove any you don't want.</p>
-        <div class="rsegwrap" id="onbStepAges" role="group" aria-label="Ratings">
-          ${AGE_LEVELS.map((a,k)=>`<button type="button" class="rseg${dAgeOn(k)?" on":""}" data-i="${k}"
-             aria-pressed="${dAgeOn(k)}">${esc(a)}</button>`).join("")}
-        </div>
-        <!-- CAS-225: no Select all / Clear all here. The segmented control is a joined row where every
-             segment is independently tappable and its state is visible on its face, so "select all" is five
-             taps the user can already see how to make, and "clear all" produces the one state the screen
-             cannot mean (no ratings = nothing qualifies). -->`;
-    },
-    wire(){
-      const box=$("onbStepAges"); if(!box) return;
-      [...box.children].forEach(b=>{
-        b.onclick=()=>{ dAgeToggle(+b.dataset.i); renderOnbStep("age"); };
-      });
     },
   },
   // ---- CAS-775: Occasions -----------------------------------------------------------------------------
