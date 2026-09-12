@@ -32,10 +32,14 @@
      plain globals). Harmless on the web build too: outside the native shell isNativePlatform() is false
      and registerPush() falls back to the browser Notification API instead of touching this.
      CAS-524: capacitor-app.js vendored the same way — needed for Capacitor.Plugins.App's appUrlOpen
-     (universal-link tap) listener. -->
+     (universal-link tap) listener.
+     CAS-969: capacitor-in-app-review.js vendored the same way — Apple's own SKStoreReviewController
+     prompt, gated to native-only at the call site (see maybeRequestReview()); its web shim throws
+     "Not implemented on web", which is exactly why the call site never reaches it off-device. -->
 <script src="capacitor-core.js"></script>
 <script src="capacitor-push-notifications.js"></script>
 <script src="capacitor-app.js"></script>
+<script src="capacitor-in-app-review.js"></script>
 <!-- CAS-947: the build stamp lives in its own generated file, not inlined into the classic script
      block below, because its `builtAt` timestamp changes on every build — inlining it would make the
      CSP hash of that block (see _headers) different on every rebuild, which the build-check job would
@@ -17786,6 +17790,66 @@ function keepRowInPlace(id, repaint){
     setTimeout(settle, 500);       // a transition that never fires must not leave the row frozen at a fixed height
   });
 }
+// ---- App Store rating prompt (CAS-969) ------------------------------------------
+// Apple's own SKStoreReviewController prompt (AppStore.requestReview on current SDKs), via the vendored
+// @capacitor-community/in-app-review plugin — never a custom modal. App Review Guidelines Section 3 and
+// 3.2.2(x) forbid incentivising or gating a review, and the prompt itself gives no signal back (no
+// callback, no status) even if that were allowed, so there is nothing to key a reward off. The system
+// also rate-limits the real prompt to roughly three times a year and decides on its own whether to show
+// it — this call just asks; it does not control what the user sees.
+// Thresholds (stated here, and in the completion comment, because AC3 wants a single place that owns
+// them): at least 3 sessions AND at least one agent has actually found a match, i.e. Cascade has
+// demonstrably done its job before it asks. Fired from the moment a user marks a film their agent found
+// as watched (window.setOpinion, below) — not on launch, not mid-onboarding, not after an error.
+const REVIEW_PROMPT_MIN_SESSIONS = 3;
+const REVIEW_PROMPT_SESSIONS_KEY = "cascade_review_sessions";
+const REVIEW_PROMPT_ASKED_KEY = "cascade_review_asked_ver";
+// One count per page load (called alongside app_open, below) — "a few sessions" means a few separate
+// visits, not a few actions within one.
+function bumpReviewPromptSessionCount(){
+  let n=0;
+  try{ n = Number(localStorage.getItem(acctKey(REVIEW_PROMPT_SESSIONS_KEY))) || 0; }catch(e){}
+  n += 1;
+  try{ localStorage.setItem(acctKey(REVIEW_PROMPT_SESSIONS_KEY), String(n)); }catch(e){}
+  return n;
+}
+function reviewPromptSessionCount(){
+  try{ return Number(localStorage.getItem(acctKey(REVIEW_PROMPT_SESSIONS_KEY))) || 0; }catch(e){ return 0; }
+}
+function reviewPromptAskedVersion(){
+  try{ return localStorage.getItem(acctKey(REVIEW_PROMPT_ASKED_KEY)); }catch(e){ return null; }
+}
+function markReviewPromptAsked(ver){
+  try{ localStorage.setItem(acctKey(REVIEW_PROMPT_ASKED_KEY), String(ver)); }catch(e){}
+}
+// The single named predicate CAS-969 AC3 asks for — every threshold this feature has lives here, and
+// nowhere else decides. Pure: takes the facts, returns the verdict, never reads state itself.
+function reviewPromptEligible({ sessions, agentFoundMatch, askedVersion, currentVersion }){
+  if(sessions < REVIEW_PROMPT_MIN_SESSIONS) return false;
+  if(!agentFoundMatch) return false;
+  if(askedVersion === currentVersion) return false;   // once per version; also covers "already asked this session"
+  return true;
+}
+// Fire-and-forget: never awaited by a caller, never returns anything a caller could branch on, so nothing
+// in the app can end up gated, delayed, or withheld on it (AC6). The "asked" flag is set BEFORE the native
+// call resolves — the ask itself is what "once per version" counts, not Apple's yes/no (which this plugin
+// never even reports).
+function maybeRequestReview(){
+  const currentVersion = (BUILD_INFO||{}).version || null;
+  const eligible = reviewPromptEligible({
+    sessions: reviewPromptSessionCount(),
+    agentFoundMatch: cascades.some(c => watchCount(c) > 0),
+    askedVersion: reviewPromptAskedVersion(),
+    currentVersion,
+  });
+  if(!eligible) return;
+  markReviewPromptAsked(currentVersion);
+  if(!(typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform())) return;
+  try{
+    const IAR = Capacitor.Plugins && Capacitor.Plugins.InAppReview;
+    if(IAR && IAR.requestReview) Promise.resolve(IAR.requestReview()).catch(e=>console.warn("Cascade: review prompt failed", e));
+  }catch(e){ console.warn("Cascade: review prompt failed", e); }
+}
 // ---- Saying what you think of a film (CAS-100) ---------------------------------
 // One answer per film: Liked, Disliked, or Not for me. Setting one clears the other two and drops the Pick
 // (what you've SEEN or waved off outranks what anything picked for you) — the pin underneath is left alone,
@@ -17823,6 +17887,10 @@ window.setOpinion=(id,kind)=>{
   } else { heldOpen.delete(id); watchHeldOpen[watchTab].delete(id); }
   saveWatchStatus();
   logEvent("opinion",{key: on?kind:"cleared"});
+  // CAS-969: a moment of delivered value — a film the agent found is being marked watched, not un-marked
+  // or ruled out ("not for me"). Fire-and-forget; see maybeRequestReview()'s own header for why this can
+  // never gate anything below it.
+  if(on && wasFound && kind!=="notfor") maybeRequestReview();
   // FIRST — so the toast reports what actually happened, not what we assumed. The repaint runs inside
   // keepRowInPlace so the card folds (or unfolds, on the tap that clears it) exactly where you tapped it.
   keepRowInPlace(id, ()=>repaintAfterOpinion(id));   // CAS-129: swap only the tapped row, not the whole list
@@ -18020,6 +18088,7 @@ const openedShared = openSharedFromURL();
   const plat = (typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform()) ? "ios"
     : (matchMedia("(display-mode: standalone)").matches) ? "pwa" : "web";
   logEvent("app_open", { plat, ver:(BUILD_INFO||{}).version || null, ret:RETURNING, onb:onboardingSeen(), acq });
+  bumpReviewPromptSessionCount();   // CAS-969: "a few sessions" counts page loads, same cadence as app_open
 }
 // First run only — the "seen" flag is set by finishing OR skipping, so returning visitors go straight to the app.
 // ?setup replays it on demand: the flag stays set, and the rest of your state is untouched — this is a way to
