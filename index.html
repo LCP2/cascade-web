@@ -4511,6 +4511,19 @@ const previewStep = URLQ.get("step");
 // shows the default following the picked agent (?step=name&agent=date_night), as it will once #2 is wired.
 const previewAgent = URLQ.get("agent");
 const didReset = URLQ.has("reset");
+// CAS-962: a custom product page's own deep link. Four named destinations only (never an arbitrary
+// route) — the exact strings a page's Deep Link field must carry:
+//   cinema    -> Watch, Cinema tab
+//   streaming -> Watch, Streaming tab
+//   moving    -> Moving
+//   family    -> the Family Movies agent's own setup (Edit Agent), if this account has one
+// Read here so it can be stripped before state loads (same reasoning as ?reset/?step above), but not
+// APPLIED yet — applyDeepLink() (below) is the one place that happens, called once it's actually safe
+// to: a returning user's boot, or the moment first-run onboarding genuinely finishes. A device that has
+// never onboarded must still run the whole flow; this only decides where to land afterwards.
+const DEEPLINK_DESTINATIONS = new Set(["cinema","streaming","moving","family"]);
+const dlParam = URLQ.get("dl");
+let pendingDeepLink = DEEPLINK_DESTINATIONS.has(dlParam) ? dlParam : null;
 if(didReset){
   try{
     Object.keys(localStorage).filter(k=>k.startsWith("cascade_")).forEach(k=>localStorage.removeItem(k));
@@ -4518,8 +4531,8 @@ if(didReset){
 }
 // Strip only what we consumed. `?c=` (a shared Cascade) and `?log` are read further down and clean up after
 // themselves — taking the whole query string here would swallow a share link that arrived alongside ?setup.
-if(didReset || forceSetup || previewStep){
-  ["reset","setup","onboard","step","agent"].forEach(k=>URLQ.delete(k));
+if(didReset || forceSetup || previewStep || pendingDeepLink){
+  ["reset","setup","onboard","step","agent","dl"].forEach(k=>URLQ.delete(k));
   const q=URLQ.toString();
   history.replaceState(null, "", location.pathname + (q?"?"+q:"") + location.hash);
 }
@@ -9030,6 +9043,29 @@ function pickLandingWatchTab(){
   const target = cinemaHasFilms ? "in_cinema" : "stream";
   const liveTabs = watchTabsNow().map(t=>t.key);
   return liveTabs.includes(target) ? target : (liveTabs[0] || target);
+}
+// CAS-962: consumes pendingDeepLink (set at boot from ?dl=, or from a native appUrlOpen tap) the moment
+// it's actually safe to act on — the caller decides "safe": a returning user's cold boot, or the exact
+// point first-run onboarding finishes (membStartWork/afterSignIn). Never called while onboarding is still
+// running, so a deep link can only ever land the user somewhere AFTER first run completes, never skip or
+// short-circuit it. A destination whose target doesn't exist for this account (no Family agent made) is
+// silently ignored — arriving at the ordinary landing screen, same as no ?dl= at all, rather than a dead end.
+function applyDeepLink(){
+  const dest = pendingDeepLink; if(!dest) return;
+  pendingDeepLink = null;
+  if(dest==="cinema" || dest==="streaming"){
+    const target = dest==="cinema" ? "in_cinema" : "stream";
+    const liveTabs = watchTabsNow().map(t=>t.key);
+    showAgentsHome();   // uncover the Watch listing if Agents/Moving happened to be open
+    if(liveTabs.includes(target)) watchTab = target;
+    render();
+  } else if(dest==="moving"){
+    openMovingScreen();
+  } else if(dest==="family"){
+    const agent = cascades.find(c=>c.template==="onb_family");
+    if(agent) briefOpen(agent.id, "agents");
+  }
+  logEvent("deeplink_applied", {dest});
 }
 // CAS-823: the same agent+occasion scope as watchScopeRows above, but narrowed only by the tab's own Watch
 // On key — no standing test — so the Also-show chips can show each window's count (renderWatchSheet) before
@@ -17053,6 +17089,11 @@ function membStartWork(){
   // by the thousands of nodes the build inserts.
   window.scrollTo(0,0);
   closeMembership();
+  // CAS-962: first run has genuinely finished (the roster above is committed) and the membership sheet
+  // is out of the way — safe to honour a deep link now, same rule as the boot path's own "onboarding
+  // already seen" branch. After closeMembership() so a "family" destination's Briefing overlay isn't
+  // stacking on top of it (same ordering onbMembBack() already uses the other way).
+  applyDeepLink();
 }
 // ================= CAS-205: the membership setup bar is gone ==========================================
 // It was the last thing between the header and the Cascades deck, and by 0.8 it was arguing with the flow
@@ -17901,6 +17942,7 @@ function afterSignIn(){
     activeId=null;
     openCascade(cascades[0].id);
     logEvent("signin_returning",{cascades:cascades.length});
+    applyDeepLink();   // CAS-962: arrival, same as the boot path's "onboarding already seen" branch
     return;
   }
   showFoundList(); render();
@@ -17908,6 +17950,7 @@ function afterSignIn(){
   // onboarding wizard — signing in is arrival, not a first run. The wizard stays reachable from the
   // splash's own entry point for a genuine new user who chooses it.
   logEvent("signin_empty_account");
+  applyDeepLink();   // CAS-962: same reasoning — this is arrival, not a first run
 }
 
 // ---- Re-engagement: what Cascade found while you weren't looking (CAS-69) ------------------------------
@@ -17961,6 +18004,7 @@ else if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
 else if(!openedShared){
   const landingTab = pickLandingWatchTab();
   if(landingTab !== watchTab){ watchTab = landingTab; render(); }
+  applyDeepLink();   // CAS-962: onboarding already seen — a returning user's cold boot is safe to act on now
 }
 // CAS-940: first-touch acquisition capture. First touch wins — cascade_acq is written once and never
 // overwritten — but the utm_* params are stripped from the URL on every load that carries them, even a
@@ -19387,6 +19431,18 @@ else if(dedupedN)
         try{
           const url=new URL((data && data.url) || "");
           if(FILM_ROUTE_RE.test(url.hash)) location.hash=url.hash;
+          // CAS-962: same event, a custom product page's own deep link (?dl=<destination>). The app
+          // always cold-boots the same bundled index.html (capacitor.config.json has no server.url), so
+          // location.search never carries this natively — the tapped URL only ever arrives here, on a
+          // cold OR warm launch (native retains the event until this listener attaches). Apply it now
+          // only if the app is actually sitting in the main app already; otherwise it stays pending for
+          // membStartWork()/afterSignIn() to honour once onboarding — already running, or about to be
+          // forced by boot's own routing — genuinely finishes.
+          const dl=url.searchParams.get("dl");
+          if(DEEPLINK_DESTINATIONS.has(dl)){
+            pendingDeepLink=dl;
+            if(onboardingSeen() && !flowOn && !briefOn) applyDeepLink();
+          }
         }catch(e){ console.warn("Cascade: appUrlOpen parse failed", e); }
       });
     }
