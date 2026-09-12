@@ -57,12 +57,16 @@ async function openFromSplash(page){
   await expect(page.locator("#contact")).toHaveClass(/open/);
 }
 
-// AC4a
-test("CAS-838 AC4a: from the splash, About then Contact us opens the sheet with Send disabled until a category is chosen", async ({ page }) => {
+// AC4a — gating moved from "a category is chosen" to "message + email are valid" under CAS-927;
+// category is now optional, so choosing one alone no longer enables Send.
+test("CAS-838 AC4a: from the splash, About then Contact us opens the sheet with Send disabled until message and email are valid (CAS-927)", async ({ page }) => {
   await freshApp(page);
   await openFromSplash(page);
   await expect(page.locator("#contactSend")).toBeDisabled();
   await page.locator("#contactCatChips .chip", { hasText: "Bug" }).click();
+  await expect(page.locator("#contactSend")).toBeDisabled();
+  await page.locator("#contactMsg").fill("Something looks broken.");
+  await page.locator("#contactEmail").fill("cas838@example.com");
   await expect(page.locator("#contactSend")).toBeEnabled();
 });
 
