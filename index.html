@@ -1832,17 +1832,14 @@
   .osinner.osslid{animation:none}
   @media (prefers-reduced-motion:reduce){ .osinner{animation:none} }
   .ostop{display:flex;align-items:center;gap:11px;margin-bottom:20px}
-  .osback{width:34px;height:34px;border-radius:10px;background:var(--panel);border:1px solid var(--line);
-    display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:15px;flex:0 0 auto;cursor:pointer}
-  .osback:hover{border-color:var(--violet)}
-  .osback:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  /* CAS-934: on the agent config screen, its spokes, and My services, Back is the only way out and the
-     thing that confirms your work — the same job the removed Done/Save button did — so it gets that
-     button's gradient/glow treatment here. Position, size and the arrow itself are untouched. */
-  .osback.primary{background:var(--grad);border-color:transparent;color:#fff;
+  /* CAS-934, widened 2026-09-12: Back is the primary action on EVERY screen that has one — it is the way
+     out and, since every screen saves as you go, the thing that confirms your work. One style, no
+     per-screen modifier. Position, size and the arrow itself are unchanged. */
+  .osback{width:34px;height:34px;border-radius:10px;background:var(--grad);border:1px solid transparent;
+    display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;flex:0 0 auto;cursor:pointer;
     box-shadow:0 6px 18px rgba(124,92,255,.35)}
-  .osback.primary:hover{border-color:transparent;filter:brightness(1.08)}
-  .osback.primary:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .osback:hover{filter:brightness(1.08)}
+  .osback:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   /* CAS-337: the screen's own title, moved into this row from a standalone heading below it — the same
      slot the fixed wizard header's .steprow gives .osh, so both header styles read as one pattern. */
   .ostop .osh{flex:1 1 auto;min-width:0;margin:0;font-size:19px;font-weight:500;
@@ -5110,7 +5107,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1111, "commit": "c9362cb", "builtAt": "2026-09-12T05:48:09Z", "providers": {"TMDB": "unconfigured", "Watchmode": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1112, "commit": "39481a3", "builtAt": "2026-09-12T05:52:41Z", "providers": {"TMDB": "unconfigured", "Watchmode": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -15897,8 +15894,8 @@ function occasionRowHTML(o){
 function renderManageOccasionsScreen(){
   const regEntries=occasionRegSorted(), n=regEntries.length;
   $("manageOccasionsBody").innerHTML=`
-    <div class="ostop"><button class="osback" type="button" onclick="closeManageOccasionsScreen()" aria-label="Back">←</button></div>
-    <div class="agshdr"><h2 class="osh">Occasions</h2><span class="agscount">${n} occasion${n===1?"":"s"}</span></div>
+    <div class="ostop"><button class="osback" type="button" onclick="closeManageOccasionsScreen()" aria-label="Back">←</button>
+      <h2 class="osh">Occasions</h2><span class="agscount" style="margin-left:auto">${n} occasion${n===1?"":"s"}</span></div>
     <p class="ossub">Tags for grouping your agents — Me, Family, Cinema night, whatever makes sense for you.
       Create one here or from an agent's Briefing; either way, every agent can select it.</p>
     <div class="ucard">
@@ -16075,8 +16072,8 @@ function renderAccount(){
   const notif=[notifyPrefs.inApp?"In-app":null, notifyPrefs.emailOn?"Email":null].filter(Boolean).join(" · ")
             || "Nothing switched on";
   $("accountBody").innerHTML=`
-    <div class="ostop menutop"><button class="osback" type="button" onclick="closeAccount()" aria-label="Back">←</button></div>
-    <h2 class="osh">Account</h2>
+    <div class="ostop menutop"><button class="osback" type="button" onclick="closeAccount()" aria-label="Back">←</button>
+      <h2 class="osh">Account</h2></div>
     <p class="ossub">How you're told, and your membership.</p>
 
     <div class="usec">Default notifications</div>
@@ -16328,14 +16325,9 @@ function renderOnbStep(key){
   // CAS-628: a step's title may be a function (services: "My services" on the top-menu spoke only, since
   // the briefing context draws its own obhd inside body() instead — see the generic mirror above).
   const title = typeof step.title==="function" ? step.title() : step.title;
-  // CAS-934: the back arrow is the only way out of the agent config screen and its spokes (briefOn), and
-  // of the top-menu's own bare spoke (menuStepOn — "My services"), now that both have lost their
-  // Done/Save button. It reads as a primary control there — same prominence the removed button had —
-  // rather than the quiet chrome it stays everywhere else.
-  const backPrimary = briefOn || menuStepOn;
   $("onbStepInner").innerHTML = `
     ${chromed ? "" : `<div class="ostop">
-      <button class="osback${backPrimary ? " primary" : ""}" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
+      <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
       ${key==="briefing"
         ? `<h2 class="osh eahn">${escA(onbFlow.name || (onbFlow.draft||{}).name || "Unnamed")}</h2>
            <button class="eapenc" type="button" onclick="briefGo('name')" aria-label="Rename agent">✏️</button>`
