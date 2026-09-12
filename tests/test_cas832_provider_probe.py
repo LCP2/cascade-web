@@ -7,7 +7,7 @@ apart from "over quota / rate limited" (throttled — expected on a free tier, s
 `--build-html` — the exact command CI's build-check/engine jobs and the daily-refresh
 commit-retry loop all run — refuses to build at all when a provider is rejected.
 
-Every test here mocks the network. Nothing reaches TMDB, OMDb, Watchmode or Wikidata.
+Every test here mocks the network. Nothing reaches TMDB, OMDb or Watchmode.
 """
 import io
 import unittest
@@ -71,25 +71,14 @@ class ProviderProbeClassification(unittest.TestCase):
         with mock.patch.object(pp, "get_json", side_effect=boom):
             self.assertEqual(pp.probe_watchmode(), "throttled")
 
-    def test_wikidata_401_is_always_throttled_never_rejected(self):
-        # The real event this ticket is about: Wikidata's exact observed response. Wikidata's
-        # public SPARQL endpoint carries no credential of its own — there is no key to be wrong,
-        # so this must never classify as 'rejected' even though it looks like one at a glance.
-        def boom(*a, **kw):
-            raise _http_error(401, b'{"error":"limited"}')
-        with mock.patch.object(pp, "get_json", side_effect=boom):
-            self.assertEqual(pp.probe_wikidata(), "throttled")
-
-    def test_wikidata_success_is_ok(self):
-        with mock.patch.object(pp, "get_json", return_value={"results": {"bindings": []}}):
-            self.assertEqual(pp.probe_wikidata(), "ok")
-
 
 class ProbeProvidersIsGatedOnLive(unittest.TestCase):
-    """Without all three keys (LIVE), nothing in the pipeline ever calls any provider today —
-    Wikidata included, since `enrich_wikidata_awards` is only reachable from the LIVE branch of
-    `build_live_catalogue`. A dev machine or a CI job with no keys set must not gain a brand-new
-    real network call just because this probe exists."""
+    """Without all three keys (LIVE), nothing in the pipeline ever calls any provider today. This
+    is why OscarBase (CAS-937) is deliberately NOT part of PROVIDERS/probe_providers: it needs no
+    credential of its own, and its nightly pass (`enrich_oscarbase_awards_nightly`) is meant to
+    run unconditionally, live or sample — the same tolerance `enrich_watchmode_fields_nightly`
+    gives a missing Watchmode key. A dev machine or a CI job with no keys set must not gain a
+    brand-new real network call to TMDB/OMDb/Watchmode just because this probe exists."""
 
     def test_not_live_never_touches_the_network(self):
         with mock.patch.object(pp, "LIVE", False), \
@@ -102,18 +91,16 @@ class ProbeProvidersIsGatedOnLive(unittest.TestCase):
         with mock.patch.object(pp, "LIVE", True), \
              mock.patch.object(pp, "probe_tmdb", return_value="ok"), \
              mock.patch.object(pp, "probe_omdb", return_value="throttled"), \
-             mock.patch.object(pp, "probe_watchmode", return_value="rejected"), \
-             mock.patch.object(pp, "probe_wikidata", return_value="ok"):
+             mock.patch.object(pp, "probe_watchmode", return_value="rejected"):
             outcomes = pp.probe_providers()
-        self.assertEqual(outcomes, {"TMDB": "ok", "OMDb": "throttled",
-                                     "Watchmode": "rejected", "Wikidata": "ok"})
+        self.assertEqual(outcomes, {"TMDB": "ok", "OMDb": "throttled", "Watchmode": "rejected"})
 
 
 class CheckProviderHealth(unittest.TestCase):
     def test_all_ok_returns_zero_silently(self):
         with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             code = pp.check_provider_health({"TMDB": "ok", "OMDb": "ok",
-                                              "Watchmode": "ok", "Wikidata": "ok"})
+                                              "Watchmode": "ok"})
         self.assertEqual(code, 0)
         self.assertEqual(out.getvalue(), "")
 
@@ -121,14 +108,14 @@ class CheckProviderHealth(unittest.TestCase):
         # AC2: unchanged from today's behaviour — a warning, run continues.
         with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             code = pp.check_provider_health({"TMDB": "ok", "OMDb": "throttled",
-                                              "Watchmode": "ok", "Wikidata": "ok"})
+                                              "Watchmode": "ok"})
         self.assertEqual(code, 0)
         self.assertIn("OMDb", out.getvalue())
 
     def test_a_rejected_provider_returns_nonzero_and_names_it(self):
         with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             code = pp.check_provider_health({"TMDB": "rejected", "OMDb": "ok",
-                                              "Watchmode": "ok", "Wikidata": "ok"})
+                                              "Watchmode": "ok"})
         self.assertNotEqual(code, 0)
         self.assertIn("TMDB", out.getvalue())
 
@@ -137,7 +124,7 @@ class BuildVersionInfoCarriesProviderStatus(unittest.TestCase):
     """AC3: the build stamp carries a per-provider status field."""
 
     def test_provider_status_is_included_when_given(self):
-        status = {"TMDB": "ok", "OMDb": "throttled", "Watchmode": "unconfigured", "Wikidata": "ok"}
+        status = {"TMDB": "ok", "OMDb": "throttled", "Watchmode": "unconfigured"}
         info = pp.build_version_info(status)
         self.assertEqual(info["providers"], status)
 
@@ -151,7 +138,7 @@ class RunBuildHtmlEntrypoint(unittest.TestCase):
     called from `python poc_pipeline.py --build-html`)."""
 
     def test_a_rejected_provider_exits_non_zero_and_never_builds(self):
-        outcomes = {"TMDB": "rejected", "OMDb": "ok", "Watchmode": "ok", "Wikidata": "ok"}
+        outcomes = {"TMDB": "rejected", "OMDb": "ok", "Watchmode": "ok"}
         with mock.patch.object(pp, "probe_providers", return_value=outcomes), \
              mock.patch.object(pp, "build_html") as build_html_mock, \
              mock.patch("sys.stdout", new_callable=io.StringIO) as out:
@@ -161,7 +148,7 @@ class RunBuildHtmlEntrypoint(unittest.TestCase):
         build_html_mock.assert_not_called()   # never writes index.html/version.json
 
     def test_a_throttled_provider_exits_zero_and_still_builds(self):
-        outcomes = {"TMDB": "ok", "OMDb": "throttled", "Watchmode": "ok", "Wikidata": "ok"}
+        outcomes = {"TMDB": "ok", "OMDb": "throttled", "Watchmode": "ok"}
         with mock.patch.object(pp, "probe_providers", return_value=outcomes), \
              mock.patch.object(pp, "build_html") as build_html_mock:
             code = pp.run_build_html()
