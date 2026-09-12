@@ -580,12 +580,36 @@ drop policy if exists invites_owner on public.invites;
 create policy invites_owner on public.invites
   for all using (auth.uid() = sender_id) with check (auth.uid() = sender_id);
 
--- A signed-out recipient must be able to READ the invite they were sent, by token only.
--- Never listable: a select without a token filter returns nothing useful because the
--- policy is satisfied per-row and the table is only ever queried by primary key.
+-- CAS-944: the anon SELECT policy this table used to carry allowed any caller to list every row —
+-- RLS cannot see the client's WHERE clause, so `using (true)` passes every row a query asks for,
+-- not just the one row a caller's token actually proves access to. The equally permissive INSERT
+-- and client-driven UPDATE policies on invite_replies below had the same shape: client_key is a
+-- value the client sends, not an identity, so anyone could forge or rewrite any reply. All three
+-- are replaced by a pair of security definer RPCs — public.invite_by_token() and
+-- public.answer_invite(), further down this section — that enforce "by token only" server-side.
+-- Dropping the three permissive policies against the live project is a separate Lee-gated step,
+-- applied 2026-09-12 onward.
 drop policy if exists invites_read_by_token on public.invites;
-create policy invites_read_by_token on public.invites
-  for select to anon, authenticated using (true);
+
+-- CAS-944: returns exactly one row for a given token, or null when it doesn't exist — the
+-- signed-out recipient's only way to read an invite now that the table has no anon SELECT policy.
+create or replace function public.invite_by_token(p_token text)
+returns json
+language sql
+security definer
+set search_path = public
+as $$
+  select json_build_object(
+    'token', token,
+    'sender_name', sender_name,
+    'tmdb_id', tmdb_id,
+    'film_title', film_title,
+    'to_name', to_name,
+    'created_at', created_at
+  )
+  from public.invites
+  where token = p_token;
+$$;
 
 create table if not exists public.invite_replies (
   id           bigserial primary key,
@@ -607,8 +631,6 @@ alter table public.invite_replies add column if not exists digested_at timestamp
 alter table public.invite_replies enable row level security;
 
 drop policy if exists invite_replies_insert on public.invite_replies;
-create policy invite_replies_insert on public.invite_replies
-  for insert to anon, authenticated with check (answer in ('yes','no'));
 
 drop policy if exists invite_replies_sender_read on public.invite_replies;
 create policy invite_replies_sender_read on public.invite_replies
@@ -622,14 +644,33 @@ create policy invite_replies_sender_update on public.invite_replies
     exists (select 1 from public.invites i
             where i.token = invite_replies.token and i.sender_id = auth.uid()));
 
--- CAS-885: a signed-out recipient re-answering (or switching Yes<->No) upserts onto their own
--- (token, client_key) row. There is no identity to check an update against here — client_key is a
--- per-device value the recipient's own browser holds, not an auth subject — so this grants the same
--- trust level invite_replies_insert above already does for the same table, just extended to UPDATE so the
--- unique (token, client_key) upsert doesn't fail on a repeat answer.
 drop policy if exists invite_replies_client_update on public.invite_replies;
-create policy invite_replies_client_update on public.invite_replies
-  for update to anon, authenticated using (true) with check (answer in ('yes','no'));
+
+-- CAS-944: upserts on (token, client_key) — a recipient who reloads and answers differently
+-- overwrites their own row rather than creating a second one (the same shape CAS-885 built into
+-- the policy this replaces). replier_id is set from auth.uid() here, server-side, never trusted
+-- from the client. Rate limited to 20/hour per client_key so a stolen or guessed token can't be
+-- used to spam replies.
+create or replace function public.answer_invite(p_token text, p_client_key text, p_answer text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_answer not in ('yes','no') then
+    raise exception 'answer_invite: answer must be yes or no';
+  end if;
+  if (select count(*) from public.invite_replies
+      where client_key = p_client_key and created_at > now() - interval '1 hour') >= 20 then
+    raise exception 'answer_invite: rate limit exceeded (20/hour)';
+  end if;
+  insert into public.invite_replies (token, client_key, answer, replier_id)
+  values (p_token, p_client_key, p_answer, auth.uid())
+  on conflict (token, client_key) do update
+    set answer = excluded.answer, replier_id = excluded.replier_id;
+end;
+$$;
 
 -- ---------------------------------------------------------------------------
 -- recommendations — Recommend Cascade, the send half of Refer a friend (CAS-884/M11)
