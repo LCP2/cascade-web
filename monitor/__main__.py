@@ -217,7 +217,7 @@ def main(argv=None) -> int:
     placement_counts = {}
     agent_hits = match(cascades, transitions, already=already, admission=admission,
                        suppressed=suppressed, excluded=muted, film_watches=watches,
-                       placement_counts=placement_counts)
+                       placement_counts=placement_counts, picks=picks)
     # CAS-841 AC5: the size of the placement change, measurable on the first live run rather than
     # inferred.
     print(f"[monitor] window placement (CAS-841): {placement_counts.get('wrong_window', 0)} "
@@ -234,7 +234,7 @@ def main(argv=None) -> int:
                       for hits in agent_hits.values() for h in hits}
     newly_qualified_hits = match_newly_qualified(cascades, prev_movies, today_movies, already=already,
                                                  admission=admission, excluded=muted,
-                                                 covered=window_covered)
+                                                 covered=window_covered, picks=picks)
     for user_id, hits in newly_qualified_hits.items():
         agent_hits.setdefault(user_id, []).extend(hits)
 
@@ -252,7 +252,7 @@ def main(argv=None) -> int:
                      for hits in agent_hits.values() for h in hits}
     new_to_agent_hits = match_new_to_agent(cascades, prev_movies, today_movies, previous_run_start,
                                            already=already, admission=admission, excluded=muted,
-                                           covered=covered_films)
+                                           covered=covered_films, picks=picks)
     for user_id, hits in new_to_agent_hits.items():
         agent_hits.setdefault(user_id, []).extend(hits)
 

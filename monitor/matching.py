@@ -258,6 +258,69 @@ def excluded_moments(prefs) -> dict:
     return out
 
 
+def pick_overrides(picks) -> dict:
+    """{(user_id, movie_id): {"pinned_to": [...], "not_in": [...]}} from film_picks rows — CAS-279's
+    hand-move IN/OUT lists (store.fetch_picks(), once its select carries pinned_to/not_in), read for
+    CAS-925's cross-surface ownership below. A row naming neither list contributes nothing here; a
+    plain "mine"/"off" answer is ``suppressed_pairs``'s half of the same table, not this one's."""
+    out: dict = {}
+    for p in picks or ():
+        pinned = [str(x) for x in (p.get("pinned_to") or ()) if x]
+        not_in = [str(x) for x in (p.get("not_in") or ()) if x]
+        if not pinned and not not_in:
+            continue
+        out[(str(p.get("user_id")), str(p.get("movie_id")))] = {"pinned_to": pinned, "not_in": not_in}
+    return out
+
+
+def _resolve_owner(user_id, movie_id, user_cascades, admission, overrides, rank_of, firing_cascade_id):
+    """CAS-925: which of a user's own ACTIVE cascades OWNS ``movie_id`` — the single-owner answer
+    every surface (Moving, the email) must now agree on, mirroring the app's own ``filmOwnerCascade``:
+
+      a. a hand-pin (``film_picks.pinned_to``) wins outright, whatever the ranks or criteria say
+         (CAS-709: a pin always outranks rank and criteria) — the lowest ``_rank_key`` among the
+         pinned cascades, if the film is pinned into more than one;
+      b. otherwise the lowest ``_rank_key`` among ``user_cascades`` that ADMIT the film today,
+         excluding any cascade the film has been hand-moved OUT of (``film_picks.not_in``, CAS-279);
+      c. otherwise the firing agent — today's behaviour, for a film no other cascade of this user's
+         would currently admit either.
+
+    ``user_cascades`` is this user's own active cascades (a paused one is never a candidate — it is
+    never even in the ``cascades`` list a real run passes in, see ``store.fetch_active_cascades``).
+    The firing cascade is always one of ``user_cascades`` (it is the one that just produced this
+    Hit), so (c) can only fail to resolve if the caller passes an incomplete list — in which case
+    this returns ``None`` and the caller keeps the firing agent's own identity, same as before this
+    ticket."""
+    key = (str(user_id), str(movie_id))
+    override = overrides.get(key) or {}
+    pinned_to = set(override.get("pinned_to") or ())
+    not_in = set(override.get("not_in") or ())
+
+    if pinned_to:
+        pinned = [c for c in user_cascades if c["id"] in pinned_to]
+        if pinned:
+            return min(pinned, key=lambda c: rank_of.get(c["id"], (float("inf"), "", "")))
+
+    admitting = [c for c in user_cascades if c["id"] not in not_in
+                 and matches_criteria(movie_id, c["id"], "today", admission)]
+    if admitting:
+        return min(admitting, key=lambda c: rank_of.get(c["id"], (float("inf"), "", "")))
+
+    for c in user_cascades:
+        if c["id"] == firing_cascade_id:
+            return c
+    return None
+
+
+def _cascades_by_user(cascades) -> dict:
+    """{user_id: [active cascade, ...]} — the candidate pool _resolve_owner picks (b) and (c) from."""
+    out: dict = {}
+    for c in cascades:
+        if c.get("active", True):
+            out.setdefault(str(c.get("user_id")), []).append(c)
+    return out
+
+
 def _rank_key(cascade: dict):
     """(order, created_at, id) sort key for one cascade, lower wins (CAS-784). The agent's rank
     lives at `criteria.order` (there is no `order` column — the front end persists it inside the
@@ -286,7 +349,7 @@ def _collapse_by_rank(hits: list, rank_of: dict) -> list:
 
 
 def match(cascades: list, transitions: list, already=None, admission=None, suppressed=None,
-          excluded=None, film_watches=None, placement_counts=None) -> dict:
+          excluded=None, film_watches=None, placement_counts=None, picks=None) -> dict:
     """Return {user_id: [Hit, ...]} — one entry per (cascade, transition) that fires and hasn't
     been sent before.
 
@@ -322,10 +385,16 @@ def match(cascades: list, transitions: list, already=None, admission=None, suppr
                   size of CAS-841's effect: "no_placement" for a hit skipped because the film has
                   no placement row (or an empty one), "wrong_window" for a hit skipped because the
                   film IS placed, just not in the window this moment maps to. Omit to not count.
+    picks       : the film_picks rows (see store.fetch_picks) carrying CAS-279's hand-move
+                  pinned_to/not_in lists — CAS-925: every Hit is attributed to the film's OWNER
+                  (see _resolve_owner), not necessarily the cascade whose moment fired it, so the
+                  email names the same agent Moving does. None/missing -> no pins or moves, and a
+                  Hit's owner is whichever of the user's cascades has the lowest rank among those
+                  admitting the film (or the firing cascade itself, failing that).
 
     CAS-784: when two of a user's active Cascades both catch the same film at the same moment,
-    only the lowest-`criteria.order` one is kept — one film, one agent, one line, on email same
-    as on screen.
+    only one Hit survives — since CAS-925 both would already be attributed to the same owner, this
+    is now mostly a de-dupe of two identical-looking Hits rather than a choice between two agents.
     """
     seen = set(already or ())
     off = {(str(u), str(m)) for u, m in (suppressed or ())}
@@ -333,6 +402,8 @@ def match(cascades: list, transitions: list, already=None, admission=None, suppr
     admission = admission or {}
     placements = _film_watch_placements(film_watches)
     rank_of = {c["id"]: _rank_key(c) for c in cascades}
+    overrides = pick_overrides(picks)
+    cascades_by_user = _cascades_by_user(cascades)
     by_user: dict = {}
 
     for c in cascades:
@@ -368,10 +439,17 @@ def match(cascades: list, transitions: list, already=None, admission=None, suppr
             if key in seen:
                 continue
             seen.add(key)   # guard against two identical Cascades double-firing within one run
+            # CAS-925: attribute the Hit to the film's OWNER, not necessarily `c` (the agent whose
+            # moment just fired) — the de-dupe key above stays on `c["id"]` regardless, so
+            # re-attribution here can neither resurrect an already-sent alert nor suppress a new one.
+            owner = _resolve_owner(c["user_id"], t.movie_id, cascades_by_user.get(str(c["user_id"]), []),
+                                   admission, overrides, rank_of, c["id"]) or c
+            owner_criteria = owner.get("criteria") or {}
             by_user.setdefault(c["user_id"], []).append(
-                Hit(user_id=c["user_id"], cascade_id=c["id"],
-                    cascade_name=c.get("name", "My Cascade"), transition=t,
-                    channels=agent_channels(criteria), rank=rank_of[c["id"]]))
+                Hit(user_id=c["user_id"], cascade_id=owner["id"],
+                    cascade_name=owner.get("name", "My Cascade"), transition=t,
+                    channels=agent_channels(owner_criteria),
+                    rank=rank_of.get(owner["id"], rank_of[c["id"]])))
     return {uid: _collapse_by_rank(hits, rank_of) for uid, hits in by_user.items()}
 
 
@@ -397,7 +475,8 @@ def _current_moment(record: dict) -> Optional[str]:
 
 
 def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list, already=None,
-                          admission=None, suppressed=None, excluded=None, covered=None) -> dict:
+                          admission=None, suppressed=None, excluded=None, covered=None,
+                          picks=None) -> dict:
     """Return {user_id: [Hit, ...]} for a film present in both catalogues whose own attributes
     changed so it now matches an active Cascade's criteria and did NOT match yesterday (Lee's rule,
     2026-08-24) — an IMDb rating crossing the bar, a metacritic score/award/gross arriving, a genre
@@ -419,6 +498,8 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
                          — a real window transition landing the same day as this film's own
                          newly-qualifies wins; the newly-qualifies hit for that pair is dropped
                          (CAS-796), the same shape ``match_new_to_agent``'s `covered` param uses.
+    picks              : same film_picks rows ``match()`` takes (CAS-925) — a Hit here is attributed
+                         to the film's owner exactly as ``match()``'s are.
 
     CAS-784: same one-film-one-agent collapse as ``match()`` — see its docstring.
     """
@@ -429,6 +510,8 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
     muted = excluded_moments(excluded)
     admission = admission or {}
     rank_of = {c["id"]: _rank_key(c) for c in cascades}
+    overrides = pick_overrides(picks)
+    cascades_by_user = _cascades_by_user(cascades)
     covered = set(covered or ())
     by_user: dict = {}
 
@@ -466,10 +549,14 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
             seen.add(key)
             t = Transition(mid, today_record.get("title", ""), "newly_qualifies",
                           services=services, price=price, movie=today_record)
+            owner = _resolve_owner(c["user_id"], mid, cascades_by_user.get(str(c["user_id"]), []),
+                                   admission, overrides, rank_of, c["id"]) or c
+            owner_criteria = owner.get("criteria") or {}
             by_user.setdefault(c["user_id"], []).append(
-                Hit(user_id=c["user_id"], cascade_id=c["id"],
-                    cascade_name=c.get("name", "My Cascade"), transition=t,
-                    channels=agent_channels(criteria), rank=rank_of[c["id"]]))
+                Hit(user_id=c["user_id"], cascade_id=owner["id"],
+                    cascade_name=owner.get("name", "My Cascade"), transition=t,
+                    channels=agent_channels(owner_criteria),
+                    rank=rank_of.get(owner["id"], rank_of[c["id"]])))
     return {uid: _collapse_by_rank(hits, rank_of) for uid, hits in by_user.items()}
 
 
@@ -496,7 +583,7 @@ def _parse_dt(value):
 
 def match_new_to_agent(cascades: list, prev_movies: list, today_movies: list, previous_run_start,
                        already=None, admission=None, suppressed=None, excluded=None,
-                       covered=None) -> dict:
+                       covered=None, picks=None) -> dict:
     """Return {user_id: [Hit, ...]} for CAS-785's first-appearance moment: a film present in both
     catalogues that matches an active Cascade's criteria today and did NOT match it yesterday —
     the same test ``match_newly_qualified`` makes — fired ONLY when the Cascade itself has been
@@ -517,6 +604,8 @@ def match_new_to_agent(cascades: list, prev_movies: list, today_movies: list, pr
     already, suppressed, excluded : same meaning as match_newly_qualified.
     admission          : same {cascade_id: {"today": {...}, "yesterday": {...}}} shape as
                          match_newly_qualified takes (CAS-825) — both snapshots are read here too.
+    picks              : same film_picks rows ``match()`` takes (CAS-925) — a Hit here is attributed
+                         to the film's owner exactly as ``match()``'s are.
     """
     prev_by_id = {str(m.get("tmdb_id")): m for m in prev_movies}
     today_by_id = {str(m.get("tmdb_id")): m for m in today_movies}
@@ -525,6 +614,8 @@ def match_new_to_agent(cascades: list, prev_movies: list, today_movies: list, pr
     muted = excluded_moments(excluded)
     admission = admission or {}
     rank_of = {c["id"]: _rank_key(c) for c in cascades}
+    overrides = pick_overrides(picks)
+    cascades_by_user = _cascades_by_user(cascades)
     covered = set(covered or ())
     by_user: dict = {}
 
@@ -536,7 +627,6 @@ def match_new_to_agent(cascades: list, prev_movies: list, today_movies: list, pr
         updated_at = _parse_dt(c.get("updated_at"))
         if updated_at is None or updated_at >= previous_run_start:
             continue                       # edited inside the window, or unprovable -> silent
-        criteria = c.get("criteria") or {}
         for mid, today_record in today_by_id.items():
             if (c["id"], mid) in covered:
                 continue                   # already alerted this run some other way
@@ -554,10 +644,14 @@ def match_new_to_agent(cascades: list, prev_movies: list, today_movies: list, pr
                 continue
             seen.add(key)
             t = Transition(mid, today_record.get("title", ""), "new_to_agent", movie=today_record)
+            owner = _resolve_owner(c["user_id"], mid, cascades_by_user.get(str(c["user_id"]), []),
+                                   admission, overrides, rank_of, c["id"]) or c
+            owner_criteria = owner.get("criteria") or {}
             by_user.setdefault(c["user_id"], []).append(
-                Hit(user_id=c["user_id"], cascade_id=c["id"],
-                    cascade_name=c.get("name", "My Cascade"), transition=t,
-                    channels=agent_channels(criteria), rank=rank_of[c["id"]]))
+                Hit(user_id=c["user_id"], cascade_id=owner["id"],
+                    cascade_name=owner.get("name", "My Cascade"), transition=t,
+                    channels=agent_channels(owner_criteria),
+                    rank=rank_of.get(owner["id"], rank_of[c["id"]])))
     return {uid: _collapse_by_rank(hits, rank_of) for uid, hits in by_user.items()}
 
 
