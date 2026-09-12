@@ -2305,6 +2305,11 @@
      pinned and the column count follows the width it actually has. repeat(3,1fr) was not giving three even
      columns at all — see the min-width note on .rvposter — and the result read as an oversized 2-up. */
   .rvgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;margin-bottom:15px}
+  /* CAS-958: the reveal steps' own grid, now rendered after the CTA (renderOnbStep's afterFoot hook) rather
+     than inside the body — this is the clear space the ticket asks for between the button and the posters.
+     A dedicated class rather than a margin-top on .rvgrid itself, so .membgrid's own margin-top (which
+     shares the base .rvgrid rule) is untouched. */
+  .rvgridtop{margin-top:26px}
   /* min-width:0 is load-bearing, not tidying. A grid item's automatic minimum size is its content size, and
      with aspect-ratio in play that resolves against the row height instead of the column — so each tile
      demanded ~192px inside a 327px grid and the track blew out to 596px, overflowing the panel. The
@@ -2742,12 +2747,26 @@
      progress rail. */
   .obwrap{padding:32px 0 26px;max-width:390px;margin:0 auto}
   /* CAS-954: v2_about's own backdrop — the splash's wall/fade pair, reused as-is, behind this one step's
-     copy. Full-bleed past the flow's own side gutter (the 100vw/negative-margin trick, since .sharpstep's
-     padding lives on the fixed dialog, not on this step's content) with room for the wall to read as a
-     backdrop rather than a band clipped to the copy's own height. */
+     copy. Full-bleed past the flow's own side gutter, with room for the wall to read as a backdrop rather
+     than a band clipped to the copy's own height.
+     CAS-958: the breakout used to be the 100vw/`calc(50% - 50vw)` trick, sized against the true viewport.
+     That is wrong under `zoom:var(--ui-scale)` (CAS-157) — `vw` resolves in PRE-zoom layout pixels, so the
+     box's rendered (post-zoom) size came out ~12% wider than the pane itself, pushing .obhd off both edges
+     while the CTA (never in vw terms) stayed correctly inset. Breaking out relative to this element's own
+     containing block instead — .osinner/.osstage carry no horizontal padding of their own, so `100%` here
+     already equals .sharpstep's own content width — keeps everything in the same zoomed coordinate space
+     as the CTA, at every viewport, with no dependency on --ui-scale's value. */
   .obabout{position:relative;overflow:hidden;min-height:56vh;min-height:56dvh;
-    width:100vw;margin:0 calc(50% - 50vw);padding:32px var(--flow-pad) 0}
+    width:calc(100% + 2*var(--flow-pad));margin:0 calc(-1*var(--flow-pad));padding:32px var(--flow-pad) 0}
   .obabout .obwrap{position:relative;z-index:2;margin:0 auto}
+  /* CAS-958: a scrim behind the copy alone — the wall is correct on the splash (short copy over a fade);
+     here three paragraphs of body text need real legibility. .splashwall/.splashfade stay exactly as
+     paintSplashWall() left them (untouched, unforked); this is an extra layer above them, sized to bleed
+     past .obwrap's own box (never inside it, so .obwrap's own edges — checked against the CTA's — don't
+     move) and behind its text (negative z-index inside .obwrap's own stacking context). Near-opaque: mean
+     luminance behind the text has to clear WCAG AA against --dim regardless of which poster art loaded. */
+  .obabout .obwrap::before{content:"";position:absolute;inset:-18px -20px;z-index:-1;
+    background:rgba(10,14,26,.94);border-radius:20px}
   .obhd{font-size:22px;font-weight:800;color:var(--ink);margin:0 0 3px;letter-spacing:-.01em}
   .obsub{font-size:12.5px;color:var(--accent);margin:0 0 18px}
   .obq{font-size:15px;font-weight:750;color:var(--ink);margin:0 0 9px}
@@ -14996,7 +15015,12 @@ const SHARP_STEPS = {
     body(){
       const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_massive");
       return c ? onbAgentRevealHTML(c, 1, "Your first agent",
-        "This agent will find the landmark, must-see movies each year. There won't be many of them (maybe 2-3 per month) but these are the ones everyone will talk about.", true) : "";
+        "This agent will find the landmark, must-see movies each year. There won't be many of them (maybe 2-3 per month) but these are the ones everyone will talk about.") : "";
+    },
+    // CAS-958: the grid now renders after the CTA (renderOnbStep's afterFoot hook), not inside body().
+    afterFoot(){
+      const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_massive");
+      return c ? onbRevealGridHTML(c) : "";
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
@@ -15006,7 +15030,11 @@ const SHARP_STEPS = {
     body(){
       const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_favs");
       return c ? onbAgentRevealHTML(c, 2, "Your second agent",
-        "This agent will find movies in the styles that you like, at a minimum score that still gives you choice.", true) : "";
+        "This agent will find movies in the styles that you like, at a minimum score that still gives you choice.") : "";
+    },
+    afterFoot(){
+      const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_favs");
+      return c ? onbRevealGridHTML(c) : "";
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
@@ -15017,7 +15045,11 @@ const SHARP_STEPS = {
     body(){
       const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_date");
       return c ? onbAgentRevealHTML(c, 3, "One for the two of you",
-        "This agent finds movies you want to watch with your partner!", true) : "";
+        "This agent finds movies you want to watch with your partner!") : "";
+    },
+    afterFoot(){
+      const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_date");
+      return c ? onbRevealGridHTML(c) : "";
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
@@ -15028,7 +15060,11 @@ const SHARP_STEPS = {
     body(){
       const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_family");
       return c ? onbAgentRevealHTML(c, 4, "And one for the whole house",
-        "And of course, let's not forget family viewing night!", true) : "";
+        "And of course, let's not forget family viewing night!") : "";
+    },
+    afterFoot(){
+      const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_family");
+      return c ? onbRevealGridHTML(c) : "";
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
@@ -15632,9 +15668,11 @@ function onbNotifySum(c){
 // edit yet. A row whose value would read Any is omitted entirely, so onboarding never teaches a new user
 // to read past an empty row; the AWARDS row is never rendered here (every generated agent carries
 // selAwards: 0). N (watchCount) is always live, never a stored or constant figure.
-// CAS-954: showPosters is only true on the four reveal steps — v2_done reuses this same function for its
-// roster recap and must not get a grid on any of its up-to-four cards, so it simply omits the argument.
-function onbAgentRevealHTML(c, rank, eyebrow, note, showPosters){
+// CAS-958: no longer takes a showPosters flag — the grid moved out to onbRevealGridHTML below, called
+// separately (as renderOnbStep's afterFoot hook) so it lands after the CTA in DOM order, not inside this
+// body. v2_done reuses this function for its roster recap and, never calling that second function, still
+// gets no grid on any of its up-to-four cards.
+function onbAgentRevealHTML(c, rank, eyebrow, note){
   const rows=[];
   const styles=agentStylesSum(c);
   if(styles!=="Any style") rows.push(`<span class="agsrow"><span class="agslbl">STYLES</span><span class="agsval">${esc(styles)}</span></span>`);
@@ -15648,11 +15686,6 @@ function onbAgentRevealHTML(c, rank, eyebrow, note, showPosters){
   const n=watchCount(c);
   const rowB = n===0 ? `<span class="agmstat">Nothing matching that yet</span>`
     : `<span class="agmstat">Found <b>${n}</b> already</span>`;
-  // The agent's own real haul, in the listing's own order — the same expression openMembership() uses,
-  // so the grid under a reveal card is never a different set from the one its count refers to.
-  const films = showPosters ? listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||DEFAULT_SORT, c) : [];
-  const posterGrid = films.length
-    ? `<div class="rvgrid">${films.slice(0, REVEAL_POSTERS).map(rvPosterHTML).join("")}</div>` : "";
   return `<p class="eyebrow">${esc(eyebrow)}</p>
     <div class="onbreveal">
       <div class="agrow agrank-${Math.min(rank,6)}">
@@ -15670,8 +15703,15 @@ function onbAgentRevealHTML(c, rank, eyebrow, note, showPosters){
         </span>
       </div>
       ${note ? `<p class="obintrotext">${esc(note)}</p>` : ""}
-      ${posterGrid}
     </div>`;
+}
+// CAS-958: the reveal steps' poster grid, split out of onbAgentRevealHTML above so it can be rendered by
+// renderOnbStep's afterFoot hook — after the CTA in DOM order, not between the purpose line and it. Same
+// haul, same order, same 8-poster cap as before; only where it lands in the page changed.
+function onbRevealGridHTML(c){
+  const films = listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||DEFAULT_SORT, c);
+  return films.length
+    ? `<div class="rvgrid rvgridtop">${films.slice(0, REVEAL_POSTERS).map(rvPosterHTML).join("")}</div>` : "";
 }
 // ================= CAS-636: Moving — the alert feed made visible =================
 // CAS-848: the screen's own subtitle, shared by the loading state and the real one so they never say two
@@ -16528,6 +16568,9 @@ function renderOnbStep(key){
   // CAS-628: a step's title may be a function (services: "My services" on the top-menu spoke only, since
   // the briefing context draws its own obhd inside body() instead — see the generic mirror above).
   const title = typeof step.title==="function" ? step.title() : step.title;
+  // CAS-958: an optional hook for content that must land AFTER the footer in DOM order — the four reveal
+  // steps' poster grid, which the ticket wants below Continue now, not between the purpose line and it.
+  // A hook rather than folding the grid into body() itself, since body() draws before osfoot unconditionally.
   $("onbStepInner").innerHTML = `
     ${chromed ? "" : `<div class="ostop">
       <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
@@ -16544,7 +16587,8 @@ function renderOnbStep(key){
     ${(step.hub||chromed||spoke) ? "" : `<div class="osfoot">
       <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${stepCtaText(step, n)}</button>
       ${step.noSkip ? "" : `<button class="osskip" type="button" onclick="onbStepSkip()">${step.skip || "Skip — I'll set this up later"}</button>`}
-    </div>`}`;
+    </div>`}
+    ${step.afterFoot ? step.afterFoot() : ""}`;
   placeStepCount(step, n);
   if(step.wire) step.wire();
   applyStepBlock(step, $("onbStepCta"));
