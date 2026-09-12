@@ -3708,10 +3708,11 @@
   <div id="filmInviteBody"></div>
 </div>
 
-<!-- RECOMMEND CASCADE (CAS-884) — the send half of M11 (Refer a friend); CAS-808 still owns attribution
-     and any reward. Reached from the nav menu, signed-in only. Body rebuilt fresh by renderRecommendForm()
-     every open, same convention as #contact/#filmInvite. Cascade itself sends the email (a new hourly
-     workflow reads unsent public.recommendations rows) — nothing here talks to Resend directly. -->
+<!-- RECOMMEND CASCADE (CAS-884, picker CAS-931) — the send half of M11 (Refer a friend); CAS-808 still
+     owns attribution and any reward. Reached from the nav menu, signed-in only. Body rebuilt fresh by
+     renderRecommendForm() every open, same convention as #contact/#filmInvite. Cascade itself sends the
+     email (a new hourly workflow reads unsent public.recommendations rows) — nothing here talks to Resend
+     directly. Close button text and header both toggle with state (Cancel/Done), same as #filmInvite. -->
 <div class="modal" id="recommend">
   <div class="modalhead"><h3>Recommend Cascade</h3><button class="donebtn" id="recommendClose">Cancel</button></div>
   <div id="recommendBody"></div>
@@ -6444,28 +6445,33 @@ function filterFriendRows(containerId, q){
   });
 }
 // ---- the shared row + add/edit form --------------------------------------------------------------------
-// selectable=true is the Invite sheet's picker (checkbox + per-recipient channel buttons); selectable=false
-// is the Friends screen (a single static "has email" mark, tap the row to edit). One row renderer, one
-// form renderer, for both — "one implementation, not two" per the ticket.
+// selectable=true is a picker row (checkbox + per-recipient channel buttons); selectable=false is the
+// Friends screen (a single static "has email" mark, tap the row to edit). One row renderer, one form
+// renderer, for both — "one implementation, not two" per the ticket. CAS-931: a selectable row now takes
+// its own ctx ("invite" or "recommend") and selMap, since Recommend hosts a second, independent picker
+// alongside the Invite sheet's — see toggleFriendSelect/setFriendChannel below, which route on ctx the
+// same way.
 function friendRowHTML(f, opts){
   const selectable=!!(opts && opts.selectable);
+  const ctx=(opts && opts.ctx) || "invite";
+  const selMap=(opts && opts.selMap) || inviteFriendSel;
   const sub=[f.email||"", f.mobile||""].filter(Boolean).join(" · ");
   const chans=friendChannels(f);
   let chanHTML;
   if(selectable){
-    const chan=(inviteFriendSel.get(String(f.id))||{}).channel || "email";
+    const chan=(selMap.get(String(f.id))||{}).channel || "email";
     chanHTML=`
-      ${chans.email?`<button type="button" class="fchan${chan==="email"?" on":""}" onclick="event.stopPropagation();setFriendChannel('${f.id}','email')" aria-label="Email ${escA(f.name)}">${ICON.mail}</button>`:""}
-      ${chans.whatsapp?`<button type="button" class="fchan${chan==="whatsapp"?" on":""}" onclick="event.stopPropagation();setFriendChannel('${f.id}','whatsapp')" aria-label="WhatsApp ${escA(f.name)}">${ICON.whatsapp}</button>`:""}
-      ${chans.sms?`<button type="button" class="fchan${chan==="sms"?" on":""}" onclick="event.stopPropagation();setFriendChannel('${f.id}','sms')" aria-label="SMS ${escA(f.name)}">${ICON.sms}</button>`:""}`;
+      ${chans.email?`<button type="button" class="fchan${chan==="email"?" on":""}" onclick="event.stopPropagation();setFriendChannel('${ctx}','${f.id}','email')" aria-label="Email ${escA(f.name)}">${ICON.mail}</button>`:""}
+      ${chans.whatsapp?`<button type="button" class="fchan${chan==="whatsapp"?" on":""}" onclick="event.stopPropagation();setFriendChannel('${ctx}','${f.id}','whatsapp')" aria-label="WhatsApp ${escA(f.name)}">${ICON.whatsapp}</button>`:""}
+      ${chans.sms?`<button type="button" class="fchan${chan==="sms"?" on":""}" onclick="event.stopPropagation();setFriendChannel('${ctx}','${f.id}','sms')" aria-label="SMS ${escA(f.name)}">${ICON.sms}</button>`:""}`;
   } else {
     chanHTML = chans.email ? `<span class="fchanstatic" aria-hidden="true">${ICON.mail}</span>` : "";
   }
   const checkbox = selectable
-    ? (()=>{ const sel=inviteFriendSel.has(String(f.id));
-        return `<button type="button" class="fcheck${sel?" on":""}" onclick="event.stopPropagation();toggleFriendSelect('${f.id}')" aria-pressed="${sel}" aria-label="${sel?"Selected":"Select"} ${escA(f.name)}">${sel?"✓":""}</button>`; })()
+    ? (()=>{ const sel=selMap.has(String(f.id));
+        return `<button type="button" class="fcheck${sel?" on":""}" onclick="event.stopPropagation();toggleFriendSelect('${ctx}','${f.id}')" aria-pressed="${sel}" aria-label="${sel?"Selected":"Select"} ${escA(f.name)}">${sel?"✓":""}</button>`; })()
     : "";
-  const sel = selectable && inviteFriendSel.has(String(f.id));
+  const sel = selectable && selMap.has(String(f.id));
   const rowAttr = selectable ? "" : ` onclick="openFriendsEditForm('${f.id}')"`;
   return `<div class="frow${sel?" fsel":""}" data-fid="${f.id}"${rowAttr}>
     <div class="favatar" style="background:${friendColorFor(f.name)}">${esc(friendInitials(f.name))}</div>
@@ -6515,12 +6521,19 @@ window.submitFriendForm = async(ctx, idStr)=>{
       const {data,error}=await c.from("friends").insert([{owner_id:owner, name, email:email||null, mobile:mobile||null}]).select().single();
       if(error) throw error;
       friends.push(data);
+      // Same cap as toggleFriendSelect — adding a new friend here is still "selecting" them. CAS-931:
+      // Recommend gets its own selMap/cap, same shape as Invite's, since the two pickers are independent.
       if(ctx==="invite"){
-        // Same cap as toggleFriendSelect — adding a new friend here is still "selecting" them.
         if(inviteFriendSel.size>=INVITE_MAX_RECIPIENTS){
           inviteCapMsg=`Choose up to ${INVITE_MAX_RECIPIENTS} people at a time.`;
         } else {
           inviteFriendSel.set(String(data.id), {channel: data.email ? "email" : "whatsapp"});
+        }
+      } else if(ctx==="recommend"){
+        if(recommendFriendSel.size>=INVITE_MAX_RECIPIENTS){
+          recommendCapMsg=`Choose up to ${INVITE_MAX_RECIPIENTS} people at a time.`;
+        } else {
+          recommendFriendSel.set(String(data.id), {channel: data.email ? "email" : "whatsapp"});
         }
       }
     }
@@ -6530,6 +6543,7 @@ window.submitFriendForm = async(ctx, idStr)=>{
     return;
   }
   if(ctx==="invite"){ inviteFriendAdding=false; renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId)); }
+  else if(ctx==="recommend"){ recommendFriendAdding=false; renderRecommendForm(); }
   else { friendsFormOpen=false; friendsEditingId=null; renderFriendsScreen(); }
 };
 window.confirmDeleteFriend = async(idStr)=>{
@@ -6593,30 +6607,39 @@ let inviteFriendAdding = false;
 const INVITE_MAX_RECIPIENTS = 20;
 let inviteCapMsg = null;
 let inviteSentInfo = null;   // {count, line} once a send has actually gone through; null otherwise
-window.toggleFriendSelect=(idStr)=>{
-  if(inviteFriendSel.has(idStr)){
-    inviteFriendSel.delete(idStr);
-    inviteCapMsg=null;
+// CAS-931: routes a picker action to whichever host (ctx) owns it — Invite's own selMap/cap/rerender,
+// or Recommend's — so the two pickers stay fully independent despite sharing friendRowHTML's markup.
+function pickerCtx(ctx){
+  return ctx==="recommend"
+    ? { sel:recommendFriendSel, setCap:m=>{recommendCapMsg=m;}, rerender:()=>renderRecommendForm() }
+    : { sel:inviteFriendSel, setCap:m=>{inviteCapMsg=m;}, rerender:()=>renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId)) };
+}
+window.toggleFriendSelect=(ctx, idStr)=>{
+  const {sel, setCap, rerender}=pickerCtx(ctx);
+  if(sel.has(idStr)){
+    sel.delete(idStr);
+    setCap(null);
   } else {
-    if(inviteFriendSel.size>=INVITE_MAX_RECIPIENTS){
-      inviteCapMsg=`Choose up to ${INVITE_MAX_RECIPIENTS} people at a time.`;
-      renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId));
+    if(sel.size>=INVITE_MAX_RECIPIENTS){
+      setCap(`Choose up to ${INVITE_MAX_RECIPIENTS} people at a time.`);
+      rerender();
       return;
     }
     // Default to whichever channel this friend actually has — email if they do, otherwise whatever
     // mobile-only channel their row offers — never a channel with no detail behind it.
     const f=friends.find(x=>String(x.id)===idStr);
     const chans=friendChannels(f);
-    inviteFriendSel.set(idStr, {channel: chans.email ? "email" : (chans.whatsapp ? "whatsapp" : "sms")});
-    inviteCapMsg=null;
+    sel.set(idStr, {channel: chans.email ? "email" : (chans.whatsapp ? "whatsapp" : "sms")});
+    setCap(null);
   }
-  renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId));
+  rerender();
 };
 // Tapping WhatsApp/SMS only changes that recipient's channel — it does not itself select or unselect them.
-window.setFriendChannel=(idStr, channel)=>{
-  const cur=inviteFriendSel.get(idStr) || {channel:"email"};
-  inviteFriendSel.set(idStr, {...cur, channel});
-  renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId));
+window.setFriendChannel=(ctx, idStr, channel)=>{
+  const {sel, rerender}=pickerCtx(ctx);
+  const cur=sel.get(idStr) || {channel:"email"};
+  sel.set(idStr, {...cur, channel});
+  rerender();
 };
 window.openFriendAddForm=()=>{ inviteFriendAdding=true; renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId)); };
 window.closeFriendAddForm=()=>{ inviteFriendAdding=false; renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId)); };
@@ -6704,7 +6727,7 @@ function renderFilmInviteSheet(m){
     : `<div class="filminvthumb"></div>`;
   const list=friendsSorted();
   const rows = list.length
-    ? list.map(f=>friendRowHTML(f,{selectable:true})).join("")
+    ? list.map(f=>friendRowHTML(f,{selectable:true, ctx:"invite", selMap:inviteFriendSel})).join("")
     : `<div class="fempty">No friends yet — add someone below.</div>`;
   const selIds=[...inviteFriendSel.keys()];
   const selCount=selIds.length;
@@ -11619,11 +11642,25 @@ window.sendContact=async()=>{
 };
 document.addEventListener("keydown", e => { if(e.key==="Escape" && $("aboutPage").classList.contains("open")) $("aboutPage").classList.remove("open"); });
 
-// ---- CAS-884: Recommend Cascade — the send half of M11 (Refer a friend) -----------------------------
+// ---- CAS-884/CAS-931: Recommend Cascade — the send half of M11 (Refer a friend) -----------------------
 // Signed-in only, reached from the nav menu. Cascade sends the email itself, on a new hourly workflow
 // (.github/workflows/recommend.yml -> monitor/recommend.py) — this only inserts a row into
 // public.recommendations, the same "queue a row, a job emails it" shape monitor/contact.py established.
-let recommendMsgDirty=false;
+// CAS-931: hosts the CAS-928 friend picker (own selMap/ctx, see pickerCtx above) in place of the old
+// single Name+Email pair, and can send to several people — up to INVITE_MAX_RECIPIENTS (20), same cap
+// as the Invite sheet. A mobile-only recipient gets the same WhatsApp/SMS device hand-off CAS-930 gave
+// Invite, carrying the same message text and the cascademovies.com link (there is no App Store listing
+// yet — Cascade is TestFlight-only).
+let recommendFriendSel = new Map();
+let recommendFriendAdding = false;
+let recommendCapMsg = null;
+let recommendSentInfo = null;   // {count} once a send has actually gone through; null otherwise
+// The message editor stays behind "Edit the message they get" rather than occupying the sheet by
+// default — the picker is the main event. null means "use the default text", which is computed per
+// recipient at render/send time (recommendMessageFor(recipientName, sender)); once the user types,
+// their raw edit is used verbatim for every recipient instead.
+let recommendMsgText = null;
+let recommendMsgEditOpen = false;
 function recommendMessageFor(name, sender){
   const who=(name||"").trim() || "there";
   const from=sender || "A friend";
@@ -11631,67 +11668,145 @@ function recommendMessageFor(name, sender){
     `when something lands in cinemas or on a service I already pay for, and tells me. Thought you'd `+
     `like it. — ${from}`;
 }
-// Rebuilt fresh every open (mirrors renderContactForm()'s own convention) so a prior visit's typed
-// name, message edits or error never bleed into the next one.
+// Rebuilt fresh every open (mirrors renderContactForm()'s own convention) so a prior visit's picks,
+// message edits or error never bleed into the next one.
 function renderRecommendForm(){
-  recommendMsgDirty=false;
+  const h3=$("recommend").querySelector("h3");
+  const closeBtn=$("recommendClose");
+  if(recommendSentInfo){
+    if(h3) h3.textContent="Recommend Cascade";
+    if(closeBtn) closeBtn.textContent="Done";
+    $("recommendBody").innerHTML=`<div class="filminvsent">
+      <div class="filminvsenttick" aria-hidden="true">${ICON.tick}</div>
+      <div class="filminvsenttitle">Recommended to ${recommendSentInfo.count} ${recommendSentInfo.count===1?"person":"people"}</div>
+    </div>`;
+    return;
+  }
+  if(closeBtn) closeBtn.textContent="Cancel";
+  if(recommendFriendAdding){
+    if(h3) h3.textContent="Add someone";
+    $("recommendBody").innerHTML = friendFormHTML(null,"recommend");
+    return;
+  }
+  if(h3) h3.textContent="Recommend Cascade";
   const a=window.CascadeAuth;
   const senderName=(a && a.user && a.user.email) ? a.user.email.split("@")[0] : null;
   window._recommendSender=senderName;
-  $("recommendBody").innerHTML=`
-    <div class="pnote">Send someone an introduction to Cascade and a link to sign up. One email, from you.</div>
-    <div class="flabel">Their name</div>
-    <input id="recommendName" class="namein" type="text" maxlength="40" autocomplete="off" placeholder="e.g. Priya" oninput="onRecommendNameInput()">
-    <div class="flabel">Their email</div>
-    <input id="recommendEmail" class="namein" type="email" autocomplete="off" placeholder="e.g. priya@example.com">
-    <div class="flabel">What they'll get</div>
-    <textarea id="recommendMsg" class="cmsg" maxlength="2000" rows="6" oninput="onRecommendMsgInput()">${esc(recommendMessageFor("", senderName))}</textarea>
-    <div class="pnote" id="recommendErr" style="color:#ffb9a6" hidden></div>
-    <button type="button" class="filminvcta" id="recommendSend" onclick="sendRecommend()">Send introduction</button>
-    <div class="pnote" style="text-align:center">You can edit the message before it goes.</div>`;
+  const list=friendsSorted();
+  const rows = list.length
+    ? list.map(f=>friendRowHTML(f,{selectable:true, ctx:"recommend", selMap:recommendFriendSel})).join("")
+    : `<div class="fempty">No friends yet — add someone below.</div>`;
+  const n=recommendFriendSel.size;
+  const ctaLabel = n ? `Recommend to ${n} ${n===1?"person":"people"}` : "Recommend";
+  $("recommendBody").innerHTML = `
+    <div class="pnote">Send an introduction to Cascade and a link to try it. One email, from you.</div>
+    <div class="flabel">Who are you telling?</div>
+    <input type="text" class="search" id="recommendSearch" placeholder="Search friends" autocomplete="off"
+      oninput="filterFriendRows('recommendPicker',this.value)">
+    <button type="button" class="fnewbtn" onclick="openRecommendAddForm()">+ Add someone new</button>
+    <div id="recommendPicker">${rows}</div>
+    <div class="pnote" id="recommendErr" style="color:#ffb9a6" ${recommendCapMsg?"":"hidden"}>${esc(recommendCapMsg||"")}</div>
+    <button type="button" class="filminvcta" id="recommendSend" onclick="sendRecommend()" ${n?"":"disabled"}>${esc(ctaLabel)}</button>
+    ${recommendMsgEditOpen ? `
+      <div class="flabel">What they'll get</div>
+      <textarea id="recommendMsg" class="cmsg" maxlength="2000" rows="6" oninput="onRecommendMsgInput(this.value)">${esc(recommendMsgText!==null?recommendMsgText:recommendMessageFor("",senderName))}</textarea>
+      <button type="button" class="osskip" onclick="toggleRecommendMsgEdit()">Hide the message</button>`
+    : `<button type="button" class="osskip" onclick="toggleRecommendMsgEdit()">Edit the message they get</button>`}`;
 }
-// The greeting stays in sync with the typed name until the message itself is edited by hand — once
-// that happens, an edit-in-progress must never be silently overwritten by a later keystroke in Name.
-window.onRecommendNameInput=()=>{
-  if(recommendMsgDirty) return;
-  $("recommendMsg").value=recommendMessageFor($("recommendName").value, window._recommendSender);
-};
-window.onRecommendMsgInput=()=>{ recommendMsgDirty=true; };
+window.onRecommendMsgInput=(val)=>{ recommendMsgText=val; };
+window.toggleRecommendMsgEdit=()=>{ recommendMsgEditOpen=!recommendMsgEditOpen; renderRecommendForm(); };
+window.openRecommendAddForm=()=>{ recommendFriendAdding=true; renderRecommendForm(); };
+window.closeRecommendAddForm=()=>{ recommendFriendAdding=false; renderRecommendForm(); };
 window.openRecommend=()=>{
+  recommendFriendSel=new Map();
+  recommendFriendAdding=false;
+  recommendCapMsg=null;
+  recommendSentInfo=null;
+  recommendMsgText=null;
+  recommendMsgEditOpen=false;
   renderRecommendForm();
   openModal($("recommend"));
   logEvent("recommend_opened");
 };
-$("recommendClose").onclick=()=>closeModal($("recommend"));
-window.sendRecommend=async()=>{
-  const nameEl=$("recommendName"), emailEl=$("recommendEmail"), msgEl=$("recommendMsg"),
-        errEl=$("recommendErr"), btn=$("recommendSend");
-  const to_name=(nameEl.value||"").trim() || null;
-  const to_email=(emailEl.value||"").trim();
-  const message=(msgEl.value||"").trim();
-  errEl.hidden=true;
-  if(!emailValid(to_email)){
-    errEl.textContent="Add a valid email address."; errEl.hidden=false; emailEl.focus(); return;
+// While the add-someone form is open, Cancel goes back to the picker, not out of the sheet entirely —
+// same convention as the Invite sheet's own filmInviteClose. Once sent, this same button reads Done
+// (set by renderRecommendForm above) but still just closes.
+$("recommendClose").onclick=()=>{
+  if(recommendFriendAdding){ closeRecommendAddForm(); return; }
+  closeModal($("recommend"));
+};
+// CAS-931: same one-at-a-time device hand-off as CAS-930's openNextInviteChannel, but for a generic
+// Cascade recommendation rather than a specific film + invite token — the link is always
+// https://cascademovies.com (there is no App Store listing yet), and the text is that recipient's own
+// personalised message.
+function openNextRecommendChannel(queue){
+  if(!queue.length) return;
+  const next=queue[0], rest=queue.slice(1);
+  const text=`${next.message}\nhttps://cascademovies.com`;
+  const digits=normalizeAuMobile(next.friend.mobile);
+  const url = next.channel==="whatsapp"
+    ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}`
+    : `sms:${digits}?&body=${encodeURIComponent(text)}`;
+  const win=window.open(url, "_blank");
+  if(!win && navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>toast(`Link copied — paste it to ${next.friend.name}`)).catch(()=>{});
   }
-  if(!message){ errEl.textContent="Add a message before sending."; errEl.hidden=false; msgEl.focus(); return; }
+  if(!rest.length) return;
+  const advance=()=>{
+    if(document.visibilityState!=="visible") return;
+    document.removeEventListener("visibilitychange", advance);
+    openNextRecommendChannel(rest);
+  };
+  document.addEventListener("visibilitychange", advance);
+}
+// One recommendations row per selected recipient who has an email (never a mobile-only recipient — they
+// get the device hand-off below instead), then last_used_at is stamped on every selected friend
+// regardless of channel, same as CAS-930's sendFilmInvite.
+window.sendRecommend=async()=>{
+  const errEl=$("recommendErr"), btn=$("recommendSend");
+  const recipients=[...recommendFriendSel.entries()]
+    .map(([id,sel])=>({friend:friends.find(x=>String(x.id)===id), channel:(sel&&sel.channel)||"email"}))
+    .filter(r=>r.friend);
+  errEl.hidden=true;
+  if(!recipients.length) return;
+  if(recipients.length>INVITE_MAX_RECIPIENTS){
+    errEl.textContent=`Choose up to ${INVITE_MAX_RECIPIENTS} people.`;
+    errEl.hidden=false;
+    return;
+  }
   const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
   const uid=(a && a.session && a.session.user) ? a.session.user.id : null;
   if(!c || !uid){
     errEl.textContent="Couldn't send that — try again in a moment."; errEl.hidden=false; return;
   }
   btn.disabled=true;
+  const senderName=window._recommendSender||null;
+  const sent=[];
   try{
-    const {error}=await c.from("recommendations").insert([{
-      sender_id:uid, sender_name:window._recommendSender||null, to_name, to_email, message,
-    }]);
-    if(error) throw error;
-    logEvent("recommend_sent");
-    $("recommendBody").innerHTML=`<p class="pnote">Sent — thanks for spreading the word.</p>`;
+    for(const r of recipients){
+      const message = recommendMsgText!==null ? recommendMsgText : recommendMessageFor(r.friend.name, senderName);
+      if(r.channel==="email"){
+        const {error}=await c.from("recommendations").insert([{
+          sender_id:uid, sender_name:senderName, to_name:r.friend.name, to_email:r.friend.email, message,
+        }]);
+        if(error) throw error;
+      }
+      const usedAt=new Date().toISOString();
+      try{ await c.from("friends").update({last_used_at:usedAt}).eq("id", r.friend.id); r.friend.last_used_at=usedAt; }
+      catch(e){}
+      sent.push({friend:r.friend, channel:r.channel, message});
+    }
   }catch(e){
     btn.disabled=false;
     errEl.textContent="Couldn't send that — try again in a moment.";
     errEl.hidden=false;
+    return;
   }
+  logEvent("recommend_sent",{n:sent.length});
+  recommendFriendSel=new Map();
+  recommendSentInfo={count:sent.length};
+  renderRecommendForm();
+  openNextRecommendChannel(sent.filter(s=>s.channel!=="email"));
 };
 
 // ---- Agent select (CAS-75, rebuilt CAS-112 / mock: 02-agent-select.html) ----
