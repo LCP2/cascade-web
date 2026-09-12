@@ -38,7 +38,11 @@ const node = () => new Proxy(function(){}, {
   deleteProperty(){ return true; },
 });
 
-function makeContext(){
+// CAS-969: localStorageStore lets a test share one backing Map across two loadEngine() calls, simulating
+// a page reload (a fresh JS realm, the same on-device storage) — needed to assert "asked at most once per
+// version" actually survives a reload, not just a second call within the same load. Optional and unused
+// by every existing test, which keeps getting its own private Map exactly as before.
+function makeContext(localStorageStore){
   const doc = new Proxy({}, {
     get(t, k){
       if(k === "querySelectorAll" || k === "getElementsByClassName" || k === "getElementsByTagName") return () => [];
@@ -46,7 +50,7 @@ function makeContext(){
     },
     set(){ return true; },
   });
-  const store = new Map();
+  const store = localStorageStore || new Map();
   const sessionStore = new Map();
   const ctx = {
     document: doc,
@@ -425,11 +429,17 @@ if(typeof window.CascadeAuth === "undefined"){
   get invites(){ return invites; },
   setInvites(v){ invites=v; },
   invitesUnseenCount, invitesBadgeText, inviteRowHTML,
+  // CAS-969: the rating-prompt predicate and its state helpers — exported so a test can drive the
+  // threshold boundaries directly, and (via loadEngine's shared localStorageStore) assert the "asked"
+  // flag really does survive a reload rather than only a second call within the same load.
+  reviewPromptEligible, REVIEW_PROMPT_MIN_SESSIONS,
+  bumpReviewPromptSessionCount, reviewPromptSessionCount,
+  reviewPromptAskedVersion, markReviewPromptAsked, maybeRequestReview,
 };
 `;
 
 /** Read index.html, take its ONE classic engine script, and evaluate it against the stub DOM. */
-export function loadEngine({ htmlPath = path.join(ROOT, "index.html") } = {}){
+export function loadEngine({ htmlPath = path.join(ROOT, "index.html"), localStorageStore } = {}){
   const html = fs.readFileSync(htmlPath, "utf8");
   const open = html.indexOf("<script>");
   if(open < 0) throw new Error(`no classic <script> found in ${htmlPath}`);
@@ -440,7 +450,7 @@ export function loadEngine({ htmlPath = path.join(ROOT, "index.html") } = {}){
   // anything that obviously isn't it.
   if(src.length < 200000) throw new Error(`engine script is only ${src.length} chars — is this a real build?`);
 
-  const ctx = makeContext();
+  const ctx = makeContext(localStorageStore);
   const sandbox = vm.createContext(ctx);
   vm.runInContext(src + EXPORTS, sandbox, { filename: `${path.basename(htmlPath)}#engine`, timeout: 120000 });
   const api = ctx.__ENGINE__;
