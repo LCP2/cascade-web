@@ -5066,7 +5066,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1100, "commit": "c21ccc9", "builtAt": "2026-09-12T01:50:15Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1101, "commit": "b7bd05e", "builtAt": "2026-09-12T01:58:10Z", "providers": {"TMDB": "unconfigured", "OMDb": "unconfigured", "Watchmode": "unconfigured", "Wikidata": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -11133,6 +11133,9 @@ const CONTACT_CATEGORIES=[
   {key:"other",label:"Something else"},
 ];
 let contactCategory=null;
+// CAS-927: message/email are validated live, but an error is only shown next to a field once it has
+// been touched and left — an untouched form must not greet the person with errors on first open.
+let contactMsgTouched=false, contactEmailTouched=false;
 function contactCatChipsHTML(){
   return CONTACT_CATEGORIES.map(c=>
     `<button type="button" class="chip gen${contactCategory===c.key?" on":""}" aria-pressed="${contactCategory===c.key}"
@@ -11143,6 +11146,8 @@ function contactCatChipsHTML(){
 function renderContactForm(){
   contactCategory=null;
   contactAttachFile=null;
+  contactMsgTouched=false;
+  contactEmailTouched=false;
   const a=window.CascadeAuth, signedIn=!!(a && a.status==="signed-in" && a.user);
   const email=signedIn ? (a.user.email||"") : "";
   $("contactBody").innerHTML=`
@@ -11151,7 +11156,9 @@ function renderContactForm(){
     <div class="flabel">What's this about?</div>
     <div class="chips" id="contactCatChips">${contactCatChipsHTML()}</div>
     <div class="flabel">Message</div>
-    <textarea id="contactMsg" class="cmsg" maxlength="2000" rows="4" placeholder="What's on your mind?"></textarea>
+    <textarea id="contactMsg" class="cmsg" maxlength="2000" rows="4" placeholder="What's on your mind?"
+      oninput="contactValidate()" onblur="contactMsgBlur()"></textarea>
+    <div class="pnote" id="contactMsgErr" style="color:#ffb9a6" hidden>Add a message so we know what's going on.</div>
     <button type="button" class="secbtn" id="contactAttachBtn" style="margin-top:2px"
       onclick="document.getElementById('contactAttachInput').click()">Attach a screenshot</button>
     <input type="file" id="contactAttachInput" accept="image/png,image/jpeg,image/webp" hidden
@@ -11164,7 +11171,8 @@ function renderContactForm(){
     </div>
     <div class="flabel">Email (so we can reply)</div>
     <input id="contactEmail" class="namein" type="email" autocomplete="email" placeholder="you@example.com"
-      value="${escA(email)}" ${signedIn?"":"required"}>
+      value="${escA(email)}" oninput="contactValidate()" onblur="contactEmailBlur()">
+    <div class="pnote" id="contactEmailErr" style="color:#ffb9a6" hidden>Add a valid email so we can reply.</div>
     <!-- Honeypot (CAS-838): off-screen, never focusable, filled only by a bot filling every field it
          finds. A real visitor never sees or reaches it, so a filled value is always dropped, silently. -->
     <input id="contactHp" class="cthp" type="text" name="cf_url" tabindex="-1" autocomplete="off" aria-hidden="true">
@@ -11177,10 +11185,22 @@ function renderContactForm(){
     <div class="pnote" id="contactErr" style="color:#ffb9a6" hidden></div>
     <div class="cascfoot"><button class="applybtn" id="contactSend" disabled onclick="sendContact()">Send</button></div>`;
 }
+// Overall Send state depends only on message + email validity — category is optional (CAS-927). An
+// error is surfaced next to a field only once contact*Touched is set (on that field's blur), so typing
+// into a fresh form never shows red text before the person has had a chance to finish.
+window.contactValidate=()=>{
+  const msgEl=$("contactMsg"), emailEl=$("contactEmail");
+  const msgOk=!!((msgEl.value||"").trim());
+  const emailOk=emailValid(emailEl.value);
+  $("contactMsgErr").hidden = !(contactMsgTouched && !msgOk);
+  $("contactEmailErr").hidden = !(contactEmailTouched && !emailOk);
+  $("contactSend").disabled = !(msgOk && emailOk);
+};
+window.contactMsgBlur=()=>{ contactMsgTouched=true; contactValidate(); };
+window.contactEmailBlur=()=>{ contactEmailTouched=true; contactValidate(); };
 window.selectContactCategory=key=>{
   contactCategory=key;
   $("contactCatChips").innerHTML=contactCatChipsHTML();
-  $("contactSend").disabled=false;
   const diagWrap=$("contactDiagWrap");
   diagWrap.hidden = key!=="bug";
   if(key!=="bug"){
@@ -11240,16 +11260,18 @@ window.clearContactAttach=()=>{
   $("contactAttachErr").hidden=true;
 };
 window.sendContact=async()=>{
-  if(!contactCategory) return;
   const hp=$("contactHp");
   if(hp && hp.value) return;   // honeypot filled — drop silently, no error, no insert
   const msgEl=$("contactMsg"), emailEl=$("contactEmail"), errEl=$("contactErr");
   const message=(msgEl.value||"").trim(), email=(emailEl.value||"").trim();
   errEl.hidden=true;
-  if(!message){ msgEl.focus(); return; }
-  if(emailEl.required && !email){
-    emailEl.focus(); errEl.textContent="Add an email so we can reply."; errEl.hidden=false; return;
-  }
+  contactMsgTouched=true;
+  contactEmailTouched=true;
+  contactValidate();
+  if(!message || !emailValid(email)) return;
+  // contact_messages.category is not-null with a 4-value check constraint — no chip chosen submits
+  // "other" rather than leaving the column empty (CAS-927).
+  const category=contactCategory||"other";
   const diagnostics = contactCategory==="bug" ? diagReportText() : null;
   const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
   const btn=$("contactSend");
@@ -11265,11 +11287,11 @@ window.sendContact=async()=>{
       logEvent("contact_attached",{bytes:contactAttachFile.size,type:contactAttachFile.type});
     }
     const {error}=await c.from("contact_messages").insert([{
-      client_key:CLIENT_KEY, build:buildCore(), category:contactCategory, message, email: email||null, diagnostics,
+      client_key:CLIENT_KEY, build:buildCore(), category, message, email, diagnostics,
       attachment_path,
     }]);
     if(error) throw error;
-    logEvent("contact_sent",{category:contactCategory});
+    logEvent("contact_sent",{category});
     $("contactBody").innerHTML=`<p class="pnote">Thanks — that's sent. We read every message, even the
       ones we can't get back to.</p>`;
   }catch(e){
