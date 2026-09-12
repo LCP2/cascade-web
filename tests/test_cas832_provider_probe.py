@@ -7,7 +7,7 @@ apart from "over quota / rate limited" (throttled — expected on a free tier, s
 `--build-html` — the exact command CI's build-check/engine jobs and the daily-refresh
 commit-retry loop all run — refuses to build at all when a provider is rejected.
 
-Every test here mocks the network. Nothing reaches TMDB, OMDb or Watchmode.
+Every test here mocks the network. Nothing reaches TMDB or Watchmode.
 """
 import io
 import unittest
@@ -26,7 +26,6 @@ class ProviderProbeClassification(unittest.TestCase):
 
     def setUp(self):
         for p in (mock.patch.object(pp, "TMDB_KEY", "x"),
-                  mock.patch.object(pp, "OMDB_KEY", "x"),
                   mock.patch.object(pp, "WATCHMODE_KEY", "x")):
             p.start(); self.addCleanup(p.stop)
 
@@ -40,24 +39,6 @@ class ProviderProbeClassification(unittest.TestCase):
     def test_tmdb_success_is_ok(self):
         with mock.patch.object(pp, "get_json", return_value={"images": {}}):
             self.assertEqual(pp.probe_tmdb(), "ok")
-
-    def test_omdb_401_request_limit_reached_is_throttled(self):
-        # The real event this ticket is about: OMDb's exact observed response.
-        def boom(*a, **kw):
-            raise _http_error(401, b'{"Response":"False","Error":"Request limit reached!"}')
-        with mock.patch.object(pp, "get_json", side_effect=boom):
-            self.assertEqual(pp.probe_omdb(), "throttled")
-
-    def test_omdb_success_is_ok(self):
-        with mock.patch.object(pp, "get_json", return_value={"Response": "True"}):
-            self.assertEqual(pp.probe_omdb(), "ok")
-
-    def test_omdb_soft_false_with_no_quota_wording_is_still_ok(self):
-        # An HTTP-200 Response:False that ISN'T quota wording (e.g. an unknown probe id) proves
-        # the key itself works — it must not read as a credential fault.
-        with mock.patch.object(pp, "get_json",
-                               return_value={"Response": "False", "Error": "Incorrect IMDb ID."}):
-            self.assertEqual(pp.probe_omdb(), "ok")
 
     def test_watchmode_403_with_no_quota_wording_is_rejected(self):
         def boom(*a, **kw):
@@ -73,12 +54,12 @@ class ProviderProbeClassification(unittest.TestCase):
 
 
 class ProbeProvidersIsGatedOnLive(unittest.TestCase):
-    """Without all three keys (LIVE), nothing in the pipeline ever calls any provider today. This
+    """Without both keys (LIVE), nothing in the pipeline ever calls any provider today. This
     is why OscarBase (CAS-937) is deliberately NOT part of PROVIDERS/probe_providers: it needs no
     credential of its own, and its nightly pass (`enrich_oscarbase_awards_nightly`) is meant to
     run unconditionally, live or sample — the same tolerance `enrich_watchmode_fields_nightly`
     gives a missing Watchmode key. A dev machine or a CI job with no keys set must not gain a
-    brand-new real network call to TMDB/OMDb/Watchmode just because this probe exists."""
+    brand-new real network call to TMDB/Watchmode just because this probe exists."""
 
     def test_not_live_never_touches_the_network(self):
         with mock.patch.object(pp, "LIVE", False), \
@@ -90,32 +71,28 @@ class ProbeProvidersIsGatedOnLive(unittest.TestCase):
     def test_live_probes_every_provider(self):
         with mock.patch.object(pp, "LIVE", True), \
              mock.patch.object(pp, "probe_tmdb", return_value="ok"), \
-             mock.patch.object(pp, "probe_omdb", return_value="throttled"), \
              mock.patch.object(pp, "probe_watchmode", return_value="rejected"):
             outcomes = pp.probe_providers()
-        self.assertEqual(outcomes, {"TMDB": "ok", "OMDb": "throttled", "Watchmode": "rejected"})
+        self.assertEqual(outcomes, {"TMDB": "ok", "Watchmode": "rejected"})
 
 
 class CheckProviderHealth(unittest.TestCase):
     def test_all_ok_returns_zero_silently(self):
         with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
-            code = pp.check_provider_health({"TMDB": "ok", "OMDb": "ok",
-                                              "Watchmode": "ok"})
+            code = pp.check_provider_health({"TMDB": "ok", "Watchmode": "ok"})
         self.assertEqual(code, 0)
         self.assertEqual(out.getvalue(), "")
 
     def test_a_throttled_provider_warns_and_returns_zero(self):
         # AC2: unchanged from today's behaviour — a warning, run continues.
         with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
-            code = pp.check_provider_health({"TMDB": "ok", "OMDb": "throttled",
-                                              "Watchmode": "ok"})
+            code = pp.check_provider_health({"TMDB": "ok", "Watchmode": "throttled"})
         self.assertEqual(code, 0)
-        self.assertIn("OMDb", out.getvalue())
+        self.assertIn("Watchmode", out.getvalue())
 
     def test_a_rejected_provider_returns_nonzero_and_names_it(self):
         with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
-            code = pp.check_provider_health({"TMDB": "rejected", "OMDb": "ok",
-                                              "Watchmode": "ok"})
+            code = pp.check_provider_health({"TMDB": "rejected", "Watchmode": "ok"})
         self.assertNotEqual(code, 0)
         self.assertIn("TMDB", out.getvalue())
 
@@ -124,7 +101,7 @@ class BuildVersionInfoCarriesProviderStatus(unittest.TestCase):
     """AC3: the build stamp carries a per-provider status field."""
 
     def test_provider_status_is_included_when_given(self):
-        status = {"TMDB": "ok", "OMDb": "throttled", "Watchmode": "unconfigured"}
+        status = {"TMDB": "ok", "Watchmode": "unconfigured"}
         info = pp.build_version_info(status)
         self.assertEqual(info["providers"], status)
 
@@ -138,7 +115,7 @@ class RunBuildHtmlEntrypoint(unittest.TestCase):
     called from `python poc_pipeline.py --build-html`)."""
 
     def test_a_rejected_provider_exits_non_zero_and_never_builds(self):
-        outcomes = {"TMDB": "rejected", "OMDb": "ok", "Watchmode": "ok"}
+        outcomes = {"TMDB": "rejected", "Watchmode": "ok"}
         with mock.patch.object(pp, "probe_providers", return_value=outcomes), \
              mock.patch.object(pp, "build_html") as build_html_mock, \
              mock.patch("sys.stdout", new_callable=io.StringIO) as out:
@@ -148,7 +125,7 @@ class RunBuildHtmlEntrypoint(unittest.TestCase):
         build_html_mock.assert_not_called()   # never writes index.html/version.json
 
     def test_a_throttled_provider_exits_zero_and_still_builds(self):
-        outcomes = {"TMDB": "ok", "OMDb": "throttled", "Watchmode": "ok"}
+        outcomes = {"TMDB": "ok", "Watchmode": "throttled"}
         with mock.patch.object(pp, "probe_providers", return_value=outcomes), \
              mock.patch.object(pp, "build_html") as build_html_mock:
             code = pp.run_build_html()

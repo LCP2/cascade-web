@@ -5,7 +5,7 @@ Cascade Movies — proof-of-concept backend pipeline
 
 Demonstrates the full daily loop for the release-window tracker:
 
-    ingest (TMDB) -> enrich (OMDb) -> availability (TMDB Watch Providers, AU)
+    ingest (TMDB) -> availability (TMDB Watch Providers, AU) -> awards (OscarBase)
         -> derive status -> diff vs yesterday -> emit alerts
 
 CAS-127: the PRIMARY availability source is TMDB Watch Providers (free, data by
@@ -14,12 +14,15 @@ catalogue. Watchmode is demoted to optional ON-DEMAND enrichment (exact rent/buy
 prices + verified deep-links) for titles a user opens or saves — never the daily
 sweep. This is what lets availability scale to a big catalogue (CAS-128).
 
+CAS-938: OMDb (ratings/RT/Metacritic) is gone — its terms forbade commercial use
+and were silent on redistribution rights. Ratings/critic score now come from
+Watchmode, awards from OscarBase (CAS-919/CAS-937).
+
 Run WITHOUT keys and it uses the bundled illustrative sample data so you can
-see the whole flow end-to-end. Set the three env vars and it hits the live
+see the whole flow end-to-end. Set the two env vars and it hits the live
 APIs instead. Nothing else changes.
 
     export TMDB_API_KEY=...          # https://www.themoviedb.org/settings/api   (free)
-    export OMDB_API_KEY=...          # https://www.omdbapi.com/apikey.aspx        (free 1k/day)
     export WATCHMODE_API_KEY=...     # https://api.watchmode.com/requestApiKey    (free 2.5k/mo)
 
     python3 poc_pipeline.py                 # one daily run
@@ -100,9 +103,8 @@ IOS_WWW_ASSETS = ("index.html", "config.js", "favicon.svg", "favicon.png",
                    "capacitor-app.js")  # CAS-524
 
 TMDB_KEY      = os.environ.get("TMDB_API_KEY")
-OMDB_KEY      = os.environ.get("OMDB_API_KEY")
 WATCHMODE_KEY = os.environ.get("WATCHMODE_API_KEY")
-LIVE = bool(TMDB_KEY and OMDB_KEY and WATCHMODE_KEY)
+LIVE = bool(TMDB_KEY and WATCHMODE_KEY)
 
 # CAS-773 — v2 phase 1: which vendor is the catalogue spine. Defaults to "tmdb" so an unset env
 # var is byte-identical to pre-v2 behaviour; only "watchmode" enters the new ingest path below,
@@ -126,26 +128,12 @@ CATALOGUE_TARGET = int(os.getenv("CATALOGUE_TARGET", "6000"))
 # (TMDB historically allows ~50 req/s and no daily cap). Watchmode is now on-demand only.
 TMDB_PACING      = float(os.getenv("TMDB_PACING", "0.05"))   # seconds between provider calls (~20/s)
 ONDEMAND_WM_CAP  = int(os.getenv("ONDEMAND_WM_CAP", str(ps.ONDEMAND_RESERVE)))  # Watchmode enrich/day ceiling
-# CAS-161: these two pots are spent against ONE shared free-tier allowance (~1000 requests/day, counted per
-# key per day, not per run), so what matters is their SUM. It was 900+150 = 1050, i.e. already over the cap
-# before a single retry — which is how the 2026-07-24 run earned a 401 the moment a second run happened the
-# same day. Now 800+100 = 900, leaving ~10% headroom for retries and for a manual staging run alongside the
-# scheduled one. Both stay env-overridable.
-OMDB_DAILY_BUDGET = int(os.getenv("OMDB_DAILY_BUDGET", "800"))  # OMDb ratings enrich/day (free tier ~1000/day)
-# CAS-156: a rating is only back-filled when a title has none, so the FIRST number OMDb ever returned was kept
-# for good. For an obscure title that first read lands while a handful of people have rated it, and it is wrong
-# almost immediately (Jellyfish: 9.4 off 8 votes, since settled to ~8.8). Titles under the vote bar are exactly
-# the ones whose score is still moving, so they get re-read — on their own small budget, so that back-filling
-# titles with NO rating at all keeps first claim on the free tier.
-IMDB_MIN_VOTES      = int(os.getenv("IMDB_MIN_VOTES", "1000"))   # keep in step with app_template.html
-OMDB_REFRESH_BUDGET = int(os.getenv("OMDB_REFRESH_BUDGET", "100"))
-OMDB_FREE_TIER_CAP  = int(os.getenv("OMDB_FREE_TIER_CAP", "1000"))   # what we believe the key is allowed/day
 
 # CAS-379: cinema_release (CAS-360) was added after the persistent catalogue already existed, and
 # build_live_catalogue carries every pre-existing base record forward unchanged — only NEW titles
 # `ingest_tmdb*` discovers ever pass through `_tmdb_record`. So every record from before the field
 # existed is permanently missing it, which is why the streaming Mission's "Cinema Release" toggle
-# matched nothing. Back-fill it under its own budget; TMDB has no daily cap (unlike OMDb/Watchmode)
+# matched nothing. Back-fill it under its own budget; TMDB has no daily cap (unlike Watchmode)
 # but a one-shot full re-fetch of the whole catalogue is still wasteful, so this converges over a
 # handful of runs instead.
 CINEMA_RELEASE_BACKFILL_BUDGET = int(os.getenv("CINEMA_RELEASE_BACKFILL_BUDGET", "500"))
@@ -218,10 +206,9 @@ def get_text(url: str, retries: int = 4, headers: dict | None = None) -> str:
 # ---------------------------------------------------------------------------
 # CAS-161: one bad API answer must not cost us the whole day's refresh
 # ---------------------------------------------------------------------------
-# enrich_omdb used to call get_json with no guard at all, so a single OMDb hiccup raised straight out of
-# build_live_catalogue and killed the run: no movies.json, no index.html, no version.json committed, for a
-# whole day, because one title out of ~1,950 failed. That is exactly what happened on 2026-07-24, when the
-# free tier's daily cap answered 401.
+# A single enrichment call used to raise straight out of build_live_catalogue and kill the run: no
+# movies.json, no index.html, no version.json committed, for a whole day, because one title out of
+# ~1,950 failed. That is exactly what happened on 2026-07-24, when a free tier's daily cap answered 401.
 #
 # The rule now: enrichment is BEST-EFFORT. A title whose enrichment fails keeps the data it already has —
 # which is real, just a day older — and the run carries on to derive, build and commit. Only two outcomes
@@ -230,10 +217,6 @@ def get_text(url: str, retries: int = 4, headers: dict | None = None) -> str:
 #   · stop — every remaining call to that API this run would get the same answer, so stop asking. A daily
 #     cap or a bad key is not per-title, and burning ~1,900 more requests to be told so again is pure waste.
 _LIMIT_MARKERS = ("limit reached", "request limit", "too many requests", "invalid api key")
-
-
-class ApiDeclined(RuntimeError):
-    """An API answered, but refused to give us data (OMDb's HTTP-200 `Response:"False"` shape)."""
 
 
 def _api_call(label: str, fn, *args):
@@ -533,32 +516,6 @@ def ingest_watchmode(seen: set) -> list[dict]:
 
     print(f"[watchmode] ingested {len(movies)} title(s), skipped {skipped} with no tmdb_id")
     return movies
-
-
-# ---------------------------------------------------------------------------
-# 2. ENRICH — IMDb + Rotten Tomatoes(critic) + Metacritic via OMDb
-# ---------------------------------------------------------------------------
-def enrich_omdb(movie: dict) -> dict:
-    if not movie.get("imdb_id"):
-        return movie
-    data = get_json(f"https://www.omdbapi.com/?i={movie['imdb_id']}&apikey={OMDB_KEY}")
-    # CAS-161: OMDb signals soft failures with HTTP 200 + {"Response":"False","Error":...} — an unknown id,
-    # and sometimes the daily cap. Every getter below would then return None and we would write "no rating"
-    # over a perfectly good stored one. Bail BEFORE touching `movie`, so a failed enrich leaves the record
-    # exactly as it was; _api_call turns the daily-cap wording into a stop and anything else into a skip.
-    if str(data.get("Response", "True")).lower() == "false":
-        raise ApiDeclined(data.get("Error") or "OMDb returned Response:False")
-    movie["imdb_rating"] = _num(data.get("imdbRating"))
-    movie["imdb_votes"]  = _int(data.get("imdbVotes"))
-    for r in data.get("Ratings", []):
-        if r["Source"] == "Rotten Tomatoes":
-            movie["rt_critic"] = _int(r["Value"].replace("%", ""))
-        elif r["Source"] == "Metacritic":
-            movie["metacritic"] = _int(r["Value"].split("/")[0])
-    # CAS-937: award / award_text now come from OscarBase (enrich_oscarbase_awards_nightly) —
-    # OMDb's own Awards field is no longer read here.
-    # OMDb BoxOffice is US-domestic only; we keep TMDB worldwide as the headline gross
-    return movie
 
 
 # ---------------------------------------------------------------------------
@@ -1245,9 +1202,9 @@ def _dedupe_by_tmdb_id(movies: list[dict]) -> list[dict]:
 
 # ---------------------------------------------------------------------------
 # CAS-384: cross-run per-day provider spend, so a second run the same UTC day sees what an
-# earlier run already spent instead of getting its own full allowance. OMDb/Watchmode free
-# tiers are counted per key per day, not per run (CAS-161) — this is the concrete gap CAS-161's
-# own comment predicted: "how a second run happened the same day" earned the 2026-07-24 401,
+# earlier run already spent instead of getting its own full allowance. Watchmode's free
+# tier is counted per key per day, not per run (CAS-161) — this is the concrete gap CAS-161's
+# own comment predicted: "how a second run happened the same day" earned a 2026-07-24 401,
 # and it recurred on 2026-08-05 for exactly that reason.
 # ---------------------------------------------------------------------------
 def _load_daily_spend(today):
@@ -1261,9 +1218,9 @@ def _load_daily_spend(today):
     return data if data.get("date") == today.isoformat() else {}
 
 
-def _save_daily_spend(today, omdb_spent, wm_spent):
+def _save_daily_spend(today, wm_spent):
     os.makedirs(STATE_DIR, exist_ok=True)
-    json.dump({"date": today.isoformat(), "omdb_spent": omdb_spent, "wm_spent": wm_spent},
+    json.dump({"date": today.isoformat(), "wm_spent": wm_spent},
                open(API_BUDGET_FILE, "w"), indent=2)
 
 
@@ -1271,21 +1228,20 @@ def _save_daily_spend(today, omdb_spent, wm_spent):
 # CAS-109 — build the persistent catalogue, poll only the daily set, carry the rest
 # ---------------------------------------------------------------------------
 def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_ids=None,
-                         omdb_spent_today=0, wm_spent_today=0):
+                         wm_spent_today=0):
     """Merge new TMDB ingest into the persistent base, then derive availability for the
     WHOLE released catalogue from TMDB Watch Providers (free, one call/title/day — CAS-127).
     Watchmode is spent only to ENRICH the on-demand set (titles a user opened/saved) with
-    exact prices + deep-links, within a small bounded budget. OMDb ratings are back-filled
-    for un-rated titles under a daily budget so new titles gain scores over runs.
+    exact prices + deep-links, within a small bounded budget.
 
-    `omdb_spent_today` / `wm_spent_today` (CAS-384) are what an earlier run already spent
-    against TODAY's free-tier allowance — this run's pots shrink by that much so the two
-    stay under one real per-key-per-day cap. No file IO here — run() loads/persists spend,
-    same pattern as wm_cache below.
+    `wm_spent_today` (CAS-384) is what an earlier run already spent against TODAY's free-tier
+    allowance — this run's pot shrinks by that much so two runs stay under one real
+    per-key-per-day cap. No file IO here — run() loads/persists spend, same pattern as
+    wm_cache below.
 
     Deps (ingest_tmdb / ingest_tmdb_upcoming / ingest_tmdb_streaming / ingest_watchmode /
-    enrich_omdb / poll_watchmode / tmdb_providers / derive_from_providers / derive_status) are
-    module functions so tests can monkeypatch them.
+    poll_watchmode / tmdb_providers / derive_from_providers / derive_status) are module
+    functions so tests can monkeypatch them.
     No file IO here — run() persists the result. Returns (catalogue_records, counts)."""
     offsets = offsets or ps.DEFAULT_OFFSETS
     base = {m["tmdb_id"]: m for m in base_records}
@@ -1308,29 +1264,16 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     # Watchmode is on-demand only now: the poll-set matters just for the engaged titles.
     sched = ps.select_daily_poll_set(catalogue, today, ondemand_ids=ondemand_ids)
     ondemand_set = {m["tmdb_id"] for m in sched["ondemand"]}
-    provider_calls = wm_calls = omdb_calls = cinema_calls = 0
-    # CAS-384: shrink today's pots by whatever an earlier run already spent against the SAME free-tier
+    provider_calls = wm_calls = cinema_calls = 0
+    # CAS-384: shrink today's pot by whatever an earlier run already spent against the SAME free-tier
     # day, so two runs sharing one real cap can't each claim a full allowance.
-    omdb_cap_remaining = max(0, OMDB_FREE_TIER_CAP - omdb_spent_today)
-    omdb_budget  = min(OMDB_DAILY_BUDGET, omdb_cap_remaining)
-    omdb_refresh = min(OMDB_REFRESH_BUDGET, max(0, omdb_cap_remaining - omdb_budget))  # CAS-156: separate pot
     wm_budget = max(0, ONDEMAND_WM_CAP - wm_spent_today)
     cinema_backfill = CINEMA_RELEASE_BACKFILL_BUDGET   # CAS-379: its own pot, same reasoning
     # CAS-161: per-API health for this run. `*_open` goes False the first time an API says something that is
     # true of the whole run (cap hit, key rejected) rather than of one title; the `*_fails` tallies are the
     # honest count of titles that kept yesterday's data, printed at the end so a degraded run is visible.
-    omdb_open = wm_open = prov_open = cinema_open = True
-    omdb_fails = wm_fails = prov_fails = cinema_fails = 0
-
-    def _omdb(m):
-        """One guarded OMDb enrich. Returns True if the caller should count a spend."""
-        nonlocal omdb_open, omdb_fails
-        _, outcome = _api_call("OMDb", enrich_omdb, m)
-        if outcome == "stop":
-            omdb_open = False
-        if outcome != "ok":
-            omdb_fails += 1
-        return True
+    wm_open = prov_open = cinema_open = True
+    wm_fails = prov_fails = cinema_fails = 0
 
     for m in catalogue:
         # CAS-379: back-fill pre-CAS-360 records regardless of poll tier — an upcoming title carried
@@ -1421,27 +1364,6 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
         else:
             m.pop("settled_since", None)
 
-    # CAS-384: OMDb back-fill for un-rated titles, bounded to stay under the free tier — plus a bounded
-    # re-read of the thinly-voted (CAS-156), whose stored score is a first impression rather than a
-    # settled one. This used to run inline while walking `catalogue` in popularity order, so a handful
-    # of popular-but-slow-tier titles could exhaust the budget before every active title got scored, and
-    # a title skipped one run had no better odds of being reached the next. Ordering the candidates by
-    # (active tier first, then oldest last_polled) instead means coverage advances around the whole pool
-    # every run rather than stalling wherever popularity order happened to run out of budget.
-    omdb_candidates = [m for m in catalogue
-                       if m.get("poll_tier") != "none" and m.get("imdb_id")
-                       and (not m.get("imdb_rating") or (m.get("imdb_votes") or 0) < IMDB_MIN_VOTES)]
-    omdb_candidates.sort(key=lambda m: (0 if m.get("poll_tier") == "active" else 1,
-                                        m.get("last_polled") or ""))
-    for m in omdb_candidates:
-        if not omdb_open:
-            break
-        if not m.get("imdb_rating"):
-            if omdb_budget > 0:
-                _omdb(m); omdb_calls += 1; omdb_budget -= 1
-        elif (m.get("imdb_votes") or 0) < IMDB_MIN_VOTES and omdb_refresh > 0:
-            _omdb(m); omdb_calls += 1; omdb_refresh -= 1
-
     # CAS-937: Oscar awards/detail now come from OscarBase, via enrich_oscarbase_awards_nightly —
     # a separate pass in run(), not this LIVE-only build, since OscarBase needs no credential of
     # its own and must run for sample data too (see that function's docstring).
@@ -1463,26 +1385,22 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
             time.sleep(TMDB_PACING)
 
     counts = dict(sched["counts"])
-    counts.update(provider_calls=provider_calls, wm_calls=wm_calls, omdb_calls=omdb_calls,
+    counts.update(provider_calls=provider_calls, wm_calls=wm_calls,
                   cinema_calls=cinema_calls, revalidated=revalidated,
                   ondemand=len(ondemand_set), catalogue=len(catalogue),
                   # CAS-161: a degraded run must SAY it was degraded. Silence here would let the catalogue
                   # quietly go stale for days while every run still reported success.
-                  omdb_fails=omdb_fails, wm_fails=wm_fails, provider_fails=prov_fails, cinema_fails=cinema_fails,
-                  omdb_stopped=not omdb_open, wm_stopped=not wm_open, providers_stopped=not prov_open,
+                  wm_fails=wm_fails, provider_fails=prov_fails, cinema_fails=cinema_fails,
+                  wm_stopped=not wm_open, providers_stopped=not prov_open,
                   cinema_stopped=not cinema_open,
                   revalidation_stopped=not revalidation_open)
-    if omdb_fails or wm_fails or prov_fails or cinema_fails:
-        print(f"[warn] degraded enrichment: {prov_fails} TMDB-provider, {omdb_fails} OMDb, {wm_fails} "
+    if wm_fails or prov_fails or cinema_fails:
+        print(f"[warn] degraded enrichment: {prov_fails} TMDB-provider, {wm_fails} "
               f"Watchmode, {cinema_fails} TMDB-release_dates title(s) kept "
               f"their previous data"
-              + (" — OMDb stopped early" if not omdb_open else "")
               + (" — Watchmode stopped early" if not wm_open else "")
               + (" — TMDB providers stopped early" if not prov_open else "")
               + (" — TMDB release_dates stopped early" if not cinema_open else ""))
-    if OMDB_DAILY_BUDGET + OMDB_REFRESH_BUDGET > OMDB_FREE_TIER_CAP:
-        print(f"[warn] OMDb budgets total {OMDB_DAILY_BUDGET + OMDB_REFRESH_BUDGET} against a "
-              f"{OMDB_FREE_TIER_CAP}/day cap — a single run can exhaust the key.")
     return catalogue, counts
 
 
@@ -1585,13 +1503,12 @@ def purge_vendor_cache(files: list[str] | None = None) -> list[str]:
 # provider, made up front, tells "wrong key" (rejected) apart from "over quota / rate limited"
 # (throttled — expected on a free tier, self-healing) before any real work happens.
 # ---------------------------------------------------------------------------
-PROVIDERS = ("TMDB", "OMDb", "Watchmode")
+PROVIDERS = ("TMDB", "Watchmode")
 
 # Named in the hard-failure message so it is obvious what is about to go missing from the
 # catalogue if the key is not rotated (Lee's step — never this pipeline's).
 PROVIDER_FIELDS = {
     "TMDB":      "cinema_date / age_rating (release_dates)",
-    "OMDb":      "imdb_rating",
     "Watchmode": "wm_user_rating / wm_critic_score / wm_popularity_percentile",
 }
 
@@ -1627,19 +1544,6 @@ def probe_tmdb() -> str:
         return "throttled"
 
 
-def probe_omdb() -> str:
-    try:
-        data = get_json(f"https://www.omdbapi.com/?i=tt0111161&apikey={OMDB_KEY}", retries=0)
-        if str(data.get("Response", "True")).lower() == "false" and \
-                any(k in (data.get("Error") or "").lower() for k in _QUOTA_MARKERS):
-            return "throttled"
-        return "ok"
-    except urllib.error.HTTPError as e:
-        return _classify_probe_error(e, has_credential=True)
-    except Exception:
-        return "throttled"
-
-
 def probe_watchmode() -> str:
     try:
         get_json(f"{WATCHMODE_BASE}/regions/?apiKey={WATCHMODE_KEY}", retries=0)
@@ -1652,7 +1556,7 @@ def probe_watchmode() -> str:
 
 def probe_providers() -> dict:
     """One cheap authenticated call per provider — but only when the pipeline would actually use
-    them this run. Without all three keys (`LIVE`), nothing below ever calls any of them today, so
+    them this run. Without both keys (`LIVE`), nothing below ever calls either of them today, so
     a dev machine or a CI job with no keys set must not gain a brand-new real network call just
     because this exists. OscarBase is not probed here: it needs no credential of its own (nothing
     to reject) and tolerates its own failures every run — see `enrich_oscarbase_awards_nightly`,
@@ -1660,7 +1564,7 @@ def probe_providers() -> dict:
     Returns {provider: outcome}, outcome in {'ok', 'throttled', 'rejected', 'unconfigured'}."""
     if not LIVE:
         return {name: "unconfigured" for name in PROVIDERS}
-    return {"TMDB": probe_tmdb(), "OMDb": probe_omdb(), "Watchmode": probe_watchmode()}
+    return {"TMDB": probe_tmdb(), "Watchmode": probe_watchmode()}
 
 
 def check_provider_health(outcomes: dict) -> int:
@@ -1699,15 +1603,13 @@ def run(simulate_day: bool = False):
         prior_spend = _load_daily_spend(today)   # CAS-384: what an earlier run today already spent
         records, counts = build_live_catalogue(today, base_records, wm_cache,
                                                offsets=offsets, ondemand_ids=ondemand_ids,
-                                               omdb_spent_today=prior_spend.get("omdb_spent", 0),
                                                wm_spent_today=prior_spend.get("wm_spent", 0))
         print(f"[live] catalogue {len(records)} | TMDB provider calls {counts['provider_calls']} (free, no quota) "
-              f"| Watchmode on-demand {counts['wm_calls']}/{ONDEMAND_WM_CAP} | OMDb backfill {counts['omdb_calls']} "
+              f"| Watchmode on-demand {counts['wm_calls']}/{ONDEMAND_WM_CAP} "
               f"| cinema_release backfill {counts['cinema_calls']}/{CINEMA_RELEASE_BACKFILL_BUDGET}")
         os.makedirs(STATE_DIR, exist_ok=True)
         json.dump(wm_cache, open(WM_CACHE_FILE, "w"), indent=2)
-        _save_daily_spend(today, prior_spend.get("omdb_spent", 0) + counts["omdb_calls"],
-                                  prior_spend.get("wm_spent", 0) + counts["wm_calls"])
+        _save_daily_spend(today, prior_spend.get("wm_spent", 0) + counts["wm_calls"])
     else:
         print("[sample] no API keys set — using bundled illustrative data.")
         records = json.load(open(SAMPLE_FILE))["movies"]
@@ -1716,6 +1618,13 @@ def run(simulate_day: bool = False):
         for m in records:
             m["status"] = derive_status(m, m.get("offers", []), today)
             m.setdefault("cache_stamped_at", today.isoformat())   # CAS-772: no real vendor stamp on sample data
+
+    # CAS-938: OMDb is retired — drop its fields from every record so a base catalogue carried
+    # forward from before this ticket (or the bundled sample data) doesn't leak them into
+    # movies.json / state/last_snapshot.json.
+    for m in records:
+        for f in ("imdb_rating", "imdb_votes", "rt_critic", "metacritic"):
+            m.pop(f, None)
 
     # CAS-921: the nightly run's own Watchmode fields pass — see enrich_watchmode_fields_nightly's
     # docstring. Runs every night, live or sample; a missing/rejected key is tolerated so this

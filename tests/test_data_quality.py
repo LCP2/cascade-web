@@ -276,37 +276,14 @@ class StatusAgreesWithTheCalendar(unittest.TestCase):
 
 
 class ScoresAreCredible(unittest.TestCase):
-    """CAS-156: a score printed on a card is a claim about consensus, so it needs a crowd behind it."""
+    """CAS-156: a score printed on a card is a claim about consensus, so it needs a crowd behind it.
+
+    CAS-938: the OMDb-sourced imdb_rating/imdb_votes/rt_critic/metacritic fields this class checked
+    are retired from the pipeline — critic/audience scores are Watchmode's now (CAS-919/920)."""
 
     @classmethod
     def setUpClass(cls):
         cls.movies = load()["movies"]
-
-    def test_ratings_are_in_range(self):
-        bad = []
-        for m in self.movies:
-            r = m.get("imdb_rating")
-            if r is not None and not (0 < float(r) <= 10):
-                bad.append((m["title"], "imdb_rating", r))
-            mc = m.get("metacritic")
-            if mc is not None and not (0 <= float(mc) <= 100):
-                bad.append((m["title"], "metacritic", mc))
-            rt = m.get("rt_critic")
-            if rt is not None and not (0 <= float(rt) <= 100):
-                bad.append((m["title"], "rt_critic", rt))
-        self.assertEqual(bad, [], f"scores outside their own scale: {bad[:5]}")
-
-    def test_an_imdb_rating_comes_with_its_vote_count(self):
-        # Without the vote count there is no way to tell 9.4-on-11-votes from 9.4-on-400,000, and the app's
-        # rating bars are percentiles of the rated population — so an unqualified score skews every dial.
-        bad = [(m["title"], m.get("imdb_rating")) for m in self.movies
-               if m.get("imdb_rating") is not None and not isinstance(m.get("imdb_votes"), int)]
-        self.assertEqual(bad, [], f"IMDb ratings with no vote count: {bad[:5]}")
-
-    def test_vote_counts_are_not_negative(self):
-        bad = [(m["title"], m.get("imdb_votes")) for m in self.movies
-               if isinstance(m.get("imdb_votes"), int) and m["imdb_votes"] < 0]
-        self.assertEqual(bad, [], f"negative vote counts: {bad[:5]}")
 
     def test_popularity_is_a_non_negative_number_where_present(self):
         bad = [(m["title"], m.get("popularity")) for m in self.movies
@@ -352,12 +329,13 @@ class DataCompleteness(unittest.TestCase):
 
     # Today's measurements, over 1,050 showable titles of 1,961 (2026-07-30). Ceilings are set with headroom
     # for ordinary daily drift and tight enough that a real regression trips them.
+    # CAS-938: imdb_rating's ceiling is retired along with the OMDb field itself — the pipeline no
+    # longer populates it on any record, so "missing" is now the field's permanent, correct state.
     CEILINGS = {
         "age_rating": 25.0,    # 16.2% today — the age dial silently passes films it cannot judge
         "genres": 3.0,         # 1.1%  — a film with no genre can never match a genre-led recipe
         "poster": 3.0,         # 1.0%  — the card falls back to a placeholder
         "synopsis": 2.0,       # 0.1%  — the card has nothing to say about the film
-        "imdb_rating": 30.0,   # 22.1% — the vote bar has nothing to place the film against
         "cinema_date": 2.0,    # 0.3%  — every estimated window date is derived from this one
     }
 
@@ -431,7 +409,6 @@ class DataCompleteness(unittest.TestCase):
             "genres": lambda m: bool(m.get("genres")),
             "poster": lambda m: bool(m.get("poster")),
             "synopsis": lambda m: bool(m.get("synopsis")),
-            "imdb_rating": lambda m: m.get("imdb_rating") is not None,
             "cinema_date": lambda m: bool(m.get("cinema_date")),
         }
         over = []

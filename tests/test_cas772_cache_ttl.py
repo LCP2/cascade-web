@@ -140,7 +140,6 @@ class RevalidationSweepDuringBuild(unittest.TestCase):
             mock.patch.object(pp, "provider_offers", lambda p: [{"service": "Netflix", "type": "sub",
                                                                 "price": None, "format": "HD"}]),
             mock.patch.object(pp, "derive_from_providers", lambda m, p, t: ["included_streaming"]),
-            mock.patch.object(pp, "enrich_omdb", lambda m: m),
             mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
             mock.patch.object(pp, "TMDB_PACING", 0),
         ]

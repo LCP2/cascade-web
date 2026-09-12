@@ -10,17 +10,24 @@ range and at least one rating threshold:
     python scripts/backlog_import.py --start 2015-01-01 --end 2018-12-31 --min-imdb 6.5
     python scripts/backlog_import.py --start 2005-01-01 --end 2005-12-31 --min-rt 70 --min-meta 60
 
-Requires TMDB_API_KEY and OMDB_API_KEY in env. Those keys are GitHub Actions secrets only (not on
-the dev PC, per CAS-335) — this script is a no-op without them, by design, the same CI-only-secret
-pattern as scripts/catalogue_sizing.py. Unlike that script it is not wired into any scheduled
-workflow: it is meant to be run by hand wherever the two keys are available.
+CAS-938: the rating gate below (--min-imdb/--min-rt/--min-meta) scored candidates via OMDb, which
+is now retired from the pipeline (its terms forbade commercial use). Nothing populates
+imdb_rating/rt_critic/metacritic on a freshly-discovered candidate any more, so `run_backlog_import`
+refuses to run rather than silently importing nothing while claiming to have looked. Needs a
+redesign onto a Watchmode-backed rating source (a Lee decision, not guessed here) before this script
+can import again — the pure helper functions below are kept and still tested since a redesign will
+still need date-range resolution and an OR-across-thresholds gate.
+
+Requires TMDB_API_KEY in env — a GitHub Actions secret only (not on the dev PC, per CAS-335), the
+same CI-only-secret pattern as scripts/catalogue_sizing.py. Unlike that script it is not wired into
+any scheduled workflow: it is meant to be run by hand wherever the key is available.
 
 A matching title is merged into state/last_snapshot.json (the base catalogue the next daily run
 starts from), tagged with `backlog_date_source`/`backlog_import_date`/`backlog_imported` — it then
 flows through the ordinary daily pipeline (availability, status, movies.json) untouched.
 """
 from __future__ import annotations
-import argparse, datetime, json, os, sys, time
+import argparse, datetime, os, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import poc_pipeline as pp  # noqa: E402
@@ -128,64 +135,21 @@ def discover_candidates(start: str, end: str, limit: int, seen: set) -> list[dic
 
 
 def run_backlog_import(args: argparse.Namespace) -> dict:
-    if not (pp.TMDB_KEY and pp.OMDB_KEY):
-        print("[backlog_import] TMDB_API_KEY/OMDB_API_KEY not set — nothing to do here "
+    if not pp.TMDB_KEY:
+        print("[backlog_import] TMDB_API_KEY not set — nothing to do here "
               "(CI-secret only, no local-key dependency).")
         return {"candidates": 0, "imported": 0, "skipped_no_score": 0, "skipped_rating_gate": 0,
-                "skipped_out_of_range": 0, "fallback_date_count": 0, "omdb_stopped": False}
+                "skipped_out_of_range": 0, "fallback_date_count": 0}
 
-    existing = json.load(open(pp.SNAPSHOT_FILE)) if os.path.exists(pp.SNAPSHOT_FILE) else []
-    seen = {m["tmdb_id"] for m in existing}
-    thresholds = thresholds_from_args(args)
-    today = datetime.date.today().isoformat()
-
-    counts = {"candidates": 0, "imported": 0, "skipped_no_score": 0, "skipped_rating_gate": 0,
-              "skipped_out_of_range": 0, "fallback_date_count": 0}
-    imported, omdb_open = [], True
-
-    for detail in discover_candidates(args.start, args.end, args.limit, seen):
-        counts["candidates"] += 1
-        record = pp._tmdb_record(detail)
-        date_str, source = resolve_effective_date(record, detail.get("release_date"))
-        if not in_range(date_str, args.start, args.end):
-            counts["skipped_out_of_range"] += 1
-            continue
-
-        if omdb_open:
-            _, outcome = pp._api_call("OMDb", pp.enrich_omdb, record)
-            if outcome == "stop":
-                omdb_open = False
-
-        if not has_any_score(record):
-            counts["skipped_no_score"] += 1
-            print(f"[backlog_import] skip (no IMDb/RT/Metacritic score): "
-                  f"{record['title']} ({record['tmdb_id']})")
-            continue
-        if not passes_rating_gate(record, thresholds):
-            counts["skipped_rating_gate"] += 1
-            continue
-
-        if source == "fallback_global":
-            counts["fallback_date_count"] += 1
-        record["backlog_date_source"] = source
-        record["backlog_import_date"] = date_str
-        record["backlog_imported"] = today
-        imported.append(record)
-        counts["imported"] += 1
-
-    counts["omdb_stopped"] = not omdb_open
-    if imported:
-        merged = pp._dedupe_by_tmdb_id(existing + imported)
-        os.makedirs(pp.STATE_DIR, exist_ok=True)
-        json.dump(merged, open(pp.SNAPSHOT_FILE, "w"), indent=2)
-
-    print(f"[backlog_import] {args.start}..{args.end} candidates={counts['candidates']} "
-          f"imported={counts['imported']} skipped_no_score={counts['skipped_no_score']} "
-          f"skipped_rating_gate={counts['skipped_rating_gate']} "
-          f"skipped_out_of_range={counts['skipped_out_of_range']} "
-          f"fallback_date={counts['fallback_date_count']}"
-          + (" — OMDb stopped early" if counts["omdb_stopped"] else ""))
-    return counts
+    # CAS-938: the rating gate below scored candidates via OMDb (imdb_rating/rt_critic/metacritic),
+    # now retired from the pipeline. Nothing populates those fields on a freshly-discovered
+    # candidate any more, so refuse to run rather than silently importing nothing while claiming
+    # to have looked — this needs a redesign onto a Watchmode-backed rating source first.
+    print("[backlog_import] OMDb was retired (CAS-938) — this script's IMDb/RT/Metacritic rating "
+          "gate has no data source any more and needs a redesign onto Watchmode fields before it "
+          "can run again. Skipping.")
+    return {"candidates": 0, "imported": 0, "skipped_no_score": 0, "skipped_rating_gate": 0,
+            "skipped_out_of_range": 0, "fallback_date_count": 0}
 
 
 def main(argv=None) -> int:

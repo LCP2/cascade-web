@@ -1,7 +1,7 @@
 """CAS-773 — v2 phase 1: Watchmode ingest behind a dormant flag, keyed on tmdb_id.
 
 Ingest only (which titles exist, not field mapping). Every test here mocks the network — no
-live TMDB/Watchmode/OMDb call is ever made — and CASCADE_SPINE defaults to "tmdb", so the whole
+live TMDB/Watchmode call is ever made — and CASCADE_SPINE defaults to "tmdb", so the whole
 Watchmode path stays provably dormant unless a test explicitly flips it.
 """
 import datetime
@@ -117,7 +117,6 @@ class CascadeSpineGatesTheIngestPath(unittest.TestCase):
             mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
             mock.patch.object(pp, "tmdb_providers", lambda tid: prov),
             mock.patch.object(pp, "has_provider_rows", lambda p: False),
-            mock.patch.object(pp, "enrich_omdb", lambda m: m),
             mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
             mock.patch.object(pp, "TMDB_PACING", 0),
         ]
