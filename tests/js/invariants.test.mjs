@@ -2833,8 +2833,11 @@ test("CAS-738 AC3: saveWatchStatus writes cascade_wow and cascade_enjoyed to loc
 
     E.CascadePersistence.saveWatchStatus();
 
-    const storedWow = JSON.parse(E.localStorage.getItem("cascade_wow") || "[]");
-    const storedEnjoyed = JSON.parse(E.localStorage.getItem("cascade_enjoyed") || "[]");
+    // CAS-957: the cache is namespaced by account (acctKey), so the literal "cascade_wow"/"cascade_enjoyed"
+    // keys are never written to directly any more — read back through the same suffix the save just used.
+    const suffix = E.CascadePersistence.acctSuffix;
+    const storedWow = JSON.parse(E.localStorage.getItem(`cascade_wow@${suffix}`) || "[]");
+    const storedEnjoyed = JSON.parse(E.localStorage.getItem(`cascade_enjoyed@${suffix}`) || "[]");
     assert.ok(storedWow.includes(wowId),
       "cascade_wow must reach localStorage the instant saveWatchStatus runs, not only be scheduled for the account");
     assert.ok(storedEnjoyed.includes(enjoyedId),
@@ -3003,15 +3006,20 @@ function fakeCas740Supabase(row){
   return { client, state };
 }
 function withCas740State(fn){
+  // CAS-957: both keys are namespaced by account now (acctKey) — signInWithClient never changes acctSuffix
+  // (it pokes CascadeAuth directly, bypassing the real sign-in chokepoint), so every test in this file reads
+  // and writes the same "@guest"-suffixed keys throughout; snapshot/restore through that same suffix.
+  const onbKey = `cascade_onb_answers@${E.CascadePersistence.acctSuffix}`;
+  const uxKey = `cascade_ux@${E.CascadePersistence.acctSuffix}`;
   const savedTouched = E.prefs.touched;
-  const savedOnb = E.localStorage.getItem("cascade_onb_answers");
-  const savedUx = E.localStorage.getItem("cascade_ux");
+  const savedOnb = E.localStorage.getItem(onbKey);
+  const savedUx = E.localStorage.getItem(uxKey);
   return (async () => {
     try { await fn(); }
     finally {
       E.prefs.touched = savedTouched;
-      if(savedOnb === null) E.localStorage.removeItem("cascade_onb_answers"); else E.localStorage.setItem("cascade_onb_answers", savedOnb);
-      if(savedUx === null) E.localStorage.removeItem("cascade_ux"); else E.localStorage.setItem("cascade_ux", savedUx);
+      if(savedOnb === null) E.localStorage.removeItem(onbKey); else E.localStorage.setItem(onbKey, savedOnb);
+      if(savedUx === null) E.localStorage.removeItem(uxKey); else E.localStorage.setItem(uxKey, savedUx);
       signOut();
     }
   })();

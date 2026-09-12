@@ -13,8 +13,10 @@ async function gotoReset(page){
 }
 
 async function readCascadeNames(page){
+  // CAS-957: the agent-list cache is namespaced by account now — this walk never signs in, so it's always
+  // the "@guest" key.
   return page.evaluate(() => {
-    try{ return JSON.parse(localStorage.getItem("cascade_cascades") || "[]").map(c => c.name); }
+    try{ return JSON.parse(localStorage.getItem("cascade_cascades@guest") || "[]").map(c => c.name); }
     catch(e){ return null; }
   });
 }
