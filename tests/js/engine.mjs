@@ -407,6 +407,12 @@ if(typeof window.CascadeAuth === "undefined"){
   // (watchRows/applyWatchRows already reach a test through CascadePersistence, same as the rest of the
   // account-sync IIFE's surface.)
   found,
+  // CAS-929: inviteUrlFor/shareTextFor are the pure text/link builders the WhatsApp/SMS device hand-off and
+  // its clipboard fallback both read; openNextInviteChannel/openNextRecommendChannel are the hand-off
+  // functions themselves (window.open is stubbed to always return null here, so calling them always
+  // exercises the clipboard-fallback branch) — exported so a test can assert the fallback's payload really
+  // carries the link, the same guarantee CAS-929 asked for on the now-removed navigator.share path.
+  inviteUrlFor, shareTextFor, openNextInviteChannel, openNextRecommendChannel,
 };
 `;
 
