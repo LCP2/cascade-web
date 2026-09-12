@@ -19,8 +19,11 @@ async function primeFakeAccount(page){
     window.__inviteInserts = [];
     window.__inviteShouldFail = false;
     window.__friendInserts = [];
+    window.__inviteEmailInserts = [];
     window.__shareCalls = [];
     window.__shareShouldAbort = false;
+    window.__opens = [];
+    window.open = (url) => { window.__opens.push(url); return { closed: false }; };
     navigator.share = (opts) => {
       window.__shareCalls.push(opts);
       if(window.__shareShouldAbort){ const e = new Error("cancelled"); e.name = "AbortError"; return Promise.reject(e); }
@@ -33,11 +36,18 @@ async function primeFakeAccount(page){
     window.CascadeAuth.client = { from: (table) => {
       // CAS-928: the Invite sheet's recipient field is now the shared friend picker — sending "with a
       // name" means adding+selecting a friend first, which round-trips through friends.insert().select().
-      if(table === "friends") return { insert: (rows) => ({ select: () => ({ single: () => {
-        const row = { id: 900 + window.__friendInserts.length + 1, ...rows[0] };
-        window.__friendInserts.push(row);
-        return Promise.resolve({ data: row, error: null });
-      } }) }) };
+      if(table === "friends") return {
+        insert: (rows) => ({ select: () => ({ single: () => {
+          const row = { id: 900 + window.__friendInserts.length + 1, ...rows[0] };
+          window.__friendInserts.push(row);
+          return Promise.resolve({ data: row, error: null });
+        } }) }),
+        update: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
+      };
+      // CAS-930: an email recipient's invite is queued into invite_emails rather than shared.
+      if(table === "invite_emails") return {
+        insert: (rows) => { window.__inviteEmailInserts.push(...rows); return Promise.resolve({ data: rows, error: null }); },
+      };
       return {
         insert: (rows) => {
           if(table !== "invites") return Promise.resolve({ data: [], error: null });
@@ -105,9 +115,11 @@ test("CAS-883 AC4b: activating Invite opens the sheet showing the film's title",
   await expect(page.locator("#filmInviteBody .filminvtitle")).toHaveText(title);
 });
 
-// AC4c/AC4d: sending with a name performs exactly one insert with that name, the right tmdb_id and a
-// 10-char [a-z0-9] token, and hands navigator.share a URL built from that same token.
-test("CAS-883 AC4c/4d: sending with a name inserts once and shares the token's own URL", async ({ page }) => {
+// AC4c/AC4d, superseded by CAS-930: sending to one selected (email) friend inserts one invites row
+// with that name, the right tmdb_id and a 10-char [a-z0-9] token, and queues one invite_emails row
+// carrying that same token — Cascade sends the email itself now, so navigator.share is never called
+// for an email recipient (CAS-930's own "the share-sheet hand-off survives only as a fallback").
+test("CAS-883 AC4c/4d: sending to one email friend inserts once and queues one invite_emails row", async ({ page }) => {
   await signedInListing(page);
   const id = await expandFirstCard(page);
   await page.locator(`#card-${id} .exsharebtn`).click();
@@ -121,27 +133,24 @@ test("CAS-883 AC4c/4d: sending with a name inserts once and shares the token's o
   expect(rows[0].tmdb_id).toBe(id);
   expect(rows[0].token).toMatch(/^[a-z0-9]{10}$/);
 
-  await page.waitForFunction(() => window.__shareCalls.length > 0, null, { timeout: 5000 });
-  const calls = await page.evaluate(() => window.__shareCalls);
-  expect(calls.length).toBe(1);
-  const expectedUrl = await page.evaluate(
-    ({ fid, token }) => `${location.origin}${location.pathname}?inv=${token}#/film/${fid}`,
-    { fid: id, token: rows[0].token },
-  );
-  expect(calls[0].url).toBe(expectedUrl);
+  await page.waitForFunction(() => window.__inviteEmailInserts.length > 0, null, { timeout: 5000 });
+  const emails = await page.evaluate(() => window.__inviteEmailInserts);
+  expect(emails.length).toBe(1);
+  expect(emails[0].to_email).toBe("sam@example.com");
+  expect(emails[0].token).toBe(rows[0].token);
+
+  expect(await page.evaluate(() => window.__shareCalls.length)).toBe(0);
 });
 
-// AC4e: sending with the name left blank still inserts, with to_name null.
-test("CAS-883 AC4e: sending with no name still inserts, with to_name null", async ({ page }) => {
+// AC4e, superseded by CAS-930: with nobody selected, Send is disabled and nothing is inserted — an
+// unnamed invite no longer exists (CAS-930 change 1: "disabled with nothing selected").
+test("CAS-883 AC4e: with nobody selected, Send is disabled and inserts nothing", async ({ page }) => {
   await signedInListing(page);
   const id = await expandFirstCard(page);
   await page.locator(`#card-${id} .exsharebtn`).click();
-  await page.locator("#filmInviteSend").click();
-  await page.waitForFunction(() => window.__inviteInserts.length > 0, null, { timeout: 5000 });
 
-  const rows = await page.evaluate(() => window.__inviteInserts);
-  expect(rows.length).toBe(1);
-  expect(rows[0].to_name).toBeNull();
+  await expect(page.locator("#filmInviteSend")).toBeDisabled();
+  expect(await page.evaluate(() => window.__inviteInserts.length)).toBe(0);
 });
 
 // AC4f: when the insert rejects, navigator.share is never called and an error is visible.

@@ -687,6 +687,40 @@ create trigger recommendations_rate_limit
   for each row execute function public.recommendations_rate_limit();
 
 -- ---------------------------------------------------------------------------
+-- invite_emails — the outgoing queue for a multi-recipient Invite's email leg (CAS-930/M12)
+-- ---------------------------------------------------------------------------
+-- A WhatsApp/SMS recipient's own device app is opened for them; only an email recipient needs
+-- Cascade to actually send anything. Queued here rather than sent from the browser (same
+-- send-before-ledger discipline as recommendations above), read by the new second step in
+-- .github/workflows/recommend.yml (monitor/invitemail.py), which joins back to invites by token
+-- for the film + sender context this table does not itself carry.
+create table if not exists public.invite_emails (
+  id         bigserial primary key,
+  token      text not null references public.invites(token) on delete cascade,
+  to_email   text not null,
+  to_name    text,
+  created_at timestamptz not null default now(),
+  sent_at    timestamptz
+);
+create index if not exists invite_emails_unsent_idx
+  on public.invite_emails (created_at) where sent_at is null;
+
+alter table public.invite_emails enable row level security;
+
+-- No sender_id column here (only a token) — ownership is proven the same way
+-- invite_replies_sender_read/update above prove it, by joining back to invites.
+drop policy if exists invite_emails_owner on public.invite_emails;
+create policy invite_emails_owner on public.invite_emails
+  for all to authenticated using (
+    exists (select 1 from public.invites i
+            where i.token = invite_emails.token and i.sender_id = auth.uid())
+  ) with check (
+    exists (select 1 from public.invites i
+            where i.token = invite_emails.token and i.sender_id = auth.uid())
+    and length(to_email) between 3 and 200
+  );
+
+-- ---------------------------------------------------------------------------
 -- friends — the shared recipient picker's own list of people (CAS-928/M12)
 -- ---------------------------------------------------------------------------
 -- Third-party personal data (someone else's name, email and/or mobile) — never readable by anyone but

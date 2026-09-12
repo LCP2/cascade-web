@@ -1,0 +1,134 @@
+"""Unit tests for Invite emails (CAS-930).
+
+Run:  python -m unittest monitor.tests.test_invitemail
+"""
+import unittest
+from unittest import mock
+
+from monitor.invitemail import email_subject, invite_url, main, render_email
+from monitor.store import InMemoryStore
+
+
+def _row(id=1, token="abc1234567", to_email="priya@example.test", to_name="Priya",
+         created_at="2026-09-08T09:00:00+00:00", sent_at=None, sender_name="lee",
+         film_title="Test Film", tmdb_id=12345):
+    return {"id": id, "token": token, "to_email": to_email, "to_name": to_name,
+            "created_at": created_at, "sent_at": sent_at, "sender_name": sender_name,
+            "film_title": film_title, "tmdb_id": tmdb_id}
+
+
+class RenderTests(unittest.TestCase):
+    def test_subject_names_the_sender_and_film(self):
+        self.assertEqual(email_subject(_row(sender_name="lee", film_title="Test Film")),
+                          "lee invited you to watch Test Film")
+
+    def test_subject_falls_back_when_sender_name_and_film_missing(self):
+        self.assertEqual(email_subject(_row(sender_name=None, film_title=None)),
+                          "A friend invited you to watch a film")
+
+    def test_email_contains_recipient_sender_and_film(self):
+        email = render_email(_row(sender_name="lee", to_name="Priya", film_title="Test Film"))
+        self.assertIn("Priya", email["html"])
+        self.assertIn("lee", email["html"])
+        self.assertIn("Test Film", email["html"])
+        self.assertIn("lee", email["subject"])
+
+    def test_email_contains_the_token_s_own_invite_link(self):
+        email = render_email(_row(token="abc1234567", tmdb_id=12345))
+        url = invite_url(_row(token="abc1234567", tmdb_id=12345))
+        self.assertIn(url, email["html"])
+        self.assertIn(url, email["text"])
+        self.assertIn("inv=abc1234567", url)
+        self.assertIn("#/film/12345", url)
+
+    def test_html_escapes_film_title(self):
+        email = render_email(_row(film_title="<script>alert(1)</script>"))
+        self.assertNotIn("<script>alert(1)</script>", email["html"])
+        self.assertIn("&lt;script&gt;", email["html"])
+
+
+class MainDryRunTests(unittest.TestCase):
+    def test_dry_run_sends_nothing_and_stamps_nothing(self):
+        store = InMemoryStore(invite_emails=[_row(1), _row(2)])
+        with mock.patch("monitor.invitemail.store_from_env", return_value=store), \
+             mock.patch("monitor.invitemail.send_via_resend") as send:
+            exit_code = main(["--dry-run"])
+        self.assertEqual(exit_code, 0)
+        send.assert_not_called()
+        self.assertEqual(len(store.fetch_unsent_invite_emails()), 2)
+
+    def test_empty_fixture_renders_nothing_and_exits_zero(self):
+        store = InMemoryStore(invite_emails=[])
+        with mock.patch("monitor.invitemail.store_from_env", return_value=store), \
+             mock.patch("monitor.invitemail.send_via_resend") as send:
+            exit_code = main(["--dry-run"])
+        self.assertEqual(exit_code, 0)
+        send.assert_not_called()
+
+    def test_no_store_and_no_fixture_flag_exits_zero(self):
+        with mock.patch("monitor.invitemail.store_from_env", return_value=None):
+            self.assertEqual(main([]), 0)
+
+
+class MainLiveSendTests(unittest.TestCase):
+    def test_successful_send_stamps_sent_at_on_every_row(self):
+        store = InMemoryStore(invite_emails=[_row(1), _row(2)])
+        with mock.patch("monitor.invitemail.store_from_env", return_value=store), \
+             mock.patch("monitor.invitemail.send_via_resend") as send:
+            exit_code = main([])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(send.call_count, 2)
+        self.assertEqual(store.fetch_unsent_invite_emails(), [])
+
+    def test_send_failure_leaves_that_rows_sent_at_unstamped(self):
+        store = InMemoryStore(invite_emails=[_row(1), _row(2)])
+        with mock.patch("monitor.invitemail.store_from_env", return_value=store), \
+             mock.patch("monitor.invitemail.send_via_resend", side_effect=RuntimeError("resend down")):
+            exit_code = main([])
+        self.assertEqual(exit_code, 0)
+        unsent = store.fetch_unsent_invite_emails()
+        self.assertEqual(len(unsent), 2)
+        self.assertTrue(all(r["sent_at"] is None for r in unsent))
+
+    def test_one_failure_does_not_block_the_other_row_from_sending(self):
+        store = InMemoryStore(invite_emails=[_row(1), _row(2)])
+        with mock.patch("monitor.invitemail.store_from_env", return_value=store), \
+             mock.patch("monitor.invitemail.send_via_resend",
+                         side_effect=[RuntimeError("resend down"), None]):
+            exit_code = main([])
+        self.assertEqual(exit_code, 0)
+        unsent = store.fetch_unsent_invite_emails()
+        self.assertEqual(len(unsent), 1)
+        self.assertEqual(unsent[0]["id"], 1)
+
+    def test_row_with_no_matching_invite_is_skipped_not_crashed(self):
+        orphan = _row(1, tmdb_id=None, film_title=None, sender_name=None)
+        store = InMemoryStore(invite_emails=[orphan, _row(2)])
+        with mock.patch("monitor.invitemail.store_from_env", return_value=store), \
+             mock.patch("monitor.invitemail.send_via_resend") as send:
+            exit_code = main([])
+        self.assertEqual(exit_code, 0)
+        send.assert_called_once()
+        unsent = store.fetch_unsent_invite_emails()
+        self.assertEqual(len(unsent), 1)
+        self.assertEqual(unsent[0]["id"], 1)
+
+
+class InviteEmailsFixtureFlagTests(unittest.TestCase):
+    def test_invite_emails_flag_loads_from_file(self):
+        with mock.patch("monitor.invitemail.send_via_resend") as send:
+            exit_code = main(["--dry-run", "--invite-emails",
+                               "monitor/fixtures/invite_emails.json"])
+        self.assertEqual(exit_code, 0)
+        send.assert_not_called()
+
+    def test_invite_emails_flag_empty_fixture_exits_zero(self):
+        with mock.patch("monitor.invitemail.send_via_resend") as send:
+            exit_code = main(["--dry-run", "--invite-emails",
+                               "monitor/fixtures/invite_emails_empty.json"])
+        self.assertEqual(exit_code, 0)
+        send.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

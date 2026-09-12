@@ -1,10 +1,15 @@
-name: Recommend Cascade
+name: Outgoing email (invites + recommendations)
 
 # CAS-884 (M11 — Refer a friend, send half): a recommendation should land within the hour, not
 # wait for daily.yml's 6am digest, so this is its own hourly job. Reads unsent public.recommendations
 # rows and sends one introduction email per row via monitor/recommend.py, then stamps sent_at on
 # each row it actually sent. Read-only from git's point of view: no commit, no catalogue build, no
 # qa.yml dispatch — this only ever talks to Supabase and Resend.
+#
+# CAS-930: a second step sends the email leg of a multi-recipient Invite the same way — unsent
+# public.invite_emails rows, one email per row via monitor/invitemail.py. Same file, same schedule,
+# same secret guard, because both are "outgoing email queues drained hourly" and the ticket
+# authorises editing only this one workflow file.
 
 on:
   schedule:
@@ -39,4 +44,21 @@ jobs:
           else
             echo "Supabase/Resend secrets absent — running --dry-run (no sends, no writes)."
             python -m monitor.recommend --dry-run
+          fi
+
+      - name: Run the Invite emails sender
+        # CAS-930: the email leg of a multi-recipient Invite — same secrets-present/--dry-run split
+        # as the step above.
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$RESEND_API_KEY" ]; then
+            echo "Secrets present — live run (will send invites + stamp sent_at)."
+            python -m monitor.invitemail
+          else
+            echo "Supabase/Resend secrets absent — running --dry-run (no sends, no writes)."
+            python -m monitor.invitemail --dry-run
           fi

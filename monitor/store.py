@@ -30,6 +30,9 @@ Interface:
   fetch_undigested_invite_replies() -> [{id, token, sender_id, to_name, film_title, tmdb_id,
                                           answer, created_at}, digested_at is null]          # CAS-887
   mark_invite_replies_digested(ids, digested_at) -> int                                      # CAS-887
+  fetch_unsent_invite_emails() -> [{id, token, to_email, to_name, created_at, sender_name,
+                                     film_title, tmdb_id}, sent_at is null]                   # CAS-930
+  mark_invite_emails_sent(ids, sent_at) -> int                                                # CAS-930
 """
 from __future__ import annotations
 
@@ -72,7 +75,8 @@ class InMemoryStore:
 
     def __init__(self, cascades=None, notifications=None, emails=None, prefs=None, picks=None,
                  push_tokens=None, watches=None, user_prefs=None, user_films=None,
-                 contact_messages=None, recommendations=None, invite_replies=None):
+                 contact_messages=None, recommendations=None, invite_replies=None,
+                 invite_emails=None):
         self._cascades = list(cascades or [])
         self._notifications = list(notifications or [])
         self._emails = dict(emails or {})
@@ -85,6 +89,7 @@ class InMemoryStore:
         self._contact_messages = [dict(r) for r in (contact_messages or [])]
         self._recommendations = [dict(r) for r in (recommendations or [])]
         self._invite_replies = [dict(r) for r in (invite_replies or [])]
+        self._invite_emails = [dict(r) for r in (invite_emails or [])]
 
     def fetch_active_cascades(self) -> list:
         return [c for c in self._cascades if c.get("active", True)]
@@ -188,6 +193,21 @@ class InMemoryStore:
         for r in self._invite_replies:
             if r.get("id") in ids:
                 r["digested_at"] = digested_at
+                n += 1
+        return n
+
+    def fetch_unsent_invite_emails(self) -> list:
+        """CAS-930: unlike SupabaseStore below, no join here — a fixture/test row is trusted to
+        already carry the film/sender context flattened in, the same convention __main__.py's
+        --replies fixture flag already follows for fetch_undigested_invite_replies."""
+        return [dict(r) for r in self._invite_emails if not r.get("sent_at")]
+
+    def mark_invite_emails_sent(self, ids, sent_at) -> int:
+        ids = set(ids)
+        n = 0
+        for r in self._invite_emails:
+            if r.get("id") in ids:
+                r["sent_at"] = sent_at
                 n += 1
         return n
 
@@ -380,6 +400,48 @@ class SupabaseStore:
         data = json.dumps({"digested_at": digested_at}).encode("utf-8")
         req = urllib.request.Request(
             self._base + f"/invite_replies?id=in.({quoted})",
+            data=data,
+            headers=self._headers({"Prefer": "return=representation"}),
+            method="PATCH",
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            body = resp.read().decode("utf-8")
+        try:
+            return len(json.loads(body))
+        except (json.JSONDecodeError, TypeError):
+            return 0
+
+    def fetch_unsent_invite_emails(self) -> list:
+        """Every invite_emails row not yet sent (CAS-930), each flattened with the film/sender
+        context from its own invite via the FK resource-embed (invite_emails.token ->
+        invites.token) — same convention as fetch_undigested_invite_replies above. Read with
+        service_role, since the authenticated-only RLS policy scopes a normal client to invites it
+        owns, never every user's."""
+        rows = self._get(
+            "/invite_emails?sent_at=is.null&order=created_at.asc&select="
+            "id,token,to_email,to_name,created_at,invites(sender_name,film_title,tmdb_id)"
+        )
+        out = []
+        for r in rows:
+            inv = r.get("invites") or {}
+            out.append({
+                "id": r.get("id"), "token": r.get("token"), "to_email": r.get("to_email"),
+                "to_name": r.get("to_name"), "created_at": r.get("created_at"),
+                "sender_name": inv.get("sender_name"), "film_title": inv.get("film_title"),
+                "tmdb_id": inv.get("tmdb_id"),
+            })
+        return out
+
+    def mark_invite_emails_sent(self, ids, sent_at) -> int:
+        """Stamp sent_at on exactly these rows, after each email has actually been sent
+        (send-before-ledger, same ordering as mark_recommendations_sent above)."""
+        ids = list(ids)
+        if not ids:
+            return 0
+        quoted = ",".join(str(i) for i in ids)
+        data = json.dumps({"sent_at": sent_at}).encode("utf-8")
+        req = urllib.request.Request(
+            self._base + f"/invite_emails?id=in.({quoted})",
             data=data,
             headers=self._headers({"Prefer": "return=representation"}),
             method="PATCH",
