@@ -843,3 +843,214 @@ drop trigger if exists watchlists_set_updated_at on public.watchlists;
 create trigger watchlists_set_updated_at
   before update on public.watchlists
   for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------------------------
+-- analytics_admins + usage_events read path (CAS-942)
+-- ---------------------------------------------------------------------------
+-- usage_events (above) is insert-only for anon/authenticated — this is the read side, gated to
+-- a small allowlist rather than every signed-in user. RLS enabled, no policy: only service_role
+-- (which bypasses RLS) or a row inserted here can ever read it.
+create table if not exists public.analytics_admins (
+  user_id uuid primary key references auth.users(id) on delete cascade
+);
+alter table public.analytics_admins enable row level security;
+
+-- Lee's auth.users id on project ypccfyatejejslzlfrbf, read from the live database 2026-09-12.
+insert into public.analytics_admins (user_id) values ('c7e9b361-368f-4488-84b5-baf0ac7a0751')
+  on conflict (user_id) do nothing;
+
+drop policy if exists usage_events_select_admin on public.usage_events;
+create policy usage_events_select_admin on public.usage_events
+  for select to authenticated
+  using (exists (select 1 from public.analytics_admins a where a.user_id = auth.uid()));
+
+-- Every view below is `security_invoker = true`, so it runs with the CALLING user's own role and
+-- row-security — the usage_events_select_admin policy above is what actually gates them. A
+-- non-admin authenticated caller gets zero rows back, not an error; a signed-out (anon) caller has
+-- no select grant on usage_events at all, so the same is true for them.
+
+-- analytics_sessions — one row per (client_key, session), with the app_open facts for that
+-- session flattened in (a session with no app_open row yet just carries nulls for those columns).
+create or replace view public.analytics_sessions
+with (security_invoker = true) as
+select
+  ue.client_key,
+  ue.session,
+  min(ue.created_at) as first_at,
+  max(ue.created_at) as last_at,
+  extract(epoch from (max(ue.created_at) - min(ue.created_at)))::bigint as duration_seconds,
+  max(ue.user_id) as user_id,
+  count(*) as event_count,
+  max(ue.data->>'plat') filter (where ue.type = 'app_open') as plat,
+  max(ue.data->>'ver')  filter (where ue.type = 'app_open') as ver,
+  bool_or((ue.data->>'ret')::boolean) filter (where ue.type = 'app_open') as ret,
+  bool_or((ue.data->>'onb')::boolean) filter (where ue.type = 'app_open') as onb,
+  max(ue.data#>>'{acq,src}')    filter (where ue.type = 'app_open') as acq_src,
+  max(ue.data#>>'{acq,med}')    filter (where ue.type = 'app_open') as acq_med,
+  max(ue.data#>>'{acq,cmp}')    filter (where ue.type = 'app_open') as acq_cmp,
+  max(ue.data#>>'{acq,con}')    filter (where ue.type = 'app_open') as acq_con,
+  max(ue.data#>>'{acq,trm}')    filter (where ue.type = 'app_open') as acq_trm,
+  max(ue.data#>>'{acq,ref}')    filter (where ue.type = 'app_open') as acq_ref,
+  max(ue.data#>>'{acq,landed}') filter (where ue.type = 'app_open') as acq_landed
+from public.usage_events ue
+group by ue.client_key, ue.session;
+
+-- analytics_acquisition — by day and by acq source/medium/campaign, off analytics_sessions above.
+-- A session with no acq object at all (the very first session on a device, before CAS-940's
+-- first-touch capture has written anything to read back) counts as 'direct', per the ticket.
+create or replace view public.analytics_acquisition
+with (security_invoker = true) as
+with signed_up as (
+  select distinct client_key from public.usage_events where user_id is not null
+)
+select
+  date_trunc('day', s.first_at)::date as day,
+  coalesce(s.acq_src, 'direct') as source,
+  coalesce(s.acq_med, '(none)') as medium,
+  coalesce(s.acq_cmp, '(none)') as campaign,
+  count(*) as sessions,
+  count(distinct s.client_key) as devices,
+  count(distinct s.client_key)
+    filter (where coalesce(s.ret,false) = false) as new_devices,
+  count(distinct s.client_key)
+    filter (where coalesce(s.ret,false) = false and s.client_key in (select client_key from signed_up))
+    as new_devices_signed_up
+from public.analytics_sessions s
+where s.plat is not null   -- only sessions that actually produced an app_open carry acquisition facts
+group by 1,2,3,4;
+
+-- analytics_onboarding_funnel — one row per onboarding step key (whichever keys actually appear
+-- in the data, not a hardcoded list), plus splash_shown/splash_cta as the two arrival rows ahead
+-- of the first real step.
+create or replace view public.analytics_onboarding_funnel
+with (security_invoker = true) as
+with steps as (
+  select distinct data->>'step' as step
+  from public.usage_events
+  where type in ('onbstep_shown','onbstep_continue','onbstep_skipped')
+    and data->>'step' is not null
+),
+step_counts as (
+  select
+    s.step,
+    count(distinct e.session) filter (where e.type = 'onbstep_shown')    as shown,
+    count(distinct e.session) filter (where e.type = 'onbstep_continue') as continued,
+    count(distinct e.session) filter (where e.type = 'onbstep_skipped')  as skipped
+  from steps s
+  left join public.usage_events e
+    on e.data->>'step' = s.step
+   and e.type in ('onbstep_shown','onbstep_continue','onbstep_skipped')
+  group by s.step
+),
+arrival as (
+  select
+    'splash_shown'::text as step,
+    count(distinct session) filter (where type = 'splash_shown') as shown,
+    count(distinct session) filter (where type = 'splash_cta')   as continued,
+    0::bigint as skipped
+  from public.usage_events
+  where type in ('splash_shown','splash_cta')
+  union all
+  select
+    'splash_cta'::text as step,
+    count(distinct session) filter (where type = 'splash_cta')     as shown,
+    count(distinct session) filter (where type = 'onbstep_shown')  as continued,
+    0::bigint as skipped
+  from public.usage_events
+  where type in ('splash_cta','onbstep_shown')
+)
+select
+  step, shown, continued, skipped,
+  case when shown = 0 then null else round(100.0 * (shown - continued) / shown, 1) end as drop_pct
+from (
+  select * from arrival
+  union all
+  select * from step_counts
+) all_steps;
+
+-- analytics_activation — by day: how many devices reached each activation milestone. The final
+-- onboarding step is 'v2_done' per both FLOWS lanes (cinema/stream) as of CAS-911/915 — update
+-- this if a future ticket renames it.
+create or replace view public.analytics_activation
+with (security_invoker = true) as
+select
+  date_trunc('day', created_at)::date as day,
+  count(distinct client_key) filter (where type = 'app_open')    as devices_app_open,
+  count(distinct client_key) filter (where type = 'splash_cta')  as devices_splash_cta,
+  count(distinct client_key)
+    filter (where type = 'onbstep_shown' and data->>'step' = 'v2_done') as devices_finished_onboarding,
+  count(distinct client_key)
+    filter (where type in ('agent_created','cascade_created')) as devices_created_agent,
+  count(distinct client_key) filter (where user_id is not null) as devices_signed_up
+from public.usage_events
+group by 1;
+
+-- analytics_retention — by first-seen week and platform: cohort size and how many devices came
+-- back on exactly day 1, day 7 and day 30 after their very first event (any type, not just app_open).
+create or replace view public.analytics_retention
+with (security_invoker = true) as
+with first_seen as (
+  select client_key, min(created_at) as first_at
+  from public.usage_events
+  group by client_key
+),
+first_plat as (
+  select distinct on (client_key) client_key, data->>'plat' as plat
+  from public.usage_events
+  where type = 'app_open'
+  order by client_key, created_at asc
+),
+opens as (
+  select client_key, created_at from public.usage_events where type = 'app_open'
+)
+select
+  date_trunc('week', fs.first_at)::date as cohort_week,
+  coalesce(fp.plat, 'unknown') as plat,
+  count(distinct fs.client_key) as cohort_size,
+  count(distinct o1.client_key)  as returned_d1,
+  count(distinct o7.client_key)  as returned_d7,
+  count(distinct o30.client_key) as returned_d30
+from first_seen fs
+left join first_plat fp on fp.client_key = fs.client_key
+left join opens o1  on o1.client_key  = fs.client_key
+  and o1.created_at  >= fs.first_at + interval '1 day'  and o1.created_at  < fs.first_at + interval '2 days'
+left join opens o7  on o7.client_key  = fs.client_key
+  and o7.created_at  >= fs.first_at + interval '7 days' and o7.created_at  < fs.first_at + interval '8 days'
+left join opens o30 on o30.client_key = fs.client_key
+  and o30.created_at >= fs.first_at + interval '30 days' and o30.created_at < fs.first_at + interval '31 days'
+group by 1,2;
+
+-- analytics_feature_usage — per event type over the trailing 28 days, plus card_expand/watch_tab
+-- broken out by their own `tab` value as additional rows alongside the plain per-type ones.
+create or replace view public.analytics_feature_usage
+with (security_invoker = true) as
+with base as (
+  select type as feature, client_key, user_id, created_at
+  from public.usage_events
+  where created_at > now() - interval '28 days'
+),
+tab_breakout as (
+  select type || ':' || coalesce(data->>'tab', '(none)') as feature, client_key, user_id, created_at
+  from public.usage_events
+  where created_at > now() - interval '28 days'
+    and type in ('card_expand','watch_tab')
+)
+select
+  feature,
+  count(distinct client_key) as devices,
+  count(distinct user_id) as users,
+  count(*) as events,
+  max(created_at) as last_seen_at
+from (
+  select * from base
+  union all
+  select * from tab_breakout
+) combined
+group by feature;
+
+grant select on public.analytics_sessions          to authenticated;
+grant select on public.analytics_acquisition       to authenticated;
+grant select on public.analytics_onboarding_funnel to authenticated;
+grant select on public.analytics_activation        to authenticated;
+grant select on public.analytics_retention         to authenticated;
+grant select on public.analytics_feature_usage     to authenticated;

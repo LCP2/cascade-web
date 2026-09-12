@@ -33,9 +33,11 @@ Interface:
   fetch_unsent_invite_emails() -> [{id, token, to_email, to_name, created_at, sender_name,
                                      film_title, tmdb_id}, sent_at is null]                   # CAS-930
   mark_invite_emails_sent(ids, sent_at) -> int                                                # CAS-930
+  delete_old_usage_events(days=180) -> int              # CAS-942: usage_events retention purge
 """
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import os
 import urllib.error
@@ -210,6 +212,10 @@ class InMemoryStore:
                 r["sent_at"] = sent_at
                 n += 1
         return n
+
+    def delete_old_usage_events(self, days: int = 180) -> int:
+        """CAS-942: fixtures/tests carry no usage_events data — nothing to purge, always 0."""
+        return 0
 
 
 class SupabaseStore:
@@ -517,6 +523,23 @@ class SupabaseStore:
         quoted = ",".join(ids)
         req = urllib.request.Request(
             self._base + f"/notifications?movie_id=in.({quoted})",
+            headers=self._headers({"Prefer": "return=representation"}),
+            method="DELETE",
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            body = resp.read().decode("utf-8")
+        try:
+            return len(json.loads(body))
+        except (json.JSONDecodeError, TypeError):
+            return 0
+
+    def delete_old_usage_events(self, days: int = 180) -> int:
+        """CAS-942: purge usage_events rows older than `days`, with the same service_role
+        credential this store already uses for every other call — this is the daily retention
+        rule for the client's batched usage log, not a fixture/test concern."""
+        cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)).isoformat()
+        req = urllib.request.Request(
+            self._base + f"/usage_events?created_at=lt.{urllib.parse.quote(cutoff)}",
             headers=self._headers({"Prefer": "return=representation"}),
             method="DELETE",
         )
