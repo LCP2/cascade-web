@@ -2741,6 +2741,13 @@
      read as the button being too wide. Top padding lifted so a chromed step's heading clears the
      progress rail. */
   .obwrap{padding:32px 0 26px;max-width:390px;margin:0 auto}
+  /* CAS-954: v2_about's own backdrop — the splash's wall/fade pair, reused as-is, behind this one step's
+     copy. Full-bleed past the flow's own side gutter (the 100vw/negative-margin trick, since .sharpstep's
+     padding lives on the fixed dialog, not on this step's content) with room for the wall to read as a
+     backdrop rather than a band clipped to the copy's own height. */
+  .obabout{position:relative;overflow:hidden;min-height:56vh;min-height:56dvh;
+    width:100vw;margin:0 calc(50% - 50vw);padding:32px var(--flow-pad) 0}
+  .obabout .obwrap{position:relative;z-index:2;margin:0 auto}
   .obhd{font-size:22px;font-weight:800;color:var(--ink);margin:0 0 3px;letter-spacing:-.01em}
   .obsub{font-size:12.5px;color:var(--accent);margin:0 0 18px}
   .obq{font-size:15px;font-weight:750;color:var(--ink);margin:0 0 9px}
@@ -6046,8 +6053,8 @@ const sortForKey = (g,key,cinema,isUserSort) =>
 // person's own menu pick, not a default, passes true so CAS-430's In Cinema override stands down for it.
 function listingOrder(films, sortKey, c, isUserSort){
   const ordered=[], seen=new Set();
-  // CAS-750: this function's one caller (openMembership) runs before any Watch tab exists, so it always
-  // reads the shared default order — never the Cinema tab's.
+  // CAS-750/CAS-954: every caller here — openMembership, the onboarding reveal/membership grids — runs
+  // before any Watch tab exists, so this always reads the shared default order, never the Cinema tab's.
   orderFor(false).forEach(g=>{
     films.filter(m=>primaryStatus(m)===g).sort(sortForKey(g,sortKey,c && c.kind==="cinema",isUserSort))
          .forEach(m=>{ ordered.push(m); seen.add(m); });
@@ -11460,8 +11467,10 @@ window.onboardingSeen = onboardingSeen;
 // (so the bottom is no longer black) made that visible as an empty band under the buttons. Nine rows of
 // six reach the bottom edge at every viewport the splash is used at.
 const SPLASH_WALL_N = 54;
-function paintSplashWall(){
-  const box=$("splashWall"); if(!box || box.childElementCount) return;
+// CAS-954: takes a target now, instead of always painting #splashWall, so v2_about's own wall (a
+// different element, painted on step entry rather than at boot) can share this one painter.
+function paintSplashWall(target){
+  const box=target || $("splashWall"); if(!box || box.childElementCount) return;
   const picks=MOVIES.filter(m=>m.poster).sort(byPopularity).slice(0, SPLASH_WALL_N);
   box.innerHTML=picks.map(m=>
     `<div class="swp" style="background-image:url(https://image.tmdb.org/t/p/w185${escA(m.poster)})"></div>`).join("");
@@ -14624,13 +14633,19 @@ const SHARP_STEPS = {
     noAgent: true, noSkip: true,
     progress: 0,
     body(){
-      return `<div class="obwrap">
+      // CAS-954: the catalogue this screen is about to explain, behind the copy — same wall the splash
+      // uses, decorative so aria-hidden, never the spec for the result (there is no design image here).
+      return `<div class="obabout">
+  <div class="splashwall" aria-hidden="true"><div class="splashwallgrid" id="obAboutWall"></div></div>
+  <div class="splashfade" aria-hidden="true"></div>
+  <div class="obwrap">
   <h2 class="obhd">Cascade finds your movies for you.</h2>
   <p class="obintrotext">Cascade works by creating specialist search agents. Each one hunts the whole catalogue for movies that match a set of criteria, and tells you the moment one lands somewhere you can watch it.</p>
   <p class="obintrotext">Setting up your membership means answering a few questions about what you like — that is how we brief your agents so they serve you well.</p>
+  </div>
 </div>`;
     },
-    wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
+    wire(){ onbFlow.answersV2=onbAnswersV2Load(); paintSplashWall($("obAboutWall")); },
   },
   v2_intro: {
     noAgent: true, noSkip: true,
@@ -14951,7 +14966,7 @@ const SHARP_STEPS = {
     body(){
       const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_massive");
       return c ? onbAgentRevealHTML(c, 1, "Your first agent",
-        "This agent will find the landmark, must-see movies each year. There won't be many of them (maybe 2-3 per month) but these are the ones everyone will talk about.") : "";
+        "This agent will find the landmark, must-see movies each year. There won't be many of them (maybe 2-3 per month) but these are the ones everyone will talk about.", true) : "";
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
@@ -14961,7 +14976,7 @@ const SHARP_STEPS = {
     body(){
       const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_favs");
       return c ? onbAgentRevealHTML(c, 2, "Your second agent",
-        "This agent will find movies in the styles that you like, at a minimum score that still gives you choice.") : "";
+        "This agent will find movies in the styles that you like, at a minimum score that still gives you choice.", true) : "";
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
@@ -14972,7 +14987,7 @@ const SHARP_STEPS = {
     body(){
       const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_date");
       return c ? onbAgentRevealHTML(c, 3, "One for the two of you",
-        "This agent finds movies you want to watch with your partner!") : "";
+        "This agent finds movies you want to watch with your partner!", true) : "";
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
@@ -14983,7 +14998,7 @@ const SHARP_STEPS = {
     body(){
       const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_family");
       return c ? onbAgentRevealHTML(c, 4, "And one for the whole house",
-        "And of course, let's not forget family viewing night!") : "";
+        "And of course, let's not forget family viewing night!", true) : "";
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
@@ -15587,7 +15602,9 @@ function onbNotifySum(c){
 // edit yet. A row whose value would read Any is omitted entirely, so onboarding never teaches a new user
 // to read past an empty row; the AWARDS row is never rendered here (every generated agent carries
 // selAwards: 0). N (watchCount) is always live, never a stored or constant figure.
-function onbAgentRevealHTML(c, rank, eyebrow, note){
+// CAS-954: showPosters is only true on the four reveal steps — v2_done reuses this same function for its
+// roster recap and must not get a grid on any of its up-to-four cards, so it simply omits the argument.
+function onbAgentRevealHTML(c, rank, eyebrow, note, showPosters){
   const rows=[];
   const styles=agentStylesSum(c);
   if(styles!=="Any style") rows.push(`<span class="agsrow"><span class="agslbl">STYLES</span><span class="agsval">${esc(styles)}</span></span>`);
@@ -15601,6 +15618,11 @@ function onbAgentRevealHTML(c, rank, eyebrow, note){
   const n=watchCount(c);
   const rowB = n===0 ? `<span class="agmstat">Nothing matching that yet</span>`
     : `<span class="agmstat">Found <b>${n}</b> already</span>`;
+  // The agent's own real haul, in the listing's own order — the same expression openMembership() uses,
+  // so the grid under a reveal card is never a different set from the one its count refers to.
+  const films = showPosters ? listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||DEFAULT_SORT, c) : [];
+  const posterGrid = films.length
+    ? `<div class="rvgrid">${films.slice(0, REVEAL_POSTERS).map(rvPosterHTML).join("")}</div>` : "";
   return `<p class="eyebrow">${esc(eyebrow)}</p>
     <div class="onbreveal">
       <div class="agrow agrank-${Math.min(rank,6)}">
@@ -15618,6 +15640,7 @@ function onbAgentRevealHTML(c, rank, eyebrow, note){
         </span>
       </div>
       ${note ? `<p class="obintrotext">${esc(note)}</p>` : ""}
+      ${posterGrid}
     </div>`;
 }
 // ================= CAS-636: Moving — the alert feed made visible =================
@@ -16716,6 +16739,15 @@ window.onbHubFinish=()=>{
 let membCascade = null;
 // Four across, six rows — enough to read as a wall without becoming the page.
 const MEMB_POSTERS = 24;
+// CAS-954: eight, not 24 — the reveal grid sits mid-flow under a card and a paragraph, and the CTA still
+// has to stay reachable underneath it.
+const REVEAL_POSTERS = 8;
+// The one poster-cell renderer every haul grid shares (this page, the onboarding membership recap, the
+// reveal steps) — a background from the film's own poster, or none, title-tagged for a screen reader.
+function rvPosterHTML(m){
+  const bg=m.poster?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
+  return `<div class="rvposter" style="${bg}" title="${escA(m.title)}"></div>`;
+}
 const MEMB_BENEFITS = [
   {ic:"🔔", name:"Film Alerts", sub:"The moment a match hits cinema, rental or streaming."},
   {ic:"🎚️", name:"Streaming service filtering", sub:"Only show films on the services you actually have."},
@@ -16740,10 +16772,7 @@ function openMembership(agentKey, nameOverride, cascade){
   // The real haul, in the listing's own order, from the listing's own membership test (CAS-132/176) — so
   // the posters under the button are the films behind it, not a different set that happens to look nice.
   const films = c ? listingOrder(MOVIES.filter(m=>watchesFilm(m,c)), c.sort||DEFAULT_SORT, c) : [];
-  const posters = films.slice(0, MEMB_POSTERS).map(m=>{
-    const bg=m.poster?`background-image:url(https://image.tmdb.org/t/p/w185${m.poster})`:"";
-    return `<div class="rvposter" style="${bg}" title="${escA(m.title)}"></div>`;
-  }).join("");
+  const posters = films.slice(0, MEMB_POSTERS).map(rvPosterHTML).join("");
   const n=films.length;
   const haul = c
     ? `<p class="membhaul">${c.icon} <b>${esc(name)}</b> is already watching
@@ -16806,9 +16835,18 @@ const OB_MEMB_BENEFITS = ["Something to watch for every occasion.",
                           "Alerts for the movies you care about.",
                           "Agents working for you.",
                           "Streaming service advice."];
+// CAS-954: the honest set for a headline that counts every agent is the union of their real lists, not
+// any one agent's haul — MOVIES.filter already dedupes this by construction, since each film is admitted
+// once regardless of how many agents would have matched it. Its own function so the roster grid's real
+// content is checkable without going through openOnbMembership's DOM write.
+function onbMembershipFilms(agents){
+  return listingOrder(MOVIES.filter(f=>agents.some(c=>watchesFilm(f,c))), DEFAULT_SORT, null);
+}
 function openOnbMembership(){
   const {n,m,k} = onbFlow.reportStats || onbComputeReportStats();
   const needsEmail = membNeedsEmail();
+  const agents = onbFlow.workingAgents || [];
+  const posters = onbMembershipFilms(agents).slice(0, MEMB_POSTERS).map(rvPosterHTML).join("");
   $("membBody").innerHTML = `
     <span class="cascpill">CASCADE</span>
     <h2 class="membh">Membership benefits</h2>
@@ -16825,6 +16863,7 @@ function openOnbMembership(){
            placeholder="you@example.com">
     <p class="fielderr" id="membEmailErr" role="alert" hidden></p>` : ""}
     <button class="membcta" type="button" onclick="membStart()">Start my free month</button>
+    ${posters?`<div class="rvgrid membgrid">${posters}</div>`:""}
     <p class="membproto">Prototype — no account, no payment, no real charge.</p>`;
   $("membScreen").scrollTop=0;
   $("membScreen").classList.add("open"); lockBodyScroll(true);

@@ -98,7 +98,9 @@ function makeContext(){
 const EXPORTS = `
 ;globalThis.__ONB_V2__ = { onbAnswersV2Default, ONB_AGENTS_V2, buildOnbAgentsV2, onbNotifySum,
   MOVIES, watchesFilm, watchCount, normCascade, laneCrit, onbAgentCapSolveV2, ONB_AGENT_CAP_V2,
-  onbMassiveCritV2, onbFavsCritV2, onbDateCritV2, onbFamilyCritV2 };
+  onbMassiveCritV2, onbFavsCritV2, onbDateCritV2, onbFamilyCritV2,
+  listingOrder, DEFAULT_SORT, escA, paintSplashWall, SHARP_STEPS, onbAgentRevealHTML,
+  onbMembershipFilms, REVEAL_POSTERS, MEMB_POSTERS };
 `;
 
 function loadOnbV2({ htmlPath = path.join(ROOT, "index.html") } = {}){
@@ -370,6 +372,73 @@ check("CAS952-AC6", () => {
       same(fam.myServices, {pvod:true, rental:true, included_streaming:true});
     }
   }
+});
+
+// CAS-954: film posters into onboarding — the About wall, each agent's own haul, and the membership
+// grid. body()/onbAgentRevealHTML return literal HTML strings (no DOM write), so their markup is
+// checked directly against a regex rather than a real render.
+check("CAS954-AC2", () => {
+  const html = E.SHARP_STEPS.v2_about.body();
+  assert.ok(/<div class="splashwall" aria-hidden="true"><div class="splashwallgrid" id="obAboutWall">/.test(html),
+    "v2_about body has no aria-hidden #obAboutWall splashwallgrid");
+  assert.ok(/<h2 class="obhd">/.test(html), "v2_about body has no heading");
+  // paintSplashWall's real population logic, against a plain object rather than the vm's DOM stub
+  // (whose set traps swallow writes) — this is the same function the app calls on step entry.
+  const box = { childElementCount: 0, innerHTML: "" };
+  E.paintSplashWall(box);
+  const n = (box.innerHTML.match(/<div class="swp"/g) || []).length;
+  assert.ok(n >= 12, `paintSplashWall only painted ${n} posters, need >= 12`);
+});
+
+check("CAS954-AC3", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app_template.html"), "utf8");
+  const matches = src.match(/function paintSplashWall/g) || [];
+  assert.equal(matches.length, 1, `expected exactly 1 paintSplashWall definition, found ${matches.length}`);
+});
+
+check("CAS954-AC4-AC5", () => {
+  const ans = { ...E.onbAnswersV2Default(), cinema:"yes", rent:"no",
+                partner:"yes", partnerDiff:"no", kids:"yes", kidAges:["G","PG"] };
+  const agents = E.buildOnbAgentsV2(ans);
+  for(const template of ["onb_massive", "onb_favs", "onb_date", "onb_family"]){
+    const agent = agents.find(a => a.template === template);
+    if(!agent) continue;                 // this fixture didn't build that lane
+    const films = E.listingOrder(E.MOVIES.filter(m => E.watchesFilm(m, agent)), agent.sort || E.DEFAULT_SORT, agent);
+    const html = E.onbAgentRevealHTML(agent, 1, "eyebrow", "note", true);
+    const gridCount = (html.match(/class="rvgrid"/g) || []).length;
+    assert.equal(gridCount, films.length ? 1 : 0,
+      `${template}: expected ${films.length ? 1 : 0} .rvgrid, found ${gridCount}`);
+    if(!films.length) continue;
+    assert.ok(html.indexOf('class="agrow') < html.indexOf('class="rvgrid"'),
+      `${template}: .rvgrid does not follow .agrow`);
+    const posterMatches = [...html.matchAll(/<div class="rvposter"[^>]*title="([^"]*)"><\/div>/g)];
+    const expectedN = Math.min(films.length, E.REVEAL_POSTERS);
+    assert.equal(posterMatches.length, expectedN,
+      `${template}: expected ${expectedN} .rvposter cells, found ${posterMatches.length}`);
+    same(posterMatches.map(m => m[1]), films.slice(0, E.REVEAL_POSTERS).map(m => E.escA(m.title)),
+      `${template}: poster titles/order don't match the agent's own real list`);
+  }
+});
+
+check("CAS954-AC6", () => {
+  const ans = { ...E.onbAnswersV2Default(), cinema:"yes", rent:"no" };
+  const agent = E.buildOnbAgentsV2(ans).find(a => a.template === "onb_massive");
+  // c.age===null short-circuits matchesTaste to false for every film (the file's own escape hatch for
+  // "no ratings admitted") — the cheapest way to force a real agent's list empty without faking MOVIES.
+  const html = E.onbAgentRevealHTML({ ...agent, age: null }, 1, "eyebrow", "note", true);
+  assert.ok(!/class="rvgrid"/.test(html), "expected no .rvgrid for an agent with an empty film list");
+});
+
+check("CAS954-AC7", () => {
+  const ans = { ...E.onbAnswersV2Default(), cinema:"yes", rent:"no",
+                partner:"yes", partnerDiff:"no", kids:"yes", kidAges:["G","PG"] };
+  const agents = E.buildOnbAgentsV2(ans);
+  const posters = E.onbMembershipFilms(agents).slice(0, E.MEMB_POSTERS);
+  assert.ok(posters.length <= E.MEMB_POSTERS, `roster grid has ${posters.length} posters, over the ${E.MEMB_POSTERS} cap`);
+  const ids = posters.map(m => m.tmdb_id);
+  assert.equal(new Set(ids).size, ids.length, "duplicate film in the roster grid");
+  assert.ok(posters.every(m => agents.some(c => E.watchesFilm(m, c))),
+    "roster grid contains a film no committed agent actually watches");
 });
 
 for(const line of results) fs.appendFileSync(REPORT_PATH, line + "\n");
