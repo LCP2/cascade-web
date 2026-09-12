@@ -931,7 +931,7 @@ select
   min(ue.created_at) as first_at,
   max(ue.created_at) as last_at,
   extract(epoch from (max(ue.created_at) - min(ue.created_at)))::bigint as duration_seconds,
-  max(ue.user_id) as user_id,
+  max(ue.user_id::text)::uuid as user_id,
   count(*) as event_count,
   max(ue.data->>'plat') filter (where ue.type = 'app_open') as plat,
   max(ue.data->>'ver')  filter (where ue.type = 'app_open') as ver,
