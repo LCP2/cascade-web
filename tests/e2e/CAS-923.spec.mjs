@@ -1,0 +1,45 @@
+// CAS-923: laneCrit's cinema branch used to zero cinemaReleaseOnly along with the three Mission dials
+// it's actually meant to clear (CAS-261), so the "Had a cinema release" switch turned on, painted on, and
+// was wiped back to false before onbApply's caller (briefSave -> commitDraft) ever saw it. Drives the real
+// UI: Agents screen -> Edit -> flip the switch -> Save -> reopen the Briefing, for both a CINEMA-kind and a
+// STREAM-kind agent (the stream lane was never known to be broken; it's covered so a future regression on
+// either lane is caught the same way).
+import { test, expect } from "@playwright/test";
+import { toShortlist, finishFlow, toListing } from "./helpers.mjs";
+
+async function openFirstAgentBriefing(page){
+  await page.locator("#agentsBtn").click();
+  await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
+  await page.locator(".ag-edit").first().click();
+  await expect(page.locator("#onbCinemaRelease")).toBeVisible();
+}
+
+async function cinemaReleaseSwitchOn(page){
+  return page.locator("#onbCinemaRelease").evaluate(el => el.classList.contains("on"));
+}
+
+for(const kind of ["cinema", "stream"]){
+  test(`Briefing: "Had a cinema release" survives Save on a ${kind.toUpperCase()}-kind agent (CAS-923 AC4)`, async ({ page }) => {
+    await toShortlist(page, kind);
+    await finishFlow(page);
+    await toListing(page);
+
+    await openFirstAgentBriefing(page);
+    const agentId = await page.evaluate(() => onbFlow.draft.id);
+
+    expect(await cinemaReleaseSwitchOn(page)).toBe(false);   // a freshly built agent starts with it off
+    await page.locator("#onbCinemaRelease").click();
+    expect(await cinemaReleaseSwitchOn(page)).toBe(true);
+
+    await page.locator(".oscta", { hasText: "Save agent" }).click();
+    await expect(page.locator("#onbStep")).not.toHaveClass(/open/);   // briefSave closes back to Agents
+
+    const saved = await page.evaluate(id => cascades.find(c => c.id === id).cinemaReleaseOnly, agentId);
+    expect(saved).toBe(true);
+
+    // Reopen — the switch must still read on, not have been quietly reset by laneCrit on the way to disk.
+    await page.locator(`.agrow[data-id="${agentId}"] .ag-edit`).click();
+    await expect(page.locator("#onbCinemaRelease")).toBeVisible();
+    expect(await cinemaReleaseSwitchOn(page)).toBe(true);
+  });
+}

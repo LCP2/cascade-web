@@ -846,6 +846,16 @@ test("lanes: an agent carries only the criteria its own lane can show", () => {
   }
 });
 
+// CAS-923: "Had a cinema release" is a Briefing requirement shown for every agent, not one of the three
+// Mission dials CAS-261 zeroes for the cinema lane — laneCrit must leave it alone while still zeroing those.
+test("lanes: laneCrit leaves cinemaReleaseOnly alone on a cinema agent", () => {
+  const c = E.laneCrit({ selCrowd: 7, selCritScore: 60, selAwards: 1, cinemaReleaseOnly: true }, "cinema");
+  assert.equal(c.cinemaReleaseOnly, true, "laneCrit wiped cinemaReleaseOnly on save");
+  assert.equal(c.selCrowd, 0, "a cinema agent kept a People's-vote floor");
+  assert.equal(c.selCritScore, 0, "a cinema agent kept a critics-score floor");
+  assert.equal(c.selAwards, 0, "a cinema agent kept an awards rung");
+});
+
 // CAS-261: no preset may be OFFERED in a lane that cannot apply the standard the card names.
 test("presets: every offer's standard survives its own lane", () => {
   for(const kind of ["cinema", "stream"]){
