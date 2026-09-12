@@ -142,22 +142,26 @@ test("opening Notify, Tags or Watched leaves the card rendered and scroll unmove
   }
 });
 
-// CAS-649: CAS-644 made Moving the landing screen and dropped its back control, but #movingScreen wasn't
-// added to the rule that pulls #agentsScreen/#yourMovies down below the sticky header — it rendered at
-// inset:0, z-index:84, covering the header (z-index:30). A returning visitor landed on a screen with no
-// navigation and no way out. This checks the actual failure mode: the header and its three chips are there
-// and working the moment a cold load lands on Moving, not just that #movingScreen itself opened.
-test("a cold load with onboarding seen shows the header, not just Moving", async ({ page }) => {
+// CAS-933 reverses CAS-644: a cold load lands on Watch, never Moving. Moving stays reachable from its own
+// chip, so the CAS-649 regression this test also covers (Moving rendered at inset:0, z-index:84, covering
+// the header — a screen with no navigation and no way out) is now checked there instead of on cold load.
+test("a cold load with onboarding seen shows the header, not Moving", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
   await toListing(page);
 
   await page.reload();
-  await expect(page.locator("#movingScreen")).toHaveClass(/open/);
+  await expect(page.locator("#movingScreen")).not.toHaveClass(/open/);
+  await expect(page.locator("#groups .card").first()).toBeVisible();
   await expect(page.locator("header")).toBeVisible();
   await expect(page.locator("#agentsBtn")).toBeVisible();
   await expect(page.locator("#moviesBtn")).toBeVisible();
   await expect(page.locator("#movingBtn")).toBeVisible();
+
+  await page.locator("#movingBtn").click();
+  await expect(page.locator("#movingScreen")).toHaveClass(/open/);
+  await expect(page.locator("header")).toBeVisible();
+  await expect(page.locator("#agentsBtn")).toBeVisible();
 
   await page.locator("#moviesBtn").click();
   await expect(page.locator("#movingScreen")).not.toHaveClass(/open/);

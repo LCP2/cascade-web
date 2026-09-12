@@ -8827,6 +8827,19 @@ function watchScopeRows(){
   if(!acs.length) return [];
   return MOVIES.filter(m=>acs.some(c=>listedBy(m,c)) && filmMatchesWatchTab(m, watchTab));
 }
+// CAS-933: the one landing-tab decision, shared by boot and the end of onboarding. Cinema only when it
+// would actually show something — asked of watchScopeRows/filmMatchesWatchedFilter, the listing's own real
+// membership test, not a proxy — Streaming otherwise. Falls back to the first tab watchTabsNow() still
+// carries if the chosen one is disabled in Where & when.
+function pickLandingWatchTab(){
+  const savedTab = watchTab;
+  watchTab = "in_cinema";
+  const cinemaHasFilms = watchScopeRows().some(m => !taggedOut(m) && filmMatchesWatchedFilter(m));
+  watchTab = savedTab;
+  const target = cinemaHasFilms ? "in_cinema" : "stream";
+  const liveTabs = watchTabsNow().map(t=>t.key);
+  return liveTabs.includes(target) ? target : (liveTabs[0] || target);
+}
 // CAS-823: the same agent+occasion scope as watchScopeRows above, but narrowed only by the tab's own Watch
 // On key — no standing test — so the Also-show chips can show each window's count (renderWatchSheet) before
 // it's switched on. Mirrors watchScopeRows's own two branches rather than sharing code with it, same
@@ -16608,6 +16621,8 @@ function membStartWork(){
     const s=STARTERS.find(x=>x.key==="streaming");   // CAS-143: the R5 presets replaced watch_tonight
     if(s){ draft=normCascade(draftFromTemplate({key:s.key, icon:s.icon, name:s.name, crit:s.crit})); commitDraft(); }
   }
+  // CAS-933: finishing onboarding lands by the same rule the boot path uses — Watch, never Moving.
+  watchTab = pickLandingWatchTab();
   showFoundList();
   render();
   // CAS-915: reset after the listing has laid out — the Watch listing scrolls the page itself
@@ -17507,10 +17522,14 @@ const openedShared = openSharedFromURL();
 // so the screen can be reviewed on its own before Lee wires the sequence.
 if(!openedShared && previewStep && openPreviewStep(previewStep, previewAgent)){/* previewing a single step */}
 else if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
-// CAS-644: Moving is where the app opens once onboarding has been seen — it is the change feed, not a
-// static listing, so it is what should greet a returning visitor. A shared link and a film link still win
-// (see below): they say what the visitor arrived for more specifically than "what changed" does.
-else if(!openedShared) openMovingScreen();
+// CAS-933: reverses CAS-644 — Watch, not Moving, is where the app opens once onboarding has been seen.
+// Cinema if it would actually show something for this account right now, Streaming otherwise (pickLandingWatchTab,
+// shared with the end of onboarding below). A shared link and a film link still win (see below): they say
+// what the visitor arrived for more specifically than the landing rule does.
+else if(!openedShared){
+  const landingTab = pickLandingWatchTab();
+  if(landingTab !== watchTab){ watchTab = landingTab; render(); }
+}
 // CAS-837: an invite link's arrival, recorded before the #/film/<id> handling below opens the film page —
 // and before closeFilmPage() (~line 7083) could ever rebuild the URL from location.pathname+location.search,
 // which is why the strip has to happen here rather than later. Preserves every other query param and the hash.
