@@ -150,20 +150,37 @@ class TheTwoUpcomingMoments(unittest.TestCase):
                   "offers": [{"service": "Stan", "type": "sub", "price": None}]}]
         self.assertEqual(self._t([], today), set())
 
-    def test_opens_soon_fires_exactly_a_week_out(self):
-        rec = {"tmdb_id": 13, "title": "Next Week", "status": ["upcoming"],
-               "cinema_date": (RUN_DATE + _dt.timedelta(days=7)).isoformat(), "offers": []}
+    def _rec(self, tmdb_id, days_ahead):
+        return {"tmdb_id": tmdb_id, "title": "Run-up", "status": ["upcoming"],
+                "cinema_date": (RUN_DATE + _dt.timedelta(days=days_ahead)).isoformat(), "offers": []}
+
+    def test_opens_soon_fires_a_week_out(self):
+        # CAS-926 AC(a): the exact-week-out day still fires (unchanged).
+        rec = self._rec(13, 7)
         self.assertIn(("13", "opens_soon"), self._t([rec], [rec]))
-        # …and on no other day, either side of it.
-        for off in (6, 8, 0, 30):
-            rec2 = dict(rec, cinema_date=(RUN_DATE + _dt.timedelta(days=off)).isoformat())
-            self.assertNotIn(("13", "opens_soon"), self._t([rec2], [rec2]),
+
+    def test_opens_soon_fires_anywhere_in_the_run_up(self):
+        # CAS-926 AC(b): every day from tomorrow through the outer edge fires, not just day 7.
+        for off in (1, 3, 6):
+            rec = self._rec(13, off)
+            self.assertIn(("13", "opens_soon"), self._t([rec], [rec]),
+                          f"opens_soon did not fire {off} days out")
+
+    def test_opens_soon_silent_outside_the_window(self):
+        # CAS-926 AC(c)/(d): outside the window (past the outer edge, on the day itself, or in the
+        # past) it stays silent.
+        for off in (8, 30, 0, -1, -30):
+            rec = self._rec(13, off)
+            self.assertNotIn(("13", "opens_soon"), self._t([rec], [rec]),
                              f"opens_soon fired {off} days out")
 
     def test_opens_soon_is_tunable_like_its_mirror(self):
         rec = {"tmdb_id": 14, "title": "Fortnight", "status": ["upcoming"],
                "cinema_date": (RUN_DATE + _dt.timedelta(days=14)).isoformat(), "offers": []}
         self.assertIn(("14", "opens_soon"), self._t([rec], [rec], soon_n=14))
+        # And a day inside that wider window also fires now (mirrors the default-N behaviour).
+        rec2 = dict(rec, cinema_date=(RUN_DATE + _dt.timedelta(days=10)).isoformat())
+        self.assertIn(("14", "opens_soon"), self._t([rec2], [rec2], soon_n=14))
 
     def test_neither_moment_is_ever_invented_from_a_missing_date(self):
         rec = {"tmdb_id": 15, "title": "No Date", "status": ["upcoming"], "cinema_date": None, "offers": []}
@@ -172,6 +189,12 @@ class TheTwoUpcomingMoments(unittest.TestCase):
         # …though a brand-new dateless unreleased title is still an announcement: that claim rests on the
         # title arriving, not on any date.
         self.assertIn(("15", "announced"), self._t([], [rec]))
+
+    def test_opens_soon_never_invented_from_an_unparseable_date(self):
+        # CAS-926 AC(e): garbage cinema_date is the same as no date at all.
+        rec = {"tmdb_id": 16, "title": "Bad Date", "status": ["upcoming"],
+               "cinema_date": "not-a-date", "offers": []}
+        self.assertNotIn(("16", "opens_soon"), self._t([rec], [rec]))
 
 
 if __name__ == "__main__":

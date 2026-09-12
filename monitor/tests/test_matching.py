@@ -315,6 +315,21 @@ class WindowPlacementTests(unittest.TestCase):
             hits = self._match(cascades, [t], [], movie)
             self.assertEqual(len(hits.get("u1", [])), 1, f"{moment} must fire with no placement row")
 
+    # ---- CAS-926: opens_soon now fires anywhere in a multi-day window; the ledger's existing
+    # de-dupe key must still stop a film alerting on each day of that window ----
+    def test_opens_soon_dedupe_fires_once_across_the_window(self):
+        movie = self._movie(status=("upcoming",))
+        cascades = self._cascade(["opens_soon"])
+        admission = _admit(cascades, today=[movie])
+        t = Transition("8001", movie["title"], "opens_soon", movie=movie)
+
+        first = match(cascades, [t], admission=admission, film_watches=[])
+        self.assertEqual(len(first.get("u1", [])), 1)
+
+        already = {("c1", "8001", "opens_soon")}
+        second = match(cascades, [t], admission=admission, already=already, film_watches=[])
+        self.assertEqual(second, {})
+
     # ---- AC4/5 are exercised via __main__.py's own counters (see test_delivery.py / manual run) ----
     def test_placement_counts_are_reported_when_a_dict_is_passed(self):
         movie = self._movie()
