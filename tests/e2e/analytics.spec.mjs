@@ -2,7 +2,7 @@
 // CAS-941: card expansion and Watch-tab switches, the app's own single entry points
 // (window.toggleExpand / window.setWatchTab) log exactly once per real user action.
 import { test, expect } from "@playwright/test";
-import { toShortlist, finishFlow, toListing } from "./helpers.mjs";
+import { toShortlist, finishFlow, toListing, freshApp } from "./helpers.mjs";
 
 // A local, param-carrying equivalent of helpers.mjs's freshApp/gotoFresh: those two always land the
 // SECOND (real) navigation on a bare /index.html, which would itself mint CLIENT_KEY and fire the first
@@ -106,4 +106,17 @@ test("CAS-941: switching Watch tab logs watch_tab; re-tapping the active tab log
   log = await readLog(page);
   tabs = log.filter(e => e.type === "watch_tab");
   expect(tabs.length).toBe(1);
+});
+
+test("CAS-943: signed out, the Metrics nav entry is hidden and no analytics_ view is ever requested", async ({ page }) => {
+  const analyticsRequests = [];
+  page.on("request", req => { if (req.url().includes("analytics_")) analyticsRequests.push(req.url()); });
+
+  await freshApp(page);
+  await page.locator("#navMenuBtn").click();
+  await expect(page.locator("#navMenu")).toBeVisible();
+  await expect(page.locator("#metricsNavItem")).toBeHidden();
+  await expect(page.locator("#navMenu .navitem", { hasText: "Metrics" })).toBeHidden();
+
+  expect(analyticsRequests).toEqual([]);
 });
