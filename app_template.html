@@ -1836,6 +1836,13 @@
     display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:15px;flex:0 0 auto;cursor:pointer}
   .osback:hover{border-color:var(--violet)}
   .osback:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  /* CAS-934: on the agent config screen, its spokes, and My services, Back is the only way out and the
+     thing that confirms your work — the same job the removed Done/Save button did — so it gets that
+     button's gradient/glow treatment here. Position, size and the arrow itself are untouched. */
+  .osback.primary{background:var(--grad);border-color:transparent;color:#fff;
+    box-shadow:0 6px 18px rgba(124,92,255,.35)}
+  .osback.primary:hover{border-color:transparent;filter:brightness(1.08)}
+  .osback.primary:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   /* CAS-337: the screen's own title, moved into this row from a standalone heading below it — the same
      slot the fixed wizard header's .steprow gives .osh, so both header styles read as one pattern. */
   .ostop .osh{flex:1 1 auto;min-width:0;margin:0;font-size:19px;font-weight:500;
@@ -2189,12 +2196,13 @@
   .osskip{display:block;width:100%;text-align:center;margin-top:12px;color:var(--dim);font-size:12.5px;
     background:none;border:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
   .osskip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}
-  /* CAS-268/CAS-303: Delete, tucked below Save. CAS-268's bordered full-width block read as a second button
-     the same size as Save, which is too much weight for a destructive action — CAS-303 dropped it to plain
-     underlined text, quieter than everything above it, so a thumb never lands on it by accident. It keeps
-     the danger colour (just dimmed) so it still reads as destructive, and its confirm() is what actually
-     stops a slip, not the button's size. The vertical padding stays generous even though the text shrank,
-     so the tap target is still a real target under the small label. */
+  /* CAS-268/CAS-303: Delete, on its own at the foot of the page (CAS-934 removed the Save button it used to
+     sit below). CAS-268's bordered full-width block read as a second button the same size as Save, which
+     was too much weight for a destructive action — CAS-303 dropped it to plain underlined text, quieter
+     than everything above it, so a thumb never lands on it by accident. It keeps the danger colour (just
+     dimmed) so it still reads as destructive, and its confirm() is what actually stops a slip, not the
+     button's size. The vertical padding stays generous even though the text shrank, so the tap target is
+     still a real target under the small label. */
   .osdel{display:block;width:100%;text-align:center;margin-top:26px;padding:13px 4px;
     background:none;border:none;color:var(--open);opacity:.7;font-family:var(--font-display);
     font-size:12.5px;font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
@@ -14078,13 +14086,12 @@ const SHARP_STEPS = {
              defined: onboarding's own S3/S4 sequence (CAS-628/629) still routes a new agent's draft through
              it before this screen ever opens. (CAS-635 N3b's exclude-tags spoke was removed outright by
              CAS-842, along with the rest of the Tags feature.) -->
-        <!-- CAS-268: Delete only appears for an agent that EXISTS. A brand-new agent reaching this screen
-             from New Cascade (CAS-246) has never been saved, so there is nothing to delete — offering the
-             button there would either do nothing or claim to have removed something that was never on the
-             deck. Backing out is what discards an uncommitted agent, and that is already true. -->
-        <div class="osfoot"><button class="oscta" type="button" onclick="briefSave()">Save agent</button>
-          ${d.id ? `<button class="osdel" type="button" onclick="briefDelete()">Delete agent</button>` : ""}
-        </div>`;
+        <!-- CAS-268/CAS-934: Delete only appears for an agent that EXISTS. A brand-new agent reaching this
+             screen from New Cascade (CAS-246) has never been saved, so there is nothing to delete — offering
+             the button there would either do nothing or claim to have removed something that was never on
+             the deck. There is no Save button any more (Back commits, see briefClose/briefCommit), so
+             Delete is the only thing left in this footer, and only ever for an agent that's really there. -->
+        ${d.id ? `<div class="osfoot"><button class="osdel" type="button" onclick="briefDelete()">Delete agent</button></div>` : ""}`;
     },
     refresh(){ paintMsnTrack(); },   // CAS-729: keeps the track's own DOM in step with onbRefresh()'s beat
     wire(){ wireMsnTrack(); wireReqCards(); wireCinemaReleaseToggle(); wireIncludeUnbudgetedToggle(); },
@@ -14350,9 +14357,10 @@ const SHARP_STEPS = {
         tog.classList.toggle("on", prefs.on);
         updatePrefSwitch(); updatePrefBtn();
         onbRefresh();
-        // CAS-480: this spoke sits over the listing, not inside a draft that only commits on Done (unlike
-        // the rest of SHARP_STEPS) — without this the switch visibly flips but the list behind it is stale
-        // until some unrelated action re-renders, same bug $("prefSwitch").onclick already avoids below.
+        // CAS-480: this spoke sits over the listing and writes straight through, not into a draft that only
+        // commits when the Briefing closes (unlike the rest of SHARP_STEPS) — without this the switch
+        // visibly flips but the list behind it is stale until some unrelated action re-renders, same bug
+        // $("prefSwitch").onclick already avoids below.
         render();
       };
     },
@@ -14932,10 +14940,10 @@ let flowNewAgent=false;
 let flowKind="cinema";
 let flowSlideT=null;
 const flowChromed = key => flowOn && flowCounted().includes(key);
-// CAS-377: the top-menu "My services" row opens the same My-services step a Briefing row does — one screen
-// you came into and go straight back out of, no hub behind it — so it is a "spoke" exactly like a Briefing
-// row's (no progress rail, CTA reads Done). menuStepOn is the menu's own flag, kept separate from briefOn
-// since there is no Briefing hub to return to here.
+// CAS-377/CAS-934: the top-menu "My services" row opens the same My-services step a Briefing row does — one
+// screen you came into and go straight back out of, no hub behind it — so it is a "spoke" exactly like a
+// Briefing row's (no progress rail, no footer button at all — just the primary-styled back arrow). menuStepOn
+// is the menu's own flag, kept separate from briefOn since there is no Briefing hub to return to here.
 let menuStepOn=false;
 const stepSpoke = key => menuStepOn || (briefOn && key!=="briefing");
 // CAS-629/CAS-815: `startKey` is the "+ New Cascade" escape hatch (newCascade() passes "pickagent") —
@@ -14984,9 +14992,11 @@ function flowBack(){
 }
 // ================= CAS-182 / CAS-208: the Agent Briefing =============================================
 // Editing an agent is the same set of screens the flow used to build it, hung off a hub instead of a line.
-// The draft is a COPY of the saved agent, so backing out changes nothing, and Save is the one moment the
-// agent on disk moves — which is also what makes the round-trip demonstrable: what you set in onboarding
-// is on the record, the Briefing reads it back off the record, and saving writes it there again.
+// CAS-934: the draft is still a COPY the hub and its spokes edit in place — that is what lets the live
+// counts read a consistent in-progress shape — but there is no Save button any more. Back is the only way
+// out, and closing the Briefing (briefClose) is now the one moment the agent on disk moves: it commits
+// whatever the draft holds, exactly once, so a round-trip works the same as every save-as-you-go screen
+// elsewhere in the app.
 let briefOn=false;
 let briefFrom=null;
 function briefOpen(id, from){
@@ -15071,11 +15081,15 @@ window.commitCreateOccasionRow=(inputEl)=>{
   }
   renderOnbStep("occasions");
 };
-// CAS-246: hand the just-picked agent to the Briefing WITHOUT committing it. briefOpen() reads a SAVED
-// cascade off the deck; this agent has never been saved, and saving it here so the hub had something to read
-// would put an agent nobody confirmed onto the deck — and leave it there if they backed out. So the draft
-// the flow has already built is kept exactly as it is and the hub is opened on it directly. Save is still
-// the one moment the deck changes, which is the whole contract briefSave/commitDraft already keep.
+// CAS-246/CAS-934: hand the just-picked agent to the Briefing WITHOUT committing it yet. briefOpen() reads
+// a SAVED cascade off the deck; this agent has never been saved, and pushing it onto the deck here — before
+// the hub has even been seen — would put an agent nobody has looked at onto the deck, and leave it there if
+// the very first screen of the picker were somehow re-entered. So the draft the flow has already built is
+// kept exactly as it is and the hub is opened on it directly. The deck only changes once the Briefing
+// closes (briefClose/briefCommit): reaching the hub means a real agent was chosen, so backing out from
+// there — with or without further edits — commits it, the same as picking a preset and using it unedited
+// anywhere else in the app. Backing out of the PICKER, before a card is ever chosen, commits nothing,
+// because briefNewAgent (and therefore a draft with something to commit) is never reached.
 function briefNewAgent(){
   flowOn=false; briefOn=true;
   onbFlow.draft = normCascade(onbApply());
@@ -15085,14 +15099,17 @@ function briefNewAgent(){
   logEvent("new_agent_briefing", {key:(onbFlow.draft||{}).template||"custom"});
   gotoStep("briefing","fwd");
 }
-window.briefSave=()=>{
+// CAS-934: the one place a Briefing session commits — run once, when the whole hub (or a spoke reached
+// from it) closes, not on every keystroke. Every field on the hub and its spokes already writes straight
+// into onbFlow.draft as it's changed (that's what keeps the live counts current); this is the point that
+// carries the draft's current shape onto the real agent, same whitelist/normalisation commitDraft has
+// always done for an explicit Save.
+function briefCommit(){
   draft = onbApply();
   const {c} = commitDraft();
   showFoundList(); render();
-  briefClose();
-
   logEvent("briefing_saved",{id:c.id, matches:watchCount(c)});
-};
+}
 // CAS-268: the same delete the builder has always had, on the screen people now edit agents from. It reads
 // the agent off the DECK by the draft's id rather than deleting the draft, because the draft is a copy and
 // deleting a copy would leave the real agent on the deck.
@@ -15100,10 +15117,14 @@ window.briefDelete=()=>{
   const id=(onbFlow.draft||{}).id;
   const c=cascades.find(x=>x.id===id);
   if(!deleteAgentAsk(c)) return;
+  // CAS-934: briefClose() now commits onbFlow.draft on its way out — but the agent it would write back to
+  // was just deleted, so there is nothing left to commit it TO. Clear the draft first, or commitDraft's
+  // Object.assign would throw reaching for a deck entry that's gone.
+  onbFlow.draft=null;
   briefClose(); showFoundList(); render();
 };
-// The one place the Briefing decides where you land. Back and Save must agree — a Save that
-// returns you somewhere Back would not is the same bug wearing a different button.
+// The one place the Briefing decides where you land. Back always lands here now, so this is the only
+// return path left to keep straight.
 function briefReturn(){
   if(briefFrom==="agents"){ briefFrom=null; return openAgentsScreen(); }
   // CAS-688: #leScreen was never closed under the Briefing (see editListCascRow), so returning is just
@@ -15116,12 +15137,18 @@ function briefReturn(){
   }
   briefFrom=null;
 }
-function briefClose(){ briefOn=false; flowStop(); briefReturn(); }
+// CAS-934: Back is the only way out of the Briefing now, so it is also the only save — commit whatever the
+// draft holds (if there's still a draft to commit; briefDelete clears it first) before tearing the chrome
+// down and returning.
+function briefClose(){
+  if(onbFlow.draft) briefCommit();
+  briefOn=false; flowStop(); briefReturn();
+}
 
-// CAS-377: the top-menu "My services" row opens the SHARP_STEPS.services spoke bare (title + Done, the
-// toggle, the provider chips) — not the older standalone Preferences modal, which had drifted out of sync
-// (no alphabetised chips, no lead/"more" rows, no Apple TV+ naming). There is no hub behind this door, so it
-// is its own spoke flag rather than reusing briefOn.
+// CAS-377/CAS-934: the top-menu "My services" row opens the SHARP_STEPS.services spoke bare (title + Back,
+// the toggle, the provider chips) — not the older standalone Preferences modal, which had drifted out of
+// sync (no alphabetised chips, no lead/"more" rows, no Apple TV+ naming). There is no hub behind this door,
+// so it is its own spoke flag rather than reusing briefOn.
 // CAS-475: this is now the ONLY door onto this step — the Briefing's own "Streaming services" row and the
 // stream lane's first-run step both opened the identical account-level screen, which was a second place to
 // set the one thing this menu item already sets. Account > My streaming services is the same screen too.
@@ -16211,15 +16238,21 @@ function renderOnbStep(key){
   // what the fixed chrome exists to remove. A standalone ?step= preview still draws both.
   const chromed = flowChromed(key);
   // A Briefing spoke, or the top-menu's own spoke (CAS-377), is one screen you came into and will come
-  // straight back out of, so it carries no progress rail (there is no sequence to be N-of) and its button
-  // says Done rather than Continue.
+  // straight back out of, so it carries no progress rail (there is no sequence to be N-of) and, since
+  // CAS-934, no footer button at all — Back is the only exit, and every edit already committed to the
+  // draft the moment it was made.
   const spoke = stepSpoke(key);
   // CAS-628: a step's title may be a function (services: "My services" on the top-menu spoke only, since
   // the briefing context draws its own obhd inside body() instead — see the generic mirror above).
   const title = typeof step.title==="function" ? step.title() : step.title;
+  // CAS-934: the back arrow is the only way out of the agent config screen and its spokes (briefOn), and
+  // of the top-menu's own bare spoke (menuStepOn — "My services"), now that both have lost their
+  // Done/Save button. It reads as a primary control there — same prominence the removed button had —
+  // rather than the quiet chrome it stays everywhere else.
+  const backPrimary = briefOn || menuStepOn;
   $("onbStepInner").innerHTML = `
     ${chromed ? "" : `<div class="ostop">
-      ${menuStepOn ? "" : `<button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>`}
+      <button class="osback${backPrimary ? " primary" : ""}" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
       ${key==="briefing"
         ? `<h2 class="osh eahn">${escA(onbFlow.name || (onbFlow.draft||{}).name || "Unnamed")}</h2>
            <button class="eapenc" type="button" onclick="briefGo('name')" aria-label="Rename agent">✏️</button>`
@@ -16230,10 +16263,9 @@ function renderOnbStep(key){
     ${step.body()}
     ${onbTrailHTML(key)}
     ${step.noAgent ? "" : `<div class="osagent"><span class="i">📓</span><p id="onbStepSum">${onbSummary()}</p></div>`}
-    ${(step.hub||chromed) ? "" : `<div class="osfoot">
-      <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${
-        spoke ? `Done${ctaCount(n)}` : stepCtaText(step, n)}</button>
-      ${(step.noSkip||spoke) ? "" : `<button class="osskip" type="button" onclick="onbStepSkip()">${step.skip || "Skip — I'll set this up later"}</button>`}
+    ${(step.hub||chromed||spoke) ? "" : `<div class="osfoot">
+      <button class="oscta" id="onbStepCta" type="button" onclick="onbStepContinue()">${stepCtaText(step, n)}</button>
+      ${step.noSkip ? "" : `<button class="osskip" type="button" onclick="onbStepSkip()">${step.skip || "Skip — I'll set this up later"}</button>`}
     </div>`}`;
   placeStepCount(step, n);
   if(step.wire) step.wire();
@@ -16266,10 +16298,10 @@ function onbRefresh(){
   const n = stepCount(step);
   // CAS-188: exactly one of these exists at a time — the step's own footer button on a ?step= preview, the
   // fixed bar's on the wired flow.
-  // CAS-377: a spoke's button reads Done, same as the initial paint — without this a chip toggle repainted
-  // it back to "Continue" a beat after render, which a Briefing or top-menu spoke must never say.
+  // CAS-934: a spoke (Briefing or top-menu) no longer has a footer button to repaint at all — $("onbStepCta")
+  // resolves to nothing there, so this only ever touches the fixed flow chrome's own Continue.
   const b=$("onbStepCta")||$("flowCta");
-  if(b) b.textContent = stepSpoke(onbStepKey) ? `Done${ctaCount(n)}` : stepCtaText(step, n);
+  if(b) b.textContent = stepCtaText(step, n);
   const top=$("onbStepCount");
   if(top && n!=null) top.innerHTML = stepCountLine(step, n);
   // CAS-198: the third printer, off the same n.
@@ -16341,7 +16373,8 @@ function finishSharpSequence(){
 // on a ?step= preview it still walks that door backwards. Otherwise it just closes the preview.
 window.onbStepBack=()=>{
   if(flowOn) return flowBack();
-  // Inside the Briefing: a spoke drops back onto the hub; the hub itself closes without saving.
+  // Inside the Briefing: a spoke drops back onto the hub; the hub itself closes, committing the draft
+  // (briefClose/briefCommit — CAS-934, there is no separate Save any more).
   if(briefOn) return (onbStepKey==="briefing") ? briefClose() : gotoStep("briefing","back");
   if(onbDoor){
     onbDoorIdx--;
@@ -16370,7 +16403,8 @@ window.onbStepContinue=()=>{
   }
   logEvent("onbstep_continue",{step:onbStepKey, matches:onbFlow.draft?onbCount():null});
   if(flowOn) return flowNext();
-  if(briefOn) return gotoStep("briefing","back");   // a spoke's Done takes the change back to the hub
+  // CAS-934: a Briefing spoke has no footer button any more (Back is the only exit — see onbStepBack), so
+  // this branch is unreached from there. Left for the onbDoor screens below, and for a standalone preview.
   if(onbDoor){
     onbDoorIdx++;
     if(onbDoorIdx>=HUB_DOORS[onbDoor].length) return onbCloseDoor(true);   // through it → confirmed
