@@ -33,7 +33,7 @@ to compare against. Output for the app front-end is written to movies.json.
 """
 
 from __future__ import annotations
-import os, sys, csv, io, json, time, shutil, datetime, subprocess, urllib.parse, urllib.request, urllib.error
+import os, sys, csv, io, re, json, time, shutil, hashlib, base64, datetime, subprocess, urllib.parse, urllib.request, urllib.error
 
 # CAS-771 — GUARDRAIL, DO NOT BREAK: tmdb_id is the join key for six Supabase tables of live user data
 # (user_films, film_picks, film_watch, the cascade film rows, list_films, notifications — all keyed on a
@@ -95,12 +95,15 @@ TEMPLATE_FILE = os.path.join(os.path.dirname(__file__), "app_template.html")
 APP_FILE      = os.path.join(os.path.dirname(__file__), "index.html")
 VERSION_FILE  = os.path.join(os.path.dirname(__file__), "VERSION")        # hand-bumped SemVer (CAS-124)
 VERSION_JSON  = os.path.join(os.path.dirname(__file__), "version.json")   # machine-readable build stamp
+BUILD_INFO_JS = os.path.join(os.path.dirname(__file__), "build-info.js")  # CAS-947: runtime-loadable twin of VERSION_JSON
+HEADERS_FILE  = os.path.join(os.path.dirname(__file__), "_headers")       # Cloudflare Pages response headers (CAS-946)
 IOS_WWW_DIR   = os.path.join(os.path.dirname(__file__), "www")            # Capacitor webDir mirror (CAS-453)
 IOS_WWW_ASSETS = ("index.html", "config.js", "favicon.svg", "favicon.png",
                    "apple-touch-icon.png", "splash-logo.svg",
                    "supabase-js.js",  # CAS-765
                    "capacitor-core.js", "capacitor-push-notifications.js",  # CAS-463
-                   "capacitor-app.js")  # CAS-524
+                   "capacitor-app.js",  # CAS-524
+                   "build-info.js")  # CAS-947
 
 TMDB_KEY      = os.environ.get("TMDB_API_KEY")
 WATCHMODE_KEY = os.environ.get("WATCHMODE_API_KEY")
@@ -1765,13 +1768,81 @@ def build_html(records: list[dict] | None = None, provider_status: dict | None =
     # (e.g. CI's UTC runner vs a contributor's local timezone), which produced a spurious
     # single-day drift that qa.yml's build-check flagged as a real diff.
     html = html.replace("__TODAY__", catalogue_date)
-    html = html.replace("__BUILD_INFO__", json.dumps(info))
     open(APP_FILE, "w", encoding="utf-8").write(html)
     # Machine-readable stamp served at /version.json (same origin as the app).
     with open(VERSION_JSON, "w", encoding="utf-8") as f:
         json.dump(info, f, separators=(",", ":")); f.write("\n")
+    # CAS-947: window.BUILD_INFO's own generated file — kept OUT of the main inline <script> (which the
+    # CSP below hashes) precisely because `builtAt` changes on every build; see the comment on the
+    # <script src="build-info.js"> tag in app_template.html.
+    with open(BUILD_INFO_JS, "w", encoding="utf-8") as f:
+        f.write("window.BUILD_INFO = " + json.dumps(info) + ";\n")
     print(f"stamped v{info['version']} · build {info['build']} · {info['commit']}")
+    write_csp_headers(html)
     _sync_ios_www()
+
+
+def _sha256_b64(text: str) -> str:
+    return base64.b64encode(hashlib.sha256(text.encode("utf-8")).digest()).decode("ascii")
+
+
+def build_csp(html: str) -> str:
+    """CAS-947: a hash-based Content-Security-Policy for the built index.html.
+
+    'unsafe-inline' is worthless against the app's many HTML-injection sinks once any inline script
+    exists at all, so every inline <script>/<style> block is individually hashed instead. Only truly
+    inline blocks are hashed — a <script src=...> tag is already same-origin and covered by 'self'.
+    Origins below were verified against what app_template.html actually loads/fetches/embeds, not
+    guessed: fonts.googleapis.com (stylesheet + preconnect), fonts.gstatic.com (the fonts it serves),
+    image.tmdb.org (posters) and img.youtube.com (trailer thumbnails) for img-src, the Supabase project
+    and cascademovies.com (the native-app catalogue fetch, CATALOGUE_URL) for connect-src, and
+    youtube-nocookie.com (the trailer <iframe>) for frame-src. Plain <a target="_blank"> links (TMDB,
+    Watchmode, JustWatch, wa.me, YouTube watch pages) are navigations, not fetches, so they need no
+    directive. No 'unsafe-inline'/'unsafe-hashes' anywhere — see the ticket comment for the onclick-
+    handler count this policy does not, and cannot, cover."""
+    script_hashes, style_hashes = [], []
+    for m in re.finditer(r"<script(\s[^>]*)?>(.*?)</script>", html, re.DOTALL | re.IGNORECASE):
+        attrs, body = m.group(1) or "", m.group(2)
+        if re.search(r"\bsrc\s*=", attrs, re.IGNORECASE):
+            continue  # external file, same-origin, already covered by script-src 'self'
+        script_hashes.append(_sha256_b64(body))
+    for m in re.finditer(r"<style(\s[^>]*)?>(.*?)</style>", html, re.DOTALL | re.IGNORECASE):
+        style_hashes.append(_sha256_b64(m.group(2)))
+    script_src = " ".join(["'self'"] + [f"'sha256-{h}'" for h in script_hashes])
+    style_src  = " ".join(["'self'"] + [f"'sha256-{h}'" for h in style_hashes] + ["https://fonts.googleapis.com"])
+    directives = [
+        "default-src 'self'",
+        f"script-src {script_src}",
+        f"style-src {style_src}",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data: https://image.tmdb.org https://img.youtube.com",
+        "connect-src 'self' https://ypccfyatejejslzlfrbf.supabase.co https://cascademovies.com",
+        "frame-src https://www.youtube-nocookie.com",
+        "frame-ancestors 'none'",
+        "base-uri 'none'",
+        "object-src 'none'",
+        "form-action 'none'",
+    ]
+    return "; ".join(directives)
+
+
+_CSP_BEGIN = "  # BEGIN GENERATED CSP — poc_pipeline.py --build-html; do not hand-edit"
+_CSP_END   = "  # END GENERATED CSP"
+
+
+def write_csp_headers(html: str) -> None:
+    """Write the CSP into _headers under its existing /* rule, replacing any previously generated
+    block between the marker comments so the hand-written headers above it are never touched."""
+    csp = build_csp(html)
+    generated = f"{_CSP_BEGIN}\n  Content-Security-Policy: {csp}\n{_CSP_END}"
+    current = open(HEADERS_FILE, encoding="utf-8").read() if os.path.exists(HEADERS_FILE) else "/*\n"
+    if _CSP_BEGIN in current and _CSP_END in current:
+        pattern = re.escape(_CSP_BEGIN) + r".*?" + re.escape(_CSP_END)
+        updated = re.sub(pattern, lambda _m: generated, current, count=1, flags=re.DOTALL)
+    else:
+        updated = current.rstrip("\n") + "\n" + generated + "\n"
+    with open(HEADERS_FILE, "w", encoding="utf-8", newline="\n") as f:
+        f.write(updated)
 
 
 def _sync_ios_www():

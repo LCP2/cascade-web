@@ -36,6 +36,11 @@
 <script src="capacitor-core.js"></script>
 <script src="capacitor-push-notifications.js"></script>
 <script src="capacitor-app.js"></script>
+<!-- CAS-947: the build stamp lives in its own generated file, not inlined into the classic script
+     block below, because its `builtAt` timestamp changes on every build — inlining it would make the
+     CSP hash of that block (see _headers) different on every rebuild, which the build-check job would
+     flag as drift. version.json is the machine-readable twin of this; this is the runtime-loadable one. -->
+<script src="build-info.js"></script>
 <style>
   :root{
     /* ---- Cascade brand system (CAS-73 / spec 26640386 §1) ----
@@ -5126,7 +5131,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = __BUILD_INFO__;
+const BUILD_INFO = window.BUILD_INFO || {};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
