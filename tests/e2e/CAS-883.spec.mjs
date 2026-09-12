@@ -18,6 +18,7 @@ async function primeFakeAccount(page){
   await page.evaluate(() => {
     window.__inviteInserts = [];
     window.__inviteShouldFail = false;
+    window.__friendInserts = [];
     window.__shareCalls = [];
     window.__shareShouldAbort = false;
     navigator.share = (opts) => {
@@ -29,15 +30,34 @@ async function primeFakeAccount(page){
     window.CascadeAuth.status = "signed-in";
     window.CascadeAuth.user = { id: "cas883-user", email: "cas883@example.com" };
     window.CascadeAuth.session = { user: { id: "cas883-user" } };
-    window.CascadeAuth.client = { from: (table) => ({
-      insert: (rows) => {
-        if(table !== "invites") return Promise.resolve({ data: [], error: null });
-        if(window.__inviteShouldFail) return Promise.resolve({ data: null, error: { message: "insert failed" } });
-        window.__inviteInserts.push(...rows);
-        return Promise.resolve({ data: rows, error: null });
-      },
-    }) };
+    window.CascadeAuth.client = { from: (table) => {
+      // CAS-928: the Invite sheet's recipient field is now the shared friend picker — sending "with a
+      // name" means adding+selecting a friend first, which round-trips through friends.insert().select().
+      if(table === "friends") return { insert: (rows) => ({ select: () => ({ single: () => {
+        const row = { id: 900 + window.__friendInserts.length + 1, ...rows[0] };
+        window.__friendInserts.push(row);
+        return Promise.resolve({ data: row, error: null });
+      } }) }) };
+      return {
+        insert: (rows) => {
+          if(table !== "invites") return Promise.resolve({ data: [], error: null });
+          if(window.__inviteShouldFail) return Promise.resolve({ data: null, error: { message: "insert failed" } });
+          window.__inviteInserts.push(...rows);
+          return Promise.resolve({ data: rows, error: null });
+        },
+      };
+    } };
   });
+}
+
+/** Opens the Invite sheet's "+ Add someone new" form, adds a friend, and returns to the picker with
+ * them selected — CAS-928's replacement for typing a name into the old free-text field. */
+async function addAndSelectFriend(page, name, email){
+  await page.locator('#filmInviteBody button:has-text("Add someone new")').click();
+  await page.locator("#ffName").fill(name);
+  await page.locator("#ffEmail").fill(email);
+  await page.locator('#filmInviteBody button:has-text("Add and select")').click();
+  await page.waitForFunction(() => window.__friendInserts.length > 0, null, { timeout: 5000 });
 }
 
 /** Signed in (faked, see primeFakeAccount), landed on the listing with at least one visible card. */
@@ -91,7 +111,7 @@ test("CAS-883 AC4c/4d: sending with a name inserts once and shares the token's o
   await signedInListing(page);
   const id = await expandFirstCard(page);
   await page.locator(`#card-${id} .exsharebtn`).click();
-  await page.locator("#filmInviteName").fill("Sam");
+  await addAndSelectFriend(page, "Sam", "sam@example.com");
   await page.locator("#filmInviteSend").click();
   await page.waitForFunction(() => window.__inviteInserts.length > 0, null, { timeout: 5000 });
 
@@ -130,7 +150,7 @@ test("CAS-883 AC4f: a rejected insert never calls navigator.share and shows an e
   await page.evaluate(() => { window.__inviteShouldFail = true; });
   const id = await expandFirstCard(page);
   await page.locator(`#card-${id} .exsharebtn`).click();
-  await page.locator("#filmInviteName").fill("Sam");
+  await addAndSelectFriend(page, "Sam", "sam@example.com");
   await page.locator("#filmInviteSend").click();
 
   await expect(page.locator("#filmInviteErr")).toBeVisible();
