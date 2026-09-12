@@ -169,6 +169,47 @@ def is_new_moment(moment: str) -> bool:
     return moment in ("new_to_agent", "newly_qualifies")
 
 
+# CAS-924: the app's own LISTING_ORDER/STATUS_LABEL (app_template.html ~L4073-4089), mirrored here
+# so the digest's outer grouping can never disagree with Moving's. opening_week is kept in the order
+# for the same reason it's in the app's — but poc_pipeline.AVAILABILITY_TIERS (the only tiers a
+# monitor-side movie record's `status` can ever hold) has no such member, so that section can never
+# actually populate; it stays listed rather than silently diverging from the app's constant.
+LISTING_ORDER = ["upcoming", "opening_week", "in_cinema", "pvod", "rental", "included_streaming"]
+
+STATUS_LABEL = {
+    "upcoming": "Upcoming",
+    "opening_week": "In Cinema · Opening week",
+    "in_cinema": "In Cinema",
+    "pvod": "Premium/Rent (~$30)",
+    "rental": "Rent (~$7)",
+    "included_streaming": "Stream (included)",
+}
+
+
+def _primary_status(movie):
+    """A movie's primary status for grouping — the furthest-along AVAILABILITY_TIERS member its
+    status set holds (poc_pipeline.tier_rank), the same "furthest travelled" reduction the app's
+    own primaryStatus makes. None if the movie carries none of the named tiers."""
+    tier = tier_rank((movie or {}).get("status") or [])
+    return AVAILABILITY_TIERS[tier] if tier >= 0 else None
+
+
+def _status_sections(hits):
+    """CAS-924: the MAJOR grouping — one outer section per film status, in LISTING_ORDER, each
+    holding the hits for that status (still to be split into per-agent sections by _agent_sections).
+    A hit whose movie carries no resolvable status is never dropped — it lands in a final, unlabelled
+    section instead, the outer-grouping equivalent of _agent_sections' own untinted trailing section.
+
+    Returns a list of {"key", "hits"} — "key" is a LISTING_ORDER member, or None for that fallback."""
+    by_status = {}
+    for h in hits:
+        by_status.setdefault(_primary_status(h.transition.movie), []).append(h)
+    sections = [{"key": k, "hits": by_status[k]} for k in LISTING_ORDER if k in by_status]
+    if None in by_status:
+        sections.append({"key": None, "hits": by_status[None]})
+    return sections
+
+
 def _agent_sections(hits):
     """Group hits into per-agent sections (CAS-849), ordered by each cascade's own `rank` — the
     `_rank_key()` tuple matching.py already computed and carried onto the Hit, not re-derived here.
@@ -228,6 +269,14 @@ def _row_html(hit, esc, site_url) -> str:
         f'<div style="font-size:14px;color:#4C7DFF;font-weight:600;margin-top:2px;">{esc(_header_line(t))}</div>'
         + (f'<div style="font-size:13px;color:#6b7280;margin-top:2px;">{esc(note)}</div>' if note else "")
         + '</a></td></tr>'
+    )
+
+
+def _status_heading_html(key, count, esc) -> str:
+    return (
+        '<tr><td style="padding:16px 0 6px;">'
+        '<span style="font-size:12px;font-weight:800;letter-spacing:0.4px;text-transform:uppercase;'
+        f'color:#8b95a5;">{esc(STATUS_LABEL[key])} ({count})</span></td></tr>'
     )
 
 
@@ -367,15 +416,16 @@ def _replies_block_html(replies, esc) -> str:
 def render_digest(hits, site_url: str = None, replies=None) -> dict:
     """Return {'subject', 'html', 'text'} for one user's consolidated digest.
 
-    CAS-849: grouped into per-agent sections in rank order (see _agent_sections), each row tagged
-    New or Changed (see is_new_moment) — the same shape and classification rule as the Moving
-    screen (app_template.html), so the two never disagree about what's new and what's changed.
+    CAS-924: grouped into outer status sections in LISTING_ORDER (see _status_sections), each
+    holding its own per-agent sections in rank order (see _agent_sections) — the same two levels
+    of grouping as the Moving screen (app_template.html), so the two never disagree about where a
+    film sits. CAS-849: each row tagged New or Changed (see is_new_moment).
 
     hits: list of monitor.matching.Hit (all for the same user)."""
     site_url = site_url or os.environ.get(SITE_URL_ENV) or DEFAULT_SITE_URL
     replies = list(replies or [])
     subject = digest_subject(hits, replies)
-    sections = _agent_sections(hits)
+    status_sections = _status_sections(hits)
     esc = _html.escape
 
     # ---- plain-text part ----
@@ -385,27 +435,34 @@ def render_digest(hits, site_url: str = None, replies=None) -> dict:
     text_lines = []
     if replies:
         text_lines.extend(_replies_block_text(replies))
-    if sections:
+    if status_sections:
         text_lines.append("Your agents have been watching. Here's today.")
         text_lines.append("")
-        for section in sections:
-            text_lines.append(section["name"])
-            for h in section["hits"]:
-                text_lines.extend(_row_text(h, site_url))
-            text_lines.append("")
+        for status_section in status_sections:
+            if status_section["key"] is not None:
+                text_lines.append(f"{STATUS_LABEL[status_section['key']]} ({len(status_section['hits'])})")
+                text_lines.append("")
+            for section in _agent_sections(status_section["hits"]):
+                text_lines.append(section["name"])
+                for h in section["hits"]:
+                    text_lines.extend(_row_text(h, site_url))
+                text_lines.append("")
     text_lines += [f"Open Cascade: {site_url}",
                    "You're getting this because Cascade is watching films for you."]
     text = "\n".join(text_lines)
 
     # ---- HTML part (inline styles; email-client safe — no <style>, no class=, no display:flex) ----
     section_html = []
-    for section in sections:
-        section_html.append(_section_heading_html(section, esc))
-        section_html.extend(_row_html(h, esc, site_url) for h in section["hits"])
+    for status_section in status_sections:
+        if status_section["key"] is not None:
+            section_html.append(_status_heading_html(status_section["key"], len(status_section["hits"]), esc))
+        for section in _agent_sections(status_section["hits"]):
+            section_html.append(_section_heading_html(section, esc))
+            section_html.extend(_row_html(h, esc, site_url) for h in section["hits"])
     body_rows = ""
     if replies:
         body_rows += _replies_block_html(replies, esc)
-    if sections:
+    if status_sections:
         body_rows += (
             '<tr><td style="padding-top:14px;">'
             '<div style="font-size:15px;color:#141A2A;font-weight:600;">'
