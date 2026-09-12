@@ -1,0 +1,29 @@
+name: RLS regression
+
+# CAS-949: `npm run test:rls` (tests/rls/matrix.mjs) probes the LIVE Supabase project as the
+# anonymous role — the entire authorisation layer, since Cascade has no server of its own. Kept
+# out of qa.yml on purpose (that gate stays a small, stable, offline smoke test); this one needs
+# the network and the live project. No secret is used: the anon key is already public in
+# config.js. The probes are all ones RLS is supposed to reject, so a passing run writes nothing.
+on:
+  schedule:
+    - cron: "0 21 * * *"        # 21:00 UTC ≈ 7-8am Sydney, an hour behind daily.yml's refresh.
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: RLS matrix (anon role, live project)
+        run: npm run test:rls
