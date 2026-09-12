@@ -5107,7 +5107,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1112, "commit": "39481a3", "builtAt": "2026-09-12T05:52:41Z", "providers": {"TMDB": "unconfigured", "Watchmode": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1113, "commit": "bffd9e0", "builtAt": "2026-09-12T06:18:10Z", "providers": {"TMDB": "unconfigured", "Watchmode": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -5282,15 +5282,16 @@ if(sessionStorage.getItem("cascade_diag") === "1") setTimeout(openDiagPanel, 300
 const LOG_KEY="cascade_log", LOG_MAX=400;
 function loadLog(){ try{ const a=JSON.parse(localStorage.getItem(LOG_KEY)||"[]"); return Array.isArray(a)?a:[]; }catch(e){ return []; } }
 let usageLog = loadLog();
-const SESSION = Date.now().toString(36).slice(-5);   // groups a session's events; not an identity
+const SESSION = cascadeNewId();   // groups a session's events; not an identity
 
 // CLIENT_KEY: a per-device id, not an account — reused as-is for the contact form's rate limit (CAS-836).
 const CLIENT_KEY_STORE="cascade_client_key";
-let CLIENT_KEY;
+let CLIENT_KEY, RETURNING;
 try{
   CLIENT_KEY = localStorage.getItem(CLIENT_KEY_STORE);
+  RETURNING = !!CLIENT_KEY;
   if(!CLIENT_KEY){ CLIENT_KEY = cascadeNewId(); localStorage.setItem(CLIENT_KEY_STORE, CLIENT_KEY); }
-}catch(e){ CLIENT_KEY = CLIENT_KEY || cascadeNewId(); }
+}catch(e){ RETURNING = false; CLIENT_KEY = CLIENT_KEY || cascadeNewId(); }
 
 const USAGE_QUEUE_MAX=200;
 let usageQueue=[], usageFlushTimer=null;
@@ -17658,6 +17659,15 @@ render();
 if(!seenFound) markFoundSeen();   // first run: seed it, and say nothing — there is no "last time" to compare to
 // A shared link takes precedence over first-run onboarding — they arrived to look at a specific radar.
 const openedShared = openSharedFromURL();
+// CAS-940: one app_open per page load, ahead of the onboarding routing decision below — plat/ver/ret/onb/acq
+// are the boot-time facts that decide that routing, so this is the natural place to record them.
+{
+  let acq=null;
+  try{ const v=localStorage.getItem("cascade_acq"); if(v!=null) acq=JSON.parse(v); }catch(e){}
+  const plat = (typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform()) ? "ios"
+    : (matchMedia("(display-mode: standalone)").matches) ? "pwa" : "web";
+  logEvent("app_open", { plat, ver:(BUILD_INFO||{}).version || null, ret:RETURNING, onb:onboardingSeen(), acq });
+}
 // First run only — the "seen" flag is set by finishing OR skipping, so returning visitors go straight to the app.
 // ?setup replays it on demand: the flag stays set, and the rest of your state is untouched — this is a way to
 // SEE the first run again, not to fake being a new user (that's ?reset, which really does clear the slate).
@@ -17672,6 +17682,33 @@ else if(!openedShared && (forceSetup || !onboardingSeen())) showSplash();
 else if(!openedShared){
   const landingTab = pickLandingWatchTab();
   if(landingTab !== watchTab){ watchTab = landingTab; render(); }
+}
+// CAS-940: first-touch acquisition capture. First touch wins — cascade_acq is written once and never
+// overwritten — but the utm_* params are stripped from the URL on every load that carries them, even a
+// later one that doesn't get to write anything, same reasoning as the inv strip below.
+{
+  const acqParams = new URLSearchParams(location.search);
+  try{
+    if(localStorage.getItem("cascade_acq")==null){
+      const src=acqParams.get("utm_source"), med=acqParams.get("utm_medium"), cmp=acqParams.get("utm_campaign"),
+            con=acqParams.get("utm_content"), trm=acqParams.get("utm_term"), ref=document.referrer;
+      const acq={};
+      if(src) acq.src=src;
+      if(med) acq.med=med;
+      if(cmp) acq.cmp=cmp;
+      if(con) acq.con=con;
+      if(trm) acq.trm=trm;
+      if(ref) acq.ref=ref;
+      acq.landed=new Date().toISOString();
+      localStorage.setItem("cascade_acq", JSON.stringify(acq));
+    }
+  }catch(e){}
+  const utmKeys=["utm_source","utm_medium","utm_campaign","utm_content","utm_term"];
+  if(utmKeys.some(k=>acqParams.has(k))){
+    utmKeys.forEach(k=>acqParams.delete(k));
+    const acqQs = acqParams.toString();
+    history.replaceState(null, "", location.pathname + (acqQs ? `?${acqQs}` : "") + location.hash);
+  }
 }
 // CAS-837: an invite link's arrival, recorded before the #/film/<id> handling below opens the film page —
 // and before closeFilmPage() (~line 7083) could ever rebuild the URL from location.pathname+location.search,
