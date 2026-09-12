@@ -350,8 +350,8 @@ const RELEASED_GROUPS = ["opening_week", "in_cinema", "pvod", "rental", "include
 // under "cascade" — discriminates nothing there.
 const SORT_TABLE = [
   // key, released-section [hi,lo] fields, upcoming-section [first,second] behaviour
-  { key: "imdb", field: "imdb_rating", hi: 9, lo: 1, upcomingByScore: false },
-  { key: "rt", field: "rt_critic", hi: 90, lo: 10, upcomingByScore: false },
+  { key: "imdb", field: "wm_user_rating", hi: 9, lo: 1, upcomingByScore: false },
+  { key: "rt", field: "wm_critic_score", hi: 90, lo: 10, upcomingByScore: false },
   { key: "gross", field: "worldwide_gross", hi: 900000000, lo: 1000, upcomingByScore: false },
   { key: "popularity", field: "popularity", hi: 900, lo: 1, upcomingByScore: false },
 ];
@@ -359,7 +359,7 @@ test("sort keys: imdb/rt/gross/popularity each reach every section (CAS-699 AC5)
   for(const { key, field, hi, lo, upcomingByScore } of SORT_TABLE){
     for(const g of RELEASED_GROUPS){
       const base = { status: [g], cinema_date: "2026-07-01",
-        imdb_rating: 5, imdb_votes: E.IMDB_MIN_VOTES, metacritic: 50, rt_critic: 50,
+        wm_user_rating: 5, wm_critic_score: 50,
         worldwide_gross: 100, popularity: 100 };
       const films = [
         { ...base, title: "Hi", [field]: hi },
@@ -373,7 +373,7 @@ test("sort keys: imdb/rt/gross/popularity each reach every section (CAS-699 AC5)
     // Soon always carries the LOW field value and Later the HIGH one, so the two possible readings —
     // "ranked by this key" (Later first, it has the high value) and "fell back to the release timeline"
     // (Soon first, it releases first) — disagree and the fixture actually discriminates between them.
-    const upBase = { status: ["upcoming"], imdb_rating: 5, imdb_votes: E.IMDB_MIN_VOTES, metacritic: 50, rt_critic: 50,
+    const upBase = { status: ["upcoming"], wm_user_rating: 5, wm_critic_score: 50,
       worldwide_gross: 100, popularity: 100 };
     const upFilms = [
       { ...upBase, title: "Soon", cinema_date: "2026-09-01", [field]: lo },
@@ -386,39 +386,36 @@ test("sort keys: imdb/rt/gross/popularity each reach every section (CAS-699 AC5)
   }
 });
 
-// "cascade" on its own (CAS-702): every RELEASED_GROUPS member except in_cinema scores off qScore, exactly
-// like the table above, so metacritic still discriminates Hi from Lo there. in_cinema and upcoming are
-// pre-release for scoring purposes (CAS-695) — cascadeScore routes them to cinemaScore's buzz percentile
-// instead (CAS-722: popularity is now that score's only term), so popularity is what has to discriminate
-// Hi from Lo for those two.
+// "cascade" on its own (CAS-702): every RELEASED_GROUPS member except in_cinema scores off wmQScore, exactly
+// like the table above, so wm_critic_score still discriminates Hi from Lo there. in_cinema and upcoming are
+// pre-release for scoring purposes (CAS-695) — cascadeScore routes them to wmCinemaScore's buzz percentile
+// instead, so wm_popularity_percentile is what has to discriminate Hi from Lo for those two.
 const QSCORE_GROUPS = RELEASED_GROUPS.filter(g => g !== "in_cinema");
 test("sort keys: cascade reaches every section, buzz-driven pre-release and score-driven once released (CAS-699 AC5, CAS-702)", () => {
   for(const g of QSCORE_GROUPS){
     const base = { status: [g], cinema_date: "2026-07-01",
-      imdb_rating: 5, imdb_votes: E.IMDB_MIN_VOTES, metacritic: 50, rt_critic: 50,
+      wm_user_rating: 5, wm_critic_score: 50,
       worldwide_gross: 100, popularity: 100 };
     const films = [
-      { ...base, title: "Hi", metacritic: 90 },
-      { ...base, title: "Lo", metacritic: 10 },
+      { ...base, title: "Hi", wm_critic_score: 90 },
+      { ...base, title: "Lo", wm_critic_score: 10 },
     ];
     const seq = [...E.listingOrder(films, "cascade", { kind: "cinema" }, true)].map(m => m.title);
     assert.deepEqual(seq, ["Hi", "Lo"], `cascade in ${g}: expected the higher critic score first — got ${seq.join(", ")}`);
   }
-  // CAS-722 dropped budget out of the cinema score entirely — buzzPctlOf(m) (popularity's own percentile
-  // rank in the same cohort BUZZ_CUTS reads) is the whole basis now, the same field byPopularity uses as its
-  // own eventual byRatingDesc tie-break fallback. Popularity values are picked from measured BUZZ_POP_VALS
-  // percentile bands, comfortably apart (0.1 / 10 ≈ 19th / 98th), and the cinemaScore check below confirms
-  // the two really do differ, so Hi and Lo cannot land in the same band or pass on the fallback by accident.
-  // Cinema dates deliberately DISAGREE with the expected order too, so a stray date-based fallback can't
-  // pass by accident either.
+  // CAS-919: the pre-release/blended branches read wmCinemaScore — wmBuzzPctlOf's rank of
+  // wm_popularity_percentile against the released cohort, not raw TMDB popularity. Opposite-end percentile
+  // values (0 and 100) are used so Hi and Lo cannot land in the same band or tie regardless of how the real
+  // catalogue's cohort shifts day to day. Cinema dates deliberately DISAGREE with the expected order too, so
+  // a stray date-based fallback can't pass by accident either.
   for(const g of ["in_cinema", "upcoming"]){
     const films = [
-      { title: "Hi", status: [g], cinema_date: "2026-11-01", popularity: 10,
-        rt_critic: null, imdb_rating: null, imdb_votes: 0 },
-      { title: "Lo", status: [g], cinema_date: "2026-07-01", popularity: 0.1,
-        rt_critic: null, imdb_rating: null, imdb_votes: 0 },
+      { title: "Hi", status: [g], cinema_date: "2026-11-01", wm_popularity_percentile: 100,
+        wm_user_rating: null, wm_critic_score: null },
+      { title: "Lo", status: [g], cinema_date: "2026-07-01", wm_popularity_percentile: 0,
+        wm_user_rating: null, wm_critic_score: null },
     ];
-    assert.ok(E.cinemaScore(films[0]) > E.cinemaScore(films[1]),
+    assert.ok(E.wmCinemaScore(films[0]) > E.wmCinemaScore(films[1]),
       `cascade in ${g}: test setup expected Hi's buzz percentile to exceed Lo's`);
     const seq = [...E.listingOrder(films, "cascade", { kind: "cinema" }, true)].map(m => m.title);
     assert.deepEqual(seq, ["Hi", "Lo"], `cascade in ${g}: expected the higher buzz percentile first, not release order — got ${seq.join(", ")}`);

@@ -1298,8 +1298,9 @@ test("K5: every listing group's item count equals the rows that belong to it, an
 
 test("K7: a refresh that changes a film's score but not its window leaves admission held — admission_score is not re-thresholded", () => withAgentState(() => {
   const film = E.MOVIES.find(x => !E.watched.has(x.tmdb_id) && !E.blocked.has(x.tmdb_id)
-    && E.imdbReliable(x) && ["pvod", "rental", "included_streaming"].includes(E.primaryStatus(x)));
-  if(!film) throw new Error("no unwatched, IMDb-reliable released film in the harness catalogue — this test would prove nothing");
+    && typeof x.wm_user_rating === "number" && x.wm_user_rating > 0
+    && ["pvod", "rental", "included_streaming"].includes(E.primaryStatus(x)));
+  if(!film) throw new Error("no unwatched, Watchmode-rated released film in the harness catalogue — this test would prove nothing");
   const id = film.tmdb_id;
   const c = broadCascade("cas791-k7", 0);
   E.cascades.push(c);
@@ -1310,9 +1311,9 @@ test("K7: a refresh that changes a film's score but not its window leaves admiss
   E.recomputeFound();
   assert.ok(E.notify[id].cascadeIds.includes(c.id), "setup: the film must be admitted before the refresh");
 
-  const savedImdb = film.imdb_rating;
+  const savedRating = film.wm_user_rating;
   try{
-    film.imdb_rating = (film.imdb_rating == null || film.imdb_rating < 5) ? 9.9 : 0.1;   // force a real score move
+    film.wm_user_rating = (film.wm_user_rating == null || film.wm_user_rating < 5) ? 9.9 : 0.1;   // force a real score move
     E.invalidateComputeCaches();
     assert.notEqual(E.cascadeScore(film), originalScore, "setup: this edit must actually move cascadeScore(film)");
 
@@ -1322,7 +1323,7 @@ test("K7: a refresh that changes a film's score but not its window leaves admiss
     assert.ok(row, "K7: the admission must hold across the refresh");
     assert.equal(row.admission_score, originalScore, "K7: admission_score must not be re-thresholded off the film's new score");
   } finally {
-    film.imdb_rating = savedImdb;
+    film.wm_user_rating = savedRating;
     E.invalidateComputeCaches();
   }
 }));
