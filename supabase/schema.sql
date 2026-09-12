@@ -680,6 +680,13 @@ create index if not exists invite_replies_token_idx on public.invite_replies (to
 -- authenticated policies below, and never the same column as `seen_at`.
 alter table public.invite_replies add column if not exists digested_at timestamptz;
 
+-- CAS-967: the same-day reply-arrived email's own "already told the sender" marker — a third,
+-- independent stamp alongside `seen_at` (the app's own read marker, CAS-886) and `digested_at`
+-- (the next-morning digest's own marker, CAS-887). None of the three may set another.
+alter table public.invite_replies add column if not exists notified_at timestamptz;
+create index if not exists invite_replies_unnotified_idx
+  on public.invite_replies (created_at) where notified_at is null;
+
 alter table public.invite_replies enable row level security;
 
 drop policy if exists invite_replies_insert on public.invite_replies;
