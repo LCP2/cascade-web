@@ -330,13 +330,29 @@
     font-size:14px;font-weight:600;padding:12px 14px;cursor:pointer}
   .navitem:last-child{border-bottom:0}
   .navitem:hover,.navitem:focus-visible{background:var(--panel2)}
-  /* CAS-886: Invites' own unread count, next to its label in the dropdown, plus the small dot the hamburger
-     icon itself carries whenever that count is non-zero — --accent (violet) rather than --rt/--green, so it
-     reads as its own thing and not a reuse of Moving's badge or the account-error dot. */
+  /* CAS-886: Invites' own unread count, next to its label in the dropdown. CAS-968 gave the hamburger
+     icon's own bare dot a matching count badge instead (.navcountbadge, below) — a dot read as decoration,
+     not news, once a real reply landed — and put a soft violet glow on both so they visibly agree
+     (item 4 of that ticket). --accent (violet) rather than --rt/--green, so it reads as its own thing and
+     not a reuse of Moving's badge or the account-error dot. */
   .navitem-badge{background:var(--accent);color:#fff;font-size:11px;font-weight:800;min-width:18px;
-    height:18px;border-radius:10px;display:grid;place-items:center;padding:0 5px;flex:0 0 auto}
-  .navdot{position:absolute;top:-3px;right:-3px;width:10px;height:10px;border-radius:50%;
-    background:var(--accent);border:2px solid var(--bg);display:none}
+    height:18px;border-radius:10px;display:grid;place-items:center;padding:0 5px;flex:0 0 auto;
+    box-shadow:0 0 10px 2px rgba(124,92,255,.55)}
+  /* CAS-968: the hamburger's own unread count — same shape/colour as .navitem-badge above, positioned over
+     the button's top-right corner and ringed in the page background so it reads against the button (the
+     image's spec), rather than the plain 10px dot this replaces. */
+  .navcountbadge{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;
+    border-radius:10px;background:var(--accent);color:#fff;font-size:11px;font-weight:800;display:none;
+    place-items:center;border:2px solid var(--bg);box-shadow:0 0 10px 2px rgba(124,92,255,.55)}
+  /* CAS-968: the gentle "attention" loop while anything is unread — ~1.6s, well under the 3Hz flash limit,
+     stops the instant the count reaches zero (JS drops the .pulse class) rather than running the animation
+     down to nothing. Reduced-motion keeps the badge/pill bright and glowing, just not moving. */
+  @keyframes cas968pulse{0%,100%{box-shadow:0 0 10px 2px rgba(124,92,255,.55);transform:scale(1)}
+    50%{box-shadow:0 0 18px 6px rgba(124,92,255,.9);transform:scale(1.12)}}
+  .navcountbadge.pulse,.navitem-badge.pulse,.pill.invnew.pulse{animation:cas968pulse 1.6s ease-in-out infinite}
+  @media (prefers-reduced-motion:reduce){
+    .navcountbadge.pulse,.navitem-badge.pulse,.pill.invnew.pulse{animation:none}
+  }
   .search{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
     border-radius:10px;padding:11px 40px 11px 12px;font-size:16px}
   .search::placeholder{color:var(--faint)}
@@ -1125,6 +1141,10 @@
   .pill.invyes{background:rgba(72,199,142,.16);border-color:var(--green);color:#a7eccb}
   .pill.invno{background:var(--panel2);border-color:var(--line);color:var(--dim)}
   .pill.invwait{background:transparent;border-color:var(--line);border-style:dashed;color:var(--faint)}
+  /* CAS-968: the New pill an unread reply's row carries in place of the old .invdot — filled violet, same
+     glow as the hamburger/menu badges above so all three read as one signal. */
+  .pill.invnew{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:800;
+    box-shadow:0 0 10px 2px rgba(124,92,255,.55)}
 
   .wtw-toggle .chev{transition:transform .18s}
   .wtw-toggle.open .chev{transform:rotate(180deg)}
@@ -1273,6 +1293,10 @@
      inventing a new one. ---- */
   .invrow{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--line)}
   .invrow:last-child{border-bottom:0}
+  /* CAS-968: an unread reply's own row gets a tinted card treatment (background + full violet border) in
+     place of the small .invdot it used to carry — a read row (CAS-886's own look) is untouched. */
+  .invrow.unread{background:rgba(124,92,255,.10);border:1px solid var(--accent);border-radius:12px;
+    padding:12px 10px;margin:2px 0 8px}
   .invposter{width:44px;height:64px;border-radius:8px;background:var(--panel2) center/cover no-repeat;
     flex:0 0 auto}
   .invmain{flex:1 1 auto;min-width:0}
@@ -3393,7 +3417,7 @@
         <div class="navmenu-wrap">
           <div class="iconbtn" id="navMenuBtn" title="Menu" role="button" tabindex="0" aria-haspopup="true"
                aria-expanded="false" aria-controls="navMenu" aria-label="Menu" onclick="toggleNavMenu(event)">☰
-            <span class="navdot" id="navMenuDot" style="display:none" aria-hidden="true"></span>
+            <span class="navcountbadge" id="navMenuDot" style="display:none" aria-hidden="true"></span>
           </div>
           <div class="navmenu" id="navMenu" role="menu" aria-label="Menu">
             <!-- CAS-886: Invites leads the menu — the top-of-list slot Notifications held before CAS-636
@@ -7114,12 +7138,19 @@ function invitesUnseenCount(){
     return n + (r && !r.seen_at ? 1 : 0);
   }, 0);
 }
-function updateInvitesBadge(){
+// CAS-968: the exact text every unread badge (hamburger corner + dropdown Invites item) shows — "" (no
+// badge) once the count reaches zero, never a lingering "0".
+function invitesBadgeText(){
   const n=invitesUnseenCount();
+  return n>0 ? String(n) : "";
+}
+function updateInvitesBadge(){
+  const text=invitesBadgeText();
+  const unread=!!text;
   const b=$("invitesNavBadge");
-  if(b){ if(n){ b.style.display="grid"; b.textContent=n; } else b.style.display="none"; }
+  if(b){ b.style.display=unread?"grid":"none"; b.textContent=text; b.classList.toggle("pulse",unread); }
   const d=$("navMenuDot");
-  if(d) d.style.display = n ? "block" : "none";
+  if(d){ d.style.display=unread?"grid":"none"; d.textContent=text; d.classList.toggle("pulse",unread); }
 }
 
 // ---- CAS-943: Metrics nav entry gate — analytics_admins probed by loadMetricsAdmin() (fireAccountFanout,
@@ -7157,13 +7188,13 @@ function inviteRowHTML(inv, state){
     : `<span class="pill invno">No</span>`;
   const when = state==="waiting" ? `sent ${inviteAgeText(inv.created_at)}` : `replied ${inviteAgeText(reply.created_at)}`;
   const unread = state==="new";
-  return `<div class="invrow">
+  return `<div class="invrow${unread?" unread":""}">
     ${poster}
     <div class="invmain">
       <div class="invname">${name}</div>
       <div class="invsub">${esc(inv.film_title||"")} · ${when}</div>
     </div>
-    <div class="invpills">${pill}${unread?'<span class="invdot" aria-hidden="true"></span>':""}</div>
+    <div class="invpills">${pill}${unread?'<span class="pill invnew pulse">New</span>':""}</div>
   </div>`;
 }
 // New replies (unread) / Earlier (read) / Waiting (no reply yet) — newest first within each group. A group
