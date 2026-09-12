@@ -756,6 +756,12 @@
   .filminvthumb{width:52px;height:78px;object-fit:cover;border-radius:8px;flex:none;background:var(--panel)}
   .filminvtitle{font-size:15.5px;font-weight:700;color:var(--ink)}
   .filminvwin{margin-top:2px}
+  /* CAS-930: the sent state — replaces the picker body once every recipient's invite has gone in. */
+  .filminvsent{text-align:center;padding:52px 8px 16px}
+  .filminvsenttick{width:72px;height:72px;border-radius:50%;background:rgba(72,199,142,.16);
+    border:1px solid rgba(72,199,142,.5);display:grid;place-items:center;margin:0 auto 22px;color:var(--green)}
+  .filminvsenttick svg{width:30px;height:30px}
+  .filminvsenttitle{font-size:19px;font-weight:800;margin:0 0 10px}
   /* CAS-304: back to a left-to-right row (reverting CAS-277's stack, per Lee's 0.8.3 review). CAS-348: the
      row is exactly three controls now — Notify, Agent, Watched (CAS-349 retaxonomized the first and third,
      CAS-427 relabelled the first again; the DOM classes stay `.ctl.notify`/`.ctl.casc`/`.ctl.watch` — see
@@ -4100,6 +4106,9 @@ const ICON = {
   mail:     svgIcon(`<rect x="3.4" y="5.6" width="17.2" height="12.8" rx="2"/><path d="m4.2 6.4 7.8 6 7.8-6"/>`),
   whatsapp: svgIcon(`<path d="M12 3.6a8.2 8.2 0 0 0-7 12.4L3.6 20.4l4.5-1.4A8.2 8.2 0 1 0 12 3.6z"/><path d="M9 9.4c.2 2.6 2.9 5.3 5.5 5.5.9.1 1-.6.7-1.1l-1-1.5c-.2-.3-.6-.4-.9-.2l-.7.4c-.5-.3-1.4-1.1-1.8-1.8l.4-.7c.2-.3.1-.7-.2-.9l-1.5-1c-.5-.3-1.2-.2-1.1.7z"/>`),
   sms:      svgIcon(`<path d="M4.2 5.6h15.6v10.4H9.4l-4 3.2v-3.2H4.2z"/><path d="M8.4 9.6h.01M12 9.6h.01M15.6 9.6h.01"/>`),
+  // CAS-930: a bare tick, no circle — the Invite sheet's own sent state draws its own circle round it
+  // (.filminvsenttick) rather than doubling up with ICON.watched's own built-in one.
+  tick:     svgIcon(`<path d="M4.4 12.6l4.6 4.6L19.6 6.4"/>`),
 };
 // Journey order — Upcoming leads (a film reaches cinemas before any home window).
 // primaryStatus() takes the LAST window a film holds, so "upcoming" sitting first is safe:
@@ -6388,10 +6397,9 @@ const inviteUrlFor = (token, m) => `${location.origin}${location.pathname}?inv=$
 // Supersedes CAS-883's single free-text name field (the Invite sheet, below) with a real remembered
 // person: a friend is a name plus an email and/or a mobile (one of the two is enough), saved automatically
 // the first time they're picked. Recommend (CAS-884) keeps its own free-text fields for now — its single
-// required-email shape needs its own follow-on decision (CAS-930/931) about which selected friend's email
-// to use, not a guess made here. No sending is wired here beyond what Invite already did (below): still
-// exactly one invites row and one share/clipboard call, just naming its recipient(s) from a selection
-// instead of a typed string.
+// required-email shape needs its own follow-on decision (CAS-931) about which selected friend's email
+// to use, not a guess made here. CAS-930 is what actually wires the picker's selections into a real
+// multi-recipient send — see sendFilmInvite below.
 let friends = [];
 let friendsReady = true;   // flips false for the span of fireAccountFanout's loadFriends() call, same
                            // shape as invitesReady — a guest has nothing to wait on, hence true.
@@ -6499,7 +6507,14 @@ window.submitFriendForm = async(ctx, idStr)=>{
       const {data,error}=await c.from("friends").insert([{owner_id:owner, name, email:email||null, mobile:mobile||null}]).select().single();
       if(error) throw error;
       friends.push(data);
-      if(ctx==="invite") inviteFriendSel.set(String(data.id), {channel:"email"});
+      if(ctx==="invite"){
+        // Same cap as toggleFriendSelect — adding a new friend here is still "selecting" them.
+        if(inviteFriendSel.size>=INVITE_MAX_RECIPIENTS){
+          inviteCapMsg=`Choose up to ${INVITE_MAX_RECIPIENTS} people at a time.`;
+        } else {
+          inviteFriendSel.set(String(data.id), {channel: data.email ? "email" : "whatsapp"});
+        }
+      }
     }
   }catch(e){
     errEl.textContent="Couldn't save that friend — try again in a moment.";
@@ -6565,9 +6580,28 @@ let filmInviteId = null;
 // convention renderContactForm()/renderFilmInviteSheet() already followed for the old free-text field.
 let inviteFriendSel = new Map();
 let inviteFriendAdding = false;
+// CAS-930: a single send's own cap (20) and its sent-state result, both reset fresh on every open —
+// see openFilmInvite below.
+const INVITE_MAX_RECIPIENTS = 20;
+let inviteCapMsg = null;
+let inviteSentInfo = null;   // {count, line} once a send has actually gone through; null otherwise
 window.toggleFriendSelect=(idStr)=>{
-  if(inviteFriendSel.has(idStr)) inviteFriendSel.delete(idStr);
-  else inviteFriendSel.set(idStr, {channel:"email"});
+  if(inviteFriendSel.has(idStr)){
+    inviteFriendSel.delete(idStr);
+    inviteCapMsg=null;
+  } else {
+    if(inviteFriendSel.size>=INVITE_MAX_RECIPIENTS){
+      inviteCapMsg=`Choose up to ${INVITE_MAX_RECIPIENTS} people at a time.`;
+      renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId));
+      return;
+    }
+    // Default to whichever channel this friend actually has — email if they do, otherwise whatever
+    // mobile-only channel their row offers — never a channel with no detail behind it.
+    const f=friends.find(x=>String(x.id)===idStr);
+    const chans=friendChannels(f);
+    inviteFriendSel.set(idStr, {channel: chans.email ? "email" : (chans.whatsapp ? "whatsapp" : "sms")});
+    inviteCapMsg=null;
+  }
   renderFilmInviteSheet(MOVIES.find(x=>x.tmdb_id===filmInviteId));
 };
 // Tapping WhatsApp/SMS only changes that recipient's channel — it does not itself select or unselect them.
@@ -6583,17 +6617,80 @@ function joinNames(list){
   if(list.length===2) return list.join(" and ");
   return list.slice(0,-1).join(", ")+" and "+list[list.length-1];
 }
+// CAS-930: strip everything but digits, drop a leading trunk 0, and prefix the country code — an
+// Australian mobile typed locally (0412 345 678) or already international (+61412345678) both land on
+// the same wa.me/sms digit string. Defaults to 61 (Australia) when no country code is present, since
+// that is the only market this app runs in today.
+function normalizeAuMobile(raw){
+  const d=(raw||"").replace(/\D/g,"");
+  if(d.startsWith("61")) return d;
+  if(d.startsWith("0")) return "61"+d.slice(1);
+  return "61"+d;
+}
+// One recipient's device-app link at a time — several window.open/location calls fired together would
+// get blocked by the browser's popup guard or interleave unpredictably. The next one only opens once
+// the person has actually come back to this tab (visibilitychange to "visible"), never on a timer. If
+// the open itself is blocked, this is the one place the old share-sheet's clipboard fallback survives.
+function openNextInviteChannel(queue, m){
+  if(!queue.length) return;
+  const next=queue[0], rest=queue.slice(1);
+  const text=`${shareTextFor(m)}\n${inviteUrlFor(next.token, m)}`;
+  const digits=normalizeAuMobile(next.friend.mobile);
+  const url = next.channel==="whatsapp"
+    ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}`
+    : `sms:${digits}?&body=${encodeURIComponent(text)}`;
+  const win=window.open(url, "_blank");
+  if(!win && navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>toast(`Link copied — paste it to ${next.friend.name}`)).catch(()=>{});
+  }
+  if(!rest.length) return;
+  const advance=()=>{
+    if(document.visibilityState!=="visible") return;
+    document.removeEventListener("visibilitychange", advance);
+    openNextInviteChannel(rest, m);
+  };
+  document.addEventListener("visibilitychange", advance);
+}
+// Truthful, channel-aware wording for the sent state — an emailed recipient has actually been sent
+// something; a WhatsApp/SMS recipient has only had their own app opened, which this must not overstate
+// as done on Cascade's behalf.
+function inviteSentLineFor(sent){
+  const names=joinNames(sent.map(s=>s.friend.name));
+  const plural=sent.length!==1, verb=plural?"have":"has", noun=plural?"answers":"answer";
+  const allEmail=sent.every(s=>s.channel==="email");
+  if(allEmail) return `${names} ${verb} been emailed. You will see their ${noun} under Invites.`;
+  const anyEmail=sent.some(s=>s.channel==="email");
+  if(anyEmail) return `${names} ${verb} been invited — some by email, some in your messaging app. `+
+    `You will see their ${noun} under Invites.`;
+  return `${names} ${verb} been invited — finish sending in your messaging app. `+
+    `You will see their ${noun} under Invites.`;
+}
+function filmInviteSentHTML(info){
+  return `<div class="filminvsent">
+    <div class="filminvsenttick" aria-hidden="true">${ICON.tick}</div>
+    <div class="filminvsenttitle">Invited ${info.count} ${info.count===1?"person":"people"}</div>
+    <div class="pnote" style="text-align:center">${esc(info.line)}</div>
+  </div>`;
+}
 // Rebuilt fresh every open (mirrors renderContactForm()'s own convention) so a prior invite's selection
 // or error never bleeds into the next one.
 function renderFilmInviteSheet(m){
   if(!m) return;
   const h3=$("filmInvite").querySelector("h3");
+  const closeBtn=$("filmInviteClose");
+  if(inviteSentInfo){
+    if(h3) h3.textContent="Invite to watch";
+    if(closeBtn) closeBtn.textContent="Done";
+    $("filmInviteBody").innerHTML = filmInviteSentHTML(inviteSentInfo);
+    return;
+  }
+  if(closeBtn) closeBtn.textContent="Cancel";
   if(inviteFriendAdding){
     if(h3) h3.textContent="Add someone";
     $("filmInviteBody").innerHTML = friendFormHTML(null,"invite");
     return;
   }
-  if(h3) h3.textContent="Invite someone";
+  if(h3) h3.textContent="Invite to watch";
   const poster = m.poster
     ? `<img class="filminvthumb" src="https://image.tmdb.org/t/p/w92${esc(m.poster)}" alt="">`
     : `<div class="filminvthumb"></div>`;
@@ -6601,7 +6698,11 @@ function renderFilmInviteSheet(m){
   const rows = list.length
     ? list.map(f=>friendRowHTML(f,{selectable:true})).join("")
     : `<div class="fempty">No friends yet — add someone below.</div>`;
-  const selCount=inviteFriendSel.size;
+  const selIds=[...inviteFriendSel.keys()];
+  const selCount=selIds.length;
+  const selFriend=selCount===1 ? friends.find(f=>String(f.id)===selIds[0]) : null;
+  const ctaLabel = selCount===0 ? "Invite"
+    : (selFriend ? `Invite ${selFriend.name}` : `Invite ${selCount} people`);
   $("filmInviteBody").innerHTML = `
     <div class="filminvrow">${poster}<div><div class="filminvtitle">${esc(m.title)}</div>
       <div class="filminvwin">${windowsLineHTML(m)}</div></div></div>
@@ -6610,70 +6711,81 @@ function renderFilmInviteSheet(m){
       oninput="filterFriendRows('filmInvitePicker',this.value)">
     <button type="button" class="fnewbtn" onclick="openFriendAddForm()">+ Add someone new</button>
     <div id="filmInvitePicker">${rows}</div>
-    <div class="pnote" id="filmInviteErr" style="color:#ffb9a6" hidden></div>
-    <button type="button" class="filminvcta" id="filmInviteSend" onclick="sendFilmInvite()">${selCount?`Invite ${selCount} ${selCount===1?"person":"people"}`:"Create invite &amp; share…"}</button>
-    <div class="pnote" style="text-align:center">Opens your share sheet — send it however you like.</div>`;
+    <div class="pnote" id="filmInviteErr" style="color:#ffb9a6" ${inviteCapMsg?"":"hidden"}>${esc(inviteCapMsg||"")}</div>
+    <button type="button" class="filminvcta" id="filmInviteSend" onclick="sendFilmInvite()" ${selCount?"":"disabled"}>${esc(ctaLabel)}</button>
+    <div class="pnote" style="text-align:center">Email sends straight from Cascade. WhatsApp or SMS opens your messaging app to finish sending.</div>`;
 }
 window.openFilmInvite = id => {
   const m=MOVIES.find(x=>x.tmdb_id===id); if(!m) return;
   filmInviteId = id;
   inviteFriendSel = new Map();
   inviteFriendAdding = false;
+  inviteCapMsg = null;
+  inviteSentInfo = null;
   renderFilmInviteSheet(m);
   openModal($("filmInvite"));
   logEvent("invite_opened",{id});
 };
 // While the add-someone form is open, Cancel goes back to the picker list, not out of the sheet entirely —
-// mirrors the design image's own frame 2, whose Cancel returns to frame 1.
+// mirrors the design image's own frame 2, whose Cancel returns to frame 1. Once sent, this same button
+// reads Done (set by renderFilmInviteSheet above) but still just closes — there is nowhere left to go back to.
 $("filmInviteClose").onclick=()=>{
   if(inviteFriendAdding){ closeFriendAddForm(); return; }
   closeModal($("filmInvite"));
 };
-// Mints the token and inserts the invites row FIRST, and only calls the platform share sheet once that
-// insert has actually succeeded — a link whose invite does not exist is a dead end for the recipient.
-// CAS-928: to_name is now the joined names of whoever is ticked in the picker (or null, same as an
-// unnamed invite always was) instead of one typed field — everything past that line is unchanged from
-// CAS-883: still exactly one invites row, still exactly one share/clipboard call.
+// One invites row per selected recipient — never a single row for several people (CAS-930's own "do
+// not invent a multi-recipient invite row"). For each recipient, in order: insert their invites row,
+// stamp last_used_at on the friend, then — for an email recipient only — queue an invite_emails row for
+// the new outgoing-email workflow step to actually send. A WhatsApp/SMS recipient's own device app is
+// opened afterwards instead, one at a time (openNextInviteChannel), never a share-sheet hand-off.
 window.sendFilmInvite = async()=>{
   const m=MOVIES.find(x=>x.tmdb_id===filmInviteId); if(!m) return;
   const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
   const uid=(a && a.session && a.session.user) ? a.session.user.id : null;
   const errEl=$("filmInviteErr"), btn=$("filmInviteSend");
-  const selectedNames=[...inviteFriendSel.keys()]
-    .map(id=>{ const f=friends.find(x=>String(x.id)===id); return f?f.name:null; })
-    .filter(Boolean);
-  const to_name = selectedNames.length ? joinNames(selectedNames) : null;
+  const recipients=[...inviteFriendSel.entries()]
+    .map(([id,sel])=>({friend:friends.find(x=>String(x.id)===id), channel:(sel&&sel.channel)||"email"}))
+    .filter(r=>r.friend);
   errEl.hidden=true;
+  if(!recipients.length) return;
+  if(recipients.length>INVITE_MAX_RECIPIENTS){
+    errEl.textContent=`Choose up to ${INVITE_MAX_RECIPIENTS} people.`;
+    errEl.hidden=false;
+    return;
+  }
   if(!c || !uid){ errEl.textContent="Couldn't create that invite — try again in a moment."; errEl.hidden=false; return; }
   btn.disabled=true;
-  const token=genInviteToken();
   const sender_name=(a.user && a.user.email) ? a.user.email.split("@")[0] : null;
+  const sent=[];
   try{
-    const {error}=await c.from("invites").insert([{
-      token, sender_id:uid, sender_name, tmdb_id:m.tmdb_id, film_title:m.title, to_name,
-    }]);
-    if(error) throw error;
-    logEvent("invite_created",{named:!!to_name});
+    for(const r of recipients){
+      const token=genInviteToken();
+      const {error}=await c.from("invites").insert([{
+        token, sender_id:uid, sender_name, tmdb_id:m.tmdb_id, film_title:m.title, to_name:r.friend.name,
+      }]);
+      if(error) throw error;
+      const usedAt=new Date().toISOString();
+      try{ await c.from("friends").update({last_used_at:usedAt}).eq("id", r.friend.id); r.friend.last_used_at=usedAt; }
+      catch(e){}
+      if(r.channel==="email"){
+        const {error:emErr}=await c.from("invite_emails").insert([{
+          token, to_email:r.friend.email, to_name:r.friend.name,
+        }]);
+        if(emErr) throw emErr;
+      }
+      sent.push({friend:r.friend, channel:r.channel, token});
+      logEvent("invite_created",{n:recipients.length, channel:r.channel});
+    }
   }catch(e){
     btn.disabled=false;
     errEl.textContent="Couldn't create that invite — try again in a moment.";
     errEl.hidden=false;
     return;
   }
-  const url=inviteUrlFor(token, m), text=shareTextFor(m);
-  closeModal($("filmInvite"));
-  if(navigator.share){
-    try{ await navigator.share({title:m.title, text, url}); logEvent("film_shared",{how:"sheet"}); return; }
-    // A cancelled share sheet is not a failure and must not fall through to copying something the person
-    // just decided not to send.
-    catch(e){ if(e && e.name==="AbortError") return; }
-  }
-  const payload=`${text}\n${url}`;
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    try{ await navigator.clipboard.writeText(payload); logEvent("film_shared",{how:"clipboard"}); toast("Copied"); return; }
-    catch(e){}
-  }
-  toast("Couldn't copy");
+  inviteFriendSel=new Map();
+  inviteSentInfo={count:sent.length, line:inviteSentLineFor(sent)};
+  renderFilmInviteSheet(m);
+  openNextInviteChannel(sent.filter(s=>s.channel!=="email"), m);
 };
 // ---- CAS-437: the public film page a share link opens ---------------------------------------------------
 // What a person who has never opened Cascade is entitled to see: the film, honestly — the same facts the
