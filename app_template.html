@@ -14618,8 +14618,23 @@ const SHARP_STEPS = {
   // listed in FLOWS: the cutover (wiring these in, retiring the old sequence) is CAS-911. Every screen here
   // writes onbFlow.answersV2 and persists through onbAnswersV2Save() — onbFlow.answers/onbAnswersDefault()/
   // ONB_ANSWERS_KEY (the live sequence's own) are untouched.
+  // CAS-953 Change 2: the first screen of the whole sequence — separate from the public "What is Cascade?"
+  // page behind #splashAbout, which this must not touch or reuse.
+  v2_about: {
+    noAgent: true, noSkip: true,
+    progress: 0,
+    body(){
+      return `<div class="obwrap">
+  <h2 class="obhd">Cascade finds your movies for you.</h2>
+  <p class="obintrotext">Cascade works by creating specialist search agents. Each one hunts the whole catalogue for movies that match a set of criteria, and tells you the moment one lands somewhere you can watch it.</p>
+  <p class="obintrotext">Setting up your membership means answering a few questions about what you like — that is how we brief your agents so they serve you well.</p>
+</div>`;
+    },
+    wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
+  },
   v2_intro: {
     noAgent: true, noSkip: true,
+    progress: 7,
     body(){
       return `<div class="obwrap">
   <h2 class="obhd">First, we'll build you a <span class="obhi">Massive Movies</span> agent.</h2>
@@ -14631,14 +14646,15 @@ const SHARP_STEPS = {
   },
   v2_cinema: {
     noAgent: true, noSkip: true,
-    title: "Do you ever go to the cinema?",
+    progress: 13,
     blocked: ans => ans.cinema==null,
     body(){
       const ans = onbFlow.answersV2 || onbAnswersV2Default();
-      return `<div class="obopts" id="obCinemaOpts">${obOptHTML([
-        ["yes","Yes","Often enough to plan around it"],
-        ["no","No","I wait for it to come home"],
-      ], ans.cinema)}</div>`;
+      return `<div class="obwrap"><h2 class="obhd">Do you ever go to the cinema?</h2></div>
+        <div class="obopts" id="obCinemaOpts">${obOptHTML([
+          ["yes","Yes","Often enough to plan around it"],
+          ["no","No"],
+        ], ans.cinema)}</div>`;
     },
     wire(){
       onbFlow.answersV2=onbAnswersV2Load();
@@ -14651,14 +14667,15 @@ const SHARP_STEPS = {
   },
   v2_rent: {
     noAgent: true, noSkip: true,
-    title: "Do you ever rent movies?",
+    progress: 20,
     blocked: ans => ans.rent==null,
     body(){
       const ans = onbFlow.answersV2 || onbAnswersV2Default();
-      return `<div class="obopts" id="obRentOpts">${obOptHTML([
-        ["yes","Yes","Happy to pay for the right film"],
-        ["no","No","Streaming only"],
-      ], ans.rent)}</div>`;
+      return `<div class="obwrap"><h2 class="obhd">Do you ever rent movies?</h2></div>
+        <div class="obopts" id="obRentOpts">${obOptHTML([
+          ["yes","Yes","Happy to pay for the right film"],
+          ["no","No","Streaming only"],
+        ], ans.rent)}</div>`;
     },
     wire(){
       onbFlow.answersV2=onbAnswersV2Load();
@@ -14671,6 +14688,7 @@ const SHARP_STEPS = {
   },
   v2_handoff: {
     noAgent: true, noSkip: true,
+    progress: 33,
     body(){
       return `<div class="obwrap">
   <h2 class="obhd">… next, an agent to find your <span class="obhi">personal favourite movies</span>.</h2>
@@ -14681,9 +14699,10 @@ const SHARP_STEPS = {
   },
   v2_styles: {
     noAgent: true, noSkip: true,
-    title: "What are your favourite styles of movie?",
+    progress: 40,
     body(){
-      return `<p class="ossub">Pick as many as you like.</p><div class="chips" id="obStylesChips"></div>`;
+      return `<div class="obwrap"><h2 class="obhd">What are your favourite styles of movie?</h2></div>
+        <p class="ossub">Pick as many as you like.</p><div class="chips" id="obStylesChips"></div>`;
     },
     wire(){
       onbFlow.answersV2=onbAnswersV2Load();
@@ -14709,7 +14728,7 @@ const SHARP_STEPS = {
   // (the dial state, the ladder, the readout) is theirs, unchanged.
   v2_budget: {
     noAgent: true, noSkip: true,
-    title: "Do you go for big Budget Movies?",
+    progress: 47,
     body(){
       onbFlow.answersV2 = onbFlow.answersV2 || onbAnswersV2Load();
       onbFlow.scaleVal = onbFlow.answersV2.selScale || 0;
@@ -14722,7 +14741,8 @@ const SHARP_STEPS = {
         </div>
         <div class="vlabels stag">${marks.map((mk,i)=>`<button type="button" class="vsnap ${mk.lit?"on":""} ${i%2?"lo":""}" data-snap="${mk.snap}"
           style="left:${mk.pos}%;transform:${mk.pos<=0?"translateX(0)":mk.pos>=100?"translateX(-100%)":"translateX(-50%)"}">${esc(mk.label)}${mk.sub?`<small>${esc(mk.sub)}</small>`:""}</button>`).join("")}</div>`;
-      return `<div class="osdial reqcard">
+      return `<div class="obwrap"><h2 class="obhd">Do you go for big Budget Movies?</h2></div>
+      <div class="osdial reqcard">
         <div class="osdh"><span class="em">🎬</span><span class="dl">Movie Budget</span></div>
         <p class="oscap">How big the film is — budget or worldwide gross.</p>
         <p class="reqval" id="reqBudgetVal">${esc(cont.read(v))}</p>
@@ -14745,9 +14765,10 @@ const SHARP_STEPS = {
   },
   v2_ages: {
     noAgent: true, noSkip: true,
-    title: "What age ratings should it bring you?",
+    progress: 53,
     body(){
-      return `<div class="chips" id="obAgesChips"></div>`;
+      return `<div class="obwrap"><h2 class="obhd">What age ratings should it bring you?</h2></div>
+        <div class="chips" id="obAgesChips"></div>`;
     },
     wire(){
       onbFlow.answersV2=onbAnswersV2Load();
@@ -14768,11 +14789,12 @@ const SHARP_STEPS = {
   },
   v2_partner: {
     noAgent: true, noSkip: true,
-    title: "Do you watch movies with a partner?",
+    progress: 67,
     blocked: ans => ans.partner==null || (ans.partner==="yes" && ans.partnerDiff==null),
     body(){
       const ans = onbFlow.answersV2 || onbAnswersV2Default();
-      let html = `<div class="obopts" id="obPartnerOpts">${obOptHTML([["yes","Yes"],["no","No"]], ans.partner)}</div>`;
+      let html = `<div class="obwrap"><h2 class="obhd">Do you watch movies with a partner?</h2></div>
+        <div class="obopts" id="obPartnerOpts">${obOptHTML([["yes","Yes"],["no","No"]], ans.partner)}</div>`;
       if(ans.partner==="yes"){
         html += `<p class="obq" style="margin-top:20px">Different styles with them?</p>
           <div class="obopts" id="obPartnerDiffOpts">${obOptHTML([
@@ -14814,11 +14836,12 @@ const SHARP_STEPS = {
   },
   v2_kids: {
     noAgent: true, noSkip: true,
-    title: "Do you watch movies with children?",
+    progress: 80,
     blocked: ans => ans.kids==null,
     body(){
       const ans = onbFlow.answersV2 || onbAnswersV2Default();
-      let html = `<div class="obopts" id="obKidsOpts">${obOptHTML([["yes","Yes"],["no","No"]], ans.kids)}</div>`;
+      let html = `<div class="obwrap"><h2 class="obhd">Do you watch movies with children?</h2></div>
+        <div class="obopts" id="obKidsOpts">${obOptHTML([["yes","Yes"],["no","No"]], ans.kids)}</div>`;
       if(ans.kids==="yes"){
         html += `<p class="obq" style="margin-top:20px">Which age ratings are OK?</p>
           <p class="oboptsub" style="margin:-4px 0 9px">This applies to the Family agent only.</p>
@@ -14854,9 +14877,10 @@ const SHARP_STEPS = {
   // writes onbFlow.answers and menuStepOn — the v1 briefing plumbing this ticket must not touch).
   v2_services: {
     noAgent: true, noSkip: true,
-    title: "Which streaming services do you have?",
+    progress: 93,
     body(){
-      return `<p class="ossub">Your agents only offer you what you can actually press play on.</p>
+      return `<div class="obwrap"><h2 class="obhd">Which streaming services do you have?</h2></div>
+        <p class="ossub">Your agents only offer you what you can actually press play on.</p>
         <div class="svcsec"><div class="svcsech">My Rental Services</div>
           <div class="chips" id="obSvcStores"></div></div>
         <div class="svcsec"><div class="svcsech">My Streaming Services</div>
@@ -14923,35 +14947,43 @@ const SHARP_STEPS = {
   // Not listed in FLOWS: the cutover (wiring these in, retiring the old sequence) is CAS-911.
   v2_massive: {
     noAgent: true, noSkip: true,
+    progress: 27,
     body(){
       const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_massive");
-      return c ? onbAgentRevealHTML(c, 1, "Your first agent") : "";
+      return c ? onbAgentRevealHTML(c, 1, "Your first agent",
+        "This agent will find the landmark, must-see movies each year. There won't be many of them (maybe 2-3 per month) but these are the ones everyone will talk about.") : "";
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
   v2_favs: {
     noAgent: true, noSkip: true,
+    progress: 60,
     body(){
       const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_favs");
-      return c ? onbAgentRevealHTML(c, 2, "Your second agent") : "";
+      return c ? onbAgentRevealHTML(c, 2, "Your second agent",
+        "This agent will find movies in the styles that you like, at a minimum score that still gives you choice.") : "";
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
   v2_date: {
     noAgent: true, noSkip: true,
+    progress: 73,
     skip: ans => ans.partner !== "yes",
     body(){
       const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_date");
-      return c ? onbAgentRevealHTML(c, 3, "One for the two of you") : "";
+      return c ? onbAgentRevealHTML(c, 3, "One for the two of you",
+        "This agent finds movies you want to watch with your partner!") : "";
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
   v2_family: {
     noAgent: true, noSkip: true,
+    progress: 87,
     skip: ans => ans.kids !== "yes",
     body(){
       const c=buildOnbAgentsV2(onbFlow.answersV2).find(a=>a.template==="onb_family");
-      return c ? onbAgentRevealHTML(c, 4, "And one for the whole house") : "";
+      return c ? onbAgentRevealHTML(c, 4, "And one for the whole house",
+        "And of course, let's not forget family viewing night!") : "";
     },
     wire(){ onbFlow.answersV2=onbAnswersV2Load(); },
   },
@@ -14965,11 +14997,15 @@ const SHARP_STEPS = {
   // v2_done re-renders the committed roster instead of building and pushing a second one.
   v2_done: {
     noAgent: true, noSkip: true,
+    progress: 100,
     cta: "Continue",
     body(){
       const agents = onbFlow.workingAgents || buildOnbAgentsV2(onbFlow.answersV2);
       const n = agents.length;
-      return `<div class="obwrap">
+      // CAS-953 Change 5: this step is no longer chromed (Change 1), so the shared .obwrap top padding that
+      // CAS-914 raised specifically to clear the fixed progress rail on a chromed step is dead weight here —
+      // tightened so the first agent card clears without scrolling at 390x844.
+      return `<div class="obwrap" style="padding:4px 0 8px">
   <h2 class="obhd">${n} agent${n===1?"":"s"}, set to work.</h2>
   <p class="obintrotext">Each one is watching the whole catalogue for you, every day.</p>
 </div>${agents.map((c,i)=>onbAgentRevealHTML(c, i+1, "")).join("")}`;
@@ -15062,10 +15098,10 @@ let onbStepKey=null;
 // (v2_cinema itself is the only lane-flavoured question now). The old briefing1/briefing2/together/
 // services/working/report sequence is retired below along with the v1-only helpers it alone called.
 const FLOWS = {
-  cinema: ["v2_intro","v2_cinema","v2_rent","v2_massive","v2_handoff",
+  cinema: ["v2_about","v2_intro","v2_cinema","v2_rent","v2_massive","v2_handoff",
            "v2_styles","v2_budget","v2_ages","v2_favs",
            "v2_partner","v2_date","v2_kids","v2_family","v2_services","v2_done"],
-  stream: ["v2_intro","v2_cinema","v2_rent","v2_massive","v2_handoff",
+  stream: ["v2_about","v2_intro","v2_cinema","v2_rent","v2_massive","v2_handoff",
            "v2_styles","v2_budget","v2_ages","v2_favs",
            "v2_partner","v2_date","v2_kids","v2_family","v2_services","v2_done"],
 };
@@ -15114,7 +15150,11 @@ let flowNewAgent=false;
 // etc.) still has a defined value, with nothing left that lets a user set it.
 let flowKind="cinema";
 let flowSlideT=null;
-const flowChromed = key => flowOn && flowCounted().includes(key);
+// CAS-953 Change 1: no v2 step is chromed any more — every screen draws its own .ostop/.osprog/.osfoot
+// instead of the fixed #stepHdr/.stepnav chrome, so the arrow, heading, progress rail and CTA are all one
+// in-body layout on every screen. #stepHdr/.stepnav are not deleted — the Briefing/Edit Agent spokes still
+// exist as a concept, they just never light this on (flowOn is false for them regardless).
+const flowChromed = key => false;
 // CAS-377/CAS-934: the top-menu "My services" row opens the same My-services step a Briefing row does — one
 // screen you came into and go straight back out of, no hub behind it — so it is a "spoke" exactly like a
 // Briefing row's (no progress rail, no footer button at all — just the primary-styled back arrow). menuStepOn
@@ -15132,7 +15172,7 @@ function flowStart(startKey){
   onbV2CommittedClear();       // CAS-951: a genuinely new run may commit again
   $("onbStep").classList.add("open"); lockBodyScroll(true);
   logEvent("flow_start");
-  gotoStep(startKey||"v2_intro","none");   // CAS-911: the first-run entry is the v2 sequence now
+  gotoStep(startKey||"v2_about","none");   // CAS-953: the first-run entry is v2_about, ahead of v2_intro
 }
 function flowStop(){
   flowOn=false; flowNewAgent=false; briefOn=false; menuStepOn=false;
@@ -15547,7 +15587,7 @@ function onbNotifySum(c){
 // edit yet. A row whose value would read Any is omitted entirely, so onboarding never teaches a new user
 // to read past an empty row; the AWARDS row is never rendered here (every generated agent carries
 // selAwards: 0). N (watchCount) is always live, never a stored or constant figure.
-function onbAgentRevealHTML(c, rank, eyebrow){
+function onbAgentRevealHTML(c, rank, eyebrow, note){
   const rows=[];
   const styles=agentStylesSum(c);
   if(styles!=="Any style") rows.push(`<span class="agsrow"><span class="agslbl">STYLES</span><span class="agsval">${esc(styles)}</span></span>`);
@@ -15577,6 +15617,7 @@ function onbAgentRevealHTML(c, rank, eyebrow){
           <span class="agmetrics"><span class="agmrow a"><span class="agmstat">watching for you from today</span><span class="agmstat total"><b>${n}</b> movies</span></span><span class="agmrow b">${rowB}</span></span>
         </span>
       </div>
+      ${note ? `<p class="obintrotext">${esc(note)}</p>` : ""}
     </div>`;
 }
 // ================= CAS-636: Moving — the alert feed made visible =================
@@ -16390,11 +16431,14 @@ function endSlide(){
 // The fixed chrome. It is painted from the step key alone, so there is exactly one place that decides
 // whether the meter is showing and what it says.
 function paintFlowChrome(key, step, n){
-  const counted = flowCounted();
-  const i = flowOn ? counted.indexOf(key) : -1, on = i>=0;
+  // CAS-953: `on` now reads flowChromed() directly, so it is the one place that decides whether a step is
+  // chromed, same as everywhere else that asks.
+  const on = flowChromed(key);
   $("stepHdr").hidden=!on; $("stepNav").hidden=!on;
   $("onbStep").classList.toggle("chromed", on);
   if(!on) return;
+  const counted = flowCounted();
+  const i = counted.indexOf(key);
   $("stepFill").style.width = Math.round((i+1)/counted.length*100)+"%";
   $("stepProg").setAttribute("aria-valuenow", String(i+1));
   $("stepLbl").textContent = "";
@@ -16438,7 +16482,7 @@ function renderOnbStep(key){
         ? `<h2 class="osh eahn">${escA(onbFlow.name || (onbFlow.draft||{}).name || "Unnamed")}</h2>
            <button class="eapenc" type="button" onclick="briefGo('name')" aria-label="Rename agent">✏️</button>`
         : title ? `<h2 class="osh${step.titleClass ? " "+step.titleClass : ""}">${escA(title)}</h2>` : ""}
-      ${(last&&!spoke)?`<span class="oslast">LAST ONE</span>`:""}
+      ${(last&&!spoke&&!flowOn)?`<span class="oslast">LAST ONE</span>`:""}
     </div>
     ${(prog==null||spoke) ? "" : `<div class="osprog"><i style="width:${prog}%"></i></div>`}`}
     ${step.body()}
