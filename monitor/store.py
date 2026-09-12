@@ -33,6 +33,9 @@ Interface:
   fetch_unsent_invite_emails() -> [{id, token, to_email, to_name, created_at, sender_name,
                                      film_title, tmdb_id}, sent_at is null]                   # CAS-930
   mark_invite_emails_sent(ids, sent_at) -> int                                                # CAS-930
+  fetch_unnotified_invite_replies() -> [{id, token, sender_id, to_name, film_title, tmdb_id,
+                                          answer, created_at}, notified_at is null]           # CAS-967
+  mark_invite_replies_notified(ids, notified_at) -> int                                       # CAS-967
   delete_old_usage_events(days=180) -> int              # CAS-942: usage_events retention purge
 """
 from __future__ import annotations
@@ -210,6 +213,23 @@ class InMemoryStore:
         for r in self._invite_emails:
             if r.get("id") in ids:
                 r["sent_at"] = sent_at
+                n += 1
+        return n
+
+    def fetch_unnotified_invite_replies(self) -> list:
+        """CAS-967: like fetch_unsent_invite_emails above, no join here — a fixture/test row is
+        trusted to already carry the sender_id/film/to_name context flattened in."""
+        return [dict(r) for r in self._invite_replies if not r.get("notified_at")]
+
+    def mark_invite_replies_notified(self, ids, notified_at) -> int:
+        """Stamps `notified_at` only, never `seen_at` or `digested_at` — item 4 (CAS-967): the
+        same-day email, the app's own read marker, and the next-morning digest are three
+        independent things and none of them may set another."""
+        ids = set(ids)
+        n = 0
+        for r in self._invite_replies:
+            if r.get("id") in ids:
+                r["notified_at"] = notified_at
                 n += 1
         return n
 
@@ -448,6 +468,51 @@ class SupabaseStore:
         data = json.dumps({"sent_at": sent_at}).encode("utf-8")
         req = urllib.request.Request(
             self._base + f"/invite_emails?id=in.({quoted})",
+            data=data,
+            headers=self._headers({"Prefer": "return=representation"}),
+            method="PATCH",
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            body = resp.read().decode("utf-8")
+        try:
+            return len(json.loads(body))
+        except (json.JSONDecodeError, TypeError):
+            return 0
+
+    def fetch_unnotified_invite_replies(self) -> list:
+        """Every invite_replies row not yet emailed to its sender the same day (CAS-967), each
+        flattened with the sender/film context from its own invite via the FK resource-embed
+        (invite_replies.token -> invites.token) — same convention as
+        fetch_undigested_invite_replies above. Read with service_role, since the authenticated-only
+        RLS policy scopes a normal client to invites it owns, never every user's. Never reads or
+        writes `seen_at`/`digested_at`; those columns belong to the app and the next-morning digest
+        respectively."""
+        rows = self._get(
+            "/invite_replies?notified_at=is.null&order=created_at.asc&select="
+            "id,token,answer,created_at,invites(sender_id,to_name,film_title,tmdb_id)"
+        )
+        out = []
+        for r in rows:
+            inv = r.get("invites") or {}
+            out.append({
+                "id": r.get("id"), "token": r.get("token"), "answer": r.get("answer"),
+                "created_at": r.get("created_at"), "sender_id": inv.get("sender_id"),
+                "to_name": inv.get("to_name"), "film_title": inv.get("film_title"),
+                "tmdb_id": inv.get("tmdb_id"),
+            })
+        return out
+
+    def mark_invite_replies_notified(self, ids, notified_at) -> int:
+        """Stamps `notified_at` on exactly these rows, after the email covering them has actually
+        sent (send-before-ledger, same ordering as mark_invite_replies_digested above). Never
+        touches `seen_at` or `digested_at` — independent columns, item 4 (CAS-967)."""
+        ids = list(ids)
+        if not ids:
+            return 0
+        quoted = ",".join(str(i) for i in ids)
+        data = json.dumps({"notified_at": notified_at}).encode("utf-8")
+        req = urllib.request.Request(
+            self._base + f"/invite_replies?id=in.({quoted})",
             data=data,
             headers=self._headers({"Prefer": "return=representation"}),
             method="PATCH",

@@ -10,6 +10,10 @@ name: Outgoing email (invites + recommendations)
 # public.invite_emails rows, one email per row via monitor/invitemail.py. Same file, same schedule,
 # same secret guard, because both are "outgoing email queues drained hourly" and the ticket
 # authorises editing only this one workflow file.
+#
+# CAS-967: a third step tells an invite's SENDER the same day a recipient replies — unnotified
+# public.invite_replies rows, one email per sender via monitor/invitereply.py. Same file, same
+# schedule, same secret guard, for the same reason as CAS-930's step above.
 
 on:
   schedule:
@@ -61,4 +65,21 @@ jobs:
           else
             echo "Supabase/Resend secrets absent — running --dry-run (no sends, no writes)."
             python -m monitor.invitemail --dry-run
+          fi
+
+      - name: Run the Invite reply notifier
+        # CAS-967: tells an invite's sender the same day a recipient replies — same
+        # secrets-present/--dry-run split as the two steps above.
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$RESEND_API_KEY" ]; then
+            echo "Secrets present — live run (will notify senders + stamp notified_at)."
+            python -m monitor.invitereply
+          else
+            echo "Supabase/Resend secrets absent — running --dry-run (no sends, no writes)."
+            python -m monitor.invitereply --dry-run
           fi
