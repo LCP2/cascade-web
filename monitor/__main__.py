@@ -141,6 +141,14 @@ def main(argv=None) -> int:
                   "skipping match/email (diff only).")
             return 0
 
+    # CAS-942: 180-day retention for usage_events, run once per day alongside everything else this
+    # job already does with the service_role credential. Skipped on --dry-run, same as every other
+    # write in this file — a demo run must not delete real data.
+    if not args.dry_run:
+        purged = _store_call(store, "delete_old_usage_events", 0)
+        if purged:
+            print(f"[monitor] usage_events retention: purged {purged} row(s) older than 180 days.")
+
     # CAS-506: active cascades are back, but scoped to feed ONLY the `announced` moment below — see
     # the comment further down for why.
     cascades = store.fetch_active_cascades()
