@@ -12030,16 +12030,16 @@ function onbBigWindowV2(ans){
 }
 // Personal Favs' marker ladder for a trial score `s` at a given BIG window — every rung before BIG
 // (ladder order) is Never, BIG itself is `s`, every rung after steps down by 6 per rung (floored at
-// 60). Shared by the recipe's own build and onbFavsSolve, which has to build this exact shape at
-// each candidate score to count it.
+// 60). Shared by the recipe's own build and onbAgentCapSolveV2, which has to build this exact shape
+// at each candidate score to count it.
 function onbFavsMarkersV2(big, s){
   const marks={}, i=WATCH_LEVEL_KEYS.indexOf(big);
   WATCH_LEVEL_KEYS.forEach((k,j)=>{ marks[k] = j<i ? null : (j===i ? s : Math.max(60, s-6*(j-i))); });
   return marks;
 }
 // Personal Favs' full criteria at a given trial score — used both by the recipe (at the solved
-// score) and by onbFavsSolve (at each candidate score), so the two can never disagree about what
-// counts as "the onb_favs agent at score s".
+// score) and by onbAgentCapSolveV2 (at each candidate score), so the two can never disagree about
+// what counts as "the onb_favs agent at score s".
 function onbFavsCritV2(ans, s){
   const big = onbBigWindowV2(ans);
   const marks = onbFavsMarkersV2(big, s);
@@ -12059,76 +12059,89 @@ function onbFavsCritV2(ans, s){
     watchWindows: ww,
   };
 }
-// The "around 30-40 films" the Personal Favs card promises can't be a fixed score — a narrow answer
-// set would return a handful, a wide one hundreds — so it is solved against the live catalogue.
-// Walks the score down from 90 to 60 and returns the first that seats at least 30, counted with
-// watchCount (the same counter the Agents screen and the listing itself use, never a re-
-// implementation). Never widens the criteria to reach the target; 60 if nothing gets there.
-function onbFavsSolve(ans){
-  for(let s=90; s>=60; s--){
-    const c = onbFavsCritV2(ans, s);
+// Every onboarding agent's reveal-time list is capped the same way (CAS-952): walk the score UP from
+// the recipe's own floor and return the lowest that seats watchCount() at or under the pre-services
+// cap. A recipe already under the cap at its floor comes back unchanged (Massive Movies, floor 90).
+// Never widens criteria to reach it — only the score moves; if nothing up to 95 gets there, 95 is
+// accepted as-is.
+const ONB_AGENT_CAP_V2 = 45;
+function onbAgentCapSolveV2(critFn, ans, floor){
+  for(let s=floor; s<=95; s++){
+    const c = critFn(ans, s);
     normCascade(c); laneCrit(c, c.kind);
-    if(watchCount(c) >= 30) return s;
+    if(watchCount(c) <= ONB_AGENT_CAP_V2) return s;
   }
-  return 60;
+  return 95;
+}
+// Massive Movies' criteria at a trial score `s` for its one active window (the BIG window) — used
+// both by the recipe (at the solved score) and onbAgentCapSolveV2 (at each candidate).
+function onbMassiveCritV2(ans, s){
+  const big = onbBigWindowV2(ans);
+  const marks={}; WATCH_LEVEL_KEYS.forEach(k=>{ marks[k] = (k===big) ? s : null; });
+  const ww={ [big]:{list:true, notify:true} };
+  // CAS-854: matchesCriteria denies any "upcoming" film to an agent whose in_cinema marker is
+  // null — arming the announcement bell there would promise something the engine will never do.
+  ww.upcoming = (big==="in_cinema")
+    ? {list:true, notify:true, subs:{announced:true, opens_soon:true}}
+    : {list:false, notify:false};
+  return {
+    kind: ans.cinema==="yes" ? "cinema" : "stream",
+    watchMarkers: marks,
+    status: ["upcoming","opening_week","in_cinema","pvod","rental","included_streaming"],
+    genre: [], exclude: [], age: ["M","MA 15+","R 18+"], includeUnrated: true, yearsBack: 3, selBuzz: 1,
+    selCrowd: 0, selCritScore: 0, selAwards: 0, selScale: 0,
+    myServices: {pvod:false, rental:false, included_streaming:false},
+    watchWindows: ww,
+  };
+}
+// Date Night's criteria at a trial score `s` for its one active window (stream) — used both by the
+// recipe (at the solved score) and onbAgentCapSolveV2 (at each candidate).
+function onbDateCritV2(ans, s){
+  return {
+    kind:"stream",
+    watchMarkers: {in_cinema:null, premium:null, rent:null, stream:s},
+    status: ["rental","included_streaming"],
+    genre: ans.partnerDiff==="yes" ? ans.partnerStyles : ans.styles,
+    exclude: [], age: ["M","MA 15+"], yearsBack: 10,
+    selCrowd: 6.95, selCritScore: 51, selAwards: 0, selScale: 0, selBuzz: 0,
+    myServices: {pvod:true, rental:true, included_streaming:true},
+    watchWindows: {rent:{list:true, notify:false}, stream:{list:true, notify:true}},
+  };
+}
+// Family Movies' criteria at a trial score `s`, its stream marker — cinema and rent ride the same
+// delta above it (+17, +7: its recipe's own 90/80/73 gaps) so the ladder's order and gaps never
+// change, whatever score the solve lands on. Never move one marker in isolation here — that's what
+// setWatchMarker's MARKER_MIN_GAP cascade is for when a person drags one marker in the UI, and
+// fighting it by shifting markers independently would fight the ladder this recipe already carries.
+function onbFamilyCritV2(ans, s){
+  return {
+    kind:"stream",
+    watchMarkers: {in_cinema:s+17, premium:null, rent:s+7, stream:s},
+    status: ["in_cinema","rental","included_streaming"],
+    genre: [], exclude: [], age: ans.kidAges, yearsBack: 20,
+    selScale: 18000000, selCrowd: 0, selCritScore: 0, selAwards: 0, selBuzz: 0,
+    myServices: {pvod:true, rental:true, included_streaming:true},
+    watchWindows: {in_cinema:{list:true, notify:false}, rent:{list:true, notify:false},
+                   stream:{list:true, notify:true}},
+  };
 }
 // order follows array position: Massive Movies is rank 0, and is therefore the default owner of a
 // contested film — deliberate, not incidental.
 const ONB_AGENTS_V2 = [
   {key:"onb_massive", icon:"🎬", name:"Massive Movies", who:"me", when:a=>true,
-   build(ans){
-     const big = onbBigWindowV2(ans);
-     const marks={}; WATCH_LEVEL_KEYS.forEach(k=>{ marks[k] = (k===big) ? 90 : null; });
-     const ww={ [big]:{list:true, notify:true} };
-     // CAS-854: matchesCriteria denies any "upcoming" film to an agent whose in_cinema marker is
-     // null — arming the announcement bell there would promise something the engine will never do.
-     ww.upcoming = (big==="in_cinema")
-       ? {list:true, notify:true, subs:{announced:true, opens_soon:true}}
-       : {list:false, notify:false};
-     return {
-       kind: ans.cinema==="yes" ? "cinema" : "stream",
-       watchMarkers: marks,
-       status: ["upcoming","opening_week","in_cinema","pvod","rental","included_streaming"],
-       genre: [], exclude: [], age: ["M","MA 15+","R 18+"], includeUnrated: true, yearsBack: 3, selBuzz: 1,
-       selCrowd: 0, selCritScore: 0, selAwards: 0, selScale: 0,
-       myServices: {pvod:false, rental:false, included_streaming:false},
-       watchWindows: ww,
-     };
-   }},
+   build(ans){ return onbMassiveCritV2(ans, onbAgentCapSolveV2(onbMassiveCritV2, ans, 90)); }},
 
   {key:"onb_favs", icon:"⭐", name:"Personal Favs", who:"me", when:a=>true,
-   build(ans){ return onbFavsCritV2(ans, onbFavsSolve(ans)); }},
+   build(ans){ return onbFavsCritV2(ans, onbAgentCapSolveV2(onbFavsCritV2, ans, 60)); }},
 
   {key:"onb_date", icon:"❤️", name:"Date Night", who:"partner", when:a=>a.partner==="yes",
    // Lifted from Lee's live Partner Date Night, score dropped to 70.
-   build(ans){
-     return {
-       kind:"stream",
-       watchMarkers: {in_cinema:null, premium:null, rent:null, stream:70},
-       status: ["rental","included_streaming"],
-       genre: ans.partnerDiff==="yes" ? ans.partnerStyles : ans.styles,
-       exclude: [], age: ["M","MA 15+"], yearsBack: 10,
-       selCrowd: 6.95, selCritScore: 51, selAwards: 0, selScale: 0, selBuzz: 0,
-       myServices: {pvod:true, rental:true, included_streaming:true},
-       watchWindows: {rent:{list:true, notify:false}, stream:{list:true, notify:true}},
-     };
-   }},
+   build(ans){ return onbDateCritV2(ans, onbAgentCapSolveV2(onbDateCritV2, ans, 70)); }},
 
   {key:"onb_family", icon:"👨‍👩‍👧", name:"Family Movies", who:"everyone", when:a=>a.kids==="yes",
    // Lifted from Lee's live Boys, with one correction: the source agent's genre:null means
    // "nothing qualifies" (CAS-182), not "no filter" — copied verbatim it would match nothing.
-   build(ans){
-     return {
-       kind:"stream",
-       watchMarkers: {in_cinema:90, premium:null, rent:80, stream:73},
-       status: ["in_cinema","rental","included_streaming"],
-       genre: [], exclude: [], age: ans.kidAges, yearsBack: 20,
-       selScale: 18000000, selCrowd: 0, selCritScore: 0, selAwards: 0, selBuzz: 0,
-       myServices: {pvod:true, rental:true, included_streaming:true},
-       watchWindows: {in_cinema:{list:true, notify:false}, rent:{list:true, notify:false},
-                      stream:{list:true, notify:true}},
-     };
-   }},
+   build(ans){ return onbFamilyCritV2(ans, onbAgentCapSolveV2(onbFamilyCritV2, ans, 73)); }},
 ];
 // Build the v2 agents from a set of answers. Same contract as buildOnbAgents above: normalised
 // cascade objects, in recipe order, ready for the caller to assign ids and push onto `cascades` —

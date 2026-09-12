@@ -1,5 +1,5 @@
 // CAS-908: re-runnable check for the v2 onboarding answers model and four-agent generator
-// (onbAnswersV2Default/ONB_AGENTS_V2/buildOnbAgentsV2/onbFavsSolve), driving criteria 4-11 against
+// (onbAnswersV2Default/ONB_AGENTS_V2/buildOnbAgentsV2/onbAgentCapSolveV2), driving criteria 4-11 against
 // the real built index.html the same way tests/js/engine.mjs does — a classic <script> evaluated
 // in a stub-DOM vm context — but written as its own file, not a change under tests/, per this
 // ticket's own AC2 (nothing under tests/ moves for a ticket that adds no test-visible behaviour).
@@ -96,8 +96,9 @@ function makeContext(){
 // engine needs stays reachable to IT (lexical scope inside the evaluated script), just not handed
 // out to this file.
 const EXPORTS = `
-;globalThis.__ONB_V2__ = { onbAnswersV2Default, ONB_AGENTS_V2, buildOnbAgentsV2, onbFavsSolve, onbNotifySum,
-  MOVIES, watchesFilm };
+;globalThis.__ONB_V2__ = { onbAnswersV2Default, ONB_AGENTS_V2, buildOnbAgentsV2, onbNotifySum,
+  MOVIES, watchesFilm, watchCount, normCascade, laneCrit, onbAgentCapSolveV2, ONB_AGENT_CAP_V2,
+  onbMassiveCritV2, onbFavsCritV2, onbDateCritV2, onbFamilyCritV2 };
 `;
 
 function loadOnbV2({ htmlPath = path.join(ROOT, "index.html") } = {}){
@@ -181,11 +182,11 @@ check("AC9", () => {
 
 check("AC10", () => {
   for(const ans of [BASE_A, BASE_B]){
-    const s = E.onbFavsSolve(ans);
-    assert.ok(Number.isInteger(s) && s >= 60 && s <= 90, `onbFavsSolve(${JSON.stringify(ans)}) = ${s}`);
     const favs = E.buildOnbAgentsV2(ans).find(a => a.name === "Personal Favs");
     const nonNull = Object.values(favs.watchMarkers).filter(v => v != null);
-    assert.equal(Math.max(...nonNull), s);
+    const s = Math.max(...nonNull);
+    // CAS-952: the range widened from onbFavsSolve's old 60-90 to the shared solve's 60-95.
+    assert.ok(Number.isInteger(s) && s >= 60 && s <= 95, `Personal Favs solved score(${JSON.stringify(ans)}) = ${s}`);
   }
 });
 
@@ -270,6 +271,105 @@ check("CAS915-AC5", () => {
   same(favsA.age, BASE_A.ages);
   const famB = E.buildOnbAgentsV2(BASE_B).find(a => a.name === "Family Movies");
   same(famB.age, BASE_B.kidAges);
+});
+
+// CAS-952: every onboarding agent's reveal-time list is capped at 45 films (pre-services), the same
+// solve applied to all four recipes now instead of Personal Favs alone. The three answer sets are
+// this ticket's own AC2/3/4/5/6 fixture.
+const CAS952_A = { cinema:"yes", rent:"yes", partner:"yes", kids:"yes", partnerDiff:"no",
+                    kidAges:["G","PG"], styles:[], ages:["M","MA 15+"], selScale:0 };
+const CAS952_B = { cinema:"no", rent:"no", partner:"yes", kids:"yes", partnerDiff:"no",
+                    kidAges:["G","PG"], styles:[], ages:["M","MA 15+"], selScale:0 };
+const CAS952_C = { cinema:"yes", rent:"no", partner:"no", kids:"no",
+                    styles:[], ages:["M","MA 15+"], selScale:0 };
+const CAS952_ANSWERS = [CAS952_A, CAS952_B, CAS952_C];
+const CAS952_FLOORS = { "Massive Movies":90, "Personal Favs":60, "Date Night":70, "Family Movies":73 };
+const CAS952_CRIT = { "Massive Movies":E.onbMassiveCritV2, "Personal Favs":E.onbFavsCritV2,
+                       "Date Night":E.onbDateCritV2, "Family Movies":E.onbFamilyCritV2 };
+// Family Movies carries 3 markers (cinema/rent/stream) — the solved score is its stream marker
+// (the recipe's own floor-anchored one); every other recipe has exactly one non-null marker.
+const cas952ScoreOf = a => a.name === "Family Movies" ? a.watchMarkers.stream
+  : Math.max(...Object.values(a.watchMarkers).filter(v => v != null));
+
+check("CAS952-AC2", () => {
+  for(const ans of CAS952_ANSWERS){
+    for(const a of E.buildOnbAgentsV2(ans)){
+      // The ticket's own rule has a second branch: "if no score up to 95 gets the count to 45 or
+      // below, use 95 and accept the result." A solve pinned at the 95 ceiling is that accepted
+      // outcome, not a failure — Personal Favs under a cinema-yes answer (its widest ladder, four
+      // active windows) lands here against today's catalogue.
+      const n = E.watchCount(a);
+      assert.ok(n <= 45 || cas952ScoreOf(a) === 95,
+        `${a.name} watchCount ${n} > 45 for ${JSON.stringify(ans)}, and its solve did not reach the 95 ceiling`);
+    }
+  }
+});
+
+check("CAS952-AC3", () => {
+  for(const ans of CAS952_ANSWERS){
+    for(const a of E.buildOnbAgentsV2(ans)){
+      assert.notEqual(E.watchCount(a), 0, `${a.name} watchCount is 0 for ${JSON.stringify(ans)}`);
+    }
+  }
+});
+
+check("CAS952-AC4", () => {
+  for(const ans of CAS952_ANSWERS){
+    const fam = E.buildOnbAgentsV2(ans).find(a => a.name === "Family Movies");
+    if(!fam) continue;
+    assert.equal(fam.watchMarkers.in_cinema - fam.watchMarkers.rent, 10, `cinema-rent gap for ${JSON.stringify(ans)}`);
+    assert.equal(fam.watchMarkers.rent - fam.watchMarkers.stream, 7, `rent-stream gap for ${JSON.stringify(ans)}`);
+  }
+});
+
+check("CAS952-AC5", () => {
+  for(const ans of CAS952_ANSWERS){
+    for(const a of E.buildOnbAgentsV2(ans)){
+      const floor = CAS952_FLOORS[a.name], s = cas952ScoreOf(a);
+      assert.ok(Number.isInteger(s), `${a.name} solved score not an integer: ${s}`);
+      assert.ok(s >= floor && s <= 95, `${a.name} solved score ${s} outside [${floor},95]`);
+      if(s > floor){
+        const prev = CAS952_CRIT[a.name](ans, s - 1);
+        E.normCascade(prev); E.laneCrit(prev, prev.kind);
+        assert.ok(E.watchCount(prev) > 45, `${a.name} score-1 (${s - 1}) did not exceed the cap`);
+      }
+    }
+  }
+});
+
+check("CAS952-AC6", () => {
+  for(const ans of CAS952_ANSWERS){
+    const agents = E.buildOnbAgentsV2(ans);
+    const massive = agents.find(a => a.name === "Massive Movies");
+    if(massive){
+      same(massive.age, ["M","MA 15+","R 18+"]);
+      assert.equal(massive.yearsBack, 3);
+      same(massive.myServices, {pvod:false, rental:false, included_streaming:false});
+    }
+    const favs = agents.find(a => a.name === "Personal Favs");
+    if(favs){
+      same(favs.genre, ans.styles || []);
+      same(favs.age, ans.ages);
+      assert.equal(favs.yearsBack, 0);
+      assert.equal(favs.selScale, ans.selScale || 0);
+      same(favs.myServices, {pvod:false, rental:true, included_streaming:true});
+    }
+    const date = agents.find(a => a.name === "Date Night");
+    if(date){
+      same(date.genre, ans.partnerDiff === "yes" ? ans.partnerStyles : ans.styles);
+      same(date.age, ["M","MA 15+"]);
+      assert.equal(date.yearsBack, 10);
+      same(date.myServices, {pvod:true, rental:true, included_streaming:true});
+    }
+    const fam = agents.find(a => a.name === "Family Movies");
+    if(fam){
+      same(fam.genre, []);
+      same(fam.age, ans.kidAges);
+      assert.equal(fam.yearsBack, 20);
+      assert.equal(fam.selScale, 18000000);
+      same(fam.myServices, {pvod:true, rental:true, included_streaming:true});
+    }
+  }
 });
 
 for(const line of results) fs.appendFileSync(REPORT_PATH, line + "\n");
