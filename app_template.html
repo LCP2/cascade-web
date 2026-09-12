@@ -6932,9 +6932,9 @@ window.addEventListener("cascade-auth-change", ()=>{
 async function resolveFilmInvite(token, id, c){
   let rows;
   try{
-    const {data,error}=await c.from("invites").select("sender_name").eq("token",token);
-    if(error || !data || !data.length) return;
-    rows=data;
+    const {data,error}=await c.rpc("invite_by_token",{p_token:token});
+    if(error || !data) return;
+    rows=[data];
   }catch(e){ return; }
   if(filmRouteId()!==id) return;                 // the recipient navigated elsewhere while the read was in flight
   const el=$("filmPage");
@@ -6970,12 +6970,9 @@ window.replyFilmInvite=async answer=>{
   const panel=$("fpInvite"); if(!panel) return;
   panel.querySelectorAll("button").forEach(b=>b.disabled=true);
   const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
-  const uid=(a && a.session && a.session.user) ? a.session.user.id : null;
   if(c){
     try{
-      await c.from("invite_replies").upsert(
-        [{ token:INVITE_TOKEN, client_key:CLIENT_KEY, answer, replier_id:uid }],
-        { onConflict:"token,client_key" });
+      await c.rpc("answer_invite",{ p_token:INVITE_TOKEN, p_client_key:CLIENT_KEY, p_answer:answer });
     }catch(e){}
   }
   logEvent("invite_replied",{answer});
