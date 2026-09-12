@@ -38,6 +38,9 @@ test("the app loads and onboarding renders", async ({ page }) => {
   await freshApp(page);
   await expect(page.locator("#splashCta")).toBeVisible();
   await page.locator("#splashCta").click();
+  await expect(page.locator(".obhd")).toContainText("Cascade finds your movies for you.");   // v2_about (CAS-953)
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);
   await expect(page.locator(".obhd")).toContainText("Massive Movies");   // v2_intro (CAS-911)
 });
 
@@ -746,8 +749,11 @@ test("CAS-740 AC4: a signed-in user whose account already holds agents is never 
 
   await expect(page.locator("#splashCta")).toBeVisible();
   await page.locator("#splashCta").click();
-  await expect(page.locator(".obhd")).toContainText("Massive Movies");   // v2_intro (CAS-911) — proves the wizard actually opened
+  await expect(page.locator(".obhd")).toContainText("Cascade finds your movies for you.");   // v2_about (CAS-953)
   expect(await page.evaluate(() => flowOn)).toBe(true);   // genuinely inside the wizard before the race resolves
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);
+  await expect(page.locator(".obhd")).toContainText("Massive Movies");   // v2_intro (CAS-911) — proves the wizard actually opened
 
   // Now let the session restore resolve to an account that already holds an agent.
   await page.evaluate(() => window.__cas740ResolveSession());
@@ -856,6 +862,9 @@ async function cas913GotoConfigured(page){
 async function cas913WalkToShortlist(page){
   await expect(page.locator("#splashCta")).toBeVisible();
   await page.locator("#splashCta").click();
+  await expect(page.locator(".obhd")).toContainText("Cascade finds your movies for you.");   // v2_about (CAS-953)
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);
   await expect(page.locator(".obhd")).toContainText("Massive Movies");            // v2_intro
   await ctaLocator(page).click();
   await page.waitForTimeout(120);

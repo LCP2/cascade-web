@@ -53,6 +53,9 @@ export const numberIn = s => {
 export async function toShortlist(page, kind){
   await freshApp(page);
   await page.locator("#splashCta").click();
+  await expect(page.locator(".obhd")).toContainText("Cascade finds your movies for you.");   // v2_about (CAS-953)
+  await ctaLocator(page).click();
+  await page.waitForTimeout(120);
   await expect(page.locator(".obhd")).toContainText("Massive Movies");   // v2_intro
   await ctaLocator(page).click();
   await page.waitForTimeout(120);              // the flow slides between steps
