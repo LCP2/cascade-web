@@ -12010,6 +12010,20 @@ function onbAnswersV2Load(){
 function onbAnswersV2Save(a){
   try{ localStorage.setItem(ONB_ANSWERS_V2_KEY, JSON.stringify(a)); }catch(e){}
 }
+// CAS-951: v2_done's commit, persisted so a reload that lands the flow back on v2_done before
+// flowStart() runs again re-renders the SAME committed roster instead of building and pushing a
+// second one. flowStart() clears this, so a genuinely new run commits fresh.
+const ONB_V2_COMMITTED_KEY = "cascade_onb_v2_committed";
+function onbV2CommittedLoad(){
+  try{ const raw=localStorage.getItem(ONB_V2_COMMITTED_KEY); return raw ? JSON.parse(raw) : null; }
+  catch(e){ return null; }
+}
+function onbV2CommittedSave(agents){
+  try{ localStorage.setItem(ONB_V2_COMMITTED_KEY, JSON.stringify(agents)); }catch(e){}
+}
+function onbV2CommittedClear(){
+  try{ localStorage.removeItem(ONB_V2_COMMITTED_KEY); }catch(e){}
+}
 // Recipes 1 and 2 both open on this: the furthest-forward window the account can actually use.
 function onbBigWindowV2(ans){
   return ans.cinema==="yes" ? "in_cinema" : (ans.rent==="yes" ? "rent" : "stream");
@@ -14930,9 +14944,12 @@ const SHARP_STEPS = {
   },
   // ---- CAS-911: the roster commits HERE, the only place onboarding writes agents — every earlier
   // reveal screen renders from the same buildOnbAgentsV2 call but commits nothing (see FLOWS below).
-  // A reload before this step lands on a fresh run with nothing to clean up; re-entering this step
-  // (Back from here, then Continue again) must not commit a second time, so wire() only builds once,
-  // guarded by onbFlow.workingAgents — same shape "working" used for the old flow.
+  // Re-entering this step (Back from here, then Continue again) must not commit a second time, so
+  // wire() only builds once, guarded by onbFlow.workingAgents — same shape "working" used for the old
+  // flow. CAS-951: that in-memory guard alone survives a Back/Forward but not a reload, so the commit
+  // also (a) REPLACES the device's roster rather than appending to it, and (b) persists once made
+  // (onbV2Committed*, cleared only by flowStart()) so a reload that lands back on this same run's
+  // v2_done re-renders the committed roster instead of building and pushing a second one.
   v2_done: {
     noAgent: true, noSkip: true,
     cta: "Continue",
@@ -14947,23 +14964,35 @@ const SHARP_STEPS = {
     wire(){
       onbFlow.answersV2=onbAnswersV2Load();
       if(!onbFlow.workingAgents){
-        const agents=buildOnbAgentsV2(onbFlow.answersV2);
-        agents.forEach(c=>{ c.id=cascadeNewId(); });
-        // CAS-915: the occasions these answers imply, created only now — at commit — via createOccasion()
-        // (idempotent by name, writes the register immediately) so backing out of the flow before this
-        // screen never leaves an orphan register entry.
-        const justMe=createOccasion("Just me");
-        const dateNight = onbFlow.answersV2.partner==="yes" ? createOccasion("Date night") : null;
-        const family = onbFlow.answersV2.kids==="yes" ? createOccasion("Family") : null;
-        agents.forEach(c=>{
-          if(c.template==="onb_massive" || c.template==="onb_favs") c.occasions=[justMe.id];
-          else if(c.template==="onb_date" && dateNight) c.occasions=[dateNight.id];
-          else if(c.template==="onb_family" && family) c.occasions=[family.id];
-        });
-        cascades.push(...agents);
-        saveCascades();
-        setActive(agents[0].id);
-        onbFlow.workingAgents=agents;
+        const already=onbV2CommittedLoad();
+        if(already){
+          // CAS-951: this run already committed once (a reload landed the flow back here before
+          // flowStart() ran again) — re-render the same roster rather than build and push a second one.
+          onbFlow.workingAgents=already;
+        } else {
+          const agents=buildOnbAgentsV2(onbFlow.answersV2);
+          agents.forEach(c=>{ c.id=cascadeNewId(); });
+          // CAS-915: the occasions these answers imply, created only now — at commit — via createOccasion()
+          // (idempotent by name, writes the register immediately) so backing out of the flow before this
+          // screen never leaves an orphan register entry.
+          const justMe=createOccasion("Just me");
+          const dateNight = onbFlow.answersV2.partner==="yes" ? createOccasion("Date night") : null;
+          const family = onbFlow.answersV2.kids==="yes" ? createOccasion("Family") : null;
+          agents.forEach(c=>{
+            if(c.template==="onb_massive" || c.template==="onb_favs") c.occasions=[justMe.id];
+            else if(c.template==="onb_date" && dateNight) c.occasions=[dateNight.id];
+            else if(c.template==="onb_family" && family) c.occasions=[family.id];
+          });
+          // CAS-951: first-run onboarding ESTABLISHES the device's roster — it replaces whatever
+          // cascades already holds (a stale account's set, or an earlier commit this same run),
+          // it never appends to it.
+          cascades.length=0;
+          cascades.push(...agents);
+          saveCascades();
+          setActive(agents[0].id);
+          onbFlow.workingAgents=agents;
+          onbV2CommittedSave(agents);
+        }
       }
     },
   },
@@ -15087,6 +15116,7 @@ function flowStart(startKey){
   onbDone=freshDone(); onbDoor=null; onbDoorIdx=0; onbDonePulse=null;
   onbFlow.draft=null;          // no agent yet — nothing on the first two screens quotes a count
   onbFlow.workingAgents=null; onbFlow.reportStats=null;   // CAS-629: a fresh roster commits fresh every run
+  onbV2CommittedClear();       // CAS-951: a genuinely new run may commit again
   $("onbStep").classList.add("open"); lockBodyScroll(true);
   logEvent("flow_start");
   gotoStep(startKey||"v2_intro","none");   // CAS-911: the first-run entry is the v2 sequence now
