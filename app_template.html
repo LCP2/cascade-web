@@ -18484,13 +18484,23 @@ else if(dedupedN)
     const localOnes = cascades.slice();
     // CAS-393/CAS-733/CAS-734: an agent that exists only on this device, which the account has never
     // confirmed (absent from rawById) AND this device has never confirmed either (absent from oldKnown, so
-    // this isn't a row another device deleted), is genuinely new — onboarding's own roster is the common
-    // case (the membership step's email gate, CAS-387, can create the account seconds after onboarding
-    // committed the agents just built), but the same rule covers any agent created here whose first push
-    // just hasn't landed yet. Folded straight in, matched by id. No dialog, no prompt: CAS-212's merge
-    // sheet (and the guest agent store it existed to reconcile) is gone.
-    const localOnly = localOnes.filter(x=>!rawById.has(x.id) && !oldKnown.has(x.id));
+    // this isn't a row another device deleted), is genuinely new — folded straight in, matched by id. No
+    // dialog, no prompt: CAS-212's merge sheet (and the guest agent store it existed to reconcile) is gone.
+    // CAS-959: onboarding's own roster used to be treated as this same "genuinely new" case — the membership
+    // step's email gate (CAS-387) can sign into an account seconds after onboarding committed the agents it
+    // just built, and that account can already hold its own roster from an earlier run (a second device, or
+    // a sign-out/back-in that walked the generator again before this load resolved). Folding the draft in
+    // duplicated it. A draft still sitting in ONB_V2_COMMITTED_KEY, unconfirmed by any account, is excluded
+    // from the fold whenever the account being loaded already has agents of its own — the account's roster
+    // wins outright and the draft is dropped, never merged in.
+    const onbDraftIds = new Set((onbV2CommittedLoad()||[]).map(a=>a.id));
+    const localOnly = localOnes.filter(x=>!rawById.has(x.id) && !oldKnown.has(x.id)
+      && !(rawRows.length && onbDraftIds.has(x.id)));
     if(localOnly.length) remote=[...remote, ...localOnly];
+    // The draft never gets a second chance to commit itself once dropped here — clear its marker (and the
+    // in-memory roster v2_done cached) so re-entering onboarding, if the flow is still open, builds fresh
+    // rather than re-showing/re-committing the discarded set.
+    if(rawRows.length && onbDraftIds.size){ onbV2CommittedClear(); onbFlow.workingAgents=null; }
     // CAS-658/CAS-734: a local copy sharing an id with an account row is the SAME Cascade, not a new one —
     // the account already has it. Which side wins is resolveCascadeConflict's call now, never an assumption
     // in the local copy's favour with nothing to back it up — that unconditional assumption was this
