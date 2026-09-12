@@ -25,9 +25,13 @@ A *transition* is one movie crossing into one *moment*. The four moments mirror 
                             but "a film worth knowing about has turned up" is a change from the reader's
                             side too. What it is NOT is the studio's announcement date — nobody publishes
                             that — so the front end says "first reaches Cascade" and the email says the same.
-    opens_soon            — today is exactly ``opening_date - N`` days (N=7, tunable). Computed from the
-                            film's own published date, the mirror of past_opening_weekend, and like it it
-                            can only ever fire on a real date.
+    opens_soon            — the film's cinema_date is between 1 and N days ahead of today, inclusive
+                            (N=7, tunable; CAS-926). Computed from the film's own published date, and
+                            like past_opening_weekend it can only ever fire on a real date — but unlike
+                            it, this is a WINDOW test, not an exact-day one: a film missed on one day
+                            (a late daily run, a date that moved, admission arriving late) still fires
+                            on a later day inside the window, and the notifications ledger's existing
+                            de-dupe (see ``monitor.matching.match``) stops it firing more than once.
     newly_qualifies       — a film already held in BOTH catalogues whose own attributes changed so it now
                             matches an agent's criteria and did not yesterday (CAS-602): an IMDb rating
                             crossing the bar, a metacritic score/award/gross arriving, a genre/age
@@ -172,7 +176,8 @@ def compute_transitions(
     prev_movies / today_movies : lists of movie records (poc_pipeline shape).
     today                       : the run date, used for the past-opening-weekend computation.
     weekend_n                   : days after opening that past_opening_weekend fires.
-    soon_n                      : days before opening that opens_soon fires.
+    soon_n                      : the outer edge (in days) of the opens_soon run-up window; it fires
+                                  for cinema_date 1..soon_n days ahead of today, inclusive.
     """
     prev = {_movie_id(m): m for m in prev_movies}
     transitions: list = []
@@ -212,7 +217,7 @@ def compute_transitions(
         if opened is not None and today == opened + _dt.timedelta(days=weekend_n):
             transitions.append(Transition(mid, m.get("title", ""), "past_opening_weekend",
                                           services=[], price=None, movie=m))
-        if opened is not None and today == opened - _dt.timedelta(days=soon_n):
+        if opened is not None and 1 <= (opened - today).days <= soon_n:
             transitions.append(Transition(mid, m.get("title", ""), "opens_soon",
                                           services=[], price=None, movie=m))
 
