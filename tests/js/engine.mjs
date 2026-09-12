@@ -221,6 +221,10 @@ if(typeof window.CascadeAuth === "undefined"){
   MISSION_DIALS, MISSION_DIALS_USED, missionRest, missionKind, laneCrit,
   axisCountsNow, genreCountsNow,
   onbApply, onbCount, pickStarter, flowStart, flowStop, FLOWS,
+  // CAS-959: the v2 onboarding commit marker (set at v2_done, cleared by flowStart or a completed/dropped
+  // load) — exported so a test can seed "this device just built an unconfirmed onboarding draft" the same
+  // way v2_done itself does, without driving the whole wired flow through the DOM stub.
+  onbV2CommittedSave, onbV2CommittedLoad, onbV2CommittedClear,
   tasteBase, cascades,
   get onbFlow(){ return onbFlow; },
   get flowKind(){ return flowKind; },
