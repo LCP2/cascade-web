@@ -14,7 +14,7 @@ Interface:
   insert_notifications(rows) -> int                                  # ledger write; returns count
   fetch_user_email(user_id) -> str | None
   fetch_notify_prefs() -> {user_id: {in_app, email_on, email_address, excluded_moments}}  # CAS-185
-  fetch_picks() -> [{user_id, movie_id, state}]                                           # CAS-185
+  fetch_picks() -> [{user_id, movie_id, state, pinned_to, not_in}]                # CAS-185/CAS-925
   fetch_push_tokens() -> {user_id: [device_token, ...]}                                   # CAS-465
   fetch_unread_counts() -> {user_id: int}                                                 # CAS-465
   fetch_film_watches() -> [{user_id, movie_id, windows, sources}]                # CAS-484/CAS-918
@@ -230,8 +230,12 @@ class SupabaseStore:
 
     def fetch_picks(self) -> list:
         """Every hand-answer on a film, for every user (CAS-100). Only the 'off' rows suppress —
-        see matching.suppressed_pairs — but both are fetched so the caller does the deciding."""
-        return self._get("/film_picks?select=user_id,movie_id,state")
+        see matching.suppressed_pairs — but both are fetched so the caller does the deciding.
+        `pinned_to`/`not_in` (CAS-279's hand-move IN/OUT lists) ride alongside since CAS-925: they
+        decide which cascade owns a film for cross-surface attribution — see matching.pick_overrides
+        and matching._resolve_owner. No schema change — both columns already exist and the app
+        already writes them (app_template.html's pinFilmToCascadeAndRepaint / film_picks.not_in)."""
+        return self._get("/film_picks?select=user_id,movie_id,state,pinned_to,not_in")
 
     def fetch_push_tokens(self) -> dict:
         """user_id -> the user's live device tokens (CAS-465), read with service_role (bypasses

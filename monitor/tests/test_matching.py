@@ -479,6 +479,100 @@ class OneAgentPerFilmTests(unittest.TestCase):
         self.assertEqual(len(by_user.get("u2", [])), 1)
 
 
+class OwnerAttributionTests(unittest.TestCase):
+    """CAS-925: every Hit is attributed to the film's OWNER — the same single-owner answer the
+    app's filmOwnerCascade gives — not necessarily the cascade whose own moment fired it. Read from
+    the live production ledger vs. Moving disagreeing about who "owns" a film (Runner/Practical
+    Magic 2, 2026-09-12): the monitor attributed a hit to whichever agent fired it, the app has
+    always named the lowest-rank admitting agent (or a hand-pin), and the two must now agree."""
+
+    def _transitions(self, genres=None):
+        prev = [{"tmdb_id": 1, "title": "A", "status": ["in_cinema"], "cinema_date": "2026-01-01",
+                 "offers": []}]
+        today = [{"tmdb_id": 1, "title": "A", "status": ["rental"], "cinema_date": "2026-01-01",
+                  "genres": genres if genres is not None else ["Drama"], "language": "en",
+                  "imdb_rating": 7.0, "imdb_votes": 5000, "rt_critic": 70,
+                  "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}]}]
+        return compute_transitions(prev, today, RUN_DATE)
+
+    def _cascade(self, cid, order, moments=("hits_rent",), genre=None, channels=None):
+        criteria = _criteria(order=order)
+        if genre is not None:
+            criteria["genre"] = genre
+        if channels is not None:
+            criteria["channelsLive"] = channels
+        return {"id": cid, "user_id": "u1", "name": cid, "active": True,
+                "alert_moments": list(moments), "criteria": criteria}
+
+    def _match(self, cascades, ts, picks=None, already=None):
+        admission = _admit(cascades, today=[t.movie for t in ts])
+        return match(cascades, ts, admission=admission, film_watches=_auto_placements(cascades, ts),
+                    picks=picks, already=already)
+
+    def test_a_owner_is_the_lower_rank_admitting_agent_even_if_it_never_fired(self):
+        # order-0 admits the Drama film but never asked for hits_rent; order-2 did ask and fires.
+        c0 = self._cascade("c0", 0, moments=())
+        c2 = self._cascade("c2", 2)
+        hits = self._match([c0, c2], self._transitions())["u1"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].cascade_id, "c0")
+
+    def test_b_falls_to_the_firing_agent_when_the_lower_rank_one_doesnt_admit(self):
+        # order-0 wants Horror only, so it does not admit this Drama film -> not a candidate owner.
+        c0 = self._cascade("c0", 0, moments=(), genre=["Horror"])
+        c2 = self._cascade("c2", 2)
+        hits = self._match([c0, c2], self._transitions())["u1"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].cascade_id, "c2")
+
+    def test_c_a_hand_pin_wins_whatever_the_ranks_or_criteria_say(self):
+        # order-5 is pinned in by hand; it wants Horror only (would not otherwise admit this film)
+        # and never asked for hits_rent — none of that matters once it is pinned (CAS-709).
+        c0 = self._cascade("c0", 0, moments=())
+        c2 = self._cascade("c2", 2)
+        c5 = self._cascade("c5", 5, moments=(), genre=["Horror"])
+        picks = [{"user_id": "u1", "movie_id": "1", "pinned_to": ["c5"]}]
+        hits = self._match([c0, c2, c5], self._transitions(), picks=picks)["u1"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].cascade_id, "c5")
+
+    def test_d_not_in_excludes_an_otherwise_admitting_lower_rank_agent(self):
+        c0 = self._cascade("c0", 0)
+        c2 = self._cascade("c2", 2, moments=())
+        picks = [{"user_id": "u1", "movie_id": "1", "not_in": ["c0"]}]
+        hits = self._match([c0, c2], self._transitions(), picks=picks)["u1"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].cascade_id, "c2")
+
+    def test_e_two_agents_firing_the_same_moment_still_yield_one_hit_naming_the_owner(self):
+        c0 = self._cascade("c0", 0)
+        c2 = self._cascade("c2", 2)
+        hits = self._match([c0, c2], self._transitions())["u1"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].cascade_id, "c0")
+
+    def test_f_already_suppresses_by_the_firing_id_never_the_owner_id(self):
+        c0 = self._cascade("c0", 0, moments=())       # owner-to-be; never itself fires
+        c2 = self._cascade("c2", 2)                    # the firing agent
+        ts = self._transitions()
+        # keyed on the FIRING agent (c2): suppresses the hit entirely.
+        suppressed = self._match([c0, c2], ts, already={("c2", "1", "hits_rent")})
+        self.assertEqual(suppressed.get("u1", []), [])
+        # keyed on the OWNER (c0), who never fired: does not suppress anything.
+        unsuppressed = self._match([c0, c2], ts, already={("c0", "1", "hits_rent")})["u1"]
+        self.assertEqual(len(unsuppressed), 1)
+        self.assertEqual(unsuppressed[0].cascade_id, "c0")
+
+    def test_g_channels_are_resolved_from_the_owners_criteria(self):
+        c0 = self._cascade("c0", 0, moments=(), channels={"inApp": True, "email": False})
+        c2 = self._cascade("c2", 2, channels={"inApp": True, "email": True})
+        hits = self._match([c0, c2], self._transitions())["u1"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].cascade_id, "c0")
+        self.assertFalse(hits[0].wants("email"))
+        self.assertTrue(hits[0].wants("in_app"))
+
+
 class PerAgentChannels(unittest.TestCase):
     """CAS-244: the account decides which channels EXIST; an agent decides which of them it uses.
 
