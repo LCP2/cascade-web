@@ -20,13 +20,17 @@ _UNSET = object()
 
 
 def _hit(title, moment, cascade, order=None, services=None, price=None, prior_window=None,
-         movie_id="1", cascade_id=_UNSET):
+         movie_id="1", cascade_id=_UNSET, status=("in_cinema",)):
     """cascade_id defaults to one derived from the agent name, so two calls naming different
     agents land in different sections (matching.py's own rank-collapse already guarantees a real
     Hit list never mixes cascade_id with cascade_name this way). Pass cascade_id=None explicitly
-    for a Watch-it hit (no cascade — cascade_name "Your picks")."""
+    for a Watch-it hit (no cascade — cascade_name "Your picks").
+
+    status defaults to ["in_cinema"] (CAS-924's outer grouping) so every existing call that never
+    cared about a film's status still lands in one shared status section, unchanged. Pass
+    status=() for a movie record with no resolvable status."""
     t = Transition(movie_id=movie_id, title=title, moment=moment,
-                   services=services or [], price=price, movie={})
+                   services=services or [], price=price, movie={"status": list(status)})
     if prior_window is not None:
         t.prior_window = prior_window
     if cascade_id is _UNSET:
@@ -391,6 +395,78 @@ class InviteReplyFormattingTests(unittest.TestCase):
         self.assertEqual(out["to_name"], "Someone")
         self.assertEqual(out["window_text"], "")
         self.assertEqual(out["when_text"], "")
+
+
+class StatusSectionTests(unittest.TestCase):
+    """CAS-924: the digest gains the same two levels of grouping Moving has — status outer,
+    agent inner."""
+
+    def setUp(self):
+        self.hits = [
+            _hit("Waiting Room", "hits_cinema", "Cinema date night", status=("upcoming",), movie_id="1"),
+            _hit("On Screens", "hits_cinema", "Cinema date night", status=("in_cinema",), movie_id="2"),
+            _hit("For Rent", "hits_rent", "Weekend picks", price=6.99, status=("rental",), movie_id="3"),
+            _hit("Now Streaming", "hits_stream", "Weekend picks", services=["Stan"],
+                 status=("included_streaming",), movie_id="4"),
+        ]
+
+    def test_headings_appear_in_listing_order(self):
+        d = render_digest(self.hits, site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            self.assertLess(part.index("Upcoming"), part.index("In Cinema"))
+            self.assertLess(part.index("In Cinema"), part.index("Rent (~$7)"))
+            self.assertLess(part.index("Rent (~$7)"), part.index("Stream (included)"))
+
+    def test_text_part_carries_same_headings_same_order(self):
+        d = render_digest(self.hits, site_url="https://x.test/")
+        text = d["text"]
+        self.assertIn("Upcoming", text)
+        self.assertIn("In Cinema", text)
+        self.assertIn("Rent (~$7)", text)
+        self.assertIn("Stream (included)", text)
+
+    def test_both_agents_appear_in_a_shared_status_section_in_rank_order(self):
+        hits = [
+            _hit("Second Agent's Film", "hits_cinema", "Rank Two Agent", order=2,
+                 status=("in_cinema",), movie_id="a"),
+            _hit("First Agent's Film", "hits_cinema", "Rank One Agent", order=1,
+                 status=("in_cinema",), movie_id="b"),
+        ]
+        d = render_digest(hits, site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            in_cinema_idx = part.index("In Cinema")
+            self.assertGreater(part.index("Rank One Agent"), in_cinema_idx)
+            self.assertGreater(part.index("Rank Two Agent"), in_cinema_idx)
+            self.assertLess(part.index("Rank One Agent"), part.index("Rank Two Agent"))
+
+    def test_agent_with_no_film_in_a_status_section_is_absent_from_it(self):
+        d = render_digest(self.hits, site_url="https://x.test/")
+        # "Weekend picks" only has films in rental/included_streaming — never in the upcoming
+        # or in_cinema sections.
+        for part in (d["html"], d["text"]):
+            upcoming_to_rent = part[part.index("Upcoming"):part.index("Rent (~$7)")]
+            self.assertNotIn("Weekend picks", upcoming_to_rent)
+
+    def test_multi_member_status_lands_in_the_furthest_along_section_only(self):
+        hit = _hit("Almost Home", "hits_stream", "Weekend picks", services=["Stan"],
+                    status=("in_cinema", "rental"), movie_id="5")
+        d = render_digest([hit], site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            self.assertIn("Rent (~$7)", part)
+            self.assertNotIn("In Cinema", part)
+
+    def test_empty_sections_are_omitted(self):
+        d = render_digest([_hit("Only Upcoming", "hits_cinema", "Some Agent",
+                                 status=("upcoming",))], site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            self.assertNotIn("Stream (included)", part)
+            self.assertNotIn("Rent (~$7)", part)
+
+    def test_unresolvable_status_is_not_dropped(self):
+        hit = _hit("No Known Window", "hits_cinema", "Some Agent", status=())
+        d = render_digest([hit], site_url="https://x.test/")
+        for part in (d["html"], d["text"]):
+            self.assertIn("No Known Window", part)
 
 
 class SendViaResendTests(unittest.TestCase):
