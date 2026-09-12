@@ -4213,10 +4213,29 @@ function fmtDay(iso){
   return `${+d} ${MONTHS[+m-1]} ${y.slice(2)}`;
 }
 function yearOf(m){ return (m.cinema_date||m.year||"").slice(0,4); }
-function esc(s){ return (s||"").replace(/</g,"&lt;"); }
+// CAS-945: hardened to escape all five HTML metacharacters (& first, so the entity text the other
+// replacements introduce is not itself re-encoded). Still safe for its original text-node call sites.
+function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
 // Same job, for text going inside a double-quoted attribute (a title=""), where a stray " would end it early.
 // Cascade names are the one string in this app the user types, and they land in exactly such an attribute.
 function escA(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;"); }
+// CAS-945: for a string that goes into an href — only an absolute https: URL or a schemeless (relative)
+// path is allowed through; anything else (javascript:, data:, a protocol-relative //host, or a string
+// that fails to parse as a URL at all) becomes "". The result is also attribute-escaped via escA, since
+// every call site drops it straight into a double-quoted href.
+function safeUrl(s){
+  s = (s||"").trim();
+  if(!s) return "";
+  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(s);
+  if(hasScheme){
+    let u;
+    try { u = new URL(s); } catch(e){ return ""; }
+    if(u.protocol !== "https:") return "";
+    return escA(s);
+  }
+  if(s.startsWith("//") || s.startsWith("\\")) return "";
+  return escA(s);
+}
 
 // ---- Confirmed vs estimated (CAS-110) ------------------------------------------
 // CAS-109 widened the catalogue past what the free Watchmode tier can poll in a day, so a title now arrives in
@@ -5107,7 +5126,7 @@ $("updated").textContent = fmtDay(BUILD_DATE);
 // ships the identical file to both hosts, so the only honest way for the live site and the preview to
 // label themselves apart is to look at where they are actually being served. So env is derived from
 // the hostname here, at runtime, for display only.
-const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1114, "commit": "cd68ed3", "builtAt": "2026-09-12T06:22:28Z", "providers": {"TMDB": "unconfigured", "Watchmode": "unconfigured"}};
+const BUILD_INFO = {"version": "1.0.0", "major": 1, "minor": 0, "patch": 0, "build": 1115, "commit": "bb1980d", "builtAt": "2026-09-12T06:29:18Z", "providers": {"TMDB": "unconfigured", "Watchmode": "unconfigured"}};
 const RUNTIME_ENV = ["cascademovies.com","www.cascademovies.com"].includes(location.hostname)
   ? "production" : "staging";
 const buildCore = () => {
@@ -6051,7 +6070,7 @@ function budgetCell(m){
   const inf=inferredScale(m);
   if(!inf)       return `<span class="m muted">${face} <b>–</b></span>`;
   return `<button class="m muted" type="button" onclick="showScaleInfer(${m.tmdb_id})"
-    title="${esc(inferScaleWhy(m))}">${face} <b>≈ ${inf.label}</b></button>`;
+    title="${escA(inferScaleWhy(m))}">${face} <b>≈ ${inf.label}</b></button>`;
 }
 // The two scores, each with the small muted dot that says whose number it is. Both are Watchmode's
 // (People = wm_user_rating, Critics = wm_critic_score); the dots keep the colours IMDb and Metacritic had.
@@ -6089,7 +6108,7 @@ function scaleBadge(m){
   if(!kind) return "";
   const b=TENT_BADGE[kind];
   return `<button class="tentbadge" type="button" onclick="showScale(${m.tmdb_id})"
-    title="${esc(scaleWhy(m))}">${b.ico} <b>${b.label}</b></button>`;
+    title="${escA(scaleWhy(m))}">${b.ico} <b>${b.label}</b></button>`;
 }
 window.showScale=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(scaleWhy(m)); };
 // CAS-701: the condensed card's own copy of the scale badge — ONE code path (scaleBadge, the exact
@@ -6709,7 +6728,7 @@ function renderFilmInviteSheet(m){
   }
   if(h3) h3.textContent="Invite to watch";
   const poster = m.poster
-    ? `<img class="filminvthumb" src="https://image.tmdb.org/t/p/w92${esc(m.poster)}" alt="">`
+    ? `<img class="filminvthumb" src="https://image.tmdb.org/t/p/w92${escA(m.poster)}" alt="">`
     : `<div class="filminvthumb"></div>`;
   const list=friendsSorted();
   const rows = list.length
@@ -6825,7 +6844,7 @@ function filmPageHTML(m){
   const fixtureBadge = m._fixture ? `<span class="fixturebadge" title="${escA(FIXTURE_MARKER)}">TEST FIXTURE</span>` : "";
   const cult = m.language ? langName(m.language) : "";
   const genres = (m.genres||[]).join(", ");
-  const poster = m.poster ? `<img class="fpposter" src="https://image.tmdb.org/t/p/w342${esc(m.poster)}" alt="">` : "";
+  const poster = m.poster ? `<img class="fpposter" src="https://image.tmdb.org/t/p/w342${escA(m.poster)}" alt="">` : "";
   const syn = m.synopsis ? `<p class="synopsis">${esc(m.synopsis)}</p>` : "";
   return `
     <div class="fpclose"><button type="button" class="ebtn" onclick="closeFilmPage()"
@@ -7017,7 +7036,7 @@ function inviteRowHTML(inv, state){
   const name=esc(inv.to_name || "Someone");
   const m=MOVIES.find(x=>x.tmdb_id===inv.tmdb_id);
   const poster=m && m.poster
-    ? `<div class="invposter" style="background-image:url(https://image.tmdb.org/t/p/w92${esc(m.poster)})"></div>`
+    ? `<div class="invposter" style="background-image:url(https://image.tmdb.org/t/p/w92${escA(m.poster)})"></div>`
     : `<div class="invposter"></div>`;
   const pill = state==="waiting" ? `<span class="pill invwait">No reply</span>`
     : reply.answer==="yes" ? `<span class="pill invyes">Yes</span>`
@@ -7165,7 +7184,7 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   // terms say it belongs. The film's JustWatch deep link is a different thing — a place you can go — and it
   // stays on the card as a link rather than as a credit.
   const jwLink = m.jw_link
-    ? `<a class="jwgo" href="${esc(m.jw_link)}" target="_blank" rel="noopener">See all options ↗</a>`
+    ? `<a class="jwgo" href="${safeUrl(m.jw_link)}" target="_blank" rel="noopener">See all options ↗</a>`
     : "";
   // CAS-426: the fused capsule's services half — nested inside bandHTML's current-window capsule rather
   // than standing alone as its own bar. Same function, same colours, same toggle; just repositioned.
@@ -7185,7 +7204,7 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   // The ▶ on the poster goes straight to the film's first trailer. No trailer, no button.
   const firstTrailer=(m.trailers||[])[0];
   const play = firstTrailer
-    ? `<a class="pplay" href="https://www.youtube.com/watch?v=${esc(firstTrailer)}" target="_blank" rel="noopener"
+    ? `<a class="pplay" href="https://www.youtube.com/watch?v=${safeUrl(firstTrailer)}" target="_blank" rel="noopener"
          onclick="event.stopPropagation()" title="Play the trailer" aria-label="${escA("Play the trailer for "+m.title)}">▶</a>`
     : "";
   const badge = scaleBadge(m);
@@ -11415,7 +11434,7 @@ function paintSplashWall(){
   const box=$("splashWall"); if(!box || box.childElementCount) return;
   const picks=MOVIES.filter(m=>m.poster).sort(byPopularity).slice(0, SPLASH_WALL_N);
   box.innerHTML=picks.map(m=>
-    `<div class="swp" style="background-image:url(https://image.tmdb.org/t/p/w185${esc(m.poster)})"></div>`).join("");
+    `<div class="swp" style="background-image:url(https://image.tmdb.org/t/p/w185${escA(m.poster)})"></div>`).join("");
 }
 function showSplash(){
   paintSplashWall();
