@@ -109,10 +109,9 @@ python3 poc_pipeline.py --simulate-day  # advances a couple of titles → prints
 ```
 
 ## Go live (real AU data)
-Get three free keys, then set them and run again — no code changes:
+Get two free keys, then set them and run again — no code changes:
 ```
 export TMDB_API_KEY=...        # themoviedb.org/settings/api          (free)
-export OMDB_API_KEY=...        # omdbapi.com/apikey.aspx              (free, 1k/day)
 export WATCHMODE_API_KEY=...   # api.watchmode.com/requestApiKey      (free, 2.5k/mo)
 python3 poc_pipeline.py
 ```
@@ -123,8 +122,8 @@ The pipeline makes two TMDB `discover` passes, both filtered to **AU theatrical*
 
 | Pass | Window | Cap | Cost |
 | --- | --- | --- | --- |
-| **Released** (`ingest_tmdb`) | `release_date` in the last `LOOKBACK_DAYS` (~3 yrs) | `MAX_TITLES` (60) | TMDB + OMDb + **Watchmode** per title |
-| **Upcoming** (`ingest_tmdb_upcoming`) | `release_date` from tomorrow to `+UPCOMING_LOOKAHEAD_DAYS` (~4 mths) | `MAX_UPCOMING` (12) | TMDB + OMDb only — **no Watchmode** |
+| **Released** (`ingest_tmdb`) | `release_date` in the last `LOOKBACK_DAYS` (~3 yrs) | `MAX_TITLES` (60) | TMDB + **Watchmode** per title |
+| **Upcoming** (`ingest_tmdb_upcoming`) | `release_date` from tomorrow to `+UPCOMING_LOOKAHEAD_DAYS` (~4 mths) | `MAX_UPCOMING` (12) | TMDB only — **no Watchmode** |
 
 The upcoming pass costs **zero Watchmode calls**: a film that hasn't opened has no AU
 home offers to poll, so the free-tier budget stays entirely with the released catalogue.
@@ -202,6 +201,7 @@ are being left out. We never impute a number we don't have.
 
 ## Known data limits (see project doc for detail)
 - AU-specific box office isn't available cheaply → the "Gross" figure is *worldwide*.
-- Rotten Tomatoes = **critic** score only (via OMDb); audience score needs scraping.
+- Critic score is Watchmode's `wm_critic_score` (CAS-919); the OMDb-era Rotten Tomatoes/
+  Metacritic blend is retired (CAS-938).
 - The $30-vs-$7 split is a price-threshold heuristic you tune (`PVOD_MIN_PRICE`,
   `RENTAL_MAX_PRICE` in poc_pipeline.py), because prices vary by store and format.

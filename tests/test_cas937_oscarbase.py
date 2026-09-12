@@ -1,7 +1,7 @@
 """CAS-937 — Oscar award status + detail from OscarBase (free, no API key, 100 req/min),
 replacing OMDb's Awards field and the retired Wikidata SPARQL detail backfill.
 
-Every test here mocks the network. Nothing reaches OscarBase, TMDB, OMDb or Watchmode.
+Every test here mocks the network. Nothing reaches OscarBase, TMDB or Watchmode.
 """
 import datetime
 import io
