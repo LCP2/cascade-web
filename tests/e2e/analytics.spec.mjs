@@ -1,5 +1,8 @@
 // CAS-940: unique session id, one app_open per load, and first-touch acquisition capture.
+// CAS-941: card expansion and Watch-tab switches, the app's own single entry points
+// (window.toggleExpand / window.setWatchTab) log exactly once per real user action.
 import { test, expect } from "@playwright/test";
+import { toShortlist, finishFlow, toListing } from "./helpers.mjs";
 
 // A local, param-carrying equivalent of helpers.mjs's freshApp/gotoFresh: those two always land the
 // SECOND (real) navigation on a bare /index.html, which would itself mint CLIENT_KEY and fire the first
@@ -51,4 +54,56 @@ test("CAS-940: first-touch acquisition capture, utm stripping, and one app_open 
   expect(opens.length).toBe(2);
   expect(opens[1].ret).toBe(true);
   expect(opens[1].s).not.toBe(firstSession);
+});
+
+test("CAS-941: expanding and collapsing a card on the Watch listing logs card_expand", async ({ page }) => {
+  await toShortlist(page, "stream");
+  await finishFlow(page);
+  await toListing(page);
+
+  const card = page.locator("#groups .card").first();
+  await expect(card).toBeVisible();
+
+  await card.locator(".titletext").first().click();
+  await expect(card).toHaveClass(/\bexpanded\b/);
+
+  let log = await readLog(page);
+  let expands = log.filter(e => e.type === "card_expand");
+  expect(expands.length).toBe(1);
+  expect(expands[0].on).toBe(true);
+  expect(expands[0].scr).toBe("watch");
+  expect(expands[0].tab).toBeTruthy();
+
+  await card.locator(".titletext").first().click();
+  await expect(card).not.toHaveClass(/\bexpanded\b/);
+
+  log = await readLog(page);
+  expands = log.filter(e => e.type === "card_expand");
+  expect(expands.length).toBe(2);
+  expect(expands[1].on).toBe(false);
+});
+
+test("CAS-941: switching Watch tab logs watch_tab; re-tapping the active tab logs nothing", async ({ page }) => {
+  await toShortlist(page, "stream");
+  await finishFlow(page);
+  await toListing(page);
+
+  const fromTab = await page.evaluate(() => watchTab);
+  const streamBtn = page.locator("#watchTabs .wtabbtn", { hasText: "Streaming" });
+  await expect(streamBtn).toBeVisible();
+
+  await streamBtn.click();
+  await expect(streamBtn).toHaveClass(/\bon\b/);
+
+  let log = await readLog(page);
+  let tabs = log.filter(e => e.type === "watch_tab");
+  expect(tabs.length).toBe(1);
+  expect(tabs[0].tab).toBe("stream");
+  expect(tabs[0].from).toBe(fromTab);
+
+  // AC4d: tapping the already-active tab is a no-op — the setWatchTab early-out fires first.
+  await streamBtn.click();
+  log = await readLog(page);
+  tabs = log.filter(e => e.type === "watch_tab");
+  expect(tabs.length).toBe(1);
 });
