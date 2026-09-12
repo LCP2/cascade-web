@@ -482,7 +482,41 @@ alter table public.usage_events enable row level security;
 
 drop policy if exists usage_events_insert on public.usage_events;
 create policy usage_events_insert on public.usage_events
-  for insert to anon, authenticated with check (true);
+  for insert to anon, authenticated with check (
+    length(type) <= 64
+    and length(client_key) <= 200
+    and length(coalesce(session,'')) <= 200
+    and pg_column_size(data) <= 4096
+  );
+
+-- security definer: counts every client_key's own rows to enforce the rate limit, the same
+-- shape as contact_messages_rate_limit below. app_template.html has 89 logEvent( call sites
+-- (CAS-948: `grep -c "logEvent(" app_template.html` = 90, minus the function's own definition
+-- line); the client batches them into flushes of at most USAGE_QUEUE_MAX=200 rows, debounced
+-- ~10s apart, so genuine heavy use tops out at a few hundred rows/hour. Set comfortably above.
+create or replace function public.usage_events_rate_limit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if (select count(*) from public.usage_events
+      where client_key = new.client_key and created_at > now() - interval '1 hour') >= 3000 then
+    raise exception 'usage_events: rate limit exceeded (3000/hour)';
+  end if;
+  if (select count(*) from public.usage_events
+      where client_key = new.client_key and created_at > now() - interval '24 hours') >= 15000 then
+    raise exception 'usage_events: rate limit exceeded (15000/day)';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists usage_events_rate_limit on public.usage_events;
+create trigger usage_events_rate_limit
+  before insert on public.usage_events
+  for each row execute function public.usage_events_rate_limit();
 
 -- ---------------------------------------------------------------------------
 -- contact_messages — Contact us submissions + rate limiting (CAS-836)
@@ -555,10 +589,28 @@ insert into storage.buckets (id, name, public)
 values ('contact-attachments', 'contact-attachments', false)
 on conflict (id) do nothing;
 
+-- CAS-948: caps enforced server-side so a direct storage API call can't bypass the client's own
+-- CONTACT_ATTACH_MAX_BYTES/CONTACT_ATTACH_TYPES checks (app_template.html).
+update storage.buckets
+set file_size_limit = 5242880,
+    allowed_mime_types = array['image/png','image/jpeg','image/webp']
+where id = 'contact-attachments';
+
+-- CAS-948: the caller is anonymous, so there is no verifiable identity to bind the path to —
+-- client_key is a value the client asserts, not a claim RLS can check (the same limitation
+-- contact_messages_rate_limit's own client_key already has). What IS enforceable is shape: the
+-- object name must be exactly one folder segment deep (storage.foldername returns null/{} for a
+-- bare filename and 2+ elements for a nested path), matching the `${CLIENT_KEY}/<file>` path the
+-- client already writes — this blocks path traversal and arbitrary top-level names, which is the
+-- concrete gap the previous `bucket_id = ...`-only check left open.
 drop policy if exists contact_attachments_insert on storage.objects;
 create policy contact_attachments_insert on storage.objects
   for insert to anon, authenticated
-  with check (bucket_id = 'contact-attachments');
+  with check (
+    bucket_id = 'contact-attachments'
+    and array_length(storage.foldername(name), 1) = 1
+    and length((storage.foldername(name))[1]) between 1 and 200
+  );
 
 -- ---------------------------------------------------------------------------
 -- invites / invite_replies — Invite to a movie (CAS-883/M12)
