@@ -4496,30 +4496,60 @@ if(didReset || forceSetup || previewStep){
 const storageWorks = (()=>{ try{ localStorage.setItem("cascade_probe","1"); localStorage.removeItem("cascade_probe"); return true; }catch(e){ return false; } })();
 function loadSet(k){ try{ return new Set(JSON.parse(localStorage.getItem(k)||"[]")); }catch(e){ return new Set(); } }
 function saveSet(k,set){ try{ localStorage.setItem(k, JSON.stringify([...set])); }catch(e){} }
-const watched = loadSet("cascade_watched");
-const blocked = loadSet("cascade_blocked");
+// CAS-957: every account-mirroring local key below is namespaced by the account it belongs to — a device
+// used by two accounts must never let one account's cache answer for the other's (the reported defect: a
+// second sign-in inherited the first account's agents, then tried to push them back under its own owner
+// and got refused by RLS). Real auth resolution happens later, asynchronously (the account-persistence IIFE
+// far below) — at THIS point in the boot sequence nothing has resolved it yet, so acctSuffix starts out as
+// this device's own record of who it last resolved to (a device fact, like cascade_had_account/
+// cascade_client_key below, never account content itself) purely so the very first paint has something to
+// show. maybeSwitchAcctSuffix (defined inside the account-persistence IIFE, where the per-account known/
+// baseline maps it also resets actually live) corrects it — discarding a cache written under a different
+// account rather than trusting it — the moment real identity resolves, before that account's own load/merge
+// ever runs.
+const ACCT_SUFFIX_KEY = "cascade_acct_suffix";
+let acctSuffix = "guest";
+try{ acctSuffix = localStorage.getItem(ACCT_SUFFIX_KEY) || "guest"; }catch(e){}
+function acctKey(base){ return base + "@" + acctSuffix; }
+// One-shot upgrade path for a device that already had these keys unnamespaced before this ticket shipped.
+// Deleted outright, never relocated onto whichever account happens to resolve next: a device can't tell a
+// legacy key's own history apart from a foreign account's leftovers (that's the whole defect), and anything
+// this device genuinely still owns comes back from the account's own table on the very next load/merge
+// anyway. "Come out clean" (the ticket's own words) wins over "guess whose it was."
+const ACCT_MIGRATED_KEY = "cascade_957_migrated";
+const MANAGED_ACCT_KEYS = ["cascade_cascades", "cascade_cascade_known", "cascade_cascade_edited_at",
+  "cascade_watched", "cascade_disliked", "cascade_blocked", "cascade_indifferent", "cascade_wow", "cascade_enjoyed",
+  "cascade_notify", "cascade_watch_known", "cascade_notifyprefs", "cascade_prefs", "cascade_ux",
+  "cascade_taste_base", "cascade_watch_prefs", "cascade_moving_seen", "cascade_occasions", "cascade_onb_answers"];
+function migrateLegacyAcctKeysOnce(){
+  try{ if(localStorage.getItem(ACCT_MIGRATED_KEY)==="1") return; }catch(e){ return; }
+  MANAGED_ACCT_KEYS.forEach(base=>{ try{ localStorage.removeItem(base); }catch(e){} });
+  try{ localStorage.setItem(ACCT_MIGRATED_KEY, "1"); }catch(e){}
+}
+const watched = loadSet(acctKey("cascade_watched"));
+const blocked = loadSet(acctKey("cascade_blocked"));
 // ---- The three things you can say about a film you're done with (CAS-100) -------
 // Liked / Didn't like / Not for me, mutually exclusive, one storage pattern each. `watched` stays the set of
 // films you've SEEN — every exclusion rule, taste weight and Cascade toggle already reads it, so the opinion
 // rides alongside it instead of replacing it: `cascade_disliked` marks which of the watched ones you didn't
 // enjoy. That makes the migration honest and free — a film you ticked watched before today reads as Liked,
 // which is what "seen it, keep it out of my results" always meant.
-const disliked = loadSet("cascade_disliked");
+const disliked = loadSet(acctKey("cascade_disliked"));
 // CAS-183: and the FOURTH thing — you watched it and it left you cold. "So-so" is not a weak like: it must
 // not pull the taste weighting toward more of the same, and it must not be filed under "didn't like" either,
 // because that pushes the kind down the list. It is its own answer, riding alongside `watched` the same way
 // `disliked` does, so a film ticked before today keeps meaning exactly what it meant.
-const indifferent = loadSet("cascade_indifferent");
+const indifferent = loadSet(acctKey("cascade_indifferent"));
 // CAS-278: and the FIFTH — the top of the scale. "Watch Again" is a strong answer, but it is not the same
 // answer as "that was extraordinary", and a five-point scale that stops at "I'd watch it again" has no room
 // at the top for the films the whole thing exists to find. It rides alongside `watched` exactly as the other
 // two markers do, so it costs no migration: nothing is in this set until somebody puts it there, and every
 // film ticked before today keeps meaning precisely what it meant.
-const wowed = loadSet("cascade_wow");
+const wowed = loadSet(acctKey("cascade_wow"));
 // CAS-349: and a SIXTH, between Watch Again and So-so — "I enjoyed it" without it being one you'd go back to.
 // Same pattern as `wowed`/`indifferent`: rides alongside `watched`, costs no migration, and a film ticked
 // before today keeps meaning precisely what it meant (nothing is in this set until somebody puts it there).
-const enjoyed = loadSet("cascade_enjoyed");
+const enjoyed = loadSet(acctKey("cascade_enjoyed"));
 const isWow      = id => watched.has(id) && wowed.has(id) && !disliked.has(id) && !indifferent.has(id);
 const isEnjoyed  = id => watched.has(id) && enjoyed.has(id) && !wowed.has(id) && !disliked.has(id) && !indifferent.has(id);
 const isDisliked = id => watched.has(id) && disliked.has(id);
@@ -4531,9 +4561,9 @@ const opinionOf  = id => blocked.has(id) ? "notfor" : isDisliked(id) ? "disliked
 // CAS-183: ONE chokepoint for every write of a watch status, so the per-account sync has a single place to
 // wrap — exactly the way saveCascades() is wrapped for the `cascades` table.
 function saveWatchStatus(){
-  saveSet("cascade_watched",watched); saveSet("cascade_disliked",disliked);
-  saveSet("cascade_blocked",blocked); saveSet("cascade_indifferent",indifferent);
-  saveSet("cascade_wow",wowed); saveSet("cascade_enjoyed",enjoyed);
+  saveSet(acctKey("cascade_watched"),watched); saveSet(acctKey("cascade_disliked"),disliked);
+  saveSet(acctKey("cascade_blocked"),blocked); saveSet(acctKey("cascade_indifferent"),indifferent);
+  saveSet(acctKey("cascade_wow"),wowed); saveSet(acctKey("cascade_enjoyed"),enjoyed);
 }
 const expandedSet = new Set();   // which cards are expanded (session only)
 
@@ -4566,15 +4596,15 @@ const NOTIFY_PREFS_KEY = "cascade_notifyprefs";
 // permission grant (registerPush(), below) may flip it.
 const notifyPrefsDefault = () => ({inApp:false, emailOn:false, email:""});
 let notifyPrefs = notifyPrefsDefault();
-try{ const o=JSON.parse(localStorage.getItem(NOTIFY_PREFS_KEY)||"null");
+try{ const o=JSON.parse(localStorage.getItem(acctKey(NOTIFY_PREFS_KEY))||"null");
      if(o && typeof o==="object") notifyPrefs={...notifyPrefsDefault(), ...o}; }catch(e){}
 function saveNotifyPrefs(){
-  try{ localStorage.setItem(NOTIFY_PREFS_KEY, JSON.stringify(notifyPrefs)); }catch(e){}
+  try{ localStorage.setItem(acctKey(NOTIFY_PREFS_KEY), JSON.stringify(notifyPrefs)); }catch(e){}
 }
 const NOTIFY_KEY="cascade_notify";
 function loadNotify(){
   let n={};
-  try{ const o=JSON.parse(localStorage.getItem(NOTIFY_KEY)||"{}"); if(o && typeof o==="object" && !Array.isArray(o)) n=o; }catch(e){}
+  try{ const o=JSON.parse(localStorage.getItem(acctKey(NOTIFY_KEY))||"{}"); if(o && typeof o==="object" && !Array.isArray(o)) n=o; }catch(e){}
   Object.keys(n).forEach(k=>{                       // anything malformed is discarded, not trusted
     const e=n[k];
     if(!e || typeof e!=="object"){ delete n[k]; return; }
@@ -4600,7 +4630,7 @@ function loadNotify(){
       old.forEach(id=>{ if(!n[id]) n[id]={source:"manual", cascadeIds:[]}; });
       // Write the new list BEFORE dropping the old one. The other order loses the user's whole list if the
       // write fails (a full quota, a locked-down browser) — the one moment we'd have nothing to fall back on.
-      localStorage.setItem(NOTIFY_KEY, JSON.stringify(n));
+      localStorage.setItem(acctKey(NOTIFY_KEY), JSON.stringify(n));
       localStorage.removeItem("cascade_tracked");
     }
   }catch(e){}
@@ -4612,7 +4642,7 @@ function saveNotify(){
   const s=JSON.stringify(notify);
   if(s===notifySaved) return;                       // recompute runs on every render — only real changes write
   notifySaved=s;
-  try{ localStorage.setItem(NOTIFY_KEY, s); }catch(e){}
+  try{ localStorage.setItem(acctKey(NOTIFY_KEY), s); }catch(e){}
 }
 // CAS-636: Moving's own seen-state — {filmId: lastSeenGroupKey} — separate from the Notifications inbox's
 // read_at, since a Moving row stays visible for the life of its condition and only stops COUNTING once
@@ -4620,7 +4650,7 @@ function saveNotify(){
 const MOVING_SEEN_KEY="cascade_moving_seen";
 function loadMovingSeen(){
   try{
-    const o=JSON.parse(localStorage.getItem(MOVING_SEEN_KEY)||"{}");
+    const o=JSON.parse(localStorage.getItem(acctKey(MOVING_SEEN_KEY))||"{}");
     return (o && typeof o==="object" && !Array.isArray(o)) ? o : {};
   }catch(e){ return {}; }
 }
@@ -4630,7 +4660,7 @@ function saveMovingSeen(){
   const s=JSON.stringify(movingSeen);
   if(s===movingSeenSaved) return;
   movingSeenSaved=s;
-  try{ localStorage.setItem(MOVING_SEEN_KEY, s); }catch(e){}
+  try{ localStorage.setItem(acctKey(MOVING_SEEN_KEY), s); }catch(e){}
 }
 const entryFor = id => notify[id] || (notify[id]={source:"auto", cascadeIds:[], pinnedTo:[], notIn:[]});
 // CAS-279: the two override tests, defined once so the listing, the counts and the Found set cannot disagree
@@ -4877,13 +4907,13 @@ const foundSource = id => {
 const cascadesFor = id => ((notify[id]||{}).cascadeIds||[])
   .map(cid=>cascades.find(c=>c.id===cid)).filter(Boolean);
 // `touched` = the user has worked the my-services switch by hand, so we stop auto-defaulting it for them.
-function loadPrefs(){ try{ const p=JSON.parse(localStorage.getItem("cascade_prefs")||"{}");
+function loadPrefs(){ try{ const p=JSON.parse(localStorage.getItem(acctKey("cascade_prefs"))||"{}");
   // CAS-251: a service saved under a variant name is folded onto its canonical one on the way in, so
   // somebody who picked "Netflix Standard with Ads" last week still has Netflix picked today.
   const canon = xs => new Set((xs||[]).map(svcCanon));
   return {on:!!p.on, touched:!!p.touched, sub:canon(p.sub), store:canon(p.store)}; }
   catch(e){ return {on:false,touched:false,sub:new Set(),store:new Set()}; } }
-function savePrefs(){ try{ localStorage.setItem("cascade_prefs",
+function savePrefs(){ try{ localStorage.setItem(acctKey("cascade_prefs"),
   JSON.stringify({on:prefs.on,touched:prefs.touched,sub:[...prefs.sub],store:[...prefs.store]})); }catch(e){} }
 const prefs = loadPrefs();
 // How many times this browser has opened the app. CAS-273 removed its ONE reader — "Finish your agent" had
@@ -4895,8 +4925,8 @@ let visits=1;
 try{ visits=(+localStorage.getItem("cascade_visits")||0)+1; localStorage.setItem("cascade_visits", String(visits)); }catch(e){}
 // UX-psychology framings sit behind one flag so the plain version is the A/B control. Default on.
 const ux = {on:true};
-try{ const v=localStorage.getItem("cascade_ux"); if(v!==null) ux.on = v==="1"; }catch(e){}
-function saveUx(){ try{ localStorage.setItem("cascade_ux", ux.on?"1":"0"); }catch(e){} }
+try{ const v=localStorage.getItem(acctKey("cascade_ux")); if(v!==null) ux.on = v==="1"; }catch(e){}
+function saveUx(){ try{ localStorage.setItem(acctKey("cascade_ux"), ux.on?"1":"0"); }catch(e){} }
 // CAS-702: the ONE default sort. Every fallback that means "no sort chosen yet" reads this, never a literal
 // string of its own — three different literals (imdb / availability / cascade) tracked three different eras
 // of what "the default" meant (CAS-148, CAS-618) and had drifted out of step with each other.
@@ -4918,7 +4948,7 @@ const SORT_MIG_KEY_2 = "cascade_sortmig_cascade";  // one-shot: default order be
 const LANG_MIG_KEY = "cascade_langmig_560";   // one-shot: see the CAS-560 language migration below
 function loadCascades(){
   try{
-    const a=JSON.parse(localStorage.getItem("cascade_cascades")||"[]");
+    const a=JSON.parse(localStorage.getItem(acctKey("cascade_cascades"))||"[]");
     if(!Array.isArray(a)) return [];
     // The budget sort is gone (it buried tentpoles TMDB has no budget for). Carry old Blockbuster
     // Cascades over to the popularity sort rather than silently dropping them back to IMDb.
@@ -4929,7 +4959,7 @@ function loadCascades(){
     try{
       if(!localStorage.getItem(SORT_MIG_KEY)){
         a.forEach(c=>{ if(!c.sort || c.sort==="imdb") c.sort="availability"; });
-        localStorage.setItem("cascade_cascades", JSON.stringify(a));
+        localStorage.setItem(acctKey("cascade_cascades"), JSON.stringify(a));
         localStorage.setItem(SORT_MIG_KEY,"1");
       }
     }catch(e){}
@@ -4939,7 +4969,7 @@ function loadCascades(){
       // deliberately from here on is never overwritten. Any other order the user chose is left alone.
       if(!localStorage.getItem(SORT_MIG_KEY_2)){
         a.forEach(c=>{ if(!c.sort || c.sort==="availability" || c.sort==="imdb") c.sort=DEFAULT_SORT; });
-        localStorage.setItem("cascade_cascades", JSON.stringify(a));
+        localStorage.setItem(acctKey("cascade_cascades"), JSON.stringify(a));
         localStorage.setItem(SORT_MIG_KEY_2,"1");
       }
     // CAS-560: language retired as a per-agent field. normCascade() forces c.lang to [] on every load
@@ -4949,7 +4979,7 @@ function loadCascades(){
       if(!localStorage.getItem(LANG_MIG_KEY)){
         if(a.some(c=>(c.lang||[]).length)){
           a.forEach(c=>{ c.lang=[]; });
-          localStorage.setItem("cascade_cascades", JSON.stringify(a));
+          localStorage.setItem(acctKey("cascade_cascades"), JSON.stringify(a));
         }
         localStorage.setItem(LANG_MIG_KEY,"1");
       }
@@ -4958,7 +4988,7 @@ function loadCascades(){
                 // language/rating-stop controls existed still opens clean, and means what it always meant.
   }catch(e){ return []; }
 }
-function saveCascades(){ try{ localStorage.setItem("cascade_cascades", JSON.stringify(cascades)); }catch(e){} }
+function saveCascades(){ try{ localStorage.setItem(acctKey("cascade_cascades"), JSON.stringify(cascades)); }catch(e){} }
 // CAS-863: WATCH_STEPS is the watched-verdict ramp the Watch On panel (openWatchPanel) renders as its five
 // segments — it used to sit here because the (now retired) watch-list model's watchlistDefaults() was this
 // array's earliest caller; nothing left up here needs it hoisted, but there's no reason to move it either.
@@ -5032,7 +5062,7 @@ reconcileActiveIds();
 const OCCASIONS_KEY="cascade_occasions";
 function loadOccasionReg(){
   try{
-    const a=JSON.parse(localStorage.getItem(OCCASIONS_KEY)||"[]");
+    const a=JSON.parse(localStorage.getItem(acctKey(OCCASIONS_KEY))||"[]");
     if(!Array.isArray(a)) return [];
     return a.filter(o=>o && typeof o.id==="string" && typeof o.name==="string");
   }catch(e){ return []; }
@@ -5043,7 +5073,7 @@ function saveOccasionReg(){
   const s=JSON.stringify(occasionReg);
   if(s===occasionRegSaved) return;
   occasionRegSaved=s;
-  try{ localStorage.setItem(OCCASIONS_KEY, s); }catch(e){}
+  try{ localStorage.setItem(acctKey(OCCASIONS_KEY), s); }catch(e){}
 }
 const occasionName = id => (occasionReg.find(o=>o.id===id)||{}).name || "";
 const occasionRegSorted = () => [...occasionReg].sort((a,b)=>a.name.localeCompare(b.name));
@@ -11990,12 +12020,12 @@ function agentNewestDays(c){
 const AGENT_STALE_DAYS = 21;
 const ONB_ANSWERS_KEY = "cascade_onb_answers";
 function onbAnswersLoad(){
-  try{ const raw=localStorage.getItem(ONB_ANSWERS_KEY);
+  try{ const raw=localStorage.getItem(acctKey(ONB_ANSWERS_KEY));
        return raw ? {...onbAnswersDefault(), ...JSON.parse(raw)} : onbAnswersDefault(); }
   catch(e){ return onbAnswersDefault(); }
 }
 function onbAnswersSave(a){
-  try{ localStorage.setItem(ONB_ANSWERS_KEY, JSON.stringify(a)); }catch(e){}
+  try{ localStorage.setItem(acctKey(ONB_ANSWERS_KEY), JSON.stringify(a)); }catch(e){}
 }
 
 // ---- CAS-908: onboarding v2 answers + four-agent generator ------------------------------------
@@ -12632,10 +12662,10 @@ const watchPrefsDefaults = () => ({
 });
 let watchPrefs = watchPrefsDefaults();
 try{
-  const raw=JSON.parse(localStorage.getItem(WATCH_PREFS_KEY)||"null");
+  const raw=JSON.parse(localStorage.getItem(acctKey(WATCH_PREFS_KEY))||"null");
   if(raw && typeof raw==="object") watchPrefs={...watchPrefsDefaults(), ...migrateWatch(raw)};
 }catch(e){}
-function saveWatchPrefs(){ try{ localStorage.setItem(WATCH_PREFS_KEY, JSON.stringify(watchPrefs)); }catch(e){} }
+function saveWatchPrefs(){ try{ localStorage.setItem(acctKey(WATCH_PREFS_KEY), JSON.stringify(watchPrefs)); }catch(e){} }
 let prefsWatchMode=false;   // true only while the Where & when you'll watch screen is on screen
 const activeWatch = () => prefsWatchMode ? watchPrefs : (onbFlow.watch || {});
 // The single source of truth propagates to every EXISTING agent immediately, not just new ones — an agent's
@@ -13010,9 +13040,9 @@ const baseDefaults = () => ({genres:[], year:YEAR_DEFAULT, langs:["en"],
 // at all and 186 are in a language outside the twelve we list, and a filter that is off must not drop them.
 const tbNone = v => v===null;                 // explicitly cleared
 let tasteBase = baseDefaults();
-try{ const o=JSON.parse(localStorage.getItem(BASE_KEY)||"null");
+try{ const o=JSON.parse(localStorage.getItem(acctKey(BASE_KEY))||"null");
      if(o && typeof o==="object") tasteBase={...baseDefaults(), ...o}; }catch(e){}
-function saveTasteBase(){ try{ localStorage.setItem(BASE_KEY, JSON.stringify(tasteBase)); }catch(e){} }
+function saveTasteBase(){ try{ localStorage.setItem(acctKey(BASE_KEY), JSON.stringify(tasteBase)); }catch(e){} }
 // CAS-250: the baseline asks the same question as the agent's own how-far-back, so it answers it the same
 // way — a rolling number of years, converted once from the old index.
 const baseYearsBack = () => (typeof tasteBase.yearsBack==="number")
@@ -18151,7 +18181,7 @@ else if(dedupedN)
   // CAS-733: signed OUT on a configured build is not a return to some on-device agent set any more —
   // there is no guest store left to read back (Change 1). This only ever fires on the real signed-in →
   // signed-out transition below, so the account's agents simply stop being what's on screen.
-  function loadGuest(){ replaceCascades([]); }
+  function loadGuest(){ maybeSwitchAcctSuffix(null); replaceCascades([]); }
 
   // ---- write path: upsert only what THIS device changed, delete only what it watched disappear ---------
   // CAS-408: the old prune deleted every account row "not on this device's screen" — which silently
@@ -18166,14 +18196,14 @@ else if(dedupedN)
   const CASCADE_KNOWN_KEY = "cascade_cascade_known";
   function loadCascadeKnown(){
     try{
-      const raw=localStorage.getItem(CASCADE_KNOWN_KEY);
+      const raw=localStorage.getItem(acctKey(CASCADE_KNOWN_KEY));
       if(!raw) return new Map();
       const parsed=JSON.parse(raw);
       return new Map(Array.isArray(parsed) ? parsed : []);
     }catch(e){ return new Map(); }
   }
   function saveCascadeKnown(){
-    try{ localStorage.setItem(CASCADE_KNOWN_KEY, JSON.stringify([...cascadeKnown])); }catch(e){}
+    try{ localStorage.setItem(acctKey(CASCADE_KNOWN_KEY), JSON.stringify([...cascadeKnown])); }catch(e){}
   }
   let cascadeKnown = loadCascadeKnown();
   // CAS-734: this device's own record of when it last actually CHANGED an agent's content — as opposed to
@@ -18184,16 +18214,64 @@ else if(dedupedN)
   const CASCADE_EDITED_KEY = "cascade_cascade_edited_at";
   function loadCascadeEditedAt(){
     try{
-      const raw=localStorage.getItem(CASCADE_EDITED_KEY);
+      const raw=localStorage.getItem(acctKey(CASCADE_EDITED_KEY));
       if(!raw) return new Map();
       const parsed=JSON.parse(raw);
       return new Map(Array.isArray(parsed) ? parsed : []);
     }catch(e){ return new Map(); }
   }
   function saveCascadeEditedAt(){
-    try{ localStorage.setItem(CASCADE_EDITED_KEY, JSON.stringify([...cascadeEditedAt])); }catch(e){}
+    try{ localStorage.setItem(acctKey(CASCADE_EDITED_KEY), JSON.stringify([...cascadeEditedAt])); }catch(e){}
   }
   let cascadeEditedAt = loadCascadeEditedAt();
+  // ---- CAS-957: keep every namespaced local cache pointed at the account actually resolved -------------
+  // Called from loadAccount() (signing in) and loadGuest() (signing out) — the two chokepoints every real
+  // sign-in/out already runs through (via the cascade-auth-change listener below), and the same two a test
+  // drives directly. Whatever was in memory a moment ago belonged to whichever suffix was active then —
+  // never automatically to the one now resolving, so it is never trusted across a real switch.
+  function maybeSwitchAcctSuffix(nextSuffix){
+    nextSuffix = nextSuffix || "guest";
+    if(nextSuffix === acctSuffix) return;
+    const fromGuest = acctSuffix === "guest";
+    migrateLegacyAcctKeysOnce();
+    acctSuffix = nextSuffix;
+    try{ localStorage.setItem(ACCT_SUFFIX_KEY, acctSuffix); }catch(e){}
+    // CAS-393/733/734's "offer up what's genuinely new" only ever makes sense for a Cascade built on THIS
+    // device while genuinely guest — coming from any OTHER account, whatever is in `cascades` belongs to
+    // whoever was signed in a moment ago, never to whoever is signing in now, so it is discarded rather
+    // than carried forward. loadAccount()'s own network fetch (which always follows this) is what
+    // repopulates it correctly either way.
+    if(!fromGuest) cascades.length = 0;
+    // None of the other namespaced subsystems fold local-only content into an incoming account the way
+    // cascades' fold-in does (their own load-from-account paths replace wholesale), so there is nothing to
+    // preserve for them across a switch either way — every one reloads fresh off the account now current.
+    cascadeKnown = loadCascadeKnown();
+    cascadeEditedAt = loadCascadeEditedAt();
+    watchKnown = loadWatchKnown();
+    const p = loadPrefs();
+    prefs.on = p.on; prefs.touched = p.touched; setTo(prefs.sub, p.sub); setTo(prefs.store, p.store);
+    tasteBase = baseDefaults();
+    try{ const o=JSON.parse(localStorage.getItem(acctKey(BASE_KEY))||"null");
+         if(o && typeof o==="object") tasteBase={...baseDefaults(), ...o}; }catch(e){}
+    watchPrefs = watchPrefsDefaults();
+    try{ const raw=JSON.parse(localStorage.getItem(acctKey(WATCH_PREFS_KEY))||"null");
+         if(raw && typeof raw==="object") watchPrefs={...watchPrefsDefaults(), ...migrateWatch(raw)}; }catch(e){}
+    try{ const o=JSON.parse(localStorage.getItem(acctKey(NOTIFY_PREFS_KEY))||"null");
+         notifyPrefs = (o && typeof o==="object") ? {...notifyPrefsDefault(), ...o} : notifyPrefsDefault(); }
+    catch(e){ notifyPrefs = notifyPrefsDefault(); }
+    setTo(watched, loadSet(acctKey("cascade_watched")));
+    setTo(disliked, loadSet(acctKey("cascade_disliked")));
+    setTo(blocked, loadSet(acctKey("cascade_blocked")));
+    setTo(indifferent, loadSet(acctKey("cascade_indifferent")));
+    setTo(wowed, loadSet(acctKey("cascade_wow")));
+    setTo(enjoyed, loadSet(acctKey("cascade_enjoyed")));
+    Object.keys(notify).forEach(id=>delete notify[id]);
+    Object.assign(notify, loadNotify());
+    occasionReg.length = 0;
+    loadOccasionReg().forEach(o=>occasionReg.push(o));
+    Object.keys(movingSeen).forEach(k=>delete movingSeen[k]);
+    Object.assign(movingSeen, loadMovingSeen());
+  }
   // CAS-734: every cascade whose content no longer matches what this device last confirmed the account
   // holds is, by definition, something THIS device just changed — stamp it now so a later load/reconcile
   // has real evidence to weigh against the account row's own updated_at, rather than the old "local always
@@ -18234,6 +18312,18 @@ else if(dedupedN)
     catch(err){ console.warn("Cascade: account sync failed", err); }
     finally{ syncing=false; if(syncAgain){ syncAgain=false; scheduleSync(); } }
   }
+  // CAS-957: the account refused to ever let this device own this row (42501) — dropping it from the
+  // local list (not just cascadeKnown) is deliberate: leaving it on screen with no way to ever save it
+  // again would be a worse experience than it simply not being there.
+  function dropRefusedCascade(id){
+    const i = cascades.findIndex(c=>c.id===id);
+    if(i>=0) cascades.splice(i,1);
+    cascadeKnown.delete(id);
+    cascadeEditedAt.delete(id);
+    saveCascadesLocal();
+    console.warn("Cascade upsert refused (42501) — dropped from this device", id);
+    if(typeof render==="function") render();
+  }
   // CAS-734 Change 4: pushes only the agents this device has actually changed (cascadeDirtyRows, diffed
   // against cascadeKnown) — a single-agent rename now upserts exactly one row, not the whole array. The old
   // `cascades.map(cascadeToRow)` upserted every row on any single edit, which is why a rename used to leave
@@ -18245,10 +18335,31 @@ else if(dedupedN)
     const deletes = cascadePendingDeleteIds();
     if(dirty.length){
       const rows = dirty.map(cascadeToRow);
-      const { data, error } = await c.from("cascades").upsert(rows, { onConflict:"id" }).select("id,updated_at");
+      let { data, error } = await c.from("cascades").upsert(rows, { onConflict:"id" }).select("id,updated_at");
+      // CAS-957: 42501 is RLS's USING clause refusing the write — this device pushing a row it does not
+      // own, almost always a row this device cached under a different account before local storage was
+      // namespaced. Re-pushing it every sync would latch the degraded banner forever over a row that will
+      // NEVER succeed, so a lone dirty row is dropped outright rather than retried. Several dirty rows in
+      // one batch are retried one at a time so the specific poisoned row(s) can be identified and dropped
+      // without discarding the rest of a genuine batch.
+      if(error && error.code==="42501" && rows.length>1){
+        data = [];
+        let lastError = null;
+        for(const row of rows){
+          const r = await c.from("cascades").upsert([row], { onConflict:"id" }).select("id,updated_at");
+          if(r.error && r.error.code==="42501") dropRefusedCascade(row.id);
+          else if(r.error) lastError = r.error;
+          else data.push(...(r.data||[]));
+        }
+        error = lastError;
+      } else if(error && error.code==="42501"){
+        dropRefusedCascade(rows[0].id);
+        data = []; error = null;
+      }
       if(error){ console.warn("Cascade upsert", error); recordSyncOutcome("cascades", false, error); return; }
       const versionById = new Map((data||[]).map(r=>[r.id, r.updated_at]));
       dirty.forEach(x=>{
+        if(!versionById.has(x.id)) return;   // refused (dropped above) or otherwise not written this pass
         cascadeKnown.set(x.id, { sig: cascadeFullSigOf(x), version: versionById.get(x.id)||null });
         cascadeEditedAt.delete(x.id);   // pushed — the account now holds this device's edit
       });
@@ -18301,6 +18412,7 @@ else if(dedupedN)
   // above; one genuinely new to this device (the account has never confirmed it) is folded straight in.
   async function loadAccount(){
     const c=client(); if(!c||!accountActive()) return;
+    maybeSwitchAcctSuffix(uid());
     const { data, error } = await acctRead("cascades", () => c.from("cascades").select("*").order("created_at"));   // RLS: only mine
     if(error){ console.warn("Cascade load", error); cascadesReady=true; return; }
     // CAS-733 Change 5: one-time legacy cleanup — a device carrying a pre-account guest agent set
@@ -18636,12 +18748,12 @@ else if(dedupedN)
     filmBaseline=remoteIds;
   }
   function loadGuestFilms(){
-    watched.clear();    loadSet("cascade_watched").forEach(id=>watched.add(id));
-    disliked.clear();   loadSet("cascade_disliked").forEach(id=>disliked.add(id));
-    blocked.clear();    loadSet("cascade_blocked").forEach(id=>blocked.add(id));
-    indifferent.clear();loadSet("cascade_indifferent").forEach(id=>indifferent.add(id));
-    wowed.clear();       loadSet("cascade_wow").forEach(id=>wowed.add(id));
-    enjoyed.clear();     loadSet("cascade_enjoyed").forEach(id=>enjoyed.add(id));
+    watched.clear();    loadSet(acctKey("cascade_watched")).forEach(id=>watched.add(id));
+    disliked.clear();   loadSet(acctKey("cascade_disliked")).forEach(id=>disliked.add(id));
+    blocked.clear();    loadSet(acctKey("cascade_blocked")).forEach(id=>blocked.add(id));
+    indifferent.clear();loadSet(acctKey("cascade_indifferent")).forEach(id=>indifferent.add(id));
+    wowed.clear();       loadSet(acctKey("cascade_wow")).forEach(id=>wowed.add(id));
+    enjoyed.clear();     loadSet(acctKey("cascade_enjoyed")).forEach(id=>enjoyed.add(id));
     agMetricsCache.clear();   // CAS-867: a reloaded guest verdict set can flip taggedOut() too
     recomputeFound();
     if(typeof render==="function") render();
@@ -18799,12 +18911,12 @@ else if(dedupedN)
   const WATCH_KNOWN_KEY = "cascade_watch_known";
   function loadWatchKnown(){
     try{
-      const arr = JSON.parse(localStorage.getItem(WATCH_KNOWN_KEY) || "[]");
+      const arr = JSON.parse(localStorage.getItem(acctKey(WATCH_KNOWN_KEY)) || "[]");
       return new Map(Array.isArray(arr) ? arr : []);
     }catch(e){ return new Map(); }
   }
   function saveWatchKnown(){
-    try{ localStorage.setItem(WATCH_KNOWN_KEY, JSON.stringify([...watchKnown])); }catch(e){}
+    try{ localStorage.setItem(acctKey(WATCH_KNOWN_KEY), JSON.stringify([...watchKnown])); }catch(e){}
   }
   let watchKnown = loadWatchKnown();
   function watchRows(){
@@ -19369,6 +19481,12 @@ else if(dedupedN)
   };
 
   window.CascadePersistence = { loadAccount, syncNow: runSync, accountActive, isUuid,
+                                // CAS-957: loadGuest is the real sign-out chokepoint (the auth-change
+                                // listener below calls it directly) — exposed so a test can drive an actual
+                                // sign-out the same way it already drives a sign-in through loadAccount.
+                                loadGuest,
+                                get acctSuffix(){ return acctSuffix; },
+                                dropRefusedCascade,
                                 loadAccountFilms, syncFilmsNow: runFilmSync, filmRows, applyFilmRows,
                                 loadNotifyPrefs, loadRealAlerts, syncNotifyNow: runNotifySync,
                                 prefsRow, pickRows, loadFilmPicks,
