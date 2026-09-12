@@ -177,34 +177,30 @@ if(typeof window.CascadeAuth === "undefined"){
   // sub-switches directly rather than only asserting the label they produce.
   accountAlertKeysOn, upcomingCapLabel,
   selScaleMatch, voteReadout, critScoreReadout, scaleReadout,
-  // CAS-694: critScore (the one recorded critics figure) and qScore's own text (qScoreSourcesText), so a test
-  // can assert both independently rather than re-deriving them from qScore's output alone.
-  qScore, critScore, qScoreSourcesText, sortMoviesBy, ratingOf, IMDB_MIN_VOTES, imdbReliable,
+  // CAS-920: critScore (the one recorded critics figure, now Watchmode's wm_critic_score) so a test can
+  // assert it independently rather than re-deriving it from wmQScore's output alone.
+  critScore, sortMoviesBy, ratingOf,
   // CAS-695: the Cascade score's own basis switch (cascadeScore/cascadeScoreSourcesText, dispatching on
-  // isPreRelease) and the cinema-side score it dispatches to (cinemaScore, over buzzPctlOf and its sorted
-  // cohort array/rank lookup) — exported independently so a test can assert each stage rather than only the
-  // combined qScoreHTML output. CAS-722 retired budgetPctlOf itself (budget left the score); CINEMA_BUDGET_VALS/
-  // CINEMA_BUDGET_MIN survive — CAS-724's legacyMissionFloorDefault still reads them for a cinema agent's
-  // one-time scoreFloor migration.
-  cascadeScore, cascadeScoreSourcesText, cinemaScore, isPreRelease, buzzPctlOf, pctRankOf,
-  // CAS-919: wmQScoreSourcesText is wmQScore's own text (alongside qScoreSourcesText above), exported so a
-  // test can assert the blended cascadeScoreSourcesText's Watchmode half directly.
+  // isPreRelease) and the buzz-percentile accessor it used to dispatch to before CAS-919 — exported
+  // independently so a test can assert each stage rather than only the combined qScoreHTML output.
+  // CAS-722 retired budgetPctlOf itself (budget left the score); CINEMA_BUDGET_VALS/CINEMA_BUDGET_MIN
+  // survive — CAS-724's legacyMissionFloorDefault still reads them for a cinema agent's one-time
+  // scoreFloor migration.
+  cascadeScore, cascadeScoreSourcesText, isPreRelease, buzzPctlOf, pctRankOf,
+  // CAS-919: wmQScoreSourcesText is wmQScore's own text, exported so a test can assert the blended
+  // cascadeScoreSourcesText's Watchmode half directly.
   wmQScoreSourcesText,
-  // CAS-895: wmQScore/wmCascadeScore, the TEMPORARY Watchmode-mirrored pair of qScore/cascadeScore — exported
-  // the same way so a test can assert each stage directly rather than only the rendered row.
-  // CAS-919: WM_SCALE/wmScaled are the frozen piecewise-linear map wmQScore now runs its raw mean through,
-  // and scoresRowHTML is the card's own People/Critics render — all exported so a test can assert each
-  // directly rather than only the rendered card.
+  // CAS-919: wmQScore/wmCascadeScore are cascadeScore's own Watchmode basis, exported the same way so a
+  // test can assert each stage directly rather than only the rendered row. WM_SCALE/wmScaled are the
+  // frozen piecewise-linear map wmQScore runs its raw mean through, and scoresRowHTML is the card's own
+  // People/Critics render — all exported so a test can assert each directly rather than only the rendered
+  // card.
   wmQScore, wmCascadeScore, WM_SCALE, wmScaled, scoresRowHTML,
   // CAS-907: the Watchmode-sourced mirror of the buzz chain (WM_BUZZ_POP_VALS/wmBuzzPctlOf/wmReleasedScoreVals/
-  // wmCinemaScore) that wmCascadeScore's pre-release/blended branches now call instead of the TMDB-only
-  // cinemaScore — exported independently so a test can assert each stage rather than only wmCascadeScore's
-  // combined output.
+  // wmCinemaScore) that wmCascadeScore's pre-release/blended branches call — exported independently so a
+  // test can assert each stage rather than only wmCascadeScore's combined output.
   WM_BUZZ_POP_VALS, wmBuzzPctlOf, wmReleasedScoreVals, wmCinemaScore,
   BUZZ_POP_VALS, CINEMA_BUDGET_VALS, CINEMA_BUDGET_MIN,
-  // CAS-748: the released-cohort quantile map's own lookup table, so a test can assert the mapping formula
-  // directly rather than only cinemaScore's output.
-  releasedScoreVals,
   // CAS-703: the Target score hard gate's own held-back count, so a test can assert it against the set it
   // claims to describe without re-deriving it from stepCountLine's HTML output.
   scoreHeldBackCount,

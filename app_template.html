@@ -3438,9 +3438,9 @@
       <div class="sortctl ca-btn x" id="sortCtl">
         <select id="sort" aria-label="Order">
           <option value="availability">Availability</option>
-          <option value="imdb">IMDb rating</option>
+          <option value="imdb">People rating</option>
           <option value="cascade">Cascade score</option>
-          <option value="rt">RT critic</option>
+          <option value="rt">Critics</option>
           <option value="gross">Box office</option>
           <option value="popularity">Most anticipated</option>
           <option value="cinema">Newest cinema</option>
@@ -3577,9 +3577,9 @@
     you asked for.</div>
   <div class="flabel">View</div>
   <div class="chips" id="viewChips"></div>
-  <div class="flabel">Minimum IMDb rating</div>
+  <div class="flabel">Minimum People rating</div>
   <div class="slider"><input type="range" id="imdbMin" min="0" max="10" step="0.1" value="0"><div class="val" id="imdbVal">Any</div></div>
-  <div class="flabel">Minimum Rotten Tomatoes (critic)</div>
+  <div class="flabel">Minimum critics score</div>
   <div class="slider"><input type="range" id="rtMin" min="0" max="100" step="1" value="0"><div class="val" id="rtVal">Any</div></div>
   <div class="flabel">Minimum worldwide box office</div>
   <select id="grossMin" style="width:100%">
@@ -5807,7 +5807,7 @@ function passes(m){
   if(filt.newOnly && !filmIsNew(m.tmdb_id)) return false;   // CAS-715
   if(!ratingOK(m, filt.imdb, filt.includeUnrated)) return false;
   if(!budgetOK(m, filt.budget)) return false;
-  if((m.rt_critic||0) < filt.rt) return false;
+  if((m.wm_critic_score||0) < filt.rt) return false;
   if((m.worldwide_gross||0) < filt.gross) return false;
   return true;
 }
@@ -5820,20 +5820,13 @@ const byPopularity=(a,b)=>(b.popularity||0)-(a.popularity||0);
 // what's on it). Two keys, both of them things you can check for yourself.
 // primaryStatus() is the LAST window a film holds, i.e. the furthest it has travelled — a film that is both
 // rentable and included with a subscription sorts as streaming, its most-progressed window.
-// ---- Ratings we can stand behind (CAS-156) -------------------------------------
-// An IMDb score is a crowd average, and a crowd of eight is not a crowd. Jellyfish carried a headline 9.4 off
-// 8 votes — above The Godfather Part II's 9.0 off 1.49 million — and its real score has since settled to ~8.8.
-// Showing the raw number treats those two as the same kind of fact, which is exactly the misleading signal the
-// honesty guardrail exists to stop. Below the bar we hold the rating back rather than dress it up: the card
-// says "-" (the same thing it says for a film nobody has rated yet) and explains why on the lozenge itself.
-const IMDB_MIN_VOTES = 1000;   // keep in step with IMDB_MIN_VOTES in poc_pipeline.py, which re-polls under it
-const imdbVotesOf = m => (typeof m.imdb_votes==="number" && m.imdb_votes>0) ? m.imdb_votes : null;
-const imdbReliable = m => (imdbVotesOf(m)||0) >= IMDB_MIN_VOTES;
-// The one accessor every ORDER reads, so the gate reaches the sorts for free: a title we won't show a number
-// for must not be ranked by that number either, or the obscure high-variance titles keep the top of the list.
-// A gated film lands where an unrated one does — bottom of its stage, anticipation breaking the tie — which is
-// honest, because "we don't trust this number yet" and "there is no number" are the same claim to the reader.
-const ratingOf = m => (typeof m.imdb_rating==="number" && m.imdb_rating>0 && imdbReliable(m)) ? m.imdb_rating : null;
+// ---- Ratings we can stand behind (CAS-156, CAS-920) -----------------------------
+// CAS-920: the People rating moved from IMDb to Watchmode's wm_user_rating, which carries no vote count —
+// there is nothing to gate on any more, so the CAS-156 reliability floor (IMDB_MIN_VOTES/imdbReliable) is
+// retired along with it. A film either carries a Watchmode figure or it doesn't.
+// The one accessor every ORDER reads: a film with no figure sits at the bottom of its stage, anticipation
+// breaking the tie, the same place an explicitly-withheld rating used to land.
+const ratingOf = m => (typeof m.wm_user_rating==="number" && m.wm_user_rating>0) ? m.wm_user_rating : null;
 // Highest rating first. A film with no rating isn't a bad film, it's an unknown one, so it sits at the bottom
 // of its stage instead of being scored as a zero and buried under genuinely low-rated films. Among the
 // unrated (nearly all of Upcoming) anticipation is the only real signal there is, so it breaks the tie.
@@ -5871,49 +5864,24 @@ function byTimelineAsc(a,b){
   if(!db) return -1;
   return da.localeCompare(db);
 }
-// ---- Critics, one recorded figure (CAS-694) ------------------------------------
-// The mean of Metacritic and RT where both are present, whichever one is present otherwise, null when
-// neither is. Cascade 9.7 (2026-09-01) took the score itself back to three separate scale-matched terms
-// (see qScore below). CAS-879: the Critics-score admission dial (selCritScore/selCriticsOK) retired
-// entirely (CAS-724) — critScore() now only feeds selSetAside's onboarding-preview messaging.
-const critScore = m => {
-  const mc=m.metacritic, rt=m.rt_critic;
-  if(mc!=null && rt!=null) return Math.round((mc+rt)/2);
-  if(mc!=null) return mc;
-  if(rt!=null) return rt;
-  return null;
-};
+// ---- Critics, one recorded figure (CAS-694, CAS-920) ---------------------------
+// CAS-920: Critics moved from the OMDb blend (Metacritic/RT averaged) onto Watchmode's single
+// wm_critic_score figure — one critic source now, not two to average. CAS-879: the Critics-score admission
+// dial (selCritScore/selCriticsOK) retired entirely (CAS-724) — critScore() now only feeds selSetAside's
+// onboarding-preview messaging.
+const critScore = m => (typeof m.wm_critic_score==="number") ? Math.round(m.wm_critic_score) : null;
 // ---- The Cascade score --------------------------------------------------------
-// Cascade 9.7 (Lee, 2026-09-01): back to three raw sources — IMDb, RT, Metacritic — not two combined axes,
-// but scale-matched first. RT_ADJ/META_ADJ are the average ratio of each critic source to the gated
-// IMDb-x10 figure, computed once over the live catalogue on 2026-09-01 (775 films for RT, 764 for
-// Metacritic, all imdbReliable) — NOT recomputed at runtime. Divide each critic source by its own ratio
-// before averaging so all three terms sit on the same 0-100 scale as imdb_rating x10; skipping this step
-// would leave RT/Meta on IMDb's raw 0-10 scale and crush their weight in the average to near nothing.
-// A film scores on whichever of the three terms it actually has (unchanged fallback rule); -1 (rendered as
-// the dash) means it has none. critScore() above is UNCHANGED — this only touches the score.
-const RT_ADJ = 1.0873;    // mean(rt_critic / (gated imdb_rating x10)), 775 films, measured 2026-09-01
+// CAS-919: Watchmode is the Cascade score. META_ADJ is the average ratio of the OMDb-era RT critic figure
+// to the gated IMDb-x10 rating, measured once over the live catalogue on 2026-09-01 (764 films) — kept
+// because wmQScore below still divides wm_critic_score by it, landing the Watchmode critic figure on the
+// same 0-100 scale wm_user_rating x10 is on. Frozen, never recomputed at runtime.
 const META_ADJ = 0.9635;  // mean(metacritic / (gated imdb_rating x10)), 764 films, measured 2026-09-01
-function qScore(m){
-  const r = ratingOf(m);
-  const adjRt = m.rt_critic!=null ? m.rt_critic/RT_ADJ : null;
-  const adjMeta = m.metacritic!=null ? m.metacritic/META_ADJ : null;
-  const p=[];
-  if(r!=null) p.push(r*10);
-  if(adjRt!=null) p.push(adjRt);
-  if(adjMeta!=null) p.push(adjMeta);
-  if(!p.length) return -1;
-  return Math.round(p.reduce((x,y)=>x+y,0)/p.length);
-}
-// CAS-895: TEMPORARY — mirrors qScore against the Watchmode fields, so the two can be compared by eye while
-// Cascade evaluates Watchmode as a replacement for the OMDb-derived ratings. Not a shipped scoring axis; see
-// wmCascadeScore below. Watchmode has no RT equivalent, so RT_ADJ does not apply here.
-// Lee, 2026-09-11 (option B): the raw Watchmode mean runs compressed against the scale every agent marker
-// was set on (released films: p99 88.8 vs 92, p1 33.5 vs 23), so moving the score onto Watchmode would have
-// silently moved every marker. WM_SCALE maps the raw mean back onto that scale, piecewise-linear through
-// the two released distributions' own percentiles (p1..p99.5), measured ONCE on staging @ 2d59567 over
-// 1,291 Watchmode-scored and 1,313 OMDb-scored released films. Frozen constants, like RT_ADJ / META_ADJ:
-// never recomputed at runtime, and OMDb is not read. Monotonic (x strictly rising, y never falling).
+// CAS-919: the raw Watchmode mean runs compressed against the scale every agent marker was set on (released
+// films: p99 88.8 vs 92, p1 33.5 vs 23), so scoring off Watchmode directly would have silently moved every
+// marker. WM_SCALE maps the raw mean back onto that scale, piecewise-linear through the two released
+// distributions' own percentiles (p1..p99.5), measured ONCE on staging @ 2d59567 over 1,291
+// Watchmode-scored and 1,313 OMDb-scored released films. Frozen, never recomputed at runtime. Monotonic
+// (x strictly rising, y never falling).
 const WM_SCALE = [[0,0],[33.5,23],[37,28],[41.5,37],[47.3,44],[50.9,48],[54,51],[56.1,55],[58.1,57],[60,60],[61.7,62],[63.6,65],[65,66],[67,68],[68.8,71],[70.3,73],[72,75],[73.9,77],[75.5,79],[77.6,82],[80.6,84],[81.1,84],[81.8,85],[83,85],[83.6,86],[84.3,87],[85.7,88],[86.1,90],[87.1,92],[88.8,92],[89.3,92],[100,100]];
 function wmScaled(v){
   for(let i=1;i<WM_SCALE.length;i++){
@@ -5922,21 +5890,14 @@ function wmScaled(v){
   }
   return 100;
 }
+// The film's own score: whichever of wm_user_rating/wm_critic_score it actually has (scale-matched, then
+// mapped through WM_SCALE); -1 (rendered as the dash) means it has neither.
 function wmQScore(m){
   const p=[];
   if(typeof m.wm_user_rating==="number" && m.wm_user_rating>0) p.push(m.wm_user_rating*10);
   if(typeof m.wm_critic_score==="number" && m.wm_critic_score>0) p.push(m.wm_critic_score/META_ADJ);
   if(!p.length) return -1;
   return Math.round(wmScaled(p.reduce((x,y)=>x+y,0)/p.length));
-}
-function qScoreSourcesText(m){
-  const names=[];
-  if(ratingOf(m)!=null) names.push("People's vote");
-  if(m.rt_critic!=null) names.push("RT");
-  if(m.metacritic!=null) names.push("Metacritic");
-  if(names.length===1) return `${names[0]} only`;
-  if(names.length===2) return `${names[0]} and ${names[1]}`;
-  return `${names[0]}, ${names[1]} and ${names[2]}`;
 }
 function oscMarkHTML(m){
   const t=String(m.award_text||"");
@@ -5965,7 +5926,7 @@ function sortMoviesBy(a,b,key){
   switch(key){
     case "cascade": {
       // CAS-702: the Cascade score sort has to read the same score the card shows (qScoreHTML uses
-      // cascadeScore) — qScore alone is -1 for every pre-release film, which made this sort a no-op on
+      // cascadeScore) — wmQScore alone is -1 for every pre-release film, which made this sort a no-op on
       // In Cinema/Upcoming even after CAS-699 let it reach those sections at all.
       const sa=cascadeScore(a), sb=cascadeScore(b);
       if(sa<0 && sb<0) return byRatingDesc(a,b);
@@ -5974,12 +5935,12 @@ function sortMoviesBy(a,b,key){
       return sb-sa;
     }
     case "availability": return byTimeline(a,b);
-    case "rt": return (b.rt_critic||0)-(a.rt_critic||0);
+    case "rt": return (b.wm_critic_score||0)-(a.wm_critic_score||0);
     case "gross": return (b.worldwide_gross||0)-(a.worldwide_gross||0);
     case "popularity": return byPopularity(a,b);
     case "cinema": return (b.cinema_date||"").localeCompare(a.cinema_date||"");
     case "title": return a.title.localeCompare(b.title);
-    default: return (ratingOf(b)||0)-(ratingOf(a)||0);   // CAS-156: the same vote gate as byRatingDesc
+    default: return (ratingOf(b)||0)-(ratingOf(a)||0);   // the same accessor as byRatingDesc
   }
 }
 // An un-released film has no rating, no box office and usually no budget — ranking it by a metric it doesn't
@@ -5988,7 +5949,7 @@ function sortMoviesBy(a,b,key){
 // "availability" belongs here too: a release date is the one thing an unreleased film definitely HAS, so the
 // timeline is meaningful pre-release — it is the only order that is.
 // CAS-699: "cascade" joined this set too. It used to be noise here for the same reason IMDb/RT/gross still
-// are — an unreleased film carried none of the sources qScore reads. CAS-695 gave every pre-release film a
+// are — an unreleased film carried none of the sources wmQScore reads. CAS-695 gave every pre-release film a
 // real cinema Cascade score (from buzz, CAS-722), so ranking Upcoming by it is meaningful now, not noise.
 const PRE_RELEASE_SORTS=new Set(["availability","title","cinema","cascade"]);
 // CAS-148: the default is the availability timeline, and it ranks every group the same way, Upcoming
@@ -6109,10 +6070,9 @@ const TENT_BADGE = {
 };
 function scaleSignals(m){
   const s=[];
-  if(m.budget>0)          s.push(money(m.budget)+" budget");
-  if(m.rt_critic!=null)   s.push(m.rt_critic+"% critics");
-  if(m.metacritic!=null)  s.push("Metacritic "+m.metacritic);
-  if(m.award)             s.push(m.award==="won" ? "award winner" : "award-nominated");
+  if(m.budget>0)               s.push(money(m.budget)+" budget");
+  if(m.wm_critic_score!=null)  s.push(Math.round(m.wm_critic_score)+"% critics");
+  if(m.award)                  s.push(m.award==="won" ? "award winner" : "award-nominated");
   return s;
 }
 function scaleWhy(m){
@@ -6153,26 +6113,6 @@ function cinemaInfoRowHTML(m){
   const gross = m.worldwide_gross>0 ? `<span class="m"><span class="lab">Gross</span> <b>${money(m.worldwide_gross)}</b></span>` : "";
   return condensedBadgeHTML(m) + budgetCell(m) + gross;
 }
-// ---- The IMDb lozenge, vote-gated (CAS-156) ------------------------------------
-// Three states, and they are three different claims, so they don't share a rendering:
-//   trusted   -> the number
-//   withheld  -> "-", plus a button explaining that the score exists but is riding on too few votes
-//   unrated   -> "-", because there genuinely is no score
-function imdbWhy(m){
-  const v=imdbVotesOf(m);
-  return `IMDb has ${m.imdb_rating.toFixed(1)} for this, but off ${v===1?"a single vote":v.toLocaleString()+" votes"} `
-       + `— under the ${IMDB_MIN_VOTES.toLocaleString()} we need before an average means much. A score that thin `
-       + `moves a long way as more people rate it, so we're holding it back rather than showing you a number `
-       + `we don't trust yet.`;
-}
-function imdbGate(m){
-  const face=`<span class="dot imdb"></span><span class="lab">IMDb</span>`;
-  if(m.imdb_rating==null) return `<span class="m muted">${face} <b>–</b></span>`;
-  if(imdbReliable(m))     return `<span class="m">${face} <b>${m.imdb_rating.toFixed(1)}</b></span>`;
-  return `<button class="m muted" type="button" onclick="showImdbWhy(${m.tmdb_id})"
-    title="${esc(imdbWhy(m))}">${face} <b>–</b></button>`;
-}
-window.showImdbWhy=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(imdbWhy(m)); };
 // ---- The availability row (CAS-426, was the CAS-179 four-lozenge strip) --------------
 // One "you-are-here" timeline: dim dots for windows behind the film, hollow dots for windows still
 // ahead, and one glowing colour-matched capsule for the window the film is actually in — carrying its
@@ -8920,8 +8860,8 @@ function renderListChrome(){
 // it: those are decisions, and a decision must not also be a "show me more".
 // Anything inside the region that is a control of its own keeps its own click. The test is what the click
 // actually landed on, not where the handler is: a real element wins over the region it sits in — the
-// withheld-IMDb explainer, the scale badge, the poster's trailer link, a trailer thumbnail, and any
-// availability lozenge that becomes a button later.
+// scale badge, the poster's trailer link, a trailer thumbnail, and any availability lozenge that becomes
+// a button later.
 // CAS-283: while a control is open, the card is a dismiss surface and nothing else. A tap anywhere on it
 // collapses the control and does NOT expand the card.
 //
@@ -9022,8 +8962,8 @@ const ALL_WINDOWS = AVAIL_ROWS.flatMap(r=>r.windows);
 // ---- Rating: catalogue percentile, not a bare IMDb number ----------------------
 // The bar is a plain word; what it MEANS is a percentile of this catalogue's rated titles, computed here
 // over the real data (the honesty guardrail cuts both ways — the label has to be backed by the numbers).
-const RATED = MOVIES.map(m=>m.imdb_rating).filter(r=>typeof r==="number" && r>0).sort((a,b)=>a-b);
-const UNRATED_N = MOVIES.filter(m=>!m.imdb_rating).length;
+const RATED = MOVIES.map(m=>m.wm_user_rating).filter(r=>typeof r==="number" && r>0).sort((a,b)=>a-b);
+const UNRATED_N = MOVIES.filter(m=>!m.wm_user_rating).length;
 const pctile = p => RATED.length ? RATED[Math.min(RATED.length-1, Math.round(p/100*(RATED.length-1)))] : 0;
 // Share of rated titles that clear a threshold — "top N%", stated honestly.
 const topPct = v => RATED.length ? Math.round(RATED.filter(r=>r>=v).length/RATED.length*100) : 0;
@@ -9112,7 +9052,9 @@ const POP_ALL      = MOVIES.map(popOf).sort((a,b)=>a-b);
 const popBar = (arr,topPct) => arr.length
   ? arr[Math.min(arr.length-1, Math.round((100-topPct)/100*(arr.length-1)))] : Infinity;
 const bigBudget    = m => (m.budget||0) >= BIG_BUDGET;
-const hiCritics    = m => (m.rt_critic||0) >= LANDMARK_RT || (m.metacritic||0) >= LANDMARK_META;
+// CAS-920: RT and Metacritic collapsed onto the one wm_critic_score figure — this is exactly the OR of the
+// two original bars against that single field, so the lower of the two (LANDMARK_META) still decides it.
+const hiCritics    = m => (m.wm_critic_score||0) >= Math.min(LANDMARK_RT, LANDMARK_META);
 // CAS-678 keeps BLOCKBUSTER_TOP/BAR and ANTICIPATED_TOP/BAR alive, unchanged, purely for the two callers
 // below that still need the PRE-ticket definitions: Landmark's own scale test (hiPop, in isLandmark) and the
 // Budget dial's scale inference (isAnticipated, in inferredScale further down). Landmark is kept as its own
@@ -9195,38 +9137,24 @@ function wmBuzzPctlOf(m){
   if(!inLadderCohort(m) || typeof m.wm_popularity_percentile!=="number") return null;
   return pctRankOf(WM_BUZZ_POP_VALS, m.wm_popularity_percentile);
 }
-// CAS-748: the released cohort's own cascadeScore values, sorted once — the lookup table cinemaScore's
-// quantile map reads from. Lazily built (isPreRelease/qScore are defined further down this file) and cached
-// like _scaleInferCache/_awardRankCache, cleared by the same invalidateComputeCaches hook below rather than a
+// CAS-748: the released cohort's own cascadeScore values, sorted once — the lookup table wmCinemaScore's
+// quantile map reads from. Lazily built (isPreRelease is defined further down this file) and cached like
+// _scaleInferCache/_awardRankCache, cleared by the same invalidateComputeCaches hook below rather than a
 // second clearing mechanism. Named so a second sort of the same data cannot appear.
-let _releasedScoreVals = null;
-function releasedScoreVals(){
-  if(_releasedScoreVals) return _releasedScoreVals;
-  return _releasedScoreVals = MOVIES.filter(m=>!isPreRelease(m)).map(qScore).filter(v=>v>=0).sort((a,b)=>a-b);
-}
-// CAS-907: the Watchmode-sourced mirror of releasedScoreVals, over wmQScore instead of qScore — mapping the
-// Watchmode buzz percentile onto qScore's distribution would calibrate it against OMDb's scale and
-// contaminate the comparison. Memoised and cleared the same way by invalidateComputeCaches.
+// CAS-920: this was once mirrored against an OMDb-sourced releasedScoreVals/cinemaScore pair, over qScore —
+// both retired along with the rest of the app's OMDb reads; wmReleasedScoreVals/wmCinemaScore are the only
+// implementation left.
 let _wmReleasedScoreVals = null;
 function wmReleasedScoreVals(){
   if(_wmReleasedScoreVals) return _wmReleasedScoreVals;
   return _wmReleasedScoreVals = MOVIES.filter(m=>!isPreRelease(m)).map(wmQScore).filter(v=>v>=0).sort((a,b)=>a-b);
 }
-// CAS-748: cinemaScore is a QUANTILE MAP, not a raw percentile — a marker set on this score and one set on
-// qScore's released-side score now mean the same thing, because a film's buzz percentile p is looked up
-// against the RELEASED cohort's own score distribution rather than printed as-is. Rank lookup only, the same
-// cutoff convention BUZZ_CUTS already uses: p=0 reads the released cohort's lowest score, p=100 its highest,
+// CAS-748: a QUANTILE MAP, not a raw percentile — a marker set on this score and one set on wmQScore's
+// released-side score mean the same thing, because a film's buzz percentile p is looked up against the
+// RELEASED cohort's own score distribution rather than printed as-is. Rank lookup only, the same cutoff
+// convention BUZZ_CUTS already uses: p=0 reads the released cohort's lowest score, p=100 its highest,
 // everything between snaps to the value standing at floor(len*p/100) — never interpolated. Monotonic by
 // construction: floor() over an ascending index can only move up or hold as p rises, never fall.
-function cinemaScore(m){
-  const p=buzzPctlOf(m);
-  if(p==null) return -1;
-  const vals=releasedScoreVals();
-  if(!vals.length) return p;   // catalogue not loaded yet — nothing to map onto, so fall back rather than divide by zero
-  return Math.round(vals[Math.min(vals.length-1, Math.floor(vals.length*p/100))]);
-}
-// CAS-907: the Watchmode-sourced mirror of cinemaScore, over wmBuzzPctlOf/wmReleasedScoreVals instead of
-// buzzPctlOf/releasedScoreVals — same quantile-map shape, same -1/empty-array fallbacks.
 function wmCinemaScore(m){
   const p=wmBuzzPctlOf(m);
   if(p==null) return -1;
@@ -9236,21 +9164,21 @@ function wmCinemaScore(m){
 }
 // The boundary reused verbatim from matchesCriteria's own preRelease check — quality signals (People's
 // vote, Critics) do not exist until a film has been judged, and this is the one place that judges it.
-// Still used for that broader boundary (releasedScoreVals' cohort, matchesCriteria's own gates) — cascadeScore
-// itself no longer dispatches on it alone, see below.
+// Still used for that broader boundary (wmReleasedScoreVals' cohort, matchesCriteria's own gates) —
+// cascadeScore itself no longer dispatches on it alone, see below.
 const isPreRelease = m => { const ps=primaryStatus(m); return ps==="upcoming" || ps==="in_cinema"; };
 // The Cascade score itself: buzz alone before a film has anything to be judged on, the streaming (People's
 // vote/Critics) score once a film is released. PVOD sits on the streaming side by decision (Lee, 2026-08-28)
 // — it is released, so people can and have watched it, even though most PVOD titles in today's catalogue
 // carry neither axis yet.
 // CAS-749: a film in cinemas (or its opening week) HAS been seen and reviewed, even though it isn't
-// "released" in the streaming sense — so once it carries a qScore, the Cascade score blends that evidence in
-// with the buzz figure rather than ignoring it. Both terms are already on the released-score scale once
-// CAS-748's quantile map has run (cinemaScore maps buzz onto the released distribution), so this mean is
-// like-for-like, not an average of a percentage against a percentile — do not "fix" it back into one.
-// Lee, 2026-09-11: Watchmode is Cascade's score. Same three branches as before, over the
-// Watchmode terms — wmCinemaScore (Watchmode popularity, re-ranked on the AU ladder cohort and quantile-
-// mapped onto wmReleasedScoreVals) and wmQScore (People x10, Critics / META_ADJ). OMDb no longer feeds it.
+// "released" in the streaming sense — so once it carries a wmQScore, the Cascade score blends that evidence
+// in with the buzz figure rather than ignoring it. Both terms are already on the released-score scale once
+// the quantile map above has run, so this mean is like-for-like, not an average of a percentage against a
+// percentile — do not "fix" it back into one.
+// CAS-919: Watchmode is Cascade's score, over wmCinemaScore (Watchmode popularity, re-ranked on the AU
+// ladder cohort and quantile-mapped onto wmReleasedScoreVals) and wmQScore (People x10, Critics / META_ADJ).
+// CAS-920 retired the app's last OMDb reads elsewhere, so this was already true everywhere it mattered.
 function cascadeScore(m){
   const ps=primaryStatus(m);
   if(ps==="upcoming") return wmCinemaScore(m);
@@ -9260,12 +9188,9 @@ function cascadeScore(m){
   }
   return wmQScore(m);
 }
-// CAS-895: TEMPORARY — mirrors cascadeScore exactly, but over wmQScore instead of qScore, so the two
-// Cascade figures can be compared side by side. See wmQScore's own comment; not read by any scoring,
-// sorting, filtering or agent-matching code.
-// CAS-907: the pre-release/blended branches now call wmCinemaScore, not cinemaScore — the two had been
-// calling the identical TMDB-only function, so every pre-release film showed the same figure under both
-// labels with no Watchmode data behind the "WM" side at all.
+// wmCascadeScore is cascadeScore's own explicit alias, defined identically (CAS-919 AC4: the two are the
+// same computation under two names) — kept so a test, or a future caller, can name the Watchmode basis
+// directly rather than only the "Cascade score" label.
 function wmCascadeScore(m){
   const ps=primaryStatus(m);
   if(ps==="upcoming") return wmCinemaScore(m);
@@ -9664,13 +9589,11 @@ $("budgetBand").innerHTML=BUDGET_BANDS.map((b,i)=>
 // "Leaving soon" needs the date a film leaves a cinema or a service, and no source we have gives us them —
 // and that remains true and unbuilt; it just no longer has a screen to be honest on.
 
-// A film with no IMDb score isn't a bad film — it's an unknown one (13 of them here, mostly unreleased).
-// It rides along at "All", and drops out the moment you raise the bar, unless you take the escape hatch.
-// CAS-171: ratingOf(), not m.imdb_rating. CAS-156 gated the DISPLAY at IMDB_MIN_VOTES but left the filters
-// reading the raw number, so a bar was matching scores the card then refused to print: at 8.2 you got
-// Skategoat (8.6 off 26 votes) and Jellyfish (9.4 off 8) back as "IMDb –" cards. A bar you can't see the
-// film clear is not a bar. Below the floor a film is unrated, exactly as CAS-156 says on the card, so it
-// takes the unrated path here too and includeUnrated is what decides it — one rule, one accessor.
+// A film with no People score isn't a bad film — it's an unknown one (mostly unreleased). It rides along at
+// "All", and drops out the moment you raise the bar, unless you take the escape hatch. CAS-171: reads
+// ratingOf(), the one accessor every bar and every sort shares, so a bar can never match a score the card
+// itself declines to show. Below the floor a film is unrated, so it takes the unrated path here too and
+// includeUnrated is what decides it.
 function ratingOK(m, min, includeUnrated){          // declared, not const — passes() is defined above this
   if(!min) return true;
   const r=ratingOf(m);
@@ -9689,9 +9612,8 @@ const ageOpen = c => c.age!==null && (!c.age.length || c.age.length===AGE_LEVELS
 // them matches exactly as it did before. matchesCriteria wires them in below.
 //   · selCrowd  — a raw IMDb bar (People's vote). A set bar is crowd-score-only, so an unrated film drops.
 //   · selCritScore — CAS-249: a continuous SCORE floor, 0-100, the same treatment CAS-166 gave Budget &
-//                  scale. It reads critScore() (CAS-694: the mean of Metacritic and RT where both are
-//                  present, whichever is present otherwise) — defined above, alongside qScore, since both
-//                  read the same one figure.
+//                  scale. It reads critScore() (CAS-920: Watchmode's wm_critic_score, rounded) — defined
+//                  above.
 //   · selAwards — CAS-249: the awards half, still stepped, but counted rather than named: 0 any · 1 one
 //                  nomination · 2 two or more · 3 three or more · 4 winner. They were one field before
 //                  (`selCritics`, 0-4), which forced a choice between a review bar and an awards bar when
@@ -9811,10 +9733,10 @@ window.showScaleInfer=id=>{ const m=MOVIES.find(x=>x.tmdb_id===id); if(m) toast(
 // CAS-742: one invalidation point for the catalogue-derived compute-once caches above, called from the
 // catalogue swap (MOVIES=payload.movies) rather than a manual clear at each call site — a stale entry let a
 // budget/awards-gated agent admit a different set of films on a device left open across a refresh than on
-// one that just booted. CAS-748 reuses this same hook for _releasedScoreVals rather than adding a second,
+// one that just booted. CAS-748 reuses this same hook for _wmReleasedScoreVals rather than adding a second,
 // separate clearing mechanism. CAS-867: agMetricsCache (declared further down, with agentMetrics) reuses it
 // too — a catalogue swap can change which films an agent lists without touching that agent's own signature.
-function invalidateComputeCaches(){ _scaleInferCache.clear(); _awardRankCache.clear(); _releasedScoreVals = null; _wmReleasedScoreVals = null; agMetricsCache.clear(); }
+function invalidateComputeCaches(){ _scaleInferCache.clear(); _awardRankCache.clear(); _wmReleasedScoreVals = null; agMetricsCache.clear(); }
 // ---- Buzz (CAS-145, ladder replaced by CAS-678) --------------------------------
 // How much a film is being talked about right now, off the TMDB popularity figure the pipeline already
 function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
@@ -9889,7 +9811,7 @@ function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   //     agent (CAS-360).
   if(c.cinemaReleaseOnly && !m.cinema_release) return false;
   if(!budgetOK(m, c.budget||0)) return false;
-  if((m.rt_critic||0) < (c.rt||0)) return false;
+  if((m.wm_critic_score||0) < (c.rt||0)) return false;
   // CAS-724/CAS-727: the score floor. agentFloor(c) is the lowest marker among the agent's usable Watch On
   // windows — there is no separate floor control. Reads cascadeScore(m), the exact figure the card prints, so
   // the gate can never disagree with what's shown. A film with no Cascade score (-1) can never be shown to
@@ -10243,7 +10165,7 @@ function filtRestore(s){
   Object.keys(s).forEach(k=>{ if(k!=="sets") filt[k]=s[k]; });
 }
 const RELAXERS = [
-  {key:"imdb",     label:()=>`the rating bar (IMDb ${filt.imdb.toFixed(1)}+)`, on:()=>filt.imdb>0,
+  {key:"imdb",     label:()=>`the rating bar (People ${filt.imdb.toFixed(1)}+)`, on:()=>filt.imdb>0,
    clear:()=>{ filt.imdb=0; filt.includeUnrated=false; }},
   {key:"status",   label:()=>`the availability window${filt.status.size>1?"s":""}`, on:()=>filt.status.size>0,
    clear:()=>filt.status.clear()},
@@ -10601,9 +10523,9 @@ function syncMineWarn(){
 // ---- Editor: Zone B, quality & taste -------------------------------------------
 function ratingCaption(){
   const stop=RATING_STOPS[draft.ratingStop];
-  if(!draft.imdb) return `<b>All ratings.</b> Every title qualifies — including the ${UNRATED_N} with no IMDb
+  if(!draft.imdb) return `<b>All ratings.</b> Every title qualifies — including the ${UNRATED_N} with no People
     score yet (mostly unreleased).`;
-  return `<b>${stop.label} — IMDb ${draft.imdb.toFixed(1)}+.</b> That's the top ${topPct(draft.imdb)}% of the
+  return `<b>${stop.label} — People ${draft.imdb.toFixed(1)}+.</b> That's the top ${topPct(draft.imdb)}% of the
     ${RATED.length} rated titles in the catalogue.`;
 }
 // Built once, then synced — re-rendering the range input mid-drag would drop the drag on the floor.
@@ -10710,7 +10632,7 @@ function syncQuality(){
   hatch.hidden=!draft.imdb || !UNRATED_N;
   hatch.classList.toggle("on", draft.includeUnrated);
   hatch.setAttribute("aria-checked", String(draft.includeUnrated));
-  hatch.textContent=`${draft.includeUnrated?"✓":"＋"} Include the ${UNRATED_N} titles with no IMDb score yet`;
+  hatch.textContent=`${draft.includeUnrated?"✓":"＋"} Include the ${UNRATED_N} titles with no People score yet`;
   $("cAwards").classList.toggle("on", draft.awards);
   $("cAwards").setAttribute("aria-checked", String(draft.awards));
   // An RT bar can only arrive from a typed description — it has no control of its own, so show it and
@@ -10718,7 +10640,7 @@ function syncQuality(){
   const rt=$("cRtRow");
   rt.hidden=!draft.rt;
   if(draft.rt){
-    rt.innerHTML=`Also carrying <b>RT critic ${draft.rt}%+</b> from your description.
+    rt.innerHTML=`Also carrying <b>Critics ${draft.rt}%+</b> from your description.
       <button class="qpill" id="cRtClear" type="button" style="margin-left:4px">Clear</button>`;
     $("cRtClear").onclick=()=>{ draft.rt=0; syncQuality(); refreshDraft(); };
   }
@@ -12986,7 +12908,7 @@ function selSetAside(){
   return MOVIES.filter(m=>{
     if(!watchesFilm(m,dOpen)) return false;   // must be in the taste base to begin with
     if(inFinal.has(m)) return false;          // already counted — not set aside
-    const noCrowd = crowdOn ? !m.imdb_rating : true;
+    const noCrowd = crowdOn ? !m.wm_user_rating : true;
     const noCrit  = critScoreOn ? (critScore(m)==null) : true;
     return noCrowd && noCrit;                 // excluded AND unscorable by every active score dial
   }).length;

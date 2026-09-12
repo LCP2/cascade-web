@@ -320,10 +320,10 @@ test("CAS-747 AC3: a film with no figure and no inference at all is decided by i
     `${unknown.title}: an agent did not list a wholly unscaled film with includeUnbudgeted true`);
 });
 
-// ---- 8. THE CASCADE SCORE (CAS-603, CAS-919) -------------------------------------------------------------
-// CAS-919: Watchmode is now the Cascade score — cascadeScore no longer reads IMDb/RT/Metacritic at all (see
-// §9c below), it reads wm_user_rating/wm_critic_score through wmQScore. qScore itself survives unchanged
-// under its own name (it is just no longer the score), so its own vote-gate behaviour is tested separately.
+// ---- 8. THE CASCADE SCORE (CAS-603, CAS-919, CAS-920) ------------------------------------------------------
+// CAS-919: Watchmode is now the Cascade score — cascadeScore reads wm_user_rating/wm_critic_score through
+// wmQScore, not IMDb/RT/Metacritic (see §9c below). CAS-920 retired qScore itself along with the app's last
+// other OMDb reads — there is nothing left to compare it against, so its own tests go with it.
 test("cascade score: a film with real Watchmode terms outranks one with none, and sourceless films sort last", () => {
   const released = { status: ["included_streaming"] };
   const wellReviewed = { ...released, title: "Well Reviewed", wm_user_rating: 8.2, wm_critic_score: 93 };
@@ -336,70 +336,41 @@ test("cascade score: a film with real Watchmode terms outranks one with none, an
   assert.ok(E.sortMoviesBy(noSources, wellReviewed, "cascade") > 0,
     "a film with no source at all did not sort after a scored film");
 });
-test("qScore (unaffected by CAS-919, still exported, no longer the score): below IMDB_MIN_VOTES the IMDb figure does not count as a rating", () => {
-  // Below IMDB_MIN_VOTES the IMDb figure must not count as a rating at all — with no critic scores backing it
-  // either, the film remains unscorable (CAS-660: a film scores from whatever it has, but a below-floor IMDb
-  // figure is not "having" IMDb).
-  const belowFloor = { imdb_rating: 9.9, imdb_votes: E.IMDB_MIN_VOTES - 1 };
-  assert.equal(E.qScore(belowFloor), -1, "a film under the vote floor with no critic scores was still treated as rated");
+
+// ---- 9b. CRITICS IS ONE RECORDED FIGURE (CAS-694, CAS-920) ---------------------------------------------------
+// CAS-920: Critics moved off the OMDb Metacritic/RT blend onto Watchmode's single wm_critic_score figure —
+// critScore is now a straight (rounded) passthrough, null when absent.
+test("critScore: reads wm_critic_score directly, rounded, null when absent", () => {
+  assert.equal(E.critScore({ wm_critic_score: 74.6 }), 75, "a present score should round to the nearest whole number");
+  // wm_critic_score: 0 is a present (if extreme) score, not an absent one — a truthy-only check would wrongly
+  // treat it as missing, exactly the asymmetry CAS-694 fixed for the old OMDb blend.
+  assert.equal(E.critScore({ wm_critic_score: 0 }), 0, "a critic score of exactly 0 should still read as present");
+  assert.equal(E.critScore({ wm_critic_score: null }), null, "an absent score should read as null");
 });
 
-// ---- 9. THE CASCADE SCORE IS THREE SCALE-MATCHED TERMS (CAS-706) -------------------------------------------
-// CAS-660 let qScore score from whichever of three raw sources a film carried; CAS-669 narrowed that; CAS-694
-// then collapsed RT/Metacritic into one combined Critics axis. CAS-706 (Cascade 9.7) reverses CAS-694: the
-// score is back to three separate terms — IMDb (gated rating x10), RT, Metacritic — but RT and Metacritic are
-// each divided by their own catalogue-measured ratio (RT_ADJ, META_ADJ) to the gated IMDb-x10 figure first, so
-// all three terms sit on the same 0-100 scale before averaging. A lone RT or Metacritic figure still scores,
-// as its own scale-matched value, not the raw source.
-const RT_ADJ = 1.0873, META_ADJ = 0.9635;
-test("cascade score: scored from IMDb/RT/Metacritic (scale-matched), never from budget/gross/popularity/awards", () => {
-  const metaOnly    = { title: "Metacritic Only", imdb_rating: null, imdb_votes: 0, metacritic: 61 };
-  const rtOnly      = { title: "RT Only",         imdb_rating: null, imdb_votes: 0, rt_critic: 88 };
-  const imdbOnly    = { title: "IMDb Only",       imdb_rating: 7.3,  imdb_votes: 1000000 };
-  const bothCritics = { title: "Both Critics",    imdb_rating: null, imdb_votes: 0, metacritic: 60, rt_critic: 90 };
-  const allThree    = { title: "All Three",       imdb_rating: 8.0,  imdb_votes: 1000000, metacritic: 60, rt_critic: 90 };
-  const neither     = { title: "Neither",         imdb_rating: null, imdb_votes: 0 };
-
-  // A lone Metacritic or RT figure scores as itself, scale-matched against IMDb's x10 convention.
-  assert.equal(E.qScore(metaOnly), Math.round(61 / META_ADJ), "a lone Metacritic score should scale-match against IMDb and score as itself");
-  assert.equal(E.qScore(rtOnly), Math.round(88 / RT_ADJ), "a lone RT score should scale-match against IMDb and score as itself");
-  // People's vote alone scores as the gated rating x10.
-  assert.equal(E.qScore(imdbOnly), 73, "IMDb-only score should be the gated IMDb rating x10, rounded");
-  // Both critic sources present but no gated IMDb: the mean of the two scale-matched terms, and it's the WHOLE score.
-  assert.equal(E.qScore(bothCritics), Math.round((60 / META_ADJ + 90 / RT_ADJ) / 2), "Metacritic+RT with no People's vote should score as the mean of the two scale-matched terms");
-  // All three present: the mean of the three scale-matched terms.
-  assert.equal(E.qScore(allThree), Math.round((80 + 60 / META_ADJ + 90 / RT_ADJ) / 3), "all three present should average the three scale-matched terms");
-  // Neither term present scores -1.
-  assert.equal(E.qScore(neither), -1, "a film with no term should not score");
-
-  // AC4: budget, worldwide gross, popularity and awards are not terms — perturbing them changes nothing.
-  const rich = { ...allThree, budget: 200e6, worldwide_gross: 900e6, popularity: 500, award: "won", award_text: "Won 3 Oscars" };
-  assert.equal(E.qScore(rich), E.qScore(allThree), "budget/gross/popularity/awards changed the score");
-
-  // AC3, whole catalogue: qScore is exactly the rounded mean of whichever scale-matched terms a film carries.
-  for(const m of E.MOVIES){
-    const q = E.qScore(m);
-    const r = E.ratingOf(m);
-    const terms = [];
-    if(r != null) terms.push(r*10);
-    if(m.rt_critic != null) terms.push(m.rt_critic / RT_ADJ);
-    if(m.metacritic != null) terms.push(m.metacritic / META_ADJ);
-    if(!terms.length){ assert.equal(q, -1, `${m.title}: has no term but scored ${q}`); continue; }
-    const expected = Math.round(terms.reduce((x,y)=>x+y,0)/terms.length);
-    assert.equal(q, expected, `${m.title}: qScore ${q} disagrees with the three-term mean ${expected}`);
-  }
+// ---- 9e. AGENT FLOORS APPLY TO THE WATCHMODE FIELDS (CAS-920 AC4/AC5) ----------------------------------------
+// The saved keys (c.imdb, c.rt) are unchanged — only the film field each floor is measured against moved
+// from OMDb to Watchmode. language:"en" is set on every fixture only to clear passesTasteBase's own default
+// language gate, which the rating/critics floor is not what's under test here.
+test("CAS-920 AC4: an agent's imdb floor applies to wm_user_rating, not imdb_rating", () => {
+  const c = E.normCascade({ kind: "stream", status: [] });
+  c.imdb = 7;
+  const admits = { status: ["included_streaming"], offers: ["netflix"], language: "en",
+    wm_user_rating: 7.2, wm_critic_score: null };
+  const rejects = { status: ["included_streaming"], offers: ["netflix"], language: "en",
+    wm_user_rating: 6.5, imdb_rating: 9, wm_critic_score: null };
+  assert.equal(E.matchesCriteria(admits, c, false, true), true,
+    "a film clearing the imdb floor on wm_user_rating alone should be admitted");
+  assert.equal(E.matchesCriteria(rejects, c, false, true), false,
+    "a film below the imdb floor on wm_user_rating must not be admitted by a high imdb_rating instead");
 });
-
-// ---- 9b. CRITICS IS ONE RECORDED FIGURE (CAS-694) -----------------------------------------------------------
-// AC1: critScore has exactly one definition.
-test("critScore: the mean of Metacritic and RT where both are present, whichever is present otherwise, null when neither is", () => {
-  assert.equal(E.critScore({ metacritic: 60, rt_critic: 90 }), 75, "both present should average to their mean");
-  assert.equal(E.critScore({ metacritic: 61, rt_critic: null }), 61, "Metacritic alone should read as itself");
-  assert.equal(E.critScore({ metacritic: null, rt_critic: 88 }), 88, "RT alone should read as itself");
-  assert.equal(E.critScore({ metacritic: null, rt_critic: null }), null, "neither present should read as null");
-  // rt_critic: 0 is a present (if extreme) score, not an absent one — a truthy-only check would wrongly treat
-  // it as missing, exactly the asymmetry this ticket fixes.
-  assert.equal(E.critScore({ metacritic: null, rt_critic: 0 }), 0, "an RT score of exactly 0 should still read as present");
+test("CAS-920 AC5: an agent's rt floor applies to wm_critic_score, not rt_critic", () => {
+  const c = E.normCascade({ kind: "stream", status: [] });
+  c.rt = 80;
+  const rejects = { status: ["included_streaming"], offers: ["netflix"], language: "en",
+    wm_critic_score: 70, rt_critic: 95 };
+  assert.equal(E.matchesCriteria(rejects, c, false, true), false,
+    "a film below the rt floor on wm_critic_score must not be admitted by a high rt_critic instead");
 });
 
 // ---- 9c. WATCHMODE IS NOW THE CASCADE SCORE (CAS-895 mirrors -> CAS-919 the real score) -----------------
@@ -408,6 +379,7 @@ test("critScore: the mean of Metacritic and RT where both are present, whichever
 // through WM_SCALE (wmScaled) so it lands on the same scale every agent marker was set on. wmCascadeScore
 // mirrors cascadeScore's three primaryStatus branches exactly, and cascadeScore now dispatches to the same
 // Watchmode terms directly (§8/CAS-919 AC4 below), so the two are the same computation under two names.
+const META_ADJ = 0.9635;
 test("wmQScore: the rounded mean of whichever Watchmode terms are present, scale-matched and then mapped through WM_SCALE", () => {
   const both  = { wm_user_rating: 7.6, wm_critic_score: 91 };
   const userOnly = { wm_user_rating: 8.0, wm_critic_score: null };
@@ -518,27 +490,24 @@ test("CAS-907 AC3: wmBuzzPctlOf returns null with no wm_popularity_percentile, a
   assert.equal(E.wmCinemaScore(noWm), -1, "with no buzz percentile to map, wmCinemaScore should return -1");
 });
 
-test("CAS-907 AC4: wmReleasedScoreVals is derived from wmQScore, not qScore, and wmCinemaScore maps onto it", () => {
+// CAS-920: CAS-907 AC4 used to prove wmReleasedScoreVals/wmCinemaScore read a genuinely different
+// distribution than the OMDb-sourced releasedScoreVals/cinemaScore/qScore they stood beside — those three
+// are retired now (nothing else reads OMDb any more), so there is nothing left to distinguish them from.
+test("wmReleasedScoreVals is derived from wmQScore, and wmCinemaScore maps onto it", () => {
   const originalMovies = E.MOVIES.slice();
   const savedBuzz = E.BUZZ_POP_VALS.slice();
   const savedWmBuzz = E.WM_BUZZ_POP_VALS.slice();
   try {
     const upcoming = { status: ["upcoming"], popularity: 100, wm_popularity_percentile: 5 };
-    // qScore and wmQScore deliberately land far apart (90 vs the CAS-919 WM_SCALE mapping of a raw 20) so a
-    // wrong lookup is unmissable.
-    const released = { status: ["included_streaming"], imdb_rating: 9.0, imdb_votes: 100000,
-      rt_critic: null, metacritic: null, wm_user_rating: 2.0, wm_critic_score: null };
+    const released = { status: ["included_streaming"], wm_user_rating: 2.0, wm_critic_score: null };
     const expectedWmQ = Math.round(E.wmScaled(20));   // CAS-919: wm_user_rating 2.0 alone -> raw mean 20, then WM_SCALE
     E.MOVIES.length = 0; E.MOVIES.push(upcoming, released);
     E.BUZZ_POP_VALS.length = 0; E.BUZZ_POP_VALS.push(100);
     E.WM_BUZZ_POP_VALS.length = 0; E.WM_BUZZ_POP_VALS.push(5);
     E.invalidateComputeCaches();
-    assert.equal(E.qScore(released), 90, "setup: qScore should read the OMDb-derived figure");
     assert.equal(E.wmQScore(released), expectedWmQ, "setup: wmQScore should read the Watchmode-derived figure, mapped through WM_SCALE");
-    assert.deepEqual([...E.releasedScoreVals()], [90], "setup: releasedScoreVals should carry qScore, not wmQScore");
-    assert.deepEqual([...E.wmReleasedScoreVals()], [expectedWmQ], "setup: wmReleasedScoreVals should carry wmQScore, not qScore");
-    assert.equal(E.cinemaScore(upcoming), 90, "sanity: cinemaScore maps buzz onto qScore's distribution");
-    assert.equal(E.wmCinemaScore(upcoming), expectedWmQ, "wmCinemaScore should map buzz onto wmQScore's distribution, not qScore's");
+    assert.deepEqual([...E.wmReleasedScoreVals()], [expectedWmQ], "wmReleasedScoreVals should carry wmQScore's value");
+    assert.equal(E.wmCinemaScore(upcoming), expectedWmQ, "wmCinemaScore should map buzz onto wmReleasedScoreVals");
   } finally {
     E.MOVIES.length = 0; E.MOVIES.push(...originalMovies);
     E.BUZZ_POP_VALS.length = 0; E.BUZZ_POP_VALS.push(...savedBuzz);
@@ -560,21 +529,6 @@ test("CAS-907 AC5: tied wm_popularity_percentile values produce tied wmBuzzPctlO
     E.WM_BUZZ_POP_VALS.length = 0;
     E.WM_BUZZ_POP_VALS.push(...savedWmBuzz);
   }
-});
-
-// ---- 9d. qScoreSourcesText NAMES THE THREE RAW SOURCES (CAS-706) -------------------------------------------
-// AC5: the card's own tooltip names People's vote, RT and Metacritic individually now that qScore is back to
-// three scale-matched terms rather than the CAS-694 two-axis (People's vote, Critics) collapse.
-test("qScoreSourcesText: names the individual sources present, not a combined Critics axis", () => {
-  const imdbOnly    = { imdb_rating: 7.3, imdb_votes: 1000000 };
-  const metaOnly    = { imdb_rating: null, imdb_votes: 0, metacritic: 61 };
-  const rtOnly      = { imdb_rating: null, imdb_votes: 0, rt_critic: 88 };
-  const allThree    = { imdb_rating: 8.0, imdb_votes: 1000000, metacritic: 60, rt_critic: 90 };
-  assert.equal(E.qScoreSourcesText(imdbOnly), "People's vote only");
-  assert.equal(E.qScoreSourcesText(metaOnly), "Metacritic only");
-  assert.equal(E.qScoreSourcesText(rtOnly), "RT only");
-  assert.equal(E.qScoreSourcesText(allThree), "People's vote, RT and Metacritic");
-  assert.ok(!E.qScoreSourcesText(allThree).includes("Critics"), "qScoreSourcesText named the retired combined Critics axis");
 });
 
 // ---- 10. MISSION DIALS COMBINE WITH OR (CAS-661) ----------------------------------------------------------
@@ -1652,8 +1606,10 @@ test("CAS-678 AC5: Landmark behaves exactly as before the change — its predica
   const popAll = E.MOVIES.map(popOf).sort((a, b) => a - b);
   const blockbusterBar = popAll.length
     ? popAll[Math.min(popAll.length - 1, Math.round((100 - BLOCKBUSTER_TOP) / 100 * (popAll.length - 1)))] : Infinity;
+  // CAS-920: RT and Metacritic collapsed onto the single wm_critic_score figure — the OR of the two original
+  // bars against that one field is just its minimum.
   const reproIsLandmark = m => !!m.award
-    && ((m.rt_critic || 0) >= LANDMARK_RT || (m.metacritic || 0) >= LANDMARK_META)
+    && ((m.wm_critic_score || 0) >= Math.min(LANDMARK_RT, LANDMARK_META))
     && ((m.budget || 0) >= BIG_BUDGET || popOf(m) >= blockbusterBar);
   let landmarkCount = 0;
   for(const m of E.MOVIES){
@@ -1788,21 +1744,24 @@ test("CAS-695 AC1: the score's basis switches on primaryStatus — cinema (buzz)
 // 95th percentile of only 87, so a marker at 90 or 95 selected wildly different slices of each cohort (10.7%
 // of pre-release vs 2.9% of released scoring 90+, measured 2026-09-03). This retires that alignment (CAS-722
 // AC1/AC2 above) in favour of one where a marker means the same thing on both sides.
-test("CAS-748 AC1: cinemaScore is a quantile map — buzzPctlOf looked up against the released cohort's own score distribution", () => {
+// CAS-920: cinemaScore/releasedScoreVals (the OMDb-sourced pair this quantile map first shipped on) are
+// retired along with the rest of the app's OMDb reads — wmCinemaScore/wmReleasedScoreVals are the only
+// implementation left, over wm_popularity_percentile rather than raw TMDB popularity.
+test("CAS-748 AC1: wmCinemaScore is a quantile map — wmBuzzPctlOf looked up against the released cohort's own score distribution", () => {
   const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
-  const scored = cohort.filter(m => typeof m.popularity === "number");
-  const unscored = cohort.filter(m => typeof m.popularity !== "number");
-  assert.ok(scored.length > 0, "no cohort film with numeric popularity found — this test would prove nothing");
-  assert.ok(unscored.length > 0, "no cohort film with no numeric popularity found — this test would prove nothing");
-  const vals = E.releasedScoreVals();
+  const scored = cohort.filter(m => typeof m.wm_popularity_percentile === "number");
+  const unscored = cohort.filter(m => typeof m.wm_popularity_percentile !== "number");
+  assert.ok(scored.length > 0, "no cohort film with a numeric wm_popularity_percentile found — this test would prove nothing");
+  assert.ok(unscored.length > 0, "no cohort film with no wm_popularity_percentile found — this test would prove nothing");
+  const vals = E.wmReleasedScoreVals();
   assert.ok(vals.length > 0, "the released cohort's score array is empty — this test would prove nothing");
   for(const m of scored){
-    const p = E.buzzPctlOf(m);
+    const p = E.wmBuzzPctlOf(m);
     const expected = Math.round(vals[Math.min(vals.length - 1, Math.floor(vals.length * p / 100))]);
-    assert.equal(E.cinemaScore(m), expected, `${m.title}: cinemaScore disagrees with the quantile-map lookup at p=${p}`);
+    assert.equal(E.wmCinemaScore(m), expected, `${m.title}: wmCinemaScore disagrees with the quantile-map lookup at p=${p}`);
   }
   for(const m of unscored){
-    assert.equal(E.cinemaScore(m), -1, `${m.title}: a cohort film with no numeric popularity should not score`);
+    assert.equal(E.wmCinemaScore(m), -1, `${m.title}: a cohort film with no wm_popularity_percentile should not score`);
   }
 });
 
@@ -1857,17 +1816,17 @@ test("CAS-748 AC3: the proportion of each side scoring 90+ is within 3 percentag
 
 // AC4: the mapping is a rank lookup into a sorted array, so it must be monotonic by construction — a film
 // with strictly higher buzz can never score lower.
-test("CAS-748 AC4: cinemaScore is monotonic in buzzPctlOf", () => {
-  const cohort = E.MOVIES.filter(m => E.inLadderCohort(m) && typeof m.popularity === "number");
+test("CAS-748 AC4: wmCinemaScore is monotonic in wmBuzzPctlOf", () => {
+  const cohort = E.MOVIES.filter(m => E.inLadderCohort(m) && typeof m.wm_popularity_percentile === "number");
   assert.ok(cohort.length > 1, "not enough cohort films to compare — this test would prove nothing");
-  const sorted = [...cohort].sort((a, b) => E.buzzPctlOf(a) - E.buzzPctlOf(b));
+  const sorted = [...cohort].sort((a, b) => E.wmBuzzPctlOf(a) - E.wmBuzzPctlOf(b));
   let compared = 0;
   for(let i = 1; i < sorted.length; i++){
     const a = sorted[i], b = sorted[i - 1];
-    if(E.buzzPctlOf(a) === E.buzzPctlOf(b)) continue;
+    if(E.wmBuzzPctlOf(a) === E.wmBuzzPctlOf(b)) continue;
     compared++;
-    assert.ok(E.cinemaScore(a) >= E.cinemaScore(b),
-      `${b.title} (p=${E.buzzPctlOf(b)}) scores ${E.cinemaScore(b)} but ${a.title} (p=${E.buzzPctlOf(a)}), higher buzz, scores lower at ${E.cinemaScore(a)}`);
+    assert.ok(E.wmCinemaScore(a) >= E.wmCinemaScore(b),
+      `${b.title} (p=${E.wmBuzzPctlOf(b)}) scores ${E.wmCinemaScore(b)} but ${a.title} (p=${E.wmBuzzPctlOf(a)}), higher buzz, scores lower at ${E.wmCinemaScore(a)}`);
   }
   assert.ok(compared > 0, "no two cohort films with different buzz percentiles found — this test would prove nothing");
 });
@@ -1875,8 +1834,8 @@ test("CAS-748 AC4: cinemaScore is monotonic in buzzPctlOf", () => {
 // AC6: the degenerate case — nothing to map onto when the released cohort is empty (a catalogue that hasn't
 // loaded). MOVIES is mutated in place and restored in `finally`, the same shared-state pattern CAS-742 AC2
 // above uses, since E.MOVIES and the engine's own internal MOVIES binding are the same array instance.
-test("CAS-748 AC6: cinemaScore falls back to the raw percentile when the released cohort is empty", () => {
-  const cohortFilm = E.MOVIES.find(m => E.buzzPctlOf(m) != null);
+test("CAS-748 AC6: wmCinemaScore falls back to the raw percentile when the released cohort is empty", () => {
+  const cohortFilm = E.MOVIES.find(m => E.wmBuzzPctlOf(m) != null);
   assert.ok(cohortFilm, "no scoreable cohort film found — this test would prove nothing");
   const original = E.MOVIES.slice();
   const onlyPreRelease = original.filter(m => isPreRelease(m));
@@ -1885,10 +1844,10 @@ test("CAS-748 AC6: cinemaScore falls back to the raw percentile when the release
     E.MOVIES.length = 0;
     E.MOVIES.push(...onlyPreRelease);
     E.invalidateComputeCaches();
-    assert.equal(E.releasedScoreVals().length, 0, "sanity: the released cohort should now be empty");
-    assert.doesNotThrow(() => E.cinemaScore(cohortFilm));
-    assert.equal(E.cinemaScore(cohortFilm), E.buzzPctlOf(cohortFilm),
-      "with an empty released cohort, cinemaScore should fall back to the raw buzz percentile rather than divide by zero");
+    assert.equal(E.wmReleasedScoreVals().length, 0, "sanity: the released cohort should now be empty");
+    assert.doesNotThrow(() => E.wmCinemaScore(cohortFilm));
+    assert.equal(E.wmCinemaScore(cohortFilm), E.wmBuzzPctlOf(cohortFilm),
+      "with an empty released cohort, wmCinemaScore should fall back to the raw buzz percentile rather than divide by zero");
   } finally {
     E.MOVIES.length = 0;
     E.MOVIES.push(...original);
