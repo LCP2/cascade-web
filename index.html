@@ -1294,6 +1294,14 @@
      the block is a read-and-choose panel, so it keeps its own left alignment and drops the side margin it
      needed when it sat loose in the Cascades bar. */
   .mlempty .cascstart{margin:16px 0 0;text-align:left}
+
+  /* CAS-943: plain data tables for the Metrics screen — Lee's stated preference is tabular, no charts,
+     no new visual language, so this reuses the existing ink/dim/faint tokens rather than adding any. */
+  .mtable{width:100%;border-collapse:collapse;font-size:12px;margin:0 0 4px}
+  .mtable th{text-align:left;color:var(--faint);font-weight:700;text-transform:uppercase;font-size:10.5px;
+    letter-spacing:.4px;padding:0 8px 6px 0;border-bottom:1px solid var(--line)}
+  .mtable td{color:var(--ink);padding:6px 8px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+  .mtable tbody tr:last-child td{border-bottom:none}
   /* ---- the provenance sheet (CAS-67) ---- */
   /* Tap the megaphone anywhere and this is what opens: who put the film on your Found list, which Cascade is
      watching it, what that Cascade will actually tell you about — and the one control that changes any of it. */
@@ -3359,6 +3367,9 @@
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('occasions')">Occasions</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('account')">Account</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('recommend')">Recommend Cascade</button>
+            <!-- CAS-943: hidden by default — updateMetricsNavItem() only shows this once analytics_admins
+                 has actually returned a row for the signed-in user. A signed-out visitor never sees it. -->
+            <button class="navitem" type="button" role="menuitem" id="metricsNavItem" style="display:none" onclick="navMenuGo('metrics')">Metrics</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('about')">About</button>
           </div>
         </div>
@@ -3934,6 +3945,13 @@
      modal. Body rendered by renderAbout(). -->
 <div class="uscreen" id="aboutScreen" role="dialog" aria-modal="true" aria-label="About">
   <div class="uwrap" id="aboutBody"></div>
+</div>
+
+<!-- METRICS (CAS-943) — admin-gated funnel/behaviour dashboard, read straight off the analytics_* views
+     (CAS-942). Only reachable via the nav entry above, which stays hidden unless analytics_admins returns
+     a row for the signed-in user. Body rendered by renderMetricsScreen(). -->
+<div class="uscreen" id="metricsScreen" role="dialog" aria-modal="true" aria-label="Metrics">
+  <div class="uwrap" id="metricsBody"></div>
 </div>
 
 <!-- ON-DEVICE DIAGNOSTICS (CAS-553) — opened by 5 taps on the About screen's build line (#aboutBuild),
@@ -7017,6 +7035,15 @@ function updateInvitesBadge(){
   if(b){ if(n){ b.style.display="grid"; b.textContent=n; } else b.style.display="none"; }
   const d=$("navMenuDot");
   if(d) d.style.display = n ? "block" : "none";
+}
+
+// ---- CAS-943: Metrics nav entry gate — analytics_admins probed by loadMetricsAdmin() (fireAccountFanout,
+// below), never by anyone else. RLS (usage_events_select_admin) is the real gate; this only decides whether
+// the menu entry — and thus any analytics_* fetch at all — is reachable in the UI.
+let isMetricsAdmin=false;
+function updateMetricsNavItem(){
+  const b=$("metricsNavItem");
+  if(b) b.style.display = isMetricsAdmin ? "flex" : "none";
 }
 // Truthful, coarse relative time — never more precise than the gap actually warrants (movingAgeText's own
 // reasoning), but Invites needs minute/hour granularity movingAgeText doesn't: "replied 20 min ago" reads
@@ -11348,6 +11375,7 @@ window.navMenuGo=key=>{
   else if(key==="whereWhen") openWhereWhen();
   else if(key==="occasions") openManageOccasionsScreen();
   else if(key==="recommend") openRecommend();
+  else if(key==="metrics") openMetrics();
   else if(key==="about") openAbout();
 };
 document.addEventListener("click", e=>{
@@ -18293,7 +18321,7 @@ else if(dedupedN)
     friendsReady=false;
     Promise.allSettled([
       loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadRealAlerts(),
-      loadFilmPicks(), loadInvites(), loadFriends()
+      loadFilmPicks(), loadInvites(), loadFriends(), loadMetricsAdmin()
     ]).then(()=>{
       const t1 = performance.now();
       console.log('[CAS-460] account fan-out end (' + label + ')', t1, 'elapsed_ms', (t1-_t460fanout).toFixed(1));
@@ -18327,6 +18355,7 @@ else if(dedupedN)
       // on-device set that no longer exists; the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); realAlerts=[]; updateMovingBadge();
       invites=[]; invitesReady=true; updateInvitesBadge();   // CAS-886: same reasoning — a guest has no invites
+      isMetricsAdmin=false; updateMetricsNavItem();   // CAS-943: same reasoning — a guest is never an admin
       cascadeKnown=new Map(); saveCascadeKnown(); cascadeEditedAt=new Map(); saveCascadeEditedAt();
       filmBaseline=null; pickBaseline=null; watchBaseline=null;
       agentFilms={}; agentFilmsBaseline=null; agentFilmsReady=true;   // CAS-736: a guest has nothing to wait on
@@ -18894,6 +18923,105 @@ else if(dedupedN)
     friendsReady=true;
     if(typeof renderFriendsScreen==="function" && $("friendsScreen") && $("friendsScreen").classList.contains("open")) renderFriendsScreen();
   }
+  // CAS-943: probes analytics_admins for a row matching this signed-in user. RLS returns an empty result
+  // for a non-admin rather than an error, so isMetricsAdmin just reflects whether any row came back.
+  async function loadMetricsAdmin(){
+    if(!client()||!accountActive()){ isMetricsAdmin=false; updateMetricsNavItem(); return; }
+    const { data, error } = await client().from("analytics_admins").select("user_id").eq("user_id", uid());
+    if(error){ console.warn("analytics_admins probe", error); isMetricsAdmin=false; updateMetricsNavItem(); return; }
+    isMetricsAdmin = !!(data && data.length);
+    updateMetricsNavItem();
+  }
+  function fmtMetricsDay(d){
+    if(!d) return "—";
+    const dt=new Date(d+"T00:00:00");
+    return isNaN(dt) ? esc(d) : dt.toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"});
+  }
+  function metricsTableHTML(cols, rows, emptyMsg){
+    if(!rows || !rows.length) return `<div class="mlempty">${esc(emptyMsg)}</div>`;
+    return `<table class="mtable"><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map(r=>`<tr>${r.map(v=>`<td>${v}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  }
+  // CAS-943: five plain tables, each read straight off its own analytics_* view — no charts, per Lee's
+  // stated preference. Fetched fresh on every open rather than pulled into the fanout, since the screen is
+  // reachable at all only for the small analytics_admins allowlist.
+  async function renderMetricsScreen(){
+    const el=$("metricsBody"); if(!el) return;
+    el.innerHTML=`
+      <div class="ostop"><button class="osback" type="button" onclick="closeMetrics()" aria-label="Back">←</button>
+        <h2 class="osh">Metrics</h2></div>
+      <p class="ossub">Acquisition, onboarding, activation, retention and feature usage — read straight off the analytics views.</p>
+      <div class="flabel">Acquisition</div><div id="metAcq" class="mlempty">Loading…</div>
+      <div class="flabel">Onboarding funnel</div><div id="metFunnel" class="mlempty">Loading…</div>
+      <div class="flabel">Activation</div><div id="metActivation" class="mlempty">Loading…</div>
+      <div class="flabel">Retention</div><div id="metRetention" class="mlempty">Loading…</div>
+      <div class="flabel">Feature usage</div><div id="metFeature" class="mlempty">Loading…</div>`;
+    const c=client();
+    if(!c){
+      ["metAcq","metFunnel","metActivation","metRetention","metFeature"].forEach(id=>{
+        const n=$(id); if(n) n.textContent="Not available.";
+      });
+      return;
+    }
+    const [acq, funnel, activation, retention, feature] = await Promise.all([
+      c.from("analytics_acquisition").select("day,source,medium,campaign,sessions,new_devices,new_devices_signed_up").order("day",{ascending:false}),
+      c.from("analytics_onboarding_funnel").select("step,shown,continued,skipped,drop_pct"),
+      c.from("analytics_activation").select("day,devices_app_open,devices_splash_cta,devices_finished_onboarding,devices_created_agent,devices_signed_up").order("day",{ascending:false}),
+      c.from("analytics_retention").select("cohort_week,plat,cohort_size,returned_d1,returned_d7,returned_d30").order("cohort_week",{ascending:false}),
+      c.from("analytics_feature_usage").select("feature,devices,users,events,last_seen_at").order("devices",{ascending:false}),
+    ]);
+
+    if(acq.error) console.warn("analytics_acquisition load", acq.error);
+    if($("metAcq")) $("metAcq").outerHTML = `<div id="metAcq">${metricsTableHTML(
+      ["Day","Source","Medium","Campaign","Sessions","New devices","Signups"],
+      (acq.data||[]).map(r=>[fmtMetricsDay(r.day), esc(r.source), esc(r.medium), esc(r.campaign), r.sessions, r.new_devices, r.new_devices_signed_up]),
+      "No acquisition data yet."
+    )}</div>`;
+
+    if(funnel.error) console.warn("analytics_onboarding_funnel load", funnel.error);
+    // Real step order starting at splash_shown: pinned first, the rest by reached (shown) descending —
+    // a funnel's per-step count only ever falls as you go deeper, so this recovers the real order without
+    // hardcoding a step list the app's own onboarding flow already owns.
+    const funnelRows=(funnel.data||[]).slice().sort((a,b)=>{
+      if(a.step==="splash_shown") return -1;
+      if(b.step==="splash_shown") return 1;
+      return (b.shown||0)-(a.shown||0);
+    });
+    if($("metFunnel")) $("metFunnel").outerHTML = `<div id="metFunnel">${metricsTableHTML(
+      ["Step","Reached","Continued","Skipped","Drop %"],
+      funnelRows.map(r=>[esc(r.step), r.shown, r.continued, r.skipped, r.drop_pct==null?"—":r.drop_pct+"%"]),
+      "No onboarding data yet."
+    )}</div>`;
+
+    if(activation.error) console.warn("analytics_activation load", activation.error);
+    if($("metActivation")) $("metActivation").outerHTML = `<div id="metActivation">${metricsTableHTML(
+      ["Day","Opens","Splash CTA","Finished onboarding","Created an agent","Signed up"],
+      (activation.data||[]).map(r=>[fmtMetricsDay(r.day), r.devices_app_open, r.devices_splash_cta, r.devices_finished_onboarding, r.devices_created_agent, r.devices_signed_up]),
+      "No activation data yet."
+    )}</div>`;
+
+    if(retention.error) console.warn("analytics_retention load", retention.error);
+    if($("metRetention")) $("metRetention").outerHTML = `<div id="metRetention">${metricsTableHTML(
+      ["Cohort week","Platform","Cohort size","D1","D7","D30"],
+      (retention.data||[]).map(r=>[fmtMetricsDay(r.cohort_week), esc(r.plat), r.cohort_size, r.returned_d1, r.returned_d7, r.returned_d30]),
+      "No retention data yet."
+    )}</div>`;
+
+    if(feature.error) console.warn("analytics_feature_usage load", feature.error);
+    if($("metFeature")) $("metFeature").outerHTML = `<div id="metFeature">${metricsTableHTML(
+      ["Event type","Devices","Users","Events","Last seen"],
+      (feature.data||[]).map(r=>[esc(r.feature), r.devices, r.users, r.events, r.last_seen_at ? new Date(r.last_seen_at).toLocaleString() : "—"]),
+      "No feature usage data yet."
+    )}</div>`;
+  }
+  window.openMetrics=()=>{
+    $("metricsScreen").scrollTop=0;
+    $("metricsScreen").classList.add("open"); lockBodyScroll(true);
+    syncWatchChip();
+    logEvent("metrics_opened",{});
+    renderMetricsScreen();
+  };
+  window.closeMetrics=()=>{ $("metricsScreen").classList.remove("open"); lockBodyScroll(false); syncWatchChip(); };
   // Opening the bell is reading it. The rows stay — "we told you about this" is a fact about the
   // past — they just stop counting toward the badge.
   window.markRealAlertsRead = async () => {
