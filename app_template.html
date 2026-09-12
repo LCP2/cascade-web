@@ -15139,6 +15139,9 @@ function flowStop(){
   if(flowSlideT){ clearTimeout(flowSlideT); flowSlideT=null; endSlide(); }
   $("onbStep").classList.remove("open","chromed","sliding"); lockBodyScroll(false);
   $("stepHdr").hidden=true; $("stepNav").hidden=true;
+  // CAS-955: the step UI is fully closed here — clearing the key means the next entry, even into the SAME
+  // step key (e.g. reopening the same Account row), is a fresh entry rather than reading as a repaint.
+  onbStepKey=null;
 }
 function flowNext(){
   // CAS-629/CAS-815: "+ New Cascade" (flowNewAgent) still walks its own pickagent hop, independent of
@@ -16403,7 +16406,14 @@ function paintFlowChrome(key, step, n){
 }
 function renderOnbStep(key){
   const step=SHARP_STEPS[key]; if(!step) return;
+  // CAS-955: every real entry into a step — the wired flow's gotoStep, a hub door, a Briefing/menu spoke,
+  // a standalone ?step= preview — ends up here, and this is the only place onbStepKey changes. A repaint of
+  // the SAME visible step (a chip toggle re-rendering its own screen) calls this with the key already
+  // current, so comparing before reassigning tells a genuine entry from a repaint without either caller
+  // having to know which one it is.
+  const entering = key!==onbStepKey;
   onbStepKey=key;
+  if(entering) logEvent("onbstep_shown",{step:key});
   // CAS-144: a step's progress may be a function — the hub's advances as its doors are confirmed, which is
   // half the point of the hub (progress you can see).
   const prog = typeof step.progress==="function" ? step.progress() : step.progress;
@@ -16524,8 +16534,7 @@ function openOnbStep(key, agentKey){
   if(picked){ onbFlow.name=starterAgentName(picked); onbFlow.defaultName=onbFlow.name;
               onbFlow.draft.icon=picked.icon; }
   $("onbStep").classList.add("open"); lockBodyScroll(true);
-  logEvent("onbstep_shown",{step:key, agent:agentKey||null});
-  renderOnbStep(key);
+  renderOnbStep(key);   // CAS-955: fires onbstep_shown itself, now that entry is tracked centrally
   return true;
 }
 window.closeOnbStep=()=>{ flowStop(); if(typeof accountResume==="function") accountResume(); };
