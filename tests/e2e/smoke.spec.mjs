@@ -13,12 +13,14 @@ import {
 } from "./helpers.mjs";
 
 // Mirrors cas565.spec.mjs's addSecondAgent — a second agent made from "+ Add" stops at the Briefing hub
-// instead of walking the splash flow, so it needs its own "Save agent" exit.
+// instead of walking the splash flow, so it needs its own exit.
 // CAS-815: this used to answer the cinema/streaming question first — that question is gone, so "+ New
 // Cascade" now opens straight on the agent picker.
 // CAS-897: CAS-874 deleted the card deck (.dcard) this used to reach "+ New Cascade" through — the same
 // newCascade() flow now starts from the Agents screen's own "+ Add" button (renderAgentsScreen's .ag-add).
 // Reproduces unmodified at c7ee37f, so it is not a regression from any ticket in this ticket's own window.
+// CAS-934: there is no Save button on the hub any more — reaching it by picking a card is itself the
+// decision (the same as using a preset unedited anywhere else in the app), so Back commits it.
 async function addSecondAgent(page){
   await page.locator("#agentsBtn").click();
   await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
@@ -27,9 +29,8 @@ async function addSecondAgent(page){
   const cards = await shortlistCards(page);
   const card = page.locator(".scard", { has: page.locator(".sc-name", { hasText: cards[0].name }) }).first();
   await card.click();
-  const saveBtn = page.locator(".osfoot .oscta", { hasText: "Save agent" });
-  await expect(saveBtn).toBeVisible();
-  await saveBtn.click();
+  await expect(page.locator("#onbStep .osback")).toBeVisible();
+  await page.locator("#onbStep .osback").click();
   await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
 }
 
@@ -276,11 +277,13 @@ test("Mission screen: one score track, one marker per enabled window, Premium ad
   // Premium starts off (CAS-243/watchPrefsDefaults), so the default roster's marker count is the other three.
   await expect(page.locator(".msnmark")).toHaveCount(3);
 
-  // Back out without saving, then switch Premium on for real through the actual Where & when screen — the
-  // same mechanism the CAS-725 tab-strip test above already drives.
+  // Back out (nothing was actually changed on this visit), then switch Premium on for real through the
+  // actual Where & when screen — the same mechanism the CAS-725 tab-strip test above already drives.
   // CAS-897: CAS-816 collapsed the Mission door and the Briefing hub into the one "Edit Agent" screen this
   // helper now opens directly (see openFirstAgentMission above) — one osback closes it, not two.
-  await page.locator("#onbStep .osback").click();   // Edit Agent -> closes, discarding this (unsaved) visit
+  // CAS-934: Edit Agent's Back now commits the draft on its way out (there is no separate Save any more),
+  // so this only stays a no-op because nothing on the page was touched before backing out.
+  await page.locator("#onbStep .osback").click();
   await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
 
   await page.locator("#navMenuBtn").click();
@@ -501,7 +504,7 @@ test("'Only show films on my services' changes what a new agent finds", async ({
 
   await page.locator("#onbSvcOnly").click();
   await expect(page.locator("#onbSvcOnly")).toHaveClass(/on/);
-  await ctaLocator(page).click();   // Done, back to the listing
+  await page.locator("#onbStep .osback").click();   // CAS-934: no Done button any more — back to the listing
   await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
 
   const idsBefore = await page.evaluate(() => cascades.map(c => c.id));
