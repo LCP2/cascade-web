@@ -1281,16 +1281,21 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     # grow the catalogue with new titles the spine surfaces that we don't already hold.
     # CAS-773: CASCADE_SPINE picks the vendor; "tmdb" (the default) is byte-identical to
     # pre-v2 behaviour, and the watchmode path is never entered unless it's explicitly set.
-    new = []
-    if len(base) < CATALOGUE_TARGET:
-        if CASCADE_SPINE == "watchmode":
-            new = ingest_watchmode(seen)
-        else:
-            new = ingest_tmdb(seen) + ingest_tmdb_upcoming(seen) + ingest_tmdb_streaming(seen)
-    catalogue = list(base.values()) + [m for m in new if m["tmdb_id"] not in base]
+    # CAS-981: this must run every refresh, not only while len(base) < CATALOGUE_TARGET — the
+    # sort+slice below already enforces the cap on its own, and a size guard here just freezes
+    # the catalogue solid the first run it reaches CATALOGUE_TARGET.
+    if CASCADE_SPINE == "watchmode":
+        new = ingest_watchmode(seen)
+    else:
+        new = ingest_tmdb(seen) + ingest_tmdb_upcoming(seen) + ingest_tmdb_streaming(seen)
+    new_unique = [m for m in new if m["tmdb_id"] not in base]
+    catalogue = list(base.values()) + new_unique
     catalogue = _dedupe_by_tmdb_id(catalogue)
     catalogue.sort(key=lambda m: m.get("popularity") or 0, reverse=True)
+    pre_slice_count = len(catalogue)
     catalogue = catalogue[:CATALOGUE_TARGET]
+    dropped = pre_slice_count - len(catalogue)
+    print(f"[discovery] discovered={len(new)} new={len(new_unique)} dropped={dropped}")
 
     # Watchmode is on-demand only now: the poll-set matters just for the engaged titles.
     sched = ps.select_daily_poll_set(catalogue, today, ondemand_ids=ondemand_ids)
