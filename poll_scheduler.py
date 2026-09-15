@@ -4,7 +4,7 @@ CAS-109 — poll tiering + free-tier-capped daily scheduler + status estimator.
 
 Pure functions over catalogue records + accrued window_dates. NO API keys needed
 (these decide WHAT to poll and estimate the rest; the actual Watchmode call stays
-in poc_pipeline.poll_watchmode). Free tier only (locked 2026-07-20: no paid yet).
+in poc_pipeline.poll_watchmode).
 
 Tiers:
   none   : upcoming / cinema date still ahead        -> never polled
@@ -17,7 +17,12 @@ import datetime, statistics
 ACTIVE_WINDOW = {"in_cinema", "pvod", "rental"}
 SIX_MONTHS = 180
 
-# --- free-tier budget (locked: stay free) ----------------------------------
+# --- default poll-set shape --------------------------------------------------
+# CAS-987: no longer fixed free-tier caps — poc_pipeline.run() scales these three with the real
+# Watchmode plan's billing-cycle allowance (compute_wm_today_allowance) and passes the scaled
+# values into select_daily_poll_set. The numbers below are the DEFAULT shape (and the ratio the
+# scaling itself is measured against) for a caller that doesn't override them — this module still
+# decides WHICH titles are worth polling; the allocator decides how many are affordable today.
 DAILY_BUDGET   = 80      # ~2500/31, integer daily ceiling
 ONDEMAND_RESERVE = 15    # calls/day held for user-triggered confirms
 ACTIVE_CAP     = 65      # max daily-active titles (<= free ceiling ~68; keeps headroom)

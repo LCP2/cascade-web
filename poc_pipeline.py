@@ -33,7 +33,7 @@ to compare against. Output for the app front-end is written to movies.json.
 """
 
 from __future__ import annotations
-import os, sys, csv, io, re, json, time, shutil, hashlib, base64, datetime, subprocess, urllib.parse, urllib.request, urllib.error
+import os, sys, csv, io, re, json, time, shutil, hashlib, base64, calendar, datetime, subprocess, urllib.parse, urllib.request, urllib.error
 
 import runstats
 
@@ -96,6 +96,13 @@ WM_MONTHLY_FILE = os.path.join(STATE_DIR, "watchmode_monthly.json")   # CAS-974:
 # rather than re-guessed, so monitor.health's remaining-credits check has a real number to compare
 # this month's cumulative on-demand spend against.
 WATCHMODE_MONTHLY_CREDITS = int(os.getenv("WATCHMODE_MONTHLY_CREDITS", "40000"))
+
+# CAS-987: the real plan this key is on, and how state/api_budget.json paces nightly spend
+# against it — a plan change (trial -> Startup -> Business) is one variable, not a code change.
+WM_MONTHLY_QUOTA = int(os.getenv("WM_MONTHLY_QUOTA", "10000"))
+WM_QUOTA_RESET_DAY = int(os.getenv("WM_QUOTA_RESET_DAY", "12"))
+WM_CYCLE_RESERVE_PCT = float(os.getenv("WM_CYCLE_RESERVE_PCT", "10"))
+
 OUTPUT_FILE   = os.path.join(os.path.dirname(__file__), "movies.json")
 SAMPLE_FILE   = os.path.join(os.path.dirname(__file__), "sample_data.json")
 TEMPLATE_FILE = os.path.join(os.path.dirname(__file__), "app_template.html")
@@ -541,7 +548,9 @@ def ingest_watchmode(seen: set) -> list[dict]:
 WM_FIELDS_MAX_CREDITS = int(os.getenv("WM_FIELDS_MAX_CREDITS", "500"))
 
 # CAS-921: the nightly poc_pipeline.py run's own budget for the same fields, spent independently
-# of WM_FIELDS_MAX_CREDITS above (the manual watchmode-backfill.yml dispatch's budget).
+# of WM_FIELDS_MAX_CREDITS above (the manual watchmode-backfill.yml dispatch's budget). CAS-987:
+# no longer a fixed daily cap of its own — run() now uses this value only as a RATIO against
+# ONDEMAND_WM_CAP/SCOREABILITY_PROBE_BUDGET to split the real cycle-paced allowance three ways.
 WM_NIGHTLY_MAX_CREDITS = int(os.getenv("WM_NIGHTLY_MAX_CREDITS", "400"))
 # A ladder-cohort title (upcoming/in_cinema) refreshes on a shorter TTL than WATCHMODE_CACHE_TTL_
 # DAYS: Watchmode popularity is the whole score for a title with no other window's data yet.
@@ -553,8 +562,9 @@ WM_NIGHTLY_COHORT_TTL_DAYS = 7
 # select_publishable's docstring). SCOREABILITY_PROBE_BUDGET is this ticket's own pot, spent by
 # probe_candidates() across the three tiers in the ticket's fixed order; separate from
 # WM_NIGHTLY_MAX_CREDITS above so CAS-921's existing nightly pass (still wired into run()
-# unchanged) is never starved by this one. A future cycle-aware budget ticket (CAS-987) replaces
-# this flat number without needing to touch probe_candidates' own signature.
+# unchanged) is never starved by this one. CAS-987: run() now uses this value only as a RATIO
+# (against WM_NIGHTLY_MAX_CREDITS/ONDEMAND_WM_CAP) to split the real cycle-paced allowance three
+# ways — probe_candidates' own signature (a plain int budget) is untouched.
 CANDIDATES_FILE = os.path.join(STATE_DIR, "candidates.json")
 SCOREABILITY_PROBE_BUDGET = int(os.getenv("SCOREABILITY_PROBE_BUDGET", "200"))
 SCOREABILITY_STALE_DAYS = WATCHMODE_CACHE_TTL_DAYS          # tier 1, non-ladder: 30 days
@@ -824,6 +834,7 @@ def probe_candidates(candidates: dict, today: datetime.date, budget: int, wm_idm
                                 or c.get("wm_critic_score") is not None
                                 or c.get("wm_popularity_percentile") is not None)
                     c["outcome"] = "scored" if has_score else "no_score"
+    outcomes["spent"] = budget - bd["remaining"]   # CAS-987: actual credits this pass drew from `budget`
     return outcomes
 
 
@@ -832,7 +843,7 @@ def run_scoreability_probe(candidates: dict, today: datetime.date, budget: int,
     """Fetch the Watchmode id map once, then run probe_candidates. Tolerates a missing/rejected
     WATCHMODE_API_KEY exactly like CAS-921's own nightly pass (enrich_watchmode_fields_nightly) —
     prints a [warn] and returns a zeroed tally rather than failing the run."""
-    empty = {"ok": 0, "cached": 0, "no-id": 0, "skip": 0, "stop": 0, "probed": 0}
+    empty = {"ok": 0, "cached": 0, "no-id": 0, "skip": 0, "stop": 0, "probed": 0, "spent": 0}
     if not WATCHMODE_KEY:
         print("[warn] Watchmode: WATCHMODE_API_KEY not set — skipping the CAS-986 scoreability probe.")
         return empty
@@ -938,6 +949,7 @@ def apply_two_tier_publication(candidates: dict, today: datetime.date, discovery
     report = {
         "candidates": len(candidates), "unprobed": unprobed,
         "probed_today": probe_outcomes["probed"], "engine_ok": engine_ok,
+        "wm_spent": probe_outcomes.get("spent", 0),   # CAS-987: this pass's actual draw on probe_budget
         **stats,
     }
     return published_records, report
@@ -1493,33 +1505,91 @@ def _dedupe_by_tmdb_id(movies: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# CAS-384: cross-run per-day provider spend, so a second run the same UTC day sees what an
-# earlier run already spent instead of getting its own full allowance. Watchmode's free
-# tier is counted per key per day, not per run (CAS-161) — this is the concrete gap CAS-161's
-# own comment predicted: "how a second run happened the same day" earned a 2026-07-24 401,
-# and it recurred on 2026-08-05 for exactly that reason.
+# CAS-987: the Watchmode billing cycle. state/api_budget.json now tracks the whole cycle, not one
+# fixed daily number — {cycle_start, cycle_end, quota, spent, updated_at, days}, `days` a per-date
+# map. CAS-384's original job (a second run the same UTC day sees what an earlier run already
+# spent, since Watchmode's quota is counted per key per day, not per run — CAS-161's "how a second
+# run happened the same day" 401 on 2026-07-24, recurred 2026-08-05) still lives here, as
+# `days[today]`, instead of its own separate {date, wm_spent} file.
 # ---------------------------------------------------------------------------
-def _load_daily_spend(today):
-    """Anything on file from a stale date is a new day's fresh allowance."""
+def _wm_cycle_bounds(today: datetime.date, reset_day: int = WM_QUOTA_RESET_DAY) -> tuple:
+    """The half-open [cycle_start, cycle_end) billing cycle containing `today`. A reset_day past
+    the end of a short month (e.g. day 31 in April) clamps to that month's last day."""
+    def _reset_date(year, month):
+        day = min(reset_day, calendar.monthrange(year, month)[1])
+        return datetime.date(year, month, day)
+    this_reset = _reset_date(today.year, today.month)
+    if today >= this_reset:
+        ny, nm = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+        return this_reset, _reset_date(ny, nm)
+    py, pm = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
+    return _reset_date(py, pm), this_reset
+
+
+def _load_wm_cycle_budget(today: datetime.date) -> dict:
+    """Loads state/api_budget.json as the current cycle's {cycle_start, cycle_end, quota, spent,
+    updated_at, days} shape. A pre-CAS-987 {date, wm_spent} file, a file from a cycle that has
+    since rolled over (today has crossed WM_QUOTA_RESET_DAY), or a missing/unparseable file all
+    read the same honest way: a fresh cycle starting now, spent back to 0 — never a raised error."""
+    cycle_start, cycle_end = _wm_cycle_bounds(today)
+    fresh = {"cycle_start": cycle_start.isoformat(), "cycle_end": cycle_end.isoformat(),
+             "quota": WM_MONTHLY_QUOTA, "spent": 0, "updated_at": today.isoformat(), "days": {}}
     if not os.path.exists(API_BUDGET_FILE):
-        return {}
+        return fresh
     try:
         data = json.load(open(API_BUDGET_FILE))
     except Exception:
-        return {}
-    return data if data.get("date") == today.isoformat() else {}
+        return fresh
+    if "days" not in data or data.get("cycle_end") != cycle_end.isoformat():
+        return fresh
+    days = data.get("days") or {}
+    return {"cycle_start": data.get("cycle_start", fresh["cycle_start"]), "cycle_end": data["cycle_end"],
+            "quota": data.get("quota", WM_MONTHLY_QUOTA), "spent": sum(days.values()),
+            "updated_at": data.get("updated_at", fresh["updated_at"]), "days": days}
 
 
-def _save_daily_spend(today, wm_spent):
+def _save_wm_cycle_budget(cycle: dict, today: datetime.date) -> None:
     os.makedirs(STATE_DIR, exist_ok=True)
-    json.dump({"date": today.isoformat(), "wm_spent": wm_spent},
-               open(API_BUDGET_FILE, "w"), indent=2)
+    out = dict(cycle)
+    out["spent"] = sum(out.get("days", {}).values())
+    out["updated_at"] = today.isoformat()
+    json.dump(out, open(API_BUDGET_FILE, "w"), indent=2, sort_keys=True)
+
+
+def compute_wm_today_allowance(quota: int, reserve_pct: float, spent_this_cycle: int,
+                               days_remaining_including_today: int) -> int:
+    """CAS-987: today's Watchmode spend ceiling, paced against the real billing cycle rather than
+    a fixed daily number. Holds back `reserve_pct` of the quota for on-demand/manual runs, then
+    spreads what's left evenly across the days remaining in the cycle (today included) — so a
+    quiet start to the cycle doesn't get spent all at once, and the last day of a cycle still
+    hands over its whole remaining pot rather than a sliver of it."""
+    if days_remaining_including_today <= 0:
+        return 0
+    spendable = quota * (1 - reserve_pct / 100) - spent_this_cycle
+    return max(0, int(spendable // days_remaining_including_today))
+
+
+def split_wm_pot(pot: int, nightly_weight: int, ondemand_weight: int,
+                 scoreability_weight: int) -> tuple:
+    """CAS-987: split one Watchmode credit pot into the nightly-fields/on-demand/scoreability-
+    probe shares run() hands to each pass, in the ratio of the three (formerly independent, fixed)
+    weights. The weights decide proportion only; their SUM together can never exceed `pot`, so a
+    run that reaches the allowance (`pot` == 0) hands every pass a cap of 0 and none of them makes
+    another Watchmode call. Returns (ondemand_cap, nightly_cap, scoreability_cap); scoreability
+    takes the rounding remainder so the three always sum to exactly `pot`."""
+    weight_total = nightly_weight + ondemand_weight + scoreability_weight
+    if weight_total <= 0 or pot <= 0:
+        return 0, 0, max(0, pot)
+    ondemand_cap = round(pot * ondemand_weight / weight_total)
+    nightly_cap = round(pot * nightly_weight / weight_total)
+    scoreability_cap = max(0, pot - ondemand_cap - nightly_cap)
+    return ondemand_cap, nightly_cap, scoreability_cap
 
 
 def _load_monthly_wm_spend(today):
-    """CAS-974: same stale-date-means-fresh-allowance rule as _load_daily_spend, keyed by month
-    instead of day — health.py's remaining-credits check needs the month's running total, not the
-    daily figure api_budget.json already tracks for a different purpose (CAS-384's same-day cap)."""
+    """CAS-974: same stale-date-means-fresh-allowance rule as _load_wm_cycle_budget, keyed by
+    month instead of billing cycle — health.py's remaining-credits check needs the month's running
+    total, not the cycle figure api_budget.json tracks for a different purpose (CAS-987's pacing)."""
     month = today.strftime("%Y-%m")
     if not os.path.exists(WM_MONTHLY_FILE):
         return {}
@@ -1540,7 +1610,7 @@ def _save_monthly_wm_spend(today, wm_spent):
 # CAS-109 — build the persistent catalogue, poll only the daily set, carry the rest
 # ---------------------------------------------------------------------------
 def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_ids=None,
-                         wm_spent_today=0):
+                         wm_spent_today=0, wm_budget_cap=None, poll_set_kwargs=None):
     """Merge new TMDB ingest into the persistent base, then derive availability for the
     WHOLE released catalogue from TMDB Watch Providers (free, one call/title/day — CAS-127).
     Watchmode is spent only to ENRICH the on-demand set (titles a user opened/saved) with
@@ -1550,6 +1620,12 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     allowance — this run's pot shrinks by that much so two runs stay under one real
     per-key-per-day cap. No file IO here — run() loads/persists spend, same pattern as
     wm_cache below.
+
+    `wm_budget_cap` (CAS-987) overrides ONDEMAND_WM_CAP as the on-demand ceiling before
+    `wm_spent_today` is subtracted — the caller's share of the one cycle-paced Watchmode pot,
+    rather than a fixed number. `None` (the default) keeps the pre-CAS-987 fixed-cap behaviour.
+    `poll_set_kwargs` similarly overrides `ps.select_daily_poll_set`'s own daily_budget/
+    active_cap/reserve defaults, so the CAS-987 allocator can pace those too.
 
     Deps (ingest_tmdb / ingest_tmdb_upcoming / ingest_tmdb_streaming / ingest_watchmode /
     poll_watchmode / tmdb_providers / derive_from_providers / derive_status) are module
@@ -1583,12 +1659,14 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     print(f"[discovery] discovered={len(new)} new={len(new_unique)} dropped={dropped}")
 
     # Watchmode is on-demand only now: the poll-set matters just for the engaged titles.
-    sched = ps.select_daily_poll_set(catalogue, today, ondemand_ids=ondemand_ids)
+    sched = ps.select_daily_poll_set(catalogue, today, ondemand_ids=ondemand_ids,
+                                     **(poll_set_kwargs or {}))
     ondemand_set = {m["tmdb_id"] for m in sched["ondemand"]}
     provider_calls = wm_calls = cinema_calls = 0
     # CAS-384: shrink today's pot by whatever an earlier run already spent against the SAME free-tier
     # day, so two runs sharing one real cap can't each claim a full allowance.
-    wm_budget = max(0, ONDEMAND_WM_CAP - wm_spent_today)
+    ondemand_cap = ONDEMAND_WM_CAP if wm_budget_cap is None else wm_budget_cap
+    wm_budget = max(0, ondemand_cap - wm_spent_today)
     cinema_backfill = CINEMA_RELEASE_BACKFILL_BUDGET   # CAS-379: its own pot, same reasoning
     # CAS-161: per-API health for this run. `*_open` goes False the first time an API says something that is
     # true of the whole run (cap hit, key rejected) rather than of one title; the `*_fails` tallies are the
@@ -1710,7 +1788,7 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     counts["candidate_pool"] = full_discovery_pool
     counts.update(provider_calls=provider_calls, wm_calls=wm_calls,
                   cinema_calls=cinema_calls, revalidated=revalidated,
-                  ondemand=len(ondemand_set), catalogue=len(catalogue),
+                  ondemand=len(ondemand_set), ondemand_cap=ondemand_cap, catalogue=len(catalogue),
                   # CAS-161: a degraded run must SAY it was degraded. Silence here would let the catalogue
                   # quietly go stale for days while every run still reported success.
                   wm_fails=wm_fails, provider_fails=prov_fails, cinema_fails=cinema_fails,
@@ -1914,6 +1992,13 @@ def check_provider_health(outcomes: dict) -> int:
 # ---------------------------------------------------------------------------
 def run(simulate_day: bool = False):
     today = datetime.date.today()
+    # CAS-987: today's Watchmode allowance, paced against the real billing cycle — replaces the
+    # fixed WM_NIGHTLY_MAX_CREDITS/ONDEMAND_WM_CAP/SCOREABILITY_PROBE_BUDGET numbers below with
+    # weighted shares of the one cycle-paced pot. `nightly_budget` has to exist even off the LIVE
+    # branch (enrich_watchmode_fields_nightly runs unconditionally, live or sample), so it starts
+    # at the old fixed default and is only overridden once real cycle state is available.
+    nightly_budget = {"remaining": WM_NIGHTLY_MAX_CREDITS, "skipped": 0}
+    scoreability_cap = SCOREABILITY_PROBE_BUDGET
 
     if LIVE:
         print(f"[live] CAS-109 tiered poll — persistent catalogue, daily-active capped ...")
@@ -1923,16 +2008,49 @@ def run(simulate_day: bool = False):
         offsets = ps.compute_median_offsets(wd_seed)
         ondemand_file = os.path.join(STATE_DIR, "ondemand.json")
         ondemand_ids = json.load(open(ondemand_file)) if os.path.exists(ondemand_file) else []
-        prior_spend = _load_daily_spend(today)   # CAS-384: what an earlier run today already spent
+
+        # CAS-987: the cycle-paced allowance. `cycle["spent"]` is every day's spend on file so far
+        # (today's included, from any earlier run today); `today_spent_prior` is just today's share
+        # of that, the same cross-run same-day dedupe CAS-384 relied on.
+        cycle = _load_wm_cycle_budget(today)
+        today_iso = today.isoformat()
+        cycle_end = datetime.date.fromisoformat(cycle["cycle_end"])
+        days_remaining = (cycle_end - today).days
+        today_allowance = compute_wm_today_allowance(cycle["quota"], WM_CYCLE_RESERVE_PCT,
+                                                      cycle["spent"], days_remaining)
+        today_spent_prior = cycle["days"].get(today_iso, 0)
+        wm_pot = max(0, today_allowance - today_spent_prior)
+        if wm_pot <= 0:
+            print("[watchmode] today's cycle allowance is exhausted — no further Watchmode calls "
+                  "this run.")
+
+        # WM_NIGHTLY_MAX_CREDITS/ONDEMAND_WM_CAP/SCOREABILITY_PROBE_BUDGET stop being independent
+        # fixed pots and become weighted shares of `wm_pot` — their old fixed values are reused
+        # only as the RATIO between the three uses, never as a ceiling of their own again.
+        ondemand_cap, nightly_cap, scoreability_cap = split_wm_pot(
+            wm_pot, WM_NIGHTLY_MAX_CREDITS, ONDEMAND_WM_CAP, SCOREABILITY_PROBE_BUDGET)
+        nightly_budget = {"remaining": nightly_cap, "skipped": 0}
+
+        # poll_scheduler's own DAILY_BUDGET/ACTIVE_CAP/ONDEMAND_RESERVE stop being fixed free-tier
+        # caps too: the scheduler still decides which titles are worth polling, but the allocator
+        # above now decides how many are affordable today — scaled by the same ratio ondemand_cap
+        # was, so the DAILY_BUDGET = ACTIVE_CAP + ONDEMAND_RESERVE relationship the constants were
+        # built on still holds.
+        poll_scale = (ondemand_cap / ps.ONDEMAND_RESERVE) if ps.ONDEMAND_RESERVE else 0
+        scaled_reserve = ondemand_cap
+        scaled_active_cap = round(ps.ACTIVE_CAP * poll_scale)
+        poll_set_kwargs = {"active_cap": scaled_active_cap, "reserve": scaled_reserve,
+                           "daily_budget": scaled_active_cap + scaled_reserve}
+
         records, counts = build_live_catalogue(today, base_records, wm_cache,
                                                offsets=offsets, ondemand_ids=ondemand_ids,
-                                               wm_spent_today=prior_spend.get("wm_spent", 0))
+                                               wm_budget_cap=ondemand_cap,
+                                               poll_set_kwargs=poll_set_kwargs)
         print(f"[live] catalogue {len(records)} | TMDB provider calls {counts['provider_calls']} (free, no quota) "
-              f"| Watchmode on-demand {counts['wm_calls']}/{ONDEMAND_WM_CAP} "
+              f"| Watchmode on-demand {counts['wm_calls']}/{counts['ondemand_cap']} "
               f"| cinema_release backfill {counts['cinema_calls']}/{CINEMA_RELEASE_BACKFILL_BUDGET}")
         os.makedirs(STATE_DIR, exist_ok=True)
         json.dump(wm_cache, open(WM_CACHE_FILE, "w"), indent=2)
-        _save_daily_spend(today, prior_spend.get("wm_spent", 0) + counts["wm_calls"])
 
         # CAS-974: this run's TMDB/Watchmode call+error tallies, for monitor.health's tmdb_fetch/
         # watchmode_fetch checks — a run with 0 keys never reaches this branch, so an "unknown"
@@ -1963,8 +2081,9 @@ def run(simulate_day: bool = False):
 
     # CAS-921: the nightly run's own Watchmode fields pass — see enrich_watchmode_fields_nightly's
     # docstring. Runs every night, live or sample; a missing/rejected key is tolerated so this
-    # never fails the build.
-    wm_outcomes = enrich_watchmode_fields_nightly(records)
+    # never fails the build. `nightly_budget` is CAS-987's cycle-paced share when LIVE, the old
+    # fixed WM_NIGHTLY_MAX_CREDITS otherwise.
+    wm_outcomes = enrich_watchmode_fields_nightly(records, budget=nightly_budget)
     print(f"[watchmode] nightly fields: {wm_outcomes['ok']} enriched, {wm_outcomes['cached']} "
           f"cached, {wm_outcomes['no-id']} no-id, {wm_outcomes['skip']} skipped, "
           f"{wm_outcomes['stop']} stopped")
@@ -1995,12 +2114,24 @@ def run(simulate_day: bool = False):
         candidates = load_candidates()
         previously_published_ids = {m["tmdb_id"] for m in base_records}
         records, cas986_report = apply_two_tier_publication(
-            candidates, today, counts["candidate_pool"], records, previously_published_ids)
+            candidates, today, counts["candidate_pool"], records, previously_published_ids,
+            probe_budget=scoreability_cap)
         save_candidates(candidates)
         print(f"[candidates] candidates={cas986_report['candidates']} "
               f"unprobed={cas986_report['unprobed']} probed_today={cas986_report['probed_today']} "
               f"published={cas986_report['published']} promoted={cas986_report['promoted']} "
               f"demoted={cas986_report['demoted']} exempt={cas986_report['exempt']}")
+
+        # CAS-987: persist the whole run's Watchmode draw on today's cycle-paced pot — on-demand
+        # (build_live_catalogue), the nightly fields pass, and the scoreability probe alike — and
+        # report the cycle's own numbers, not any one pass's slice of them.
+        nightly_spent = nightly_cap - nightly_budget["remaining"]
+        today_total_spent = today_spent_prior + counts["wm_calls"] + nightly_spent + cas986_report["wm_spent"]
+        cycle["days"][today_iso] = today_total_spent
+        _save_wm_cycle_budget(cycle, today)
+        print(f"watchmode cycle {cycle['cycle_start']}..{cycle['cycle_end']} quota={cycle['quota']} "
+              f"spent={sum(cycle['days'].values())} today_allowance={today_allowance} "
+              f"today_spent={today_total_spent} remaining={max(0, today_allowance - today_total_spent)}")
 
     # CAS-608: how much of the published catalogue is genuinely upcoming vs. released-with-no-AU-
     # offer vs. on the short 7-day Watchmode ladder — the counts this ticket exists to shrink.
