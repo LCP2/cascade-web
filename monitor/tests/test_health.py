@@ -214,6 +214,102 @@ class AuthSignin(unittest.TestCase):
         self.assertIsNone(c["ok"])
 
 
+def _rows(n, type_="app_open", client_prefix="device", data=None):
+    return [{"type": type_, "client_key": f"{client_prefix}-{i}", "data": data} for i in range(n)]
+
+
+class ClientErrorRate(unittest.TestCase):
+    """CAS-985: client_error + client_rejection as a share of app_open, red above 5% or 20 rows."""
+
+    def test_pass_low_error_rate(self):
+        window = {"rows24": _rows(100) + _rows(2, "client_error"), "rows_prev": []}
+        c = health.check_client_error_rate(window)
+        self.assertTrue(c["ok"])
+        self.assertEqual(c["value"], 2)
+
+    def test_fail_over_five_percent(self):
+        window = {"rows24": _rows(100) + _rows(10, "client_error"), "rows_prev": []}
+        c = health.check_client_error_rate(window)
+        self.assertFalse(c["ok"])
+
+    def test_fail_over_twenty_rows_even_under_five_percent(self):
+        # 21 of 1000 is 2.1%, well under the 5% ceiling, but over the 20-row absolute ceiling.
+        window = {"rows24": _rows(1000) + _rows(21, "client_error"), "rows_prev": []}
+        c = health.check_client_error_rate(window)
+        self.assertFalse(c["ok"])
+
+    def test_top_messages_named_in_detail(self):
+        window = {"rows24": _rows(100) + _rows(3, "client_error", data={"message": "sync_failed boom"}),
+                  "rows_prev": []}
+        c = health.check_client_error_rate(window)
+        self.assertIn("sync_failed boom", c["detail"])
+
+    def test_unknown_under_fifty_app_open_rows(self):
+        window = {"rows24": _rows(10) + _rows(5, "client_error"), "rows_prev": []}
+        c = health.check_client_error_rate(window)
+        self.assertIsNone(c["ok"])
+
+    def test_unknown_with_no_credentials(self):
+        c = health.check_client_error_rate(None)
+        self.assertIsNone(c["ok"])
+
+    def test_unknown_when_probe_errored(self):
+        c = health.check_client_error_rate({"error": "canary sign-in failed (HTTP 400)."})
+        self.assertIsNone(c["ok"])
+        self.assertIn("canary sign-in failed", c["detail"])
+
+
+class EmptyAccountRate(unittest.TestCase):
+    """CAS-985: signin_empty_account as a share of all real-account sign-ins, red above 10%."""
+
+    def test_pass_low_empty_rate(self):
+        window = {"rows24": _rows(60) + _rows(95, "signin_returning") + _rows(5, "signin_empty_account"),
+                  "rows_prev": []}
+        c = health.check_empty_account_rate(window)
+        self.assertTrue(c["ok"])
+        self.assertEqual(c["value"], 5)
+
+    def test_fail_over_ten_percent(self):
+        window = {"rows24": _rows(60) + _rows(80, "signin_returning") + _rows(20, "signin_empty_account"),
+                  "rows_prev": []}
+        c = health.check_empty_account_rate(window)
+        self.assertFalse(c["ok"])
+
+    def test_unknown_under_fifty_app_open_rows(self):
+        window = {"rows24": _rows(10) + _rows(1, "signin_empty_account"), "rows_prev": []}
+        c = health.check_empty_account_rate(window)
+        self.assertIsNone(c["ok"])
+
+    def test_unknown_with_no_credentials(self):
+        c = health.check_empty_account_rate(None)
+        self.assertIsNone(c["ok"])
+
+
+class ActivityFloor(unittest.TestCase):
+    """CAS-985: distinct devices with an app_open in the last 24h; red at zero when yesterday wasn't."""
+
+    def test_pass_devices_active_both_days(self):
+        window = {"rows24": _rows(60), "rows_prev": _rows(55)}
+        c = health.check_activity_floor(window)
+        self.assertTrue(c["ok"])
+        self.assertEqual(c["value"], 60)
+
+    def test_fail_zero_today_after_nonzero_yesterday(self):
+        window = {"rows24": _rows(60, "signin_returning"), "rows_prev": _rows(55)}
+        c = health.check_activity_floor(window)
+        self.assertFalse(c["ok"])
+        self.assertEqual(c["value"], 0)
+
+    def test_unknown_under_fifty_app_open_rows(self):
+        window = {"rows24": _rows(10), "rows_prev": _rows(10)}
+        c = health.check_activity_floor(window)
+        self.assertIsNone(c["ok"])
+
+    def test_unknown_with_no_credentials(self):
+        c = health.check_activity_floor(None)
+        self.assertIsNone(c["ok"])
+
+
 class ShrunkenCatalogueFixture(unittest.TestCase):
     """AC3: a deliberately shrunken movies.json fixture fails catalogue_size with the actual
     count in the message. monitor/fixtures/today.json (6 records) already IS such a fixture."""

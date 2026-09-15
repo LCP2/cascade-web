@@ -1,7 +1,7 @@
-"""Nightly health assertions (CAS-974).
+"""Nightly health assertions (CAS-974, CAS-985).
 
 Every silent failure Cascade has actually had passed CI: a green `daily.yml` run is not
-evidence the night's work actually happened. This module asserts eleven concrete things about
+evidence the night's work actually happened. This module asserts fourteen concrete things about
 the run that just finished and writes the answer to ``state/health.json`` as
 ``{checked_at, checks: [{name, ok, value, threshold, detail}], ok}`` — exiting non-zero on any
 real failure so `alert.yml` (CAS-973) fires.
@@ -14,6 +14,18 @@ Tolerance: a check whose inputs are unavailable this run (no run_stats.json sect
 Supabase credential, etc.) reports ``ok: null`` ("unknown") and does NOT fail the run —
 except ``catalogue_size``/``catalogue_integrity``, whose input (``movies.json``) is never
 optional, so those two always resolve to a real pass/fail.
+
+CAS-985's three client-side checks (client_error_rate, empty_account_rate, activity_floor) read
+the last 24h of usage_events. This job is deliberately handed only SUPABASE_ANON_KEY (see
+daily.yml), never SUPABASE_SERVICE_ROLE_KEY — the same reasoning probe_usage_events_insert
+below already documents: a service_role read would sail straight past the RLS this account
+actually sits behind. usage_events has no anon select grant at all (CAS-942: only an
+`authenticated` caller listed in analytics_admins may read it), so these three probe by signing
+in with the SAME CASCADE_CANARY_EMAIL/PASSWORD probe_auth_signin uses and reading with that
+session's own JWT. Until CAS-942's select policy is live AND that canary account is added to
+analytics_admins, RLS silently returns zero rows rather than an error — indistinguishable from a
+genuinely quiet window, so it is reported the same way: unknown, under the shared <50-app_open
+floor below, naming CAS-942 as one of the two possible reasons.
 """
 from __future__ import annotations
 
@@ -24,6 +36,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from collections import Counter
 
 import poc_pipeline as pp
 import runstats
@@ -47,6 +60,13 @@ SCORE_COVERAGE_MIN_PCT = 0.90
 WATCHMODE_FLOOR_PCT = 0.15
 WATCHMODE_PACE_LOOKBACK_DAYS = 7
 WATCHMODE_PACE_MIN_DAYS = 3
+# CAS-985: shared precondition for all three usage_events checks below — fewer app_open rows than this
+# in the trailing 24h reads as unknown rather than a false alarm (a quiet pre-launch day, or CAS-942's
+# live grant not applied yet — the two are indistinguishable from this probe's own vantage point).
+USAGE_WINDOW_MIN_APP_OPEN = 50
+CLIENT_ERROR_RATE_MAX_PCT = 0.05
+CLIENT_ERROR_RATE_MAX_ABS = 20
+EMPTY_ACCOUNT_RATE_MAX_PCT = 0.10
 
 
 # ---------------------------------------------------------------------------
@@ -294,15 +314,134 @@ def check_auth_signin(probe: dict | None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# client_error_rate / empty_account_rate / activity_floor — CAS-985, see the module docstring for
+# why these read as the canary account rather than anon or service_role.
+# ---------------------------------------------------------------------------
+def _get_json(url: str, headers: dict, timeout: int = 15):
+    req = urllib.request.Request(url, method="GET", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as err:
+        body = (err.read() or b"").decode("utf-8", "replace") if err.fp else ""
+        return err.code, body
+
+
+def probe_usage_window(supabase_url: str | None, anon_key: str | None, email: str | None,
+                       password: str | None, now: _dt.datetime) -> dict | None:
+    """Signs in with the canary account and reads the trailing 24h (`rows24`) and the 24h before
+    that (`rows_prev`, for activity_floor's day-over-day comparison) of usage_events with that
+    session's own JWT. None when the credentials aren't configured; otherwise a dict carrying
+    either "error" (the sign-in or the read itself failed outright) or the two row lists — RLS
+    quietly returning zero rows (no select grant applied yet) is NOT an error here, it's read the
+    same as a genuinely quiet window, by design (see the module docstring)."""
+    if not (supabase_url and anon_key and email and password):
+        return None
+    try:
+        status, body = _post_json(
+            f"{supabase_url.rstrip('/')}/auth/v1/token?grant_type=password",
+            {"apikey": anon_key, "Content-Type": "application/json"},
+            {"email": email, "password": password})
+        if not (200 <= status < 300):
+            return {"error": f"canary sign-in failed (HTTP {status})."}
+        token = json.loads(body).get("access_token")
+        if not token:
+            return {"error": "canary sign-in returned no access_token."}
+        headers = {"apikey": anon_key, "Authorization": f"Bearer {token}"}
+        since24 = (now - _dt.timedelta(hours=24)).isoformat()
+        since48 = (now - _dt.timedelta(hours=48)).isoformat()
+        base = f"{supabase_url.rstrip('/')}/rest/v1/usage_events"
+        r24_status, r24_body = _get_json(
+            f"{base}?select=type,client_key,data&created_at=gte.{since24}&limit=10000", headers)
+        rprev_status, rprev_body = _get_json(
+            f"{base}?select=type,client_key&created_at=gte.{since48}&created_at=lt.{since24}&limit=10000",
+            headers)
+        if not (200 <= r24_status < 300 and 200 <= rprev_status < 300):
+            return {"error": f"usage_events read failed (HTTP {r24_status}/{rprev_status})."}
+        return {"rows24": json.loads(r24_body), "rows_prev": json.loads(rprev_body)}
+    except Exception as err:  # noqa: BLE001 — a probe failure is a result, never a crash
+        return {"error": f"{type(err).__name__}: {err}"}
+
+
+def _app_open_count(rows: list) -> int:
+    return sum(1 for r in rows if r.get("type") == "app_open")
+
+
+def _usage_window_gate(name: str, window: dict | None):
+    """The precondition every one of the three checks below shares: no credentials, the probe itself
+    failed outright, or too few app_open rows to mean anything. Returns a `_check` dict to return
+    immediately, or None when the caller should go on and compute the real answer."""
+    if window is None:
+        return _check(name, None, None, None,
+                      "no SUPABASE_URL/SUPABASE_ANON_KEY/CASCADE_CANARY_EMAIL/"
+                      "CASCADE_CANARY_PASSWORD — unavailable.")
+    if window.get("error"):
+        return _check(name, None, None, None, window["error"])
+    app_open = _app_open_count(window["rows24"])
+    if app_open < USAGE_WINDOW_MIN_APP_OPEN:
+        return _check(name, None, app_open, USAGE_WINDOW_MIN_APP_OPEN,
+                      f"only {app_open} app_open row(s) in the last 24h (floor {USAGE_WINDOW_MIN_APP_OPEN}) "
+                      f"— a quiet window, or CAS-942's live select grant for this account isn't applied yet.")
+    return None
+
+
+def check_client_error_rate(window: dict | None) -> dict:
+    gate = _usage_window_gate("client_error_rate", window)
+    if gate is not None:
+        return gate
+    rows = window["rows24"]
+    app_open = _app_open_count(rows)
+    errs = [r for r in rows if r.get("type") in ("client_error", "client_rejection")]
+    n = len(errs)
+    pct = n / app_open
+    ok = not (pct > CLIENT_ERROR_RATE_MAX_PCT or n > CLIENT_ERROR_RATE_MAX_ABS)
+    top = Counter((r.get("data") or {}).get("message") or "(no message)" for r in errs).most_common(3)
+    detail = f"{n} client_error/client_rejection row(s) of {app_open} app_open ({pct:.1%})."
+    if top:
+        detail += " Top: " + "; ".join(f"{m} x{c}" for m, c in top)
+    return _check("client_error_rate", ok, n, CLIENT_ERROR_RATE_MAX_ABS, detail)
+
+
+def check_empty_account_rate(window: dict | None) -> dict:
+    gate = _usage_window_gate("empty_account_rate", window)
+    if gate is not None:
+        return gate
+    rows = window["rows24"]
+    empty = sum(1 for r in rows if r.get("type") == "signin_empty_account")
+    returning = sum(1 for r in rows if r.get("type") == "signin_returning")
+    total = empty + returning
+    if not total:
+        return _check("empty_account_rate", None, 0, None,
+                      "no signin_returning/signin_empty_account rows in the last 24h.")
+    pct = empty / total
+    ok = pct <= EMPTY_ACCOUNT_RATE_MAX_PCT
+    return _check("empty_account_rate", ok, empty, total,
+                  f"{empty} of {total} sign-in(s) landed on an empty account ({pct:.1%}).")
+
+
+def check_activity_floor(window: dict | None) -> dict:
+    gate = _usage_window_gate("activity_floor", window)
+    if gate is not None:
+        return gate
+    today_keys = {r.get("client_key") for r in window["rows24"] if r.get("type") == "app_open"}
+    prev_keys = {r.get("client_key") for r in window["rows_prev"] if r.get("type") == "app_open"}
+    ok = not (len(today_keys) == 0 and len(prev_keys) > 0)
+    return _check("activity_floor", ok, len(today_keys), len(prev_keys),
+                  f"{len(today_keys)} distinct device(s) opened the app in the last 24h "
+                  f"(previous 24h: {len(prev_keys)}).")
+
+
+# ---------------------------------------------------------------------------
 # assemble + report
 # ---------------------------------------------------------------------------
 CHECK_NAMES = ("catalogue_size", "catalogue_integrity", "tmdb_fetch", "watchmode_fetch",
               "watchmode_pace", "oscarbase_fetch", "score_coverage", "email_send", "push_send",
-              "usage_events_insert", "auth_signin")
+              "usage_events_insert", "auth_signin",
+              "client_error_rate", "empty_account_rate", "activity_floor")
 
 
 def run_checks(*, today_movies, prev_movies, stats, usage_probe, auth_probe, apns_configured,
-              wm_cycle, today) -> list:
+              wm_cycle, today, usage_window) -> list:
     return [
         check_catalogue_size(today_movies, prev_movies),
         check_catalogue_integrity(today_movies),
@@ -315,6 +454,9 @@ def run_checks(*, today_movies, prev_movies, stats, usage_probe, auth_probe, apn
         check_push_send(stats.get("push"), apns_configured),
         check_usage_events_insert(usage_probe),
         check_auth_signin(auth_probe),
+        check_client_error_rate(usage_window),
+        check_empty_account_rate(usage_window),
+        check_activity_floor(usage_window),
     ]
 
 
@@ -361,7 +503,18 @@ def _dry_run_inputs():
     wm_cycle = {"cycle_start": "2026-09-12", "cycle_end": "2026-10-12", "quota": 40000, "spent": 750,
                "updated_at": today.isoformat(),
                "days": {"2026-09-12": 250, "2026-09-13": 250, "2026-09-14": 250}}
-    return today_movies, prev_movies, stats, usage_probe, auth_probe, True, wm_cycle, today
+    # CAS-985: 200 app_open rows across 50 devices (well above the 50-row floor), 3 error rows (1.5%,
+    # under both the 5%/20-row ceilings), 5 empty-account sign-ins of 155 (3.2%, under the 10% ceiling),
+    # and the same 50 devices active the previous day too — an all-green window.
+    rows24 = [{"type": "app_open", "client_key": f"fixture-device-{i % 50}", "data": None} for i in range(200)]
+    rows24 += [{"type": "client_error", "client_key": "fixture-device-0",
+               "data": {"message": "fixture error"}} for _ in range(3)]
+    rows24 += [{"type": "signin_returning", "client_key": f"fixture-device-{i}", "data": None} for i in range(150)]
+    rows24 += [{"type": "signin_empty_account", "client_key": f"fixture-device-{150+i}", "data": None}
+              for i in range(5)]
+    rows_prev = [{"type": "app_open", "client_key": f"fixture-device-{i % 50}", "data": None} for i in range(180)]
+    usage_window = {"rows24": rows24, "rows_prev": rows_prev}
+    return today_movies, prev_movies, stats, usage_probe, auth_probe, True, wm_cycle, today, usage_window
 
 
 # ---------------------------------------------------------------------------
@@ -378,11 +531,12 @@ def _parse_args(argv):
 
 def main(argv=None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
-    checked_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    now_dt = _dt.datetime.now(_dt.timezone.utc)
+    checked_at = now_dt.isoformat()
 
     if args.dry_run:
         (today_movies, prev_movies, stats, usage_probe, auth_probe, apns_configured,
-         wm_cycle, today) = _dry_run_inputs()
+         wm_cycle, today, usage_window) = _dry_run_inputs()
     else:
         today = _dt.date.today()
         today_movies = movies_of(load_today())
@@ -390,15 +544,16 @@ def main(argv=None) -> int:
         stats = runstats.load()
         supabase_url = os.environ.get(SUPABASE_URL_ENV)
         anon_key = os.environ.get(SUPABASE_ANON_KEY_ENV)
+        canary_email, canary_password = os.environ.get(CANARY_EMAIL_ENV), os.environ.get(CANARY_PASSWORD_ENV)
         usage_probe = probe_usage_events_insert(supabase_url, anon_key)
-        auth_probe = probe_auth_signin(supabase_url, anon_key,
-                                       os.environ.get(CANARY_EMAIL_ENV), os.environ.get(CANARY_PASSWORD_ENV))
+        auth_probe = probe_auth_signin(supabase_url, anon_key, canary_email, canary_password)
+        usage_window = probe_usage_window(supabase_url, anon_key, canary_email, canary_password, now_dt)
         apns_configured = all(os.environ.get(v) for v in APNS_ENV_VARS)
         wm_cycle = pp._load_wm_cycle_budget(today)
 
     checks = run_checks(today_movies=today_movies, prev_movies=prev_movies, stats=stats,
                         usage_probe=usage_probe, auth_probe=auth_probe, apns_configured=apns_configured,
-                        wm_cycle=wm_cycle, today=today)
+                        wm_cycle=wm_cycle, today=today, usage_window=usage_window)
     report = build_report(checks, checked_at)
 
     for c in checks:
