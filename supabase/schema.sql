@@ -548,7 +548,10 @@ create policy contact_messages_insert on public.contact_messages
     length(message) between 1 and 2000
     and length(coalesce(email,'')) <= 200
     and length(coalesce(diagnostics,'')) <= 8000
-    and category in ('bug','suggestion','account','other')
+    -- bug/suggestion/account/other are the #contact sheet's own categories (CAS-838/927); broken/idea/
+    -- film/billing are the Feedback sheet's (CAS-978) — a distinct taxonomy for a distinct entry point,
+    -- both writing into this same table.
+    and category in ('bug','suggestion','account','other','broken','idea','film','billing')
   );
 
 -- security definer: counts every client_key's own rows to enforce the rate limit, including

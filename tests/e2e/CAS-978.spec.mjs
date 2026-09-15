@@ -1,0 +1,235 @@
+// CAS-978: Feedback — wires Account's dead "Feedback form" row (and the Help screen footer) onto the
+// same contact_messages pipeline #contact (CAS-838) already uses. Mirrors CAS-838.spec.mjs's
+// fake-supabase-js technique (see CAS740_FAKE_SUPABASE_GLOBAL in smoke.spec.mjs) to capture the insert
+// without touching a live project — signed-out-but-configured throughout, since contact_messages' own
+// RLS policy grants insert to anon.
+import { test, expect } from "@playwright/test";
+import { freshApp, gotoFresh, toShortlist, finishFlow, toListing } from "./helpers.mjs";
+
+const CAS978_FAKE_SUPABASE_GLOBAL = `
+  window.__contactInserts = [];
+  window.__contactShouldFail = false;
+  function chain(){
+    return new Proxy(() => {}, {
+      get: (_t, prop) => prop === "then" ? (resolve) => resolve({ data: [], error: null }) : () => chain(),
+      apply: () => chain(),
+    });
+  }
+  window.supabase = { createClient(){
+    return {
+      auth: {
+        getSession: () => Promise.resolve({ data: { session: null } }),
+        onAuthStateChange: () => ({ data: { subscription: { unsubscribe(){} } } }),
+        signInWithPassword: async () => ({ data: {}, error: null }),
+        signUp: async () => ({ data: {}, error: null }),
+        signOut: async () => ({ error: null }),
+      },
+      from: (table) => {
+        if(table !== "contact_messages") return chain();
+        return { insert: (rows) => {
+          if(window.__contactShouldFail) return Promise.resolve({ data: null, error: { message: "insert failed" } });
+          window.__contactInserts.push(...rows);
+          return Promise.resolve({ data: rows, error: null });
+        } };
+      },
+    };
+  } };
+`;
+
+async function configuredApp(page){
+  await page.route("**/config.js", route => route.fulfill({
+    contentType: "application/javascript",
+    body: `window.CASCADE_CONFIG = { SUPABASE_URL: "https://fake-project.supabase.test", SUPABASE_ANON_KEY: "fake-anon-key-not-a-real-secret" };`,
+  }));
+  await page.route("**/supabase-js.js", route => route.fulfill({
+    contentType: "application/javascript",
+    body: CAS978_FAKE_SUPABASE_GLOBAL,
+  }));
+  await gotoFresh(page);
+  await page.waitForFunction(() => window.CascadeAuth && window.CascadeAuth.enabled === true, null, { timeout: 5000 });
+}
+
+async function openFromAccount(page){
+  await page.locator("#navMenuBtn").click();
+  await page.locator(".navitem", { hasText: "Account" }).click();
+  await expect(page.locator("#accountScreen")).toHaveClass(/open/);
+  await page.locator(".urow", { hasText: "Feedback form" }).click();
+  await expect(page.locator("#feedback")).toHaveClass(/open/);
+}
+
+// AC — reachable from the Account row.
+test("CAS-978: the Account 'Feedback form' row opens the sheet", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFromAccount(page);
+});
+
+// AC — also reachable from the Help screen footer.
+test("CAS-978: the Help screen footer opens the same sheet", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await page.locator("#navMenuBtn").click();
+  await page.locator(".navitem", { hasText: "Help" }).click();
+  await expect(page.locator("#helpScreen")).toHaveClass(/open/);
+  await page.locator(".urow", { hasText: "Send feedback" }).click();
+  await expect(page.locator("#feedback")).toHaveClass(/open/);
+});
+
+// AC2 — category and message enforced client-side; Send stays disabled until all fields are valid.
+test("CAS-978: Send is disabled until category, message and email are all valid", async ({ page }) => {
+  await freshApp(page);
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFromAccount(page);
+  await expect(page.locator("#feedbackSend")).toBeDisabled();
+  await page.locator("#feedbackCatChips .chip", { hasText: "An idea" }).click();
+  await expect(page.locator("#feedbackSend")).toBeDisabled();
+  await page.locator("#feedbackMsg").fill("It would be nice if...");
+  await expect(page.locator("#feedbackSend")).toBeDisabled();
+  await page.locator("#feedbackEmail").fill("cas978@example.com");
+  await expect(page.locator("#feedbackSend")).toBeEnabled();
+});
+
+// AC3 — signed out, the email field is required: filling everything else still leaves Send disabled
+// with an empty email, and the field's error shows once a Send attempt has been made.
+test("CAS-978: signed out, an empty email blocks Send and surfaces its own error", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFromAccount(page);
+  await page.locator("#feedbackCatChips .chip", { hasText: "Something else" }).click();
+  await page.locator("#feedbackMsg").fill("Just a note.");
+  await expect(page.locator("#feedbackSend")).toBeDisabled();
+  await page.locator("#feedbackEmail").click();
+  await page.locator("#feedbackMsg").click();   // blur email empty
+  await expect(page.locator("#feedbackEmailErr")).toBeVisible();
+});
+
+// AC2 — an over-length message is blocked and the counter turns red.
+test("CAS-978: a message over 2000 characters turns the counter red and blocks Send", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFromAccount(page);
+  await page.locator("#feedbackCatChips .chip", { hasText: "An idea" }).click();
+  await page.locator("#feedbackEmail").fill("cas978@example.com");
+  await page.locator("#feedbackMsg").fill("x".repeat(2001));
+  await expect(page.locator("#feedbackMsgCount")).toHaveText("2001 / 2000");
+  await expect(page.locator("#feedbackMsgCount")).toHaveCSS("color", "rgb(255, 185, 166)");
+  await expect(page.locator("#feedbackSend")).toBeDisabled();
+});
+
+// AC4 — "Something's broken" shows the diagnostics switch, checked by default; sending inserts a row
+// carrying a non-empty diagnostics string.
+test("CAS-978: choosing Something's broken sends diagnostics by default", async ({ page }) => {
+  await configuredApp(page);
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFromAccount(page);
+  await page.locator("#feedbackCatChips .chip", { hasText: "Something's broken" }).click();
+  await expect(page.locator("#feedbackDiagSwitch")).toHaveClass(/on/);
+  await page.locator("#feedbackEmail").fill("cas978@example.com");
+  await page.locator("#feedbackMsg").fill("Something looks broken.");
+  await page.locator("#feedbackSend").click();
+  await page.waitForFunction(() => window.__contactInserts.length > 0, null, { timeout: 5000 });
+
+  const rows = await page.evaluate(() => window.__contactInserts);
+  expect(rows.length).toBe(1);
+  expect(rows[0].category).toBe("broken");
+  expect(typeof rows[0].diagnostics).toBe("string");
+  expect(rows[0].diagnostics.length).toBeGreaterThan(0);
+});
+
+// AC4 — switching the diagnostics switch off means no diagnostics text reaches the row.
+test("CAS-978: turning off Include diagnostics sends a null diagnostics field", async ({ page }) => {
+  await configuredApp(page);
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFromAccount(page);
+  await page.locator("#feedbackCatChips .chip", { hasText: "Something's broken" }).click();
+  await page.locator("#feedbackDiagSwitch").click();
+  await expect(page.locator("#feedbackDiagSwitch")).not.toHaveClass(/on/);
+  await page.locator("#feedbackEmail").fill("cas978@example.com");
+  await page.locator("#feedbackMsg").fill("Something looks broken, no diagnostics please.");
+  await page.locator("#feedbackSend").click();
+  await page.waitForFunction(() => window.__contactInserts.length > 0, null, { timeout: 5000 });
+
+  const rows = await page.evaluate(() => window.__contactInserts);
+  expect(rows.length).toBe(1);
+  expect(rows[0].diagnostics).toBeNull();
+});
+
+// AC — a category outside "Something's broken" never carries diagnostics, switch or not.
+test("CAS-978: a non-broken category sends no diagnostics at all", async ({ page }) => {
+  await configuredApp(page);
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFromAccount(page);
+  await page.locator("#feedbackCatChips .chip", { hasText: "A film is wrong or missing" }).click();
+  await expect(page.locator("#feedbackDiagWrap")).toBeHidden();
+  await page.locator("#feedbackEmail").fill("cas978@example.com");
+  await page.locator("#feedbackMsg").fill("Wrong poster on this title.");
+  await page.locator("#feedbackSend").click();
+  await page.waitForFunction(() => window.__contactInserts.length > 0, null, { timeout: 5000 });
+
+  const rows = await page.evaluate(() => window.__contactInserts);
+  expect(rows[0].category).toBe("film");
+  expect(rows[0].diagnostics).toBeNull();
+});
+
+// AC — success shows the receipt.
+test("CAS-978: a successful send shows the receipt", async ({ page }) => {
+  await configuredApp(page);
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFromAccount(page);
+  await page.locator("#feedbackCatChips .chip", { hasText: "Membership and billing" }).click();
+  await page.locator("#feedbackEmail").fill("cas978@example.com");
+  await page.locator("#feedbackMsg").fill("A billing question.");
+  await page.locator("#feedbackSend").click();
+  await expect(page.locator("#feedbackBody")).toContainText("Thanks — we read every one of these.");
+});
+
+// AC5/AC6 — a failed insert leaves the sheet open with the typed text intact and an error visible.
+test("CAS-978: when the insert rejects, the typed message stays and an error is visible", async ({ page }) => {
+  await configuredApp(page);
+  await page.evaluate(() => { window.__contactShouldFail = true; });
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFromAccount(page);
+  await page.locator("#feedbackCatChips .chip", { hasText: "An idea" }).click();
+  await page.locator("#feedbackEmail").fill("cas978@example.com");
+  await page.locator("#feedbackMsg").fill("This should fail to send.");
+  await page.locator("#feedbackSend").click();
+
+  await expect(page.locator("#feedbackErr")).toBeVisible();
+  await expect(page.locator("#feedbackMsg")).toHaveValue("This should fail to send.");
+  const rows = await page.evaluate(() => window.__contactInserts);
+  expect(rows.length).toBe(0);
+});
+
+// AC — the honeypot silently drops the submission, same convention as #contact's.
+test("CAS-978: filling the honeypot and sending performs no insert at all", async ({ page }) => {
+  await configuredApp(page);
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  await openFromAccount(page);
+  await page.locator("#feedbackCatChips .chip", { hasText: "An idea" }).click();
+  await page.locator("#feedbackEmail").fill("cas978@example.com");
+  await page.locator("#feedbackMsg").fill("Ignore me, I'm a bot.");
+  await page.evaluate(() => { document.getElementById("feedbackHp").value = "http://spam.example"; });
+  await page.locator("#feedbackSend").click();
+  await page.waitForTimeout(300);
+
+  const rows = await page.evaluate(() => window.__contactInserts);
+  expect(rows.length).toBe(0);
+});

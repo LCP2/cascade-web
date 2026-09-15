@@ -391,6 +391,10 @@
      (a .uscreen, z-index:84) — the highest of either, so it stacks over both rather than opening behind
      the surface that launched it, same reasoning as #authModal.open above. */
   #contact.open{z-index:91}
+  /* CAS-978: the Feedback sheet opens from renderAccount()'s #accountScreen and renderHelpScreen()'s
+     #helpScreen — both .uscreen, z-index:84 — same over-the-launching-surface treatment as #contact.open
+     above. */
+  #feedback.open{z-index:91}
   /* CAS-883: the Invite sheet opens from the film page (.filmpage, z-index:85) as well as the plain
      listing, so it needs the same over-the-film-page treatment as #contact.open above. */
   #filmInvite.open{z-index:91}
@@ -3789,6 +3793,17 @@
 <div class="modal" id="contact">
   <div class="modalhead"><h3>Contact us</h3><button class="donebtn" id="contactClose">Cancel</button></div>
   <div id="contactBody"></div>
+</div>
+
+<!-- FEEDBACK (CAS-978) — the front door for Account's dead "Feedback form" row and the Help screen
+     footer, wired onto the same contact_messages pipeline as #contact above (CAS-838/CAS-836): the
+     nightly digest, daily.yml step and CASCADE_CONTACT_TO secret all already run. A separate sheet from
+     #contact rather than reusing it — its own 5-way category taxonomy and an explicit, opt-out
+     diagnostics switch are both specific to this entry point. Body rebuilt fresh by
+     renderFeedbackForm() every open, same convention as #contact. -->
+<div class="modal" id="feedback">
+  <div class="modalhead"><h3>Feedback</h3><button class="donebtn" id="feedbackClose">Cancel</button></div>
+  <div id="feedbackBody"></div>
 </div>
 
 <!-- INVITE TO A FILM (CAS-883) — replaces the old Share pill: an invite is now a real record
@@ -11613,7 +11628,9 @@ function helpIndexBody(){
               onclick="helpSearchClear()">✕</button>
     </div>
     <div class="usec">Articles</div>
-    <div class="ucard" id="helpList">${helpListHTML()}</div>`;
+    <div class="ucard" id="helpList">${helpListHTML()}</div>
+    <div class="usec">Still stuck?</div>
+    <div class="ucard">${acctRow("✉️","Send feedback", null, "openFeedback('help')")}</div>`;
 }
 function helpArticleBody(a){
   const paras=a.body.split("\n\n").map(p=>`<p class="ossub" style="margin-bottom:12px">${esc(p)}</p>`).join("");
@@ -11988,6 +12005,129 @@ window.sendContact=async()=>{
   }
 };
 document.addEventListener("keydown", e => { if(e.key==="Escape" && $("aboutPage").classList.contains("open")) $("aboutPage").classList.remove("open"); });
+
+// ---- CAS-978: Feedback — Account's dead row + Help's footer, wired onto the same contact_messages
+// pipeline as Contact us above, with its own category taxonomy and an explicit diagnostics opt-out ------
+const FEEDBACK_CATEGORIES=[
+  {key:"broken",label:"Something's broken"},
+  {key:"idea",label:"An idea"},
+  {key:"film",label:"A film is wrong or missing"},
+  {key:"billing",label:"Membership and billing"},
+  {key:"other",label:"Something else"},
+];
+let feedbackCategory=null, feedbackIncludeDiag=true, feedbackAttempted=false;
+let feedbackMsgTouched=false, feedbackEmailTouched=false;
+function feedbackCatChipsHTML(){
+  return FEEDBACK_CATEGORIES.map(c=>
+    `<button type="button" class="chip gen${feedbackCategory===c.key?" on":""}" aria-pressed="${feedbackCategory===c.key}"
+      onclick="selectFeedbackCategory('${c.key}')">${esc(c.label)}</button>`).join("");
+}
+// Rebuilt fresh every open (mirrors renderContactForm()'s own convention) so a prior visit's category,
+// typed message or error never bleeds into the next one.
+function renderFeedbackForm(){
+  feedbackCategory=null;
+  feedbackIncludeDiag=true;
+  feedbackAttempted=false;
+  feedbackMsgTouched=false;
+  feedbackEmailTouched=false;
+  const a=window.CascadeAuth, signedIn=!!(a && a.status==="signed-in" && a.user);
+  const email=signedIn ? (a.user.email||"") : "";
+  $("feedbackBody").innerHTML=`
+    <div class="pnote">Tell us what's going on — we read every one of these.</div>
+    <div class="flabel">What's this about?</div>
+    <div class="chips" id="feedbackCatChips">${feedbackCatChipsHTML()}</div>
+    <div class="pnote" id="feedbackCatErr" style="color:#ffb9a6" hidden>Choose a category.</div>
+    <div class="flabel">Message</div>
+    <textarea id="feedbackMsg" class="cmsg" rows="4" placeholder="What's on your mind?"
+      oninput="feedbackValidate()" onblur="feedbackMsgBlur()"></textarea>
+    <div class="pnote" id="feedbackMsgCount">0 / 2000</div>
+    <div class="pnote" id="feedbackMsgErr" style="color:#ffb9a6" hidden>Add a message so we know what's going on.</div>
+    <div class="flabel">Email (so we can reply)</div>
+    <input id="feedbackEmail" class="namein" type="email" autocomplete="email" placeholder="you@example.com"
+      value="${escA(email)}" oninput="feedbackValidate()" onblur="feedbackEmailBlur()">
+    <div class="pnote" id="feedbackEmailErr" style="color:#ffb9a6" hidden>Add a valid email so we can reply.</div>
+    <!-- Honeypot, same convention as #contact's contactHp. -->
+    <input id="feedbackHp" class="cthp" type="text" name="cf_url" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <div id="feedbackDiagWrap" hidden>
+      <div class="switch mini on" id="feedbackDiagSwitch" role="switch" aria-checked="true" onclick="toggleFeedbackDiag()">
+        <span>Include diagnostics</span><span class="knob"></span></div>
+      <div class="pnote">Includes your build stamp, origin, viewport and safe-area figures, and a console
+        tail — never your typed message.</div>
+    </div>
+    <div class="pnote" id="feedbackErr" style="color:#ffb9a6" hidden></div>
+    <div class="cascfoot"><button class="applybtn" id="feedbackSend" disabled onclick="sendFeedback()">Send</button></div>`;
+  feedbackValidate();
+}
+// Overall Send state depends on category + message + email. An error is surfaced next to a field only
+// once it has been touched (blur) or a Send attempt has been made, same convention as contactValidate.
+// The message counter turns red past 2000 chars and Send stays disabled — no native maxlength, so a
+// person can see the block rather than have the extra text silently vanish.
+window.feedbackValidate=()=>{
+  const msgEl=$("feedbackMsg"), emailEl=$("feedbackEmail");
+  const a=window.CascadeAuth, signedIn=!!(a && a.status==="signed-in" && a.user);
+  const message=msgEl.value||"", len=message.length, trimmed=message.trim();
+  const msgOk=!!trimmed && len<=2000;
+  const email=(emailEl.value||"").trim();
+  const emailOk = signedIn ? (!email || emailValid(email)) : emailValid(email);
+  const catOk=!!feedbackCategory;
+  const countEl=$("feedbackMsgCount");
+  countEl.textContent=`${len} / 2000`;
+  countEl.style.color = len>2000 ? "#ffb9a6" : "";
+  $("feedbackCatErr").hidden = !(feedbackAttempted && !catOk);
+  $("feedbackMsgErr").hidden = !((feedbackMsgTouched||feedbackAttempted) && !trimmed);
+  $("feedbackEmailErr").hidden = !((feedbackEmailTouched||feedbackAttempted) && !emailOk);
+  $("feedbackSend").disabled = !(catOk && msgOk && emailOk);
+};
+window.feedbackMsgBlur=()=>{ feedbackMsgTouched=true; feedbackValidate(); };
+window.feedbackEmailBlur=()=>{ feedbackEmailTouched=true; feedbackValidate(); };
+window.selectFeedbackCategory=key=>{
+  feedbackCategory=key;
+  $("feedbackCatChips").innerHTML=feedbackCatChipsHTML();
+  $("feedbackDiagWrap").hidden = key!=="broken";
+  feedbackValidate();
+};
+window.toggleFeedbackDiag=()=>{
+  feedbackIncludeDiag=!feedbackIncludeDiag;
+  const sw=$("feedbackDiagSwitch");
+  sw.classList.toggle("on", feedbackIncludeDiag);
+  sw.setAttribute("aria-checked", String(feedbackIncludeDiag));
+};
+window.openFeedback=from=>{
+  renderFeedbackForm();
+  openModal($("feedback"));
+  logEvent("feedback_opened",{from});
+};
+$("feedbackClose").onclick=()=>closeModal($("feedback"));
+window.sendFeedback=async()=>{
+  const hp=$("feedbackHp");
+  if(hp && hp.value) return;   // honeypot filled — drop silently, no error, no insert
+  const msgEl=$("feedbackMsg"), emailEl=$("feedbackEmail"), errEl=$("feedbackErr");
+  const message=(msgEl.value||"").trim(), email=(emailEl.value||"").trim();
+  errEl.hidden=true;
+  feedbackAttempted=true;
+  feedbackMsgTouched=true;
+  feedbackEmailTouched=true;
+  feedbackValidate();
+  if($("feedbackSend").disabled) return;
+  const category=feedbackCategory;
+  const diagnostics = (category==="broken" && feedbackIncludeDiag) ? diagReportText() : null;
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  const btn=$("feedbackSend");
+  btn.disabled=true;
+  try{
+    if(!c) throw new Error("Cascade: no Supabase client");
+    const {error}=await c.from("contact_messages").insert([{
+      client_key:CLIENT_KEY, build:buildCore(), category, message, email, diagnostics,
+    }]);
+    if(error) throw error;
+    logEvent("feedback_sent",{category});
+    $("feedbackBody").innerHTML=`<p class="pnote">Thanks — we read every one of these.</p>`;
+  }catch(e){
+    btn.disabled=false;
+    errEl.textContent="Couldn't send that — your message is still here, try again in a moment.";
+    errEl.hidden=false;
+  }
+};
 
 // ---- CAS-884/CAS-931: Recommend Cascade — the send half of M11 (Refer a friend) -----------------------
 // Signed-in only, reached from the nav menu. Cascade sends the email itself, on a new hourly workflow
@@ -16580,7 +16720,7 @@ function renderAccount(){
     <div class="usec">Help &amp; feedback</div>
     <div class="ucard">
       ${acctRow("📖","Help", null, "openHelp()")}
-      ${acctSoon("✉️","Feedback form")}
+      ${acctRow("✉️","Feedback form", null, "openFeedback('account')")}
       ${acctRow("🔁","Replay the tour", null, "replayTutorial()")}
     </div>`;
 }
