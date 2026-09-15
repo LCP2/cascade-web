@@ -1125,6 +1125,24 @@ def provider_offers(prov: dict) -> list[dict]:
     return [{"service": s, "type": t, "price": None, "format": None} for s, t in rows]
 
 
+def _offerless_window(cinema_date: str | None, today: datetime.date) -> str:
+    """CAS-608: the date-only classification for a title with no usable offer to read a window
+    from — judged by the release date, never by whether an offer exists, so a film Cascade can't
+    place an AU offer against is never confused with one that genuinely hasn't come out yet.
+      not yet opened               -> upcoming (buzz is the whole of its score; 7-day ladder)
+      opened, still within its run -> in_cinema (cinemas publish no offers; this is CAS-395's window)
+      opened, past its run         -> released (a real, offer-less RELEASED film — 30-day ladder,
+                                       still held in the catalogue, judged by qScore like any other
+                                       released title. This is the split that used to fall to
+                                       "upcoming" and never left it.)
+    Mirrored exactly by app_template.html's own offerlessWindow — CAS-608 AC5 asserts they agree."""
+    opened = bool(cinema_date and cinema_date <= today.isoformat())
+    if not opened:
+        return "upcoming"
+    still_running = cinema_date >= (today - datetime.timedelta(days=CINEMA_RUN_DAYS)).isoformat()
+    return "in_cinema" if still_running else "released"
+
+
 def derive_from_providers(movie: dict, prov: dict, today: datetime.date) -> list[str]:
     """Headline Cascade window from TMDB/JustWatch AU providers (CAS-127 cascade):
       flatrate|free|ads  -> included_streaming
@@ -1132,7 +1150,7 @@ def derive_from_providers(movie: dict, prov: dict, today: datetime.date) -> list
                             TMDB gives no price, so premium vs standard can't use
                             PVOD_MIN_PRICE — a rentable title is the standard window,
                             a buy-only title is the earlier premium/PVOD window.
-      else               -> in_cinema if it has opened, otherwise upcoming.
+      else               -> _offerless_window: upcoming / in_cinema / released, by date alone.
     CAS-395: a title still inside its AU theatrical run (cinema_date within CINEMA_RUN_DAYS) carries
     in_cinema ALONGSIDE whatever home window its offers resolve to — a film that has just opened often
     already has a pre-order/rent row, and the old code let that one row erase in_cinema entirely, which
@@ -1142,16 +1160,11 @@ def derive_from_providers(movie: dict, prov: dict, today: datetime.date) -> list
         windows.append("included_streaming")
     elif prov.get("rent") or prov.get("buy"):
         windows.append("rental" if prov.get("rent") else "pvod")
-    cd = movie.get("cinema_date")
-    opened = bool(cd and cd <= today.isoformat())
-    still_running = opened and cd >= (today - datetime.timedelta(days=CINEMA_RUN_DAYS)).isoformat()
     # CAS-418 (walk back CAS-395): in_cinema is EXCLUSIVE with home offers — a film with a rent/stream/
-    # buy offer is never filed under the big screen (engine invariant #55). So in_cinema is only ever the
-    # answer when NO home window resolved. An offer-less title is in_cinema only within CINEMA_RUN_DAYS of
-    # opening (still_running); past its run, an offer-less title falls to upcoming (CAS-418 item 4) rather
-    # than staying stamped in_cinema forever.
+    # buy offer is never filed under the big screen (engine invariant #55). So the offer-less fallback
+    # only ever runs when NO home window resolved.
     if not windows:
-        windows.append("in_cinema" if still_running else "upcoming")
+        windows.append(_offerless_window(movie.get("cinema_date"), today))
     return windows
 
 
@@ -1229,8 +1242,10 @@ def derive_status(movie: dict, offers: list[dict], today: datetime.date) -> list
     if has_sub:
         status.add("included_streaming")
 
+    # CAS-608: date-only, same as derive_from_providers' offer-less fallback — a title past its
+    # cinema run with no priced offer is released-and-unavailable, not upcoming.
     if not status:
-        status.add("in_cinema" if cd and cd <= today.isoformat() else "upcoming")
+        status.add(_offerless_window(cd, today))
     return sorted(status)
 
 
@@ -1292,6 +1307,7 @@ def apply_monotonic_status(m: dict, candidate: list[str], confidence: str, today
 STATUS_LABEL = {
     "upcoming": "Upcoming",
     "in_cinema": "In Cinema",
+    "released": "Released (no AU offer)",
     "pvod": "Premium Buy/Rent (~$30)",
     "rental": "Standard Rental (~$7)",
     "included_streaming": "Included Streaming",
@@ -1985,6 +2001,14 @@ def run(simulate_day: bool = False):
               f"unprobed={cas986_report['unprobed']} probed_today={cas986_report['probed_today']} "
               f"published={cas986_report['published']} promoted={cas986_report['promoted']} "
               f"demoted={cas986_report['demoted']} exempt={cas986_report['exempt']}")
+
+    # CAS-608: how much of the published catalogue is genuinely upcoming vs. released-with-no-AU-
+    # offer vs. on the short 7-day Watchmode ladder — the counts this ticket exists to shrink.
+    upcoming_n = sum(1 for m in records if "upcoming" in (m.get("status") or []))
+    released_unavailable_n = sum(1 for m in records if "released" in (m.get("status") or []))
+    ladder_cohort_n = sum(1 for m in records if _is_ladder_cohort(m))
+    print(f"[status] upcoming={upcoming_n} released_unavailable={released_unavailable_n} "
+          f"ladder_cohort={ladder_cohort_n}")
 
     # CAS-772: cache-health report (change item 4) — a limit nobody can see is a limit nobody
     # keeps. Printed every run, live or sample, since the sample branch never touches build_live_

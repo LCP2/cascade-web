@@ -4410,6 +4410,15 @@ const inCinemaRun = m => !!m.cinema_date && m.cinema_date<=TODAY && m.cinema_dat
 // CAS-289: the estimated-only counterpart, capped at CINEMA_ESTIMATE_RUN_DAYS rather than CINEMA_RUN_DAYS.
 const inCinemaRunEstimated = m => !!m.cinema_date && m.cinema_date<=TODAY && m.cinema_date>=addDays(TODAY,-CINEMA_ESTIMATE_RUN_DAYS);
 const cinemaRungFor = m => m.cinema_date >= addDays(TODAY,-OPENING_WEEK_DAYS) ? "opening_week" : "in_cinema";
+// CAS-608: date-only classification for a title with no usable offer to read a window from — mirrors
+// poc_pipeline.py's _offerless_window exactly (a fixture-based test asserts the two agree). Never
+// invents a paid tier; judges only whether the release date is still ahead, still inside its cinema
+// run, or behind it with nothing to show for it.
+function offerlessWindow(cd, today){
+  const opened = !!cd && cd<=today;
+  if(!opened) return "upcoming";
+  return (cd >= addDays(today,-CINEMA_RUN_DAYS)) ? "in_cinema" : "released";
+}
 // The window the pipeline worked out, kept safe before deriveStatus() overwrites m.status below. Reused by
 // pollCatalogue() (CAS-503) every time a fresh catalogue swap needs the same two-step treatment. Skips a
 // ?fixtures=1 film (CAS-486/491): those carry a hand-authored status/window_dates with no claimedStatus of
@@ -4485,7 +4494,7 @@ function deriveStatus(m){
   if(hasSub) s.add("included_streaming");
   // Nothing readable in the offers. Defer to the pipeline rather than guessing from the calendar; only a film
   // the data says nothing at all about falls back to the date, and that one is genuinely all we have.
-  if(s.size===0) return claimed.length ? claimed : [(cd && cd<=TODAY) ? "in_cinema" : "upcoming"];
+  if(s.size===0) return claimed.length ? claimed : [offerlessWindow(cd, TODAY)];
   return CASCADE.filter(x=>s.has(x));
 }
 // CAS-342: which of a dual rent/stream title's two home windows the viewer's OWN picked services actually

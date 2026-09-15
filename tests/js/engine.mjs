@@ -159,6 +159,9 @@ if(typeof window.CascadeAuth === "undefined"){
   // leInnerHTML/leComputeCounts all went with that model.
   WATCH_STEPS,
   normCascade, showable, primaryStatus, inCinemaWindow, isEstimated, deriveStatus, isUpcoming,
+  // CAS-608: exported so a fixture-based test can assert this agrees with poc_pipeline.py's
+  // _offerless_window directly, rather than only indirectly through deriveStatus.
+  offerlessWindow,
   // CAS-255: the my-services scope and the stage dates are both places the app makes a claim about what you
   // can watch and when, so the QA gate needs to reach them the same way the listing does.
   prefs, servicesPicked, matchesServices, scopeOf, anyScope, HOME_KEYS,
