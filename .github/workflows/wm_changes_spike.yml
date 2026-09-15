@@ -1,0 +1,61 @@
+name: Watchmode changes-endpoints cost spike
+
+# CAS-990: measure whether Watchmode's Changes endpoints (/changes/titles_details_changed,
+# /changes/titles_sources_changed) could replace most of the 30-day/7-day TTL re-fetch that is
+# Cascade's entire recurring Watchmode bill. WATCHMODE_API_KEY is a GitHub secret only (CAS-
+# 579/767), so this has to be a workflow, not a script run from a clone. Manual dispatch only —
+# this spends real Watchmode credits (capped by max_credits), so nothing here fires unattended.
+on:
+  workflow_dispatch:
+    inputs:
+      max_credits:
+        description: 'Watchmode credits to spend this run — the run stops cleanly once reached'
+        required: false
+        type: string
+        default: '50'
+
+permissions:
+  contents: write
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: staging
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run the Watchmode changes-endpoints spike
+        env:
+          WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
+        run: |
+          python scripts/wm_changes_spike.py --max-credits "${{ inputs.max_credits }}"
+
+      - name: Commit and push (CAS-758 reset-soft-and-push retry — never to main)
+        # This script never touches movies.json or app_template.html, so — same as the Watchmode
+        # back-catalogue sizing workflow — the rebuild command is a no-op. The only owned path is
+        # docs/appraisals, per this ticket's explicit "no other path" restriction.
+        run: |
+          git config user.name  "cascade-bot"
+          git config user.email "actions@users.noreply.github.com"
+          bash scripts/reset_soft_and_push.sh staging true docs/appraisals
+
+  # CAS-973: email someone the moment this workflow breaks, instead of leaving it to be
+  # noticed by whoever next opens the Actions tab.
+  alert:
+    needs: [spike]
+    if: failure()
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/alert.yml
+    with:
+      workflow_name: "wm-changes-spike"
+    secrets:
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+      CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
