@@ -191,6 +191,21 @@ jobs:
             python -m monitor --dry-run $BASELINE_ARGS
           fi
 
+      - name: Persist the held-ids snapshot (CAS-986)
+        # The monitor step above just wrote state/user_held_ids.json (a real run only — --dry-run
+        # writes nothing, so there is nothing new to commit then). It runs AFTER both of this
+        # workflow's earlier commit steps, so without this step the file would never reach
+        # staging — poc_pipeline.py's next run reads it off disk, not Supabase directly. Same
+        # bounded fetch/reset-soft/push retry as the two earlier commit sites, via the reusable,
+        # tested form of that algorithm (scripts/reset_soft_and_push.sh) rather than a third inline
+        # copy of it — there is no template rebuild owed here, unlike those two sites: this file is
+        # plain data, never derived from app_template.html.
+        if: ${{ github.event.inputs.probe_title == '' }}
+        run: |
+          git config user.name  "cascade-bot"
+          git config user.email "actions@users.noreply.github.com"
+          bash scripts/reset_soft_and_push.sh staging true state/user_held_ids.json
+
       - name: Run the Contact-us digest (CAS-836)
         # Same secrets-present/--dry-run split as the monitor step above: with all three present
         # this sends the real digest and stamps sent_at; without them it renders and sends

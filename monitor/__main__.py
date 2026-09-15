@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import os
 import sys
 
 import runstats
@@ -38,6 +39,12 @@ from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notificat
                compute_admission, format_invite_reply)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
 from .store import InMemoryStore, store_from_env
+
+# CAS-986: the two-tier catalogue's demotion-safety net. Written at the end of every real (non-
+# --dry-run) monitor run — poc_pipeline.py reads it off disk, never Supabase directly, so the
+# nightly build never needs its own service_role credential.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+USER_HELD_IDS_FILE = os.path.join(_REPO_ROOT, "state", "user_held_ids.json")
 
 
 def _parse_args(argv):
@@ -150,6 +157,17 @@ def main(argv=None) -> int:
         purged = _store_call(store, "delete_old_usage_events", 0)
         if purged:
             print(f"[monitor] usage_events retention: purged {purged} row(s) older than 180 days.")
+
+    # CAS-986: the two-tier catalogue's demotion-safety net — every tmdb_id a user holds state on,
+    # written once per real run so poc_pipeline.py can read it off disk without its own Supabase
+    # credential. Skipped on --dry-run, same as every other write in this file (the docstring's own
+    # "write nothing" promise) — a demo run must not touch real state.
+    if not args.dry_run:
+        held_ids = _store_call(store, "fetch_user_held_ids", None)
+        if held_ids is not None:
+            os.makedirs(os.path.dirname(USER_HELD_IDS_FILE), exist_ok=True)
+            json.dump(sorted(held_ids), open(USER_HELD_IDS_FILE, "w", encoding="utf-8"), indent=2)
+            print(f"[monitor] wrote {len(held_ids)} held id(s) to state/user_held_ids.json.")
 
     # CAS-506: active cascades are back, but scoped to feed ONLY the `announced` moment below — see
     # the comment further down for why.

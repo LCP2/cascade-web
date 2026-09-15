@@ -547,6 +547,22 @@ WM_NIGHTLY_MAX_CREDITS = int(os.getenv("WM_NIGHTLY_MAX_CREDITS", "400"))
 # DAYS: Watchmode popularity is the whole score for a title with no other window's data yet.
 WM_NIGHTLY_COHORT_TTL_DAYS = 7
 
+# CAS-986: the two-tier catalogue. state/candidates.json is every title discovery has ever found —
+# never shipped, never read by the app, never pruned. movies.json is the strict subset that can
+# carry a Cascade score today, capped at CATALOGUE_TARGET (a ceiling now, not the mechanism — see
+# select_publishable's docstring). SCOREABILITY_PROBE_BUDGET is this ticket's own pot, spent by
+# probe_candidates() across the three tiers in the ticket's fixed order; separate from
+# WM_NIGHTLY_MAX_CREDITS above so CAS-921's existing nightly pass (still wired into run()
+# unchanged) is never starved by this one. A future cycle-aware budget ticket (CAS-987) replaces
+# this flat number without needing to touch probe_candidates' own signature.
+CANDIDATES_FILE = os.path.join(STATE_DIR, "candidates.json")
+SCOREABILITY_PROBE_BUDGET = int(os.getenv("SCOREABILITY_PROBE_BUDGET", "200"))
+SCOREABILITY_STALE_DAYS = WATCHMODE_CACHE_TTL_DAYS          # tier 1, non-ladder: 30 days
+SCOREABILITY_LADDER_STALE_DAYS = WM_NIGHTLY_COHORT_TTL_DAYS  # tier 1, ladder cohort: 7 days
+SCOREABILITY_RECOVERY_DAYS = 90                              # tier 3: no_score re-probe wait
+USER_HELD_IDS_FILE = os.path.join(STATE_DIR, "user_held_ids.json")   # CAS-986: monitor/store.py writes this
+SCOREABLE_SHIM = os.path.join(os.path.dirname(__file__), "scripts", "scoreable_shim.mjs")
+
 
 def _invert_watchmode_idmap(idmap: dict) -> dict:
     """`_fetch_watchmode_idmap` returns {wm_id: tmdb_id}; this backfill looks the other way
@@ -676,6 +692,255 @@ def enrich_watchmode_fields_nightly(movies: list, budget: dict | None = None) ->
     for m in rest:
         outcomes[enrich_watchmode_fields(m, wm_idmap, budget)] += 1
     return outcomes
+
+
+# ---------------------------------------------------------------------------
+# CAS-986: the two-tier catalogue — a candidate pool (state/candidates.json), and publish only
+# titles that carry a score (movies.json). See the ticket for the full design; in short:
+# list-titles/title_id_map only give an id/title/year, so whether a title HAS a score costs
+# exactly what fetching it costs — scoreability cannot gate discovery, only publication.
+# ---------------------------------------------------------------------------
+def load_candidates() -> dict:
+    """tmdb_id (str) -> candidate record — every title discovery has ever found. Never shipped,
+    never read by the app, never pruned (CAS-986)."""
+    if not os.path.exists(CANDIDATES_FILE):
+        return {}
+    return json.load(open(CANDIDATES_FILE, encoding="utf-8"))
+
+
+def save_candidates(candidates: dict) -> None:
+    os.makedirs(STATE_DIR, exist_ok=True)
+    json.dump(candidates, open(CANDIDATES_FILE, "w", encoding="utf-8"), indent=2, sort_keys=True)
+
+
+def merge_candidates(candidates: dict, pool: list, today_iso: str) -> int:
+    """Union today's full discovery pool into the persistent candidates store. Only a genuinely
+    new tmdb_id is added here (as unprobed) — an id already tracked is left alone by this
+    function, because `pool` (build_live_catalogue's pre-slice union) carries no CAS-921/CAS-937
+    enrichment for the portion that fell outside today's CATALOGUE_TARGET slice, and overwriting an
+    already-probed candidate with that unenriched shape would erase its accumulated score data.
+    See refresh_enriched_candidates below for syncing the enriched portion back in. Returns the
+    number of new candidates added."""
+    added = 0
+    for m in pool:
+        key = str(m["tmdb_id"])
+        if key in candidates:
+            continue
+        rec = dict(m)
+        rec["first_seen"] = today_iso
+        rec["last_probed"] = None
+        rec["probe_count"] = 0
+        rec["outcome"] = "unprobed"
+        candidates[key] = rec
+        added += 1
+    return added
+
+
+_CANDIDATE_TRACKING_FIELDS = ("first_seen", "last_probed", "probe_count", "outcome")
+
+
+def refresh_enriched_candidates(candidates: dict, enriched: list, today_iso: str) -> None:
+    """Sync this run's freshly availability/score/awards-enriched records (`enriched` — the
+    post-slice, post-CAS-921/CAS-937 `records`) back into candidates.json's own entries for the
+    same ids, preserving each candidate's own tracking fields. A candidate outside this run's slice
+    is left exactly as it was — its own accumulated data is never overwritten by an unenriched pass.
+
+    Also recognises a candidate CAS-921's own (unchanged) nightly Watchmode-fields pass already
+    probed today — via `wm_fields_fetched_at` landing on today's date — as a real probe, so
+    outcome/last_probed/probe_count never drift out of sync with what the record actually carries
+    just because probe_candidates() itself never touched it this run."""
+    for m in enriched:
+        key = str(m["tmdb_id"])
+        if key not in candidates:
+            continue
+        prior = candidates[key]
+        tracking = {k: prior.get(k) for k in _CANDIDATE_TRACKING_FIELDS}
+        candidates[key] = dict(m)
+        candidates[key].update(tracking)
+        if m.get("wm_fields_fetched_at") == today_iso and prior.get("last_probed") != today_iso:
+            candidates[key]["last_probed"] = today_iso
+            candidates[key]["probe_count"] = (prior.get("probe_count") or 0) + 1
+            has_score = (m.get("wm_user_rating") is not None or m.get("wm_critic_score") is not None
+                        or m.get("wm_popularity_percentile") is not None)
+            candidates[key]["outcome"] = "scored" if has_score else "no_score"
+
+
+def _scoreability_recovery_due(c: dict, today: datetime.date) -> bool:
+    """Tier 3: a no_score candidate is only re-probed once SCOREABILITY_RECOVERY_DAYS have passed
+    since its last probe — recovers the tail without re-asking every night."""
+    lp = c.get("last_probed")
+    if not lp:
+        return True
+    try:
+        stamped = datetime.date.fromisoformat(lp)
+    except ValueError:
+        return True
+    return (today - stamped).days >= SCOREABILITY_RECOVERY_DAYS
+
+
+def probe_candidates(candidates: dict, today: datetime.date, budget: int, wm_idmap: dict,
+                      published_ids: set) -> dict:
+    """CAS-986's own nightly scoreability probe, spending `budget` Watchmode credits across three
+    priority tiers, highest first — the order matters and must not be rearranged:
+      1. published titles (`published_ids` — yesterday's movies.json) whose Watchmode fields are
+         stale (30 days, or 7 for an upcoming/in_cinema ladder-cohort title) — first, because
+         letting a published title's fields expire silently removes it from the app.
+      2. unprobed candidates, most popular first — this is what grows the catalogue.
+      3. no_score candidates last probed more than SCOREABILITY_RECOVERY_DAYS ago — recovers the
+         tail without re-asking every night.
+    Reuses enrich_watchmode_fields for the actual per-title fetch (CAS-921) — never a second fetch/
+    parse of Watchmode's response. Mutates each probed candidate's own last_probed/probe_count/
+    outcome in place. Returns the {'ok','cached','no-id','skip','stop'} tally plus 'probed', the
+    count of candidates that actually got a fresh answer (ok or no-id) this run."""
+    bd = {"remaining": budget, "skipped": 0}
+    today_iso = today.isoformat()
+
+    def _by_popularity(items):
+        return sorted(items, key=lambda m: m.get("popularity") or 0, reverse=True)
+
+    tier1 = _by_popularity(
+        c for c in candidates.values()
+        if c["tmdb_id"] in published_ids
+        and _watchmode_fields_stale(c, SCOREABILITY_LADDER_STALE_DAYS if _is_ladder_cohort(c)
+                                    else SCOREABILITY_STALE_DAYS))
+    tier2 = _by_popularity(c for c in candidates.values() if c.get("outcome") == "unprobed")
+    tier3 = _by_popularity(c for c in candidates.values() if c.get("outcome") == "no_score"
+                           and _scoreability_recovery_due(c, today))
+
+    outcomes = {"ok": 0, "cached": 0, "no-id": 0, "skip": 0, "stop": 0, "probed": 0}
+    for tier in (tier1, tier2, tier3):
+        for c in tier:
+            ttl = SCOREABILITY_LADDER_STALE_DAYS if _is_ladder_cohort(c) else SCOREABILITY_STALE_DAYS
+            result = enrich_watchmode_fields(c, wm_idmap, bd, ttl)
+            outcomes[result] = outcomes.get(result, 0) + 1
+            if result in ("ok", "no-id"):
+                outcomes["probed"] += 1
+                c["last_probed"] = today_iso
+                c["probe_count"] = c.get("probe_count", 0) + 1
+                if result == "no-id":
+                    c["outcome"] = "no_wm_id"
+                else:
+                    has_score = (c.get("wm_user_rating") is not None
+                                or c.get("wm_critic_score") is not None
+                                or c.get("wm_popularity_percentile") is not None)
+                    c["outcome"] = "scored" if has_score else "no_score"
+    return outcomes
+
+
+def run_scoreability_probe(candidates: dict, today: datetime.date, budget: int,
+                           published_ids: set) -> dict:
+    """Fetch the Watchmode id map once, then run probe_candidates. Tolerates a missing/rejected
+    WATCHMODE_API_KEY exactly like CAS-921's own nightly pass (enrich_watchmode_fields_nightly) —
+    prints a [warn] and returns a zeroed tally rather than failing the run."""
+    empty = {"ok": 0, "cached": 0, "no-id": 0, "skip": 0, "stop": 0, "probed": 0}
+    if not WATCHMODE_KEY:
+        print("[warn] Watchmode: WATCHMODE_API_KEY not set — skipping the CAS-986 scoreability probe.")
+        return empty
+    idmap, idmap_outcome = _api_call("Watchmode ID map", _fetch_watchmode_idmap)
+    if idmap_outcome != "ok" or not idmap:
+        print("[warn] Watchmode: no usable ID map this run — skipping the CAS-986 scoreability probe.")
+        return empty
+    wm_idmap = _invert_watchmode_idmap(idmap)
+    return probe_candidates(candidates, today, budget, wm_idmap, published_ids)
+
+
+def scoreable_ids(movies: list) -> set:
+    """CAS-986's publication test: ask the shipped engine (scripts/scoreable_shim.mjs, which calls
+    isScoreable() — the same rule scripts/wm_scoreable_manifest.mjs already encodes for CAS-922)
+    which of `movies` can carry a Cascade score today. One process for the whole batch, never per
+    title. Writing a second copy of this rule in Python is the defect this function exists to
+    avoid — if the app's scoring changes, this keeps changing with it automatically."""
+    payload = json.dumps({"movies": movies})
+    proc = subprocess.run(["node", SCOREABLE_SHIM], input=payload, capture_output=True,
+                          text=True, timeout=180, check=True)
+    return {int(x) for x in json.loads(proc.stdout)["scoreable_ids"]}
+
+
+def load_user_held_ids():
+    """CAS-986's demotion-safety net: the union of tmdb_ids a user holds state on (user_films,
+    film_watch, agent_films, notifications — written by monitor/store.py at the end of each
+    monitor run). Returns None when the file is absent or unreadable, the caller's signal to
+    demote nothing at all this run rather than orphan a film a user marked watched or pinned."""
+    try:
+        return set(json.load(open(USER_HELD_IDS_FILE, encoding="utf-8")))
+    except (OSError, ValueError):
+        return None
+
+
+def select_publishable(candidates: dict, engine_scoreable_ids: set, previously_published_ids: set,
+                       held_ids, catalogue_target: int) -> tuple:
+    """Rebuild movies.json's own membership from `candidates` (CAS-986). A title publishes when
+    the shipped engine says it's scoreable today AND it ranks inside `catalogue_target` by
+    popularity among scoreable candidates — CATALOGUE_TARGET is a ceiling on the result now, not
+    the mechanism that picks it. A title that WAS published (`previously_published_ids`) but would
+    otherwise drop is still kept, and counted `exempt`, when a user holds state on it (`held_ids`)
+    or when `held_ids` is None (the tables were unreadable this run — demote nothing at all,
+    per the ticket's own fail-safe).
+
+    Returns (published_records, stats) where stats has published/promoted/demoted/exempt."""
+    scoreable = [c for c in candidates.values() if c["tmdb_id"] in engine_scoreable_ids]
+    scoreable.sort(key=lambda m: m.get("popularity") or 0, reverse=True)
+    ranked_in = {c["tmdb_id"] for c in scoreable[:catalogue_target]}
+
+    published_ids = set(ranked_in)
+    exempt_ids = set()
+    for tid in previously_published_ids - ranked_in:
+        if str(tid) not in candidates:
+            continue
+        if held_ids is None or tid in held_ids:
+            published_ids.add(tid)
+            exempt_ids.add(tid)
+
+    promoted_ids = published_ids - previously_published_ids
+    demoted_ids = previously_published_ids - published_ids
+    published_records = [candidates[str(tid)] for tid in published_ids if str(tid) in candidates]
+    published_records.sort(key=lambda m: m.get("popularity") or 0, reverse=True)
+
+    stats = {"published": len(published_records), "promoted": len(promoted_ids),
+             "demoted": len(demoted_ids), "exempt": len(exempt_ids)}
+    return published_records, stats
+
+
+def apply_two_tier_publication(candidates: dict, today: datetime.date, discovery_pool: list,
+                               enriched_records: list, previously_published_ids: set,
+                               probe_budget: int = SCOREABILITY_PROBE_BUDGET) -> tuple:
+    """CAS-986's own top-level nightly step: merge today's discovery into candidates.json, sync in
+    this run's already-enriched records, probe within budget, ask the engine which candidates are
+    scoreable today, then rebuild movies.json's membership. Tolerant of a broken/unavailable Node
+    engine (no `node` on PATH, a shim crash) — falls back to publishing exactly what was previously
+    published, unchanged, rather than ever wiping the live catalogue over a tooling failure.
+
+    Returns (published_records, report) where report has the ticket's seven reporting figures
+    (candidates/unprobed/probed_today/published/promoted/demoted/exempt) plus 'engine_ok'."""
+    today_iso = today.isoformat()
+    merge_candidates(candidates, discovery_pool, today_iso)
+    refresh_enriched_candidates(candidates, enriched_records, today_iso)
+
+    probe_outcomes = run_scoreability_probe(candidates, today, probe_budget, previously_published_ids)
+
+    try:
+        engine_ids = scoreable_ids(list(candidates.values()))
+        engine_ok = True
+    except Exception as err:  # noqa: BLE001 — a broken engine call must never wipe the catalogue
+        print(f"[warn] CAS-986: scoreability engine call failed ({err}) — publishing the "
+              "previously-published set unchanged this run.")
+        engine_ids = set(previously_published_ids)
+        engine_ok = False
+
+    held_ids = load_user_held_ids()
+    if held_ids is None:
+        print("[warn] CAS-986: state/user_held_ids.json absent or unreadable — demoting nothing "
+              "this run.")
+
+    published_records, stats = select_publishable(candidates, engine_ids, previously_published_ids,
+                                                   held_ids, CATALOGUE_TARGET)
+    unprobed = sum(1 for c in candidates.values() if c.get("outcome") == "unprobed")
+    report = {
+        "candidates": len(candidates), "unprobed": unprobed,
+        "probed_today": probe_outcomes["probed"], "engine_ok": engine_ok,
+        **stats,
+    }
+    return published_records, report
 
 
 # Map a film's original language (with production country as a tiebreak) to a
@@ -1293,6 +1558,10 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     catalogue = _dedupe_by_tmdb_id(catalogue)
     catalogue.sort(key=lambda m: m.get("popularity") or 0, reverse=True)
     pre_slice_count = len(catalogue)
+    # CAS-986: the full merged, popularity-sorted pool BEFORE the CATALOGUE_TARGET slice below —
+    # candidates.json accumulates from this, not from the sliced `catalogue` return value, so a
+    # title dropped by the slice this run is still retained as a candidate rather than forgotten.
+    full_discovery_pool = list(catalogue)
     catalogue = catalogue[:CATALOGUE_TARGET]
     dropped = pre_slice_count - len(catalogue)
     print(f"[discovery] discovered={len(new)} new={len(new_unique)} dropped={dropped}")
@@ -1421,6 +1690,8 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
             time.sleep(TMDB_PACING)
 
     counts = dict(sched["counts"])
+    # CAS-986: handed to candidates.json's merge step in run() — see full_discovery_pool above.
+    counts["candidate_pool"] = full_discovery_pool
     counts.update(provider_calls=provider_calls, wm_calls=wm_calls,
                   cinema_calls=cinema_calls, revalidated=revalidated,
                   ondemand=len(ondemand_set), catalogue=len(catalogue),
@@ -1699,6 +1970,21 @@ def run(simulate_day: bool = False):
     runstats.bump("oscarbase",
                   calls=oscarbase_outcomes["ok"] + oscarbase_outcomes["skip"] + oscarbase_outcomes["stop"],
                   errors=oscarbase_outcomes["skip"] + oscarbase_outcomes["stop"])
+
+    # CAS-986: the two-tier catalogue — publish only what candidates.json's own scoreability probe
+    # (via the shipped engine) says can carry a score today. LIVE only: the bundled sample data
+    # carries no Watchmode fields at all (it predates Watchmode), so gating the offline/no-key demo
+    # catalogue the same way would wipe it to zero rather than illustrate anything.
+    if LIVE:
+        candidates = load_candidates()
+        previously_published_ids = {m["tmdb_id"] for m in base_records}
+        records, cas986_report = apply_two_tier_publication(
+            candidates, today, counts["candidate_pool"], records, previously_published_ids)
+        save_candidates(candidates)
+        print(f"[candidates] candidates={cas986_report['candidates']} "
+              f"unprobed={cas986_report['unprobed']} probed_today={cas986_report['probed_today']} "
+              f"published={cas986_report['published']} promoted={cas986_report['promoted']} "
+              f"demoted={cas986_report['demoted']} exempt={cas986_report['exempt']}")
 
     # CAS-772: cache-health report (change item 4) — a limit nobody can see is a limit nobody
     # keeps. Printed every run, live or sample, since the sample branch never touches build_live_
