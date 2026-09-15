@@ -6,6 +6,9 @@ one that tripped it gets nothing. This exercises the CLI end-to-end against the 
 a store that fails the ledger write, the same way a live 400 does.
 """
 import io
+import json
+import os
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
@@ -103,6 +106,43 @@ class ChannelIndependence(unittest.TestCase):
         out = buf.getvalue()
         self.assertIn("email channel — sent", out)
         self.assertRegex(out, r"sent [1-9]\d* email digest\(s\)")
+
+
+class UserHeldIdsSnapshot(unittest.TestCase):
+    """CAS-986: state/user_held_ids.json — the two-tier catalogue's demotion-safety net — is
+    written once per real run, never on --dry-run (the docstring's own "write nothing" promise)."""
+
+    def _argv(self, extra=None):
+        return [
+            "--today", f"{FIXTURES}/today.json", "--yesterday", f"{FIXTURES}/yesterday.json",
+            "--date", "2026-07-16",
+            "--cascades", f"{FIXTURES}/cascades.json",
+            "--notifications", f"{FIXTURES}/notifications.json",
+            "--watches", f"{FIXTURES}/watches.json",
+        ] + (extra or [])
+
+    def test_a_real_run_writes_the_sorted_union_as_a_plain_array(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = os.path.join(tmp, "state", "user_held_ids.json")
+            buf = io.StringIO()
+            with mock.patch("monitor.__main__.USER_HELD_IDS_FILE", out_path):
+                with redirect_stdout(buf):
+                    rc = main(self._argv())
+            self.assertEqual(rc, 0)
+            with open(out_path, encoding="utf-8") as fh:
+                written = json.load(fh)
+            self.assertEqual(written, sorted(written))
+            self.assertEqual(set(written), {"5001", "5002"})
+            self.assertIn("wrote 2 held id(s)", buf.getvalue())
+
+    def test_dry_run_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = os.path.join(tmp, "state", "user_held_ids.json")
+            with mock.patch("monitor.__main__.USER_HELD_IDS_FILE", out_path):
+                with redirect_stdout(io.StringIO()):
+                    rc = main(self._argv(["--dry-run"]))
+            self.assertEqual(rc, 0)
+            self.assertFalse(os.path.exists(out_path))
 
 
 class LedgerWriteResilience(unittest.TestCase):
