@@ -3325,6 +3325,26 @@
   .card:not(.expanded) .actions .ctl .ctog{display:none}
   .card:not(.expanded) .cmini{padding:0 4px}
   .card:not(.expanded) .actions{gap:5px}
+  /* ---- FIRST-RUN TUTORIAL (CAS-976) — five coach marks over the real listing controls ------------------
+     One full-viewport layer above everything else (navmenu, the highest thing before this, tops out at
+     95). .tuthole is the spotlight: its own box carries the anchor's rect (plus padding), and its
+     box-shadow spreads 9999px outward, which is what actually paints the dimmed surround — the hole
+     itself stays visually clear because nothing is painted inside its own box. For the closing, anchorless
+     card, tutorialReposition() collapses the hole to a zero-size box at the viewport centre: a 0x0 box's
+     shadow still spreads the full 9999px in every direction, so the screen reads as evenly dimmed with no
+     spotlight, rather than needing a second code path. .tutscrim itself carries no background — it exists
+     only to catch pointer events everywhere outside the card and buttons, same as .overlay above. */
+  .tutscrim{position:fixed;inset:0;z-index:120;display:none}
+  .tutscrim.open{display:block}
+  .tuthole{position:fixed;pointer-events:none;border-radius:12px;box-shadow:0 0 0 9999px rgba(6,8,14,.78)}
+  .tutcard{position:fixed;z-index:2;width:260px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.45)}
+  .tuttext{margin:0 0 14px;font-size:14.5px;line-height:1.5;color:var(--ink)}
+  .tutbtns{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .tutskip{background:transparent;border:none;color:var(--dim);font-size:13px;font-weight:600;cursor:pointer;padding:8px 4px}
+  .tutskip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .tutnext{background:var(--accentdeep);color:#fff;border:none;border-radius:10px;padding:9px 18px;font-weight:700;font-size:14px;cursor:pointer}
+  .tutnext:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 </style>
 </head>
 <body>
@@ -4056,6 +4076,20 @@
      / account / push). Reached from the reveal's "Keep it running". Screens rendered by renderInvite(). -->
 <div class="invite" id="invite" role="dialog" aria-modal="true" aria-label="Turn your search into an agent">
   <div class="invcard" id="inviteBody"></div>
+</div>
+
+<!-- FIRST-RUN TUTORIAL (CAS-976) — five coach marks over the real listing. Static markup, always present,
+     toggled by .open same as .overlay above; the five cards' copy is painted by showTutorialCard() and the
+     spotlight geometry by tutorialReposition(), both further down in this script. -->
+<div class="tutscrim" id="tutScrim" role="dialog" aria-modal="true" aria-label="Tour">
+  <div class="tuthole" id="tutHole"></div>
+  <div class="tutcard" id="tutCard">
+    <p class="tuttext" id="tutText"></p>
+    <div class="tutbtns">
+      <button type="button" class="tutskip" id="tutSkipBtn" onclick="tutorialSkip()">Skip tour</button>
+      <button type="button" class="tutnext" id="tutNextBtn" onclick="tutorialNext()">Next</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -16417,6 +16451,7 @@ function renderAccount(){
     <div class="ucard">
       ${acctSoon("📖","Help wiki")}
       ${acctSoon("✉️","Feedback form")}
+      ${acctRow("🔁","Replay the tour", null, "replayTutorial()")}
     </div>`;
 }
 window.openAccount=()=>{
@@ -17109,6 +17144,118 @@ window.membStart=()=>{
     });
   } else proceed();
 };
+// ---- FIRST-RUN TUTORIAL (CAS-976) — five coach marks anchored to the real listing controls, shown once
+// per account the first time the listing paints after onboarding. "Seen" is account-namespaced the same
+// way every other per-account device flag is (CAS-957's acctKey) — read live off localStorage rather than
+// cached in a variable, so a suffix switch (sign-in/out, via maybeSwitchAcctSuffix) picks up the right
+// value for free, with nothing to add to that function's own reload list.
+const TUTORIAL_SEEN_KEY="cascade_tutorial_seen";
+function tutorialSeen(){ try{ return localStorage.getItem(acctKey(TUTORIAL_SEEN_KEY))==="1"; }catch(e){ return true; } }
+function markTutorialSeen(){ try{ localStorage.setItem(acctKey(TUTORIAL_SEEN_KEY),"1"); }catch(e){} }
+// The four anchored cards, in order; the fifth (closing, centred, no anchor) is appended in startTutorial.
+// Copy is verbatim per the ticket. Anchors are real listing controls: the agent rail the ticket names
+// doesn't exist in this build (agents are a vertical reorderable list, not a rail) — #agentsBtn is the one
+// real element that stands for "your agents" on the listing itself, the nav chip that opens them.
+function tutorialCardDefs(){
+  return [
+    {sel:"#agentsBtn", text:"These are your agents. Each one watches for a different kind of film, all the time, so you don't have to."},
+    {sel:"#groups .card .r-scores", text:"Two numbers: what people thought, and what critics thought. Your agent only speaks up when a film clears the bar you set."},
+    {sel:"#groups .card .ctl.notify", text:"Films move — cinema, then rent, then streaming. Your agent follows each one and tells you when it reaches a window you actually use."},
+    {sel:"#movingBtn", text:"Moving is what changed since you last looked. That's the page to come back to."},
+  ];
+}
+// A DOM match that's actually on screen — a condensed ("cinfo") card hides its own .r-scores via
+// display:none rather than removing it, so a plain querySelector can resolve to a real element with a
+// zero-size rect. That is indistinguishable from "not present" for a coach mark to point at.
+function tutorialResolveAnchor(sel){
+  for(const el of document.querySelectorAll(sel)){
+    const r=el.getBoundingClientRect();
+    if(r.width>0 && r.height>0) return el;
+  }
+  return null;
+}
+let tutCards=[], tutIdx=-1;
+// The one gate for the automatic (non-replay) trigger: onboarding done, at least one agent, not already
+// seen or skipped, and nothing else already on screen (a deep link opening straight into another screen
+// right after onboarding, per CAS-962, must win over the tour starting underneath it).
+function maybeStartTutorial(){
+  if(!onboardingSeen() || !cascades.length || tutorialSeen()) return;
+  if(document.querySelector(".uscreen.open,.modal.open,.wsheetscrim.open,.filmpage.open")) return;
+  requestAnimationFrame(()=>requestAnimationFrame(startTutorial));
+}
+// Resolution happens here, not at the gate above, so it always runs one full layout past whatever just
+// painted the listing — same double-rAF reasoning as membStart's own proceed() a few lines up.
+function startTutorial(){
+  const anchored=tutorialCardDefs().map(c=>({text:c.text, el:tutorialResolveAnchor(c.sel)})).filter(c=>c.el);
+  // Resilience: skip a card whose anchor isn't there rather than point at nothing; if fewer than two of
+  // the four resolve, don't start at all — and don't mark it seen, so a later, better-populated listing
+  // gets a real chance at it.
+  if(anchored.length<2) return;
+  tutCards=anchored.concat([{text:"You're set. Nothing more to do today — your agents report in the morning.", el:null}]);
+  tutIdx=0;
+  window.addEventListener("resize", tutorialReposition);
+  window.addEventListener("scroll", tutorialReposition, true);
+  $("tutScrim").classList.add("open");
+  showTutorialCard();
+}
+function showTutorialCard(){
+  const c=tutCards[tutIdx];
+  $("tutText").textContent=c.text;
+  $("tutNextBtn").textContent = (tutIdx===tutCards.length-1) ? "Done" : "Next";
+  if(c.el) c.el.scrollIntoView({block:"center", inline:"center"});
+  requestAnimationFrame(()=>requestAnimationFrame(tutorialReposition));
+}
+// Re-measures the current card's anchor and repositions the spotlight + caption. Bound to resize/scroll
+// while the tour is open (AC: the cut-out stays correct after either), and called once per card on top of
+// that. The closing card carries no anchor: collapsing the hole to a zero-size box at the viewport centre
+// (see the .tuthole comment in <style>) dims the whole screen evenly instead of needing a second layout
+// branch for "no spotlight".
+function tutorialReposition(){
+  const scrim=$("tutScrim");
+  if(!scrim || !scrim.classList.contains("open")) return;
+  const c=tutCards[tutIdx];
+  const hole=$("tutHole"), card=$("tutCard"), pad=8, vw=innerWidth, vh=innerHeight;
+  let r;
+  if(c && c.el){
+    r=c.el.getBoundingClientRect();
+    hole.style.left=(r.left-pad)+"px"; hole.style.top=(r.top-pad)+"px";
+    hole.style.width=(r.width+pad*2)+"px"; hole.style.height=(r.height+pad*2)+"px";
+  } else {
+    r={left:vw/2, top:vh/2, bottom:vh/2, width:0, height:0};
+    hole.style.left=r.left+"px"; hole.style.top=r.top+"px";
+    hole.style.width="0px"; hole.style.height="0px";
+  }
+  const cardH=card.offsetHeight||140, cardW=card.offsetWidth||260;
+  let top, left;
+  if(!c || !c.el){
+    top=(vh-cardH)/2; left=(vw-cardW)/2;
+  } else {
+    const spaceBelow=vh-r.bottom-pad*2;
+    top = spaceBelow>=cardH+12 ? r.bottom+pad*2+12 : Math.max(12, r.top-pad*2-12-cardH);
+    left = Math.min(Math.max(12, r.left), vw-cardW-12);
+  }
+  card.style.top=top+"px"; card.style.left=left+"px";
+}
+function tutorialNext(){
+  if(tutIdx>=tutCards.length-1){ endTutorial(true); return; }
+  tutIdx++;
+  showTutorialCard();
+}
+function tutorialSkip(){ endTutorial(true); }
+function endTutorial(markSeen){
+  $("tutScrim").classList.remove("open");
+  window.removeEventListener("resize", tutorialReposition);
+  window.removeEventListener("scroll", tutorialReposition, true);
+  if(markSeen) markTutorialSeen();
+  tutCards=[]; tutIdx=-1;
+}
+// Replay (from Account's Help & feedback row): Account is a .uscreen sitting over the listing that was
+// already there, so closing it is enough to land back on it — no need to force the watch tab or rebuild.
+// Bypasses tutorialSeen() on purpose, same as any other explicit "show me that again" control.
+function replayTutorial(){
+  closeAccount();
+  requestAnimationFrame(()=>requestAnimationFrame(startTutorial));
+}
 function membStartWork(){
   try{ localStorage.setItem("cascade_onboarded","1"); }catch(e){}
   if(!cascades.length){
@@ -17129,6 +17276,10 @@ function membStartWork(){
   // already seen" branch. After closeMembership() so a "family" destination's Briefing overlay isn't
   // stacking on top of it (same ordering onbMembBack() already uses the other way).
   applyDeepLink();
+  // CAS-976: first listing paint after finishing onboarding — the one automatic trigger point. After
+  // applyDeepLink() so a deep-link destination it opened wins; maybeStartTutorial's own "any other screen
+  // open" check is what actually enforces that.
+  maybeStartTutorial();
 }
 // ================= CAS-205: the membership setup bar is gone ==========================================
 // It was the last thing between the header and the Cascades deck, and by 0.8 it was arguing with the flow
@@ -18105,6 +18256,8 @@ else if(!openedShared){
   const landingTab = pickLandingWatchTab();
   if(landingTab !== watchTab){ watchTab = landingTab; render(); }
   applyDeepLink();   // CAS-962: onboarding already seen — a returning user's cold boot is safe to act on now
+  maybeStartTutorial();   // CAS-976: a returning user who finished onboarding before this shipped, or
+                           // skipped it too fast to see all five cards, still gets it once on a normal boot.
 }
 // CAS-940: first-touch acquisition capture. First touch wins — cascade_acq is written once and never
 // overwritten — but the utm_* params are stripped from the URL on every load that carries them, even a
