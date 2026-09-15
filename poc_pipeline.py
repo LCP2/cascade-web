@@ -167,7 +167,7 @@ CINEMA_RELEASE_BACKFILL_BUDGET = int(os.getenv("CINEMA_RELEASE_BACKFILL_BUDGET",
 # tolerance `enrich_watchmode_fields_nightly` gives a missing Watchmode key.
 OSCARBASE_BASE = "https://api.oscarbase.com"
 OSCARBASE_CACHE_FILE = os.path.join(STATE_DIR, "oscarbase_cache.json")
-OSCARBASE_BACKFILL_BUDGET = int(os.getenv("OSCARBASE_BACKFILL_BUDGET", "300"))
+OSCARBASE_BACKFILL_BUDGET = int(os.getenv("OSCARBASE_BACKFILL_BUDGET", "750"))
 OSCARBASE_PACING = float(os.getenv("OSCARBASE_PACING", "0.65"))   # 100 req/min cap, 2 calls/title
 OSCARBASE_RECENT_CEREMONY_YEARS = 2   # re-fetch a cached title while its release is this recent
 

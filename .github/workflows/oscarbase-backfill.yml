@@ -1,0 +1,66 @@
+name: OscarBase awards backfill
+
+# CAS-984: OscarBase (CAS-937) is free and needs no key — the only cost of a fetch is time. The
+# nightly pass only spends OSCARBASE_BACKFILL_BUDGET (750, CAS-984) titles a night against the
+# whole catalogue, so an initial backfill of ~6,000 titles at the old 300/night default would
+# have taken weeks. Manual dispatch only, idempotent — a title already in
+# state/oscarbase_cache.json is never re-fetched by this script (a title still inside the
+# recent-ceremony recheck window is the nightly pass's job, not this backfill's) — so it is safe
+# to dispatch repeatedly until the printed `remaining` reaches 0.
+on:
+  workflow_dispatch:
+    inputs:
+      budget:
+        description: 'OSCARBASE_BACKFILL_MAX — never-fetched titles to resolve this run'
+        required: false
+        type: string
+        default: '1500'
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: staging
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run the OscarBase awards backfill
+        env:
+          OSCARBASE_BACKFILL_MAX: ${{ inputs.budget }}
+        run: python scripts/cas984_oscarbase_backfill.py
+
+      - name: Commit and push (CAS-758 reset-soft-and-push retry — never to main)
+        # Pushes via scripts/reset_soft_and_push.sh's `git push origin HEAD:staging`, the same
+        # tested reset --soft retry algorithm watchmode-backfill.yml uses — this branch, never
+        # main; only promote.yml writes main.
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
+          WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
+        run: |
+          git config user.name  "cascade-bot"
+          git config user.email "actions@users.noreply.github.com"
+          bash scripts/reset_soft_and_push.sh staging "python poc_pipeline.py --build-html" index.html movies.json state
+
+  # CAS-973: email someone the moment this workflow breaks, instead of leaving it to be
+  # noticed by whoever next opens the Actions tab.
+  alert:
+    needs: [backfill]
+    if: failure()
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/alert.yml
+    with:
+      workflow_name: "oscarbase-backfill"
+    secrets:
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+      CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
