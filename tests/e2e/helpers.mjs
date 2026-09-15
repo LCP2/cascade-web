@@ -122,11 +122,25 @@ export async function finishFlow(page){
   return reveal;
 }
 
-/** Close the membership page and land on the new agent's listing, fully streamed in. */
-export async function toListing(page){
+/** Close the membership page and land on the new agent's listing, fully streamed in.
+ * CAS-976: finishing onboarding is also the tutorial's one automatic trigger point (a fresh account,
+ * onboarded, with an agent, having never seen it — exactly what every caller here just built) — so by
+ * default this also clears it, Skip-tour, the same way a person impatient to see their own listing would.
+ * Every caller except CAS-976's own spec wants the plain, uninterrupted listing; pass
+ * { skipTutorial: false } to see the tour as it actually first appears. */
+export async function toListing(page, opts = {}){
+  const { skipTutorial = true } = opts;
   await page.locator(".membcta").click();
   await expect(page.locator("#membScreen.open")).toBeHidden({ timeout: 30_000 });
   await settleListing(page);
+  if(skipTutorial){
+    const tour = page.locator("#tutScrim.open");
+    if(await tour.count() === 0) await page.waitForTimeout(150);   // the tour's own double-rAF start
+    if(await tour.count() > 0){
+      await page.locator("#tutSkipBtn").click();
+      await expect(page.locator("#tutScrim")).not.toHaveClass(/open/);
+    }
+  }
 }
 
 /** The listing streams its cards in batches, so wait for the count to stop moving. */
