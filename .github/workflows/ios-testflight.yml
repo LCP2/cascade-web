@@ -126,3 +126,19 @@ jobs:
       - name: Remove the temporary keychain
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/ios-signing.keychain-db" || true
+
+  # CAS-973: email someone the moment this workflow breaks, instead of leaving it to be
+  # noticed by whoever next opens the Actions tab.
+  alert:
+    needs: [testflight]
+    if: failure()
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/alert.yml
+    with:
+      workflow_name: "ios-testflight"
+    secrets:
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+      CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}

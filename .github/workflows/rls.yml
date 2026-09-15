@@ -27,3 +27,19 @@ jobs:
 
       - name: RLS matrix (anon role, live project)
         run: npm run test:rls
+
+  # CAS-973: email someone the moment this workflow breaks, instead of leaving it to be
+  # noticed by whoever next opens the Actions tab.
+  alert:
+    needs: [rls]
+    if: failure()
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/alert.yml
+    with:
+      workflow_name: "rls"
+    secrets:
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+      CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}

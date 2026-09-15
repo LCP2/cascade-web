@@ -1,0 +1,52 @@
+# Codynamics Development Standard (Cascade web) — the reusable failure-alert workflow.
+#
+# CAS-973: reusable failure alert, called as the final `if: failure()` job of every
+# scheduled/CI workflow (daily, rls, recommend, qa, promote, the Watchmode backfill, iOS
+# TestFlight) so a broken run notifies someone instead of sitting silent until someone opens
+# the Actions tab. A `workflow_call` job runs inside the SAME run as the workflow that calls
+# it (they share `github.run_id`), so it reads the failing job/step and log tail straight off
+# this run via the Actions API — the caller only has to pass its own human-readable name.
+#
+# Needs `actions: read` to list this run's jobs/steps and read the failing step's log. A
+# reusable workflow can only use permissions its caller grants, so each caller job sets
+# `permissions: { contents: read, actions: read }` next to its own `uses:` line.
+#
+# Secrets: reuses RESEND_API_KEY and CASCADE_EMAIL_FROM (already used by monitor/emailer.py).
+# CASCADE_ALERT_TO is new. Either one absent -> scripts/send_alert.py logs and exits 0, the
+# same tolerance the monitor gives an absent secret — safe to wire in before the secret exists.
+name: alert
+
+on:
+  workflow_call:
+    inputs:
+      workflow_name:
+        description: "Human name of the calling workflow, for the alert subject/body."
+        required: true
+        type: string
+    secrets:
+      RESEND_API_KEY:
+        required: false
+      CASCADE_EMAIL_FROM:
+        required: false
+      CASCADE_ALERT_TO:
+        required: false
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Find the failing job/step in this run and email via Resend
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WORKFLOW_NAME: ${{ inputs.workflow_name }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+          CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
+        run: python scripts/send_alert.py
