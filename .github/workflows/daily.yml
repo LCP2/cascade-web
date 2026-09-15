@@ -219,6 +219,56 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run qa.yml --ref staging
 
+      - name: Run nightly health assertions (CAS-974)
+        # The literal last step: asserts the night's work actually happened (catalogue size/
+        # integrity, TMDB/Watchmode/OscarBase call+error tallies, email/push delivery, a live
+        # anon-role usage_events insert, a live canary sign-in) rather than trusting a green
+        # workflow. Runs after qa.yml's dispatch above so a health failure here never blocks that
+        # unrelated code-quality gate. SUPABASE_ANON_KEY/CASCADE_CANARY_EMAIL/CASCADE_CANARY_
+        # PASSWORD are new secrets (Lee's step, CAS-974 hand-off) — until they exist, the two live
+        # Supabase checks report "unknown" (tolerated) rather than failing the run.
+        if: ${{ github.event.inputs.probe_title == '' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          CASCADE_CANARY_EMAIL: ${{ secrets.CASCADE_CANARY_EMAIL }}
+          CASCADE_CANARY_PASSWORD: ${{ secrets.CASCADE_CANARY_PASSWORD }}
+          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}
+          APNS_TEAM_ID: ${{ secrets.APNS_TEAM_ID }}
+          APNS_AUTH_KEY: ${{ secrets.APNS_AUTH_KEY }}
+          APNS_BUNDLE_ID: ${{ secrets.APNS_BUNDLE_ID }}
+        run: |
+          HEALTH_EXIT=0
+          python -m monitor.health || HEALTH_EXIT=$?
+          git config user.name  "cascade-bot"
+          git config user.email "actions@users.noreply.github.com"
+          # Same reset-soft-and-commit retry as the catalogue-sizing step above, minus the rebuild
+          # step — state/health.json and state/run_stats.json are plain data, never derived from
+          # app_template.html, so there is nothing to regenerate before committing them.
+          attempt=1
+          pushed=0
+          while [ "$attempt" -le 3 ]; do
+            git fetch origin staging
+            if ! git reset --soft origin/staging; then
+              echo "::error::git reset --soft onto origin/staging failed"
+              exit 1
+            fi
+            git checkout HEAD -- . ':!state/health.json' ':!state/run_stats.json'
+            git add state/health.json state/run_stats.json
+            git commit -m "CAS-974: nightly health report $(date -u +%F)" || echo "nothing to commit"
+            if git push origin HEAD:staging; then
+              pushed=1
+              break
+            fi
+            echo "push rejected (attempt $attempt/3), retrying after reset"
+            attempt=$((attempt + 1))
+          done
+          if [ "$pushed" -ne 1 ]; then
+            echo "::error::failed to push the health report to staging after 3 attempts"
+            exit 1
+          fi
+          exit $HEALTH_EXIT
+
   # CAS-973: email someone the moment this workflow breaks, instead of leaving it to be
   # noticed by whoever next opens the Actions tab.
   alert:

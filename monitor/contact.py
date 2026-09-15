@@ -24,6 +24,8 @@ import sys
 import urllib.parse
 from zoneinfo import ZoneInfo
 
+import runstats
+
 from .emailer import send_via_resend
 from .store import InMemoryStore, store_from_env
 
@@ -438,11 +440,13 @@ def main(argv=None) -> int:
         send_via_resend(to_addr, digest["subject"], digest["html"], digest["text"])
     except Exception as err:  # noqa: BLE001 — a failed send must not stamp sent_at
         print(f"[monitor.contact] send failed: {err} — not marking sent, will retry next run.")
+        runstats.bump("email", attempted=1, delivered=0, errors=1)
         return 1
 
     sent_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
     n = store.mark_contact_messages_sent([r["id"] for r in rows], sent_at)
     print(f"[monitor.contact] sent digest covering {len(rows)} message(s); stamped {n} row(s) sent.")
+    runstats.bump("email", attempted=1, delivered=1, errors=0)
     return 0
 
 
