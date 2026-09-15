@@ -1,0 +1,91 @@
+name: Watchmode back-catalogue sizing
+
+# CAS-989: size (and, in enumerate mode, build the CAS-986 candidate pool for) the AU back
+# catalogue using Watchmode's own /list-titles server-side filters, at about 1 credit per
+# requested region per page — never per title. WATCHMODE_API_KEY is a GitHub secret only (CAS-
+# 579/767), so this has to be a workflow, not a script run from a clone. Manual dispatch only:
+# both modes spend real Watchmode credits, and the by-year sweep alone runs to ~290 of them at
+# its default range, so nothing here should fire unattended on a schedule.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'by-year sizes the catalogue by calendar year; enumerate builds the CAS-986 candidate pool'
+        required: true
+        type: choice
+        options:
+          - by-year
+          - enumerate
+      year_start:
+        description: 'First calendar year to include'
+        required: false
+        type: string
+        default: '1930'
+      year_end:
+        description: 'Last calendar year to include (empty = the current year)'
+        required: false
+        type: string
+        default: ''
+      rating_gates:
+        description: 'Comma-separated user_rating_low values (0 = no gate)'
+        required: false
+        type: string
+        default: '0,5.5,6.5'
+      max_credits:
+        description: 'Watchmode credits to spend this run — the run stops cleanly once reached'
+        required: false
+        type: string
+        default: '400'
+
+permissions:
+  contents: write
+
+jobs:
+  size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: staging
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run the back-catalogue sizing script
+        env:
+          WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
+          YEAR_END: ${{ inputs.year_end }}
+        run: |
+          ARGS=(--mode "${{ inputs.mode }}" --year-start "${{ inputs.year_start }}"
+                --rating-gates "${{ inputs.rating_gates }}" --max-credits "${{ inputs.max_credits }}")
+          if [ -n "$YEAR_END" ]; then
+            ARGS+=(--year-end "$YEAR_END")
+          fi
+          python scripts/wm_backcatalogue_sizing.py "${ARGS[@]}"
+
+      - name: Commit and push (CAS-758 reset-soft-and-push retry — never to main)
+        # Neither mode touches movies.json or app_template.html, so — unlike the Watchmode
+        # fields/OscarBase backfills — there is nothing to rebuild here; the rebuild command is
+        # a no-op. Owned paths are exactly what the script writes: docs/appraisals for --mode
+        # by-year, state for --mode enumerate.
+        run: |
+          git config user.name  "cascade-bot"
+          git config user.email "actions@users.noreply.github.com"
+          bash scripts/reset_soft_and_push.sh staging true docs/appraisals state
+
+  # CAS-973: email someone the moment this workflow breaks, instead of leaving it to be
+  # noticed by whoever next opens the Actions tab.
+  alert:
+    needs: [size]
+    if: failure()
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/alert.yml
+    with:
+      workflow_name: "wm-backcatalogue-sizing"
+    secrets:
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+      CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
