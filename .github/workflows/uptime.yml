@@ -1,0 +1,96 @@
+name: Hourly uptime synthetic
+
+# CAS-975: is the site up, does the catalogue parse, can a real person sign in — checked every
+# hour, not just once a night. daily.yml's health assertions (CAS-974) cover the pipeline; they
+# say nothing about the other 23 hours, and a Pages/Cloudflare/Supabase outage was previously
+# invisible until a user complained.
+#
+# scripts/uptime_probe.mjs owns everything: the six probes, the flap-control state machine, and
+# the alert/recovery emails (via Resend, reusing the RESEND_API_KEY/CASCADE_EMAIL_FROM/
+# CASCADE_ALERT_TO secrets alert.yml already uses). This workflow deliberately does NOT also wire
+# in the shared alert.yml (CAS-973): that fires on ANY single job failure, which would page
+# someone on a single red probe — exactly what this ticket's own flap control exists to prevent.
+# The job is still allowed to end red (AC1: the script exits non-zero on any red probe) so the
+# Actions tab reflects reality; nobody polls it (the money rule) because the flap-controlled email
+# is the actual notification path.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  uptime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check out staging (the probe script lives here)
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+
+      - name: Check out main (VERSION is the live deploy's source of truth)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main-ref
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Read main's VERSION into the environment
+        run: echo "CASCADE_MAIN_VERSION=$(cat main-ref/VERSION)" >> "$GITHUB_ENV"
+
+      - name: Run the six probes, decide alerting, write state/uptime.json
+        env:
+          CASCADE_MAIN_VERSION: ${{ env.CASCADE_MAIN_VERSION }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          CASCADE_CANARY_EMAIL: ${{ secrets.CASCADE_CANARY_EMAIL }}
+          CASCADE_CANARY_PASSWORD: ${{ secrets.CASCADE_CANARY_PASSWORD }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+          CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
+        run: |
+          PROBE_EXIT=0
+          node scripts/uptime_probe.mjs --json || PROBE_EXIT=$?
+          echo "PROBE_EXIT=$PROBE_EXIT" >> "$GITHUB_ENV"
+
+      - name: Commit state/uptime.json
+        # Same bounded fetch/reset-soft/push retry every other state-writing workflow step in this
+        # repo uses (see daily.yml's CAS-974 step) — reset --soft onto the current staging tip never
+        # conflicts with a concurrent ticket push, it just re-parents this commit onto it.
+        run: |
+          git config user.name  "cascade-bot"
+          git config user.email "actions@users.noreply.github.com"
+          attempt=1
+          pushed=0
+          while [ "$attempt" -le 3 ]; do
+            git fetch origin staging
+            if ! git reset --soft origin/staging; then
+              echo "::error::git reset --soft onto origin/staging failed"
+              exit 1
+            fi
+            git checkout HEAD -- . ':!state/uptime.json'
+            git add state/uptime.json
+            git commit -m "CAS-975: hourly uptime report $(date -u +%FT%H)" || echo "nothing to commit"
+            if git push origin HEAD:staging; then
+              pushed=1
+              break
+            fi
+            echo "push rejected (attempt $attempt/3), retrying after reset"
+            attempt=$((attempt + 1))
+          done
+          if [ "$pushed" -ne 1 ]; then
+            echo "::error::failed to push state/uptime.json to staging after 3 attempts"
+            exit 1
+          fi
+
+      - name: Fail the job if any probe was red
+        # Kept as the LAST step, after the state commit above always runs regardless of probe
+        # outcome — a red probe must never stop state/uptime.json (and therefore the flap-control
+        # counters) from being recorded.
+        run: exit "${PROBE_EXIT:-0}"
