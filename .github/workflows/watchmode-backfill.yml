@@ -61,3 +61,19 @@ jobs:
           git config user.name  "cascade-bot"
           git config user.email "actions@users.noreply.github.com"
           bash scripts/reset_soft_and_push.sh staging "python poc_pipeline.py --build-html" index.html movies.json state
+
+  # CAS-973: email someone the moment this workflow breaks, instead of leaving it to be
+  # noticed by whoever next opens the Actions tab.
+  alert:
+    needs: [backfill]
+    if: failure()
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/alert.yml
+    with:
+      workflow_name: "watchmode-backfill"
+    secrets:
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+      CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}

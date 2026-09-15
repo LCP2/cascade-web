@@ -432,3 +432,20 @@ jobs:
           FAILED_JOBS: ${{ env.FAILED_JOBS }}
           FAILURE_DETAIL: ${{ env.FAILURE_DETAIL }}
         run: python ci/mark_qa_failed.py
+
+  # CAS-973: email someone the moment this workflow breaks, instead of leaving it to be
+  # noticed by whoever next opens the Actions tab. Separate concern from on-failure above
+  # (which requeues the Jira ticket) — needs every other job so it fires whichever one broke.
+  alert:
+    needs: [build-check, engine, data, monitor, lint, e2e, mark-on-staging, dispatch-promote, on-failure]
+    if: failure()
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/alert.yml
+    with:
+      workflow_name: "qa"
+    secrets:
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+      CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
