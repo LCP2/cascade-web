@@ -29,6 +29,8 @@ import datetime as _dt
 import json
 import sys
 
+import runstats
+
 from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notification_rows,
                render_digest, send_via_resend, excluded_moments,
                prefs_for, excludes_from_prefs, delivery_plan, send_via_apns, push_copy,
@@ -331,6 +333,12 @@ def main(argv=None) -> int:
     # CAS-887 AC2: a user with replies but no film transitions still reaches this loop (from
     # replies_by_user) and still gets an email — the replies alone are worth sending.
     sent, written_total, inapp, pushed_total = 0, 0, 0, 0
+    # CAS-974: attempted/failed tallies alongside the existing sent/pushed_total counters above,
+    # for monitor.health's email_send/push_send checks — written to runstats at the end of this
+    # function, never mid-loop, so a run that sends nothing writes nothing (an absent section
+    # reads as "unknown", the honest answer, not a fabricated all-zero "pass").
+    email_attempted = email_failed = 0
+    push_attempted = push_failed = 0
     for user_id in sorted(all_user_ids):
         hits = by_user.get(user_id, [])
         reply_pairs = replies_by_user.get(user_id, [])
@@ -384,6 +392,7 @@ def main(argv=None) -> int:
         email_ok = False
         if mailable or mail_replies:
             digest = render_digest(mailable, replies=[f for _, f in mail_replies])  # only what's delivered
+            email_attempted += 1
             try:
                 send_via_resend(email, digest["subject"], digest["html"], digest["text"])
                 email_ok = True
@@ -391,6 +400,7 @@ def main(argv=None) -> int:
                 print(f"[monitor] {user_id}: email channel — sent ({len(mailable)} alert(s), "
                       f"{len(mail_replies)} invite reply(s)).")
             except Exception as err:  # noqa: BLE001 — never let one bad send abort the run
+                email_failed += 1
                 print(f"[monitor] {user_id}: email channel — failed: {err} — ledger not written for "
                       "it, will retry; in-app/push are unaffected.")
         if appable:
@@ -414,8 +424,11 @@ def main(argv=None) -> int:
                 payload = {"movie_id": h.transition.movie_id, "moment": h.transition.moment,
                            "cascade_id": h.cascade_id}
                 for tok in tokens:
+                    push_attempted += 1
                     if send_via_apns(tok, copy["title"], copy["body"], badge=badge, payload=payload):
                         pushed += 1
+                    else:
+                        push_failed += 1
             if pushed:
                 print(f"[monitor] {user_id}: sent {pushed} push notification(s) across "
                       f"{len(tokens)} device(s).")
@@ -447,6 +460,14 @@ def main(argv=None) -> int:
     else:
         print(f"[monitor] sent {sent} email digest(s), {inapp} in-app-only, {pushed_total} push "
               f"notification(s); wrote {written_total} notification row(s).")
+        # CAS-974: for monitor.health's email_send/push_send checks — only written on a real run
+        # (never --dry-run, which sends nothing) and only when this pass actually attempted a
+        # channel, so a night with nobody to notify leaves the section unwritten ("unknown") rather
+        # than a fabricated all-zero "pass".
+        if email_attempted:
+            runstats.bump("email", attempted=email_attempted, delivered=sent, errors=email_failed)
+        if push_attempted:
+            runstats.bump("push", attempted=push_attempted, delivered=pushed_total, errors=push_failed)
     return 0
 
 

@@ -35,6 +35,8 @@ to compare against. Output for the app front-end is written to movies.json.
 from __future__ import annotations
 import os, sys, csv, io, re, json, time, shutil, hashlib, base64, datetime, subprocess, urllib.parse, urllib.request, urllib.error
 
+import runstats
+
 # CAS-771 — GUARDRAIL, DO NOT BREAK: tmdb_id is the join key for six Supabase tables of live user data
 # (user_films, film_picks, film_watch, the cascade film rows, list_films, notifications — all keyed on a
 # `movie_id text` that is always a tmdb_id, per supabase/schema.sql). It must survive any change of data
@@ -89,6 +91,11 @@ ALERTS_FILE   = os.path.join(STATE_DIR, "alerts.json")
 WM_CACHE_FILE = os.path.join(STATE_DIR, "watchmode_ids.json")   # imdb_id -> watchmode_id (never changes)
 WINDOW_DATES_FILE = os.path.join(STATE_DIR, "window_dates.json")  # tmdb_id -> {window: first_seen_date}
 API_BUDGET_FILE = os.path.join(STATE_DIR, "api_budget.json")    # CAS-384: today's cross-run provider spend
+WM_MONTHLY_FILE = os.path.join(STATE_DIR, "watchmode_monthly.json")   # CAS-974: cumulative spend this month
+# Watchmode's own quoted allowance (see the REVALIDATION_DAILY_BUDGET comment above) — reused here
+# rather than re-guessed, so monitor.health's remaining-credits check has a real number to compare
+# this month's cumulative on-demand spend against.
+WATCHMODE_MONTHLY_CREDITS = int(os.getenv("WATCHMODE_MONTHLY_CREDITS", "40000"))
 OUTPUT_FILE   = os.path.join(os.path.dirname(__file__), "movies.json")
 SAMPLE_FILE   = os.path.join(os.path.dirname(__file__), "sample_data.json")
 TEMPLATE_FILE = os.path.join(os.path.dirname(__file__), "app_template.html")
@@ -1228,6 +1235,26 @@ def _save_daily_spend(today, wm_spent):
                open(API_BUDGET_FILE, "w"), indent=2)
 
 
+def _load_monthly_wm_spend(today):
+    """CAS-974: same stale-date-means-fresh-allowance rule as _load_daily_spend, keyed by month
+    instead of day — health.py's remaining-credits check needs the month's running total, not the
+    daily figure api_budget.json already tracks for a different purpose (CAS-384's same-day cap)."""
+    month = today.strftime("%Y-%m")
+    if not os.path.exists(WM_MONTHLY_FILE):
+        return {}
+    try:
+        data = json.load(open(WM_MONTHLY_FILE))
+    except Exception:
+        return {}
+    return data if data.get("month") == month else {}
+
+
+def _save_monthly_wm_spend(today, wm_spent):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    json.dump({"month": today.strftime("%Y-%m"), "wm_spent": wm_spent},
+               open(WM_MONTHLY_FILE, "w"), indent=2)
+
+
 # ---------------------------------------------------------------------------
 # CAS-109 — build the persistent catalogue, poll only the daily set, carry the rest
 # ---------------------------------------------------------------------------
@@ -1614,6 +1641,18 @@ def run(simulate_day: bool = False):
         os.makedirs(STATE_DIR, exist_ok=True)
         json.dump(wm_cache, open(WM_CACHE_FILE, "w"), indent=2)
         _save_daily_spend(today, prior_spend.get("wm_spent", 0) + counts["wm_calls"])
+
+        # CAS-974: this run's TMDB/Watchmode call+error tallies, for monitor.health's tmdb_fetch/
+        # watchmode_fetch checks — a run with 0 keys never reaches this branch, so an "unknown"
+        # (no run_stats.json entry) there is the honest answer, not a fabricated 0.
+        runstats.bump("tmdb", calls=counts["provider_calls"] + counts["cinema_calls"],
+                      errors=counts["provider_fails"] + counts["cinema_fails"])
+        runstats.bump("watchmode", calls=counts["wm_calls"], errors=counts["wm_fails"])
+        prior_monthly = _load_monthly_wm_spend(today)
+        monthly_spent = prior_monthly.get("wm_spent", 0) + counts["wm_calls"]
+        _save_monthly_wm_spend(today, monthly_spent)
+        runstats.set_value("watchmode",
+                           remaining_monthly_credits=max(0, WATCHMODE_MONTHLY_CREDITS - monthly_spent))
     else:
         print("[sample] no API keys set — using bundled illustrative data.")
         records = json.load(open(SAMPLE_FILE))["movies"]
@@ -1649,6 +1688,12 @@ def run(simulate_day: bool = False):
     print(f"[oscarbase] awards: {oscarbase_outcomes['ok']} fetched, "
           f"{oscarbase_outcomes['cache_fallback']} from cache, "
           f"{oscarbase_outcomes['skip']} skipped, {oscarbase_outcomes['stop']} stopped")
+    # CAS-974: 'skip'/'stop' are both genuine per-title fetch failures here (unlike Watchmode's
+    # nightly-fields 'skip', which also covers a benign budget-exhausted title) — see
+    # enrich_oscarbase_awards_nightly's own outcome contract — so both fold straight into errors.
+    runstats.bump("oscarbase",
+                  calls=oscarbase_outcomes["ok"] + oscarbase_outcomes["skip"] + oscarbase_outcomes["stop"],
+                  errors=oscarbase_outcomes["skip"] + oscarbase_outcomes["stop"])
 
     # CAS-772: cache-health report (change item 4) — a limit nobody can see is a limit nobody
     # keeps. Printed every run, live or sample, since the sample branch never touches build_live_
