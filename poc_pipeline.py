@@ -566,6 +566,9 @@ WM_NIGHTLY_COHORT_TTL_DAYS = 7
 # (against WM_NIGHTLY_MAX_CREDITS/ONDEMAND_WM_CAP) to split the real cycle-paced allowance three
 # ways — probe_candidates' own signature (a plain int budget) is untouched.
 CANDIDATES_FILE = os.path.join(STATE_DIR, "candidates.json")
+# CAS-991: CAS-989's --mode enumerate output (keyed on Watchmode id) — optional input, folded into
+# CANDIDATES_FILE (keyed on tmdb_id) by merge_backcatalogue_candidates before the probe tiers run.
+WM_BACKCATALOGUE_CANDIDATES_FILE = os.path.join(STATE_DIR, "wm_backcatalogue_candidates.json")
 SCOREABILITY_PROBE_BUDGET = int(os.getenv("SCOREABILITY_PROBE_BUDGET", "200"))
 SCOREABILITY_STALE_DAYS = WATCHMODE_CACHE_TTL_DAYS          # tier 1, non-ladder: 30 days
 SCOREABILITY_LADDER_STALE_DAYS = WM_NIGHTLY_COHORT_TTL_DAYS  # tier 1, ladder cohort: 7 days
@@ -721,6 +724,59 @@ def load_candidates() -> dict:
 def save_candidates(candidates: dict) -> None:
     os.makedirs(STATE_DIR, exist_ok=True)
     json.dump(candidates, open(CANDIDATES_FILE, "w", encoding="utf-8"), indent=2, sort_keys=True)
+
+
+def merge_backcatalogue_candidates(candidates: dict, today_iso: str, path: str | None = None) -> dict:
+    """CAS-991: folds CAS-989's `--mode enumerate` output (state/wm_backcatalogue_candidates.json,
+    keyed on Watchmode id) into the persistent candidates.json store (keyed on tmdb_id) — nothing
+    else reads the back-catalogue file into the candidate pool, so an enumerate run would otherwise
+    spend real Watchmode credits filling a file nothing consumes.
+
+    Joins on tmdb_id, which `/list-titles` returns on every enumerated row. Makes no network calls.
+    A row with no tmdb_id cannot join candidates.json (which is keyed by tmdb_id) — it is skipped
+    and counted, never given a synthesised id. An id already tracked in candidates.json is left
+    completely alone (its outcome/last_probed/probe_count are never reset), the same rule
+    merge_candidates applies above, so re-running this is a no-op for anything already known. A
+    genuinely new id enters as `outcome: unprobed`, carrying its tmdb_id, title, year and
+    popularity_percentile, so tier 2 of probe_candidates picks it up.
+
+    `path` defaults to WM_BACKCATALOGUE_CANDIDATES_FILE; absent is not an error — this file is
+    optional input (no enumerate run has happened yet).
+
+    Returns {'merged': int, 'already_known': int, 'no_tmdb_id': int}, and prints the same three
+    figures as `backcat_merged=<n> already_known=<n> no_tmdb_id=<n>`."""
+    path = path or WM_BACKCATALOGUE_CANDIDATES_FILE
+    stats = {"merged": 0, "already_known": 0, "no_tmdb_id": 0}
+    if not os.path.exists(path):
+        print("[info] CAS-991: state/wm_backcatalogue_candidates.json absent — nothing to merge "
+              "this run (optional input, no enumerate run has happened yet).")
+        return stats
+
+    rows = json.load(open(path, encoding="utf-8"))
+    for row in rows:
+        tmdb_id = row.get("tmdb_id")
+        if tmdb_id is None:
+            stats["no_tmdb_id"] += 1
+            continue
+        key = str(tmdb_id)
+        if key in candidates:
+            stats["already_known"] += 1
+            continue
+        candidates[key] = {
+            "tmdb_id": tmdb_id,
+            "title": row.get("title"),
+            "year": row.get("year"),
+            "popularity_percentile": row.get("popularity_percentile"),
+            "first_seen": today_iso,
+            "last_probed": None,
+            "probe_count": 0,
+            "outcome": "unprobed",
+        }
+        stats["merged"] += 1
+
+    print(f"backcat_merged={stats['merged']} already_known={stats['already_known']} "
+          f"no_tmdb_id={stats['no_tmdb_id']}")
+    return stats
 
 
 def merge_candidates(candidates: dict, pool: list, today_iso: str) -> int:
@@ -926,6 +982,7 @@ def apply_two_tier_publication(candidates: dict, today: datetime.date, discovery
     today_iso = today.isoformat()
     merge_candidates(candidates, discovery_pool, today_iso)
     refresh_enriched_candidates(candidates, enriched_records, today_iso)
+    merge_backcatalogue_candidates(candidates, today_iso)
 
     probe_outcomes = run_scoreability_probe(candidates, today, probe_budget, previously_published_ids)
 
