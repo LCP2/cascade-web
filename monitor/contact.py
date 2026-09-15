@@ -31,14 +31,28 @@ from .store import InMemoryStore, store_from_env
 
 CONTACT_TO_ENV = "CASCADE_CONTACT_TO"
 
-_CATEGORY_LABEL = {"bug": "Bug", "suggestion": "Suggestion", "account": "Account", "other": "Other"}
-_SUBJECT_SINGLE = {"bug": "bug report", "suggestion": "suggestion", "account": "account question"}
+_CATEGORY_LABEL = {
+    "bug": "Bug", "suggestion": "Suggestion", "account": "Account", "other": "Other",
+    # CAS-978: the Feedback sheet's own taxonomy (Account row + Help footer), distinct from #contact's
+    # above but writing into this same table.
+    "broken": "Something's broken", "idea": "An idea", "film": "Film wrong or missing",
+    "billing": "Membership and billing",
+}
+_SUBJECT_SINGLE = {
+    "bug": "bug report", "suggestion": "suggestion", "account": "account question",
+    "broken": "bug report", "idea": "suggestion", "film": "film report", "billing": "billing question",
+}
 # CAS-892: colour-coded pill per category (bug warm amber, suggestion violet, account blue, other grey).
+# CAS-978's new categories reuse the closest existing colour rather than inventing a 5th and 6th pill.
 _CATEGORY_STYLE = {
     "bug": {"bg": "#FDF1E2", "fg": "#B15C00", "border": "#F0C085"},
     "suggestion": {"bg": "#F1EDFF", "fg": "#6B48F2", "border": "#C9BBFA"},
     "account": {"bg": "#E8F0FF", "fg": "#2A5FD9", "border": "#AFC7F5"},
     "other": {"bg": "#F1F2F5", "fg": "#5B6472", "border": "#D7DAE0"},
+    "broken": {"bg": "#FDF1E2", "fg": "#B15C00", "border": "#F0C085"},
+    "idea": {"bg": "#F1EDFF", "fg": "#6B48F2", "border": "#C9BBFA"},
+    "film": {"bg": "#FDF1E2", "fg": "#B15C00", "border": "#F0C085"},
+    "billing": {"bg": "#E8F0FF", "fg": "#2A5FD9", "border": "#AFC7F5"},
 }
 
 _WINDOWS_VERSIONS = {"10.0": "Windows 10", "6.3": "Windows 8.1", "6.2": "Windows 8", "6.1": "Windows 7"}
