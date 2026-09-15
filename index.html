@@ -4135,6 +4135,65 @@
 // capped array, cheap enough to leave running in every build, since it only pays off if it's always on.
 const DIAG_LOG_MAX = 50;
 let diagLog = [];
+// CAS-985: caps client_error/client_rejection/sync_failed/auth_failed at 10 usage_events rows EACH per
+// session, so a boot loop can't flood the table. Declared here, ahead of window.onerror below, so the
+// counter always exists by the time any of this script's later code could possibly throw.
+const CLIENT_HEALTH_EVENT_CAP = 10;
+let clientHealthEventCounts = {};
+// logEvent (below, ~line 5557) isn't defined yet this early — it's a hoisted function declaration, so the
+// reference itself is safe, but the `let`s it reads (usageLog/usageQueue, also further down) are not: a
+// throw during this script's own top-level execution, before those initialise, would hit their temporal
+// dead zone. diagRecord (above) is the guaranteed destination either way, so a failed usage_events row here
+// is swallowed rather than surfaced as a second error.
+function logClientHealthEvent(type, data){
+  const n = clientHealthEventCounts[type] || 0;
+  if(n >= CLIENT_HEALTH_EVENT_CAP) return;
+  clientHealthEventCounts[type] = n + 1;
+  try{ if(typeof logEvent === "function") logEvent(type, data); }catch(e){}
+}
+// CAS-985: "the current screen" for a client_error/client_rejection row — whichever [role="dialog"] the
+// app itself has marked .open (the same class openModal/closeModal and every uscreen use), innermost last,
+// or "listing" when nothing is open. Truthful rather than exhaustive: it reads real DOM state, not a
+// hand-kept list of screen names that would drift the moment a new screen is added.
+function diagCurrentScreen(){
+  const open = document.querySelectorAll('[role="dialog"].open');
+  return open.length ? (open[open.length-1].id || "dialog") : "listing";
+}
+// CAS-985: scrubs an email-shaped substring out of free text before it ever reaches usage_events — the
+// one thing a thrown error's own message could accidentally carry. EMAIL_RE elsewhere (~line 16843)
+// anchors ^...$ to validate a whole field is an email; this one is unanchored, to find one inside a
+// longer string.
+const PII_EMAIL_RE = /[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+/g;
+function redactPII(str){ return String(str||"").replace(PII_EMAIL_RE, "[redacted]"); }
+// CAS-985 AC4: kept as tiny pure functions, not inlined in the handlers below, so the "never a credential"
+// guarantee is something a test can assert directly against the exact shape that reaches usage_events.
+// Neither ever spreads the source error/event object — only these named fields ever leave the client.
+function clientErrorPayload(message, source, lineno, colno){
+  return { message:redactPII(message), source:source||null, line:lineno!=null?lineno:null, col:colno!=null?colno:null,
+           screen:diagCurrentScreen(), commit:(window.BUILD_INFO||{}).commit||"unknown" };
+}
+function clientRejectionPayload(reason){
+  const message = redactPII((reason && reason.message) || reason);
+  return { message, source:null, line:null, col:null,
+           screen:diagCurrentScreen(), commit:(window.BUILD_INFO||{}).commit||"unknown" };
+}
+// CAS-985 Part 1: the five tables the ticket names sync_failed for — "agents" is this ticket's own name
+// for the `cascades` table (ACCT_TABLE_SURFACE, further down, already makes the same substitution for the
+// account banner's user-facing copy). Never the payload, only the table name and the Supabase error code.
+const SYNC_FAILED_TABLE_LABEL = { cascades:"agents", agent_films:"agent_films",
+                                   user_films:"user_films", film_watch:"film_watch", notifications:"notifications" };
+function logSyncFailed(table, err){
+  const label = SYNC_FAILED_TABLE_LABEL[table];
+  if(!label) return;   // a sync target outside this ticket's five (user_prefs, notify_prefs, film_picks)
+  logClientHealthEvent("sync_failed", { table:label, code:(err && err.code) || null });
+}
+// CAS-985 AC4: the auth module (a separate <script type="module">, further down) calls this bare — a
+// classic script's top-level function declarations, like logEvent elsewhere in this file, are already
+// reachable that way. Reads ONLY .code off whatever Supabase hands back, so nothing else on the error
+// object — a message that could echo the attempted email, for one — ever has a path into usage_events.
+function authFailedPayload(err){
+  return { code: (err && err.code) || null };
+}
 function diagRecord(kind, parts){
   const msg = parts.map(p=>{
     if(typeof p === "string") return p;
@@ -4149,11 +4208,18 @@ function diagRecord(kind, parts){
 });
 window.onerror = function(message, source, lineno, colno){
   diagRecord("onerror", [message + " (" + (source||"?") + ":" + (lineno||"?") + ":" + (colno||"?") + ")"]);
+  // CAS-985 Part 1: an added destination, not a replacement — diagRecord above still runs unconditionally.
+  logClientHealthEvent("client_error", clientErrorPayload(message, source, lineno, colno));
   return false;   // don't suppress the browser's own error reporting, only tee it
 };
-window.addEventListener("unhandledrejection", e=>{
-  diagRecord("unhandledrejection", [String((e.reason && e.reason.message) || e.reason)]);
-});
+// CAS-985: a named function, not an inline arrow, so a test can call it directly — tests/js/engine.mjs's
+// stub addEventListener discards whatever handler it's given, so dispatching a real event never reaches it.
+function handleUnhandledRejection(e){
+  const reason = e && e.reason;
+  diagRecord("unhandledrejection", [String((reason && reason.message) || reason)]);
+  logClientHealthEvent("client_rejection", clientRejectionPayload(reason));
+}
+window.addEventListener("unhandledrejection", handleUnhandledRejection);
 
 // CAS-488: baked in at build time, but no longer immutable — a live tab swaps the catalogue in underneath
 // itself (see pollCatalogue below), so it must stay reassignable.
@@ -18753,6 +18819,7 @@ else if(dedupedN)
       if(attempt<2) await acctReadWait(ACCT_READ_DELAYS[attempt]);
     }
     setAcctTableFail(table, true);
+    logSyncFailed(table, result.error);   // CAS-985: all 3 retries exhausted — a genuine read failure
     return result;
   }
   // CAS-691: the OTHER direction a save can fail to reach the account — not "we don't trust what we last
@@ -18831,6 +18898,9 @@ else if(dedupedN)
       syncTargetDegraded[target] = degradedNow;
       renderAcctBanner();   // AC7: clears the moment a later attempt succeeds — no reload needed
     }
+    // CAS-985: this choke point already covers every WRITE (upsert/delete) to cascades/user_films/
+    // film_watch/agent_films — logSyncFailed itself filters to just those four of its seven targets.
+    if(!ok) logSyncFailed(target, err);
   }
   function anySyncTargetDegraded(){ return Object.keys(syncTargetDegraded).some(t=>syncTargetDegraded[t]); }
   // The diagnostics panel's own read of the above (AC1-AC4) — built here, next to the data, in a fixed
@@ -19458,7 +19528,7 @@ else if(dedupedN)
   async function loadAccountFilms(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("user_films").select("movie_id,status");   // RLS: only mine
-    if(error){ console.warn("user_films load", error); return; }
+    if(error){ console.warn("user_films load", error); logSyncFailed("user_films", error); return; }
     const remote=data||[];
     filmBaseline=new Set(remote.map(r=>String(r.movie_id)));
     applyFilmRows(remote);
@@ -19469,7 +19539,7 @@ else if(dedupedN)
   async function reconcileFilms(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("user_films").select("movie_id,status");
-    if(error){ console.warn("user_films reconcile", error); return; }
+    if(error){ console.warn("user_films reconcile", error); logSyncFailed("user_films", error); return; }
     const remote=data||[];
     const remoteIds=new Set(remote.map(r=>String(r.movie_id)));
     const localOnly=filmRows().filter(r=>!remoteIds.has(String(r.movie_id)));
@@ -19738,7 +19808,7 @@ else if(dedupedN)
     const c=client(); if(!c||!accountActive()) return;
     clearAccountNotify();
     const { data, error } = await c.from("film_watch").select("movie_id,windows,sources,updated_at");
-    if(error){ console.warn("film_watch load", error); return; }
+    if(error){ console.warn("film_watch load", error); logSyncFailed("film_watch", error); return; }
     const remote=data||[];
     applyWatchRows(remote);
     watchBaseline=new Set(remote.map(r=>String(r.movie_id)));
@@ -19749,7 +19819,7 @@ else if(dedupedN)
   async function reconcileFilmWatches(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("film_watch").select("movie_id,windows,sources,updated_at");
-    if(error){ console.warn("film_watch reconcile", error); return; }
+    if(error){ console.warn("film_watch reconcile", error); logSyncFailed("film_watch", error); return; }
     const remote=data||[];
     const remoteIds=new Set(remote.map(r=>String(r.movie_id)));
     const localOnly=watchRows().filter(r=>!remoteIds.has(String(r.movie_id)));
@@ -19846,7 +19916,7 @@ else if(dedupedN)
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("agent_films")
       .select("cascade_id,movie_id,admitted_at,admission_score,admission_status,agent_sig");
-    if(error){ console.warn("agent_films load", error); return; }
+    if(error){ console.warn("agent_films load", error); logSyncFailed("agent_films", error); return; }
     const remote=data||[];
     applyAgentFilmRows(remote);
     agentFilmsBaseline=new Set(remote.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));
@@ -19862,7 +19932,7 @@ else if(dedupedN)
     const { data, error } = await c.from("notifications")
       .select("id,movie_id,moment,title,cascade_name,emailed_at,read_at")
       .order("emailed_at", { ascending:false }).limit(200);
-    if(error){ console.warn("notifications load", error); movingReady=true; return; }
+    if(error){ console.warn("notifications load", error); logSyncFailed("notifications", error); movingReady=true; return; }
     realAlerts = data || [];
     movingReady=true;
     updateMovingBadge();
@@ -20010,7 +20080,7 @@ else if(dedupedN)
     if(!c||!owner) return;
     const { error } = await c.from("notifications").update({read_at:now})
       .eq("user_id", owner).is("read_at", null);
-    if(error) console.warn("notifications mark-read", error);
+    if(error){ console.warn("notifications mark-read", error); logSyncFailed("notifications", error); }
   };
   // CAS-466: tap-to-open + foreground handling. Native only, registered once at boot (not inside
   // registerPush(), which only runs when the user exercises the in-app toggle) — a tap can launch
@@ -20469,10 +20539,16 @@ else if(dedupedN)
         if(/already registered/i.test(signUp.error.message || '')){
           const otp = await supa.auth.signInWithOtp({ email });
           if(!otp.error) return { ok: true, otpSent: true };
+          logClientHealthEvent("auth_failed", authFailedPayload(otp.error));
           return { ok: false, error: otp.error.message };
         }
+        // CAS-985: sign-in AND sign-up both failed.
+        logClientHealthEvent("auth_failed", authFailedPayload(signUp.error));
         return { ok: false, error: signUp.error.message };
-      } catch(err){ return { ok: false, error: (err && err.message) || String(err) }; }
+      } catch(err){
+        logClientHealthEvent("auth_failed", authFailedPayload(err));
+        return { ok: false, error: (err && err.message) || String(err) };
+      }
       finally {
         const _t460signInEnd = performance.now();
         console.log('[CAS-460] sign-in end', _t460signInEnd, 'elapsed_ms', (_t460signInEnd-_t460signIn).toFixed(1));
@@ -20488,7 +20564,11 @@ else if(dedupedN)
       const { data: { session } } = await supa.auth.getSession();
       api.session = session || null;
       session ? setSignedIn(session.user) : setSignedOut();
-    } catch(err){ console.warn(err); setSignedOut(); }
+    } catch(err){
+      // CAS-985: getSession() is also where a stored refresh token gets exchanged on cold launch — the
+      // "token refresh" leg of auth_failed, alongside sign-in/sign-up above.
+      console.warn(err); logClientHealthEvent("auth_failed", authFailedPayload(err)); setSignedOut();
+    }
     finally {
       const _t460sessionEnd = performance.now();
       console.log('[CAS-460] session restore end', _t460sessionEnd, 'elapsed_ms', (_t460sessionEnd-_t460session).toFixed(1));

@@ -438,6 +438,19 @@ if(typeof window.CascadeAuth === "undefined"){
   reviewPromptEligible, REVIEW_PROMPT_MIN_SESSIONS,
   bumpReviewPromptSessionCount, reviewPromptSessionCount,
   reviewPromptAskedVersion, markReviewPromptAsked, maybeRequestReview,
+  // CAS-985: the client-side half of error/failure routing into usage_events. window.onerror is a real
+  // property assignment (unlike addEventListener, which the stub below discards), so it's callable
+  // directly; handleUnhandledRejection is a plain top-level function for the same reason. logSyncFailed/
+  // clientErrorPayload/clientRejectionPayload/authFailedPayload are the pure shaping functions AC4 needs
+  // to assert directly; usageQueue is exposed live (get, like watchPrefs elsewhere) so a test can read
+  // back what actually reached the queue without waiting on a real Supabase flush.
+  onerror: (...args) => window.onerror(...args),
+  handleUnhandledRejection, logClientHealthEvent, logSyncFailed,
+  clientErrorPayload, clientRejectionPayload, authFailedPayload, diagCurrentScreen, redactPII,
+  resetClientHealthEventCounts(){ clientHealthEventCounts = {}; },
+  get usageQueue(){ return usageQueue; },
+  clearUsageQueue(){ usageQueue = []; },
+  get diagLog(){ return diagLog; },
 };
 `;
 
