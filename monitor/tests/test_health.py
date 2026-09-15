@@ -1,10 +1,11 @@
-"""Unit tests for the nightly health assertions (CAS-974).
+"""Unit tests for the nightly health assertions (CAS-974, CAS-988).
 
 One passing and one failing fixture per check, plus a dedicated test for the deliberately
 shrunken movies.json fixture (AC3) and the offline --dry-run CLI path (AC1).
 
 Run:  python -m unittest monitor.tests.test_health
 """
+import datetime
 import json
 import os
 import unittest
@@ -87,18 +88,59 @@ class OscarbaseFetch(unittest.TestCase):
 class WatchmodeFetch(unittest.TestCase):
     def test_pass_calls_no_errors_credits_ok(self):
         c = health.check_watchmode_fetch(
-            {"calls": 40, "errors": 0, "remaining_monthly_credits": 30000})
+            {"calls": 40, "errors": 0, "remaining_monthly_credits": 30000}, quota=40000)
         self.assertTrue(c["ok"])
 
     def test_fail_low_remaining_credits(self):
+        # quota 10000 -> floor 1500 (15%); 100 remaining is below it.
         c = health.check_watchmode_fetch(
-            {"calls": 40, "errors": 0, "remaining_monthly_credits": 100})
+            {"calls": 40, "errors": 0, "remaining_monthly_credits": 100}, quota=10000)
         self.assertFalse(c["ok"])
 
     def test_fail_has_errors(self):
         c = health.check_watchmode_fetch(
-            {"calls": 40, "errors": 2, "remaining_monthly_credits": 30000})
+            {"calls": 40, "errors": 2, "remaining_monthly_credits": 30000}, quota=40000)
         self.assertFalse(c["ok"])
+
+    def test_floor_reads_from_the_passed_in_quota_not_a_hardcoded_plan_size(self):
+        # AC5: quota 40000 -> floor 6000. 6500 remaining clears it, 5500 doesn't.
+        clears = health.check_watchmode_fetch(
+            {"calls": 40, "errors": 0, "remaining_monthly_credits": 6500}, quota=40000)
+        below = health.check_watchmode_fetch(
+            {"calls": 40, "errors": 0, "remaining_monthly_credits": 5500}, quota=40000)
+        self.assertEqual(clears["threshold"], 6000)
+        self.assertTrue(clears["ok"])
+        self.assertFalse(below["ok"])
+
+
+class WatchmodePace(unittest.TestCase):
+    """AC1/AC2/AC3 — extrapolate the cycle's recent daily burn to the reset date."""
+
+    def _cycle(self, days, quota=10000, cycle_end="2026-10-12"):
+        return {"cycle_start": "2026-09-12", "cycle_end": cycle_end, "quota": quota,
+               "spent": sum(days.values()), "updated_at": "2026-09-15", "days": days}
+
+    def test_fail_pace_exceeds_quota_before_reset(self):
+        # 1380 spent over 3 days (460/day average), 27 days to reset -> projects to 13800 > 10000.
+        cycle = self._cycle({"2026-09-12": 460, "2026-09-13": 460, "2026-09-14": 460})
+        c = health.check_watchmode_pace(cycle, datetime.date(2026, 9, 15))
+        self.assertFalse(c["ok"])
+        self.assertIn("2026-10-03", c["detail"])   # the projected exhaustion date
+
+    def test_pass_pace_stays_under_quota(self):
+        # 750 spent over 3 days (250/day average), 27 days to reset -> projects to 7500 < 10000.
+        cycle = self._cycle({"2026-09-12": 250, "2026-09-13": 250, "2026-09-14": 250})
+        c = health.check_watchmode_pace(cycle, datetime.date(2026, 9, 15))
+        self.assertTrue(c["ok"])
+
+    def test_unknown_with_fewer_than_three_days_of_cycle_data(self):
+        cycle = self._cycle({"2026-09-13": 460, "2026-09-14": 460})
+        c = health.check_watchmode_pace(cycle, datetime.date(2026, 9, 15))
+        self.assertIsNone(c["ok"])
+
+    def test_unknown_when_no_cycle_available(self):
+        c = health.check_watchmode_pace(None, datetime.date(2026, 9, 15))
+        self.assertIsNone(c["ok"])
 
 
 class ScoreCoverage(unittest.TestCase):
