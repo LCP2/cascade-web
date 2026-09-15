@@ -2942,7 +2942,8 @@
   .ucard{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
 
   .urow{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:transparent;
-    border:0;border-bottom:1px solid var(--line);padding:13px 14px;cursor:pointer;color:var(--ink)}
+    border:0;border-bottom:1px solid var(--line);padding:13px 14px;cursor:pointer;color:var(--ink);
+    text-decoration:none}
   .urow:last-child{border-bottom:0}
   .urow:hover{background:var(--panel2)}
   .urow:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
@@ -16686,6 +16687,15 @@ const acctRow = (icon, label, sub, action, chev=true) => {
     ${action&&chev?`<span class="uchev">›</span>`:""}</${tag}>`;
 };
 const acctSoon = (icon,label) => acctRow(icon, label, `<i>Not built yet — it'll say so until it is.</i>`, null);
+// CAS-979: "Manage or cancel" needs to be a real <a href> on web (so it's an actual link, not a JS
+// handler pretending to be one) while iOS needs the itms-apps:// scheme, which only a click handler
+// can hand to the OS. Same row language as acctRow, just a different tag.
+const acctLink = (icon, label, sub, href) => `<a class="urow" href="${href}" target="_blank" rel="noopener">
+    <span class="uic">${icon}</span>
+    <span class="utxt"><span class="ut">${esc(label)}</span>${sub?`<span class="ussub">${sub}</span>`:""}</span>
+    <span class="uchev">›</span></a>`;
+const MANAGE_SUB_URL = "https://apps.apple.com/account/subscriptions";
+window.openManageSubscription = () => { location.href = "itms-apps://apps.apple.com/account/subscriptions"; };
 function accountWho(){
   const a=window.CascadeAuth;
   if(a && a.status==="signed-in" && a.user) return {in:true, email:a.user.email||"your account"};
@@ -16711,8 +16721,9 @@ function renderAccount(){
       ${who.in ? acctRow("👤","Signed in", esc(who.email), "openAccountAuth()")
                : acctRow("👤","Not signed in", "Sign in to sync across devices", "openAccountAuth()")}
       ${acctRow("💳","Plan", "Free for your first month · then $4.99/month · cancel any time", null, false)}
-      ${acctSoon("🧾","Restore purchases")}
-      ${acctSoon("⚙️","Manage / cancel subscription")}
+      ${(typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform())
+          ? acctRow("⚙️","Manage or cancel", "A subscription bought in the app is cancelled in the App Store.", "openManageSubscription()")
+          : acctLink("⚙️","Manage or cancel", "A subscription bought in the app is cancelled in the App Store.", MANAGE_SUB_URL)}
       ${acctSoon("🗑️","Delete account")}
     </div>
     <p class="unone" style="margin:10px 2px 0">Prototype — no card is held and nothing is ever charged.</p>
