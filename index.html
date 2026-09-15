@@ -1555,6 +1555,7 @@
     margin:0 0 8px;font-family:inherit}
   .dangerbtn{background:var(--panel2);border:1px solid #5c3540;color:#ffb9a6;border-radius:11px;
     padding:13px 14px;font-size:14px;font-weight:700;cursor:pointer}
+  .dangerbtn:disabled{opacity:.45;cursor:not-allowed}
   /* CAS-317: neutral secondary action beside an .applybtn (e.g. "Log in" next to "Create account") —
      .dangerbtn's red tint would misread as a destructive action here. */
   .secbtn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:11px;
@@ -3805,6 +3806,14 @@
 <div class="modal" id="feedback">
   <div class="modalhead"><h3>Feedback</h3><button class="donebtn" id="feedbackClose">Cancel</button></div>
   <div id="feedbackBody"></div>
+</div>
+
+<!-- DELETE ACCOUNT (CAS-980) — Account's dead "Delete account" row. Typed confirmation, not a tap, because
+     it is irreversible. Body rebuilt fresh by renderDeleteAcctForm() every open, same convention as
+     #contact/#feedback. -->
+<div class="modal" id="deleteAcct">
+  <div class="modalhead"><h3>Delete account</h3><button class="donebtn" id="deleteAcctClose">Cancel</button></div>
+  <div id="deleteAcctBody"></div>
 </div>
 
 <!-- INVITE TO A FILM (CAS-883) — replaces the old Share pill: an invite is now a real record
@@ -16724,7 +16733,7 @@ function renderAccount(){
       ${(typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform())
           ? acctRow("⚙️","Manage or cancel", "A subscription bought in the app is cancelled in the App Store.", "openManageSubscription()")
           : acctLink("⚙️","Manage or cancel", "A subscription bought in the app is cancelled in the App Store.", MANAGE_SUB_URL)}
-      ${acctSoon("🗑️","Delete account")}
+      ${who.in ? acctRow("🗑️","Delete account", "This can't be undone.", "openDeleteAccount()") : acctSoon("🗑️","Delete account")}
     </div>
     <p class="unone" style="margin:10px 2px 0">Prototype — no card is held and nothing is ever charged.</p>
 
@@ -16743,6 +16752,67 @@ window.openAccount=()=>{
   logEvent("account_opened",{signedIn:accountWho().in});
 };
 window.closeAccount=()=>{ $("accountScreen").classList.remove("open"); lockBodyScroll(false); syncWatchChip(); };
+// ---- CAS-980: Delete account, for real -----------------------------------------------------------
+// Typed confirmation, not a tap — deleteAcctGate() only unlocks the button once the field reads
+// exactly DELETE_CONFIRM_WORD. Rebuilt fresh every open (same convention as #contact/#feedback) so a
+// mistyped word from a cancelled prior visit never survives into the next one.
+const DELETE_CONFIRM_WORD="DELETE";
+function renderDeleteAcctForm(){
+  const subLink=(typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform())
+    ? `<a href="#" onclick="openManageSubscription();return false;">manage or cancel it yourself</a>`
+    : `<a href="${MANAGE_SUB_URL}" target="_blank" rel="noopener">manage or cancel it yourself</a>`;
+  $("deleteAcctBody").innerHTML=`
+    <p class="pnote">This deletes your agents, everything they've found for you, what you've marked watched,
+      your invites and friends, your notification history, and your sign-in itself. It can't be undone.</p>
+    <p class="pnote">Deleting your account does not cancel an active App Store subscription — you'll need to
+      ${subLink}.</p>
+    <div class="flabel">Type ${DELETE_CONFIRM_WORD} to confirm</div>
+    <input id="deleteAcctWord" class="namein" type="text" autocomplete="off" autocapitalize="characters"
+      autocorrect="off" spellcheck="false" placeholder="${DELETE_CONFIRM_WORD}" oninput="deleteAcctGate()">
+    <div class="pnote" id="deleteAcctErr" style="color:#ffb9a6" hidden></div>
+    <div class="cascfoot"><button class="dangerbtn" id="deleteAcctGo" disabled onclick="confirmDeleteAccount()">Delete my account</button></div>`;
+  deleteAcctGate();
+}
+window.deleteAcctGate=()=>{
+  const el=$("deleteAcctWord"), b=$("deleteAcctGo");
+  if(!el || !b) return;
+  const ok=el.value===DELETE_CONFIRM_WORD;
+  b.disabled=!ok;
+  b.classList.toggle("blocked", !ok);
+  b.title=ok?"":`Type ${DELETE_CONFIRM_WORD} to confirm`;
+};
+window.openDeleteAccount=()=>{
+  renderDeleteAcctForm();
+  openModal($("deleteAcct"));
+  logEvent("delete_account_opened");
+};
+$("deleteAcctClose").onclick=()=>closeModal($("deleteAcct"));
+window.confirmDeleteAccount=async()=>{
+  const el=$("deleteAcctWord");
+  if(!el || el.value!==DELETE_CONFIRM_WORD) return;
+  const a=window.CascadeAuth, c=(a && a.enabled && a.client) ? a.client : null;
+  const btn=$("deleteAcctGo"), errEl=$("deleteAcctErr");
+  errEl.hidden=true;
+  btn.disabled=true;
+  try{
+    if(!c) throw new Error("Cascade: no Supabase client");
+    const {error}=await c.rpc("delete_my_account");
+    if(error) throw error;
+  }catch(e){
+    // AC: a failure leaves the account intact and says so — nothing below this line runs.
+    deleteAcctGate();
+    errEl.textContent="Couldn't delete your account — try again in a moment.";
+    errEl.hidden=false;
+    return;
+  }
+  logEvent("account_deleted");
+  closeModal($("deleteAcct"));
+  closeAccount();
+  // setSignedOut()'s own auth listener does the CAS-957 local-state clear and lands on the splash —
+  // best-effort here: the account is already gone server-side even if this client-side call throws.
+  try{ await c.auth.signOut(); }catch(e){}
+  toast("Your account has been deleted.");
+};
 // A defaults row opens the very screen the flow uses for that setting, rather than a second copy of it.
 // The step frame sits above this one, so Account steps aside and comes back when the step closes.
 let acctResume=false;
