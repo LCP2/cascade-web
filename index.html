@@ -3460,6 +3460,7 @@
             <!-- CAS-943: hidden by default — updateMetricsNavItem() only shows this once analytics_admins
                  has actually returned a row for the signed-in user. A signed-out visitor never sees it. -->
             <button class="navitem" type="button" role="menuitem" id="metricsNavItem" style="display:none" onclick="navMenuGo('metrics')">Metrics</button>
+            <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('help')">Help</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('about')">About</button>
           </div>
         </div>
@@ -4035,6 +4036,14 @@
      modal. Body rendered by renderAbout(). -->
 <div class="uscreen" id="aboutScreen" role="dialog" aria-modal="true" aria-label="About">
   <div class="uwrap" id="aboutBody"></div>
+</div>
+
+<!-- HELP (CAS-977) — an in-app reference, ten static articles, deep-linkable via ?help=<slug>. Replaces the
+     dead "Help wiki" row in Account. Body rendered by renderHelpScreen(); one screen holds both the index
+     and the article view (helpView) inside one uscreen instead of two, so a back tap from an article can
+     return to the index without closing the screen. -->
+<div class="uscreen" id="helpScreen" role="dialog" aria-modal="true" aria-label="Help">
+  <div class="uwrap" id="helpBody"></div>
 </div>
 
 <!-- METRICS (CAS-943) — admin-gated funnel/behaviour dashboard, read straight off the analytics_* views
@@ -5558,6 +5567,13 @@ $("logCopy").onclick=()=>{
 };
 // Two ways in, both deliberately un-findable by a test participant: ?log=1, or five taps on the date line.
 if(new URLSearchParams(location.search).has("log")) setTimeout(openLog, 300);
+// CAS-977: ?help=<slug> deep-links straight to a Help article, on web and in the app — not stripped from
+// the URL (same reasoning as ?log above: it names no state mutation, so a reload should reopen the same
+// place rather than only work once). openHelp() itself falls back to the index for an unknown slug.
+{
+  const helpSlug = new URLSearchParams(location.search).get("help");
+  if(helpSlug) setTimeout(()=>openHelp(helpSlug), 300);
+}
 let updTaps=0, updTapT=null;
 $("updated").onclick=()=>{
   clearTimeout(updTapT); updTapT=setTimeout(()=>{ updTaps=0; }, 1200);
@@ -11529,6 +11545,119 @@ window.openAbout=()=>{
   logEvent("about_opened",{});
 };
 window.closeAbout=()=>{ $("aboutScreen").classList.remove("open"); lockBodyScroll(false); syncWatchChip(); };
+
+// ================= Help (CAS-977) =================
+// Not an external wiki, not a hosted site — a static array shipped with the build, so it works offline and
+// in the iOS app with no second source of truth to keep in sync. Each body is written from the behaviour in
+// the code above, not from memory, and must stay true of the build it ships in.
+const HELP_ARTICLES = [
+  {slug:"what-is-an-agent", title:"What is an agent?",
+   summary:"An agent is a standing search that keeps watching — not a watchlist you fill in.",
+   body:"An agent isn't a list you build up film by film. It's a standing search: you tell it what you're after — genres, how far back, an age rating, a minimum score — and it keeps watching the whole catalogue for anything that matches, for as long as it exists.\n\nA film doesn't need you to add it. The moment it qualifies — because it's just been released, its score just cleared your bar, or it just reached a window you're tracking — your agent finds it on its own. Edit an agent's settings and the same thing happens immediately: everything already found is re-checked against the new answer, so an agent's list is never something you have to maintain by hand."},
+  {slug:"the-score", title:"The score",
+   summary:"People and Critics, where each comes from, and that it is one figure on one scale.",
+   body:"Every film in Cascade carries one Cascade score, from 0 to 100 — not two separate numbers you have to weigh against each other.\n\nOnce a film is released, that score is built from two things: what people who watched it thought (People), and what critics thought (Critics). When both exist, the score blends them; when only one does, the score is that one alone.\n\nBefore a film is released there's nothing to review yet, so its score is built from how much it's being talked about instead — a placeholder that gets replaced the moment real reviews start arriving. Either way it lands on the same 0-100 scale, so a marker you set once means the same thing whether the film is still upcoming or already out."},
+  {slug:"setting-the-bar", title:"Setting the bar",
+   summary:"Markers per window, what standing in a window means, and that moving a marker re-places films immediately.",
+   body:"Each window an agent tracks — Cinema, Premium, Rent, Stream — can carry its own marker: the minimum score a film needs to be listed once it reaches that window. A film only has to clear the marker for the window it's currently standing in, not every window it might pass through later.\n\nYou can set a window's marker to Off, which lists everything that reaches it regardless of score, or turn a window off entirely so it's never tracked at all.\n\nDrag a marker and Cascade re-checks every film your agent has already found against the new bar straight away — no refresh needed. A film that no longer clears it drops from the agent's list; one that now does appears. (A film you've set Watch On for yourself by hand is protected from this — see “Watch On and overrides”.)"},
+  {slug:"the-cascade", title:"The cascade",
+   summary:"Cinema to rent to stream, the start window, and why a later window reads “follows Rent”.",
+   body:"A film moves through the same four windows in order: Cinema, Premium, Rent, then Stream. That order is the whole idea behind the name — a film cascades down through them over time, and Cascade watches for it at whichever window you've chosen to track.\n\nThe earliest window you've armed with a marker is your agent's start window — the one that carries its entry bar. A later window you're also tracking, but haven't given its own marker, doesn't need one: it simply follows the start window's decision, which is what a later window's chip means when it reads “follows Rent” instead of showing a score of its own. Once a film's been judged in, it doesn't need to clear a fresh bar just because it's moved further down the cascade."},
+  {slug:"watch-on-and-overrides", title:"Watch On and overrides",
+   summary:"What Watch On is, what a hand-made override protects, and what an agent edit can and cannot undo.",
+   body:"Watch On is the one answer, per film, for where you're actually going to watch it — Cinema, Premium, Rent or Stream. Cascade sets it for you automatically the moment a film is admitted, based on the window it just qualified in and the windows your agent tracks.\n\nIf you change Watch On yourself, that choice is a hand-made override: it's yours, not the agent's, and it's protected. Editing the agent afterwards — moving a marker, changing what it's tracking — can update everything the agent decided for itself, but it can never quietly undo a Watch On value you set by hand. Even if the film later leaves the agent altogether, your own choice for it stays."},
+  {slug:"occasions", title:"Occasions",
+   summary:"What they are and how they group agents.",
+   body:"An occasion is a label you can put on any agent — Me, Family, Cinema night, or anything else that makes sense for how you actually use Cascade. It doesn't change what an agent finds; it's purely a way of grouping agents that belong together so you can tell them apart at a glance.\n\nAn agent can carry as many occasions as you like, or none. Occasions live in their own register, so one you've created stays available to tag onto a new agent even before anything currently carries it, and renaming or removing one there updates every agent tagged with it."},
+  {slug:"your-services", title:"Your services",
+   summary:"Why membership ignores your services but no screen does.",
+   body:"Your services — the ones you've told Cascade you actually pay for — shape almost everything you see: what an agent lists when it's scoped to them, what a film's own “where to watch” line says, and what the notify and listing screens show you. They're the lens nearly every screen in the app looks through.\n\nMembership is the one thing that doesn't look through it. What you pay for Cascade itself is flat, whether you've told it about one service or ten — your services describe what you can watch, never what Cascade charges you to help you find it."},
+  {slug:"moving", title:"Moving",
+   summary:"New versus Changed, and the two-week window.",
+   body:"Moving is where Cascade tells you what's happened lately, split into two kinds of row. New is a film's first appearance for a given agent — something it's never found before. Changed is everything else: a film the agent already had, that's now moved to a different window. A film is never counted as both at once.\n\nYou choose how far back to look — Today, Week, 2 weeks or Month — and Moving shows only what falls inside that window, measured back from right now. Every row names the agent that actually owns the film today, so nothing is shown under an agent that no longer has it."},
+  {slug:"notifications", title:"Notifications",
+   summary:"Exactly what will reach you, by which channel, and when the daily report runs.",
+   body:"Cascade can tell you about a film in two ways: in-app, as a row waiting on the bell next time you open it, and by email, folded into one daily digest sent to the address on your account. Which of those exist for you at all is your account's own decision — an individual agent can only switch an available channel off for itself, never turn on one your account hasn't enabled.\n\nThe daily digest goes out once a day, gathering whatever every agent's channels found since the last one, rather than emailing you separately every time something is found."},
+  {slug:"your-account-and-data", title:"Your account and data",
+   summary:"What is stored, where, and how to delete it.",
+   body:"Signed out, everything Cascade knows about you — your agents, what you've watched, your preferences — is stored only on this device, in this browser or app install. Nothing about it reaches anywhere else.\n\nSigned in, that same information is mirrored to your account so it's there again on another device you sign into. Signing out doesn't erase it — it's still on your account, waiting for you to sign back in.\n\nDeleting your account outright isn't built into this screen yet — the Account screen says so plainly rather than pretending the button works. Until it is, use Contact us (on the About screen) to ask, and it'll be done by hand."},
+];
+let helpView={mode:"index"}, helpQuery="";
+function helpArticlesFiltered(){
+  const q=helpQuery;
+  if(!q) return HELP_ARTICLES;
+  return HELP_ARTICLES.filter(a=>a.title.toLowerCase().includes(q) || a.summary.toLowerCase().includes(q)
+    || a.body.toLowerCase().includes(q));
+}
+function helpListHTML(){
+  const list=helpArticlesFiltered();
+  if(!list.length) return `<div class="unone">No articles match “${esc(helpQuery)}”.</div>`;
+  return list.map(a=>acctRow("📖", a.title, esc(a.summary), `helpOpenArticle('${a.slug}')`)).join("");
+}
+// Re-renders only the list + clear button, same reasoning as renderLangChips — rebuilding the whole screen
+// on every keystroke would destroy the search input mid-type and dismiss the keyboard.
+function renderHelpList(){
+  const box=$("helpList"); if(!box) return;
+  box.innerHTML=helpListHTML();
+  const x=$("helpSearchClear"); if(x) x.classList.toggle("show", !!helpQuery);
+}
+function helpIndexBody(){
+  return `<div class="ostop menutop"><button class="osback" type="button" onclick="closeHelp()" aria-label="Back">←</button>
+      <h2 class="osh">Help</h2></div>
+    <p class="ossub">How Cascade thinks, in plain English.</p>
+    <div class="langsearchwrap">
+      <input id="helpSearch" class="search" type="search" inputmode="search" autocapitalize="off"
+             autocorrect="off" spellcheck="false" placeholder="Search Help"
+             aria-label="Search Help" oninput="helpSearchInput(this.value)">
+      <button type="button" id="helpSearchClear" class="searchclear" aria-label="Clear search"
+              onclick="helpSearchClear()">✕</button>
+    </div>
+    <div class="usec">Articles</div>
+    <div class="ucard" id="helpList">${helpListHTML()}</div>`;
+}
+function helpArticleBody(a){
+  const paras=a.body.split("\n\n").map(p=>`<p class="ossub" style="margin-bottom:12px">${esc(p)}</p>`).join("");
+  return `<div class="ostop menutop"><button class="osback" type="button" onclick="helpBack()" aria-label="Back">←</button>
+      <h2 class="osh">${esc(a.title)}</h2></div>
+    ${paras}`;
+}
+function renderHelpScreen(){
+  $("helpBody").innerHTML = helpView.mode==="article"
+    ? helpArticleBody(HELP_ARTICLES.find(x=>x.slug===helpView.slug) || HELP_ARTICLES[0])
+    : helpIndexBody();
+}
+// One entry point for every way in: the top-menu item (no slug), an index row, and the ?help=<slug> deep
+// link (any screen may hand this a slug). An unrecognised or missing slug lands on the index rather than
+// failing silently.
+window.openHelp=slug=>{
+  helpQuery="";
+  const a = slug && HELP_ARTICLES.find(x=>x.slug===slug);
+  helpView = a ? {mode:"article", slug:a.slug} : {mode:"index"};
+  renderHelpScreen();
+  $("helpScreen").scrollTop=0;
+  $("helpScreen").classList.add("open"); lockBodyScroll(true);
+  syncWatchChip();
+  logEvent("help_opened",{slug:a?a.slug:null});
+};
+window.helpOpenArticle=slug=>{
+  helpView={mode:"article", slug};
+  renderHelpScreen();
+  $("helpScreen").scrollTop=0;
+  logEvent("help_article_opened",{slug});
+};
+window.helpBack=()=>{
+  helpView={mode:"index"};
+  renderHelpScreen();
+  $("helpScreen").scrollTop=0;
+};
+window.closeHelp=()=>{ $("helpScreen").classList.remove("open"); lockBodyScroll(false); syncWatchChip(); };
+window.helpSearchInput=v=>{ helpQuery=v.toLowerCase().trim(); renderHelpList(); };
+window.helpSearchClear=()=>{
+  helpQuery="";
+  const i=$("helpSearch"); if(i){ i.value=""; i.focus(); }
+  renderHelpList();
+};
+
 window.toggleNavMenu=e=>{
   e && e.stopPropagation();
   const open=!$("navMenu").classList.contains("open");
@@ -11553,6 +11682,7 @@ window.navMenuGo=key=>{
   else if(key==="occasions") openManageOccasionsScreen();
   else if(key==="recommend") openRecommend();
   else if(key==="metrics") openMetrics();
+  else if(key==="help") openHelp();
   else if(key==="about") openAbout();
 };
 document.addEventListener("click", e=>{
@@ -16449,7 +16579,7 @@ function renderAccount(){
 
     <div class="usec">Help &amp; feedback</div>
     <div class="ucard">
-      ${acctSoon("📖","Help wiki")}
+      ${acctRow("📖","Help", null, "openHelp()")}
       ${acctSoon("✉️","Feedback form")}
       ${acctRow("🔁","Replay the tour", null, "replayTutorial()")}
     </div>`;
