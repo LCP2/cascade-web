@@ -1116,3 +1116,50 @@ grant select on public.analytics_onboarding_funnel to authenticated;
 grant select on public.analytics_activation        to authenticated;
 grant select on public.analytics_retention         to authenticated;
 grant select on public.analytics_feature_usage     to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- delete_my_account — self-service account deletion (CAS-980)
+-- ---------------------------------------------------------------------------
+-- The typed-DELETE confirmation sheet lives in the client; this is the one thing it calls.
+-- security definer so it can reach the final `delete from auth.users` (an authenticated caller's
+-- own role has no privilege over that table) and the tables above whose owner FK is `on delete set
+-- null` rather than `cascade` — usage_events and contact_messages — which the auth.users delete
+-- alone would only anonymise, not remove. Every other table the ticket names is ALSO deleted
+-- explicitly here even where the auth.users delete below would already cascade it away, so this
+-- stays correct if a future migration ever loosens one of those FKs. invite_replies is deleted by
+-- replier_id (this user answering someone else's invite) separately from invites by sender_id (this
+-- user's own sent invites, which already cascades to that sender's invite_replies/invite_emails
+-- rows) since the two are different relationships to the same table. auth.uid() is captured once,
+-- up front: once the auth.users row is gone, auth.uid() itself would start reading back null.
+create or replace function public.delete_my_account()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  uid uuid := auth.uid();
+begin
+  if uid is null then
+    raise exception 'delete_my_account: not signed in';
+  end if;
+
+  delete from public.agent_films      where user_id = uid;
+  delete from public.cascades         where user_id = uid;
+  delete from public.user_films       where user_id = uid;
+  delete from public.film_watch       where user_id = uid;
+  delete from public.notifications    where user_id = uid;
+  delete from public.usage_events     where user_id = uid;
+  delete from public.push_tokens      where user_id = uid;
+  delete from public.friends          where owner_id = uid;
+  delete from public.invites          where sender_id = uid;
+  delete from public.invite_replies   where replier_id = uid;
+  delete from public.contact_messages where user_id = uid;
+  delete from public.analytics_admins where user_id = uid;
+
+  delete from auth.users where id = uid;
+end;
+$$;
+
+revoke all on function public.delete_my_account() from public;
+grant execute on function public.delete_my_account() to authenticated;

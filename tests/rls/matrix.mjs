@@ -178,6 +178,22 @@ async function probeAnswerInvite() {
   return { verdict: 'FAIL', detail: `answer_invite(unknown token) unexpectedly succeeded (status ${res.status})` };
 }
 
+async function probeDeleteMyAccount() {
+  // CAS-980: not signed in (no Authorization other than the bare anon key), so a correctly
+  // gated function must refuse before it ever reaches its own `uid is null` check — either the
+  // REVOKE/GRANT denies EXECUTE outright, or auth.uid() reads null and it raises. Either way,
+  // an anon caller must never get a 2xx from this. The SQL is a Lee-gated live-apply step
+  // (CAS-980), so a 404 ahead of that apply is expected and reported as SKIPPED, not a failure.
+  const res = await fetch(`${REST}/rpc/delete_my_account`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({}),
+  });
+  if (res.status === 404) return { verdict: 'SKIPPED', detail: 'not deployed (PGRST202)' };
+  if (res.ok) return { verdict: 'FAIL', detail: `delete_my_account() unexpectedly succeeded for anon (status ${res.status})` };
+  return { verdict: 'PASS' };
+}
+
 async function main() {
   const stabilityTables = ['invites', 'invite_replies'];
   const before = {};
@@ -201,6 +217,7 @@ async function main() {
 
   results.push({ table: 'rpc:invite_by_token', op: 'CALL', ...(await probeInviteByToken()) });
   results.push({ table: 'rpc:answer_invite', op: 'CALL', ...(await probeAnswerInvite()) });
+  results.push({ table: 'rpc:delete_my_account', op: 'CALL', ...(await probeDeleteMyAccount()) });
 
   for (const t of stabilityTables) {
     const after = await countTable(t);
