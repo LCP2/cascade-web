@@ -227,7 +227,74 @@ class AuthSignin(unittest.TestCase):
         c = health.check_auth_signin(probe)
         self.assertFalse(c["ok"])
         self.assertEqual(c["status"], "fail")
-        self.assertEqual(c["detail"], "not configured: CASCADE_CANARY_EMAIL, CASCADE_CANARY_PASSWORD")
+        self.assertEqual(c["detail"], "not configured: SUPABASE_SERVICE_ROLE_KEY, CASCADE_CANARY_EMAIL")
+
+    def test_ac3_fails_loud_naming_only_the_missing_service_role_key(self):
+        probe = health.probe_auth_signin("https://x.test", "anon-key", None, "canary@x.test")
+        c = health.check_auth_signin(probe)
+        self.assertFalse(c["ok"])
+        self.assertEqual(c["status"], "fail")
+        self.assertEqual(c["detail"], "not configured: SUPABASE_SERVICE_ROLE_KEY")
+
+    def test_ac1_generate_link_then_verify_yields_a_working_session(self):
+        calls = []
+
+        def fake_post(url, headers, payload, timeout=15):
+            calls.append(url)
+            if url.endswith("/auth/v1/admin/generate_link"):
+                self.assertEqual(headers.get("apikey"), "service-role-key")
+                self.assertEqual(payload, {"type": "magiclink", "email": "canary@x.test"})
+                return 200, json.dumps({"properties": {"hashed_token": "HASHED123"}})
+            if url.endswith("/auth/v1/verify"):
+                self.assertEqual(headers.get("apikey"), "anon-key")
+                self.assertEqual(payload, {"type": "magiclink", "token_hash": "HASHED123"})
+                return 200, json.dumps({"access_token": "TOKEN123"})
+            raise AssertionError(f"unexpected POST {url}")
+
+        with unittest.mock.patch("monitor.health._post_json", side_effect=fake_post):
+            probe = health.probe_auth_signin(
+                "https://x.test", "anon-key", "service-role-key", "canary@x.test")
+
+        self.assertEqual(calls, [
+            "https://x.test/auth/v1/admin/generate_link", "https://x.test/auth/v1/verify"])
+        self.assertTrue(probe["ok"])
+        self.assertEqual(probe["token"], "TOKEN123")
+
+
+class UsageWindowSession(unittest.TestCase):
+    """CAS-996 AC2: the CAS-985 usage_events reads mint their session the same passwordless way
+    and use the returned access_token, not a stored password."""
+
+    def test_ac2_usage_window_reads_use_the_minted_access_token(self):
+        def fake_post(url, headers, payload, timeout=15):
+            if url.endswith("/auth/v1/admin/generate_link"):
+                return 200, json.dumps({"properties": {"hashed_token": "HASHED123"}})
+            if url.endswith("/auth/v1/verify"):
+                return 200, json.dumps({"access_token": "TOKEN123"})
+            raise AssertionError(f"unexpected POST {url}")
+
+        seen_auth_headers = []
+
+        def fake_get(url, headers, timeout=15):
+            seen_auth_headers.append(headers.get("Authorization"))
+            return 200, "[]"
+
+        now = datetime.datetime(2026, 9, 16, tzinfo=datetime.timezone.utc)
+        with unittest.mock.patch("monitor.health._post_json", side_effect=fake_post), \
+             unittest.mock.patch("monitor.health._get_json", side_effect=fake_get):
+            window = health.probe_usage_window(
+                "https://x.test", "anon-key", "service-role-key", "canary@x.test", now)
+
+        self.assertEqual(window, {"rows24": [], "rows_prev": []})
+        self.assertEqual(seen_auth_headers, ["Bearer TOKEN123", "Bearer TOKEN123"])
+
+    def test_ac3_fails_loud_naming_only_the_missing_service_role_key(self):
+        window = health.probe_usage_window(
+            "https://x.test", "anon-key", None, "canary@x.test", datetime.datetime.now())
+        c = health.check_client_error_rate(window)
+        self.assertFalse(c["ok"])
+        self.assertEqual(c["status"], "fail")
+        self.assertEqual(c["detail"], "not configured: SUPABASE_SERVICE_ROLE_KEY")
 
 
 def _rows(n, type_="app_open", client_prefix="device", data=None):

@@ -17,10 +17,10 @@ them yet (no run_stats.json section this scope, too few usage rows to mean anyth
 refresh to diff against) reports ``ok: null`` ("unknown") and does NOT fail the run — except
 ``catalogue_size``/``catalogue_integrity``, whose input (``movies.json``) is never optional, so
 those two always resolve to a real pass/fail. CAS-995: a check that instead cannot run because a
-*credential it needs is simply not set* (SUPABASE_ANON_KEY, CASCADE_CANARY_EMAIL/PASSWORD) is a
-different case — a configuration gap someone needs to fix, not a quiet night — so it reports
-``ok: false`` ("fail") with detail ``"not configured: <NAME>"`` naming exactly which secret(s)
-are missing, and DOES fail the run.
+*credential it needs is simply not set* (SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
+CASCADE_CANARY_EMAIL) is a different case — a configuration gap someone needs to fix, not a quiet
+night — so it reports ``ok: false`` ("fail") with detail ``"not configured: <NAME>"`` naming
+exactly which secret(s) are missing, and DOES fail the run.
 
 CAS-993: the monitor moved out of daily.yml into its own alerts.yml, so this module now has two
 scoped callers instead of one. ``--scope daily`` (daily.yml, straight after the catalogue refresh)
@@ -30,16 +30,24 @@ subset of ``CHECK_NAMES`` and merge their result into the same day's ``state/hea
 original all-fourteen-checks-in-one-file behaviour.
 
 CAS-985's three client-side checks (client_error_rate, empty_account_rate, activity_floor) read
-the last 24h of usage_events. This job is deliberately handed only SUPABASE_ANON_KEY (see
-daily.yml), never SUPABASE_SERVICE_ROLE_KEY — the same reasoning probe_usage_events_insert
-below already documents: a service_role read would sail straight past the RLS this account
-actually sits behind. usage_events has no anon select grant at all (CAS-942: only an
+the last 24h of usage_events. usage_events has no anon select grant at all (CAS-942: only an
 `authenticated` caller listed in analytics_admins may read it), so these three probe by signing
-in with the SAME CASCADE_CANARY_EMAIL/PASSWORD probe_auth_signin uses and reading with that
-session's own JWT. Until CAS-942's select policy is live AND that canary account is added to
+in as the SAME canary account probe_auth_signin uses and reading with that session's own JWT —
+never with SUPABASE_SERVICE_ROLE_KEY directly, which would sail straight past the RLS this
+account actually sits behind (the same reasoning probe_usage_events_insert below already
+documents). Until CAS-942's select policy is live AND that canary account is added to
 analytics_admins, RLS silently returns zero rows rather than an error — indistinguishable from a
 genuinely quiet window, so it is reported the same way: unknown, under the shared <50-app_open
 floor below, naming CAS-942 as one of the two possible reasons.
+
+CAS-996: Cascade accounts are passwordless (magic-link/emailed-code sign-in only), so the canary
+session cannot be minted with `grant_type=password` — no such account password secret exists, and
+none ever will. Instead SUPABASE_SERVICE_ROLE_KEY calls `admin/generate_link` for
+CASCADE_CANARY_EMAIL (this does not send an email) and the returned `hashed_token` is exchanged
+at `/auth/v1/verify` for a normal access_token — exactly the session a real magic-link click
+would produce. The service-role key mints the session only; every read that follows still goes
+through with that session's own (RLS-bound) JWT, so the CAS-942/probe_usage_events_insert
+reasoning above is unaffected.
 """
 from __future__ import annotations
 
@@ -62,8 +70,8 @@ HEALTH_FILE = os.path.join(_REPO_ROOT, "state", "health.json")
 
 SUPABASE_URL_ENV = "SUPABASE_URL"
 SUPABASE_ANON_KEY_ENV = "SUPABASE_ANON_KEY"
+SUPABASE_SERVICE_ROLE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
 CANARY_EMAIL_ENV = "CASCADE_CANARY_EMAIL"
-CANARY_PASSWORD_ENV = "CASCADE_CANARY_PASSWORD"
 APNS_ENV_VARS = ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_AUTH_KEY", "APNS_BUNDLE_ID")
 
 CATALOGUE_MIN = 5500
@@ -308,28 +316,60 @@ def probe_usage_events_insert(supabase_url: str | None, anon_key: str | None) ->
     return {"ok": ok, "detail": f"HTTP {status}" + (f" — {body[:200]}" if not ok and body else "")}
 
 
-def probe_auth_signin(supabase_url: str | None, anon_key: str | None,
-                      email: str | None, password: str | None) -> dict | None:
+def _mint_canary_session(supabase_url: str | None, anon_key: str | None,
+                         service_role_key: str | None, email: str | None) -> dict:
+    """CAS-996: the passwordless equivalent of a `grant_type=password` sign-in — generate_link
+    (service-role key) creates no email, just a `hashed_token`; verify (anon key) exchanges it for
+    a real session, exactly as a real magic-link click would. Returns {"not_configured": [...]},
+    {"ok": False, "detail": ...}, or {"ok": True, "token": <access_token>}."""
     missing = _missing_names(
         (SUPABASE_URL_ENV, supabase_url), (SUPABASE_ANON_KEY_ENV, anon_key),
-        (CANARY_EMAIL_ENV, email), (CANARY_PASSWORD_ENV, password))
+        (SUPABASE_SERVICE_ROLE_KEY_ENV, service_role_key), (CANARY_EMAIL_ENV, email))
     if missing:
         return {"not_configured": missing}
-    headers = {"apikey": anon_key, "Content-Type": "application/json"}
-    payload = {"email": email, "password": password}
+    gen_headers = {"apikey": service_role_key, "Authorization": f"Bearer {service_role_key}",
+                  "Content-Type": "application/json"}
     try:
-        status, body = _post_json(
-            f"{supabase_url.rstrip('/')}/auth/v1/token?grant_type=password", headers, payload)
+        status, body = _post_json(f"{supabase_url.rstrip('/')}/auth/v1/admin/generate_link",
+                                  gen_headers, {"type": "magiclink", "email": email})
     except Exception as err:  # noqa: BLE001 — a probe failure is a result, never a crash
         return {"ok": False, "detail": f"{type(err).__name__}: {err}"}
     if not (200 <= status < 300):
-        return {"ok": False, "detail": f"HTTP {status}" + (f" — {body[:200]}" if body else "")}
+        return {"ok": False,
+                "detail": f"generate_link failed: HTTP {status}" + (f" — {body[:200]}" if body else "")}
     try:
-        got_session = bool(json.loads(body).get("access_token"))
+        hashed_token = json.loads(body).get("properties", {}).get("hashed_token")
     except Exception:
-        got_session = False
-    return {"ok": got_session,
-            "detail": "session returned." if got_session else "200 response carried no access_token."}
+        hashed_token = None
+    if not hashed_token:
+        return {"ok": False, "detail": "generate_link response carried no hashed_token."}
+
+    verify_headers = {"apikey": anon_key, "Content-Type": "application/json"}
+    try:
+        status, body = _post_json(f"{supabase_url.rstrip('/')}/auth/v1/verify",
+                                  verify_headers, {"type": "magiclink", "token_hash": hashed_token})
+    except Exception as err:  # noqa: BLE001 — a probe failure is a result, never a crash
+        return {"ok": False, "detail": f"{type(err).__name__}: {err}"}
+    if not (200 <= status < 300):
+        return {"ok": False,
+                "detail": f"verify failed: HTTP {status}" + (f" — {body[:200]}" if body else "")}
+    try:
+        token = json.loads(body).get("access_token")
+    except Exception:
+        token = None
+    if not token:
+        return {"ok": False, "detail": "verify response carried no access_token."}
+    return {"ok": True, "token": token}
+
+
+def probe_auth_signin(supabase_url: str | None, anon_key: str | None,
+                      service_role_key: str | None, email: str | None) -> dict | None:
+    session = _mint_canary_session(supabase_url, anon_key, service_role_key, email)
+    if session.get("not_configured"):
+        return session
+    if not session.get("ok"):
+        return {"ok": False, "detail": session.get("detail", "canary sign-in failed.")}
+    return {"ok": True, "detail": "session returned.", "token": session["token"]}
 
 
 def check_usage_events_insert(probe: dict | None) -> dict:
@@ -346,8 +386,8 @@ def check_usage_events_insert(probe: dict | None) -> dict:
 def check_auth_signin(probe: dict | None) -> dict:
     if probe is None:
         return _check("auth_signin", None, None, None,
-                      "no SUPABASE_URL/SUPABASE_ANON_KEY/CASCADE_CANARY_EMAIL/"
-                      "CASCADE_CANARY_PASSWORD — unavailable.")
+                      "no SUPABASE_URL/SUPABASE_ANON_KEY/SUPABASE_SERVICE_ROLE_KEY/"
+                      "CASCADE_CANARY_EMAIL — unavailable.")
     if probe.get("not_configured"):
         return _check("auth_signin", False, None, None,
                       f"not configured: {', '.join(probe['not_configured'])}")
@@ -369,29 +409,21 @@ def _get_json(url: str, headers: dict, timeout: int = 15):
         return err.code, body
 
 
-def probe_usage_window(supabase_url: str | None, anon_key: str | None, email: str | None,
-                       password: str | None, now: _dt.datetime) -> dict | None:
+def probe_usage_window(supabase_url: str | None, anon_key: str | None, service_role_key: str | None,
+                       email: str | None, now: _dt.datetime) -> dict | None:
     """Signs in with the canary account and reads the trailing 24h (`rows24`) and the 24h before
     that (`rows_prev`, for activity_floor's day-over-day comparison) of usage_events with that
     session's own JWT. None when the credentials aren't configured; otherwise a dict carrying
     either "error" (the sign-in or the read itself failed outright) or the two row lists — RLS
     quietly returning zero rows (no select grant applied yet) is NOT an error here, it's read the
     same as a genuinely quiet window, by design (see the module docstring)."""
-    missing = _missing_names(
-        (SUPABASE_URL_ENV, supabase_url), (SUPABASE_ANON_KEY_ENV, anon_key),
-        (CANARY_EMAIL_ENV, email), (CANARY_PASSWORD_ENV, password))
-    if missing:
-        return {"not_configured": missing}
+    session = _mint_canary_session(supabase_url, anon_key, service_role_key, email)
+    if session.get("not_configured"):
+        return session
+    if not session.get("ok"):
+        return {"error": session.get("detail", "canary sign-in failed.")}
     try:
-        status, body = _post_json(
-            f"{supabase_url.rstrip('/')}/auth/v1/token?grant_type=password",
-            {"apikey": anon_key, "Content-Type": "application/json"},
-            {"email": email, "password": password})
-        if not (200 <= status < 300):
-            return {"error": f"canary sign-in failed (HTTP {status})."}
-        token = json.loads(body).get("access_token")
-        if not token:
-            return {"error": "canary sign-in returned no access_token."}
+        token = session["token"]
         headers = {"apikey": anon_key, "Authorization": f"Bearer {token}"}
         since24 = (now - _dt.timedelta(hours=24)).isoformat()
         since48 = (now - _dt.timedelta(hours=48)).isoformat()
@@ -418,8 +450,8 @@ def _usage_window_gate(name: str, window: dict | None):
     immediately, or None when the caller should go on and compute the real answer."""
     if window is None:
         return _check(name, None, None, None,
-                      "no SUPABASE_URL/SUPABASE_ANON_KEY/CASCADE_CANARY_EMAIL/"
-                      "CASCADE_CANARY_PASSWORD — unavailable.")
+                      "no SUPABASE_URL/SUPABASE_ANON_KEY/SUPABASE_SERVICE_ROLE_KEY/"
+                      "CASCADE_CANARY_EMAIL — unavailable.")
     if window.get("not_configured"):
         return _check(name, False, None, None,
                       f"not configured: {', '.join(window['not_configured'])}")
@@ -638,10 +670,11 @@ def main(argv=None) -> int:
         stats = runstats.load()
         supabase_url = os.environ.get(SUPABASE_URL_ENV)
         anon_key = os.environ.get(SUPABASE_ANON_KEY_ENV)
-        canary_email, canary_password = os.environ.get(CANARY_EMAIL_ENV), os.environ.get(CANARY_PASSWORD_ENV)
+        service_role_key = os.environ.get(SUPABASE_SERVICE_ROLE_KEY_ENV)
+        canary_email = os.environ.get(CANARY_EMAIL_ENV)
         usage_probe = probe_usage_events_insert(supabase_url, anon_key)
-        auth_probe = probe_auth_signin(supabase_url, anon_key, canary_email, canary_password)
-        usage_window = probe_usage_window(supabase_url, anon_key, canary_email, canary_password, now_dt)
+        auth_probe = probe_auth_signin(supabase_url, anon_key, service_role_key, canary_email)
+        usage_window = probe_usage_window(supabase_url, anon_key, service_role_key, canary_email, now_dt)
         apns_configured = all(os.environ.get(v) for v in APNS_ENV_VARS)
         wm_cycle = pp._load_wm_cycle_budget(today)
 

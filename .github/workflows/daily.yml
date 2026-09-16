@@ -181,9 +181,11 @@ jobs:
         # integrity, TMDB/Watchmode/OscarBase call+error tallies, a live anon-role usage_events
         # insert, a live canary sign-in) rather than trusting a green workflow. Runs after qa.yml's
         # dispatch above so a health failure here never blocks that unrelated code-quality gate.
-        # SUPABASE_ANON_KEY/CASCADE_CANARY_EMAIL/CASCADE_CANARY_PASSWORD are new secrets (Lee's
+        # SUPABASE_ANON_KEY/SUPABASE_SERVICE_ROLE_KEY/CASCADE_CANARY_EMAIL are secrets (Lee's
         # step, CAS-974 hand-off) — until they exist, the two live Supabase checks report
-        # "unknown" (tolerated) rather than failing the run. CAS-993: email/push delivery is no
+        # "unknown" (tolerated) rather than failing the run. CAS-996: Cascade accounts are
+        # passwordless, so the canary session comes from admin/generate_link (service-role key) +
+        # verify (anon key), never a stored account password. CAS-993: email/push delivery is no
         # longer asserted here — the monitor doesn't run in this workflow any more, so there is
         # nothing yet to check; --scope daily excludes those two checks entirely rather than
         # reporting them "unknown" for a run that hasn't happened yet. alerts.yml asserts them
@@ -193,8 +195,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           CASCADE_CANARY_EMAIL: ${{ secrets.CASCADE_CANARY_EMAIL }}
-          CASCADE_CANARY_PASSWORD: ${{ secrets.CASCADE_CANARY_PASSWORD }}
         run: |
           HEALTH_EXIT=0
           python -m monitor.health --scope daily || HEALTH_EXIT=$?
