@@ -151,9 +151,20 @@ def check_oscarbase_fetch(stats: dict | None) -> dict:
     return _check_fetch("oscarbase_fetch", stats)
 
 
-def check_watchmode_fetch(stats: dict | None, quota: int) -> dict:
+def check_watchmode_fetch(stats: dict | None, quota: int, run_max_credits: int | None = None) -> dict:
     """CAS-988: the floor is 15% of `quota` — the real state/api_budget.json cycle quota (CAS-987),
-    passed in by the caller rather than assumed here, so a plan change moves the floor with it."""
+    passed in by the caller rather than assumed here, so a plan change moves the floor with it.
+
+    CAS-994: `run_max_credits` (WM_RUN_MAX_CREDITS, default `pp.WM_RUN_MAX_CREDITS`) is the same
+    per-run ceiling poc_pipeline.py gates every Watchmode call on. 0 means the run is DELIBERATELY
+    spending nothing on Watchmode this run — 0 calls is then the expected, correct outcome, not
+    the failure `_check_fetch` would otherwise report it as."""
+    if run_max_credits is None:
+        run_max_credits = pp.WM_RUN_MAX_CREDITS
+    if run_max_credits <= 0:
+        return _check("watchmode_fetch", None, 0, None,
+                      "Watchmode spend paused (WM_RUN_MAX_CREDITS=0) — 0 calls is expected.",
+                      status="skipped")
     base = _check_fetch("watchmode_fetch", stats)
     if base["ok"] is not True:
         return base

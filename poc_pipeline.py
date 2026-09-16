@@ -103,6 +103,12 @@ WM_MONTHLY_QUOTA = int(os.getenv("WM_MONTHLY_QUOTA", "10000"))
 WM_QUOTA_RESET_DAY = int(os.getenv("WM_QUOTA_RESET_DAY", "12"))
 WM_CYCLE_RESERVE_PCT = float(os.getenv("WM_CYCLE_RESERVE_PCT", "10"))
 
+# CAS-994: the whole run's hard ceiling on Watchmode credits, across every credit-costing call
+# path (nightly fields, on-demand enrichment, the CAS-986 scoreability probe) — off by default,
+# switched back on in stages via the WM_RUN_MAX_CREDITS repo variable (daily.yml). Unset reads as
+# 0, same as an explicit 0: no credit-costing Watchmode call at all this run (see wm_run_allowance).
+WM_RUN_MAX_CREDITS = int(os.getenv("WM_RUN_MAX_CREDITS", "0") or 0)
+
 OUTPUT_FILE   = os.path.join(os.path.dirname(__file__), "movies.json")
 SAMPLE_FILE   = os.path.join(os.path.dirname(__file__), "sample_data.json")
 TEMPLATE_FILE = os.path.join(os.path.dirname(__file__), "app_template.html")
@@ -483,6 +489,13 @@ def _fetch_watchmode_idmap() -> dict:
     return _parse_watchmode_idmap_csv(get_text(f"{WATCHMODE_IDMAP_URL}?apiKey={WATCHMODE_KEY}"))
 
 
+def _fetch_watchmode_status() -> dict:
+    """CAS-994: Watchmode's own live account usage — {'quota', 'quotaUsed'} — costs 0 credits.
+    Only called with a non-zero WM_RUN_MAX_CREDITS ceiling (see wm_run_allowance): it's not worth
+    the round-trip when the ceiling has already decided this run spends nothing."""
+    return get_json(f"{WATCHMODE_BASE}/status/?apiKey={WATCHMODE_KEY}")
+
+
 def _list_watchmode_titles_page(page: int) -> dict:
     return get_json(
         f"{WATCHMODE_BASE}/list-titles/?apiKey={WATCHMODE_KEY}&types=movie"
@@ -670,6 +683,11 @@ def enrich_watchmode_fields_nightly(movies: list, budget: dict | None = None) ->
     if not WATCHMODE_KEY:
         print("[warn] Watchmode: WATCHMODE_API_KEY not set — skipping the nightly Watchmode "
               "fields step.")
+        return outcomes
+    # CAS-994: a 0 budget (WM_RUN_MAX_CREDITS=0, or this run's pot already spent) means no
+    # Watchmode call at all for this pass — not even the free ID map, which nothing downstream
+    # would use with a zeroed budget anyway.
+    if budget is not None and budget.get("remaining", 0) <= 0:
         return outcomes
 
     idmap, idmap_outcome = _api_call("Watchmode ID map", _fetch_watchmode_idmap)
@@ -911,6 +929,9 @@ def run_scoreability_probe(candidates: dict, today: datetime.date, budget: int,
     empty = {"ok": 0, "cached": 0, "no-id": 0, "skip": 0, "stop": 0, "probed": 0, "spent": 0}
     if not WATCHMODE_KEY:
         print("[warn] Watchmode: WATCHMODE_API_KEY not set — skipping the CAS-986 scoreability probe.")
+        return empty
+    # CAS-994: a 0 budget means no Watchmode call at all this pass — not even the free ID map.
+    if budget <= 0:
         return empty
     idmap, idmap_outcome = _api_call("Watchmode ID map", _fetch_watchmode_idmap)
     if idmap_outcome != "ok" or not idmap:
@@ -1701,6 +1722,44 @@ def split_wm_pot(pot: int, nightly_weight: int, ondemand_weight: int,
     return ondemand_cap, nightly_cap, scoreability_cap
 
 
+def wm_run_allowance(today: datetime.date, run_max_credits: int | None = None) -> int:
+    """CAS-994: this run's whole Watchmode credit pot — the single gate every credit-costing call
+    path (the nightly fields pass, on-demand enrichment, the CAS-986 scoreability probe) is capped
+    against, via split_wm_pot.
+
+    `run_max_credits` (the WM_RUN_MAX_CREDITS repo variable, default 0) is a hard ceiling. 0 means
+    the run spends nothing: GET /status is skipped too (it's a live figure, not a credit cost, but
+    not worth the round-trip when the ceiling has already decided the answer), and this prints the
+    paused line the ticket's `[watchmode] paused: WM_RUN_MAX_CREDITS=0` names.
+
+    Non-zero: GET /status (0 credits) for Watchmode's own live {quota, quotaUsed}, then pace that
+    against the real billing cycle with the same CAS-987 formula (compute_wm_today_allowance) the
+    old state/api_budget.json-driven allowance used — except fed by the account's live figures
+    instead of the local ledger, which had drifted from what Watchmode's own dashboard showed
+    (this ticket's own Why). state/api_budget.json stays as a spend record (run() still writes to
+    it) but no longer drives the allowance itself. A failed /status call spends nothing this run
+    rather than falling back to any locally-tracked number — the honest answer when the one source
+    of truth this now relies on is unavailable."""
+    if run_max_credits is None:
+        run_max_credits = WM_RUN_MAX_CREDITS
+    if run_max_credits <= 0:
+        print("[watchmode] paused: WM_RUN_MAX_CREDITS=0")
+        return 0
+    status, outcome = _api_call("Watchmode status", _fetch_watchmode_status)
+    if outcome != "ok" or not status:
+        print("[watchmode] /status failed — spending nothing on Watchmode this run.")
+        return 0
+    quota = status.get("quota", 0)
+    quota_used = status.get("quotaUsed", 0)
+    cycle_start, cycle_end = _wm_cycle_bounds(today)
+    days_remaining = (cycle_end - today).days
+    paced = compute_wm_today_allowance(quota, WM_CYCLE_RESERVE_PCT, quota_used, days_remaining)
+    pot = max(0, min(run_max_credits, paced))
+    print(f"[watchmode] run allowance {pot} (ceiling {run_max_credits}, live quota {quota} used "
+          f"{quota_used}, {days_remaining} day(s) left this cycle)")
+    return pot
+
+
 def _load_monthly_wm_spend(today):
     """CAS-974: same stale-date-means-fresh-allowance rule as _load_wm_cycle_budget, keyed by
     month instead of billing cycle — health.py's remaining-credits check needs the month's running
@@ -1757,7 +1816,11 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     # sort+slice below already enforces the cap on its own, and a size guard here just freezes
     # the catalogue solid the first run it reaches CATALOGUE_TARGET.
     if CASCADE_SPINE == "watchmode":
-        new = ingest_watchmode(seen)
+        # CAS-994: wm_budget_cap == 0 is this run's paused/exhausted signal (never None — see the
+        # docstring above) — the watchmode-spine ingest costs credits too, so it is gated the
+        # same as every other Watchmode call path, not just the on-demand poll below. No new
+        # titles from this spine this run, rather than silently falling back to the TMDB spine.
+        new = ingest_watchmode(seen) if wm_budget_cap != 0 else []
     else:
         new = ingest_tmdb(seen) + ingest_tmdb_upcoming(seen) + ingest_tmdb_streaming(seen)
     new_unique = [m for m in new if m["tmdb_id"] not in base]
@@ -2124,20 +2187,13 @@ def run(simulate_day: bool = False):
         ondemand_file = os.path.join(STATE_DIR, "ondemand.json")
         ondemand_ids = json.load(open(ondemand_file)) if os.path.exists(ondemand_file) else []
 
-        # CAS-987: the cycle-paced allowance. `cycle["spent"]` is every day's spend on file so far
-        # (today's included, from any earlier run today); `today_spent_prior` is just today's share
-        # of that, the same cross-run same-day dedupe CAS-384 relied on.
+        # CAS-994: this run's whole Watchmode pot — WM_RUN_MAX_CREDITS is a hard ceiling (0 by
+        # default: no credit-costing Watchmode call at all), paced against Watchmode's own live
+        # /status figures when non-zero. state/api_budget.json stays as a spend record below
+        # (cycle["days"]) but no longer drives the allowance itself — see wm_run_allowance.
         cycle = _load_wm_cycle_budget(today)
         today_iso = today.isoformat()
-        cycle_end = datetime.date.fromisoformat(cycle["cycle_end"])
-        days_remaining = (cycle_end - today).days
-        today_allowance = compute_wm_today_allowance(cycle["quota"], WM_CYCLE_RESERVE_PCT,
-                                                      cycle["spent"], days_remaining)
-        today_spent_prior = cycle["days"].get(today_iso, 0)
-        wm_pot = max(0, today_allowance - today_spent_prior)
-        if wm_pot <= 0:
-            print("[watchmode] today's cycle allowance is exhausted — no further Watchmode calls "
-                  "this run.")
+        wm_pot = wm_run_allowance(today)
 
         # WM_NIGHTLY_MAX_CREDITS/ONDEMAND_WM_CAP/SCOREABILITY_PROBE_BUDGET stop being independent
         # fixed pots and become weighted shares of `wm_pot` — their old fixed values are reused
@@ -2237,16 +2293,18 @@ def run(simulate_day: bool = False):
               f"published={cas986_report['published']} promoted={cas986_report['promoted']} "
               f"demoted={cas986_report['demoted']} exempt={cas986_report['exempt']}")
 
-        # CAS-987: persist the whole run's Watchmode draw on today's cycle-paced pot — on-demand
-        # (build_live_catalogue), the nightly fields pass, and the scoreability probe alike — and
-        # report the cycle's own numbers, not any one pass's slice of them.
+        # CAS-994: state/api_budget.json is now a spend RECORD only (wm_run_allowance drives the
+        # actual allowance from Watchmode's own live /status figures, not this file) — accumulate
+        # today's total draw across every credit-costing pass (on-demand, nightly fields,
+        # scoreability probe) rather than overwrite it, in case a second run happens the same day.
         nightly_spent = nightly_cap - nightly_budget["remaining"]
-        today_total_spent = today_spent_prior + counts["wm_calls"] + nightly_spent + cas986_report["wm_spent"]
+        run_spent = counts["wm_calls"] + nightly_spent + cas986_report["wm_spent"]
+        today_total_spent = cycle["days"].get(today_iso, 0) + run_spent
         cycle["days"][today_iso] = today_total_spent
         _save_wm_cycle_budget(cycle, today)
         print(f"watchmode cycle {cycle['cycle_start']}..{cycle['cycle_end']} quota={cycle['quota']} "
-              f"spent={sum(cycle['days'].values())} today_allowance={today_allowance} "
-              f"today_spent={today_total_spent} remaining={max(0, today_allowance - today_total_spent)}")
+              f"spent={sum(cycle['days'].values())} run_pot={wm_pot} "
+              f"today_spent={today_total_spent}")
 
     # CAS-608: how much of the published catalogue is genuinely upcoming vs. released-with-no-AU-
     # offer vs. on the short 7-day Watchmode ladder — the counts this ticket exists to shrink.
