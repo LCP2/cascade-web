@@ -6,8 +6,12 @@
 // monitor/admit_shim.mjs (CAS-825) already established: writing a second copy of this rule in
 // Python is the defect CAS-986 exists to avoid, so this file is a thin pipe, not a reimplementation.
 //
-// Request shape:  { "movies": [ <movie dict>, ... ] }
+// Request shape:  { "movies": [ <movie dict>, ... ], "floor": <int, optional, default 0> }
 // Response shape: { "scoreable_ids": [ <tmdb_id>, ... ] }
+//
+// CAS-997: `floor` is the Cascade-score publication floor — poc_pipeline.py passes its
+// WM_PUBLISH_FLOOR (default 60) here. Defaulting to 0 when omitted keeps this shim's own
+// existing callers/tests (none of which name a floor) on the pre-CAS-997 unfloored rule.
 import { loadEngine } from "../tests/js/engine.mjs";
 import { isScoreable } from "./wm_scoreable_manifest.mjs";
 
@@ -25,10 +29,11 @@ async function main(){
   const req = raw.trim() ? JSON.parse(raw) : {};
   const E = loadEngine();
   const movies = req.movies || [];
+  const floor = req.floor || 0;
   let failed = 0;
   const scoreable_ids = movies.filter(m => {
     try {
-      return isScoreable(E, m);
+      return isScoreable(E, m, floor);
     } catch (err) {
       failed++;
       return false;
