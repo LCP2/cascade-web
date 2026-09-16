@@ -1,12 +1,17 @@
-name: Daily AU movie refresh + Cascade monitor
+name: Daily AU movie refresh
 
-# Once a day in the cloud: rebuild today's AU catalogue, commit the refreshed app + data
-# (so GitHub Pages serves the latest AND git history carries "yesterday" for the diff), then
-# run the Cascade monitor — diff today vs yesterday, match to each user's Cascades, de-dupe,
-# and email one digest per user via Resend. Also runnable on demand from the Actions tab.
+# Once a day in the cloud: rebuild today's AU catalogue, commit the refreshed app + data (so
+# GitHub Pages serves the latest AND git history carries "yesterday" for the diff), run the
+# Contact-us digest, then the night's health assertions. Also runnable on demand from the Actions
+# tab.
 #
-# Secrets are read from GitHub Actions secrets only (never hardcoded). When the Supabase +
-# Resend secrets are absent (e.g. a first manual run before you've added them), the monitor
+# CAS-993: the Cascade monitor (diff today vs yesterday, match to each user's Cascades, de-dupe,
+# email/push one alert per user) moved out of this workflow into alerts.yml, which sends at a
+# fixed 17:00 Sydney time instead of whenever this refresh happens to run. This workflow no longer
+# runs the monitor at all — see alerts.yml.
+#
+# Secrets are read from GitHub Actions secrets only (never hardcoded). When the Supabase + Resend
+# secrets are absent (e.g. a first manual run before you've added them), the Contact-us digest
 # runs in --dry-run so the workflow still passes.
 
 on:
@@ -43,7 +48,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: staging           # the repo's default branch is main; refresh must land on staging, never main
-          fetch-depth: 0         # full history: the monitor anchors "yesterday" to the last refresh on an EARLIER day, not HEAD~1
+          fetch-depth: 0         # full history: the health step's catalogue_size/score_coverage checks anchor "yesterday" to the last refresh on an EARLIER day, not HEAD~1
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -142,73 +147,10 @@ jobs:
             exit 1
           fi
 
-      - name: Set up Node (CAS-825 — the monitor calls the shipped engine via admit_shim.mjs)
-        if: ${{ github.event.inputs.probe_title == '' }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Run the Cascade monitor (diff → match → de-dupe → email)
-        # Reads yesterday's catalogue from git history (last refresh on an earlier calendar day). With the Supabase +
-        # Resend secrets present it does the real thing; without them it runs --dry-run so the
-        # workflow still passes (no writes, no email). CAS-825: matching now shells out once to
-        # admit_shim.mjs, which loads index.html (already rebuilt above) via tests/js/engine.mjs —
-        # Node must be on PATH before this step runs.
-        if: ${{ github.event.inputs.probe_title == '' }}
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}   # optional; defaults to Resend's test sender
-          CASCADE_SITE_URL: ${{ secrets.SITE_URL }}               # optional; defaults to the live Pages URL
-          DAYS_BACK: ${{ github.event.inputs.days_back }}          # demo look-back (0/blank on schedule)
-          BASELINE_REF: ${{ github.event.inputs.baseline_ref }}    # demo exact-ref override
-          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}                 # CAS-483: without these four, push silently no-ops
-          APNS_TEAM_ID: ${{ secrets.APNS_TEAM_ID }}
-          APNS_AUTH_KEY: ${{ secrets.APNS_AUTH_KEY }}
-          APNS_BUNDLE_ID: ${{ secrets.APNS_BUNDLE_ID }}
-        run: |
-          # Demo look-back (CAS-417 follow-on): a manual run can diff against an OLDER catalogue so real
-          # transitions fire and a digest actually sends — for building/validating the notification UX.
-          # Scheduled runs pass no inputs, so DAYS_BACK is blank/0 and behaviour is unchanged.
-          BASELINE_ARGS=""
-          REF="$BASELINE_REF"
-          if [ -z "$REF" ] && [ -n "$DAYS_BACK" ] && [ "$DAYS_BACK" != "0" ]; then
-            CUTOFF=$(date -u -d "$DAYS_BACK days ago" +%Y-%m-%d)
-            REF=$(git log --format="%H %cd" --date=format:%Y-%m-%d -- movies.json | awk -v c="$CUTOFF" '$2 <= c {print $1; exit}')
-            echo "days_back=$DAYS_BACK -> cutoff $CUTOFF -> baseline commit ${REF:-<none found>}"
-          fi
-          if [ -n "$REF" ]; then
-            git show "$REF:movies.json" > /tmp/prev.json && BASELINE_ARGS="--yesterday /tmp/prev.json"
-            echo "DEMO baseline: $REF ($(wc -l < /tmp/prev.json) lines)"
-          fi
-          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$RESEND_API_KEY" ]; then
-            echo "Secrets present — live run (will send digests + write the notifications ledger)."
-            python -m monitor $BASELINE_ARGS
-          else
-            echo "Supabase/Resend secrets absent — running --dry-run (no writes, no email)."
-            python -m monitor --dry-run $BASELINE_ARGS
-          fi
-
-      - name: Persist the held-ids snapshot (CAS-986)
-        # The monitor step above just wrote state/user_held_ids.json (a real run only — --dry-run
-        # writes nothing, so there is nothing new to commit then). It runs AFTER both of this
-        # workflow's earlier commit steps, so without this step the file would never reach
-        # staging — poc_pipeline.py's next run reads it off disk, not Supabase directly. Same
-        # bounded fetch/reset-soft/push retry as the two earlier commit sites, via the reusable,
-        # tested form of that algorithm (scripts/reset_soft_and_push.sh) rather than a third inline
-        # copy of it — there is no template rebuild owed here, unlike those two sites: this file is
-        # plain data, never derived from app_template.html.
-        if: ${{ github.event.inputs.probe_title == '' }}
-        run: |
-          git config user.name  "cascade-bot"
-          git config user.email "actions@users.noreply.github.com"
-          bash scripts/reset_soft_and_push.sh staging true state/user_held_ids.json
-
       - name: Run the Contact-us digest (CAS-836)
-        # Same secrets-present/--dry-run split as the monitor step above: with all three present
-        # this sends the real digest and stamps sent_at; without them it renders and sends
-        # nothing, so the workflow still passes before the secrets are configured.
+        # Same secrets-present/--dry-run split as the health step's own dry-run tolerance below:
+        # with all three present this sends the real digest and stamps sent_at; without them it
+        # renders and sends nothing, so the workflow still passes before the secrets are configured.
         if: ${{ github.event.inputs.probe_title == '' }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -233,27 +175,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run qa.yml --ref staging
 
-      - name: Run nightly health assertions (CAS-974)
+      - name: Run nightly health assertions (CAS-974/CAS-993)
         # The literal last step: asserts the night's work actually happened (catalogue size/
-        # integrity, TMDB/Watchmode/OscarBase call+error tallies, email/push delivery, a live
-        # anon-role usage_events insert, a live canary sign-in) rather than trusting a green
-        # workflow. Runs after qa.yml's dispatch above so a health failure here never blocks that
-        # unrelated code-quality gate. SUPABASE_ANON_KEY/CASCADE_CANARY_EMAIL/CASCADE_CANARY_
-        # PASSWORD are new secrets (Lee's step, CAS-974 hand-off) — until they exist, the two live
-        # Supabase checks report "unknown" (tolerated) rather than failing the run.
+        # integrity, TMDB/Watchmode/OscarBase call+error tallies, a live anon-role usage_events
+        # insert, a live canary sign-in) rather than trusting a green workflow. Runs after qa.yml's
+        # dispatch above so a health failure here never blocks that unrelated code-quality gate.
+        # SUPABASE_ANON_KEY/CASCADE_CANARY_EMAIL/CASCADE_CANARY_PASSWORD are new secrets (Lee's
+        # step, CAS-974 hand-off) — until they exist, the two live Supabase checks report
+        # "unknown" (tolerated) rather than failing the run. CAS-993: email/push delivery is no
+        # longer asserted here — the monitor doesn't run in this workflow any more, so there is
+        # nothing yet to check; --scope daily excludes those two checks entirely rather than
+        # reporting them "unknown" for a run that hasn't happened yet. alerts.yml asserts them
+        # itself, straight after its own monitor step, and merges the result into this same
+        # state/health.json.
         if: ${{ github.event.inputs.probe_title == '' }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           CASCADE_CANARY_EMAIL: ${{ secrets.CASCADE_CANARY_EMAIL }}
           CASCADE_CANARY_PASSWORD: ${{ secrets.CASCADE_CANARY_PASSWORD }}
-          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}
-          APNS_TEAM_ID: ${{ secrets.APNS_TEAM_ID }}
-          APNS_AUTH_KEY: ${{ secrets.APNS_AUTH_KEY }}
-          APNS_BUNDLE_ID: ${{ secrets.APNS_BUNDLE_ID }}
         run: |
           HEALTH_EXIT=0
-          python -m monitor.health || HEALTH_EXIT=$?
+          python -m monitor.health --scope daily || HEALTH_EXIT=$?
           git config user.name  "cascade-bot"
           git config user.email "actions@users.noreply.github.com"
           # Same reset-soft-and-commit retry as the catalogue-sizing step above, minus the rebuild

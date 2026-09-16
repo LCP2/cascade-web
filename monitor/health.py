@@ -9,11 +9,20 @@ real failure so `alert.yml` (CAS-973) fires.
     python -m monitor.health                 # live: reads movies.json, git history, env vars,
                                               # state/run_stats.json, and probes Supabase directly
     python -m monitor.health --dry-run       # offline demo against a synthetic all-green fixture
+    python -m monitor.health --scope daily   # CAS-993: every check except email_send/push_send
+    python -m monitor.health --scope alerts  # CAS-993: only email_send/push_send
 
 Tolerance: a check whose inputs are unavailable this run (no run_stats.json section, no
 Supabase credential, etc.) reports ``ok: null`` ("unknown") and does NOT fail the run —
 except ``catalogue_size``/``catalogue_integrity``, whose input (``movies.json``) is never
 optional, so those two always resolve to a real pass/fail.
+
+CAS-993: the monitor moved out of daily.yml into its own alerts.yml, so this module now has two
+scoped callers instead of one. ``--scope daily`` (daily.yml, straight after the catalogue refresh)
+and ``--scope alerts`` (alerts.yml, straight after its own monitor step) each assert a different
+subset of ``CHECK_NAMES`` and merge their result into the same day's ``state/health.json`` (see
+``merge_report``) rather than overwriting each other. Plain ``--dry-run``/no ``--scope`` keeps the
+original all-fourteen-checks-in-one-file behaviour.
 
 CAS-985's three client-side checks (client_error_rate, empty_account_rate, activity_floor) read
 the last 24h of usage_events. This job is deliberately handed only SUPABASE_ANON_KEY (see
@@ -439,30 +448,57 @@ CHECK_NAMES = ("catalogue_size", "catalogue_integrity", "tmdb_fetch", "watchmode
               "usage_events_insert", "auth_signin",
               "client_error_rate", "empty_account_rate", "activity_floor")
 
+# CAS-993: the monitor only runs in alerts.yml now, so email_send/push_send — the two checks that
+# read THIS run's delivery stats — can only be asserted there. Every other check still runs in
+# daily.yml, straight after the catalogue refresh, as before.
+ALERT_CHECK_NAMES = ("email_send", "push_send")
+DAILY_CHECK_NAMES = tuple(n for n in CHECK_NAMES if n not in ALERT_CHECK_NAMES)
 
-def run_checks(*, today_movies, prev_movies, stats, usage_probe, auth_probe, apns_configured,
-              wm_cycle, today, usage_window) -> list:
-    return [
-        check_catalogue_size(today_movies, prev_movies),
-        check_catalogue_integrity(today_movies),
-        check_tmdb_fetch(stats.get("tmdb")),
-        check_watchmode_fetch(stats.get("watchmode"), wm_cycle["quota"]),
-        check_watchmode_pace(wm_cycle, today),
-        check_oscarbase_fetch(stats.get("oscarbase")),
-        check_score_coverage(today_movies, prev_movies),
-        check_email_send(stats.get("email")),
-        check_push_send(stats.get("push"), apns_configured),
-        check_usage_events_insert(usage_probe),
-        check_auth_signin(auth_probe),
-        check_client_error_rate(usage_window),
-        check_empty_account_rate(usage_window),
-        check_activity_floor(usage_window),
-    ]
+
+def run_checks(*, today_movies=None, prev_movies=None, stats=None, usage_probe=None, auth_probe=None,
+              apns_configured=None, wm_cycle=None, today=None, usage_window=None, names=None) -> list:
+    """Compute only the checks named in `names` (default: every check in CHECK_NAMES, unchanged
+    legacy behaviour). Each check is a lazy thunk, so a scoped caller (daily.yml's
+    DAILY_CHECK_NAMES or alerts.yml's ALERT_CHECK_NAMES) never pays for — or needs to supply
+    inputs for — a check outside its own scope. This matters beyond cost: usage_probe's underlying
+    probe_usage_events_insert() does a real Supabase INSERT, which must not fire twice a day."""
+    names = set(CHECK_NAMES if names is None else names)
+    thunks = {
+        "catalogue_size": lambda: check_catalogue_size(today_movies, prev_movies),
+        "catalogue_integrity": lambda: check_catalogue_integrity(today_movies),
+        "tmdb_fetch": lambda: check_tmdb_fetch(stats.get("tmdb")),
+        "watchmode_fetch": lambda: check_watchmode_fetch(stats.get("watchmode"), wm_cycle["quota"]),
+        "watchmode_pace": lambda: check_watchmode_pace(wm_cycle, today),
+        "oscarbase_fetch": lambda: check_oscarbase_fetch(stats.get("oscarbase")),
+        "score_coverage": lambda: check_score_coverage(today_movies, prev_movies),
+        "email_send": lambda: check_email_send(stats.get("email")),
+        "push_send": lambda: check_push_send(stats.get("push"), apns_configured),
+        "usage_events_insert": lambda: check_usage_events_insert(usage_probe),
+        "auth_signin": lambda: check_auth_signin(auth_probe),
+        "client_error_rate": lambda: check_client_error_rate(usage_window),
+        "empty_account_rate": lambda: check_empty_account_rate(usage_window),
+        "activity_floor": lambda: check_activity_floor(usage_window),
+    }
+    return [thunks[n]() for n in CHECK_NAMES if n in names]
 
 
 def build_report(checks: list, checked_at: str) -> dict:
     ok = all(c["ok"] is not False for c in checks)
     return {"checked_at": checked_at, "checks": checks, "ok": ok}
+
+
+def merge_report(existing: dict | None, checks: list, checked_at: str) -> dict:
+    """CAS-993: daily.yml and alerts.yml each assert a different subset of CHECK_NAMES now, in
+    separate jobs — this lets the second job's write add its checks to the first job's same-day
+    report instead of overwriting it down to just its own subset. `existing` is dropped (a fresh
+    report starts) when there isn't one yet or it's from an earlier calendar day."""
+    prior_checks = []
+    if existing and existing.get("checked_at", "")[:10] == checked_at[:10]:
+        prior_checks = existing.get("checks", [])
+    fresh_names = {c["name"] for c in checks}
+    merged = [c for c in prior_checks if c["name"] not in fresh_names] + checks
+    ok = all(c["ok"] is not False for c in merged)
+    return {"checked_at": checked_at, "checks": merged, "ok": ok}
 
 
 # ---------------------------------------------------------------------------
@@ -526,6 +562,12 @@ def _parse_args(argv):
     p.add_argument("--dry-run", action="store_true",
                    help="Run offline against a synthetic all-green fixture; exits 0.")
     p.add_argument("--out", metavar="PATH", help="Where to write the report (default: state/health.json).")
+    p.add_argument("--scope", choices=("all", "daily", "alerts"), default="all",
+                   help="CAS-993: 'daily' asserts every check except email_send/push_send (the "
+                        "monitor no longer runs in daily.yml, so this run has nothing to say about "
+                        "delivery); 'alerts' asserts only those two, straight after alerts.yml's own "
+                        "monitor step. Both merge into an existing same-day report rather than "
+                        "overwriting it. Default 'all' is the unchanged legacy behaviour.")
     return p.parse_args(argv)
 
 
@@ -534,9 +576,22 @@ def main(argv=None) -> int:
     now_dt = _dt.datetime.now(_dt.timezone.utc)
     checked_at = now_dt.isoformat()
 
+    names = {"daily": DAILY_CHECK_NAMES, "alerts": ALERT_CHECK_NAMES}.get(args.scope)
+
     if args.dry_run:
         (today_movies, prev_movies, stats, usage_probe, auth_probe, apns_configured,
          wm_cycle, today, usage_window) = _dry_run_inputs()
+    elif args.scope == "alerts":
+        # The only inputs email_send/push_send read are state/run_stats.json's email/push
+        # sections (just written by this same job's monitor step) and the APNS_* env vars — skip
+        # the rest of the live gather entirely, including probe_usage_events_insert's real INSERT,
+        # which this scope must not repeat a second time in the same day.
+        today = _dt.date.today()
+        today_movies, prev_movies = [], []
+        stats = runstats.load()
+        usage_probe = auth_probe = usage_window = None
+        apns_configured = all(os.environ.get(v) for v in APNS_ENV_VARS)
+        wm_cycle = {}
     else:
         today = _dt.date.today()
         today_movies = movies_of(load_today())
@@ -553,8 +608,7 @@ def main(argv=None) -> int:
 
     checks = run_checks(today_movies=today_movies, prev_movies=prev_movies, stats=stats,
                         usage_probe=usage_probe, auth_probe=auth_probe, apns_configured=apns_configured,
-                        wm_cycle=wm_cycle, today=today, usage_window=usage_window)
-    report = build_report(checks, checked_at)
+                        wm_cycle=wm_cycle, today=today, usage_window=usage_window, names=names)
 
     for c in checks:
         marker = {"ok": "OK", "fail": "FAIL", "unknown": "unknown", "skipped": "skipped"}[c["status"]]
@@ -562,9 +616,24 @@ def main(argv=None) -> int:
 
     out_path = args.out or HEALTH_FILE
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    if args.scope in ("daily", "alerts"):
+        existing = None
+        if os.path.exists(out_path):
+            try:
+                existing = json.load(open(out_path, encoding="utf-8"))
+            except Exception:
+                existing = None
+        report = merge_report(existing, checks, checked_at)
+    else:
+        report = build_report(checks, checked_at)
     json.dump(report, open(out_path, "w", encoding="utf-8"), indent=2)
 
-    if not report["ok"]:
+    # Exit status is about THIS run's own checks, never a merged-in failure the other scope
+    # already reported (and already alerted on) earlier today — merging two scopes into one
+    # file must not make alerts.yml fail because daily.yml's catalogue check was red, or vice
+    # versa.
+    ok_this_run = all(c["ok"] is not False for c in checks)
+    if not ok_this_run:
         failed = [c["name"] for c in checks if c["ok"] is False]
         print(f"[health] FAILED: {', '.join(failed)}")
         return 1
