@@ -228,7 +228,10 @@ jobs:
           exit $HEALTH_EXIT
 
   # CAS-973: email someone the moment this workflow breaks, instead of leaving it to be
-  # noticed by whoever next opens the Actions tab.
+  # noticed by whoever next opens the Actions tab. CAS-995: `secrets: inherit` (the one
+  # secret/env reference this ticket authorises adding here) replaces the three named secrets
+  # below with everything this workflow has access to, so alert.yml's new push channel
+  # (SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY/APNS_*) reaches it too without naming each one.
   alert:
     needs: [refresh]
     if: failure()
@@ -238,7 +241,4 @@ jobs:
     uses: ./.github/workflows/alert.yml
     with:
       workflow_name: "daily"
-    secrets:
-      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-      CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
-      CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
+    secrets: inherit

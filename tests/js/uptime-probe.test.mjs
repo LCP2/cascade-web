@@ -10,11 +10,13 @@ import path from "node:path";
 import {
   checkSiteUp, parseBuildInfoVersion,
   checkMoviesJson,
-  checkSupabaseCanary,
-  checkSignup, probeSignupEmail,
-  checkUsageEventsInsert, checkPagesHead,
-  decideAlerting,
+  checkSupabaseCanary, probeSupabaseCanary,
+  checkSignup, probeSignupEmail, probeSignup,
+  checkUsageEventsInsert, checkPagesHead, probeUsageEventsInsert,
+  checkDailyRefreshFresh, checkAlertsRan,
+  decideAlerting, FAST_ALERT_CHECKS,
   probeSiteUp, probePagesHead,
+  mintApnsProviderJwt, findPushTokensForEmail,
   readState, writeState,
 } from "../../scripts/uptime_probe.mjs";
 
@@ -135,46 +137,91 @@ test("CAS-975: pages_head reflects the probe's own ok", () => {
 });
 
 // ---------------------------------------------------------------------------
-// flap control
+// flap control — a "slow" check (not in FAST_ALERT_CHECKS) needs two consecutive reds; a "fast"
+// check (site_up/movies_json/daily_refresh_fresh) alerts on its first (CAS-995 AC5).
 // ---------------------------------------------------------------------------
-test("CAS-975 AC: a single red probe does not alert", () => {
-  const d = decideAlerting({ consecutiveReds: 0 }, false);
+const GREEN = [{ name: "pages_head", ok: true }];
+const SLOW_RED = [{ name: "pages_head", ok: false }];
+const FAST_RED = [{ name: "site_up", ok: false }];
+
+test("CAS-975 AC: a single red probe (not a fast-alert check) does not alert", () => {
+  const d = decideAlerting({ consecutiveReds: 0, slowConsecutiveReds: 0 }, SLOW_RED);
   assert.equal(d.consecutiveReds, 1);
   assert.equal(d.sendAlert, false);
 });
 
-test("CAS-975 AC: two consecutive reds send exactly one alert", () => {
-  const d = decideAlerting({ consecutiveReds: 1 }, false);
+test("CAS-975 AC: two consecutive reds (slow check) send exactly one alert", () => {
+  const d = decideAlerting({ consecutiveReds: 1, slowConsecutiveReds: 1 }, SLOW_RED);
   assert.equal(d.consecutiveReds, 2);
   assert.equal(d.sendAlert, true);
 });
 
 test("CAS-975 AC: a third consecutive red sends nothing more", () => {
-  const d = decideAlerting({ consecutiveReds: 2, lastAlertAt: new Date().toISOString() }, false);
+  const d = decideAlerting(
+    { consecutiveReds: 2, slowConsecutiveReds: 2, lastAlertAt: new Date().toISOString() }, SLOW_RED);
   assert.equal(d.consecutiveReds, 3);
   assert.equal(d.sendAlert, false);
 });
 
 test("CAS-975 AC: the first green after a red always sends one recovery email", () => {
-  const d = decideAlerting({ consecutiveReds: 1 }, true);
+  const d = decideAlerting({ consecutiveReds: 1, slowConsecutiveReds: 1 }, GREEN);
   assert.equal(d.consecutiveReds, 0);
   assert.equal(d.sendRecovery, true);
 });
 
 test("CAS-975: green after green sends no recovery", () => {
-  const d = decideAlerting({ consecutiveReds: 0 }, true);
+  const d = decideAlerting({ consecutiveReds: 0, slowConsecutiveReds: 0 }, GREEN);
   assert.equal(d.sendRecovery, false);
 });
 
 test("CAS-975 AC: never more than one alert per hour even if two runs both land on their 2nd red", () => {
   const recentAlert = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // 5 minutes ago
-  const d = decideAlerting({ consecutiveReds: 0, lastAlertAt: recentAlert }, false);
+  const d = decideAlerting(
+    { consecutiveReds: 0, slowConsecutiveReds: 0, lastAlertAt: recentAlert }, SLOW_RED);
   // consecutiveReds is now 1, not 2, so no alert regardless — cooldown only matters when a run
   // would otherwise land exactly on the 2-red trigger within the same hour as the last alert.
-  const d2 = decideAlerting({ consecutiveReds: 1, lastAlertAt: recentAlert }, false);
+  const d2 = decideAlerting(
+    { consecutiveReds: 1, slowConsecutiveReds: 1, lastAlertAt: recentAlert }, SLOW_RED);
   assert.equal(d.sendAlert, false);
   assert.equal(d2.consecutiveReds, 2);
   assert.equal(d2.sendAlert, false, "an alert already sent within the last hour must not fire again");
+});
+
+// ---------------------------------------------------------------------------
+// CAS-995 AC5 — first-red alerting for site_up/movies_json/daily_refresh_fresh; two-in-a-row
+// for every other check (covered above via SLOW_RED).
+// ---------------------------------------------------------------------------
+test("CAS-995 AC5: site_up going red for the FIRST time alerts immediately", () => {
+  const d = decideAlerting({ consecutiveReds: 0, fastRedNames: [] }, FAST_RED);
+  assert.equal(d.sendAlert, true);
+  assert.deepEqual(d.fastRedNames, ["site_up"]);
+});
+
+test("CAS-995 AC5: movies_json going red for the FIRST time alerts immediately too", () => {
+  const d = decideAlerting({ consecutiveReds: 0, fastRedNames: [] }, [{ name: "movies_json", ok: false }]);
+  assert.equal(d.sendAlert, true);
+});
+
+test("CAS-995 AC5: daily_refresh_fresh going red for the FIRST time alerts immediately", () => {
+  const d = decideAlerting({ consecutiveReds: 0, fastRedNames: [] }, [{ name: "daily_refresh_fresh", ok: false }]);
+  assert.equal(d.sendAlert, true);
+});
+
+test("CAS-995 AC5: a fast check staying red a second hour does not re-alert (edge-triggered)", () => {
+  const d = decideAlerting({ consecutiveReds: 1, fastRedNames: ["site_up"] }, FAST_RED);
+  assert.equal(d.sendAlert, false, "already alerted on the first red; still open, not newly red");
+});
+
+test("CAS-995 AC5: a fast check still honours the one-alert-per-hour cooldown", () => {
+  const recentAlert = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const d = decideAlerting({ consecutiveReds: 0, fastRedNames: [], lastAlertAt: recentAlert }, FAST_RED);
+  assert.equal(d.sendAlert, false);
+});
+
+test("CAS-995 AC5: recovery clears fastRedNames", () => {
+  const d = decideAlerting({ consecutiveReds: 1, fastRedNames: ["site_up"] }, GREEN);
+  assert.equal(d.sendRecovery, true);
+  assert.deepEqual(d.fastRedNames, []);
 });
 
 // ---------------------------------------------------------------------------
@@ -202,4 +249,100 @@ test("CAS-975 AC: pages_head pointed at a refused local port is red", async () =
   const c = checkPagesHead(probe);
   assert.equal(c.ok, false);
   assert.match(c.detail, /ECONNREFUSED/);
+});
+
+// ---------------------------------------------------------------------------
+// CAS-995 AC3 — missing credentials report "not configured: <NAME>", not a vaguer message. The
+// test process itself carries none of SUPABASE_URL/SUPABASE_ANON_KEY/CASCADE_CANARY_*, so these
+// probes hit their missing-config branch without a network call.
+// ---------------------------------------------------------------------------
+test("CAS-995 AC3: supabase_canary names every missing credential", async () => {
+  const probe = await probeSupabaseCanary();
+  assert.equal(probe.signedIn, false);
+  assert.match(probe.detail, /^not configured: /);
+  assert.match(probe.detail, /SUPABASE_URL/);
+});
+
+test("CAS-995 AC3: signup names every missing credential", async () => {
+  const probe = await probeSignup();
+  assert.equal(probe.created, false);
+  assert.match(probe.detail, /^not configured: /);
+});
+
+test("CAS-995 AC3: usage_events_insert names every missing credential", async () => {
+  const probe = await probeUsageEventsInsert();
+  const c = checkUsageEventsInsert(probe);
+  assert.equal(c.ok, false);
+  assert.match(c.detail, /^not configured: SUPABASE_URL, SUPABASE_ANON_KEY$/);
+});
+
+// ---------------------------------------------------------------------------
+// CAS-995 AC4 — dead-man checks: red for a 31-hour-old refresh/success, green for a 2-hour-old
+// one. Pure decision functions, injected `now`, no network.
+// ---------------------------------------------------------------------------
+test("CAS-995 AC4: daily_refresh_fresh is red for a 31-hour-old commit", () => {
+  const now = new Date("2026-09-16T12:00:00Z");
+  const probe = { lastCommitAt: "2026-09-15T05:00:00Z" };   // 31h before `now`
+  const c = checkDailyRefreshFresh(probe, now);
+  assert.equal(c.ok, false);
+});
+
+test("CAS-995 AC4: daily_refresh_fresh is green for a 2-hour-old commit", () => {
+  const now = new Date("2026-09-16T12:00:00Z");
+  const probe = { lastCommitAt: "2026-09-16T10:00:00Z" };   // 2h before `now`
+  const c = checkDailyRefreshFresh(probe, now);
+  assert.equal(c.ok, true);
+});
+
+test("CAS-995 AC4: daily_refresh_fresh is red when no matching commit was found at all", () => {
+  const c = checkDailyRefreshFresh({ detail: 'no "Daily refresh" commit in the last 100 on staging' });
+  assert.equal(c.ok, false);
+  assert.match(c.detail, /Daily refresh/);
+});
+
+test("CAS-995 AC4: alerts_ran is red for a 31-hour-old successful run", () => {
+  const now = new Date("2026-09-16T12:00:00Z");
+  const probe = { lastSuccessAt: "2026-09-15T05:00:00Z" };
+  const c = checkAlertsRan(probe, now);
+  assert.equal(c.ok, false);
+});
+
+test("CAS-995 AC4: alerts_ran is green for a 2-hour-old successful run", () => {
+  const now = new Date("2026-09-16T12:00:00Z");
+  const probe = { lastSuccessAt: "2026-09-16T10:00:00Z" };
+  const c = checkAlertsRan(probe, now);
+  assert.equal(c.ok, true);
+});
+
+test("CAS-995: FAST_ALERT_CHECKS names exactly the three checks the ticket calls out", () => {
+  assert.deepEqual(new Set(FAST_ALERT_CHECKS),
+    new Set(["site_up", "movies_json", "daily_refresh_fresh"]));
+});
+
+// ---------------------------------------------------------------------------
+// CAS-995 — push channel: the ES256 provider JWT verifies against its own public key (pure,
+// no network), and the token lookup is a documented no-op without SUPABASE_SERVICE_ROLE_KEY.
+// ---------------------------------------------------------------------------
+test("CAS-995: mintApnsProviderJwt produces a JWT that verifies against its own public key", async () => {
+  const crypto = await import("node:crypto");
+  const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const authKeyB64 = privateKey.export({ format: "der", type: "pkcs8" }).toString("base64");
+
+  const jwt = mintApnsProviderJwt("KEYID123", "TEAMID456", authKeyB64, 1_700_000_000);
+  const [headerB64, payloadB64, sigB64] = jwt.split(".");
+
+  const header = JSON.parse(Buffer.from(headerB64, "base64url").toString());
+  const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString());
+  assert.deepEqual(header, { alg: "ES256", kid: "KEYID123" });
+  assert.deepEqual(payload, { iss: "TEAMID456", iat: 1_700_000_000 });
+
+  const verified = crypto.verify(
+    "sha256", Buffer.from(`${headerB64}.${payloadB64}`),
+    { key: publicKey, dsaEncoding: "ieee-p1363" }, Buffer.from(sigB64, "base64url"));
+  assert.equal(verified, true);
+});
+
+test("CAS-995: findPushTokensForEmail is a no-op without SUPABASE_SERVICE_ROLE_KEY configured", async () => {
+  const tokens = await findPushTokensForEmail(() => { throw new Error("must not fetch"); }, "lee@example.test");
+  assert.deepEqual(tokens, []);
 });

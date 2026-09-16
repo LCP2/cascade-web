@@ -12,10 +12,15 @@ real failure so `alert.yml` (CAS-973) fires.
     python -m monitor.health --scope daily   # CAS-993: every check except email_send/push_send
     python -m monitor.health --scope alerts  # CAS-993: only email_send/push_send
 
-Tolerance: a check whose inputs are unavailable this run (no run_stats.json section, no
-Supabase credential, etc.) reports ``ok: null`` ("unknown") and does NOT fail the run —
-except ``catalogue_size``/``catalogue_integrity``, whose input (``movies.json``) is never
-optional, so those two always resolve to a real pass/fail.
+Tolerance: a check whose inputs are unavailable this run because the run itself didn't produce
+them yet (no run_stats.json section this scope, too few usage rows to mean anything, no previous
+refresh to diff against) reports ``ok: null`` ("unknown") and does NOT fail the run — except
+``catalogue_size``/``catalogue_integrity``, whose input (``movies.json``) is never optional, so
+those two always resolve to a real pass/fail. CAS-995: a check that instead cannot run because a
+*credential it needs is simply not set* (SUPABASE_ANON_KEY, CASCADE_CANARY_EMAIL/PASSWORD) is a
+different case — a configuration gap someone needs to fix, not a quiet night — so it reports
+``ok: false`` ("fail") with detail ``"not configured: <NAME>"`` naming exactly which secret(s)
+are missing, and DOES fail the run.
 
 CAS-993: the monitor moved out of daily.yml into its own alerts.yml, so this module now has two
 scoped callers instead of one. ``--scope daily`` (daily.yml, straight after the catalogue refresh)
@@ -277,12 +282,20 @@ def _post_json(url: str, headers: dict, payload: dict, timeout: int = 15):
         return err.code, body
 
 
+def _missing_names(*pairs) -> list:
+    """CAS-995: the exact env var names among `pairs` (name, value) whose value is falsy — used
+    to build the "not configured: <NAME>" detail a credential-gated check reports instead of the
+    old, never-failing "unknown" when its inputs simply aren't there."""
+    return [name for name, value in pairs if not value]
+
+
 def probe_usage_events_insert(supabase_url: str | None, anon_key: str | None) -> dict | None:
     """Insert one canary row into usage_events AS THE ANON ROLE — the check that would have
     caught the live defect (CAS-974's own Problem statement): a service_role write would sail
     straight past the RLS policy an anon client actually hits."""
-    if not (supabase_url and anon_key):
-        return None
+    missing = _missing_names((SUPABASE_URL_ENV, supabase_url), (SUPABASE_ANON_KEY_ENV, anon_key))
+    if missing:
+        return {"not_configured": missing}
     headers = {"apikey": anon_key, "Authorization": f"Bearer {anon_key}",
                "Content-Type": "application/json", "Prefer": "return=minimal"}
     payload = {"client_key": "cascade-health-canary", "type": "health_canary",
@@ -297,8 +310,11 @@ def probe_usage_events_insert(supabase_url: str | None, anon_key: str | None) ->
 
 def probe_auth_signin(supabase_url: str | None, anon_key: str | None,
                       email: str | None, password: str | None) -> dict | None:
-    if not (supabase_url and anon_key and email and password):
-        return None
+    missing = _missing_names(
+        (SUPABASE_URL_ENV, supabase_url), (SUPABASE_ANON_KEY_ENV, anon_key),
+        (CANARY_EMAIL_ENV, email), (CANARY_PASSWORD_ENV, password))
+    if missing:
+        return {"not_configured": missing}
     headers = {"apikey": anon_key, "Content-Type": "application/json"}
     payload = {"email": email, "password": password}
     try:
@@ -320,6 +336,9 @@ def check_usage_events_insert(probe: dict | None) -> dict:
     if probe is None:
         return _check("usage_events_insert", None, None, None,
                       "no SUPABASE_URL/SUPABASE_ANON_KEY — unavailable.")
+    if probe.get("not_configured"):
+        return _check("usage_events_insert", False, None, None,
+                      f"not configured: {', '.join(probe['not_configured'])}")
     return _check("usage_events_insert", bool(probe.get("ok")), 1 if probe.get("ok") else 0, 1,
                   probe.get("detail", ""))
 
@@ -329,6 +348,9 @@ def check_auth_signin(probe: dict | None) -> dict:
         return _check("auth_signin", None, None, None,
                       "no SUPABASE_URL/SUPABASE_ANON_KEY/CASCADE_CANARY_EMAIL/"
                       "CASCADE_CANARY_PASSWORD — unavailable.")
+    if probe.get("not_configured"):
+        return _check("auth_signin", False, None, None,
+                      f"not configured: {', '.join(probe['not_configured'])}")
     return _check("auth_signin", bool(probe.get("ok")), 1 if probe.get("ok") else 0, 1,
                   probe.get("detail", ""))
 
@@ -355,8 +377,11 @@ def probe_usage_window(supabase_url: str | None, anon_key: str | None, email: st
     either "error" (the sign-in or the read itself failed outright) or the two row lists — RLS
     quietly returning zero rows (no select grant applied yet) is NOT an error here, it's read the
     same as a genuinely quiet window, by design (see the module docstring)."""
-    if not (supabase_url and anon_key and email and password):
-        return None
+    missing = _missing_names(
+        (SUPABASE_URL_ENV, supabase_url), (SUPABASE_ANON_KEY_ENV, anon_key),
+        (CANARY_EMAIL_ENV, email), (CANARY_PASSWORD_ENV, password))
+    if missing:
+        return {"not_configured": missing}
     try:
         status, body = _post_json(
             f"{supabase_url.rstrip('/')}/auth/v1/token?grant_type=password",
@@ -395,6 +420,9 @@ def _usage_window_gate(name: str, window: dict | None):
         return _check(name, None, None, None,
                       "no SUPABASE_URL/SUPABASE_ANON_KEY/CASCADE_CANARY_EMAIL/"
                       "CASCADE_CANARY_PASSWORD — unavailable.")
+    if window.get("not_configured"):
+        return _check(name, False, None, None,
+                      f"not configured: {', '.join(window['not_configured'])}")
     if window.get("error"):
         return _check(name, None, None, None, window["error"])
     app_open = _app_open_count(window["rows24"])

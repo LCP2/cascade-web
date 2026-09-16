@@ -200,6 +200,14 @@ class UsageEventsInsert(unittest.TestCase):
         c = health.check_usage_events_insert(None)
         self.assertIsNone(c["ok"])
 
+    def test_ac3_fails_loud_naming_the_missing_credential(self):
+        probe = health.probe_usage_events_insert(None, None)
+        c = health.check_usage_events_insert(probe)
+        self.assertFalse(c["ok"])
+        self.assertEqual(c["status"], "fail")
+        self.assertIn("not configured: SUPABASE_URL", c["detail"])
+        self.assertIn("SUPABASE_ANON_KEY", c["detail"])
+
 
 class AuthSignin(unittest.TestCase):
     def test_pass_session_returned(self):
@@ -213,6 +221,13 @@ class AuthSignin(unittest.TestCase):
     def test_unknown_with_no_credentials(self):
         c = health.check_auth_signin(None)
         self.assertIsNone(c["ok"])
+
+    def test_ac3_fails_loud_naming_the_missing_credential(self):
+        probe = health.probe_auth_signin("https://x.test", "anon-key", None, None)
+        c = health.check_auth_signin(probe)
+        self.assertFalse(c["ok"])
+        self.assertEqual(c["status"], "fail")
+        self.assertEqual(c["detail"], "not configured: CASCADE_CANARY_EMAIL, CASCADE_CANARY_PASSWORD")
 
 
 def _rows(n, type_="app_open", client_prefix="device", data=None):
@@ -258,6 +273,13 @@ class ClientErrorRate(unittest.TestCase):
         c = health.check_client_error_rate({"error": "canary sign-in failed (HTTP 400)."})
         self.assertIsNone(c["ok"])
         self.assertIn("canary sign-in failed", c["detail"])
+
+    def test_ac3_fails_loud_naming_the_missing_credential(self):
+        window = health.probe_usage_window(None, None, None, None, datetime.datetime.now())
+        c = health.check_client_error_rate(window)
+        self.assertFalse(c["ok"])
+        self.assertEqual(c["status"], "fail")
+        self.assertIn("not configured: SUPABASE_URL", c["detail"])
 
 
 class EmptyAccountRate(unittest.TestCase):
