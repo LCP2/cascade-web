@@ -9,6 +9,7 @@ import datetime
 import json
 import os
 import unittest
+import unittest.mock
 
 from monitor import health
 from monitor.catalogue import load_catalogue_file, movies_of
@@ -333,6 +334,90 @@ class BuildReport(unittest.TestCase):
                   health.check_email_send(None)]
         report = health.build_report(checks, "2026-09-15T00:00:00+00:00")
         self.assertTrue(report["ok"])
+
+
+class RunChecksScoping(unittest.TestCase):
+    """CAS-993: daily.yml and alerts.yml each assert a different subset of CHECK_NAMES now."""
+
+    def test_names_none_returns_every_check_in_order(self):
+        checks = health.run_checks(
+            today_movies=_movies(5600), prev_movies=_movies(5580),
+            stats={"email": {"attempted": 1, "delivered": 1, "errors": 0}},
+            usage_probe=None, auth_probe=None, apns_configured=False,
+            wm_cycle={"quota": 40000}, today=datetime.date(2026, 9, 15), usage_window=None)
+        self.assertEqual([c["name"] for c in checks], list(health.CHECK_NAMES))
+
+    def test_alert_scope_only_computes_email_and_push(self):
+        checks = health.run_checks(
+            stats={"email": {"attempted": 1, "delivered": 1, "errors": 0},
+                  "push": {"attempted": 1, "delivered": 1, "errors": 0}},
+            apns_configured=True, names=health.ALERT_CHECK_NAMES)
+        self.assertEqual([c["name"] for c in checks], ["email_send", "push_send"])
+        self.assertTrue(all(c["ok"] for c in checks))
+
+    def test_daily_scope_excludes_email_and_push(self):
+        checks = health.run_checks(
+            today_movies=_movies(5600), prev_movies=_movies(5580), stats={},
+            usage_probe=None, auth_probe=None, apns_configured=False,
+            wm_cycle={"quota": 40000}, today=datetime.date(2026, 9, 15), usage_window=None,
+            names=health.DAILY_CHECK_NAMES)
+        names = [c["name"] for c in checks]
+        self.assertNotIn("email_send", names)
+        self.assertNotIn("push_send", names)
+        self.assertIn("catalogue_size", names)
+
+
+class MergeReport(unittest.TestCase):
+    """CAS-993: a second same-day scoped run adds its checks rather than overwriting the first."""
+
+    def test_same_day_merges_by_name(self):
+        existing = {"checked_at": "2026-09-15T20:00:00+00:00",
+                    "checks": [health.check_catalogue_size(_movies(5600), _movies(5580))]}
+        new_checks = [health.check_email_send({"attempted": 1, "delivered": 1, "errors": 0})]
+        merged = health.merge_report(existing, new_checks, "2026-09-15T03:17:00+00:00")
+        self.assertEqual({c["name"] for c in merged["checks"]}, {"catalogue_size", "email_send"})
+        self.assertTrue(merged["ok"])
+
+    def test_same_day_replaces_a_check_with_the_same_name(self):
+        stale = health.check_email_send({"attempted": 1, "delivered": 0, "errors": 1})   # fail
+        existing = {"checked_at": "2026-09-15T03:00:00+00:00", "checks": [stale]}
+        fresh = [health.check_email_send({"attempted": 1, "delivered": 1, "errors": 0})]   # pass
+        merged = health.merge_report(existing, fresh, "2026-09-15T03:17:00+00:00")
+        self.assertEqual(len(merged["checks"]), 1)
+        self.assertTrue(merged["checks"][0]["ok"])
+
+    def test_earlier_calendar_day_starts_fresh(self):
+        existing = {"checked_at": "2026-09-14T20:00:00+00:00",
+                    "checks": [health.check_catalogue_size(_movies(100), _movies(100))]}  # fail
+        new_checks = [health.check_email_send({"attempted": 1, "delivered": 1, "errors": 0})]
+        merged = health.merge_report(existing, new_checks, "2026-09-15T03:17:00+00:00")
+        self.assertEqual([c["name"] for c in merged["checks"]], ["email_send"])
+        self.assertTrue(merged["ok"])
+
+    def test_no_existing_report_starts_fresh(self):
+        new_checks = [health.check_email_send({"attempted": 1, "delivered": 1, "errors": 0})]
+        merged = health.merge_report(None, new_checks, "2026-09-15T03:17:00+00:00")
+        self.assertEqual([c["name"] for c in merged["checks"]], ["email_send"])
+
+
+class ScopedCliExitCode(unittest.TestCase):
+    """A merged-in failure from the OTHER scope's earlier run must not fail THIS run."""
+
+    def test_alerts_scope_ignores_a_daily_failure_already_in_the_file(self):
+        out_path = os.path.join(os.path.dirname(__file__), "_health_scope_cli.json")
+        self.addCleanup(lambda: os.path.exists(out_path) and os.remove(out_path))
+        json.dump({"checked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                  "checks": [health.check_catalogue_size(_movies(100), _movies(100))],  # fail
+                  "ok": False},
+                 open(out_path, "w", encoding="utf-8"))
+        # Isolated from the real state/run_stats.json — a same-day real daily.yml run committing
+        # real "email"/"push" data would otherwise make this test's outcome depend on repo state.
+        with unittest.mock.patch("monitor.health.runstats.load", return_value={"date": "x"}):
+            code = health.main(["--scope", "alerts", "--out", out_path])
+        self.assertEqual(code, 0)   # push_send/email_send report "unknown" with no stats/env configured
+        report = json.load(open(out_path, encoding="utf-8"))
+        self.assertIn("catalogue_size", {c["name"] for c in report["checks"]})
+        self.assertIn("email_send", {c["name"] for c in report["checks"]})
 
 
 class DryRunCli(unittest.TestCase):

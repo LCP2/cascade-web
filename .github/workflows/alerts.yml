@@ -1,0 +1,147 @@
+name: Cascade alerts (17:00 Sydney)
+
+# CAS-993: user alerts (the monitor's email digests + push notifications) used to be a step
+# inside daily.yml, scheduled at 20:00 UTC (~6-7am Sydney) and in practice starting 2-3 hours
+# later than that (run #75 started 22:53 UTC, run #76 at 22:36 UTC) — so alerts landed at a
+# random morning time. This workflow is the monitor and nothing else: it waits until 17:00
+# Australia/Sydney (daylight-saving aware), then runs exactly the monitor step daily.yml used to
+# run. The catalogue refresh itself stays in daily.yml.
+#
+# Secrets are read from GitHub Actions secrets only (never hardcoded). When the Supabase + Resend
+# secrets are absent, the monitor runs in --dry-run so the workflow still passes (no writes, no
+# email). The repo is public, so runner minutes spent waiting for 17:00 Sydney are free.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"        # 03:17 UTC — an off-the-hour minute, because top-of-hour schedules run late. Converted to Sydney and waited out below.
+  workflow_dispatch:             # manual "Run workflow" button — does NOT wait for 17:00 Sydney.
+    inputs:
+      days_back:
+        description: "Demo: diff the monitor against the catalogue this many days ago so real transitions fire and a digest actually sends (for building/validating the notification UX). 0 = normal ~yesterday behaviour."
+        required: false
+        default: "0"
+      baseline_ref:
+        description: "Demo (advanced): diff against this exact git ref's movies.json. Overrides days_back. Blank = use days_back."
+        required: false
+        default: ""
+
+permissions:
+  contents: write                # allow the held-ids/health-report commit steps
+
+concurrency:                     # share daily.yml's group: refresh and alerts must never overlap
+  group: daily-refresh
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360         # covers the longest possible wait (a run starting just after 17:17 the PREVIOUS cycle boundary) plus the monitor itself
+    steps:
+      - name: Check out repo (carries yesterday's state for change-detection)
+        uses: actions/checkout@v4
+        with:
+          ref: staging           # the repo's default branch is main; alerts must land on staging, never main
+          fetch-depth: 0         # full history: the monitor anchors "yesterday" to the last refresh on an EARLIER day, not HEAD~1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Wait until 17:00 Sydney (CAS-993)
+        # A manual dispatch is someone deliberately testing right now, so it skips the wait.
+        # zoneinfo (stdlib) handles daylight saving automatically from the runner's system tzdata.
+        if: ${{ github.event_name == 'schedule' }}
+        run: python scripts/wait_until_sydney.py
+
+      - name: Set up Node (CAS-825 — the monitor calls the shipped engine via admit_shim.mjs)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run the Cascade monitor (diff → match → de-dupe → email)
+        # Reads yesterday's catalogue from git history (last refresh on an earlier calendar day). With the Supabase +
+        # Resend secrets present it does the real thing; without them it runs --dry-run so the
+        # workflow still passes (no writes, no email). CAS-825: matching now shells out once to
+        # admit_shim.mjs, which loads index.html via tests/js/engine.mjs — Node must be on PATH
+        # before this step runs.
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}   # optional; defaults to Resend's test sender
+          CASCADE_SITE_URL: ${{ secrets.SITE_URL }}               # optional; defaults to the live Pages URL
+          DAYS_BACK: ${{ github.event.inputs.days_back }}          # demo look-back (0/blank on schedule)
+          BASELINE_REF: ${{ github.event.inputs.baseline_ref }}    # demo exact-ref override
+          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}                 # CAS-483: without these four, push silently no-ops
+          APNS_TEAM_ID: ${{ secrets.APNS_TEAM_ID }}
+          APNS_AUTH_KEY: ${{ secrets.APNS_AUTH_KEY }}
+          APNS_BUNDLE_ID: ${{ secrets.APNS_BUNDLE_ID }}
+        run: |
+          # Demo look-back (CAS-417 follow-on): a manual run can diff against an OLDER catalogue so real
+          # transitions fire and a digest actually sends (for building/validating the notification UX).
+          # Scheduled runs pass no inputs, so DAYS_BACK is blank/0 and behaviour is unchanged.
+          BASELINE_ARGS=""
+          REF="$BASELINE_REF"
+          if [ -z "$REF" ] && [ -n "$DAYS_BACK" ] && [ "$DAYS_BACK" != "0" ]; then
+            CUTOFF=$(date -u -d "$DAYS_BACK days ago" +%Y-%m-%d)
+            REF=$(git log --format="%H %cd" --date=format:%Y-%m-%d -- movies.json | awk -v c="$CUTOFF" '$2 <= c {print $1; exit}')
+            echo "days_back=$DAYS_BACK -> cutoff $CUTOFF -> baseline commit ${REF:-<none found>}"
+          fi
+          if [ -n "$REF" ]; then
+            git show "$REF:movies.json" > /tmp/prev.json && BASELINE_ARGS="--yesterday /tmp/prev.json"
+            echo "DEMO baseline: $REF ($(wc -l < /tmp/prev.json) lines)"
+          fi
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$RESEND_API_KEY" ]; then
+            echo "Secrets present — live run (will send digests + write the notifications ledger)."
+            python -m monitor $BASELINE_ARGS
+          else
+            echo "Supabase/Resend secrets absent — running --dry-run (no writes, no email)."
+            python -m monitor --dry-run $BASELINE_ARGS
+          fi
+
+      - name: Persist the held-ids snapshot (CAS-986)
+        # The monitor step above just wrote state/user_held_ids.json (a real run only — --dry-run
+        # writes nothing, so there is nothing new to commit then). Same bounded fetch/reset-soft/
+        # push retry as daily.yml's own commit sites, via the reusable, tested form of that
+        # algorithm (scripts/reset_soft_and_push.sh) — there is no template rebuild owed here:
+        # this file is plain data, never derived from app_template.html.
+        run: |
+          git config user.name  "cascade-bot"
+          git config user.email "actions@users.noreply.github.com"
+          bash scripts/reset_soft_and_push.sh staging true state/user_held_ids.json
+
+      - name: Run alert-delivery health assertions (CAS-993/CAS-974)
+        # The two checks that need THIS run's own delivery stats — email_send/push_send — can
+        # only be asserted here now that the monitor no longer runs in daily.yml. --scope alerts
+        # computes only those two (never re-running daily's Supabase probes a second time in the
+        # same day) and merges the result into today's state/health.json alongside daily.yml's
+        # own (larger) report rather than overwriting it.
+        env:
+          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}
+          APNS_TEAM_ID: ${{ secrets.APNS_TEAM_ID }}
+          APNS_AUTH_KEY: ${{ secrets.APNS_AUTH_KEY }}
+          APNS_BUNDLE_ID: ${{ secrets.APNS_BUNDLE_ID }}
+        run: |
+          HEALTH_EXIT=0
+          python -m monitor.health --scope alerts || HEALTH_EXIT=$?
+          git config user.name  "cascade-bot"
+          git config user.email "actions@users.noreply.github.com"
+          bash scripts/reset_soft_and_push.sh staging true state/health.json
+          exit $HEALTH_EXIT
+
+  # CAS-973: email someone the moment this workflow breaks, instead of leaving it to be
+  # noticed by whoever next opens the Actions tab.
+  alert:
+    needs: [send]
+    if: failure()
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/alert.yml
+    with:
+      workflow_name: "alerts"
+    secrets:
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+      CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
