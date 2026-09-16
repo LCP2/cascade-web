@@ -68,7 +68,12 @@ jobs:
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
-          WM_RUN_MAX_CREDITS: ${{ vars.WM_RUN_MAX_CREDITS || '0' }}
+          # CAS-1003: pass the repo variable through as-is — no `|| '0'` fallback — so an unset
+          # variable and an explicit "0" stay distinguishable downstream (monitor/health.py's
+          # watchmode_fetch check). poc_pipeline.py's own WM_RUN_MAX_CREDITS still coerces an
+          # unset/empty value to 0 for actual spend gating, so this changes nothing about what
+          # the run spends.
+          WM_RUN_MAX_CREDITS: ${{ vars.WM_RUN_MAX_CREDITS }}
         run: python poc_pipeline.py
 
       - name: Commit refreshed app + data (this becomes "today" for tomorrow's diff)
@@ -195,6 +200,11 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           CASCADE_CANARY_EMAIL: ${{ secrets.CASCADE_CANARY_EMAIL }}
+          # CAS-1003: this step's own shell never inherited the build step's WM_RUN_MAX_CREDITS —
+          # each step gets a fresh env — so watchmode_fetch was reading it as unset every single
+          # run regardless of the repo variable. Pass it through as-is (no fallback) so the check
+          # sees the same unset/explicit-"0" distinction the build step now does.
+          WM_RUN_MAX_CREDITS: ${{ vars.WM_RUN_MAX_CREDITS }}
         run: |
           HEALTH_EXIT=0
           python -m monitor.health --scope daily || HEALTH_EXIT=$?
