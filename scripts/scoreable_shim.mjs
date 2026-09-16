@@ -17,12 +17,26 @@ async function readStdin(){
   return Buffer.concat(chunks).toString("utf8");
 }
 
+// CAS-992: one malformed candidate (e.g. missing `status`) must never fail the whole batch — a
+// record that throws is treated as not scoreable, and the count of such records goes to stderr,
+// never stdout, so the JSON response scoreable_ids() parses stays clean.
 async function main(){
   const raw = await readStdin();
   const req = raw.trim() ? JSON.parse(raw) : {};
   const E = loadEngine();
   const movies = req.movies || [];
-  const scoreable_ids = movies.filter(m => isScoreable(E, m)).map(m => m.tmdb_id);
+  let failed = 0;
+  const scoreable_ids = movies.filter(m => {
+    try {
+      return isScoreable(E, m);
+    } catch (err) {
+      failed++;
+      return false;
+    }
+  }).map(m => m.tmdb_id);
+  if (failed > 0) {
+    console.error(`[warn] CAS-992: ${failed} record(s) threw during isScoreable() and were treated as not scoreable`);
+  }
   process.stdout.write(JSON.stringify({ scoreable_ids }));
 }
 
