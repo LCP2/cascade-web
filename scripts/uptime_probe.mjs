@@ -173,6 +173,17 @@ async function supabaseFetch(fetchImpl, pathAndQuery, { method = "GET", token, b
 // a hashed_token that /auth/v1/verify (anon key) exchanges for a normal access_token. `type`
 // defaults to "magiclink" for an existing account (the canary); the signup probe below passes
 // "signup" instead, which additionally creates the throwaway account as a side effect.
+//
+// CAS-998: the raw GoTrue response carries hashed_token (+ action_link, email_otp,
+// verification_type) at the TOP LEVEL of the body, alongside the user fields — `properties.
+// hashed_token` is supabase-js's client-side wrapper shape, not what the HTTP endpoint itself
+// sends. Check the top level first, keep the wrapper shape as a fallback in case a future GoTrue
+// version reintroduces it.
+function errDetail(json) {
+  const msg = json && (json.msg || json.error_description || json.message || json.error);
+  return msg ? ` — ${msg}` : "";
+}
+
 async function mintSessionForEmail(fetchImpl, email, { type = "magiclink", extraBody = {} } = {}) {
   const missing = missingNames(
     ["SUPABASE_URL", SUPABASE_URL], ["SUPABASE_ANON_KEY", SUPABASE_ANON_KEY],
@@ -181,15 +192,15 @@ async function mintSessionForEmail(fetchImpl, email, { type = "magiclink", extra
 
   const gen = await supabaseFetch(fetchImpl, "/auth/v1/admin/generate_link",
     { method: "POST", serviceRole: true, body: { type, email, ...extraBody } });
-  const hashedToken = gen.json?.properties?.hashed_token;
+  const hashedToken = gen.json?.hashed_token ?? gen.json?.properties?.hashed_token;
   if (!gen.ok || !hashedToken) {
-    return { ok: false, detail: `generate_link failed: HTTP ${gen.status}` };
+    return { ok: false, detail: `generate_link failed: HTTP ${gen.status}${errDetail(gen.json)}` };
   }
   const verify = await supabaseFetch(fetchImpl, "/auth/v1/verify",
     { method: "POST", body: { type, token_hash: hashedToken } });
   const token = verify.json?.access_token;
   if (!verify.ok || !token) {
-    return { ok: false, detail: `verify failed: HTTP ${verify.status}` };
+    return { ok: false, detail: `verify failed: HTTP ${verify.status}${errDetail(verify.json)}` };
   }
   return { ok: true, token };
 }
@@ -388,19 +399,28 @@ export function checkAlertsRan(probe, now = new Date()) {
 // page anyone. Either path fires at most once per open red streak (edge-triggered on the probe
 // NEWLY going red, tracked per-name in state) and respects the same one-alert-per-hour cooldown.
 // The first green after any red always sends exactly one recovery, unchanged.
+//
+// CAS-998: those two triggers only decide whether the FIRST alert of a streak fires. Once one
+// has, `lastAlertedRedNames` (the sorted, comma-joined set of failing check names at the moment
+// of that alert) drives what happens next: if the failing set changes at all — a check newly
+// joins it — that's alerted immediately, bypassing every cooldown, because it's new information;
+// otherwise, while the same set stays red, the alert repeats every twelve hours rather than
+// staying silent for the rest of the outage.
 // ---------------------------------------------------------------------------
 export const FAST_ALERT_CHECKS = ["site_up", "movies_json", "daily_refresh_fresh"];
+const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 
 export function decideAlerting(prevState, results, nowMs = Date.now()) {
   const allOk = results.every(r => r.ok);
   const prevReds = (prevState && prevState.consecutiveReds) || 0;
   const prevSlowReds = (prevState && prevState.slowConsecutiveReds) || 0;
   const prevFastRed = new Set((prevState && prevState.fastRedNames) || []);
+  const prevAlertedRed = (prevState && prevState.lastAlertedRedNames) || null;
 
   if (allOk) {
     return {
-      consecutiveReds: 0, slowConsecutiveReds: 0, fastRedNames: [], sendAlert: false,
-      sendRecovery: prevReds > 0 || prevFastRed.size > 0,
+      consecutiveReds: 0, slowConsecutiveReds: 0, fastRedNames: [], lastAlertedRedNames: null,
+      sendAlert: false, sendRecovery: prevReds > 0 || prevFastRed.size > 0,
     };
   }
 
@@ -415,8 +435,19 @@ export function decideAlerting(prevState, results, nowMs = Date.now()) {
 
   const lastAlertAt = prevState && prevState.lastAlertAt ? Date.parse(prevState.lastAlertAt) : null;
   const withinCooldown = lastAlertAt != null && (nowMs - lastAlertAt) < ONE_HOUR_MS;
-  const sendAlert = (newlyFastRed || slowConsecutiveReds === 2) && !withinCooldown;
-  return { consecutiveReds, slowConsecutiveReds, fastRedNames, sendAlert, sendRecovery: false };
+
+  const redNamesKey = results.filter(r => !r.ok).map(r => r.name).sort().join(",");
+  const setChangedSinceLastAlert = prevAlertedRed != null && redNamesKey !== prevAlertedRed;
+  const persistentRedDue = prevAlertedRed != null && !setChangedSinceLastAlert
+    && lastAlertAt != null && (nowMs - lastAlertAt) >= TWELVE_HOURS_MS;
+
+  const sendAlert = setChangedSinceLastAlert || persistentRedDue
+    || ((newlyFastRed || slowConsecutiveReds === 2) && !withinCooldown);
+  return {
+    consecutiveReds, slowConsecutiveReds, fastRedNames,
+    lastAlertedRedNames: sendAlert ? redNamesKey : prevAlertedRed,
+    sendAlert, sendRecovery: false,
+  };
 }
 
 async function sendResendEmail(fetchImpl, subject, text) {
@@ -604,6 +635,7 @@ async function main() {
     consecutiveReds: decision.consecutiveReds,
     slowConsecutiveReds: decision.slowConsecutiveReds || 0,
     fastRedNames: decision.fastRedNames || [],
+    lastAlertedRedNames: decision.lastAlertedRedNames ?? null,
     lastAlertAt: decision.sendAlert ? new Date().toISOString() : (prevState.lastAlertAt || null),
     signupAccountsPending: signupPendingAfter,
     checks: results,

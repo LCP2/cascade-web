@@ -303,7 +303,16 @@ test("CAS-996 AC1: canary sign-in calls generate_link then verify, and uses the 
       if (pathname === "/auth/v1/admin/generate_link") {
         assert.equal(opts.headers.apikey, "service-role-key");
         assert.deepEqual(JSON.parse(opts.body), { type: "magiclink", email: "canary@x.test" });
-        return { ok: true, status: 200, text: async () => JSON.stringify({ properties: { hashed_token: "HASHED123" } }) };
+        // CAS-998: the real GoTrue response carries hashed_token at the TOP LEVEL, not under
+        // `properties` (that's supabase-js's client wrapper shape, never what the HTTP endpoint
+        // itself returns).
+        return {
+          ok: true, status: 200,
+          text: async () => JSON.stringify({
+            hashed_token: "HASHED123", action_link: "https://x.test/verify?token=HASHED123",
+            email_otp: "123456", verification_type: "magiclink",
+          }),
+        };
       }
       if (pathname === "/auth/v1/verify") {
         assert.equal(opts.headers.apikey, "anon-key");
@@ -338,6 +347,145 @@ test("CAS-996 AC1: canary sign-in calls generate_link then verify, and uses the 
     delete process.env.SUPABASE_SERVICE_ROLE_KEY;
     delete process.env.CASCADE_CANARY_EMAIL;
   }
+});
+
+// ---------------------------------------------------------------------------
+// CAS-998 — generate_link's response is parsed at the wrong path (properties.hashed_token is
+// supabase-js's client wrapper, never what the raw HTTP endpoint sends); both the canary sign-in
+// probe and the signup probe route through the same mintSessionForEmail, so one fixture of the
+// real top-level shape must satisfy both.
+// ---------------------------------------------------------------------------
+test("CAS-998 AC1: signup probe obtains a session from the real top-level generate_link body and proceeds to verify", async () => {
+  process.env.SUPABASE_URL = "https://x.test";
+  process.env.SUPABASE_ANON_KEY = "anon-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  process.env.CASCADE_CANARY_EMAIL = "canary@x.test";
+  try {
+    const mod = await importFreshProbeModule("ac998signup");
+    const calls = [];
+    const fetchStub = async (url, opts) => {
+      const { pathname } = new URL(url);
+      calls.push(pathname);
+      if (pathname === "/auth/v1/admin/generate_link") {
+        assert.equal(JSON.parse(opts.body).type, "signup");
+        return {
+          ok: true, status: 200,
+          text: async () => JSON.stringify({ hashed_token: "HASHED456", action_link: "https://x.test/verify" }),
+        };
+      }
+      if (pathname === "/auth/v1/verify") {
+        assert.deepEqual(JSON.parse(opts.body), { type: "signup", token_hash: "HASHED456" });
+        return { ok: true, status: 200, text: async () => JSON.stringify({ access_token: "TOKEN456" }) };
+      }
+      if (pathname === "/rest/v1/rpc/delete_my_account") {
+        return { ok: false, status: 404, text: async () => JSON.stringify({ message: "Could not find function", code: "PGRST202" }) };
+      }
+      throw new Error(`unexpected fetch: ${pathname}`);
+    };
+    const probe = await mod.probeSignup(fetchStub);
+    assert.equal(probe.created, true);
+    assert.deepEqual(calls.slice(0, 2), ["/auth/v1/admin/generate_link", "/auth/v1/verify"]);
+  } finally {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_ANON_KEY;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    delete process.env.CASCADE_CANARY_EMAIL;
+  }
+});
+
+test("CAS-998: the properties.hashed_token wrapper shape still works as a fallback", async () => {
+  process.env.SUPABASE_URL = "https://x.test";
+  process.env.SUPABASE_ANON_KEY = "anon-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  process.env.CASCADE_CANARY_EMAIL = "canary@x.test";
+  try {
+    const mod = await importFreshProbeModule("ac998fallback");
+    const fetchStub = async (url) => {
+      const { pathname } = new URL(url);
+      if (pathname === "/auth/v1/admin/generate_link") {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ properties: { hashed_token: "HASHED789" } }) };
+      }
+      if (pathname === "/auth/v1/verify") {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ access_token: "TOKEN789" }) };
+      }
+      if (pathname.startsWith("/rest/v1/")) return { ok: true, status: 200, text: async () => "[]" };
+      if (pathname === "/auth/v1/logout") return { ok: true, status: 204, text: async () => "" };
+      throw new Error(`unexpected fetch: ${pathname}`);
+    };
+    const probe = await mod.probeSupabaseCanary(fetchStub);
+    assert.equal(probe.signedIn, true);
+  } finally {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_ANON_KEY;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    delete process.env.CASCADE_CANARY_EMAIL;
+  }
+});
+
+test("CAS-998 AC2: a 4xx generate_link response reports the response's own error message, not just the status", async () => {
+  process.env.SUPABASE_URL = "https://x.test";
+  process.env.SUPABASE_ANON_KEY = "anon-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  process.env.CASCADE_CANARY_EMAIL = "canary@x.test";
+  try {
+    const mod = await importFreshProbeModule("ac998err");
+    const fetchStub = async (url) => {
+      const { pathname } = new URL(url);
+      if (pathname === "/auth/v1/admin/generate_link") {
+        return {
+          ok: false, status: 422,
+          text: async () => JSON.stringify({ error_code: "email_not_confirmed", msg: "Email not confirmed" }),
+        };
+      }
+      throw new Error(`unexpected fetch: ${pathname}`);
+    };
+    const probe = await mod.probeSupabaseCanary(fetchStub);
+    assert.equal(probe.signedIn, false);
+    assert.match(probe.detail, /HTTP 422/);
+    assert.match(probe.detail, /Email not confirmed/);
+  } finally {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_ANON_KEY;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    delete process.env.CASCADE_CANARY_EMAIL;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// CAS-998 AC3 — a red that persists must alert again after 12h, and a newly failing check must
+// alert at once rather than wait out the flap-control/cooldown rules.
+// ---------------------------------------------------------------------------
+test("CAS-998 AC3: a persisting red with the same failing set does not re-alert before 12h", () => {
+  const justAlerted = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1h ago
+  const d = decideAlerting(
+    { consecutiveReds: 2, slowConsecutiveReds: 2, lastAlertAt: justAlerted, lastAlertedRedNames: "pages_head" },
+    SLOW_RED);
+  assert.equal(d.sendAlert, false);
+});
+
+test("CAS-998 AC3: a persisting red with the same failing set re-alerts after 12h", () => {
+  const longAgo = new Date(Date.now() - 13 * 60 * 60 * 1000).toISOString(); // 13h ago
+  const d = decideAlerting(
+    { consecutiveReds: 10, slowConsecutiveReds: 10, lastAlertAt: longAgo, lastAlertedRedNames: "pages_head" },
+    SLOW_RED);
+  assert.equal(d.sendAlert, true);
+  assert.equal(d.lastAlertedRedNames, "pages_head");
+});
+
+test("CAS-998 AC3: a newly failing check joining an already-alerted red set alerts at once", () => {
+  const justAlerted = new Date(Date.now() - 60 * 1000).toISOString(); // 1 minute ago
+  const d = decideAlerting(
+    { consecutiveReds: 2, slowConsecutiveReds: 2, lastAlertAt: justAlerted, lastAlertedRedNames: "pages_head" },
+    [{ name: "pages_head", ok: false }, { name: "usage_events_insert", ok: false }]);
+  assert.equal(d.sendAlert, true);
+  assert.equal(d.lastAlertedRedNames, "pages_head,usage_events_insert");
+});
+
+test("CAS-998 AC3: recovery clears lastAlertedRedNames", () => {
+  const d = decideAlerting(
+    { consecutiveReds: 2, slowConsecutiveReds: 2, lastAlertedRedNames: "pages_head" }, GREEN);
+  assert.equal(d.sendRecovery, true);
+  assert.equal(d.lastAlertedRedNames, null);
 });
 
 test("CAS-996 AC3: supabase_canary fails naming only the missing service-role key", async () => {

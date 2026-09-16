@@ -258,7 +258,15 @@ class AuthSignin(unittest.TestCase):
             if url.endswith("/auth/v1/admin/generate_link"):
                 self.assertEqual(headers.get("apikey"), "service-role-key")
                 self.assertEqual(payload, {"type": "magiclink", "email": "canary@x.test"})
-                return 200, json.dumps({"properties": {"hashed_token": "HASHED123"}})
+                # CAS-998: the real GoTrue response carries hashed_token at the TOP LEVEL, not
+                # under `properties` (that's supabase-js's client wrapper shape, never what the
+                # HTTP endpoint itself returns).
+                return 200, json.dumps({
+                    "hashed_token": "HASHED123",
+                    "action_link": "https://x.test/verify?token=HASHED123",
+                    "email_otp": "123456",
+                    "verification_type": "magiclink",
+                })
             if url.endswith("/auth/v1/verify"):
                 self.assertEqual(headers.get("apikey"), "anon-key")
                 self.assertEqual(payload, {"type": "magiclink", "token_hash": "HASHED123"})
@@ -274,6 +282,20 @@ class AuthSignin(unittest.TestCase):
         self.assertTrue(probe["ok"])
         self.assertEqual(probe["token"], "TOKEN123")
 
+    def test_ac2_a_4xx_generate_link_response_reports_its_own_error_message(self):
+        def fake_post(url, headers, payload, timeout=15):
+            if url.endswith("/auth/v1/admin/generate_link"):
+                return 422, json.dumps({"error_code": "email_not_confirmed", "msg": "Email not confirmed"})
+            raise AssertionError(f"unexpected POST {url}")
+
+        with unittest.mock.patch("monitor.health._post_json", side_effect=fake_post):
+            probe = health.probe_auth_signin(
+                "https://x.test", "anon-key", "service-role-key", "canary@x.test")
+
+        self.assertFalse(probe["ok"])
+        self.assertIn("HTTP 422", probe["detail"])
+        self.assertIn("Email not confirmed", probe["detail"])
+
 
 class UsageWindowSession(unittest.TestCase):
     """CAS-996 AC2: the CAS-985 usage_events reads mint their session the same passwordless way
@@ -282,7 +304,7 @@ class UsageWindowSession(unittest.TestCase):
     def test_ac2_usage_window_reads_use_the_minted_access_token(self):
         def fake_post(url, headers, payload, timeout=15):
             if url.endswith("/auth/v1/admin/generate_link"):
-                return 200, json.dumps({"properties": {"hashed_token": "HASHED123"}})
+                return 200, json.dumps({"hashed_token": "HASHED123"})
             if url.endswith("/auth/v1/verify"):
                 return 200, json.dumps({"access_token": "TOKEN123"})
             raise AssertionError(f"unexpected POST {url}")
