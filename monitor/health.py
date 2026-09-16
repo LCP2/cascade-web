@@ -190,16 +190,32 @@ def check_oscarbase_fetch(stats: dict | None) -> dict:
     return _check_fetch("oscarbase_fetch", stats)
 
 
-def check_watchmode_fetch(stats: dict | None, quota: int, run_max_credits: int | None = None) -> dict:
+def check_watchmode_fetch(stats: dict | None, quota: int, run_max_credits_raw: str | None = None,
+                          unfilled_count: int = 0) -> dict:
     """CAS-988: the floor is 15% of `quota` — the real state/api_budget.json cycle quota (CAS-987),
     passed in by the caller rather than assumed here, so a plan change moves the floor with it.
 
-    CAS-994: `run_max_credits` (WM_RUN_MAX_CREDITS, default `pp.WM_RUN_MAX_CREDITS`) is the same
-    per-run ceiling poc_pipeline.py gates every Watchmode call on. 0 means the run is DELIBERATELY
-    spending nothing on Watchmode this run — 0 calls is then the expected, correct outcome, not
-    the failure `_check_fetch` would otherwise report it as."""
-    if run_max_credits is None:
-        run_max_credits = pp.WM_RUN_MAX_CREDITS
+    CAS-994: an explicit WM_RUN_MAX_CREDITS of 0 means the run is DELIBERATELY spending nothing
+    on Watchmode this run — 0 calls is then the expected, correct outcome, not the failure
+    `_check_fetch` would otherwise report it as.
+
+    CAS-1003: `run_max_credits_raw` is the RAW string read from the environment — None (or "")
+    when the WM_RUN_MAX_CREDITS repo variable was never set at all — not the already-coerced
+    `pp.WM_RUN_MAX_CREDITS` int, whose `int(os.getenv(..., "0") or 0)` collapses "nobody
+    configured this" and "someone explicitly paused it" into the same 0, so both used to read as
+    the same harmless "skipped". An explicit "0" is still a real decision and still reports
+    "skipped". UNSET only reports "fail" (naming WM_RUN_MAX_CREDITS and `unfilled_count`) when the
+    catalogue still holds records with no wm_fields_fetched_at — an unset variable over an
+    already fully-enriched catalogue hasn't cost anything, so isn't worth failing the run over."""
+    if not run_max_credits_raw:
+        if unfilled_count > 0:
+            return _check("watchmode_fetch", False, unfilled_count, 0,
+                          f"WM_RUN_MAX_CREDITS is unset and {unfilled_count} record(s) carry no "
+                          "wm_fields_fetched_at — Watchmode enrichment is silently paused.")
+        return _check("watchmode_fetch", None, 0, None,
+                      "WM_RUN_MAX_CREDITS is unset, but every record already carries "
+                      "wm_fields_fetched_at.", status="skipped")
+    run_max_credits = int(run_max_credits_raw)
     if run_max_credits <= 0:
         return _check("watchmode_fetch", None, 0, None,
                       "Watchmode spend paused (WM_RUN_MAX_CREDITS=0) — 0 calls is expected.",
@@ -569,7 +585,10 @@ def run_checks(*, today_movies=None, prev_movies=None, stats=None, usage_probe=N
         "catalogue_size": lambda: check_catalogue_size(today_movies, prev_movies),
         "catalogue_integrity": lambda: check_catalogue_integrity(today_movies),
         "tmdb_fetch": lambda: check_tmdb_fetch(stats.get("tmdb")),
-        "watchmode_fetch": lambda: check_watchmode_fetch(stats.get("watchmode"), wm_cycle["quota"]),
+        "watchmode_fetch": lambda: check_watchmode_fetch(
+            stats.get("watchmode"), wm_cycle["quota"],
+            run_max_credits_raw=os.environ.get("WM_RUN_MAX_CREDITS"),
+            unfilled_count=sum(1 for m in today_movies if not m.get("wm_fields_fetched_at"))),
         "watchmode_pace": lambda: check_watchmode_pace(wm_cycle, today),
         "oscarbase_fetch": lambda: check_oscarbase_fetch(stats.get("oscarbase")),
         "score_coverage": lambda: check_score_coverage(today_movies, prev_movies),
@@ -619,6 +638,10 @@ def _synthetic_catalogue(n: int, scored_pct: float = 1.0) -> list:
             "status": ["in_cinema"],
             "wm_user_rating": 7.5 if i < scored_n else None,
             "wm_critic_score": None,
+            # CAS-1003: every fixture record carries this so the dry-run's watchmode_fetch check
+            # stays green regardless of whatever WM_RUN_MAX_CREDITS happens to be in the real
+            # shell running the demo — an unset variable only fails when unfilled records exist.
+            "wm_fields_fetched_at": "2026-09-14",
         })
     return out
 
