@@ -257,5 +257,38 @@ class ReportFigures(unittest.TestCase):
             self.assertIn(key, report)
 
 
+class BackcatalogueCandidatesCarryStatusAndPopularity(unittest.TestCase):
+    """CAS-992 AC4 — a record merge_backcatalogue_candidates creates must carry `status` (a list)
+    and a numeric `popularity`: the shim/engine index into `status` and sort/rank on `popularity`,
+    and a record missing either crashed the whole scoreable_ids() batch call (CAS-992's Defect 2)."""
+
+    def test_a_newly_merged_record_carries_status_and_popularity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "wm_backcatalogue_candidates.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump([{"id": 1, "tmdb_id": 99, "title": "T99", "year": 2020,
+                            "popularity_percentile": 80}], fh)
+            candidates = {}
+            pp.merge_backcatalogue_candidates(candidates, "2026-09-16", path=path)
+            rec = candidates["99"]
+            self.assertEqual(rec["status"], [])
+            self.assertIsInstance(rec["popularity"], (int, float))
+            self.assertGreater(rec["popularity"], 0)
+
+
+class ScoreableIdsSurvivesRealBackcatalogueCandidates(unittest.TestCase):
+    """CAS-992 AC5 — this reproduces the exact failure from daily.yml run #76: the real
+    movies.json catalogue merged with the real state/wm_backcatalogue_candidates.json (CAS-989's
+    enumerate output), through the real merge + the real scoreable_ids() engine call, with no
+    stubbing, must complete without raising."""
+
+    def test_real_movies_plus_real_backcatalogue_candidates_do_not_raise(self):
+        movies = json.load(open(pp.OUTPUT_FILE, encoding="utf-8"))["movies"]
+        candidates = {str(m["tmdb_id"]): dict(m) for m in movies}
+        pp.merge_backcatalogue_candidates(candidates, "2026-09-16")
+        ids = pp.scoreable_ids(list(candidates.values()))
+        self.assertIsInstance(ids, set)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -763,11 +763,19 @@ def merge_backcatalogue_candidates(candidates: dict, today_iso: str, path: str |
         if key in candidates:
             stats["already_known"] += 1
             continue
+        # CAS-992: `status` must be a list — primaryStatus()/isScoreable() index into it and throw
+        # on None/missing, which took down scoreable_ids()'s whole batch call. `popularity` is
+        # scaled down from the 0-100 popularity_percentile (percentile / 10, so a 0-10 range) to
+        # land within TMDB's own popularity distribution (movies.json: median 1.2, p75 2.7, p90
+        # 8.2) rather than the raw percentile value, which would outrank most real TMDB titles.
+        percentile = row.get("popularity_percentile") or 0
         candidates[key] = {
             "tmdb_id": tmdb_id,
             "title": row.get("title"),
             "year": row.get("year"),
             "popularity_percentile": row.get("popularity_percentile"),
+            "popularity": round(percentile / 10, 4),
+            "status": [],
             "first_seen": today_iso,
             "last_probed": None,
             "probe_count": 0,
@@ -917,7 +925,15 @@ def scoreable_ids(movies: list) -> set:
     isScoreable() — the same rule scripts/wm_scoreable_manifest.mjs already encodes for CAS-922)
     which of `movies` can carry a Cascade score today. One process for the whole batch, never per
     title. Writing a second copy of this rule in Python is the defect this function exists to
-    avoid — if the app's scoring changes, this keeps changing with it automatically."""
+    avoid — if the app's scoring changes, this keeps changing with it automatically.
+
+    CAS-992: a candidate with no `status` (a shape gap in a legacy/pre-fix candidates.json entry —
+    the shim itself is also hardened to never let one bad record fail the whole batch) is
+    normalised to `status: []` here, in place, before the call — `primaryStatus()` indexes into
+    `status` and throws on anything else."""
+    for m in movies:
+        if m.get("status") is None:
+            m["status"] = []
     payload = json.dumps({"movies": movies})
     proc = subprocess.run(["node", SCOREABLE_SHIM], input=payload, capture_output=True,
                           text=True, timeout=180, check=True)
@@ -1456,12 +1472,35 @@ class MassStampGuardTripped(RuntimeError):
     like CAS-578's D1, rather than a real release day."""
 
 
-def check_mass_stamp_guard(records: list[dict], prev_by_id: dict, pct: float = MASS_STAMP_GUARD_PCT) -> None:
+MASS_STAMP_ACK_FILE = os.path.join(STATE_DIR, "mass_stamp_ack.json")
+
+
+def _load_mass_stamp_ack() -> dict | None:
+    """CAS-992: the committed one-off acknowledgement that lets ONE deliberate reclassification
+    (CAS-608's ~951-title released/upcoming correction) through the CAS-578 guard once, without
+    weakening it for any other run or window. Returns None when the file is absent or unreadable —
+    the guard then applies exactly as it did before this ticket."""
+    if not os.path.exists(MASS_STAMP_ACK_FILE):
+        return None
+    try:
+        return json.load(open(MASS_STAMP_ACK_FILE, encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def check_mass_stamp_guard(records: list[dict], prev_by_id: dict, pct: float = MASS_STAMP_GUARD_PCT,
+                           today: datetime.date | None = None, ack: dict | None = None) -> None:
     """Raise MassStampGuardTripped if this run would move more than `pct` of the WHOLE catalogue
     into one window it did not hold yesterday. A title's very first sighting is excluded — that is
     catalogue GROWTH (e.g. CAS-128's cap lift, which moved thousands of titles from "doesn't exist
     yet" into some window in one run), not a reclassification of an existing record, and diff_and_alert's
-    own arrival events already draw the same "first sighting doesn't count" line."""
+    own arrival events already draw the same "first sighting doesn't count" line.
+
+    CAS-992: `ack` (defaulting to `_load_mass_stamp_ack()`, i.e. state/mass_stamp_ack.json) can
+    cover exactly ONE tripped window — only when it is the ack's own named window, only at or
+    below the ack's own `max_titles`, and only on a run date (`today`, defaulting to `_RUN_DATE`)
+    at or before the ack's own `valid_through`. Any other tripped window, a larger count, a later
+    date, or no ack at all still raises. `pct`/threshold are never affected by an ack."""
     total = len(records)
     if not total:
         return
@@ -1476,11 +1515,29 @@ def check_mass_stamp_guard(records: list[dict], prev_by_id: dict, pct: float = M
         for w in after - before:
             gained[w] = gained.get(w, 0) + 1
     tripped = {w: n for w, n in gained.items() if n > threshold}
-    if tripped:
-        raise MassStampGuardTripped(
-            f"refusing to write this run: {tripped} title(s) would newly enter one window out of "
-            f"{total} ( > {pct:.0%}, threshold {threshold} ) — looks like a mass-stamp bug (CAS-578), "
-            f"not a real release day")
+    if not tripped:
+        return
+
+    if ack is None:
+        ack = _load_mass_stamp_ack()
+    if ack:
+        window = ack.get("window")
+        max_titles = ack.get("max_titles")
+        valid_through = ack.get("valid_through")
+        run_date = today if today is not None else datetime.date.fromisoformat(_RUN_DATE)
+        if (window in tripped and tripped[window] <= max_titles and valid_through
+                and run_date <= datetime.date.fromisoformat(valid_through)):
+            print(f"[info] CAS-992: mass-stamp guard acknowledgement used for window '{window}' "
+                  f"({tripped[window]} title(s) <= {max_titles}, valid through {valid_through}, "
+                  f"reason: {ack.get('reason')})")
+            tripped = {w: n for w, n in tripped.items() if w != window}
+            if not tripped:
+                return
+
+    raise MassStampGuardTripped(
+        f"refusing to write this run: {tripped} title(s) would newly enter one window out of "
+        f"{total} ( > {pct:.0%}, threshold {threshold} ) — looks like a mass-stamp bug (CAS-578), "
+        f"not a real release day")
 
 
 # ---------------------------------------------------------------------------

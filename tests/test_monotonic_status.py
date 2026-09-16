@@ -496,5 +496,62 @@ class MassStampGuardCatchesABadRun(unittest.TestCase):
         pp.check_mass_stamp_guard(records, {})   # must not raise
 
 
+class MassStampGuardAcknowledgement(unittest.TestCase):
+    """CAS-992 AC1/AC2 — state/mass_stamp_ack.json lets CAS-608's one-off ~951-title released
+    reclassification through the CAS-578 guard exactly once, without weakening it for anything
+    else. Reproduces daily.yml run #76's own numbers: 837 titles newly entering `released` out of
+    5,999 total, threshold 299."""
+
+    _ACK = {"window": "released", "max_titles": 1000, "valid_through": "2026-09-20",
+            "reason": "CAS-608 reclassification"}
+
+    def _run76_records(self, n_released, total=5999):
+        prev = {i: {"status": ["upcoming"]} for i in range(total)}
+        records = [{"tmdb_id": i, "status": ["released"] if i < n_released else ["upcoming"]}
+                   for i in range(total)]
+        return records, prev
+
+    def test_the_acknowledged_window_passes_at_or_below_its_cap_and_on_or_before_valid_through(self):
+        records, prev = self._run76_records(837)
+        pp.check_mass_stamp_guard(records, prev, today=datetime.date(2026, 9, 16),
+                                   ack=self._ACK)   # must not raise
+        pp.check_mass_stamp_guard(records, prev, today=datetime.date(2026, 9, 20),
+                                   ack=self._ACK)   # must not raise — valid_through is inclusive
+
+    def test_a_run_date_after_valid_through_still_trips(self):
+        records, prev = self._run76_records(837)
+        with self.assertRaises(pp.MassStampGuardTripped):
+            pp.check_mass_stamp_guard(records, prev, today=datetime.date(2026, 9, 21),
+                                       ack=self._ACK)
+
+    def test_a_count_over_max_titles_still_trips(self):
+        records, prev = self._run76_records(1001)
+        with self.assertRaises(pp.MassStampGuardTripped):
+            pp.check_mass_stamp_guard(records, prev, today=datetime.date(2026, 9, 16),
+                                       ack=self._ACK)
+
+    def test_a_window_other_than_the_acknowledged_one_still_trips(self):
+        prev = {i: {"status": ["upcoming"]} for i in range(100)}
+        records = [{"tmdb_id": i, "status": ["rental"] if i < 50 else ["upcoming"]}
+                   for i in range(100)]   # 50% -> rental, not the acknowledged "released" window
+        with self.assertRaises(pp.MassStampGuardTripped):
+            pp.check_mass_stamp_guard(records, prev, today=datetime.date(2026, 9, 16),
+                                       ack=self._ACK)
+
+    def test_no_acknowledgement_at_all_still_trips(self):
+        records, prev = self._run76_records(837)
+        with mock.patch.object(pp, "_load_mass_stamp_ack", return_value=None):
+            with self.assertRaises(pp.MassStampGuardTripped):
+                pp.check_mass_stamp_guard(records, prev, today=datetime.date(2026, 9, 16))
+
+    def test_the_committed_acknowledgement_file_has_the_tickets_own_values(self):
+        self.assertEqual(pp._load_mass_stamp_ack(), self._ACK)
+
+    def test_the_real_committed_file_lets_run_76s_own_numbers_through_today(self):
+        # End-to-end: no injected `ack`/`today` — reads the real committed file and _RUN_DATE.
+        records, prev = self._run76_records(837)
+        pp.check_mass_stamp_guard(records, prev)   # must not raise
+
+
 if __name__ == "__main__":
     unittest.main()
