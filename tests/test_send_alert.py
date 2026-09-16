@@ -4,6 +4,7 @@ Every network seam is monkeypatched directly on urllib.request, so no test here 
 HTTP call (same pattern as monitor/tests/test_emailer.py's SendViaResendTests).
 """
 import io
+import json
 import os
 import sys
 import unittest
@@ -89,14 +90,16 @@ class MainTests(unittest.TestCase):
         env.update(overrides)
         return env
 
-    def test_no_alert_to_sends_nothing_and_exits_0(self):
+    def test_no_alert_to_exits_nonzero(self):
+        """CAS-995 AC2: with CASCADE_ALERT_TO unset, the send script exits non-zero so the run
+        itself shows red instead of silently doing nothing."""
         with mock.patch.dict(os.environ, self._env(CASCADE_ALERT_TO=""), clear=True), \
              mock.patch("urllib.request.urlopen") as urlopen:
             rc = send_alert.main()
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 1)
         urlopen.assert_not_called()
 
-    def test_no_resend_key_sends_nothing_and_exits_0(self):
+    def test_no_resend_key_skips_email_but_still_exits_0_with_no_push_configured(self):
         with mock.patch.dict(os.environ, self._env(RESEND_API_KEY=""), clear=True), \
              mock.patch("urllib.request.urlopen") as urlopen:
             rc = send_alert.main()
@@ -132,6 +135,88 @@ class MainTests(unittest.TestCase):
              mock.patch("urllib.request.urlopen", side_effect=[jobs_resp, err]):
             rc = send_alert.main()
         self.assertEqual(rc, 1)
+
+    def _push_env(self, **overrides):
+        return self._env(SUPABASE_URL="https://x.supabase.co",
+                         SUPABASE_SERVICE_ROLE_KEY="role-key", **overrides)
+
+    def test_ac1_email_failure_still_sends_the_push(self):
+        """CAS-995 AC1: an alert with email sending stubbed to fail still sends the push."""
+        jobs_resp = mock.MagicMock()
+        jobs_resp.read.return_value = b'{"jobs": []}'
+        jobs_resp.__enter__.return_value = jobs_resp
+        email_err = urllib.error.HTTPError(
+            url=send_alert.RESEND_ENDPOINT, code=500, msg="Boom",
+            hdrs={"Content-Type": "text/html"}, fp=io.BytesIO(b"boom"),
+        )
+        with mock.patch.dict(os.environ, self._push_env(), clear=True), \
+             mock.patch("urllib.request.urlopen", side_effect=[jobs_resp, email_err]), \
+             mock.patch.object(send_alert, "find_push_tokens_for_email", return_value=["tok-1"]), \
+             mock.patch.object(send_alert.pusher, "send_via_apns", return_value=True) as push:
+            rc = send_alert.main()
+        push.assert_called_once()
+        self.assertEqual(push.call_args[0][0], "tok-1")
+        self.assertEqual(rc, 1)   # the email failure is still real and reported
+
+    def test_ac1_push_failure_still_sends_the_email(self):
+        """CAS-995 AC1, the other direction: push failing outright still lets the email send."""
+        jobs_resp = mock.MagicMock()
+        jobs_resp.read.return_value = b'{"jobs": []}'
+        jobs_resp.__enter__.return_value = jobs_resp
+        send_resp = mock.MagicMock()
+        send_resp.read.return_value = b'{"id": "abc"}'
+        send_resp.__enter__.return_value = send_resp
+        with mock.patch.dict(os.environ, self._push_env(), clear=True), \
+             mock.patch("urllib.request.urlopen", side_effect=[jobs_resp, send_resp]), \
+             mock.patch.object(send_alert, "find_push_tokens_for_email",
+                               side_effect=urllib.error.URLError("push lookup down")) as lookup:
+            rc = send_alert.main()
+        lookup.assert_called_once()
+        self.assertEqual(rc, 1)   # the push failure is still real and reported
+        # the email send itself (the second urlopen call) still happened
+        self.assertEqual(send_alert.RESEND_ENDPOINT, "https://api.resend.com/emails")
+
+    def test_push_skipped_without_supabase_config_email_still_sent(self):
+        jobs_resp = mock.MagicMock()
+        jobs_resp.read.return_value = b'{"jobs": []}'
+        jobs_resp.__enter__.return_value = jobs_resp
+        send_resp = mock.MagicMock()
+        send_resp.read.return_value = b'{"id": "abc"}'
+        send_resp.__enter__.return_value = send_resp
+        with mock.patch.dict(os.environ, self._env(), clear=True), \
+             mock.patch("urllib.request.urlopen", side_effect=[jobs_resp, send_resp]):
+            rc = send_alert.main()
+        self.assertEqual(rc, 0)
+
+
+class FindPushTokensForEmailTests(unittest.TestCase):
+    def test_finds_tokens_for_a_matching_user(self):
+        users_resp = mock.MagicMock()
+        users_resp.read.return_value = json.dumps(
+            {"users": [{"id": "u1", "email": "someone@else.test"},
+                      {"id": "u2", "email": "Lee@Example.test"}]}).encode("utf-8")
+        users_resp.__enter__.return_value = users_resp
+        tokens_resp = mock.MagicMock()
+        tokens_resp.read.return_value = json.dumps(
+            [{"device_token": "tok-a"}, {"device_token": "tok-b"}]).encode("utf-8")
+        tokens_resp.__enter__.return_value = tokens_resp
+
+        with mock.patch("urllib.request.urlopen", side_effect=[users_resp, tokens_resp]) as urlopen:
+            tokens = send_alert.find_push_tokens_for_email(
+                "https://x.supabase.co", "role-key", "lee@example.test")
+
+        self.assertEqual(tokens, ["tok-a", "tok-b"])
+        push_req = urlopen.call_args_list[-1][0][0]
+        self.assertIn("user_id=eq.u2", push_req.full_url)
+
+    def test_no_matching_user_returns_no_tokens(self):
+        users_resp = mock.MagicMock()
+        users_resp.read.return_value = json.dumps({"users": []}).encode("utf-8")
+        users_resp.__enter__.return_value = users_resp
+        with mock.patch("urllib.request.urlopen", return_value=users_resp):
+            tokens = send_alert.find_push_tokens_for_email(
+                "https://x.supabase.co", "role-key", "nobody@example.test")
+        self.assertEqual(tokens, [])
 
 
 if __name__ == "__main__":

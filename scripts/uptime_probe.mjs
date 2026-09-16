@@ -4,17 +4,29 @@
 // hours, where a Pages/Cloudflare/Supabase outage was previously invisible until a user
 // complained.
 //
-// Six independent probes: site_up, movies_json, supabase_canary, signup, usage_events_insert,
-// pages_head. Each is split into a `probeX()` (real network I/O) and a `checkX()` (pure
-// pass/fail decision over the probe's result) — the same split monitor/health.py uses — so the
-// decision logic is unit-testable without a network.
+// Eight independent probes: site_up, movies_json, supabase_canary, signup, usage_events_insert,
+// pages_head, and (CAS-995) two dead-man checks — daily_refresh_fresh (has daily.yml actually
+// landed a commit in the last 30h) and alerts_ran (has alerts.yml completed successfully in the
+// last 30h) — so a dropped schedule or disabled Action is caught even though nothing "failed".
+// Each is split into a `probeX()` (real network I/O) and a `checkX()` (pure pass/fail decision
+// over the probe's result) — the same split monitor/health.py uses — so the decision logic is
+// unit-testable without a network.
 //
-// Flap control: a single red probe must not page anyone. `state/uptime.json` (committed by the
-// workflow) carries the running `consecutiveReds` count and the last alert time; decideAlerting()
-// is the whole state machine — two consecutive reds send one alert, a third sends nothing more,
-// and the first green after any red always sends a recovery so a red is never left open. Never
-// more than one alert per hour (a `lastAlertAt` cooldown, belt-and-braces alongside the hourly
-// cron cadence itself).
+// Flap control: a single red probe must not page anyone, EXCEPT the three checks in
+// FAST_ALERT_CHECKS (site_up, movies_json, daily_refresh_fresh) — an outage or a silently
+// stopped daily refresh is worth knowing about immediately, not after a second confirming red.
+// Every other probe still needs two consecutive reds. `state/uptime.json` (committed by the
+// workflow) carries the running `consecutiveReds` count, the last alert time, and which
+// fast-alert checks were red last run (`fastRedNames`, so re-alerting is edge-triggered on a
+// check NEWLY going red, not every hour it stays red); decideAlerting() is the whole state
+// machine. The first green after any red always sends a recovery so a red is never left open.
+// Never more than one alert per hour (a `lastAlertAt` cooldown, belt-and-braces alongside the
+// hourly cron cadence itself).
+//
+// CAS-995: every alert/recovery is ALSO sent as an APNs push (to the device tokens of the
+// Supabase account whose email equals CASCADE_ALERT_TO), independently of the Resend email — a
+// Resend outage must not silence the push, and a push misconfiguration must not silence the
+// email.
 //
 // The signup probe follows its own contingency clause: CAS-980 (the delete_my_account RPC) has
 // not shipped yet (no such function in supabase/schema.sql at the time this was written), so
@@ -23,6 +35,7 @@
 // exist" as expected-for-now: it leaves the account in place and reports the running count of
 // accounts still pending removal. Once CAS-980 ships, the same code path starts removing them for
 // real with no change needed here.
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,12 +57,32 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const EMAIL_FROM = process.env.CASCADE_EMAIL_FROM || "Cascade <onboarding@resend.dev>";
 const ALERT_TO = process.env.CASCADE_ALERT_TO;
 
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GITHUB_REPOSITORY = process.env.GITHUB_REPOSITORY || "LCP2/cascade-web";
+const GITHUB_API = "https://api.github.com";
+
+const APNS_KEY_ID = process.env.APNS_KEY_ID;
+const APNS_TEAM_ID = process.env.APNS_TEAM_ID;
+const APNS_AUTH_KEY = process.env.APNS_AUTH_KEY;      // base64-encoded .p8 contents
+const APNS_BUNDLE_ID = process.env.APNS_BUNDLE_ID;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
 export const CATALOGUE_MIN = 5500;
 const ONE_HOUR_MS = 60 * 60 * 1000;
+const THIRTY_HOURS_MS = 30 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10000;
+const DAILY_REFRESH_COMMIT_PREFIX = "Daily refresh ";
+const ALERTS_WORKFLOW_FILE = "alerts.yml";
 
 function withTimeout(opts = {}) {
   return { ...opts, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) };
+}
+
+// CAS-995: the exact env var names among `pairs` (name, value) whose value is falsy — used to
+// build the "not configured: <NAME>" detail a credential-gated probe reports instead of a vaguer
+// "not all set" list, so health.py and this script name a missing secret the same way.
+function missingNames(...pairs) {
+  return pairs.filter(([, value]) => !value).map(([name]) => name);
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +167,11 @@ async function supabaseFetch(fetchImpl, pathAndQuery, { method = "GET", token, b
 }
 
 export async function probeSupabaseCanary(fetchImpl = fetch) {
-  if (!(SUPABASE_URL && SUPABASE_ANON_KEY && CANARY_EMAIL && CANARY_PASSWORD)) {
-    return { signedIn: false, detail: "SUPABASE_URL/SUPABASE_ANON_KEY/CASCADE_CANARY_EMAIL/CASCADE_CANARY_PASSWORD not all set" };
+  const missing = missingNames(
+    ["SUPABASE_URL", SUPABASE_URL], ["SUPABASE_ANON_KEY", SUPABASE_ANON_KEY],
+    ["CASCADE_CANARY_EMAIL", CANARY_EMAIL], ["CASCADE_CANARY_PASSWORD", CANARY_PASSWORD]);
+  if (missing.length) {
+    return { signedIn: false, detail: `not configured: ${missing.join(", ")}` };
   }
   const signin = await supabaseFetch(fetchImpl, "/auth/v1/token?grant_type=password",
     { method: "POST", body: { email: CANARY_EMAIL, password: CANARY_PASSWORD } });
@@ -183,8 +219,11 @@ function randomPassword() {
 }
 
 export async function probeSignup(fetchImpl = fetch) {
-  if (!(SUPABASE_URL && SUPABASE_ANON_KEY && CANARY_EMAIL)) {
-    return { created: false, detail: "SUPABASE_URL/SUPABASE_ANON_KEY/CASCADE_CANARY_EMAIL not all set" };
+  const missing = missingNames(
+    ["SUPABASE_URL", SUPABASE_URL], ["SUPABASE_ANON_KEY", SUPABASE_ANON_KEY],
+    ["CASCADE_CANARY_EMAIL", CANARY_EMAIL]);
+  if (missing.length) {
+    return { created: false, detail: `not configured: ${missing.join(", ")}` };
   }
   const email = probeSignupEmail();
   const password = randomPassword();
@@ -233,8 +272,9 @@ export function checkSignup(probe, pendingAfter) {
 // usage_events_insert — one row, as anon
 // ---------------------------------------------------------------------------
 export async function probeUsageEventsInsert(fetchImpl = fetch) {
-  if (!(SUPABASE_URL && SUPABASE_ANON_KEY)) {
-    return { ok: false, detail: "SUPABASE_URL/SUPABASE_ANON_KEY not set" };
+  const missing = missingNames(["SUPABASE_URL", SUPABASE_URL], ["SUPABASE_ANON_KEY", SUPABASE_ANON_KEY]);
+  if (missing.length) {
+    return { ok: false, detail: `not configured: ${missing.join(", ")}` };
   }
   const res = await supabaseFetch(fetchImpl, "/rest/v1/usage_events", {
     method: "POST", prefer: "return=minimal",
@@ -264,19 +304,102 @@ export function checkPagesHead(probe) {
 }
 
 // ---------------------------------------------------------------------------
-// flap control — two consecutive reds alert once; a third alerts nothing more; the first green
-// after any red always closes it out with a recovery. Never more than one alert per hour.
+// daily_refresh_fresh — dead-man check: has daily.yml's refresh actually landed a commit
+// recently, or did the schedule silently stop firing (CAS-995)
 // ---------------------------------------------------------------------------
-export function decideAlerting(prevState, allOk, nowMs = Date.now()) {
-  const prevReds = (prevState && prevState.consecutiveReds) || 0;
-  if (allOk) {
-    return { consecutiveReds: 0, sendAlert: false, sendRecovery: prevReds > 0 };
+function githubHeaders() {
+  const headers = { "User-Agent": "cascade-uptime-probe/1.0", Accept: "application/vnd.github+json" };
+  if (GITHUB_TOKEN) headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
+  return headers;
+}
+
+export async function probeDailyRefreshFresh(fetchImpl = fetch) {
+  try {
+    const url = `${GITHUB_API}/repos/${GITHUB_REPOSITORY}/commits?sha=staging&per_page=100`;
+    const res = await fetchImpl(url, withTimeout({ headers: githubHeaders() }));
+    if (!res.ok) return { detail: `GET commits -> HTTP ${res.status}` };
+    const commits = await res.json();
+    const hit = (commits || []).find(c =>
+      (c.commit?.message || "").startsWith(DAILY_REFRESH_COMMIT_PREFIX));
+    if (!hit) return { detail: `no "${DAILY_REFRESH_COMMIT_PREFIX.trim()}" commit in the last 100 on staging` };
+    return { lastCommitAt: hit.commit.author?.date || hit.commit.committer?.date };
+  } catch (err) {
+    return { detail: `GET commits -> ${err && err.message || err}` };
   }
+}
+
+export function checkDailyRefreshFresh(probe, now = new Date()) {
+  if (!probe || !probe.lastCommitAt) {
+    return { ok: false, detail: (probe && probe.detail) || "no \"Daily refresh\" commit found" };
+  }
+  const ageMs = now.getTime() - new Date(probe.lastCommitAt).getTime();
+  const ok = ageMs <= THIRTY_HOURS_MS;
+  return { ok, detail: `last "Daily refresh" commit ${(ageMs / 3600000).toFixed(1)}h ago (floor 30h).` };
+}
+
+// ---------------------------------------------------------------------------
+// alerts_ran — dead-man check: has alerts.yml (CAS-993) completed successfully recently
+// ---------------------------------------------------------------------------
+export async function probeAlertsRan(fetchImpl = fetch) {
+  try {
+    const url = `${GITHUB_API}/repos/${GITHUB_REPOSITORY}/actions/workflows/${ALERTS_WORKFLOW_FILE}/runs`
+      + `?status=success&per_page=1`;
+    const res = await fetchImpl(url, withTimeout({ headers: githubHeaders() }));
+    if (!res.ok) return { detail: `GET workflow runs -> HTTP ${res.status}` };
+    const data = await res.json();
+    const run = (data.workflow_runs || [])[0];
+    if (!run) return { detail: `no successful ${ALERTS_WORKFLOW_FILE} run found` };
+    return { lastSuccessAt: run.updated_at || run.run_started_at || run.created_at };
+  } catch (err) {
+    return { detail: `GET workflow runs -> ${err && err.message || err}` };
+  }
+}
+
+export function checkAlertsRan(probe, now = new Date()) {
+  if (!probe || !probe.lastSuccessAt) {
+    return { ok: false, detail: (probe && probe.detail) || `no successful ${ALERTS_WORKFLOW_FILE} run found` };
+  }
+  const ageMs = now.getTime() - new Date(probe.lastSuccessAt).getTime();
+  const ok = ageMs <= THIRTY_HOURS_MS;
+  return { ok, detail: `last successful ${ALERTS_WORKFLOW_FILE} run ${(ageMs / 3600000).toFixed(1)}h ago (floor 30h).` };
+}
+
+// ---------------------------------------------------------------------------
+// flap control (CAS-975/CAS-995) — site_up, movies_json and daily_refresh_fresh alert on their
+// FIRST red (an outage or a silently-stopped schedule is worth knowing about immediately); every
+// other probe still needs two consecutive reds, same as before, so a single flaky probe doesn't
+// page anyone. Either path fires at most once per open red streak (edge-triggered on the probe
+// NEWLY going red, tracked per-name in state) and respects the same one-alert-per-hour cooldown.
+// The first green after any red always sends exactly one recovery, unchanged.
+// ---------------------------------------------------------------------------
+export const FAST_ALERT_CHECKS = ["site_up", "movies_json", "daily_refresh_fresh"];
+
+export function decideAlerting(prevState, results, nowMs = Date.now()) {
+  const allOk = results.every(r => r.ok);
+  const prevReds = (prevState && prevState.consecutiveReds) || 0;
+  const prevSlowReds = (prevState && prevState.slowConsecutiveReds) || 0;
+  const prevFastRed = new Set((prevState && prevState.fastRedNames) || []);
+
+  if (allOk) {
+    return {
+      consecutiveReds: 0, slowConsecutiveReds: 0, fastRedNames: [], sendAlert: false,
+      sendRecovery: prevReds > 0 || prevFastRed.size > 0,
+    };
+  }
+
   const consecutiveReds = prevReds + 1;
+  const fastRedNames = results.filter(r => FAST_ALERT_CHECKS.includes(r.name) && !r.ok).map(r => r.name);
+  const newlyFastRed = fastRedNames.some(n => !prevFastRed.has(n));
+  // Tracked separately from `consecutiveReds` (which counts ANY red, for the recovery message's
+  // "after N red runs" text): a fast check staying red on its own must not also trip the slow
+  // two-in-a-row rule a run after it already alerted on its own first-red rule.
+  const anySlowRed = results.some(r => !FAST_ALERT_CHECKS.includes(r.name) && !r.ok);
+  const slowConsecutiveReds = anySlowRed ? prevSlowReds + 1 : 0;
+
   const lastAlertAt = prevState && prevState.lastAlertAt ? Date.parse(prevState.lastAlertAt) : null;
   const withinCooldown = lastAlertAt != null && (nowMs - lastAlertAt) < ONE_HOUR_MS;
-  const sendAlert = consecutiveReds === 2 && !withinCooldown;
-  return { consecutiveReds, sendAlert, sendRecovery: false };
+  const sendAlert = (newlyFastRed || slowConsecutiveReds === 2) && !withinCooldown;
+  return { consecutiveReds, slowConsecutiveReds, fastRedNames, sendAlert, sendRecovery: false };
 }
 
 async function sendResendEmail(fetchImpl, subject, text) {
@@ -293,6 +416,99 @@ async function sendResendEmail(fetchImpl, subject, text) {
   } catch (err) {
     console.error(`::error::Resend send failed: ${err && err.message || err}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// push (CAS-995) — the second, independent alert channel. APNs auth is the same ES256
+// token-based provider API monitor/pusher.py signs by hand (no npm install step in this repo);
+// Node's built-in `crypto` module signs P-256 natively via `dsaEncoding: "ieee-p1363"`, which
+// hands back the raw r||s bytes ES256 needs directly — no manual DER/point-math required here.
+// ---------------------------------------------------------------------------
+function b64url(buf) {
+  return Buffer.from(buf).toString("base64url");
+}
+
+export function mintApnsProviderJwt(keyId, teamId, authKeyB64, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const keyObject = crypto.createPrivateKey({
+    key: Buffer.from(authKeyB64, "base64"), format: "der", type: "pkcs8",
+  });
+  const header = { alg: "ES256", kid: keyId };
+  const payload = { iss: teamId, iat: nowSeconds };
+  const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`;
+  const signature = crypto.sign("sha256", Buffer.from(signingInput), { key: keyObject, dsaEncoding: "ieee-p1363" });
+  return `${signingInput}.${b64url(signature)}`;
+}
+
+async function sendApnsPush(fetchImpl, deviceToken, title, body) {
+  if (!(APNS_KEY_ID && APNS_TEAM_ID && APNS_AUTH_KEY && APNS_BUNDLE_ID)) {
+    console.log("[uptime] APNS_* not set — skipping push.");
+    return false;
+  }
+  let token;
+  try {
+    token = mintApnsProviderJwt(APNS_KEY_ID, APNS_TEAM_ID, APNS_AUTH_KEY);
+  } catch (err) {
+    console.error(`[uptime] APNs provider JWT mint failed: ${err && err.message || err}`);
+    return false;
+  }
+  try {
+    const res = await fetchImpl(`https://api.push.apple.com/3/device/${deviceToken}`, withTimeout({
+      method: "POST",
+      headers: {
+        authorization: `bearer ${token}`, "apns-topic": APNS_BUNDLE_ID,
+        "apns-push-type": "alert", "content-type": "application/json",
+      },
+      body: JSON.stringify({ aps: { alert: { title, body } } }),
+    }));
+    if (!res.ok) console.log(`[uptime] APNs push rejected: HTTP ${res.status}`);
+    return res.ok;
+  } catch (err) {
+    console.error(`[uptime] APNs push failed: ${err && err.message || err}`);
+    return false;
+  }
+}
+
+// GoTrue admin users listing has no documented stable exact-email filter, so this paginates the
+// same way scripts/send_alert.py's Python twin does — cheap for this project's small user count.
+export async function findPushTokensForEmail(fetchImpl, email) {
+  if (!(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)) return [];
+  const headers = { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` };
+  const base = SUPABASE_URL.replace(/\/$/, "");
+  const target = email.toLowerCase();
+  let userId = null;
+  for (let page = 1; page <= 25 && !userId; page++) {
+    const res = await fetchImpl(`${base}/auth/v1/admin/users?page=${page}&per_page=200`, withTimeout({ headers }));
+    if (!res.ok) break;
+    const data = await res.json();
+    const users = Array.isArray(data) ? data : (data.users || []);
+    const match = users.find(u => (u.email || "").toLowerCase() === target);
+    if (match) userId = match.id;
+    if (users.length < 200) break;
+  }
+  if (!userId) return [];
+  const res = await fetchImpl(
+    `${base}/rest/v1/push_tokens?select=device_token&user_id=eq.${encodeURIComponent(userId)}`,
+    withTimeout({ headers }));
+  if (!res.ok) return [];
+  const rows = await res.json();
+  return (rows || []).map(r => r.device_token).filter(Boolean);
+}
+
+async function sendPushAlert(fetchImpl, subject, text) {
+  if (!ALERT_TO) return;
+  let tokens;
+  try {
+    tokens = await findPushTokensForEmail(fetchImpl, ALERT_TO);
+  } catch (err) {
+    console.error(`[uptime] push token lookup failed: ${err && err.message || err}`);
+    return;
+  }
+  if (!tokens.length) {
+    console.log(`[uptime] no push tokens registered for ${ALERT_TO} — skipping push.`);
+    return;
+  }
+  const body = text.split("\n").find(l => l.trim()) || subject;
+  await Promise.all(tokens.map(tok => sendApnsPush(fetchImpl, tok, "Cascade Alert", body)));
 }
 
 // ---------------------------------------------------------------------------
@@ -332,6 +548,8 @@ export async function runAllProbes(fetchImpl = fetch, prevState = {}) {
 
   results.push(await timeProbe("usage_events_insert", async () => checkUsageEventsInsert(await probeUsageEventsInsert(fetchImpl))));
   results.push(await timeProbe("pages_head", async () => checkPagesHead(await probePagesHead(fetchImpl))));
+  results.push(await timeProbe("daily_refresh_fresh", async () => checkDailyRefreshFresh(await probeDailyRefreshFresh(fetchImpl))));
+  results.push(await timeProbe("alerts_ran", async () => checkAlertsRan(await probeAlertsRan(fetchImpl))));
 
   return { results, signupPendingAfter };
 }
@@ -341,7 +559,7 @@ async function main() {
   const prevState = readState();
   const { results, signupPendingAfter } = await runAllProbes(fetch, prevState);
   const allOk = results.every(r => r.ok);
-  const decision = decideAlerting(prevState, allOk);
+  const decision = decideAlerting(prevState, results);
 
   for (const r of results) {
     if (jsonMode) console.log(JSON.stringify({ name: r.name, ok: r.ok, ms: r.ms, detail: r.detail }));
@@ -350,19 +568,25 @@ async function main() {
 
   if (decision.sendAlert) {
     const failed = results.filter(r => !r.ok).map(r => r.name).join(", ");
-    await sendResendEmail(fetch, "[Cascade ALERT] hourly uptime check red",
-      `Two consecutive hourly uptime checks have failed.\nFailing probe(s): ${failed}\n\n`
-      + results.map(r => `${r.name}: ${r.ok ? "OK" : "RED"} — ${r.detail}`).join("\n"));
+    const subject = "[Cascade ALERT] hourly uptime check red";
+    const text = `Failing probe(s): ${failed}\n\n`
+      + results.map(r => `${r.name}: ${r.ok ? "OK" : "RED"} — ${r.detail}`).join("\n");
+    // Independent channels (CAS-995): a Resend outage must not also silence the push, and vice
+    // versa, so each is sent on its own path rather than one gating the other.
+    await Promise.all([sendResendEmail(fetch, subject, text), sendPushAlert(fetch, subject, text)]);
   }
   if (decision.sendRecovery) {
-    await sendResendEmail(fetch, "[Cascade RECOVERY] hourly uptime check green",
-      `The hourly uptime check is green again after ${(prevState.consecutiveReds || 0)} red run(s).\n\n`
-      + results.map(r => `${r.name}: OK — ${r.detail}`).join("\n"));
+    const subject = "[Cascade RECOVERY] hourly uptime check green";
+    const text = `The hourly uptime check is green again after ${(prevState.consecutiveReds || 0)} red run(s).\n\n`
+      + results.map(r => `${r.name}: OK — ${r.detail}`).join("\n");
+    await Promise.all([sendResendEmail(fetch, subject, text), sendPushAlert(fetch, subject, text)]);
   }
 
   writeState({
     lastRun: new Date().toISOString(),
     consecutiveReds: decision.consecutiveReds,
+    slowConsecutiveReds: decision.slowConsecutiveReds || 0,
+    fastRedNames: decision.fastRedNames || [],
     lastAlertAt: decision.sendAlert ? new Date().toISOString() : (prevState.lastAlertAt || null),
     signupAccountsPending: signupPendingAfter,
     checks: results,

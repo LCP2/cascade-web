@@ -12,8 +12,15 @@
 # `permissions: { contents: read, actions: read }` next to its own `uses:` line.
 #
 # Secrets: reuses RESEND_API_KEY and CASCADE_EMAIL_FROM (already used by monitor/emailer.py).
-# CASCADE_ALERT_TO is new. Either one absent -> scripts/send_alert.py logs and exits 0, the
-# same tolerance the monitor gives an absent secret — safe to wire in before the secret exists.
+# CASCADE_ALERT_TO is new (CAS-973) and, since it names the one account this whole alert path
+# exists to notify, is no longer optional-and-silent (CAS-995): scripts/send_alert.py now exits
+# non-zero without it, so a caller that forgets to pass it shows red instead of silently doing
+# nothing. RESEND_API_KEY/CASCADE_EMAIL_FROM absent still degrades gracefully (skips email only).
+#
+# CAS-995: a second, independent channel — an APNs push to CASCADE_ALERT_TO's own device tokens
+# — reuses monitor/pusher.py and the existing SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY/APNS_*
+# secrets. All four optional new secrets below degrade the same way: absent -> push skipped,
+# email still sent (and vice versa) — see scripts/send_alert.py's send_email_alert/send_push_alert.
 name: alert
 
 on:
@@ -30,6 +37,18 @@ on:
         required: false
       CASCADE_ALERT_TO:
         required: false
+      SUPABASE_URL:
+        required: false
+      SUPABASE_SERVICE_ROLE_KEY:
+        required: false
+      APNS_KEY_ID:
+        required: false
+      APNS_TEAM_ID:
+        required: false
+      APNS_AUTH_KEY:
+        required: false
+      APNS_BUNDLE_ID:
+        required: false
 
 jobs:
   alert:
@@ -42,11 +61,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Find the failing job/step in this run and email via Resend
+      - name: Find the failing job/step in this run, email via Resend and push via APNs
         env:
           GITHUB_TOKEN: ${{ github.token }}
           WORKFLOW_NAME: ${{ inputs.workflow_name }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
           CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}
+          APNS_TEAM_ID: ${{ secrets.APNS_TEAM_ID }}
+          APNS_AUTH_KEY: ${{ secrets.APNS_AUTH_KEY }}
+          APNS_BUNDLE_ID: ${{ secrets.APNS_BUNDLE_ID }}
         run: python scripts/send_alert.py

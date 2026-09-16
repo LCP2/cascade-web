@@ -3,16 +3,18 @@ name: Hourly uptime synthetic
 # CAS-975: is the site up, does the catalogue parse, can a real person sign in — checked every
 # hour, not just once a night. daily.yml's health assertions (CAS-974) cover the pipeline; they
 # say nothing about the other 23 hours, and a Pages/Cloudflare/Supabase outage was previously
-# invisible until a user complained.
+# invisible until a user complained. CAS-995 adds two dead-man checks (daily_refresh_fresh,
+# alerts_ran — via the GitHub API, hence GITHUB_TOKEN below) and a second, independent alert
+# channel (an APNs push, via SUPABASE_SERVICE_ROLE_KEY + APNS_*).
 #
-# scripts/uptime_probe.mjs owns everything: the six probes, the flap-control state machine, and
-# the alert/recovery emails (via Resend, reusing the RESEND_API_KEY/CASCADE_EMAIL_FROM/
-# CASCADE_ALERT_TO secrets alert.yml already uses). This workflow deliberately does NOT also wire
-# in the shared alert.yml (CAS-973): that fires on ANY single job failure, which would page
-# someone on a single red probe — exactly what this ticket's own flap control exists to prevent.
-# The job is still allowed to end red (AC1: the script exits non-zero on any red probe) so the
-# Actions tab reflects reality; nobody polls it (the money rule) because the flap-controlled email
-# is the actual notification path.
+# scripts/uptime_probe.mjs owns everything: the eight probes, the flap-control state machine, and
+# the alert/recovery emails+pushes (via Resend and APNs, reusing the RESEND_API_KEY/
+# CASCADE_EMAIL_FROM/CASCADE_ALERT_TO/SUPABASE_*/APNS_* secrets alert.yml also uses). This
+# workflow deliberately does NOT also wire in the shared alert.yml (CAS-973): that fires on ANY
+# single job failure, which would page someone on a single red probe — exactly what this
+# ticket's own flap control exists to prevent. The job is still allowed to end red (AC1: the
+# script exits non-zero on any red probe) so the Actions tab reflects reality; nobody polls it
+# (the money rule) because the flap-controlled email/push is the actual notification path.
 on:
   schedule:
     - cron: "17 * * * *"
@@ -20,6 +22,7 @@ on:
 
 permissions:
   contents: write
+  actions: read   # CAS-995: alerts_ran reads alerts.yml's run history via the Actions API
 
 jobs:
   uptime:
@@ -44,7 +47,7 @@ jobs:
       - name: Read main's VERSION into the environment
         run: echo "CASCADE_MAIN_VERSION=$(cat main-ref/VERSION)" >> "$GITHUB_ENV"
 
-      - name: Run the six probes, decide alerting, write state/uptime.json
+      - name: Run the eight probes, decide alerting, write state/uptime.json
         env:
           CASCADE_MAIN_VERSION: ${{ env.CASCADE_MAIN_VERSION }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -54,6 +57,12 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
           CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}
+          APNS_TEAM_ID: ${{ secrets.APNS_TEAM_ID }}
+          APNS_AUTH_KEY: ${{ secrets.APNS_AUTH_KEY }}
+          APNS_BUNDLE_ID: ${{ secrets.APNS_BUNDLE_ID }}
         run: |
           PROBE_EXIT=0
           node scripts/uptime_probe.mjs --json || PROBE_EXIT=$?
