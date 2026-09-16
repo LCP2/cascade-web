@@ -363,10 +363,15 @@ def _mint_canary_session(supabase_url: str | None, anon_key: str | None,
     if not (200 <= status < 300):
         return {"ok": False,
                 "detail": f"generate_link failed: HTTP {status}" + (f" — {body[:200]}" if body else "")}
+    # CAS-998: the raw GoTrue response carries hashed_token at the TOP LEVEL of the body,
+    # alongside the user fields — `properties.hashed_token` is supabase-js's client-side wrapper
+    # shape, not what the HTTP endpoint itself sends. Check the top level first, keep the wrapper
+    # shape as a fallback in case a future GoTrue version reintroduces it.
     try:
-        hashed_token = json.loads(body).get("properties", {}).get("hashed_token")
+        parsed = json.loads(body)
     except Exception:
-        hashed_token = None
+        parsed = {}
+    hashed_token = parsed.get("hashed_token") or (parsed.get("properties") or {}).get("hashed_token")
     if not hashed_token:
         return {"ok": False, "detail": "generate_link response carried no hashed_token."}
 
