@@ -6,6 +6,16 @@ name: Watchmode evaluation
 on:
   workflow_dispatch:
     inputs:
+      job:
+        description: 'Which job(s) to run — reprobe only spends ~120 credits; evaluate/evaluate_trial/all also spend theirs'
+        required: true
+        type: choice
+        default: reprobe
+        options:
+          - reprobe
+          - evaluate
+          - evaluate_trial
+          - all
       sample_start:
         description: 'CAS579_SAMPLE_START — field-coverage sample window start (YYYYMMDD, optional)'
         required: false
@@ -28,6 +38,7 @@ permissions:
 
 jobs:
   evaluate:
+    if: ${{ inputs.job == 'evaluate' || inputs.job == 'all' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +74,7 @@ jobs:
   # meaningful once the Watchmode key has been switched to the Startup trial (a repository-
   # settings change, not a code change) - see scripts/cas767_watchmode_trial_eval.py.
   evaluate_trial:
+    if: ${{ inputs.job == 'evaluate_trial' || inputs.job == 'all' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,6 +109,7 @@ jobs:
   # classification, relevance_percentile, and the changes endpoints' real subpath. Separate
   # job so it cannot collide with the two evaluations above.
   reprobe:
+    if: ${{ inputs.job == 'reprobe' || inputs.job == 'all' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
