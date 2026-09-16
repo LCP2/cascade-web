@@ -19,11 +19,17 @@ import { loadEngine } from "../tests/js/engine.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(ROOT, "state", "wm_backfill_scoreable.txt");
 
-export function isScoreable(E, m){
+// CAS-997: `floor` is the Cascade-score publication floor (default 0 — every existing caller
+// except scripts/scoreable_shim.mjs's publication test wants the old, unfloored rule; the CAS-922
+// manifest above must keep asking "would this score at all today", not "would this publish").
+// `upcoming` never takes a floor — a genuinely upcoming title is admitted on cinema buzz alone,
+// which has no quality signal yet to floor. The cinema statuses (in_cinema/opening_week) still
+// pass on cinema buzz alone too; the floor only gates their OR'd wmQScore alternative.
+export function isScoreable(E, m, floor = 0){
   const ps = E.primaryStatus(m);
   if(ps === "upcoming") return E.wmCinemaScore(m) >= 0;
-  if(ps === "in_cinema" || ps === "opening_week") return E.wmCinemaScore(m) >= 0 || E.wmQScore(m) >= 0;
-  return E.wmQScore(m) >= 0;
+  if(ps === "in_cinema" || ps === "opening_week") return E.wmCinemaScore(m) >= 0 || E.wmQScore(m) >= floor;
+  return E.wmQScore(m) >= floor;
 }
 
 /** -> [tmdb_id, ...], most popular first, over every film not yet Watchmode-fetched that satisfies isScoreable. */

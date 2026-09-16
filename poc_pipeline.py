@@ -254,6 +254,13 @@ def _api_call(label: str, fn, *args):
             body = (e.read() or b"").decode("utf-8", "replace")[:200].strip()
         except Exception:
             pass
+        # CAS-997: a 404 means the vendor itself has deleted/withdrawn the resource — not a fetch
+        # outage, and never a reason to stop calling (unlike 401/403 below). Kept as its own
+        # outcome so a caller that cares (build_live_catalogue's TMDB call sites) can tally it
+        # separately from a real error rather than folding it into 'skip'.
+        if e.code == 404:
+            print(f"[info] {label}: HTTP 404 — not found, keeping previous data")
+            return None, "not_found"
         # 401/403 is the daily cap or a bad key — never a property of this one title.
         stop = e.code in (401, 403) or any(k in body.lower() for k in _LIMIT_MARKERS)
         detail = f" — {body}" if body else ""
@@ -589,6 +596,14 @@ SCOREABILITY_LADDER_STALE_DAYS = WM_NIGHTLY_COHORT_TTL_DAYS  # tier 1, ladder co
 SCOREABILITY_RECOVERY_DAYS = 90                              # tier 3: no_score re-probe wait
 USER_HELD_IDS_FILE = os.path.join(STATE_DIR, "user_held_ids.json")   # CAS-986: monitor/store.py writes this
 SCOREABLE_SHIM = os.path.join(os.path.dirname(__file__), "scripts", "scoreable_shim.mjs")
+
+# CAS-997 Defect 1: a released title only publishes at or above this Cascade score; a genuinely
+# upcoming title keeps publishing on cinema buzz alone, no floor (see scoreable_ids/isScoreable).
+WM_PUBLISH_FLOOR = int(os.getenv("WM_PUBLISH_FLOOR", "60"))
+
+# CAS-997 Defect 2: a title TMDB reports not-found (404) on this many CONSECUTIVE nightly runs is
+# gone for good, not a transient blip — dropped from candidates.json/publication unless user-held.
+TMDB_NOT_FOUND_DROP_STREAK = 3
 
 
 def _invert_watchmode_idmap(idmap: dict) -> dict:
@@ -941,12 +956,16 @@ def run_scoreability_probe(candidates: dict, today: datetime.date, budget: int,
     return probe_candidates(candidates, today, budget, wm_idmap, published_ids)
 
 
-def scoreable_ids(movies: list) -> set:
+def scoreable_ids(movies: list, floor: int = 0) -> set:
     """CAS-986's publication test: ask the shipped engine (scripts/scoreable_shim.mjs, which calls
     isScoreable() — the same rule scripts/wm_scoreable_manifest.mjs already encodes for CAS-922)
     which of `movies` can carry a Cascade score today. One process for the whole batch, never per
     title. Writing a second copy of this rule in Python is the defect this function exists to
     avoid — if the app's scoring changes, this keeps changing with it automatically.
+
+    CAS-997: `floor` defaults to 0 (the pre-CAS-997, unfloored rule) — the real publication path
+    (apply_two_tier_publication) passes WM_PUBLISH_FLOOR explicitly; every other caller is
+    unaffected unless it opts in.
 
     CAS-992: a candidate with no `status` (a shape gap in a legacy/pre-fix candidates.json entry —
     the shim itself is also hardened to never let one bad record fail the whole batch) is
@@ -955,7 +974,7 @@ def scoreable_ids(movies: list) -> set:
     for m in movies:
         if m.get("status") is None:
             m["status"] = []
-    payload = json.dumps({"movies": movies})
+    payload = json.dumps({"movies": movies, "floor": floor})
     proc = subprocess.run(["node", SCOREABLE_SHIM], input=payload, capture_output=True,
                           text=True, timeout=180, check=True)
     return {int(x) for x in json.loads(proc.stdout)["scoreable_ids"]}
@@ -970,6 +989,28 @@ def load_user_held_ids():
         return set(json.load(open(USER_HELD_IDS_FILE, encoding="utf-8")))
     except (OSError, ValueError):
         return None
+
+
+def drop_not_found_candidates(candidates: dict, held_ids) -> int:
+    """CAS-997 Defect 2: a candidate whose `tmdb_not_found_streak` (set by build_live_catalogue's
+    TMDB call sites) has reached TMDB_NOT_FOUND_DROP_STREAK consecutive nightly runs is gone from
+    TMDB for good, not a transient 404 — remove it from `candidates` in place, so it is dropped
+    from candidates.json and can never publish. Uses the same user-held exemption + fail-safe as
+    select_publishable's own demotion: a held title is never dropped, and `held_ids=None` (the
+    user-state tables were unreadable this run) means drop nothing at all rather than guess.
+
+    Returns the number of candidates dropped."""
+    if held_ids is None:
+        return 0
+    dropped = 0
+    for key, c in list(candidates.items()):
+        if (c.get("tmdb_not_found_streak") or 0) < TMDB_NOT_FOUND_DROP_STREAK:
+            continue
+        if c.get("tmdb_id") in held_ids:
+            continue
+        del candidates[key]
+        dropped += 1
+    return dropped
 
 
 def select_publishable(candidates: dict, engine_scoreable_ids: set, previously_published_ids: set,
@@ -1016,27 +1057,35 @@ def apply_two_tier_publication(candidates: dict, today: datetime.date, discovery
     published, unchanged, rather than ever wiping the live catalogue over a tooling failure.
 
     Returns (published_records, report) where report has the ticket's seven reporting figures
-    (candidates/unprobed/probed_today/published/promoted/demoted/exempt) plus 'engine_ok'."""
+    (candidates/unprobed/probed_today/published/promoted/demoted/exempt) plus 'engine_ok' and
+    CAS-997's 'not_found_dropped'."""
     today_iso = today.isoformat()
     merge_candidates(candidates, discovery_pool, today_iso)
     refresh_enriched_candidates(candidates, enriched_records, today_iso)
     merge_backcatalogue_candidates(candidates, today_iso)
 
+    held_ids = load_user_held_ids()
+    if held_ids is None:
+        print("[warn] CAS-986: state/user_held_ids.json absent or unreadable — demoting nothing "
+              "this run.")
+
+    # CAS-997 Defect 2: drop before the probe/engine pass, so a title TMDB has deleted is never
+    # re-probed, never asked about, and never published this run.
+    not_found_dropped = drop_not_found_candidates(candidates, held_ids)
+    if not_found_dropped:
+        print(f"[info] CAS-997: dropped {not_found_dropped} candidate(s) TMDB reported not-found "
+              f"on {TMDB_NOT_FOUND_DROP_STREAK} consecutive nightly runs.")
+
     probe_outcomes = run_scoreability_probe(candidates, today, probe_budget, previously_published_ids)
 
     try:
-        engine_ids = scoreable_ids(list(candidates.values()))
+        engine_ids = scoreable_ids(list(candidates.values()), floor=WM_PUBLISH_FLOOR)
         engine_ok = True
     except Exception as err:  # noqa: BLE001 — a broken engine call must never wipe the catalogue
         print(f"[warn] CAS-986: scoreability engine call failed ({err}) — publishing the "
               "previously-published set unchanged this run.")
         engine_ids = set(previously_published_ids)
         engine_ok = False
-
-    held_ids = load_user_held_ids()
-    if held_ids is None:
-        print("[warn] CAS-986: state/user_held_ids.json absent or unreadable — demoting nothing "
-              "this run.")
 
     published_records, stats = select_publishable(candidates, engine_ids, previously_published_ids,
                                                    held_ids, CATALOGUE_TARGET)
@@ -1045,6 +1094,7 @@ def apply_two_tier_publication(candidates: dict, today: datetime.date, discovery
         "candidates": len(candidates), "unprobed": unprobed,
         "probed_today": probe_outcomes["probed"], "engine_ok": engine_ok,
         "wm_spent": probe_outcomes.get("spent", 0),   # CAS-987: this pass's actual draw on probe_budget
+        "not_found_dropped": not_found_dropped,
         **stats,
     }
     return published_records, report
@@ -1841,6 +1891,7 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                                      **(poll_set_kwargs or {}))
     ondemand_set = {m["tmdb_id"] for m in sched["ondemand"]}
     provider_calls = wm_calls = cinema_calls = 0
+    provider_not_found = cinema_not_found = 0   # CAS-997 Defect 2: 404s, tallied apart from real errors
     # CAS-384: shrink today's pot by whatever an earlier run already spent against the SAME free-tier
     # day, so two runs sharing one real cap can't each claim a full allowance.
     ondemand_cap = ONDEMAND_WM_CAP if wm_budget_cap is None else wm_budget_cap
@@ -1853,6 +1904,12 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     wm_fails = prov_fails = cinema_fails = 0
 
     for m in catalogue:
+        # CAS-997 Defect 2: whether ANY TMDB call for this title this run confirmed it still exists
+        # or reported it not-found — decides the persistent tmdb_not_found_streak update below, once
+        # per title rather than once per call, so a title hit by both the cinema backfill and the
+        # providers call in the same run is never double-counted.
+        title_tmdb_ok = title_tmdb_not_found = False
+
         # CAS-379: back-fill pre-CAS-360 records regardless of poll tier — an upcoming title carried
         # forward from before the field existed is just as stuck as a released one.
         if "cinema_release" not in m and cinema_open and cinema_backfill > 0:
@@ -1860,8 +1917,13 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
             cinema_calls += 1; cinema_backfill -= 1
             if cinema_outcome == "stop":
                 cinema_open = False
-            if cinema_outcome != "ok":
+            if cinema_outcome == "not_found":
+                cinema_not_found += 1
+                title_tmdb_not_found = True
+            elif cinema_outcome != "ok":
                 cinema_fails += 1
+            else:
+                title_tmdb_ok = True
 
         tier = ps.classify_tier(m, today)
         m["poll_tier"] = tier
@@ -1878,7 +1940,11 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                 provider_calls += 1
             if prov_outcome == "stop":
                 prov_open = False
+            if prov_outcome == "not_found":
+                provider_not_found += 1
+                title_tmdb_not_found = True
             if prov_outcome == "ok":
+                title_tmdb_ok = True
                 m["jw_link"] = prov.get("jw_link")           # JustWatch deep-out + attribution
                 if has_provider_rows(prov):
                     m["offers"] = provider_offers(prov)
@@ -1901,7 +1967,10 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                 # stamp last_polled, because the app's confirmed/estimated badge must never claim a read that
                 # did not happen. A title we have never successfully polled has nothing to keep, so it falls
                 # back to the honest date-based estimate rather than being left window-less.
-                prov_fails += 1
+                # CAS-997: a 404 (title not found) is tallied separately above (provider_not_found),
+                # not here — it is not a fetch outage, so it must not count toward prov_fails/errors.
+                if prov_outcome != "not_found":
+                    prov_fails += 1
                 if not m.get("status"):
                     w, conf = ps.estimate_status(m, today, offsets)
                     m["offers"] = []
@@ -1934,6 +2003,15 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                 time.sleep(TMDB_PACING)
             if TMDB_PACING:
                 time.sleep(TMDB_PACING)                      # polite pacing between provider calls
+
+        # CAS-997 Defect 2: a positive "still exists" answer from TMDB always wins and resets the
+        # streak; only a not-found with no confirming call this run advances it. Neither happening
+        # (skip/stop only, e.g. the daily cap already hit) leaves the streak exactly as it was —
+        # silence is not evidence the title is gone.
+        if title_tmdb_ok:
+            m["tmdb_not_found_streak"] = 0
+        elif title_tmdb_not_found:
+            m["tmdb_not_found_streak"] = (m.get("tmdb_not_found_streak") or 0) + 1
 
         st = set(m.get("status", []))
         if "included_streaming" in st and not (st & ps.ACTIVE_WINDOW):
@@ -1970,6 +2048,8 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                   # CAS-161: a degraded run must SAY it was degraded. Silence here would let the catalogue
                   # quietly go stale for days while every run still reported success.
                   wm_fails=wm_fails, provider_fails=prov_fails, cinema_fails=cinema_fails,
+                  # CAS-997 Defect 2: 404s, kept apart from *_fails above — not a fetch outage.
+                  provider_not_found=provider_not_found, cinema_not_found=cinema_not_found,
                   wm_stopped=not wm_open, providers_stopped=not prov_open,
                   cinema_stopped=not cinema_open,
                   revalidation_stopped=not revalidation_open)
@@ -2227,7 +2307,8 @@ def run(simulate_day: bool = False):
         # watchmode_fetch checks — a run with 0 keys never reaches this branch, so an "unknown"
         # (no run_stats.json entry) there is the honest answer, not a fabricated 0.
         runstats.bump("tmdb", calls=counts["provider_calls"] + counts["cinema_calls"],
-                      errors=counts["provider_fails"] + counts["cinema_fails"])
+                      errors=counts["provider_fails"] + counts["cinema_fails"],
+                      not_found=counts["provider_not_found"] + counts["cinema_not_found"])
         runstats.bump("watchmode", calls=counts["wm_calls"], errors=counts["wm_fails"])
         prior_monthly = _load_monthly_wm_spend(today)
         monthly_spent = prior_monthly.get("wm_spent", 0) + counts["wm_calls"]
@@ -2291,7 +2372,8 @@ def run(simulate_day: bool = False):
         print(f"[candidates] candidates={cas986_report['candidates']} "
               f"unprobed={cas986_report['unprobed']} probed_today={cas986_report['probed_today']} "
               f"published={cas986_report['published']} promoted={cas986_report['promoted']} "
-              f"demoted={cas986_report['demoted']} exempt={cas986_report['exempt']}")
+              f"demoted={cas986_report['demoted']} exempt={cas986_report['exempt']} "
+              f"not_found_dropped={cas986_report['not_found_dropped']}")
 
         # CAS-994: state/api_budget.json is now a spend RECORD only (wm_run_allowance drives the
         # actual allowance from Watchmode's own live /status figures, not this file) — accumulate

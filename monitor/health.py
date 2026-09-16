@@ -77,6 +77,9 @@ APNS_ENV_VARS = ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_AUTH_KEY", "APNS_BUNDLE_ID
 CATALOGUE_MIN = 5500
 CATALOGUE_DROP_PCT = 0.05
 SCORE_COVERAGE_MIN_PCT = 0.90
+# CAS-997: a TMDB 404 (a title TMDB itself has deleted) is not a fetch outage — tmdb_fetch only
+# fails on a real error, or when not-found calls exceed this share of the run's total TMDB calls.
+TMDB_NOT_FOUND_MAX_PCT = 0.02
 # CAS-988: the floor is 15% of the REAL quota (state/api_budget.json, CAS-987's cycle shape),
 # never a hard-coded plan size — the account has moved plans before (see CAS-987) and will again.
 WATCHMODE_FLOOR_PCT = 0.15
@@ -157,7 +160,30 @@ def _check_fetch(name: str, stats: dict | None) -> dict:
 
 
 def check_tmdb_fetch(stats: dict | None) -> dict:
-    return _check_fetch("tmdb_fetch", stats)
+    """CAS-997: unlike the other *_fetch checks, a TMDB 404 (`not_found` in run_stats.json — TMDB
+    itself has deleted/withdrawn the title, poc_pipeline.py already keeps its previous data) must
+    never read as a fetch outage on its own. This still fails on any OTHER error, exactly like
+    `_check_fetch`, and separately fails when not-found calls exceed TMDB_NOT_FOUND_MAX_PCT of the
+    run's total calls — a real spike in vendor deletions is still worth knowing about."""
+    if not stats:
+        return _check("tmdb_fetch", None, None, None, "no run_stats.json entry this run — unavailable.")
+    calls = stats.get("calls", 0)
+    errors = stats.get("errors", 0)
+    not_found = stats.get("not_found", 0)
+    if calls <= 0:
+        return _check("tmdb_fetch", False, calls, 0, "0 calls made this run.")
+    if errors:
+        return _check("tmdb_fetch", False, errors, 0,
+                      f"{errors} error(s) across {calls} call(s) ({not_found} not-found, not "
+                      "counted as errors).")
+    not_found_pct = not_found / calls
+    if not_found_pct > TMDB_NOT_FOUND_MAX_PCT:
+        floor = round(calls * TMDB_NOT_FOUND_MAX_PCT)
+        return _check("tmdb_fetch", False, not_found, floor,
+                      f"{not_found} not-found across {calls} call(s) ({not_found_pct:.1%}) — above "
+                      f"the {TMDB_NOT_FOUND_MAX_PCT:.0%} floor.")
+    return _check("tmdb_fetch", True, calls, 0,
+                  f"{calls} call(s), 0 error(s), {not_found} not-found ({not_found_pct:.1%}).")
 
 
 def check_oscarbase_fetch(stats: dict | None) -> dict:

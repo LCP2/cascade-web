@@ -75,6 +75,20 @@ class TmdbFetch(unittest.TestCase):
         self.assertIsNone(c["ok"])
         self.assertEqual(c["status"], "unknown")
 
+    def test_pass_not_found_404s_are_not_an_outage(self):
+        # CAS-997 AC4: the real daily.yml run 35059055079 shape — 13 not-found across 5862 calls,
+        # 0 other errors, must pass.
+        c = health.check_tmdb_fetch({"calls": 5862, "errors": 0, "not_found": 13})
+        self.assertTrue(c["ok"])
+
+    def test_fail_one_other_error_alongside_not_found(self):
+        c = health.check_tmdb_fetch({"calls": 5862, "errors": 1, "not_found": 13})
+        self.assertFalse(c["ok"])
+
+    def test_fail_not_found_above_two_percent(self):
+        c = health.check_tmdb_fetch({"calls": 1000, "errors": 0, "not_found": 21})
+        self.assertFalse(c["ok"])
+
 
 class OscarbaseFetch(unittest.TestCase):
     def test_pass_calls_no_errors(self):
