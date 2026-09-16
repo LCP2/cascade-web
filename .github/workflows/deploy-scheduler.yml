@@ -1,0 +1,53 @@
+name: deploy-scheduler
+
+# CAS-1000: deploys the Cloudflare Worker (cloudflare/scheduler) that dispatches uptime.yml,
+# daily.yml and alerts.yml on time via workflow_dispatch — GitHub's own `schedule` trigger runs
+# late/unreliably for this repo (see the ticket). Manual only: run it once to stand the Worker up,
+# and again any time cloudflare/scheduler changes. The Worker itself never needs a Cloudflare
+# credential — only this deploy step does.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy the Worker and set its secrets
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare/scheduler
+          secrets: |
+            GH_DISPATCH_TOKEN
+            RESEND_API_KEY
+            ALERT_TO
+            ALERT_FROM
+        env:
+          GH_DISPATCH_TOKEN: ${{ secrets.SCHEDULER_GH_TOKEN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
+          ALERT_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+
+  # CAS-973: email someone the moment this workflow breaks, instead of leaving it to be
+  # noticed by whoever next opens the Actions tab.
+  alert:
+    needs: [deploy]
+    if: failure()
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/alert.yml
+    with:
+      workflow_name: "deploy-scheduler"
+    secrets:
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}
+      CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
