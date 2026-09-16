@@ -51,7 +51,6 @@ const MAIN_VERSION = (process.env.CASCADE_MAIN_VERSION || "").trim() || null;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const CANARY_EMAIL = process.env.CASCADE_CANARY_EMAIL;
-const CANARY_PASSWORD = process.env.CASCADE_CANARY_PASSWORD;
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const EMAIL_FROM = process.env.CASCADE_EMAIL_FROM || "Cascade <onboarding@resend.dev>";
@@ -154,8 +153,9 @@ export function checkMoviesJson(probe) {
 // ---------------------------------------------------------------------------
 // supabase_canary — sign in, agents (cascades) + agent_films non-empty, film_watch read succeeds
 // ---------------------------------------------------------------------------
-async function supabaseFetch(fetchImpl, pathAndQuery, { method = "GET", token, body, prefer } = {}) {
-  const headers = { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" };
+async function supabaseFetch(fetchImpl, pathAndQuery, { method = "GET", token, body, prefer, serviceRole } = {}) {
+  const headers = { apikey: serviceRole ? SUPABASE_SERVICE_ROLE_KEY : SUPABASE_ANON_KEY, "Content-Type": "application/json" };
+  if (serviceRole) headers.Authorization = `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
   if (token) headers.Authorization = `Bearer ${token}`;
   if (prefer) headers.Prefer = prefer;
   const res = await fetchImpl(`${SUPABASE_URL.replace(/\/$/, "")}${pathAndQuery}`,
@@ -166,19 +166,46 @@ async function supabaseFetch(fetchImpl, pathAndQuery, { method = "GET", token, b
   return { status: res.status, ok: res.ok, json };
 }
 
+// CAS-996: Cascade accounts are passwordless (magic-link/emailed-code only), so there is no
+// account-password secret to grant_type=password with — and there never will be one, since no
+// such secret can exist for a passwordless account. Mint a real session the same way a signed-in
+// magic-link click does, without sending an email: admin/generate_link (service-role key) returns
+// a hashed_token that /auth/v1/verify (anon key) exchanges for a normal access_token. `type`
+// defaults to "magiclink" for an existing account (the canary); the signup probe below passes
+// "signup" instead, which additionally creates the throwaway account as a side effect.
+async function mintSessionForEmail(fetchImpl, email, { type = "magiclink", extraBody = {} } = {}) {
+  const missing = missingNames(
+    ["SUPABASE_URL", SUPABASE_URL], ["SUPABASE_ANON_KEY", SUPABASE_ANON_KEY],
+    ["SUPABASE_SERVICE_ROLE_KEY", SUPABASE_SERVICE_ROLE_KEY]);
+  if (missing.length) return { ok: false, detail: `not configured: ${missing.join(", ")}` };
+
+  const gen = await supabaseFetch(fetchImpl, "/auth/v1/admin/generate_link",
+    { method: "POST", serviceRole: true, body: { type, email, ...extraBody } });
+  const hashedToken = gen.json?.properties?.hashed_token;
+  if (!gen.ok || !hashedToken) {
+    return { ok: false, detail: `generate_link failed: HTTP ${gen.status}` };
+  }
+  const verify = await supabaseFetch(fetchImpl, "/auth/v1/verify",
+    { method: "POST", body: { type, token_hash: hashedToken } });
+  const token = verify.json?.access_token;
+  if (!verify.ok || !token) {
+    return { ok: false, detail: `verify failed: HTTP ${verify.status}` };
+  }
+  return { ok: true, token };
+}
+
 export async function probeSupabaseCanary(fetchImpl = fetch) {
   const missing = missingNames(
     ["SUPABASE_URL", SUPABASE_URL], ["SUPABASE_ANON_KEY", SUPABASE_ANON_KEY],
-    ["CASCADE_CANARY_EMAIL", CANARY_EMAIL], ["CASCADE_CANARY_PASSWORD", CANARY_PASSWORD]);
+    ["SUPABASE_SERVICE_ROLE_KEY", SUPABASE_SERVICE_ROLE_KEY], ["CASCADE_CANARY_EMAIL", CANARY_EMAIL]);
   if (missing.length) {
     return { signedIn: false, detail: `not configured: ${missing.join(", ")}` };
   }
-  const signin = await supabaseFetch(fetchImpl, "/auth/v1/token?grant_type=password",
-    { method: "POST", body: { email: CANARY_EMAIL, password: CANARY_PASSWORD } });
-  const token = signin.json?.access_token;
-  if (!signin.ok || !token) {
-    return { signedIn: false, detail: `canary sign-in failed: HTTP ${signin.status}` };
+  const session = await mintSessionForEmail(fetchImpl, CANARY_EMAIL);
+  if (!session.ok) {
+    return { signedIn: false, detail: `canary sign-in failed: ${session.detail}` };
   }
+  const token = session.token;
   const cascades = await supabaseFetch(fetchImpl, "/rest/v1/cascades?select=id", { token });
   const agentFilms = await supabaseFetch(fetchImpl, "/rest/v1/agent_films?select=movie_id&limit=1", { token });
   const filmWatch = await supabaseFetch(fetchImpl, "/rest/v1/film_watch?select=movie_id&limit=1", { token });
@@ -221,29 +248,19 @@ function randomPassword() {
 export async function probeSignup(fetchImpl = fetch) {
   const missing = missingNames(
     ["SUPABASE_URL", SUPABASE_URL], ["SUPABASE_ANON_KEY", SUPABASE_ANON_KEY],
-    ["CASCADE_CANARY_EMAIL", CANARY_EMAIL]);
+    ["SUPABASE_SERVICE_ROLE_KEY", SUPABASE_SERVICE_ROLE_KEY], ["CASCADE_CANARY_EMAIL", CANARY_EMAIL]);
   if (missing.length) {
     return { created: false, detail: `not configured: ${missing.join(", ")}` };
   }
   const email = probeSignupEmail();
-  const password = randomPassword();
-  const signup = await supabaseFetch(fetchImpl, "/auth/v1/signup", { method: "POST", body: { email, password } });
-  const userId = signup.json?.id || signup.json?.user?.id || null;
-  if (!signup.ok || !userId) {
-    return { created: false, detail: `sign-up failed: HTTP ${signup.status}` };
+  // CAS-996: no password grant here either — generate_link's "signup" type creates the throwaway
+  // account as a side effect (the API still requires a password field to shape the row; it is
+  // never used to sign in) and verify hands back a real, already-confirmed session directly.
+  const session = await mintSessionForEmail(fetchImpl, email, { type: "signup", extraBody: { password: randomPassword() } });
+  if (!session.ok) {
+    return { created: false, detail: `sign-up failed: ${session.detail}` };
   }
-
-  // A confirmation-required project won't hand back a session here; try a password grant next —
-  // if that also carries no session, there is nothing left this probe can do but leave the
-  // account exactly where CAS-980's own contingency clause says to.
-  let token = signup.json?.access_token || null;
-  if (!token) {
-    const signin = await supabaseFetch(fetchImpl, "/auth/v1/token?grant_type=password",
-      { method: "POST", body: { email, password } });
-    token = signin.json?.access_token || null;
-  }
-
-  if (!token) return { created: true, removed: false, notShipped: true, email };
+  const token = session.token;
 
   const del = await supabaseFetch(fetchImpl, "/rest/v1/rpc/delete_my_account", { method: "POST", token, body: {} });
   const bodyStr = JSON.stringify(del.json || {});

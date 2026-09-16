@@ -277,6 +277,102 @@ test("CAS-995 AC3: usage_events_insert names every missing credential", async ()
 });
 
 // ---------------------------------------------------------------------------
+// CAS-996 — passwordless canary sign-in: generate_link (service-role key) then verify (anon
+// key), no account-password secret anywhere. SUPABASE_URL/ANON_KEY/SERVICE_ROLE_KEY/CANARY_EMAIL
+// are module-level consts read from process.env at import time, so exercising the "credentials
+// present" path needs a fresh module instance re-evaluated AFTER process.env is set — a plain
+// `import` at the top of this file (already evaluated once) can't see env vars set later. A
+// dynamically-imported, uniquely-querystringed specifier gives Node a distinct module record that
+// re-runs its top-level code, including those const bindings, against the current process.env.
+// ---------------------------------------------------------------------------
+async function importFreshProbeModule(qs) {
+  return import(`../../scripts/uptime_probe.mjs?${qs}=${Date.now()}-${Math.random()}`);
+}
+
+test("CAS-996 AC1: canary sign-in calls generate_link then verify, and uses the token for the roster read", async () => {
+  process.env.SUPABASE_URL = "https://x.test";
+  process.env.SUPABASE_ANON_KEY = "anon-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  process.env.CASCADE_CANARY_EMAIL = "canary@x.test";
+  try {
+    const mod = await importFreshProbeModule("ac1");
+    const calls = [];
+    const fetchStub = async (url, opts) => {
+      const { pathname } = new URL(url);
+      calls.push(pathname);
+      if (pathname === "/auth/v1/admin/generate_link") {
+        assert.equal(opts.headers.apikey, "service-role-key");
+        assert.deepEqual(JSON.parse(opts.body), { type: "magiclink", email: "canary@x.test" });
+        return { ok: true, status: 200, text: async () => JSON.stringify({ properties: { hashed_token: "HASHED123" } }) };
+      }
+      if (pathname === "/auth/v1/verify") {
+        assert.equal(opts.headers.apikey, "anon-key");
+        assert.deepEqual(JSON.parse(opts.body), { type: "magiclink", token_hash: "HASHED123" });
+        return { ok: true, status: 200, text: async () => JSON.stringify({ access_token: "TOKEN123" }) };
+      }
+      if (pathname === "/rest/v1/cascades") {
+        assert.equal(opts.headers.Authorization, "Bearer TOKEN123");
+        return { ok: true, status: 200, text: async () => JSON.stringify([{ id: 1 }]) };
+      }
+      if (pathname === "/rest/v1/agent_films") {
+        return { ok: true, status: 200, text: async () => JSON.stringify([{ movie_id: 1 }]) };
+      }
+      if (pathname === "/rest/v1/film_watch") {
+        return { ok: true, status: 200, text: async () => JSON.stringify([]) };
+      }
+      if (pathname === "/auth/v1/logout") {
+        return { ok: true, status: 204, text: async () => "" };
+      }
+      throw new Error(`unexpected fetch: ${pathname}`);
+    };
+
+    const probe = await mod.probeSupabaseCanary(fetchStub);
+    assert.equal(probe.signedIn, true);
+    assert.deepEqual(calls, [
+      "/auth/v1/admin/generate_link", "/auth/v1/verify",
+      "/rest/v1/cascades", "/rest/v1/agent_films", "/rest/v1/film_watch", "/auth/v1/logout",
+    ]);
+  } finally {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_ANON_KEY;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    delete process.env.CASCADE_CANARY_EMAIL;
+  }
+});
+
+test("CAS-996 AC3: supabase_canary fails naming only the missing service-role key", async () => {
+  process.env.SUPABASE_URL = "https://x.test";
+  process.env.SUPABASE_ANON_KEY = "anon-key";
+  process.env.CASCADE_CANARY_EMAIL = "canary@x.test";
+  try {
+    const mod = await importFreshProbeModule("ac3canary");
+    const probe = await mod.probeSupabaseCanary(() => { throw new Error("must not fetch"); });
+    assert.equal(probe.signedIn, false);
+    assert.equal(probe.detail, "not configured: SUPABASE_SERVICE_ROLE_KEY");
+  } finally {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_ANON_KEY;
+    delete process.env.CASCADE_CANARY_EMAIL;
+  }
+});
+
+test("CAS-996 AC3: signup fails naming only the missing service-role key", async () => {
+  process.env.SUPABASE_URL = "https://x.test";
+  process.env.SUPABASE_ANON_KEY = "anon-key";
+  process.env.CASCADE_CANARY_EMAIL = "canary@x.test";
+  try {
+    const mod = await importFreshProbeModule("ac3signup");
+    const probe = await mod.probeSignup(() => { throw new Error("must not fetch"); });
+    assert.equal(probe.created, false);
+    assert.equal(probe.detail, "not configured: SUPABASE_SERVICE_ROLE_KEY");
+  } finally {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_ANON_KEY;
+    delete process.env.CASCADE_CANARY_EMAIL;
+  }
+});
+
+// ---------------------------------------------------------------------------
 // CAS-995 AC4 — dead-man checks: red for a 31-hour-old refresh/success, green for a 2-hour-old
 // one. Pure decision functions, injected `now`, no network.
 // ---------------------------------------------------------------------------
