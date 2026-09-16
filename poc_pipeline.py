@@ -1477,7 +1477,7 @@ def _load_prev_snapshot() -> dict:
     overwrites SNAPSHOT_FILE for today."""
     if not os.path.exists(SNAPSHOT_FILE):
         return {}
-    return {m["tmdb_id"]: m for m in json.load(open(SNAPSHOT_FILE))}
+    return {m["tmdb_id"]: m for m in json.load(open(SNAPSHOT_FILE, encoding="utf-8"))}
 
 
 def diff_and_alert(today_records: list[dict]) -> list[dict]:
@@ -1522,9 +1522,9 @@ def diff_and_alert(today_records: list[dict]) -> list[dict]:
             })
     # persist
     os.makedirs(STATE_DIR, exist_ok=True)
-    json.dump(today_records, open(SNAPSHOT_FILE, "w"), indent=2)
-    existing = json.load(open(ALERTS_FILE)) if os.path.exists(ALERTS_FILE) else []
-    json.dump(existing + events, open(ALERTS_FILE, "w"), indent=2)
+    json.dump(today_records, open(SNAPSHOT_FILE, "w", encoding="utf-8"), indent=2)
+    existing = json.load(open(ALERTS_FILE, encoding="utf-8")) if os.path.exists(ALERTS_FILE) else []
+    json.dump(existing + events, open(ALERTS_FILE, "w", encoding="utf-8"), indent=2)
     return events
 
 
@@ -1723,7 +1723,7 @@ def _load_wm_cycle_budget(today: datetime.date) -> dict:
     if not os.path.exists(API_BUDGET_FILE):
         return fresh
     try:
-        data = json.load(open(API_BUDGET_FILE))
+        data = json.load(open(API_BUDGET_FILE, encoding="utf-8"))
     except Exception:
         return fresh
     if "days" not in data or data.get("cycle_end") != cycle_end.isoformat():
@@ -1739,7 +1739,7 @@ def _save_wm_cycle_budget(cycle: dict, today: datetime.date) -> None:
     out = dict(cycle)
     out["spent"] = sum(out.get("days", {}).values())
     out["updated_at"] = today.isoformat()
-    json.dump(out, open(API_BUDGET_FILE, "w"), indent=2, sort_keys=True)
+    json.dump(out, open(API_BUDGET_FILE, "w", encoding="utf-8"), indent=2, sort_keys=True)
 
 
 def compute_wm_today_allowance(quota: int, reserve_pct: float, spent_this_cycle: int,
@@ -1818,7 +1818,7 @@ def _load_monthly_wm_spend(today):
     if not os.path.exists(WM_MONTHLY_FILE):
         return {}
     try:
-        data = json.load(open(WM_MONTHLY_FILE))
+        data = json.load(open(WM_MONTHLY_FILE, encoding="utf-8"))
     except Exception:
         return {}
     return data if data.get("month") == month else {}
@@ -1827,7 +1827,7 @@ def _load_monthly_wm_spend(today):
 def _save_monthly_wm_spend(today, wm_spent):
     os.makedirs(STATE_DIR, exist_ok=True)
     json.dump({"month": today.strftime("%Y-%m"), "wm_spent": wm_spent},
-               open(WM_MONTHLY_FILE, "w"), indent=2)
+               open(WM_MONTHLY_FILE, "w", encoding="utf-8"), indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -2260,12 +2260,12 @@ def run(simulate_day: bool = False):
 
     if LIVE:
         print(f"[live] CAS-109 tiered poll — persistent catalogue, daily-active capped ...")
-        wm_cache = json.load(open(WM_CACHE_FILE)) if os.path.exists(WM_CACHE_FILE) else {}
-        base_records = json.load(open(SNAPSHOT_FILE)) if os.path.exists(SNAPSHOT_FILE) else []
-        wd_seed = json.load(open(WINDOW_DATES_FILE)) if os.path.exists(WINDOW_DATES_FILE) else {}
+        wm_cache = json.load(open(WM_CACHE_FILE, encoding="utf-8")) if os.path.exists(WM_CACHE_FILE) else {}
+        base_records = json.load(open(SNAPSHOT_FILE, encoding="utf-8")) if os.path.exists(SNAPSHOT_FILE) else []
+        wd_seed = json.load(open(WINDOW_DATES_FILE, encoding="utf-8")) if os.path.exists(WINDOW_DATES_FILE) else {}
         offsets = ps.compute_median_offsets(wd_seed)
         ondemand_file = os.path.join(STATE_DIR, "ondemand.json")
-        ondemand_ids = json.load(open(ondemand_file)) if os.path.exists(ondemand_file) else []
+        ondemand_ids = json.load(open(ondemand_file, encoding="utf-8")) if os.path.exists(ondemand_file) else []
 
         # CAS-994: this run's whole Watchmode pot — WM_RUN_MAX_CREDITS is a hard ceiling (0 by
         # default: no credit-costing Watchmode call at all), paced against Watchmode's own live
@@ -2301,7 +2301,7 @@ def run(simulate_day: bool = False):
               f"| Watchmode on-demand {counts['wm_calls']}/{counts['ondemand_cap']} "
               f"| cinema_release backfill {counts['cinema_calls']}/{CINEMA_RELEASE_BACKFILL_BUDGET}")
         os.makedirs(STATE_DIR, exist_ok=True)
-        json.dump(wm_cache, open(WM_CACHE_FILE, "w"), indent=2)
+        json.dump(wm_cache, open(WM_CACHE_FILE, "w", encoding="utf-8"), indent=2)
 
         # CAS-974: this run's TMDB/Watchmode call+error tallies, for monitor.health's tmdb_fetch/
         # watchmode_fetch checks — a run with 0 keys never reaches this branch, so an "unknown"
@@ -2317,7 +2317,7 @@ def run(simulate_day: bool = False):
                            remaining_monthly_credits=max(0, WATCHMODE_MONTHLY_CREDITS - monthly_spent))
     else:
         print("[sample] no API keys set — using bundled illustrative data.")
-        records = json.load(open(SAMPLE_FILE))["movies"]
+        records = json.load(open(SAMPLE_FILE, encoding="utf-8"))["movies"]
         if simulate_day:
             _apply_scripted_change(records)
         for m in records:
@@ -2343,11 +2343,11 @@ def run(simulate_day: bool = False):
     # CAS-937: the nightly OscarBase awards pass — see enrich_oscarbase_awards_nightly's
     # docstring. Runs every night, live or sample; a failed fetch falls back to the committed
     # cache rather than ever failing the build.
-    oscarbase_cache = (json.load(open(OSCARBASE_CACHE_FILE))
+    oscarbase_cache = (json.load(open(OSCARBASE_CACHE_FILE, encoding="utf-8"))
                        if os.path.exists(OSCARBASE_CACHE_FILE) else {})
     oscarbase_outcomes = enrich_oscarbase_awards_nightly(records, today, oscarbase_cache)
     os.makedirs(STATE_DIR, exist_ok=True)
-    json.dump(oscarbase_cache, open(OSCARBASE_CACHE_FILE, "w"), indent=2)
+    json.dump(oscarbase_cache, open(OSCARBASE_CACHE_FILE, "w", encoding="utf-8"), indent=2)
     print(f"[oscarbase] awards: {oscarbase_outcomes['ok']} fetched, "
           f"{oscarbase_outcomes['cache_fallback']} from cache, "
           f"{oscarbase_outcomes['skip']} skipped, {oscarbase_outcomes['stop']} stopped")
@@ -2413,13 +2413,13 @@ def run(simulate_day: bool = False):
     # Record the first date each title was seen in each window, so transition
     # dates become EXACT over time (no backfill — accrues from the first run).
     # The app uses these when present and falls back to estimates otherwise.
-    wd = json.load(open(WINDOW_DATES_FILE)) if os.path.exists(WINDOW_DATES_FILE) else {}
+    wd = json.load(open(WINDOW_DATES_FILE, encoding="utf-8")) if os.path.exists(WINDOW_DATES_FILE) else {}
     update_window_dates(records, wd, prev_snapshot, today.isoformat())
     for m in records:
         m.setdefault("availability_confidence", "confirmed")   # CAS-109 (sample/legacy default)
         m.setdefault("poll_tier", ps.classify_tier(m, today))
     os.makedirs(STATE_DIR, exist_ok=True)
-    json.dump(wd, open(WINDOW_DATES_FILE, "w"), indent=2)
+    json.dump(wd, open(WINDOW_DATES_FILE, "w", encoding="utf-8"), indent=2)
 
     events = diff_and_alert(records)
 
@@ -2430,9 +2430,9 @@ def run(simulate_day: bool = False):
         "live": LIVE,
         "movies": records,
     }
-    json.dump(payload, open(OUTPUT_FILE, "w"), indent=2)
+    json.dump(payload, open(OUTPUT_FILE, "w", encoding="utf-8"), indent=2)
     os.makedirs(STATE_DIR, exist_ok=True)     # this run's changes, for the email step / CI
-    json.dump(events, open(os.path.join(STATE_DIR, "last_run_events.json"), "w"), indent=2)
+    json.dump(events, open(os.path.join(STATE_DIR, "last_run_events.json"), "w", encoding="utf-8"), indent=2)
     build_html(records)                       # regenerate the double-clickable app
 
     n_up = sum(1 for m in records if "upcoming" in m.get("status", []))
@@ -2501,7 +2501,7 @@ def build_html(records: list[dict] | None = None, provider_status: dict | None =
     Also stamps the release/build version (CAS-124) into the app and /version.json."""
     catalogue_date = datetime.date.today().isoformat()
     if records is None:  # --build-html on its own: rebuild from the last movies.json
-        catalogue = json.load(open(OUTPUT_FILE))
+        catalogue = json.load(open(OUTPUT_FILE, encoding="utf-8"))
         records = catalogue["movies"]
         catalogue_date = catalogue.get("generated", catalogue_date)
     if not os.path.exists(TEMPLATE_FILE):
