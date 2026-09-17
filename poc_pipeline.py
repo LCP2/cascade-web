@@ -34,6 +34,7 @@ to compare against. Output for the app front-end is written to movies.json.
 
 from __future__ import annotations
 import os, sys, csv, io, re, json, time, shutil, hashlib, base64, calendar, datetime, subprocess, urllib.parse, urllib.request, urllib.error
+from collections import Counter
 
 import runstats
 
@@ -244,11 +245,20 @@ def get_text(url: str, retries: int = 4, headers: dict | None = None) -> str:
 _LIMIT_MARKERS = ("limit reached", "request limit", "too many requests", "invalid api key")
 
 
-def _api_call(label: str, fn, *args):
-    """Run one enrichment call. Returns (value, outcome) with outcome in {'ok','skip','stop'}."""
+def _api_call(label: str, fn, *args, status_counts: "Counter | None" = None):
+    """Run one enrichment call. Returns (value, outcome) with outcome in {'ok','skip','stop'}.
+
+    CAS-1011: `status_counts`, when given, tallies the REAL response actually received for
+    this one call (HTTP status code, or 'other' for a non-HTTP exception) — a title skipped
+    because an earlier call already tripped `stop` never reaches here, so it can never inflate
+    this tally. This is what health.py's tmdb_fetch check now reads for its per-status
+    breakdown, rather than the per-title *_fails counters below (which also count untried
+    post-stop skips, and so are not a true error tally on their own)."""
     try:
         return fn(*args), "ok"
     except urllib.error.HTTPError as e:
+        if status_counts is not None:
+            status_counts[e.code] += 1
         body = ""
         try:
             body = (e.read() or b"").decode("utf-8", "replace")[:200].strip()
@@ -268,6 +278,8 @@ def _api_call(label: str, fn, *args):
               f"{f' — no further {label} calls this run' if stop else ' — skipping this title'}")
         return None, ("stop" if stop else "skip")
     except Exception as e:
+        if status_counts is not None:
+            status_counts["other"] += 1
         stop = any(k in str(e).lower() for k in _LIMIT_MARKERS)
         print(f"[warn] {label}: {type(e).__name__}: {e}"
               f"{f' — no further {label} calls this run' if stop else ' — skipping this title'}")
@@ -1892,6 +1904,10 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     ondemand_set = {m["tmdb_id"] for m in sched["ondemand"]}
     provider_calls = wm_calls = cinema_calls = 0
     provider_not_found = cinema_not_found = 0   # CAS-997 Defect 2: 404s, tallied apart from real errors
+    # CAS-1011: real per-status-code tally for the two TMDB call sites that feed provider_calls/
+    # cinema_calls below (not revalidate_record — that pass never counts toward calls/errors at
+    # all) — see _api_call's docstring for why this, not *_fails, is the true error tally.
+    tmdb_status_counts: Counter = Counter()
     # CAS-384: shrink today's pot by whatever an earlier run already spent against the SAME free-tier
     # day, so two runs sharing one real cap can't each claim a full allowance.
     ondemand_cap = ONDEMAND_WM_CAP if wm_budget_cap is None else wm_budget_cap
@@ -1913,7 +1929,8 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
         # CAS-379: back-fill pre-CAS-360 records regardless of poll tier — an upcoming title carried
         # forward from before the field existed is just as stuck as a released one.
         if "cinema_release" not in m and cinema_open and cinema_backfill > 0:
-            _, cinema_outcome = _api_call("TMDB release_dates", enrich_cinema_release, m)
+            _, cinema_outcome = _api_call("TMDB release_dates", enrich_cinema_release, m,
+                                          status_counts=tmdb_status_counts)
             cinema_calls += 1; cinema_backfill -= 1
             if cinema_outcome == "stop":
                 cinema_open = False
@@ -1934,7 +1951,8 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
             m["availability_source"] = "tmdb_date"
         else:
             # PRIMARY availability: free TMDB Watch Providers (AU), every released title, daily.
-            prov, prov_outcome = (_api_call("TMDB providers", tmdb_providers, m["tmdb_id"])
+            prov, prov_outcome = (_api_call("TMDB providers", tmdb_providers, m["tmdb_id"],
+                                            status_counts=tmdb_status_counts)
                                   if prov_open else (None, "skip"))
             if prov_open:
                 provider_calls += 1
@@ -2061,7 +2079,9 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                   provider_not_found=provider_not_found, cinema_not_found=cinema_not_found,
                   wm_stopped=not wm_open, providers_stopped=not prov_open,
                   cinema_stopped=not cinema_open,
-                  revalidation_stopped=not revalidation_open)
+                  revalidation_stopped=not revalidation_open,
+                  # CAS-1011: real per-status-code tally, JSON-safe (string keys).
+                  tmdb_status_counts={str(k): v for k, v in tmdb_status_counts.items()})
     if wm_fails or prov_fails or cinema_fails:
         print(f"[warn] degraded enrichment: {prov_fails} TMDB-provider, {wm_fails} "
               f"Watchmode, {cinema_fails} TMDB-release_dates title(s) kept "
@@ -2315,9 +2335,15 @@ def run(simulate_day: bool = False):
         # CAS-974: this run's TMDB/Watchmode call+error tallies, for monitor.health's tmdb_fetch/
         # watchmode_fetch checks — a run with 0 keys never reaches this branch, so an "unknown"
         # (no run_stats.json entry) there is the honest answer, not a fabricated 0.
+        # CAS-1011: "errors" is now derived from the real per-status breakdown (every status other
+        # than 404), not provider_fails/cinema_fails — those also count titles skipped untried
+        # after an earlier call already tripped `stop`, which is not a per-call error.
+        tmdb_status_counts = counts["tmdb_status_counts"]
+        tmdb_errors = sum(v for status, v in tmdb_status_counts.items() if status != "404")
         runstats.bump("tmdb", calls=counts["provider_calls"] + counts["cinema_calls"],
-                      errors=counts["provider_fails"] + counts["cinema_fails"],
+                      errors=tmdb_errors,
                       not_found=counts["provider_not_found"] + counts["cinema_not_found"])
+        runstats.bump_counts("tmdb", "status_counts", tmdb_status_counts)
         runstats.bump("watchmode", calls=counts["wm_calls"], errors=counts["wm_fails"])
         prior_monthly = _load_monthly_wm_spend(today)
         monthly_spent = prior_monthly.get("wm_spent", 0) + counts["wm_calls"]

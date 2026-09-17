@@ -90,6 +90,21 @@ class TmdbFetch(unittest.TestCase):
         c = health.check_tmdb_fetch({"calls": 1000, "errors": 0, "not_found": 21})
         self.assertFalse(c["ok"])
 
+    def test_pass_status_breakdown_all_404_reports_ok(self):
+        # CAS-1011: QA-260917-1 MON-01 shape — poc_pipeline.py's real per-status tally shows the
+        # run's only non-ok responses were 404s, so errors is 0 and the run passes.
+        c = health.check_tmdb_fetch({"calls": 11723, "errors": 0, "not_found": 13,
+                                     "status_counts": {"404": 13}})
+        self.assertTrue(c["ok"])
+        self.assertIn("404:13", c["detail"])
+
+    def test_fail_status_breakdown_shown_for_real_errors(self):
+        c = health.check_tmdb_fetch({"calls": 11723, "errors": 2, "not_found": 13,
+                                     "status_counts": {"404": 13, "500": 2}})
+        self.assertFalse(c["ok"])
+        self.assertIn("404:13", c["detail"])
+        self.assertIn("500:2", c["detail"])
+
 
 class OscarbaseFetch(unittest.TestCase):
     def test_pass_calls_no_errors(self):

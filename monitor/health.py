@@ -160,31 +160,50 @@ def _check_fetch(name: str, stats: dict | None) -> dict:
     return _check(name, True, calls, 0, f"{calls} call(s), 0 errors.")
 
 
+def _status_breakdown(stats: dict) -> str:
+    """CAS-1011: render run_stats.json's tmdb.status_counts (real per-HTTP-status tally from
+    poc_pipeline.py's _api_call) as a stable, human-readable suffix — 404 first, since that's the
+    one callers most want to see excluded from the error count, then the rest sorted."""
+    status_counts = stats.get("status_counts") or {}
+    if not status_counts:
+        return ""
+    breakdown = ", ".join(f"{status}:{n}" for status, n in
+                          sorted(status_counts.items(), key=lambda kv: (kv[0] != "404", kv[0])))
+    return f" Status breakdown: {breakdown}."
+
+
 def check_tmdb_fetch(stats: dict | None) -> dict:
     """CAS-997: unlike the other *_fetch checks, a TMDB 404 (`not_found` in run_stats.json — TMDB
     itself has deleted/withdrawn the title, poc_pipeline.py already keeps its previous data) must
     never read as a fetch outage on its own. This still fails on any OTHER error, exactly like
     `_check_fetch`, and separately fails when not-found calls exceed TMDB_NOT_FOUND_MAX_PCT of the
-    run's total calls — a real spike in vendor deletions is still worth knowing about."""
+    run's total calls — a real spike in vendor deletions is still worth knowing about.
+
+    CAS-1011: `errors` (bumped by poc_pipeline.py from its real per-status tally, not from the
+    per-title *_fails counters that also count titles skipped untried after an earlier call
+    already tripped `stop`) already excludes 404s — this only adds the breakdown to the detail
+    so a real, non-404 failure says exactly which status codes it was."""
     if not stats:
         return _check("tmdb_fetch", None, None, None, "no run_stats.json entry this run — unavailable.")
     calls = stats.get("calls", 0)
     errors = stats.get("errors", 0)
     not_found = stats.get("not_found", 0)
+    breakdown = _status_breakdown(stats)
     if calls <= 0:
         return _check("tmdb_fetch", False, calls, 0, "0 calls made this run.")
     if errors:
         return _check("tmdb_fetch", False, errors, 0,
                       f"{errors} error(s) across {calls} call(s) ({not_found} not-found, not "
-                      "counted as errors).")
+                      f"counted as errors).{breakdown}")
     not_found_pct = not_found / calls
     if not_found_pct > TMDB_NOT_FOUND_MAX_PCT:
         floor = round(calls * TMDB_NOT_FOUND_MAX_PCT)
         return _check("tmdb_fetch", False, not_found, floor,
                       f"{not_found} not-found across {calls} call(s) ({not_found_pct:.1%}) — above "
-                      f"the {TMDB_NOT_FOUND_MAX_PCT:.0%} floor.")
+                      f"the {TMDB_NOT_FOUND_MAX_PCT:.0%} floor.{breakdown}")
     return _check("tmdb_fetch", True, calls, 0,
-                  f"{calls} call(s), 0 error(s), {not_found} not-found ({not_found_pct:.1%}).")
+                  f"{calls} call(s), 0 error(s), {not_found} not-found ({not_found_pct:.1%})."
+                  f"{breakdown}")
 
 
 def check_oscarbase_fetch(stats: dict | None) -> dict:
