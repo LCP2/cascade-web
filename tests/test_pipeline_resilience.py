@@ -53,10 +53,13 @@ class ApiCallOutcomes(unittest.TestCase):
             raise _http_error(503)
         self.assertEqual(pp._api_call("TMDB", boom)[1], "skip")
 
-    def test_404_skips_only_this_title(self):
+    def test_404_does_not_stop_the_run(self):
+        # CAS-997: a 404 is the vendor withdrawing the resource, not a fetch outage — it must not
+        # stop the run, but it's tallied separately from 'skip' so callers can act on it (dropping
+        # a long-404ing candidate) rather than treating it like a transient error.
         def boom():
             raise _http_error(404)
-        self.assertEqual(pp._api_call("TMDB", boom)[1], "skip")
+        self.assertEqual(pp._api_call("TMDB", boom)[1], "not_found")
 
     def test_non_http_errors_skip_rather_than_raise(self):
         def boom():
