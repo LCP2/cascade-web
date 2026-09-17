@@ -418,18 +418,18 @@ test("wmCascadeScore: follows cascadeScore's three primaryStatus branches, over 
   // CAS-907: the pre-release/blended branches now dispatch to wmCinemaScore (the Watchmode-sourced buzz
   // chain), not cinemaScore (TMDB-sourced) — that shared call was the defect this ticket fixes, so pinning
   // cinemaScore here would re-pin the bug.
-  const upcoming = E.MOVIES.find(m => E.primaryStatus(m) === "upcoming");
-  assert.ok(upcoming, "no upcoming film found — this test would prove nothing");
+  // CAS-1005: fixed fixtures, not E.MOVIES.find() — a live film's primaryStatus can flip (e.g. its cinema
+  // date is today) between when the catalogue built and when this test runs, and "not pre-release" is not
+  // the same test as "released" (opening_week is neither).
+  const upcoming = { status: ["upcoming"] };
   assert.equal(E.wmCascadeScore(upcoming), E.wmCinemaScore(upcoming), "upcoming should return wmCinemaScore unchanged");
 
-  const released = E.MOVIES.find(m => !E.isPreRelease(m));
-  assert.ok(released, "no released film found — this test would prove nothing");
+  const released = { status: ["included_streaming"], wm_user_rating: 7.5, wm_critic_score: 82 };
   assert.equal(E.wmCascadeScore(released), E.wmQScore(released), "released (not in_cinema/opening_week) should return wmQScore unchanged");
 
   // A film in cinemas (or its opening week) whose wmQScore is -1 falls back to wmCinemaScore rather than
   // returning a negative number, exactly like cascadeScore falls back to buzz when qScore is -1.
-  const cinemaFilm = E.MOVIES.find(m => (E.primaryStatus(m)==="in_cinema" || E.primaryStatus(m)==="opening_week"));
-  assert.ok(cinemaFilm, "no in_cinema/opening_week film found — this test would prove nothing");
+  const cinemaFilm = { status: ["in_cinema"], wm_popularity_percentile: 50 };
   const noWm = { ...cinemaFilm, wm_user_rating: null, wm_critic_score: null };
   assert.equal(E.wmCascadeScore(noWm), E.wmCinemaScore(noWm), "in_cinema/opening_week with no Watchmode terms should fall back to wmCinemaScore, not a negative number");
 
@@ -1714,16 +1714,17 @@ test("CAS-919: condensedShowsScores agrees with the Watchmode two-source rule, o
 // CAS-919: the three-way dispatch is unchanged, but its two terms are now wmCinemaScore/wmQScore (Watchmode)
 // instead of cinemaScore/qScore (OMDb/TMDB) — qScore/cinemaScore survive under their own names but are no
 // longer what cascadeScore reads.
+// CAS-1005: the upcoming/released spot checks below use fixed fixtures, not E.MOVIES.find() — "not
+// isPreRelease" is not the same test as "released" (opening_week is neither), and a live film's cinema
+// date landing on today can flip its primaryStatus out from under a `find()`.
 test("CAS-695 AC1: the score's basis switches on primaryStatus — cinema (buzz) before release, streaming (Watchmode) after", () => {
-  const upcomingFilm = E.MOVIES.find(m => E.primaryStatus(m) === "upcoming" && E.cascadeScore(m) >= 0);
-  assert.ok(upcomingFilm, "no scored upcoming film found — this test would prove nothing");
+  const upcomingFilm = { status: ["upcoming"], wm_popularity_percentile: 50 };
   assert.equal(E.cascadeScore(upcomingFilm), E.wmCinemaScore(upcomingFilm),
-    `${upcomingFilm.title}: upcoming film's Cascade score is not its Watchmode cinema score`);
+    "upcoming film's Cascade score is not its Watchmode cinema score");
 
-  const releasedFilm = E.MOVIES.find(m => !isPreRelease(m) && E.wmQScore(m) >= 0);
-  assert.ok(releasedFilm, "no scored released film found — this test would prove nothing");
+  const releasedFilm = { status: ["included_streaming"], wm_user_rating: 7.5, wm_critic_score: 82 };
   assert.equal(E.cascadeScore(releasedFilm), E.wmQScore(releasedFilm),
-    `${releasedFilm.title}: released film's Cascade score is not its (Watchmode) wmQScore`);
+    "released film's Cascade score is not its (Watchmode) wmQScore");
 
   // Whole catalogue: the same three-way dispatch, never a fourth formula.
   for(const m of E.MOVIES){
@@ -1943,18 +1944,19 @@ test("CAS-695 AC4: the cohort's popularity and budget arrays are sorted once, no
 // a budget term that no longer exists — and keep naming the streaming axes exactly as qScoreSourcesText does
 // once released. Narrowed to an upcoming film by CAS-749: an in-cinema film with a real qScore now names both
 // contributions (see the CAS-749 test below), so it no longer demonstrates "Buzz only".
+// CAS-1005: fixed fixtures, not E.MOVIES.find() — "not isPreRelease" is not the same test as "released"
+// (opening_week is neither), and a live film's cinema date landing on today can flip its primaryStatus out
+// from under a `find()`.
 test("CAS-722 AC4: cascadeScoreSourcesText names only Buzz for a film with nothing else to go on, never Budget", () => {
-  const buzzed = E.MOVIES.find(m => E.primaryStatus(m) === "upcoming" && E.wmBuzzPctlOf(m) != null);
-  assert.ok(buzzed, "no buzz-scored upcoming film found — this test would prove nothing");
+  const buzzed = { status: ["upcoming"], wm_popularity_percentile: 50 };
   assert.equal(E.cascadeScoreSourcesText(buzzed), "Buzz");
   for(const name of ["Budget", "People's vote", "Critics"]){
     assert.ok(!E.cascadeScoreSourcesText(buzzed).includes(name), `cascadeScoreSourcesText named ${name} on a pre-release film`);
   }
 
-  const releasedFilm = E.MOVIES.find(m => !isPreRelease(m) && E.wmQScore(m) >= 0);
-  assert.ok(releasedFilm, "no scored released film found — this test would prove nothing");
+  const releasedFilm = { status: ["included_streaming"], wm_user_rating: 7.5, wm_critic_score: 82 };
   assert.equal(E.cascadeScoreSourcesText(releasedFilm), E.wmQScoreSourcesText(releasedFilm),
-    `${releasedFilm.title}: released film's basis text should be exactly wmQScoreSourcesText's`);
+    "released film's basis text should be exactly wmQScoreSourcesText's");
 });
 
 // CAS-724: an agent saved before c.scoreFloor existed migrates it, once, from whichever legacy Mission dials
