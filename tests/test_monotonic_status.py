@@ -240,6 +240,75 @@ class ZeroAuRowsNeverInventAPaidTier(unittest.TestCase):
         self.assertNotIn("pending_downgrade", day2[0])
 
 
+class AHeldDowngradeKeepsItsOffers(unittest.TestCase):
+    """CAS-1008 (D1/D2, prod QA-260917-1): apply_monotonic_status can hold a backward move back —
+    m["status"] then still reads yesterday's CONFIRMED tier — but the old build_live_catalogue code
+    overwrote m["offers"] with today's real (lesser) read regardless of that hold. Two live symptoms:
+    a held pvod/rental/included_streaming sitting next to zero offers (AU returned no rows at all),
+    and a held included_streaming sitting next to a rent-only offer list (AU still has a row, just
+    not a sub/free one). Offers must move in lockstep with status: stay put while held, update only
+    once the candidate is actually committed."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        state_dir = self._tmp.name
+        patches = [
+            mock.patch.object(pp, "STATE_DIR", state_dir),
+            mock.patch.object(pp, "SNAPSHOT_FILE", os.path.join(state_dir, "last_snapshot.json")),
+            mock.patch.object(pp, "ALERTS_FILE", os.path.join(state_dir, "alerts.json")),
+            mock.patch.object(pp, "ingest_tmdb", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_upcoming", lambda seen: []),
+            mock.patch.object(pp, "ingest_tmdb_streaming", lambda seen: []),
+            mock.patch.object(pp, "TMDB_PACING", 0),
+            mock.patch.object(pp, "REVALIDATION_DAILY_BUDGET", 0),
+            mock.patch.object(pp, "enrich_cinema_release", lambda m: m),
+        ]
+        for p in patches:
+            p.start(); self.addCleanup(p.stop)
+
+    def test_a_home_window_held_pending_keeps_its_prior_offers_not_zero(self):
+        # NXT Heatwave 2026 (CAS-1008 D1): a real buy offer once put it at pvod; today's AU read
+        # comes back with zero provider rows at all, which is a backward move that must be held —
+        # so the record must still carry the offer that backs the pvod it's still claiming.
+        still_running = (datetime.date(2026, 8, 6) - datetime.timedelta(days=10)).isoformat()
+        prior_offer = {"service": "Prime Video", "type": "buy", "price": 24.99, "format": "HD"}
+        base = [_title(1, status=["pvod"], cinema_date=still_running, offers=[prior_offer])]
+        empty_prov = {"flatrate": [], "rent": [], "buy": [], "ads": [], "free": [], "jw_link": None}
+
+        with mock.patch.object(pp, "tmdb_providers", lambda tid: empty_prov):
+            day1, _ = pp.build_live_catalogue(datetime.date(2026, 8, 6), base, {}, ondemand_ids=[])
+
+        self.assertEqual(day1[0]["status"], ["pvod"])                 # held, not demoted to in_cinema
+        self.assertIn("pending_downgrade", day1[0])
+        self.assertEqual(day1[0]["offers"], [prior_offer])            # NOT wiped to []
+
+    def test_included_streaming_held_pending_keeps_its_sub_offer_not_rent_only(self):
+        # Migration (CAS-1008 D2): a real sub offer once put it at included_streaming; today's AU
+        # read still has a row, but only a rent one — a backward move that must be held, so the
+        # record must still carry a sub/free offer while it still claims included_streaming.
+        sub_offer = {"service": "Netflix", "type": "sub", "price": None, "format": None}
+        base = [_title(1, status=["included_streaming"], offers=[sub_offer])]
+        rent_only_prov = {"flatrate": [], "rent": ["Prime Video"], "buy": [], "ads": [], "free": [],
+                           "jw_link": None}
+
+        with mock.patch.object(pp, "tmdb_providers", lambda tid: rent_only_prov):
+            day1, _ = pp.build_live_catalogue(datetime.date(2026, 8, 6), base, {}, ondemand_ids=[])
+
+        self.assertEqual(day1[0]["status"], ["included_streaming"])   # held, not demoted to rental
+        self.assertIn("pending_downgrade", day1[0])
+        self.assertTrue(any(o.get("type") in ("sub", "free") for o in day1[0]["offers"]))
+
+        # A SECOND run repeating the same rent-only read confirms the downgrade — now, and only
+        # now, the offers must catch up to reflect the real, current (offer-honest) state.
+        with mock.patch.object(pp, "tmdb_providers", lambda tid: rent_only_prov):
+            day2, _ = pp.build_live_catalogue(datetime.date(2026, 8, 7), day1, {}, ondemand_ids=[])
+
+        self.assertEqual(day2[0]["status"], ["rental"])
+        self.assertNotIn("pending_downgrade", day2[0])
+        self.assertEqual([o["type"] for o in day2[0]["offers"]], ["rent"])
+
+
 class AnEstimatedTierIsNotOwedTheTransientGapHold(unittest.TestCase):
     """CAS-418: apply_monotonic_status's 2-run hold exists to protect a CONFIRMED tier (a real
     offer) from a one-day AU-feed gap (CAS-355, exercised above). A tier stamped "estimated" was

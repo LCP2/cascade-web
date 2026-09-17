@@ -1946,8 +1946,9 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
             if prov_outcome == "ok":
                 title_tmdb_ok = True
                 m["jw_link"] = prov.get("jw_link")           # JustWatch deep-out + attribution
+                prev_offers = m.get("offers", [])
                 if has_provider_rows(prov):
-                    m["offers"] = provider_offers(prov)
+                    new_offers = provider_offers(prov)
                     apply_monotonic_status(m, derive_from_providers(m, prov, today), "confirmed", today)
                 else:
                     # CAS-412: JustWatch has no AU row at all, so there is no real offer to back a home
@@ -1957,8 +1958,16 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                     # since the ladder never re-computes a lower answer as the same title ages further.
                     # derive_from_providers' own cinema-date-only fallback (empty `prov` in every window
                     # check) is offer-honest: in_cinema while the title is still opened, upcoming before.
-                    m["offers"] = []
+                    new_offers = []
                     apply_monotonic_status(m, derive_from_providers(m, prov, today), "estimated", today)
+                # CAS-1008 (D1/D2): apply_monotonic_status can HOLD a backward move back rather than
+                # commit it (pending_downgrade set) — m["status"] then still reads yesterday's tier.
+                # The old code overwrote m["offers"] with today's real read regardless, so a held
+                # confirmed home window (or included_streaming) could sit next to zero offers, or
+                # offers of a type that no longer backs it (rent-only under a held included_streaming).
+                # Offers must move in lockstep with status: only once the candidate is actually
+                # committed does today's real offer list apply.
+                m["offers"] = prev_offers if m.get("pending_downgrade") else new_offers
                 m["last_polled"] = today.isoformat()
                 m["availability_source"] = "tmdb_providers"
             else:
