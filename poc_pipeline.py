@@ -621,6 +621,11 @@ WM_PUBLISH_FLOOR = int(os.getenv("WM_PUBLISH_FLOOR", "60"))
 # gone for good, not a transient blip — dropped from candidates.json/publication unless user-held.
 TMDB_NOT_FOUND_DROP_STREAK = 3
 
+# CAS-1029: how often enrich_candidates_for_publication persists candidates.json mid-batch, so a
+# run that is killed before finishing its full eligible set (an external timeout, never a cap this
+# code imposes itself) keeps every enrichment it already completed. 0 disables mid-batch saving.
+PUBLISH_ENRICH_SAVE_EVERY = int(os.getenv("PUBLISH_ENRICH_SAVE_EVERY", "200"))
+
 
 def _invert_watchmode_idmap(idmap: dict) -> dict:
     """`_fetch_watchmode_idmap` returns {wm_id: tmdb_id}; this backfill looks the other way
@@ -1122,18 +1127,45 @@ def enrich_candidates_for_publication(candidates: dict, engine_scoreable_ids: se
     title). Mutates `candidates` in place; the caller's own save_candidates persists the result,
     so a candidate enriched here is never re-fetched on a later run.
 
-    Returns {'enriched': int, 'failed': int} — 'failed' folds every _api_call outcome that isn't
-    'ok' (skip/stop/not_found), printed as `publish_guard_enriched=<n> publish_guard_failed=<n>`."""
-    stats = {"enriched": 0, "failed": 0}
-    for c in candidates.values():
-        if c["tmdb_id"] not in engine_scoreable_ids or is_publishable_record(c):
-            continue
-        if enrich_candidate_for_publication(c, today) == "ok":
+    CAS-1029: every eligible candidate is attempted, most popular first, in a single run — no cap
+    imposed here. save_candidates runs every PUBLISH_ENRICH_SAVE_EVERY titles so a run stopped
+    early by something outside this code (a workflow timeout) keeps its completed work; the next
+    run's eligible set naturally excludes anything already enriched. TMDB_PACING paces the calls,
+    same as the discovery loops. No Watchmode call is ever made here — see
+    enrich_candidate_for_publication.
+
+    Returns {'eligible': int, 'enriched': int, 'failed': int, 'reasons': dict} — 'eligible' is the
+    pre-loop count of scoreable-but-not-yet-publishable candidates; 'reasons' tallies every
+    non-'ok' outcome (skip/stop/not_found) by name. Printed as
+    `publish_guard_enriched=<n> publish_guard_failed=<n>`."""
+    eligible = [c for c in candidates.values()
+               if c["tmdb_id"] in engine_scoreable_ids and not is_publishable_record(c)]
+    eligible.sort(key=lambda c: c.get("popularity") or 0, reverse=True)
+
+    stats = {"eligible": len(eligible), "enriched": 0, "failed": 0, "reasons": {}}
+    for i, c in enumerate(eligible, start=1):
+        outcome = enrich_candidate_for_publication(c, today)
+        if outcome == "ok":
             stats["enriched"] += 1
         else:
             stats["failed"] += 1
+            stats["reasons"][outcome] = stats["reasons"].get(outcome, 0) + 1
+        if PUBLISH_ENRICH_SAVE_EVERY > 0 and i % PUBLISH_ENRICH_SAVE_EVERY == 0:
+            save_candidates(candidates)
+        time.sleep(TMDB_PACING)
     print(f"publish_guard_enriched={stats['enriched']} publish_guard_failed={stats['failed']}")
     return stats
+
+
+def publish_enrich_log_line(enrich_stats: dict, published: int) -> str:
+    """CAS-1029's own required summary line, built once so both call sites (the nightly
+    apply_two_tier_publication step and cas1024_backcatalogue_load.py's watchmode-backfill.yml
+    target=backcatalogue dispatch) print it identically. `published` is select_publishable's own
+    'promoted' count for this run — how many of this run's candidates actually reached
+    movies.json, not the catalogue's whole published total."""
+    reasons = ", ".join(f"{k}={v}" for k, v in sorted(enrich_stats["reasons"].items())) or "none"
+    return (f"[enrich] eligible {enrich_stats['eligible']}, enriched {enrich_stats['enriched']}, "
+            f"published {published}, failed {enrich_stats['failed']} ({reasons})")
 
 
 def run_scoreability_probe(candidates: dict, today: datetime.date, budget: int,
@@ -1302,12 +1334,14 @@ def apply_two_tier_publication(candidates: dict, today: datetime.date, discovery
 
     published_records, stats = select_publishable(candidates, engine_ids, previously_published_ids,
                                                    held_ids, CATALOGUE_TARGET)
+    print(publish_enrich_log_line(enrich_stats, stats["promoted"]))
     unprobed = sum(1 for c in candidates.values() if c.get("outcome") == "unprobed")
     report = {
         "candidates": len(candidates), "unprobed": unprobed,
         "probed_today": probe_outcomes["probed"], "engine_ok": engine_ok,
         "wm_spent": probe_outcomes.get("spent", 0),   # CAS-987: this pass's actual draw on probe_budget
         "not_found_dropped": not_found_dropped,
+        "publish_guard_eligible": enrich_stats["eligible"],
         "publish_guard_enriched": enrich_stats["enriched"],
         "publish_guard_failed": enrich_stats["failed"],
         **stats,

@@ -141,7 +141,7 @@ class EnrichCandidatesForPublicationBatch(unittest.TestCase):
         with mock.patch.object(pp, "get_json", side_effect=_get):
             stats = pp.enrich_candidates_for_publication(candidates, {1, 2}, _TODAY)
 
-        self.assertEqual(stats, {"enriched": 1, "failed": 0})
+        self.assertEqual(stats, {"eligible": 1, "enriched": 1, "failed": 0, "reasons": {}})
         self.assertEqual(len(detail_calls), 1)   # never re-fetched the already-good record
         self.assertTrue(pp.is_publishable_record(candidates["2"]))
         self.assertFalse(pp.is_publishable_record(candidates["3"]))   # left alone, out of scope

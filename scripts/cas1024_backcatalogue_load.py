@@ -95,11 +95,14 @@ def run(max_credits: int, today: datetime.date | None = None) -> dict:
         engine_ids = set(previously_published_ids)
         engine_ok = False
 
-    # CAS-1027: a back-catalogue candidate the engine calls scoreable today is still a raw
-    # CAS-991 candidate-pool stub until it gets the same TMDB enrichment any other published
+    # CAS-1027/CAS-1029: a back-catalogue candidate the engine calls scoreable today is still a
+    # raw CAS-991 candidate-pool stub until it gets the same TMDB enrichment any other published
     # title carries — give it that here, so select_publishable's own guard (is_publishable_record)
-    # has a real record to admit rather than a stub to reject. No Watchmode credits spent.
-    pp.enrich_candidates_for_publication(candidates, engine_ids, today)
+    # has a real record to admit rather than a stub to reject. No Watchmode credits spent. Every
+    # eligible candidate is attempted (not just backcat_ids) — this is the same full-catalogue
+    # catch-up pass CAS-1029 wires into the nightly refresh, available here as the manual
+    # watchmode-backfill.yml target=backcatalogue dispatch.
+    enrich_stats = pp.enrich_candidates_for_publication(candidates, engine_ids, today)
     # CAS-1027: saved once, after every mutation this run makes to `candidates` (the probe above
     # and the enrichment just above) — the earlier save-right-after-the-probe point left a since-
     # enriched candidate's repair unpersisted, so the next dispatch re-enriched it from scratch.
@@ -116,8 +119,10 @@ def run(max_credits: int, today: datetime.date | None = None) -> dict:
     print(f"[backcatalogue] probed {probe_result['probed']}, published {pub_stats['promoted']}, "
           f"no_score {probe_result['no_score']}, credits spent {probe_result['spent']}, "
           f"remaining {remaining_label}")
+    print(pp.publish_enrich_log_line(enrich_stats, pub_stats["promoted"]))
 
-    return {**probe_result, "engine_ok": engine_ok, **pub_stats, "remaining_credits": remaining}
+    return {**probe_result, "engine_ok": engine_ok, **pub_stats, "remaining_credits": remaining,
+            **{f"enrich_{k}": v for k, v in enrich_stats.items()}}
 
 
 if __name__ == "__main__":
