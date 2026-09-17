@@ -12,6 +12,7 @@ import {
   checkMoviesJson,
   checkSupabaseCanary, probeSupabaseCanary,
   checkSignup, probeSignupEmail, probeSignup,
+  checkOrphanAccounts, probeOrphanAccounts,
   checkUsageEventsInsert, checkPagesHead, probeUsageEventsInsert,
   checkDailyRefreshFresh, checkAlertsRan,
   decideAlerting, FAST_ALERT_CHECKS,
@@ -121,6 +122,67 @@ test("CAS-975: signup probe is red when creation itself fails", () => {
 test("CAS-975: signup probe is red when delete_my_account exists but errors", () => {
   const c = checkSignup({ created: true, removed: false, notShipped: false, email: "x@y.com", detail: "delete_my_account failed: HTTP 500" }, 1);
   assert.equal(c.ok, false);
+});
+
+// ---------------------------------------------------------------------------
+// orphan_probe_accounts — CAS-1012 AC: no `probe` account older than 2h
+// ---------------------------------------------------------------------------
+test("CAS-1012 AC: orphan_probe_accounts is red when a probe account is older than 2h", () => {
+  const now = new Date("2026-09-17T12:00:00Z").getTime();
+  const c = checkOrphanAccounts({
+    users: [
+      { email: "lee+probe-1@codynamics.com.au", created_at: "2026-09-17T09:00:00Z" }, // 3h old
+      { email: "lee@codynamics.com.au", created_at: "2026-09-17T09:00:00Z" },
+    ],
+  }, now);
+  assert.equal(c.ok, false);
+  assert.match(c.detail, /lee\+probe-1@codynamics\.com\.au/);
+});
+
+test("CAS-1012 AC: orphan_probe_accounts is green when every probe account is under 2h old", () => {
+  const now = new Date("2026-09-17T12:00:00Z").getTime();
+  const c = checkOrphanAccounts({
+    users: [{ email: "lee+probe-2@codynamics.com.au", created_at: "2026-09-17T11:00:00Z" }], // 1h old
+  }, now);
+  assert.equal(c.ok, true);
+});
+
+test("CAS-1012 AC: orphan_probe_accounts is green with no probe accounts at all", () => {
+  const c = checkOrphanAccounts({ users: [{ email: "lee@codynamics.com.au", created_at: "2020-01-01T00:00:00Z" }] });
+  assert.equal(c.ok, true);
+});
+
+test("CAS-1012: orphan_probe_accounts is red when the user list itself could not be fetched", () => {
+  const c = checkOrphanAccounts({ detail: "GET admin/users -> HTTP 500" });
+  assert.equal(c.ok, false);
+  assert.match(c.detail, /HTTP 500/);
+});
+
+test("CAS-1012: probeOrphanAccounts names every missing credential", async () => {
+  const probe = await probeOrphanAccounts();
+  assert.match(probe.detail, /^not configured: /);
+  assert.match(probe.detail, /SUPABASE_SERVICE_ROLE_KEY/);
+});
+
+test("CAS-1012: probeOrphanAccounts pages through admin/users and stops at a short page", async () => {
+  process.env.SUPABASE_URL = "https://x.test";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  try {
+    const mod = await importFreshProbeModule("cas1012page");
+    const calls = [];
+    const fetchStub = async (url, opts) => {
+      const { pathname, searchParams } = new URL(url);
+      calls.push(pathname + "?" + searchParams.toString());
+      assert.equal(opts.headers.apikey, "service-role-key");
+      return { ok: true, status: 200, json: async () => ({ users: [{ email: "lee+probe-9@x.com", created_at: "2020-01-01T00:00:00Z" }] }) };
+    };
+    const probe = await mod.probeOrphanAccounts(fetchStub);
+    assert.deepEqual(calls, ["/auth/v1/admin/users?page=1&per_page=200"]);
+    assert.equal(probe.users.length, 1);
+  } finally {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  }
 });
 
 // ---------------------------------------------------------------------------
