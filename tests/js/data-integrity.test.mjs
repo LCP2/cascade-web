@@ -50,6 +50,16 @@ test("status: every film resolves to one labelled window that it actually holds"
   for(const m of E.MOVIES){
     const st = m.status || [];
     assert.ok(st.length > 0, `${m.title} holds no window at all`);
+    // CAS-999: "released" is a deliberate, legitimate terminal status — poc_pipeline.py's offerless-window
+    // fallback for a title whose cinema run is over with no AU offer behind it, mirrored exactly by the
+    // front end's own offerlessWindow(). It is not a CASCADE window (nothing plays there) and always
+    // arrives alone (deriveStatus/derive_from_providers only ever emit it as the sole element of that
+    // fallback), so it is exempt from the window-order/label checks below. What must still hold is AC3:
+    // a film in this state has nothing to watch, so it must never be showable — never reach a Watch window.
+    if(st.length === 1 && st[0] === "released"){
+      assert.ok(!E.showable(m), `${m.title} holds only "released" but is still showable — it would reach a Watch window with nothing to watch`);
+      continue;
+    }
     for(const w of st) assert.ok(order.has(w), `${m.title} holds unknown window ${w}`);
     // Compared as a string, not with deepEqual: `m.status` is an array built inside the vm realm, so its
     // prototype is not the host's Array.prototype and a strict deep-equal of two identical arrays fails.

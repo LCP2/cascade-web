@@ -43,6 +43,15 @@ BLOCKING_TESTS = {
 WINDOWS = ["upcoming", "opening_week", "in_cinema", "pvod", "rental", "included_streaming"]
 CINEMA_WINDOWS = {"opening_week", "in_cinema"}
 HOME_WINDOWS = {"pvod", "rental", "included_streaming"}
+
+# CAS-999: "released" is a deliberate, legitimate terminal status — poc_pipeline.py's own
+# _offerless_window() returns it for a title whose cinema run is over with no AU offer behind it
+# (STATUS_LABEL there already prints it as "Released (no AU offer)"), mirrored exactly by the front
+# end's offerlessWindow(). It never joins WINDOWS: unlike every entry there, nothing plays in it, so
+# it carries no journey-order index, and it always arrives alone (derive_from_providers only ever
+# appends it as the single-element offerless fallback). The front end's own showable() gate keeps a
+# film in this state out of every listing, so it is a known, harmless value here rather than a bug.
+NON_WINDOW_STATUSES = {"released"}
 # A film released before cinema existed is a data error, and one dated far in the future is a placeholder.
 EARLIEST_SANE = datetime.date(1895, 1, 1)
 
@@ -108,14 +117,18 @@ class AvailabilityIsBackedBySomething(unittest.TestCase):
 
     def test_status_values_are_known_windows(self):
         bad = [(m["title"], m["status"]) for m in self.movies
-               if not m["status"] or any(w not in WINDOWS for w in m["status"])]
+               if not m["status"] or any(w not in WINDOWS and w not in NON_WINDOW_STATUSES for w in m["status"])]
         self.assertEqual(bad, [], f"films holding an unknown window: {bad[:5]}")
 
     def test_status_is_in_journey_order(self):
         # primaryStatus() takes the LAST window a film holds, so the order is load-bearing: a list written out
         # of order would make the app read the wrong window as current.
+        # CAS-999: a NON_WINDOW_STATUSES film (e.g. "released") is not on the ladder at all and always
+        # arrives alone, so there's no journey order to check — WINDOWS.index() would raise for it anyway.
         bad = []
         for m in self.movies:
+            if set(m["status"]) & NON_WINDOW_STATUSES:
+                continue
             order = [WINDOWS.index(w) for w in m["status"]]
             if order != sorted(order):
                 bad.append((m["title"], m["status"]))
@@ -243,10 +256,13 @@ class StatusAgreesWithTheCalendar(unittest.TestCase):
         self.assertEqual(bad, [], f"bad cinema dates: {bad[:5]}")
 
     def test_window_dates_parse_and_belong_to_real_windows(self):
+        # CAS-999: update_window_dates() stamps every status value it sees, including "released" —
+        # a NON_WINDOW_STATUSES entry is still a real first-seen date worth keeping, just not one of
+        # the journey WINDOWS.
         bad = []
         for m in self.movies:
             for window, raw in (m.get("window_dates") or {}).items():
-                if window not in WINDOWS:
+                if window not in WINDOWS and window not in NON_WINDOW_STATUSES:
                     bad.append((m["title"], window, "unknown window"))
                 elif parse_date(raw) is None:
                     bad.append((m["title"], window, raw))
