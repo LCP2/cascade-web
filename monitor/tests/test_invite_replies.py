@@ -102,8 +102,12 @@ class TwoRepliesTwoTransitionsOrdering(unittest.TestCase):
         rc, out, _ = _run(argv)
         self.assertEqual(rc, 0)
         self.assertIn("2 alert(s), 2 invite reply(s)", out)
-        self.assertIn("Replies to your invites", out)
-        self.assertLess(out.index("Replies to your invites"), out.index("Rent Riser"))
+        # The catalogue-diff dump (every transition seen, matched or not) prints "Rent Riser" well
+        # before the digest itself — the ordering claim is about the RENDERED DIGEST, so it must be
+        # checked inside the "---- digest HTML ----" block, not the run's full stdout.
+        html = out[out.index("---- digest HTML ----"):]
+        self.assertIn("Replies to your invites", html)
+        self.assertLess(html.index("Replies to your invites"), html.index("Rent Riser"))
 
 
 class NeverWritesSeenAt(unittest.TestCase):

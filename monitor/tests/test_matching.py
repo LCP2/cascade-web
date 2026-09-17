@@ -6,7 +6,7 @@ CAS-825: admission (which film a Cascade admits) is now asked of the real shippe
 compute_admission() -> admit_shim.mjs, not recomputed field-by-field in Python. Every fixture
 Cascade below carries `watchMarkers` (so app_template.html's agentFloor() has a usable, 0-floor
 window rather than Infinity) and every fixture movie carries enough of a quality signal
-(imdb_rating + imdb_votes>=1000, or rt_critic) and a `language` for the taste baseline to clear —
+(wm_user_rating or wm_critic_score, CAS-919/920) and a `language` for the taste baseline to clear —
 without them the real engine holds a film back exactly as it would in the app, which is the whole
 point of this ticket, but makes an under-specified fixture film look unmatched for the wrong
 reason. `_admit()` below is the one place every test asks the engine for its answer.
@@ -266,9 +266,9 @@ class WindowPlacementTests(unittest.TestCase):
 
     def _movie(self, tmdb_id=8001, title="Placed Film", status=("rental",)):
         return {"tmdb_id": tmdb_id, "title": title, "genres": ["Drama"], "status": list(status),
-                "cinema_date": "2026-01-01", "language": "en", "rt_critic": 70, "popularity": 50,
+                "cinema_date": "2026-01-01", "language": "en", "wm_critic_score": 70, "popularity": 50,
                 "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}],
-                "imdb_rating": 7.5, "imdb_votes": 5000}
+                "wm_user_rating": 7.5}
 
     def _cascade(self, moments):
         return [{"id": "c1", "user_id": "u1", "name": "Everything", "active": True,
@@ -357,9 +357,9 @@ class ForwardWindowMatchTests(unittest.TestCase):
 
     def _movie(self, tmdb_id=8001, title="Rolled-Over Film", status=("rental",)):
         return {"tmdb_id": tmdb_id, "title": title, "genres": ["Drama"], "status": list(status),
-                "cinema_date": "2026-01-01", "language": "en", "rt_critic": 70, "popularity": 50,
+                "cinema_date": "2026-01-01", "language": "en", "wm_critic_score": 70, "popularity": 50,
                 "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}],
-                "imdb_rating": 7.5, "imdb_votes": 5000}
+                "wm_user_rating": 7.5}
 
     def _cascade(self, moments):
         return [{"id": "c1", "user_id": "u1", "name": "Everything", "active": True,
@@ -746,9 +746,9 @@ class NewlyQualifiedTests(unittest.TestCase):
 
     def _movie(self, imdb, status=("rental",), tmdb_id=9001, title="Rising Star", **extra):
         m = {"tmdb_id": tmdb_id, "title": title, "genres": ["Drama"], "status": list(status),
-             "cinema_date": "2026-01-01", "language": "en", "rt_critic": 70,
+             "cinema_date": "2026-01-01", "language": "en", "wm_critic_score": 70,
              "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}],
-             "imdb_rating": imdb, "imdb_votes": 5000 if imdb else 0}
+             "wm_user_rating": imdb}
         m.update(extra)
         return m
 
@@ -875,9 +875,9 @@ class NewToAgentTests(unittest.TestCase):
 
     def _movie(self, imdb, status=("rental",), tmdb_id=9101, title="Quiet Riser", **extra):
         m = {"tmdb_id": tmdb_id, "title": title, "genres": ["Drama"], "status": list(status),
-             "cinema_date": "2026-01-01", "language": "en", "rt_critic": 70,
+             "cinema_date": "2026-01-01", "language": "en", "wm_critic_score": 70,
              "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}],
-             "imdb_rating": imdb, "imdb_votes": 5000 if imdb else 0}
+             "wm_user_rating": imdb}
         m.update(extra)
         return m
 
@@ -927,10 +927,10 @@ class NewToAgentTests(unittest.TestCase):
     # ---- CAS-785 AC1(c) ----
     def test_first_appearance_plus_a_window_transition_fires_once_not_twice(self):
         prev = [{"tmdb_id": 9102, "title": "Double Mover", "genres": ["Drama"], "status": [],
-                 "cinema_date": "2026-07-16", "offers": [], "imdb_rating": 6.5}]
+                 "cinema_date": "2026-07-16", "offers": [], "wm_user_rating": 6.5}]
         today = [{"tmdb_id": 9102, "title": "Double Mover", "genres": ["Drama"], "status": ["in_cinema"],
-                  "cinema_date": "2026-07-16", "offers": [], "language": "en", "rt_critic": 70,
-                  "popularity": 50, "imdb_rating": 7.5, "imdb_votes": 5000}]
+                  "cinema_date": "2026-07-16", "offers": [], "language": "en", "wm_critic_score": 70,
+                  "popularity": 50, "wm_user_rating": 7.5}]
         transitions = compute_transitions(prev, today, _dt.date(2026, 7, 16))
         cascade = {"id": "c1", "user_id": "u1", "name": "Drama radar", "active": True,
                    "alert_moments": ["hits_cinema"], "criteria": _criteria(genre=["Drama"], imdb=7.0),
