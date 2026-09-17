@@ -2581,7 +2581,11 @@ def run(simulate_day: bool = False):
                       errors=tmdb_errors,
                       not_found=counts["provider_not_found"] + counts["cinema_not_found"])
         runstats.bump_counts("tmdb", "status_counts", tmdb_status_counts)
-        runstats.bump("watchmode", calls=counts["wm_calls"], errors=counts["wm_fails"])
+        # CAS-1033: run_stats.watchmode.calls is bumped once every credit-costing Watchmode path
+        # for this run is known (see the CAS-986 two-tier publication block below), not here —
+        # on-demand enrichment alone is routinely 0 on a run that still spent its whole nightly/
+        # scoreability-probe allowance, and bumping only counts["wm_calls"] here made monitor.
+        # health's watchmode_fetch report "0 calls made this run" on a run that did real work.
         prior_monthly = _load_monthly_wm_spend(today)
         monthly_spent = prior_monthly.get("wm_spent", 0) + counts["wm_calls"]
         _save_monthly_wm_spend(today, monthly_spent)
@@ -2653,6 +2657,11 @@ def run(simulate_day: bool = False):
         # scoreability probe) rather than overwrite it, in case a second run happens the same day.
         nightly_spent = nightly_cap - nightly_budget["remaining"]
         run_spent = counts["wm_calls"] + nightly_spent + cas986_report["wm_spent"]
+        # CAS-1033: the deferred watchmode run_stats bump — run_spent is this run's REAL total
+        # Watchmode activity (on-demand + nightly fields + the CAS-986 scoreability probe), so
+        # monitor.health's watchmode_fetch check (which reads run_stats.watchmode.calls) is
+        # measuring what it claims to measure instead of only the on-demand slice.
+        runstats.bump("watchmode", calls=run_spent, errors=counts["wm_fails"])
         today_total_spent = cycle["days"].get(today_iso, 0) + run_spent
         cycle["days"][today_iso] = today_total_spent
         _save_wm_cycle_budget(cycle, today)

@@ -196,6 +196,35 @@ class WatchmodeFetchUnsetVsExplicitZero(unittest.TestCase):
         self.assertEqual(c["status"], "skipped")
 
 
+class WatchmodeFetchRunStatsAggregate(unittest.TestCase):
+    """CAS-1033: run #80 (2026-09-17) spent 120 real Watchmode credits — all of it across the
+    nightly-fields pass and the CAS-986 scoreability probe — while on-demand enrichment (the only
+    slice poc_pipeline.py used to bump into run_stats.watchmode.calls) was 0. That made this check
+    read the run's own run_stats.json entry as `{"calls": 0, ...}` and fail with "0 calls made
+    this run" despite the run having done real, budgeted work. poc_pipeline.py now bumps
+    run_stats.watchmode.calls once from `run_spent` (on-demand + nightly + probe combined) after
+    every credit-costing pass has run, so the entry this check sees for that scenario is the
+    aggregate below, not the on-demand-only 0."""
+
+    def test_ac1_and_ac2_ondemand_zero_nightly_and_probe_nonzero_reports_ok(self):
+        # on-demand 0, nightly-fields 39, scoreability probe 81 -> aggregate 120 (run #80's own
+        # figures from state/api_budget.json on origin/staging at commit b4fba42).
+        c = health.check_watchmode_fetch(
+            {"calls": 120, "errors": 0, "remaining_monthly_credits": 30000}, quota=10000,
+            run_max_credits_raw="60")
+        self.assertTrue(c["ok"])
+        self.assertNotIn("0 calls made this run", c["detail"])
+
+    def test_ac3_explicit_zero_still_skips_even_with_the_new_aggregate_bump(self):
+        # WM_RUN_MAX_CREDITS=0 -> the CAS-986 probe budget and nightly cap both fold to 0 too
+        # (split_wm_pot), so run_spent (and thus the aggregate bump) is 0 -- CAS-1003's "explicit
+        # 0 reads as skipped, not failed" must still hold with nothing to regress it.
+        c = health.check_watchmode_fetch(
+            {"calls": 0, "errors": 0}, quota=10000, run_max_credits_raw="0")
+        self.assertIsNone(c["ok"])
+        self.assertEqual(c["status"], "skipped")
+
+
 class WatchmodePace(unittest.TestCase):
     """AC1/AC2/AC3 — extrapolate the cycle's recent daily burn to the reset date."""
 
