@@ -4652,10 +4652,31 @@ const SVC_SHORT = {"Amazon Prime Video":"Prime","Disney Plus":"Disney","Apple TV
   "Paramount Plus":"Paramount","HBO Max":"Max","BINGE":"Binge","Stan":"Stan","Netflix":"Netflix",
   "Google Play Movies":"Google","YouTube":"YouTube","Foxtel Now":"Foxtel","BritBox":"BritBox"};
 const svcShort=s=>SVC_SHORT[svcCanon(s)]||svcName(s);
+// CAS-1014: svcCanon's rules strip known billing/reseller suffixes, but they don't catch two spellings of
+// the SAME name that differ only in spacing, case or punctuation — e.g. the feed's "CuriosityStream Amazon
+// Channel" strips to "CuriosityStream", one word, while its plain "Curiosity Stream" listing keeps the
+// space. Group every post-svcCanon spelling by a spacing/case/punctuation-blind key and fold each group onto
+// one spelling actually seen for it (the one with the most separator characters, so a compressed spelling
+// doesn't win over a readable one; alphabetical order breaks a tie so the choice is stable) — a real-name
+// collision this general needs the whole catalogue in view, not a per-name rule.
+const svcFoldKey = s => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+const svcSpellingsByFold = new Map();   // fold key -> Set of canonical spellings seen for it
+MOVIES.forEach(m=>(m.offers||[]).forEach(o=>{
+  const c = svcCanon(o.service), key = svcFoldKey(c);
+  if(!svcSpellingsByFold.has(key)) svcSpellingsByFold.set(key, new Set());
+  svcSpellingsByFold.get(key).add(c);
+}));
+const svcFoldWinner = new Map();   // fold key -> the one spelling every variant in that group folds to
+svcSpellingsByFold.forEach((spellings, key)=>{
+  const seps = s => (s.match(/[^a-z0-9]/gi) || []).length;
+  const [winner] = [...spellings].sort((a,b)=> seps(b)-seps(a) || a.localeCompare(b));
+  svcFoldWinner.set(key, winner);
+});
+const svcFold = s => svcFoldWinner.get(svcFoldKey(s)) || s;
 // CAS-448: fold every offer's service name to its canonical spelling ONCE here, right after svcCanon exists —
 // so every later reader of m.offers (Service analysis, the offers bar, My Services, Notify, dedupOffers) sees
 // one name per real service without each having to remember to call svcCanon itself.
-MOVIES.forEach(m=>{ (m.offers||[]).forEach(o=>{ o.service=svcCanon(o.service); }); });
+MOVIES.forEach(m=>{ (m.offers||[]).forEach(o=>{ o.service=svcFold(svcCanon(o.service)); }); });
 
 // ---- Reviewer URL params: ?reset and ?setup ------------------------------------
 // Demo/review affordances, not product surface. This block runs BEFORE any state is read below, so ?reset
@@ -5120,7 +5141,9 @@ const cascadesFor = id => ((notify[id]||{}).cascadeIds||[])
 function loadPrefs(){ try{ const p=JSON.parse(localStorage.getItem(acctKey("cascade_prefs"))||"{}");
   // CAS-251: a service saved under a variant name is folded onto its canonical one on the way in, so
   // somebody who picked "Netflix Standard with Ads" last week still has Netflix picked today.
-  const canon = xs => new Set((xs||[]).map(svcCanon));
+  // CAS-1014: also fold spacing/case/punctuation variants (svcFold), so a pick saved under a spelling
+  // that has since merged into another still matches today's canonical one.
+  const canon = xs => new Set((xs||[]).map(s=>svcFold(svcCanon(s))));
   return {on:!!p.on, touched:!!p.touched, sub:canon(p.sub), store:canon(p.store)}; }
   catch(e){ return {on:false,touched:false,sub:new Set(),store:new Set()}; } }
 function savePrefs(){ try{ localStorage.setItem(acctKey("cascade_prefs"),
