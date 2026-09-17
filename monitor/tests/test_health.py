@@ -10,6 +10,7 @@ import json
 import os
 import unittest
 import unittest.mock
+import urllib.parse
 
 from monitor import health
 from monitor.catalogue import load_catalogue_file, movies_of
@@ -383,6 +384,44 @@ class UsageWindowSession(unittest.TestCase):
         self.assertFalse(c["ok"])
         self.assertEqual(c["status"], "fail")
         self.assertEqual(c["detail"], "not configured: SUPABASE_SERVICE_ROLE_KEY")
+
+    def test_cas1010_the_utc_offset_plus_is_percent_encoded_in_both_requests(self):
+        # PostgREST decodes an unescaped "+" in a query string as a space, so a raw UTC
+        # isoformat() timestamp's "+00:00" offset silently corrupts the filter and the read
+        # comes back HTTP 400 (CAS-1010). Every "+" in the timestamp must travel as "%2B".
+        captured_urls = []
+
+        def fake_post(url, headers, payload, timeout=15):
+            if url.endswith("/auth/v1/admin/generate_link"):
+                return 200, json.dumps({"hashed_token": "HASHED123"})
+            if url.endswith("/auth/v1/verify"):
+                return 200, json.dumps({"access_token": "TOKEN123"})
+            raise AssertionError(f"unexpected POST {url}")
+
+        def fake_get(url, headers, timeout=15):
+            captured_urls.append(url)
+            return 200, "[]"
+
+        now = datetime.datetime(2026, 9, 16, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        with unittest.mock.patch("monitor.health._post_json", side_effect=fake_post), \
+             unittest.mock.patch("monitor.health._get_json", side_effect=fake_get):
+            health.probe_usage_window(
+                "https://x.test", "anon-key", "service-role-key", "canary@x.test", now)
+
+        self.assertEqual(len(captured_urls), 2)
+        for url in captured_urls:
+            query = url.split("?", 1)[1]
+            self.assertNotIn("+00:00", query)
+            self.assertIn("%2B00%3A00", query)
+            parsed = urllib.parse.parse_qs(query)
+            self.assertTrue(parsed["created_at"])
+            for value in parsed["created_at"]:
+                self.assertTrue(value.endswith("+00:00"), value)
+        r24_query, rprev_query = (u.split("?", 1)[1] for u in captured_urls)
+        self.assertEqual(urllib.parse.parse_qs(r24_query)["created_at"],
+                         ["gte.2026-09-15T12:00:00+00:00"])
+        self.assertEqual(urllib.parse.parse_qs(rprev_query)["created_at"],
+                         ["gte.2026-09-14T12:00:00+00:00", "lt.2026-09-15T12:00:00+00:00"])
 
 
 def _rows(n, type_="app_open", client_prefix="device", data=None):

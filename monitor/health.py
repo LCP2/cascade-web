@@ -57,6 +57,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter
 
@@ -472,8 +473,12 @@ def probe_usage_window(supabase_url: str | None, anon_key: str | None, service_r
     try:
         token = session["token"]
         headers = {"apikey": anon_key, "Authorization": f"Bearer {token}"}
-        since24 = (now - _dt.timedelta(hours=24)).isoformat()
-        since48 = (now - _dt.timedelta(hours=48)).isoformat()
+        # PostgREST decodes an unescaped "+" in a query string as a space (the
+        # application/x-www-form-urlencoded convention), which corrupts a UTC isoformat()
+        # timestamp's "+00:00" offset and gets the whole request rejected with HTTP 400 — quote()
+        # so the "+" survives as "%2B".
+        since24 = urllib.parse.quote((now - _dt.timedelta(hours=24)).isoformat(), safe="")
+        since48 = urllib.parse.quote((now - _dt.timedelta(hours=48)).isoformat(), safe="")
         base = f"{supabase_url.rstrip('/')}/rest/v1/usage_events"
         r24_status, r24_body = _get_json(
             f"{base}?select=type,client_key,data&created_at=gte.{since24}&limit=10000", headers)
