@@ -722,14 +722,34 @@ test("CAS-724 AC6: raising the Budget requirement never increases what an agent 
 // Mission-dials target, so the count is meaningful at any real floor. CAS-762 changes what "at a floor of 0"
 // means: 0 is now Off, no score requirement at all, so nothing is held back for score there any more.
 test("CAS-724: scoreHeldBackCount agrees with its own set, at a real floor", () => {
-  const d = missionCase({ status: ["included_streaming", "pvod", "rental"], scoreFloor: 50 });
-  const held = E.scoreHeldBackCount(d);
-  const heldFilms = E.MOVIES.filter(m => E.cascadeScore(m) === -1
-    && !E.listedBy(m, d) && E.listedBy(m, d, true));
-  assert.equal(heldFilms.length, held, "scoreHeldBackCount disagrees with its own set");
-  assert.ok(held > 0, "test setup: expected at least one unscored film held back to exercise the count");
-  for(const m of heldFilms) assert.equal(E.listedBy(m, d), false,
-    `${m.title} has no score but is still listed`);
+  const originalMovies = E.MOVIES.slice();
+  try {
+    // CAS-1028: movies.json has been scoreable-only since CAS-986/1027, so every published film now carries
+    // a Cascade score — there is no longer a live film to find for the "held back for having none" case.
+    // Clone a real, currently-listed film and strip its score fields so it's unscored but otherwise a
+    // genuine catalogue entry, the same "mutate in place, restore in finally" shape CAS-742 AC2/CAS-748 AC6
+    // already use on MOVIES.
+    const d0 = missionCase({ status: ["included_streaming", "pvod", "rental"], scoreFloor: 0 });
+    const donor = E.MOVIES.find(m => E.listedBy(m, d0));
+    assert.ok(donor, "test setup: no real film available to clone for the held-back fixture");
+    const unscored = { ...donor, tmdb_id: -724001,
+      wm_user_rating: null, wm_critic_score: null, wm_popularity_percentile: null };
+    assert.equal(E.cascadeScore(unscored), -1, "test setup: cloned fixture should be unscored");
+    E.MOVIES.push(unscored);
+    E.invalidateComputeCaches();
+
+    const d = missionCase({ status: ["included_streaming", "pvod", "rental"], scoreFloor: 50 });
+    const held = E.scoreHeldBackCount(d);
+    const heldFilms = E.MOVIES.filter(m => E.cascadeScore(m) === -1
+      && !E.listedBy(m, d) && E.listedBy(m, d, true));
+    assert.equal(heldFilms.length, held, "scoreHeldBackCount disagrees with its own set");
+    assert.ok(held > 0, "test setup: expected at least one unscored film held back to exercise the count");
+    for(const m of heldFilms) assert.equal(E.listedBy(m, d), false,
+      `${m.title} has no score but is still listed`);
+  } finally {
+    E.MOVIES.length = 0; E.MOVIES.push(...originalMovies);
+    E.invalidateComputeCaches();
+  }
 });
 // CAS-762: at a floor of 0 (Off) scoreHeldBackCount must read 0 — nothing is excluded by score any more.
 test("CAS-762: scoreHeldBackCount is 0 for an agent whose floor is Off", () => {
@@ -1749,20 +1769,36 @@ test("CAS-695 AC1: the score's basis switches on primaryStatus — cinema (buzz)
 // retired along with the rest of the app's OMDb reads — wmCinemaScore/wmReleasedScoreVals are the only
 // implementation left, over wm_popularity_percentile rather than raw TMDB popularity.
 test("CAS-748 AC1: wmCinemaScore is a quantile map — wmBuzzPctlOf looked up against the released cohort's own score distribution", () => {
-  const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
-  const scored = cohort.filter(m => typeof m.wm_popularity_percentile === "number");
-  const unscored = cohort.filter(m => typeof m.wm_popularity_percentile !== "number");
-  assert.ok(scored.length > 0, "no cohort film with a numeric wm_popularity_percentile found — this test would prove nothing");
-  assert.ok(unscored.length > 0, "no cohort film with no wm_popularity_percentile found — this test would prove nothing");
-  const vals = E.wmReleasedScoreVals();
-  assert.ok(vals.length > 0, "the released cohort's score array is empty — this test would prove nothing");
-  for(const m of scored){
-    const p = E.wmBuzzPctlOf(m);
-    const expected = Math.round(vals[Math.min(vals.length - 1, Math.floor(vals.length * p / 100))]);
-    assert.equal(E.wmCinemaScore(m), expected, `${m.title}: wmCinemaScore disagrees with the quantile-map lookup at p=${p}`);
-  }
-  for(const m of unscored){
-    assert.equal(E.wmCinemaScore(m), -1, `${m.title}: a cohort film with no wm_popularity_percentile should not score`);
+  const originalMovies = E.MOVIES.slice();
+  try {
+    // CAS-1028: movies.json has been scoreable-only since CAS-986/1027, so every upcoming/in_cinema film in
+    // the live catalogue now carries a wm_popularity_percentile — there is no longer a live "unscored cohort
+    // film" to find. Clone a real cohort film and strip that one field so it's unscored but otherwise
+    // genuine, same "mutate MOVIES in place, restore in finally" shape CAS-742 AC2/CAS-748 AC6 already use.
+    const donor = E.MOVIES.find(m => E.inLadderCohort(m) && typeof m.wm_popularity_percentile === "number");
+    assert.ok(donor, "test setup: no scored cohort film available to clone for the unscored fixture");
+    const unscoredFixture = { ...donor, tmdb_id: -748001, wm_popularity_percentile: undefined };
+    E.MOVIES.push(unscoredFixture);
+    E.invalidateComputeCaches();
+
+    const cohort = E.MOVIES.filter(m => E.inLadderCohort(m));
+    const scored = cohort.filter(m => typeof m.wm_popularity_percentile === "number");
+    const unscored = cohort.filter(m => typeof m.wm_popularity_percentile !== "number");
+    assert.ok(scored.length > 0, "no cohort film with a numeric wm_popularity_percentile found — this test would prove nothing");
+    assert.ok(unscored.length > 0, "no cohort film with no wm_popularity_percentile found — this test would prove nothing");
+    const vals = E.wmReleasedScoreVals();
+    assert.ok(vals.length > 0, "the released cohort's score array is empty — this test would prove nothing");
+    for(const m of scored){
+      const p = E.wmBuzzPctlOf(m);
+      const expected = Math.round(vals[Math.min(vals.length - 1, Math.floor(vals.length * p / 100))]);
+      assert.equal(E.wmCinemaScore(m), expected, `${m.title}: wmCinemaScore disagrees with the quantile-map lookup at p=${p}`);
+    }
+    for(const m of unscored){
+      assert.equal(E.wmCinemaScore(m), -1, `${m.title}: a cohort film with no wm_popularity_percentile should not score`);
+    }
+  } finally {
+    E.MOVIES.length = 0; E.MOVIES.push(...originalMovies);
+    E.invalidateComputeCaches();
   }
 });
 

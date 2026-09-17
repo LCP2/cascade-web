@@ -117,7 +117,10 @@ class NeverWritesSeenAt(unittest.TestCase):
     def test_running_the_digest_leaves_seen_at_untouched(self):
         replies = [{
             "id": 501, "sender_id": "user-A", "to_name": "Sam", "film_title": "Rent Riser",
-            "tmdb_id": 5001, "answer": "yes", "created_at": "2026-07-15T10:00:00Z",
+            # CAS-1015: --target-user only folds in a reply whose tmdb_id sits in the reserved
+            # fixture range (999000001-999000999) — anything else is treated as real correspondence
+            # and left untouched, so this fixture has to use one to be picked up at all.
+            "tmdb_id": 999000001, "answer": "yes", "created_at": "2026-07-15T10:00:00Z",
             "seen_at": "2026-01-01T00:00:00Z",
         }]
         argv = [

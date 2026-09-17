@@ -23,6 +23,12 @@ function withState(fn){
   const savedFirstFound = { ...E.firstFound };
   const savedWatched = new Set(E.watched);
   const savedHadAccount = E.localStorage.getItem("cascade_had_account");
+  // CAS-1028: these tests pick donor films out of the live catalogue by window/service/estimate, never by
+  // language, so a fixture built from a non-English pick can fail listedBy() on the account's default
+  // English-only taste base for a reason that has nothing to do with what the test is actually exercising.
+  // Opened for the test's duration, same restore-in-finally shape as every other saved global here.
+  const savedLangs = E.tasteBase.langs;
+  E.tasteBase.langs = [];
   try{ fn(); }
   finally{
     Object.keys(E.notify).forEach(k => delete E.notify[k]);
@@ -34,6 +40,7 @@ function withState(fn){
     E.watched.clear(); savedWatched.forEach(id => E.watched.add(id));
     if(savedHadAccount === null) E.localStorage.removeItem("cascade_had_account");
     else E.localStorage.setItem("cascade_had_account", savedHadAccount);
+    E.tasteBase.langs = savedLangs;
     E.setMovingReady(true);
   }
 }

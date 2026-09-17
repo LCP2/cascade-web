@@ -256,8 +256,19 @@ test("an agent created with every window enabled lists films at rental or stream
   // this ticket's own window. What CAS-723 actually widened is listedBy's own window gate, so read that
   // directly — the same predicate the listing itself filters by, one layer before the per-tab tracking gate.
   await settleListing(page);
-  const listedWindows = await page.evaluate(() =>
-    [...new Set(MOVIES.filter(m => cascades.some(c => listedBy(m, c))).map(m => primaryStatus(m)))]);
+  // CAS-1028: whether a real rental/streaming film clears this roster's own score floor is a live-catalogue
+  // coincidence, not what CAS-723 actually claims (that the WINDOW GATE admits rental/streaming once every
+  // window is enabled, not just cinema/upcoming) — the floor demotion has left runs where nothing at either
+  // window clears today's cohort. Clone a real, already-admissible rental film and max its score fields so
+  // the window gate is what this assertion is actually exercising, same "mutate MOVIES, real donor, only the
+  // field under test overridden" shape tests/js/invariants.test.mjs's CAS-724/CAS-748 fixtures use.
+  const listedWindows = await page.evaluate(() => {
+    const donor = MOVIES.find(m => primaryStatus(m) === "rental");
+    if(donor){
+      MOVIES.push({ ...donor, tmdb_id: -723001, wm_user_rating: 10, wm_critic_score: 100 });
+    }
+    return [...new Set(MOVIES.filter(m => cascades.some(c => listedBy(m, c))).map(m => primaryStatus(m)))];
+  });
   expect(listedWindows.some(w => w === "rental" || w === "included_streaming"),
     `no rental/included_streaming among this agent's listed windows: ${JSON.stringify(listedWindows)}`).toBe(true);
 });
