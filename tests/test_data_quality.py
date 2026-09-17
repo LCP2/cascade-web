@@ -38,6 +38,11 @@ BLOCKING_TESTS = {
     # these two are the assertions AC2/AC4 require, and they block for the same reason the four above do.
     "AvailabilityIsBackedBySomething.test_a_home_window_is_never_claimed_with_zero_offers",
     "AvailabilityIsBackedBySomething.test_included_streaming_is_never_claimed_without_a_current_sub_offer",
+    # CAS-1031: production QA expected the publish floor to shrink the catalogue and it barely
+    # moved — the floor turned out to be applied correctly (every published title already clears
+    # it), but nothing before this proved that in CI, so a real regression would have shipped
+    # unnoticed the same way. Blocking for the same reason the checks above are.
+    "OnlyFloorQualifyingTitlesPublish.test_every_published_film_clears_the_publish_floor",
 }
 
 # The windows a film can hold, in journey order — the same list the front end calls CASCADE.
@@ -334,6 +339,26 @@ class ScoresAreCredible(unittest.TestCase):
         bad = [m["title"] for m in self.movies
                if m.get("award") and not (m.get("award_text") or "").strip()]
         self.assertEqual(bad, [], f"award claims with no award text: {bad[:5]}")
+
+
+class OnlyFloorQualifyingTitlesPublish(unittest.TestCase):
+    """CAS-1031: CAS-986/CAS-997's publication floor (WM_PUBLISH_FLOOR) is the promise that
+    movies.json holds only titles the shipped engine calls scoreable today (upcoming/cinema buzz
+    exempt, everything else needs wmQScore >= the floor). Runs the same real engine call
+    apply_two_tier_publication itself makes (poc_pipeline.scoreable_ids -> scripts/
+    scoreable_shim.mjs -> isScoreable) against the whole published catalogue, so a regression that
+    republishes a below-floor title is caught here rather than assumed from the pipeline's intent."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.movies = load()["movies"]
+
+    def test_every_published_film_clears_the_publish_floor(self):
+        scoreable = pp.scoreable_ids(self.movies, floor=pp.WM_PUBLISH_FLOOR)
+        offenders = [m.get("title", m.get("tmdb_id")) for m in self.movies
+                    if m["tmdb_id"] not in scoreable]
+        self.assertEqual(offenders, [],
+                         f"published films that fail WM_PUBLISH_FLOOR={pp.WM_PUBLISH_FLOOR}: {offenders[:5]}")
 
 
 class DataCompleteness(unittest.TestCase):
