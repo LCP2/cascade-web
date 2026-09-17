@@ -84,8 +84,6 @@ def run(max_credits: int, today: datetime.date | None = None) -> dict:
             candidates, today, max_credits, wm_idmap, backcat_ids, _fetch_remaining_credits,
             pp.WM_BACKCAT_UPKEEP_FLOOR)
 
-    pp.save_candidates(candidates)
-
     data, movies = _load_movies(pp.OUTPUT_FILE)
     previously_published_ids = {m["tmdb_id"] for m in movies}
     try:
@@ -96,6 +94,16 @@ def run(max_credits: int, today: datetime.date | None = None) -> dict:
               "previously-published set unchanged this run.")
         engine_ids = set(previously_published_ids)
         engine_ok = False
+
+    # CAS-1027: a back-catalogue candidate the engine calls scoreable today is still a raw
+    # CAS-991 candidate-pool stub until it gets the same TMDB enrichment any other published
+    # title carries — give it that here, so select_publishable's own guard (is_publishable_record)
+    # has a real record to admit rather than a stub to reject. No Watchmode credits spent.
+    pp.enrich_candidates_for_publication(candidates, engine_ids, today)
+    # CAS-1027: saved once, after every mutation this run makes to `candidates` (the probe above
+    # and the enrichment just above) — the earlier save-right-after-the-probe point left a since-
+    # enriched candidate's repair unpersisted, so the next dispatch re-enriched it from scratch.
+    pp.save_candidates(candidates)
 
     held_ids = pp.load_user_held_ids()
     published_records, pub_stats = pp.select_publishable(

@@ -1033,6 +1033,109 @@ def run_backcatalogue_probe(candidates: dict, today: datetime.date, max_credits:
     return outcomes
 
 
+# CAS-1027: the exact shape CAS-991's merge_backcatalogue_candidates writes for a genuinely new
+# tmdb_id — nothing else in the pipeline produces a record carrying ONLY these keys.
+_CANDIDATE_STUB_KEYS = frozenset({
+    "first_seen", "last_probed", "outcome", "popularity", "popularity_percentile",
+    "probe_count", "status", "title", "tmdb_id", "year",
+    "wm_user_rating", "wm_critic_score", "wm_popularity_percentile", "wm_fields_fetched_at",
+})
+
+
+def is_publishable_record(record: dict) -> bool:
+    """CAS-1027's publication guard — every path that decides movies.json's membership must run
+    each candidate through this before it publishes. Closes the defect CAS-1024's back-catalogue
+    dispatch hit: a candidate the Watchmode probe scored, but that never got TMDB enrichment,
+    published as a raw candidate-pool stub — an int `year` and none of the fields the app needs,
+    which crashed the app's own `(m.cinema_date || m.year || "").slice` read and every engine/data-
+    integrity check that assumes a string date.
+
+    Requires a STRING `year` or `cinema_date` (CAS-991's merge_backcatalogue_candidates writes an
+    int `year`, never a string), and rejects a record whose keys are ENTIRELY the candidate-pool
+    bookkeeping set (`_CANDIDATE_STUB_KEYS`) — a record that thin has had no TMDB enrichment at
+    all, even once the Watchmode probe has added every wm_* field it ever will."""
+    year = record.get("year")
+    cinema_date = record.get("cinema_date")
+    has_date = (isinstance(year, str) and year != "") or (isinstance(cinema_date, str) and cinema_date != "")
+    if not has_date:
+        return False
+    if set(record.keys()) <= _CANDIDATE_STUB_KEYS:
+        return False
+    return True
+
+
+def enrich_candidate_for_publication(candidate: dict, today: datetime.date) -> str:
+    """CAS-1027: give a stub candidate (CAS-991's merge_backcatalogue_candidates shape, or any
+    other thin candidate) the exact TMDB-only enrichment and record shape build_live_catalogue
+    gives every other title, in place, before select_publishable is allowed to publish it — never
+    a second enrichment implementation. Reuses revalidate_record for the detail call (_tmdb_record)
+    and tmdb_providers/derive_from_providers/apply_monotonic_status for availability, the same
+    calls build_live_catalogue's own per-title loop makes. Spends no Watchmode credits; a
+    candidate's existing wm_* fields (CAS-1023's scoreability probe) are untouched, since none of
+    these calls read or write them, and a brand-new candidate's status ([]) ranks below every real
+    tier so apply_monotonic_status always commits the fresh answer, never holds it back.
+
+    Returns an _api_call outcome ('ok', 'skip', 'stop' or 'not_found'). Anything but 'ok' leaves
+    `candidate` exactly as it was — still a stub, to retry next run."""
+    _, outcome = _api_call("TMDB detail (publication enrich)", revalidate_record, candidate, today)
+    if outcome != "ok":
+        return outcome
+
+    tier = ps.classify_tier(candidate, today)
+    candidate["poll_tier"] = tier
+    if tier == "none":
+        candidate["offers"] = []
+        candidate["status"] = ["upcoming"]
+        candidate["availability_confidence"] = "confirmed"
+        candidate["availability_source"] = "tmdb_date"
+        return "ok"
+
+    prov, prov_outcome = _api_call("TMDB providers (publication enrich)", tmdb_providers,
+                                   candidate["tmdb_id"])
+    if prov_outcome == "ok":
+        candidate["jw_link"] = prov.get("jw_link")
+        if has_provider_rows(prov):
+            candidate["offers"] = provider_offers(prov)
+            apply_monotonic_status(candidate, derive_from_providers(candidate, prov, today),
+                                   "confirmed", today)
+        else:
+            candidate["offers"] = []
+            apply_monotonic_status(candidate, derive_from_providers(candidate, {}, today),
+                                   "estimated", today)
+        candidate["last_polled"] = today.isoformat()
+        candidate["availability_source"] = "tmdb_providers"
+    else:
+        w, conf = ps.estimate_status(candidate, today)
+        candidate["offers"] = []
+        candidate["status"] = [w]
+        candidate["availability_confidence"] = conf
+        candidate["availability_source"] = "estimated_unpolled"
+    return "ok"
+
+
+def enrich_candidates_for_publication(candidates: dict, engine_scoreable_ids: set,
+                                      today: datetime.date) -> dict:
+    """CAS-1027: before select_publishable runs, give every candidate the engine says is
+    scoreable today — but that isn't yet a publishable record shape — the enrichment
+    enrich_candidate_for_publication describes. A candidate that already satisfies
+    is_publishable_record is left completely alone (no repeat TMDB calls for an already-enriched
+    title). Mutates `candidates` in place; the caller's own save_candidates persists the result,
+    so a candidate enriched here is never re-fetched on a later run.
+
+    Returns {'enriched': int, 'failed': int} — 'failed' folds every _api_call outcome that isn't
+    'ok' (skip/stop/not_found), printed as `publish_guard_enriched=<n> publish_guard_failed=<n>`."""
+    stats = {"enriched": 0, "failed": 0}
+    for c in candidates.values():
+        if c["tmdb_id"] not in engine_scoreable_ids or is_publishable_record(c):
+            continue
+        if enrich_candidate_for_publication(c, today) == "ok":
+            stats["enriched"] += 1
+        else:
+            stats["failed"] += 1
+    print(f"publish_guard_enriched={stats['enriched']} publish_guard_failed={stats['failed']}")
+    return stats
+
+
 def run_scoreability_probe(candidates: dict, today: datetime.date, budget: int,
                            published_ids: set) -> dict:
     """Fetch the Watchmode id map once, then run probe_candidates. Tolerates a missing/rejected
@@ -1120,15 +1223,21 @@ def select_publishable(candidates: dict, engine_scoreable_ids: set, previously_p
     or when `held_ids` is None (the tables were unreadable this run — demote nothing at all,
     per the ticket's own fail-safe).
 
+    CAS-1027: is_publishable_record gates every addition to `published_ids` below, ranked-in or
+    exempt — the engine's scoreable answer is necessary but not sufficient; a candidate scoreable
+    today that never got TMDB-enriched (a CAS-991 back-catalogue stub the enrichment pass upstream
+    failed to complete) must never reach movies.json.
+
     Returns (published_records, stats) where stats has published/promoted/demoted/exempt."""
-    scoreable = [c for c in candidates.values() if c["tmdb_id"] in engine_scoreable_ids]
+    scoreable = [c for c in candidates.values()
+                if c["tmdb_id"] in engine_scoreable_ids and is_publishable_record(c)]
     scoreable.sort(key=lambda m: m.get("popularity") or 0, reverse=True)
     ranked_in = {c["tmdb_id"] for c in scoreable[:catalogue_target]}
 
     published_ids = set(ranked_in)
     exempt_ids = set()
     for tid in previously_published_ids - ranked_in:
-        if str(tid) not in candidates:
+        if str(tid) not in candidates or not is_publishable_record(candidates[str(tid)]):
             continue
         if held_ids is None or tid in held_ids:
             published_ids.add(tid)
@@ -1184,6 +1293,13 @@ def apply_two_tier_publication(candidates: dict, today: datetime.date, discovery
         engine_ids = set(previously_published_ids)
         engine_ok = False
 
+    # CAS-1027: a candidate the engine calls scoreable today may still be a raw candidate-pool
+    # stub (CAS-991's merge_backcatalogue_candidates, or any other thin source) — give it the same
+    # TMDB enrichment any other published title carries before select_publishable's own guard
+    # (is_publishable_record) decides membership. No Watchmode credits spent; an already-enriched
+    # candidate is left untouched.
+    enrich_stats = enrich_candidates_for_publication(candidates, engine_ids, today)
+
     published_records, stats = select_publishable(candidates, engine_ids, previously_published_ids,
                                                    held_ids, CATALOGUE_TARGET)
     unprobed = sum(1 for c in candidates.values() if c.get("outcome") == "unprobed")
@@ -1192,6 +1308,8 @@ def apply_two_tier_publication(candidates: dict, today: datetime.date, discovery
         "probed_today": probe_outcomes["probed"], "engine_ok": engine_ok,
         "wm_spent": probe_outcomes.get("spent", 0),   # CAS-987: this pass's actual draw on probe_budget
         "not_found_dropped": not_found_dropped,
+        "publish_guard_enriched": enrich_stats["enriched"],
+        "publish_guard_failed": enrich_stats["failed"],
         **stats,
     }
     return published_records, report

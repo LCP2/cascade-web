@@ -30,6 +30,7 @@ CATALOGUE = os.path.join(ROOT, "movies.json")
 BLOCKING_TESTS = {
     "CatalogueShape.test_ids_are_unique",
     "CatalogueShape.test_every_film_has_the_fields_the_ui_prints",
+    "CatalogueShape.test_no_record_is_a_raw_candidate_pool_stub",
     "DataCompleteness.test_the_showable_catalogue_is_a_real_population",
     "DataCompleteness.test_every_showable_film_carries_what_it_cannot_be_shown_without",
     # CAS-578: D1/D2 were exactly this class of app-breaker (a listing claiming you can watch
@@ -106,6 +107,17 @@ class CatalogueShape(unittest.TestCase):
         # status writer looks like from the outside.
         held = {w for m in self.movies for w in m.get("status", [])}
         self.assertGreaterEqual(len(held), 2, f"every film is in the same window: {held}")
+
+    def test_no_record_is_a_raw_candidate_pool_stub(self):
+        # CAS-1027: the back-catalogue dispatch (CAS-1024) once published CAS-991's raw
+        # merge_backcatalogue_candidates stubs straight into movies.json — an int `year`, no
+        # `cinema_date`/`genres`/`release_dates`/etc — which crashed the app's own
+        # `(m.cinema_date || m.year || "").slice` read. is_publishable_record is the one guard
+        # every path that writes movies.json must pass a candidate through before publishing it;
+        # this proves the file actually shipped only reflects that guard.
+        stubs = [m.get("title", m.get("tmdb_id")) for m in self.movies
+                if not pp.is_publishable_record(m)]
+        self.assertEqual(stubs, [], f"films that are still raw, un-enriched candidate-pool stubs: {stubs[:5]}")
 
 
 class AvailabilityIsBackedBySomething(unittest.TestCase):
