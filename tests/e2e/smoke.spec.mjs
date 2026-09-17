@@ -202,6 +202,29 @@ test("the Watch screen's tab strip follows the enabled watch windows", async ({ 
   const premiumTab = page.locator(".wtabbtn", { hasText: "Premium" });
   await expect(premiumTab).toBeVisible();
 
+  // CAS-1028: same live-catalogue coincidence as CAS-723's test below — today's whole catalogue carries only
+  // a couple of Premium-window titles, and whether one clears this roster's own score floor (let alone Massive
+  // Movies' own age/language/3-year-recency gates, and — since real offers now trip the account-wide "only
+  // show on my services" default CAS-915 arms the moment onboarding reaches the services screen — the my-
+  // services gate too) is not what CAS-725 claims (that the tab strip and its contents follow the enabled
+  // window). Boost a REAL, showable Premium-status film's score/age/language/date in place — not a cloned
+  // stand-in — so recomputeFound()'s real admission pass has something guaranteed to pick up and start
+  // tracking, the same "mutate, don't fabricate an untracked stand-in" reasoning CAS-897's comment below
+  // already gives for not placing a synthetic film here; an estimated placeholder with no real offers (some of
+  // today's few Premium-window titles are exactly that) is never showable, so it must be excluded from the
+  // pick. prefs.on off is the account-wide twin of the per-tab mineOnly switch already turned off just below —
+  // both are "a different feature's default doing its job, not this test's own concern", the same reasoning
+  // CAS-897's own comment already gives for the per-tab one.
+  await page.evaluate(() => {
+    const donor = MOVIES.find(m => primaryStatus(m) === "pvod" && showable(m));
+    if(donor){
+      Object.assign(donor, { wm_user_rating: 10, wm_critic_score: 100, language: "en", age_rating: "M", cinema_date: TODAY });
+      prefs.on = false;
+      recomputeFound();
+      render();
+    }
+  });
+
   await premiumTab.click();
   // CAS-897: "Show only available on my services" (CAS-753) defaults ON per tab, and this guest session
   // never picks any — leaving it on empties the Premium tab regardless of what's actually available there,
@@ -262,10 +285,26 @@ test("an agent created with every window enabled lists films at rental or stream
   // window clears today's cohort. Clone a real, already-admissible rental film and max its score fields so
   // the window gate is what this assertion is actually exercising, same "mutate MOVIES, real donor, only the
   // field under test overridden" shape tests/js/invariants.test.mjs's CAS-724/CAS-748 fixtures use.
+  // CAS-1028: the first rental-status film in MOVIES' own order is not a stable pick — whichever real title
+  // it happens to be also carries its OWN age_rating/language/cinema_date/offers, and Massive Movies' onboarding
+  // recipe applies a language gate (passesTasteBase), an age gate (age_rating must be M/MA15+/R18+ or
+  // absent), a 3-year releasedSince cutoff (onbMassiveCritV2's yearsBack:3) and — once the donor carries any
+  // real offer at all — the account-wide "only show on my services" default (CAS-915 arms it the instant
+  // onboarding reaches the services screen, and this guest session never picks one) on top of the score floor.
+  // All exactly the class of bug this same commit's moving-owner.test.mjs fix and this file's Premium tab-strip
+  // fix already named (a donor's own incidental field, or a different feature's own default, tripping a gate
+  // unrelated to what the test checks). Overriding only the score fields left this assertion at the mercy of
+  // whichever donor MOVIES.find() happens to return and whatever offers it happens to carry that day (an
+  // earlier version of this fix passed only because that day's real pick had none); pin every gate the recipe
+  // actually applies, and turn the services default off, so the donor's identity cannot matter.
   const listedWindows = await page.evaluate(() => {
     const donor = MOVIES.find(m => primaryStatus(m) === "rental");
     if(donor){
-      MOVIES.push({ ...donor, tmdb_id: -723001, wm_user_rating: 10, wm_critic_score: 100 });
+      MOVIES.push({
+        ...donor, tmdb_id: -723001, wm_user_rating: 10, wm_critic_score: 100,
+        language: "en", age_rating: "M", cinema_date: TODAY,
+      });
+      prefs.on = false;
     }
     return [...new Set(MOVIES.filter(m => cascades.some(c => listedBy(m, c))).map(m => primaryStatus(m)))];
   });
