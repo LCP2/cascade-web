@@ -606,6 +606,10 @@ SCOREABILITY_PROBE_BUDGET = int(os.getenv("SCOREABILITY_PROBE_BUDGET", "200"))
 SCOREABILITY_STALE_DAYS = WATCHMODE_CACHE_TTL_DAYS          # tier 1, non-ladder: 30 days
 SCOREABILITY_LADDER_STALE_DAYS = WM_NIGHTLY_COHORT_TTL_DAYS  # tier 1, ladder cohort: 7 days
 SCOREABILITY_RECOVERY_DAYS = 90                              # tier 3: no_score re-probe wait
+# CAS-1024: the manual one-shot back-catalogue dispatch (watchmode-backfill.yml's
+# target=backcatalogue) stops spending once Watchmode's live remaining-credits figure drops below
+# this — the floor nightly upkeep (WM_NIGHTLY_MAX_CREDITS/CAS-987 pacing) still needs.
+WM_BACKCAT_UPKEEP_FLOOR = 300
 USER_HELD_IDS_FILE = os.path.join(STATE_DIR, "user_held_ids.json")   # CAS-986: monitor/store.py writes this
 SCOREABLE_SHIM = os.path.join(os.path.dirname(__file__), "scripts", "scoreable_shim.mjs")
 
@@ -945,6 +949,73 @@ def probe_candidates(candidates: dict, today: datetime.date, budget: int, wm_idm
                                 or c.get("wm_popularity_percentile") is not None)
                     c["outcome"] = "scored" if has_score else "no_score"
     outcomes["spent"] = budget - bd["remaining"]   # CAS-987: actual credits this pass drew from `budget`
+    return outcomes
+
+
+def run_backcatalogue_probe(candidates: dict, today: datetime.date, max_credits: int,
+                            wm_idmap: dict, backcat_ids: set, fetch_remaining_credits,
+                            upkeep_floor: int = WM_BACKCAT_UPKEEP_FLOOR) -> dict:
+    """CAS-1024: the one-shot manual back-catalogue probe (watchmode-backfill.yml's
+    target=backcatalogue mode). Probes only `backcat_ids` (tmdb_ids sourced from CAS-989's
+    state/wm_backcatalogue_candidates.json) that are still `outcome: unprobed`, most popular
+    first, reusing enrich_watchmode_fields for the actual per-title fetch — the SAME call
+    CAS-986's nightly probe_candidates() uses; never a second scoring/probe implementation. A
+    candidate already probed (scored/no_score/no_wm_id) is never revisited by this mode — unlike
+    probe_candidates' tier 3, there is no recovery window here (the ticket's own Change #2).
+
+    Deliberately NOT capped by wm_run_allowance/WM_RUN_MAX_CREDITS/the CAS-987 cycle pace: this is
+    the manual dispatch's own explicit spend decision, so `max_credits` is the only ceiling this
+    function itself enforces.
+
+    Stops before spending the next credit when: `max_credits` is exhausted, the candidate list is
+    exhausted, or `fetch_remaining_credits()` — Watchmode's live, 0-credit /status figure, called
+    before every probe — reports fewer than `upkeep_floor` credits remaining on the account (the
+    nightly upkeep path's own floor). `fetch_remaining_credits` is injected so callers/tests can
+    supply a live status source or a canned sequence without a real network call; `None` (a failed
+    status check) is treated as "unknown" and never stops the run on its own.
+
+    Mutates each probed candidate's own last_probed/probe_count/outcome in place, the same
+    bookkeeping probe_candidates() applies, so a second dispatch resumes correctly.
+
+    Returns the same {'ok','cached','no-id','skip','stop','probed','spent'} tally as
+    probe_candidates, plus 'stopped_on_floor' (bool) and this run's own 'no_score' count (an
+    'ok' fetch that resolved no usable score field — distinct from 'no-id')."""
+    bd = {"remaining": max_credits, "skipped": 0}
+    today_iso = today.isoformat()
+
+    targets = sorted(
+        (c for c in candidates.values()
+         if c.get("tmdb_id") in backcat_ids and c.get("outcome") == "unprobed"),
+        key=lambda c: c.get("popularity") or 0, reverse=True)
+
+    outcomes = {"ok": 0, "cached": 0, "no-id": 0, "skip": 0, "stop": 0, "probed": 0,
+                "no_score": 0}
+    stopped_on_floor = False
+    for c in targets:
+        if bd["remaining"] <= 0:
+            break
+        remaining_credits = fetch_remaining_credits()
+        if remaining_credits is not None and remaining_credits < upkeep_floor:
+            stopped_on_floor = True
+            break
+        ttl = SCOREABILITY_LADDER_STALE_DAYS if _is_ladder_cohort(c) else SCOREABILITY_STALE_DAYS
+        result = enrich_watchmode_fields(c, wm_idmap, bd, ttl)
+        outcomes[result] = outcomes.get(result, 0) + 1
+        if result in ("ok", "no-id"):
+            outcomes["probed"] += 1
+            c["last_probed"] = today_iso
+            c["probe_count"] = c.get("probe_count", 0) + 1
+            if result == "no-id":
+                c["outcome"] = "no_wm_id"
+            else:
+                has_score = (c.get("wm_user_rating") is not None
+                            or c.get("wm_critic_score") is not None
+                            or c.get("wm_popularity_percentile") is not None)
+                c["outcome"] = "scored" if has_score else "no_score"
+                if not has_score:
+                    outcomes["no_score"] += 1
+    outcomes["spent"] = max_credits - bd["remaining"]
+    outcomes["stopped_on_floor"] = stopped_on_floor
     return outcomes
 
 
