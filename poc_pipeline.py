@@ -663,7 +663,16 @@ def enrich_watchmode_fields(movie: dict, wm_idmap: dict, budget: dict,
 
     Returns 'ok' (fetched and wrote fields), 'cached' (already fresh, no credit spent), 'no-id'
     (no Watchmode id resolves for this title), 'skip' (budget exhausted), or an `_api_call`
-    outcome ('skip'/'stop') on a failed fetch."""
+    outcome ('skip'/'stop') on a failed fetch.
+
+    CAS-1023: this is the one call every Watchmode-scoreable title must pass through (isScoreable
+    needs at least one of these fields), but a title ingested via `_watchmode_record` or
+    `merge_backcatalogue_candidates` never gets a TMDB detail call, so `popularity`/`budget`/
+    `worldwide_gross` (the scale dial's own fields, CAS-238) can otherwise stay null forever even
+    once the title is scoreable and published. A successful fetch backfills `popularity` from the
+    same percentile-to-TMDB-scale formula CAS-991's merge already uses, but only when the movie
+    carries no scale signal of its own yet — a real TMDB popularity/budget/gross is never
+    overwritten."""
     if not _watchmode_fields_stale(movie, ttl_days):
         return "cached"
     wm_id = wm_idmap.get(movie.get("tmdb_id"))
@@ -678,8 +687,13 @@ def enrich_watchmode_fields(movie: dict, wm_idmap: dict, budget: dict,
         return outcome
     movie["wm_user_rating"] = _num(detail.get("user_rating"))
     movie["wm_critic_score"] = _int(detail.get("critic_score"))
-    movie["wm_popularity_percentile"] = _num(detail.get("popularity_percentile"))
+    percentile = _num(detail.get("popularity_percentile"))
+    movie["wm_popularity_percentile"] = percentile
     movie["wm_fields_fetched_at"] = _RUN_DATE
+    has_scale_signal = ((movie.get("budget") or 0) > 0 or (movie.get("worldwide_gross") or 0) > 0
+                        or (movie.get("popularity") or 0) > 0)
+    if not has_scale_signal and percentile is not None:
+        movie["popularity"] = round(percentile / 10, 4)
     return "ok"
 
 
