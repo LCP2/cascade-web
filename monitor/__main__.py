@@ -38,7 +38,7 @@ from . import (compute_transitions, DEFAULT_WEEKEND_N, MOMENTS, match, notificat
                match_film_watches, match_newly_qualified, match_new_to_agent, suppressed_pairs,
                compute_admission, format_invite_reply)
 from .catalogue import load_catalogue_file, load_today, load_yesterday_from_git
-from .store import InMemoryStore, store_from_env
+from .store import FIXTURE_ID_MAX, FIXTURE_ID_MIN, InMemoryStore, store_from_env
 
 # CAS-986: the two-tier catalogue's demotion-safety net. Written at the end of every real (non-
 # --dry-run) monitor run — poc_pipeline.py reads it off disk, never Supabase directly, so the
@@ -101,6 +101,14 @@ def _parse_args(argv):
 def _load_json(path):
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def _is_int_in_range(value, lo, hi) -> bool:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return False
+    return lo <= n <= hi
 
 
 def _store_call(store, name, default):
@@ -314,6 +322,14 @@ def main(argv=None) -> int:
                     else _store_call(store, "fetch_undigested_invite_replies", []))
     if args.target_user:
         replies_rows = [r for r in replies_rows if str(r.get("sender_id")) == args.target_user]
+        # CAS-1015: --target-user is the notify-test harness's own safety valve (never set by the
+        # daily job — see its help text above), so a run wearing it must never fold a REAL invite
+        # reply into the digest just because it happens to belong to the same target account. Only
+        # replies about a fixture film (the reserved 999000001-999000999 tmdb_id range) can be a
+        # harness-run's own doing; anything else is real correspondence and stays untouched here,
+        # so it is neither delivered nor stamped digested_at by this run.
+        replies_rows = [r for r in replies_rows
+                        if _is_int_in_range(r.get("tmdb_id"), FIXTURE_ID_MIN, FIXTURE_ID_MAX)]
     movies_by_id = {str(m.get("tmdb_id")): m for m in today_movies}
     _digest_now = _dt.datetime.now(_dt.timezone.utc)
     replies_by_user: dict = {}

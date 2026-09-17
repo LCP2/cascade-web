@@ -72,20 +72,24 @@ def _movie_record(f: dict, status: list, offers: list, run_date: str) -> dict:
         "director": f["director"],
         "genres": f.get("genres", []),
         "age_rating": f.get("age_rating", "M"),
-        "imdb_rating": f.get("imdb_rating"),
         "poster": None,
         "synopsis": f.get("synopsis", FIXTURE_MARKER),
         "cinema_date": None,   # never a real date — keeps past_opening_weekend/opens_soon silent
         "status": list(status),
         "offers": list(offers),
         "window_dates": {s: run_date for s in status},
-        # CAS-825: admission is asked of the real engine now, which reads these beyond taste
-        # criteria alone — language for the account taste baseline, popularity/rt_critic for the
-        # Cascade score. Carried straight from the fixture film so a harness scenario keeps
-        # producing a real, scoreable film rather than one the score gate holds back regardless.
+        # CAS-825/CAS-1015: admission is asked of the real engine now, which reads these beyond
+        # taste criteria alone — language for the account taste baseline, popularity/wm_user_rating/
+        # wm_critic_score/wm_popularity_percentile for the Cascade score (CAS-919/920 moved scoring
+        # onto Watchmode's own fields; imdb_rating/rt_critic are dead on the engine side and were
+        # silently leaving every fixture film unscored). Carried straight from the fixture film so a
+        # harness scenario keeps producing a real, scoreable film rather than one the score gate
+        # holds back regardless.
         "language": f.get("language"),
         "popularity": f.get("popularity"),
-        "rt_critic": f.get("rt_critic"),
+        "wm_user_rating": f.get("wm_user_rating"),
+        "wm_critic_score": f.get("wm_critic_score"),
+        "wm_popularity_percentile": f.get("wm_popularity_percentile"),
     }
 
 
