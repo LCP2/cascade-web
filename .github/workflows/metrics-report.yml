@@ -1,0 +1,52 @@
+name: Cascade metrics report (daily)
+
+# CAS-1021: the behavioural analytics report (onboarding funnel/dropout, sessions, acquisition,
+# activation, retention, feature usage) is for Lee only and lives outside the user app, as its
+# own scheduled email — no in-app UI, no third-party analytics SDK. monitor/metrics_report.py
+# reads the CAS-942 analytics_* views with the service_role key and sends one plain-HTML email via
+# Resend to CASCADE_ALERT_TO. With the Supabase/Resend secrets absent it runs --dry-run so the
+# workflow still passes (no send). This ticket explicitly authorises adding this one workflow
+# file, on staging only.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 21 * * *"   # ~7-8am Sydney
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: staging   # the repo's default branch is main; this must land on staging, never main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run the metrics report (reads the analytics_* views, sends via Resend)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          CASCADE_EMAIL_FROM: ${{ secrets.CASCADE_EMAIL_FROM }}   # optional; defaults to Resend's test sender
+          CASCADE_ALERT_TO: ${{ secrets.CASCADE_ALERT_TO }}
+        run: python -m monitor.metrics_report
+
+  # CAS-973: email someone the moment this workflow breaks, the same convention every other
+  # scheduled workflow in this repo follows.
+  alert:
+    needs: [send]
+    if: failure()
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/alert.yml
+    with:
+      workflow_name: "metrics-report"
+    secrets: inherit

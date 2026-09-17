@@ -38,6 +38,7 @@ Interface:
                                           answer, created_at}, notified_at is null]           # CAS-967
   mark_invite_replies_notified(ids, notified_at) -> int                                       # CAS-967
   delete_old_usage_events(days=180) -> int              # CAS-942: usage_events retention purge
+  fetch_view(view_name) -> list                # every row, select=* (CAS-1021: metrics_report.py)
 """
 from __future__ import annotations
 
@@ -622,6 +623,11 @@ class SupabaseStore:
             return len(json.loads(body))
         except (json.JSONDecodeError, TypeError):
             return 0
+
+    def fetch_view(self, view_name: str) -> list:
+        """CAS-1021: every row of a public view or table, select=* — used by metrics_report.py to
+        read the CAS-942 analytics_* views without a bespoke method per view."""
+        return self._get(f"/{view_name}?select=*")
 
     def delete_old_usage_events(self, days: int = 180) -> int:
         """CAS-942: purge usage_events rows older than `days`, with the same service_role
