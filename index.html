@@ -19241,6 +19241,11 @@ else if(dedupedN)
     loadOccasionReg().forEach(o=>occasionReg.push(o));
     Object.keys(movingSeen).forEach(k=>delete movingSeen[k]);
     Object.assign(movingSeen, loadMovingSeen());
+    // CAS-1035: outbox is namespaced the same as everything else above — loaded once at parse time
+    // (before any account is known, so always under "guest"), and never re-read since. Without this, a
+    // row this device recorded as still-owed under the real account's key is invisible to the in-memory
+    // `outbox` a reload rebuilds under "guest" first, so outboxOverlay has nothing to restore.
+    outbox = loadOutbox();
   }
   // CAS-734: every cascade whose content no longer matches what this device last confirmed the account
   // holds is, by definition, something THIS device just changed — stamp it now so a later load/reconcile
