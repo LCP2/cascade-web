@@ -120,6 +120,36 @@ test("CAS-1035 AC2: a failed film_watch push leaves an outbox entry; a simulated
   } finally{ signOut(E2); }
 });
 
+// This is the requeue this ticket kept hitting on AC3 itself: outboxMark's own persist is coalesced onto a
+// microtask (recomputeFound's bulk admission pass needs that batching, or the whole loop is O(catalogue^2) —
+// see the O(n^2) fix above), which is NOT guaranteed to have run yet the instant a real pagehide fires — a
+// reload landing in that exact gap durably lost the row despite outboxPending() already showing it pending
+// in memory. flushAccountSync (the pagehide/hidden handler) must force that persist through synchronously,
+// with no await anywhere in this test standing in for the microtask tick a real close doesn't guarantee.
+test("CAS-1035 AC3 regression: flushAccountSync durably persists the outbox before any microtask can, so a reload landing immediately after it never loses the mark", () => {
+  const store = new Map();
+  const E1 = loadEngine({ localStorageStore: store });
+  const film = pickStreamableFilm(E1);
+  const movieId = String(film.tmdb_id);
+
+  const client = fakeClient({ upserts: { film_watch: { message: "network down" } } });
+  signIn(E1, client);
+  E1.toggleFilmOpt(film.tmdb_id, "stream");
+  assert.ok(movieId in E1.CascadePersistence.outboxPending("film_watch"),
+    "sanity: the mark is visible in memory immediately");
+
+  // No await here — a real pagehide is not preceded by one either. If the fix regresses to relying on the
+  // deferred microtask alone, this call does nothing and the assertion below fails.
+  E1.CascadePersistence.flushAccountSync();
+
+  // Simulated reboot, same technique as AC2 above: a fresh JS realm sharing the same localStorage-backed
+  // outbox, with nothing awaited between the mark and this "reload".
+  const E2 = loadEngine({ localStorageStore: store });
+  assert.ok(movieId in E2.CascadePersistence.outboxPending("film_watch"),
+    "the outbox entry must already be durable in localStorage by the time flushAccountSync returns");
+  signOut(E1);
+});
+
 test("CAS-1035: outboxPending clears once its push actually succeeds", async () => {
   const E = loadEngine();
   const client = fakeClient({ upserts: { film_watch: null } });   // succeeds

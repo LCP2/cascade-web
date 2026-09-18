@@ -19080,10 +19080,19 @@ else if(dedupedN)
   // continuation runs) still shows/clears the banner and durably persists before any close event can fire —
   // AC3 asked for "the instant", not "synchronously"; a microtask later is still well within that.
   let outboxPersistQueued = false;
+  // Split out so flushAccountSync (below) can force this immediately: a microtask is guaranteed to drain
+  // before the NEXT task, but a real pagehide fires as part of the SAME task that queued it — nothing
+  // forces the queued microtask to have run yet at that point, so a close/reload landing between the mark
+  // and its deferred persist would durably lose the row outboxMark just promised was safe.
+  function outboxPersistNow(){
+    outboxPersistQueued = false;
+    saveOutboxLocal();
+    renderAcctBanner();
+  }
   function outboxPersistSoon(){
     if(outboxPersistQueued) return;
     outboxPersistQueued = true;
-    Promise.resolve().then(()=>{ outboxPersistQueued=false; saveOutboxLocal(); renderAcctBanner(); });
+    Promise.resolve().then(outboxPersistNow);
   }
   function outboxClearKeys(target, keys){
     const bucket=outbox[target]; if(!bucket) return;
@@ -20466,6 +20475,10 @@ else if(dedupedN)
   // already in flight before this function (and the event that called it) returns.
   function flushAccountSync(){
     if(!accountActive()) return;
+    // CAS-1035: force the outbox durably to localStorage right now — outboxMark's own persist is coalesced
+    // onto a microtask for perf (recomputeFound's bulk admission pass), which is not guaranteed to have run
+    // yet the instant a real pagehide/hidden fires; a reload landing in that gap must not lose the mark.
+    outboxPersistNow();
     clearTimeout(syncTimer); runSync();
     clearTimeout(filmTimer); runFilmSync();
     clearTimeout(notifyTimer); runNotifySync();
