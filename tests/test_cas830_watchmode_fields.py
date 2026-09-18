@@ -55,6 +55,46 @@ class EnrichWatchmodeFieldsWritesRatings(unittest.TestCase):
         self.assertEqual(budget["remaining"], 5)
 
 
+class EnrichWatchmodeFieldsBackfillsPopularity(unittest.TestCase):
+    """CAS-1023: a title with no scale signal of its own (budget/worldwide_gross/popularity all
+    null — e.g. ingested via `_watchmode_record` or a back-catalogue merge, never through a TMDB
+    detail call) must not stay blind forever just because it becomes scoreable via Watchmode. A
+    successful fetch backfills `popularity` from the same percentile/10 formula CAS-991 already
+    uses, but a real existing scale signal is never overwritten."""
+
+    def test_a_scale_blind_title_gets_popularity_from_the_percentile(self):
+        movie = {"tmdb_id": 555, "budget": None, "worldwide_gross": None, "popularity": None}
+        detail = {"user_rating": 7.8, "critic_score": 64, "popularity_percentile": 91.2}
+        budget = {"remaining": 5, "skipped": 0}
+        with mock.patch.object(pp, "_fetch_watchmode_title_details", return_value=detail):
+            pp.enrich_watchmode_fields(movie, {555: "100"}, budget)
+        self.assertEqual(movie["popularity"], round(91.2 / 10, 4))
+
+    def test_a_title_with_real_tmdb_popularity_is_left_alone(self):
+        movie = {"tmdb_id": 555, "budget": None, "worldwide_gross": None, "popularity": 4.2}
+        detail = {"user_rating": 7.8, "critic_score": 64, "popularity_percentile": 91.2}
+        budget = {"remaining": 5, "skipped": 0}
+        with mock.patch.object(pp, "_fetch_watchmode_title_details", return_value=detail):
+            pp.enrich_watchmode_fields(movie, {555: "100"}, budget)
+        self.assertEqual(movie["popularity"], 4.2)
+
+    def test_a_title_with_budget_or_gross_is_not_given_a_popularity_figure(self):
+        movie = {"tmdb_id": 555, "budget": 1000000, "worldwide_gross": None, "popularity": None}
+        detail = {"user_rating": 7.8, "critic_score": 64, "popularity_percentile": 91.2}
+        budget = {"remaining": 5, "skipped": 0}
+        with mock.patch.object(pp, "_fetch_watchmode_title_details", return_value=detail):
+            pp.enrich_watchmode_fields(movie, {555: "100"}, budget)
+        self.assertIsNone(movie["popularity"])
+
+    def test_no_percentile_in_the_response_leaves_a_blind_title_blind(self):
+        movie = {"tmdb_id": 555, "budget": None, "worldwide_gross": None, "popularity": None}
+        detail = {"user_rating": 7.8, "critic_score": 64}   # no popularity_percentile key
+        budget = {"remaining": 5, "skipped": 0}
+        with mock.patch.object(pp, "_fetch_watchmode_title_details", return_value=detail):
+            pp.enrich_watchmode_fields(movie, {555: "100"}, budget)
+        self.assertIsNone(movie["popularity"])
+
+
 class EnrichWatchmodeFieldsBudget(unittest.TestCase):
     """AC3 — with a shared budget of 2 credits and 5 candidate titles, exactly 2 are enriched and
     the budget reports 3 skipped."""

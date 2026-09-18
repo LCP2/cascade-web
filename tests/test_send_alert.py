@@ -100,11 +100,17 @@ class MainTests(unittest.TestCase):
         urlopen.assert_not_called()
 
     def test_no_resend_key_skips_email_but_still_exits_0_with_no_push_configured(self):
+        """RESEND_API_KEY only gates send_email_alert — find_failure's jobs lookup still runs
+        whenever GITHUB_REPOSITORY/RUN_ID/GITHUB_TOKEN are present, so urlopen IS called once."""
+        jobs_resp = mock.MagicMock()
+        jobs_resp.read.return_value = b'{"jobs": []}'
+        jobs_resp.__enter__.return_value = jobs_resp
         with mock.patch.dict(os.environ, self._env(RESEND_API_KEY=""), clear=True), \
-             mock.patch("urllib.request.urlopen") as urlopen:
+             mock.patch("urllib.request.urlopen", return_value=jobs_resp) as urlopen:
             rc = send_alert.main()
         self.assertEqual(rc, 0)
-        urlopen.assert_not_called()
+        urlopen.assert_called_once()
+        self.assertNotEqual(urlopen.call_args[0][0].full_url, send_alert.RESEND_ENDPOINT)
 
     def test_sends_exactly_one_email_when_configured(self):
         jobs_resp = mock.MagicMock()

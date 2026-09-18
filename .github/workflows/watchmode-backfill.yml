@@ -10,19 +10,28 @@ name: Watchmode fields backfill
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: 'CAS-1024: catalogue (default) = today’s movies.json fields backfill, unchanged. backcatalogue = one-shot probe of CAS-989’s enumerated 2015–2022 back catalogue (state/wm_backcatalogue_candidates.json), NOT paced by WM_RUN_MAX_CREDITS/CAS-987 — max_credits below is the spend decision.'
+        required: false
+        type: choice
+        options:
+          - catalogue
+          - backcatalogue
+        default: 'catalogue'
       max_credits:
-        description: 'WM_FIELDS_MAX_CREDITS — credits to spend this run (1 credit per resolved title)'
+        description: 'Credits to spend this run (1 credit per resolved title). target=catalogue: WM_FIELDS_MAX_CREDITS. target=backcatalogue: WM_BACKCAT_MAX_CREDITS, stops early at 300 credits remaining on the account.'
         required: false
         type: string
         default: '1000'
       manifest:
-        description: 'CAS-889: path to a manifest file (one tmdb_id per line) to restrict this run to, passed as --ids-from. Empty runs the full catalogue.'
+        description: 'CAS-889: target=catalogue only — path to a manifest file (one tmdb_id per line) to restrict this run to, passed as --ids-from. Empty runs the full catalogue.'
         required: false
         type: string
         default: ''
 
 permissions:
   contents: write
+  actions: write                 # CAS-1024/CAS-523: allow dispatching qa.yml at the end of a backcatalogue run
 
 jobs:
   backfill:
@@ -37,6 +46,7 @@ jobs:
           python-version: '3.12'
 
       - name: Run the Watchmode fields backfill
+        if: ${{ inputs.target == 'catalogue' }}
         env:
           WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
           CASCADE_CATALOGUE: movies.json
@@ -49,6 +59,17 @@ jobs:
             python scripts/cas850_watchmode_backfill.py
           fi
 
+      - name: Run the CAS-1024 back-catalogue load
+        # One-shot manual probe of CAS-989's enumerated 2015-2022 back catalogue
+        # (state/wm_backcatalogue_candidates.json) — NOT paced by WM_RUN_MAX_CREDITS/CAS-987;
+        # this dispatch's max_credits IS the explicit spend decision (Lee, 2026-09-17). Never runs
+        # alongside the catalogue-mode step above.
+        if: ${{ inputs.target == 'backcatalogue' }}
+        env:
+          WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
+          WM_BACKCAT_MAX_CREDITS: ${{ inputs.max_credits }}
+        run: python scripts/cas1024_backcatalogue_load.py
+
       - name: Commit and push (CAS-758 reset-soft-and-push retry — never to main)
         # Pushes via scripts/reset_soft_and_push.sh's `git push origin HEAD:staging`, the same
         # tested reset --soft retry algorithm daily.yml inlines at its own two push sites — this
@@ -60,6 +81,16 @@ jobs:
           git config user.name  "cascade-bot"
           git config user.email "actions@users.noreply.github.com"
           bash scripts/reset_soft_and_push.sh staging "python poc_pipeline.py --build-html" index.html movies.json state
+
+      - name: Dispatch qa.yml (CAS-523/CAS-1024)
+        # Same anti-recursion workaround as daily.yml's own dispatch: the push above used the
+        # default GITHUB_TOKEN, which never fires qa.yml's `push` trigger, so promote.yml's gate
+        # would otherwise never see a backcatalogue-only push. target=catalogue is unchanged
+        # (no dispatch) — this ticket only authorises it for the new mode.
+        if: ${{ inputs.target == 'backcatalogue' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run qa.yml --ref staging
 
   # CAS-973: email someone the moment this workflow breaks, instead of leaving it to be
   # noticed by whoever next opens the Actions tab.

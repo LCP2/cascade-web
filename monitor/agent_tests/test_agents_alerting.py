@@ -146,10 +146,10 @@ class G6ARisingRatingCrossesTheAgentsBar(unittest.TestCase):
         offer = [{"service": "AppleTV", "type": "rent", "price": 6.99}]
         prev = [{"tmdb_id": 621, "title": "Slow Climber", "genres": ["Drama"], "status": ["rental"],
                 "cinema_date": "2026-01-01", "offers": offer, "language": "en", "rt_critic": 70,
-                "imdb_rating": 6.4, "imdb_votes": 5000}]
+                "wm_user_rating": 6.4}]
         today = [{"tmdb_id": 621, "title": "Slow Climber", "genres": ["Drama"], "status": ["rental"],
                  "cinema_date": "2026-01-01", "offers": offer, "language": "en", "rt_critic": 70,
-                 "imdb_rating": 7.6, "imdb_votes": 5000}]
+                 "wm_user_rating": 7.6}]
         cascade = [{"id": "c1", "user_id": "u1", "name": "Drama radar", "active": True,
                    "alert_moments": ["hits_rent"], "criteria": _criteria(genre=["Drama"], imdb=7.0)}]
 
@@ -174,11 +174,11 @@ class G7RatingCrossPlusARealWindowTransitionSameDay(unittest.TestCase):
     def _fixture(self):
         prev = [{"tmdb_id": 622, "title": "Double Mover", "genres": ["Drama"], "status": ["in_cinema"],
                 "cinema_date": "2026-01-01", "offers": [], "language": "en", "rt_critic": 70,
-                "imdb_rating": 6.4, "imdb_votes": 5000}]
+                "wm_user_rating": 6.4}]
         today = [{"tmdb_id": 622, "title": "Double Mover", "genres": ["Drama"], "status": ["rental"],
                  "cinema_date": "2026-01-01",
                  "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}],
-                 "language": "en", "rt_critic": 70, "imdb_rating": 7.6, "imdb_votes": 5000}]
+                 "language": "en", "rt_critic": 70, "wm_user_rating": 7.6}]
         cascade = [{"id": "c1", "user_id": "u1", "name": "Drama radar", "active": True,
                    "alert_moments": ["hits_rent"], "criteria": _criteria(genre=["Drama"], imdb=7.0)}]
         return prev, today, cascade
@@ -208,10 +208,10 @@ class G7RatingCrossPlusARealWindowTransitionSameDay(unittest.TestCase):
         offer = [{"service": "AppleTV", "type": "rent", "price": 6.99}]
         prev = [{"tmdb_id": 623, "title": "Steady Climber", "genres": ["Drama"], "status": ["rental"],
                 "cinema_date": "2026-01-01", "offers": offer, "language": "en", "rt_critic": 70,
-                "imdb_rating": 6.4, "imdb_votes": 5000}]
+                "wm_user_rating": 6.4}]
         today = [{"tmdb_id": 623, "title": "Steady Climber", "genres": ["Drama"], "status": ["rental"],
                  "cinema_date": "2026-01-01", "offers": offer, "language": "en", "rt_critic": 70,
-                 "imdb_rating": 7.6, "imdb_votes": 5000}]
+                 "wm_user_rating": 7.6}]
         cascade = [{"id": "c1", "user_id": "u1", "name": "Drama radar", "active": True,
                    "alert_moments": ["hits_rent"], "criteria": _criteria(genre=["Drama"], imdb=7.0)}]
         transitions = compute_transitions(prev, today, RUN_DATE)
@@ -232,11 +232,11 @@ class G7RatingCrossPlusARealWindowTransitionSameDay(unittest.TestCase):
         one hit — `covered` gates match_newly_qualified only, never match() itself."""
         prev = [{"tmdb_id": 624, "title": "Plain Mover", "genres": ["Drama"], "status": ["in_cinema"],
                 "cinema_date": "2026-01-01", "offers": [], "language": "en", "rt_critic": 70,
-                "imdb_rating": 7.6, "imdb_votes": 5000}]
+                "wm_user_rating": 7.6}]
         today = [{"tmdb_id": 624, "title": "Plain Mover", "genres": ["Drama"], "status": ["rental"],
                  "cinema_date": "2026-01-01",
                  "offers": [{"service": "AppleTV", "type": "rent", "price": 6.99}],
-                 "language": "en", "rt_critic": 70, "imdb_rating": 7.6, "imdb_votes": 5000}]
+                 "language": "en", "rt_critic": 70, "wm_user_rating": 7.6}]
         cascade = [{"id": "c1", "user_id": "u1", "name": "Drama radar", "active": True,
                    "alert_moments": ["hits_rent"], "criteria": _criteria(genre=["Drama"], imdb=7.0)}]
         transitions = compute_transitions(prev, today, RUN_DATE)

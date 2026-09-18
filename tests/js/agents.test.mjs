@@ -1190,6 +1190,8 @@ test("J8: a film moving to a later window advances Watch On to standing and show
   const film = E.MOVIES.find(x => !E.watched.has(x.tmdb_id) && !E.blocked.has(x.tmdb_id));
   const id = film.tmdb_id;
   const savedStatus = film.status;
+  const savedOffers = film.offers;
+  const savedConfidence = film.availability_confidence;
   const c = broadCascade("cas791-j8", 0);
   E.cascades.push(c);
   try{
@@ -1200,7 +1202,12 @@ test("J8: a film moving to a later window advances Watch On to standing and show
     assert.equal(E.notify[id].wins.in_cinema, true, "setup: the film must earn Cinema, the first usable rung");
     assert.ok(E.found.has(id), "setup: the film must be found before this test's move");
 
-    film.status = ["included_streaming"];   // the world moves the film all the way to Stream
+    // The world moves the film all the way to Stream — a real included_streaming record always carries a
+    // confirmed offer (that's what the status means), so the fixture needs one too for showable()/listedBy
+    // to agree the film has actually arrived, the same as any other included_streaming fixture in this suite.
+    film.status = ["included_streaming"];
+    film.offers = [{ service: "Stan", type: "sub" }];
+    film.availability_confidence = "confirmed";
     E.recomputeFound();
 
     assert.equal(E.notify[id].wins.stream, true, "J8: Watch On must advance to standing (Stream) once the film reaches it");
@@ -1211,6 +1218,8 @@ test("J8: a film moving to a later window advances Watch On to standing and show
     assert.ok(row, "J8: a movingData() row must exist for the film");
   } finally {
     film.status = savedStatus;
+    film.offers = savedOffers;
+    film.availability_confidence = savedConfidence;
   }
 }));
 
@@ -1218,6 +1227,8 @@ test("J9: the same move leaves a manual Watch On untouched, and a movingData() r
   const film = E.MOVIES.find(x => !E.watched.has(x.tmdb_id) && !E.blocked.has(x.tmdb_id));
   const id = film.tmdb_id;
   const savedStatus = film.status;
+  const savedOffers = film.offers;
+  const savedConfidence = film.availability_confidence;
   const c = broadCascade("cas791-j9", 0);
   E.cascades.push(c);
   try{
@@ -1228,7 +1239,10 @@ test("J9: the same move leaves a manual Watch On untouched, and a movingData() r
     E.toggleFilmOpt(id, "in_cinema");
     assert.equal(E.notify[id].winsSource.in_cinema, "manual", "setup: the tick must land as manual");
 
-    film.status = ["included_streaming"];   // the world moves the film all the way to Stream
+    // See J8's own comment: a real included_streaming record always carries a confirmed offer.
+    film.status = ["included_streaming"];
+    film.offers = [{ service: "Stan", type: "sub" }];
+    film.availability_confidence = "confirmed";
     E.recomputeFound();
 
     assert.equal(E.notify[id].wins.in_cinema, true, "J9: a manual Watch On must be untouched by the film's own move");
@@ -1237,6 +1251,8 @@ test("J9: the same move leaves a manual Watch On untouched, and a movingData() r
     assert.ok(row, "J9: a movingData() row must still appear");
   } finally {
     film.status = savedStatus;
+    film.offers = savedOffers;
+    film.availability_confidence = savedConfidence;
   }
 }));
 

@@ -53,10 +53,14 @@ export const numberIn = s => {
 export async function toShortlist(page, kind){
   await freshApp(page);
   await page.locator("#splashCta").click();
-  await expect(page.locator(".obhd")).toContainText("Cascade finds your movies for you.");   // v2_about (CAS-953)
+  // CAS-1018: scoped to #onbStepInner, not a bare ".obhd" — gotoStep's dual-pane slide leaves the
+  // outgoing step's .obhd in the DOM alongside the incoming one for the length of the transition
+  // (intentional, see gotoStep's own comment), and #onbStepInner is the id it moves onto the
+  // incoming pane immediately, so this always resolves to exactly one element.
+  await expect(page.locator("#onbStepInner .obhd")).toContainText("Cascade finds your movies for you.");   // v2_about (CAS-953)
   await ctaLocator(page).click();
   await page.waitForTimeout(120);
-  await expect(page.locator(".obhd")).toContainText("Massive Movies");   // v2_intro
+  await expect(page.locator("#onbStepInner .obhd")).toContainText("Massive Movies");   // v2_intro
   await ctaLocator(page).click();
   await page.waitForTimeout(120);              // the flow slides between steps
   await expect(page.locator("#obCinemaOpts")).toBeVisible();             // v2_cinema
@@ -135,7 +139,17 @@ export async function toListing(page, opts = {}){
   await settleListing(page);
   if(skipTutorial){
     const tour = page.locator("#tutScrim.open");
-    if(await tour.count() === 0) await page.waitForTimeout(150);   // the tour's own double-rAF start
+    // maybeStartTutorial() (already called synchronously above, inside membStartWork) schedules the
+    // actual open via requestAnimationFrame(()=>requestAnimationFrame(startTutorial)) — a fixed
+    // millisecond wait here is a guess at how long two real frames take and can race a slow/loaded
+    // headless webkit. Registering our own double rAF now lands after the app's, since callbacks
+    // queued earlier in the same frame always run first, so this reliably observes the tour's own
+    // open (or its absence) rather than guessing at a timeout.
+    if(await tour.count() === 0){
+      await page.evaluate(() => new Promise(resolve => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
+    }
     if(await tour.count() > 0){
       await page.locator("#tutSkipBtn").click();
       await expect(page.locator("#tutScrim")).not.toHaveClass(/open/);

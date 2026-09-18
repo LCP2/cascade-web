@@ -10,8 +10,8 @@ const CARD_TEXT = [
   "These are your agents. Each one watches for a different kind of film, all the time, so you don't have to.",
   "Two numbers: what people thought, and what critics thought. Your agent only speaks up when a film clears the bar you set.",
   "Films move — cinema, then rent, then streaming. Your agent follows each one and tells you when it reaches a window you actually use.",
-  "Moving is what changed since you last looked. That's the page to come back to.",
-  "You're set. Nothing more to do today — your agents report in the morning.",
+  "Moving shows what's changed recently — Today, Week, 2 weeks or Month. It opens on 2 weeks, so that's the page to come back to.",
+  "You're set. Nothing more to do today — your agents report at 5pm.",
 ];
 
 async function buildFreshListing(page){

@@ -58,6 +58,17 @@ def set_value(section: str, today=None, **values) -> None:
     _save(data)
 
 
+def bump_counts(section: str, key: str, counts: dict, today=None) -> None:
+    """Like bump(), but for a {label: count} mapping (e.g. an HTTP status-code breakdown) that
+    accumulates per-label across the day's writer steps, under section[key]."""
+    data = _load(_today_iso(today))
+    bucket = data.setdefault(section, {})
+    sub = bucket.setdefault(key, {})
+    for label, delta in counts.items():
+        sub[str(label)] = sub.get(str(label), 0) + delta
+    _save(data)
+
+
 def load(today=None) -> dict:
     """Today's stats, or just {"date": ...} if nothing has written yet today."""
     return _load(_today_iso(today))

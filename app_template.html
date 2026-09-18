@@ -1336,13 +1336,6 @@
      needed when it sat loose in the Cascades bar. */
   .mlempty .cascstart{margin:16px 0 0;text-align:left}
 
-  /* CAS-943: plain data tables for the Metrics screen — Lee's stated preference is tabular, no charts,
-     no new visual language, so this reuses the existing ink/dim/faint tokens rather than adding any. */
-  .mtable{width:100%;border-collapse:collapse;font-size:12px;margin:0 0 4px}
-  .mtable th{text-align:left;color:var(--faint);font-weight:700;text-transform:uppercase;font-size:10.5px;
-    letter-spacing:.4px;padding:0 8px 6px 0;border-bottom:1px solid var(--line)}
-  .mtable td{color:var(--ink);padding:6px 8px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap}
-  .mtable tbody tr:last-child td{border-bottom:none}
   /* ---- the provenance sheet (CAS-67) ---- */
   /* Tap the megaphone anywhere and this is what opens: who put the film on your Found list, which Cascade is
      watching it, what that Cascade will actually tell you about — and the one control that changes any of it. */
@@ -3470,9 +3463,6 @@
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('occasions')">Occasions</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('account')">Account</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('recommend')">Recommend Cascade</button>
-            <!-- CAS-943: hidden by default — updateMetricsNavItem() only shows this once analytics_admins
-                 has actually returned a row for the signed-in user. A signed-out visitor never sees it. -->
-            <button class="navitem" type="button" role="menuitem" id="metricsNavItem" style="display:none" onclick="navMenuGo('metrics')">Metrics</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('help')">Help</button>
             <button class="navitem" type="button" role="menuitem" onclick="navMenuGo('about')">About</button>
           </div>
@@ -4078,12 +4068,6 @@
   <div class="uwrap" id="helpBody"></div>
 </div>
 
-<!-- METRICS (CAS-943) — admin-gated funnel/behaviour dashboard, read straight off the analytics_* views
-     (CAS-942). Only reachable via the nav entry above, which stays hidden unless analytics_admins returns
-     a row for the signed-in user. Body rendered by renderMetricsScreen(). -->
-<div class="uscreen" id="metricsScreen" role="dialog" aria-modal="true" aria-label="Metrics">
-  <div class="uwrap" id="metricsBody"></div>
-</div>
 
 <!-- ON-DEVICE DIAGNOSTICS (CAS-553) — opened by 5 taps on the About screen's build line (#aboutBuild),
      or ?diag on the web build. No Safari Web Inspector can reach the installed app's WKWebView from
@@ -4668,10 +4652,31 @@ const SVC_SHORT = {"Amazon Prime Video":"Prime","Disney Plus":"Disney","Apple TV
   "Paramount Plus":"Paramount","HBO Max":"Max","BINGE":"Binge","Stan":"Stan","Netflix":"Netflix",
   "Google Play Movies":"Google","YouTube":"YouTube","Foxtel Now":"Foxtel","BritBox":"BritBox"};
 const svcShort=s=>SVC_SHORT[svcCanon(s)]||svcName(s);
+// CAS-1014: svcCanon's rules strip known billing/reseller suffixes, but they don't catch two spellings of
+// the SAME name that differ only in spacing, case or punctuation — e.g. the feed's "CuriosityStream Amazon
+// Channel" strips to "CuriosityStream", one word, while its plain "Curiosity Stream" listing keeps the
+// space. Group every post-svcCanon spelling by a spacing/case/punctuation-blind key and fold each group onto
+// one spelling actually seen for it (the one with the most separator characters, so a compressed spelling
+// doesn't win over a readable one; alphabetical order breaks a tie so the choice is stable) — a real-name
+// collision this general needs the whole catalogue in view, not a per-name rule.
+const svcFoldKey = s => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+const svcSpellingsByFold = new Map();   // fold key -> Set of canonical spellings seen for it
+MOVIES.forEach(m=>(m.offers||[]).forEach(o=>{
+  const c = svcCanon(o.service), key = svcFoldKey(c);
+  if(!svcSpellingsByFold.has(key)) svcSpellingsByFold.set(key, new Set());
+  svcSpellingsByFold.get(key).add(c);
+}));
+const svcFoldWinner = new Map();   // fold key -> the one spelling every variant in that group folds to
+svcSpellingsByFold.forEach((spellings, key)=>{
+  const seps = s => (s.match(/[^a-z0-9]/gi) || []).length;
+  const [winner] = [...spellings].sort((a,b)=> seps(b)-seps(a) || a.localeCompare(b));
+  svcFoldWinner.set(key, winner);
+});
+const svcFold = s => svcFoldWinner.get(svcFoldKey(s)) || s;
 // CAS-448: fold every offer's service name to its canonical spelling ONCE here, right after svcCanon exists —
 // so every later reader of m.offers (Service analysis, the offers bar, My Services, Notify, dedupOffers) sees
 // one name per real service without each having to remember to call svcCanon itself.
-MOVIES.forEach(m=>{ (m.offers||[]).forEach(o=>{ o.service=svcCanon(o.service); }); });
+MOVIES.forEach(m=>{ (m.offers||[]).forEach(o=>{ o.service=svcFold(svcCanon(o.service)); }); });
 
 // ---- Reviewer URL params: ?reset and ?setup ------------------------------------
 // Demo/review affordances, not product surface. This block runs BEFORE any state is read below, so ?reset
@@ -5136,7 +5141,9 @@ const cascadesFor = id => ((notify[id]||{}).cascadeIds||[])
 function loadPrefs(){ try{ const p=JSON.parse(localStorage.getItem(acctKey("cascade_prefs"))||"{}");
   // CAS-251: a service saved under a variant name is folded onto its canonical one on the way in, so
   // somebody who picked "Netflix Standard with Ads" last week still has Netflix picked today.
-  const canon = xs => new Set((xs||[]).map(svcCanon));
+  // CAS-1014: also fold spacing/case/punctuation variants (svcFold), so a pick saved under a spelling
+  // that has since merged into another still matches today's canonical one.
+  const canon = xs => new Set((xs||[]).map(s=>svcFold(svcCanon(s))));
   return {on:!!p.on, touched:!!p.touched, sub:canon(p.sub), store:canon(p.store)}; }
   catch(e){ return {on:false,touched:false,sub:new Set(),store:new Set()}; } }
 function savePrefs(){ try{ localStorage.setItem(acctKey("cascade_prefs"),
@@ -7346,14 +7353,6 @@ function updateInvitesBadge(){
   if(d){ d.style.display=unread?"grid":"none"; d.textContent=text; d.classList.toggle("pulse",unread); }
 }
 
-// ---- CAS-943: Metrics nav entry gate — analytics_admins probed by loadMetricsAdmin() (fireAccountFanout,
-// below), never by anyone else. RLS (usage_events_select_admin) is the real gate; this only decides whether
-// the menu entry — and thus any analytics_* fetch at all — is reachable in the UI.
-let isMetricsAdmin=false;
-function updateMetricsNavItem(){
-  const b=$("metricsNavItem");
-  if(b) b.style.display = isMetricsAdmin ? "flex" : "none";
-}
 // Truthful, coarse relative time — never more precise than the gap actually warrants (movingAgeText's own
 // reasoning), but Invites needs minute/hour granularity movingAgeText doesn't: "replied 20 min ago" reads
 // very differently from "replied today" on a screen that's largely about how fresh a reply is.
@@ -8030,7 +8029,7 @@ window.openAgentPanel=(id, btn)=>{
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
   const card=btn.closest(".card"); if(card) card.classList.add("popopen");   // CAS-684
-  watchPanelAnchorY=scrollY;   // CAS-647: see snapToWatchPanelAnchor
+  armPanelAnchor();   // CAS-1028: see captureEarlyPanelAnchor above; CAS-647: see snapToWatchPanelAnchor
   const pop=document.createElement("div");
   // CAS-374-style chrome: content-width, no in-panel close — the chip is the toggle. CAS-439: Agent sits in
   // the middle of the row, not an edge, so it gets .al-c (JS-anchored to the button) rather than .al-l/.al-r.
@@ -8091,7 +8090,7 @@ window.openNotifyPanel=(id, btn)=>{
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
   const card=btn.closest(".card"); if(card) card.classList.add("popopen");   // CAS-684
-  watchPanelAnchorY=scrollY;   // CAS-647: see snapToWatchPanelAnchor
+  armPanelAnchor();   // CAS-1028: see captureEarlyPanelAnchor above; CAS-647: see snapToWatchPanelAnchor
   const pop=document.createElement("div");
   // CAS-374: content-width, left-aligned under the Notify chip — no in-panel close, the chip is the toggle.
   pop.className="cpop npop al-l";
@@ -8317,6 +8316,27 @@ function snapToWatchPanelAnchor(){
   const chase=()=>{ fix(); if(++n<5) requestAnimationFrame(chase); };
   requestAnimationFrame(chase);
 }
+// CAS-1028 (build-chat decision, 18 Sep 2026): on WebKit, the reveal-scroll described above can already have
+// played out by the time an open*Panel below reads scrollY for itself — a tap on a card below the first
+// fires pointerdown/focus before the click that runs openWatchPanel/openNotifyPanel/openAgentPanel, and that
+// earlier moment is when the drift happens, not during the click. This capture-phase listener takes the same
+// "where were we" measurement at pointerdown/focus instead, ahead of the reveal-scroll it is meant to
+// precede — it only records a position: no scroll, no preventDefault, no stopPropagation, so no other
+// handler's behaviour changes. armPanelAnchor (called by every open*Panel in place of a bare
+// `watchPanelAnchorY=scrollY`) uses this measurement only while it's fresh — this same gesture — and
+// otherwise falls back to scrollY exactly as CAS-647 did, so a programmatic or delayed open still anchors
+// correctly.
+let earlyPanelAnchorY=null, earlyPanelAnchorAt=-Infinity;
+function captureEarlyPanelAnchor(e){
+  if(!e.target.closest || !e.target.closest(".ctl.watch, .ctl.notify, .ctl.casc")) return;
+  earlyPanelAnchorY=scrollY;
+  earlyPanelAnchorAt=performance.now();
+}
+document.addEventListener("pointerdown", captureEarlyPanelAnchor, true);
+document.addEventListener("focus", captureEarlyPanelAnchor, true);
+function armPanelAnchor(){
+  watchPanelAnchorY = (performance.now()-earlyPanelAnchorAt<1000) ? earlyPanelAnchorY : scrollY;
+}
 window.openWatchPanel=(id, btn)=>{
   // CAS-281: "was MY panel already open?", not "was ANY panel open?". The old test closed whatever was open
   // and returned, so tapping a second control while a first was open closed the first and opened nothing —
@@ -8327,7 +8347,7 @@ window.openWatchPanel=(id, btn)=>{
   if(mine){ watchPanelAnchorY=null; return; }    // tapping the chip again closes the panel it opened
   const stub=btn.closest(".stub"); if(stub) stub.classList.add("ratingopen");
   const card=btn.closest(".card"); if(card) card.classList.add("popopen");   // CAS-684
-  watchPanelAnchorY=scrollY;
+  armPanelAnchor();   // CAS-1028: see captureEarlyPanelAnchor above
   const cur=opinionOf(id);
   const pop=document.createElement("div");
   // CAS-374: content-width, right-aligned under the Watched chip — no in-panel close, the chip is the toggle.
@@ -11695,31 +11715,31 @@ const HELP_ARTICLES = [
    body:"An agent isn't a list you build up film by film. It's a standing search: you tell it what you're after — genres, how far back, an age rating, a minimum score — and it keeps watching the whole catalogue for anything that matches, for as long as it exists.\n\nA film doesn't need you to add it. The moment it qualifies — because it's just been released, its score just cleared your bar, or it just reached a window you're tracking — your agent finds it on its own. Edit an agent's settings and the same thing happens immediately: everything already found is re-checked against the new answer, so an agent's list is never something you have to maintain by hand."},
   {slug:"the-score", title:"The score",
    summary:"People and Critics, where each comes from, and that it is one figure on one scale.",
-   body:"Every film in Cascade carries one Cascade score, from 0 to 100 — not two separate numbers you have to weigh against each other.\n\nOnce a film is released, that score is built from two things: what people who watched it thought (People), and what critics thought (Critics). When both exist, the score blends them; when only one does, the score is that one alone.\n\nBefore a film is released there's nothing to review yet, so its score is built from how much it's being talked about instead — a placeholder that gets replaced the moment real reviews start arriving. Either way it lands on the same 0-100 scale, so a marker you set once means the same thing whether the film is still upcoming or already out."},
+   body:"Every film in Cascade carries one Cascade score, from 0 to 100 — not two separate numbers you have to weigh against each other.\n\nOnce a film is released — including PVOD, rental and streaming — that score is built from two things: what people who watched it thought (People), and what critics thought (Critics). When both exist, the score blends them; when only one does, the score is that one alone.\n\nBefore a film opens in cinemas there's nothing to review yet, so its score is built from how much it's being talked about instead — its buzz. Once it's in cinemas, real reviews start counting again: if a People or Critics score exists yet, the score blends it in with buzz rather than switching over to it outright. Either way it lands on the same 0-100 scale, so a marker you set once means the same thing whether the film is still upcoming or already out."},
   {slug:"setting-the-bar", title:"Setting the bar",
-   summary:"Markers per window, what standing in a window means, and that moving a marker re-places films immediately.",
-   body:"Each window an agent tracks — Cinema, Premium, Rent, Stream — can carry its own marker: the minimum score a film needs to be listed once it reaches that window. A film only has to clear the marker for the window it's currently standing in, not every window it might pass through later.\n\nYou can set a window's marker to Off, which lists everything that reaches it regardless of score, or turn a window off entirely so it's never tracked at all.\n\nDrag a marker and Cascade re-checks every film your agent has already found against the new bar straight away — no refresh needed. A film that no longer clears it drops from the agent's list; one that now does appears. (A film you've set Watch On for yourself by hand is protected from this — see “Watch On and overrides”.)"},
+   summary:"Markers per window, the single admission floor, and that moving a marker re-places films immediately.",
+   body:"Each window an agent tracks — Cinema, Premium, Rent, Stream — can carry its own marker: a minimum score for a film to be listed once it reaches that window. But your agent doesn't re-test a film against a fresh marker every time it moves on — it's admitted the moment it clears the lowest marker among every window you're tracking, and stays admitted from there. Markers still decide where a film is placed: the earliest window you've given a marker is where an agent judges a film in, while a later window you're tracking but haven't marked just carries it forward once it's already admitted.\n\nYou can set a window's marker to Off, which lists everything that reaches that window regardless of score. Turning a window off entirely, so it's never tracked at all, isn't something an agent decides for itself — that's set account-wide, in Where & when you'll watch.\n\nDrag a marker and Cascade re-checks every film your agent has already found against the new bar straight away — no refresh needed. A film that no longer clears it drops from the agent's list; one that now does appears. (A film you've set Watch On for yourself by hand is protected from this — see “Watch On and overrides”.)"},
   {slug:"the-cascade", title:"The cascade",
-   summary:"Cinema to rent to stream, the start window, and why a later window reads “follows Rent”.",
-   body:"A film moves through the same four windows in order: Cinema, Premium, Rent, then Stream. That order is the whole idea behind the name — a film cascades down through them over time, and Cascade watches for it at whichever window you've chosen to track.\n\nThe earliest window you've armed with a marker is your agent's start window — the one that carries its entry bar. A later window you're also tracking, but haven't given its own marker, doesn't need one: it simply follows the start window's decision, which is what a later window's chip means when it reads “follows Rent” instead of showing a score of its own. Once a film's been judged in, it doesn't need to clear a fresh bar just because it's moved further down the cascade."},
+   summary:"Cinema to rent to stream, the start window, and that the entry bar is the lowest marker you've set.",
+   body:"A film moves through the same four windows in order: Cinema, Premium, Rent, then Stream. That order is the whole idea behind the name — a film cascades down through them over time, and Cascade watches for it at whichever window you've chosen to track.\n\nThe earliest window you've armed with a marker is your agent's start window. Every window you're tracking after it is always followed, marker or not — a later window's chip reads “follows Rent” instead of showing a score of its own, because it doesn't need one. Your agent's entry bar itself is simply the lowest marker among every window you've set one on — not necessarily the start window's — so once a film clears it, the film doesn't need to clear a fresh bar just because it's moved further down the cascade."},
   {slug:"watch-on-and-overrides", title:"Watch On and overrides",
    summary:"What Watch On is, what a hand-made override protects, and what an agent edit can and cannot undo.",
    body:"Watch On is the one answer, per film, for where you're actually going to watch it — Cinema, Premium, Rent or Stream. Cascade sets it for you automatically the moment a film is admitted, based on the window it just qualified in and the windows your agent tracks.\n\nIf you change Watch On yourself, that choice is a hand-made override: it's yours, not the agent's, and it's protected. Editing the agent afterwards — moving a marker, changing what it's tracking — can update everything the agent decided for itself, but it can never quietly undo a Watch On value you set by hand. Even if the film later leaves the agent altogether, your own choice for it stays."},
   {slug:"occasions", title:"Occasions",
-   summary:"What they are and how they group agents.",
-   body:"An occasion is a label you can put on any agent — Me, Family, Cinema night, or anything else that makes sense for how you actually use Cascade. It doesn't change what an agent finds; it's purely a way of grouping agents that belong together so you can tell them apart at a glance.\n\nAn agent can carry as many occasions as you like, or none. Occasions live in their own register, so one you've created stays available to tag onto a new agent even before anything currently carries it, and renaming or removing one there updates every agent tagged with it."},
+   summary:"What they are, how they group agents, and the Watch filter they unlock.",
+   body:"An occasion is a label you can put on any agent — Me, Family, Cinema night, or anything else that makes sense for how you actually use Cascade. It doesn't change what an agent finds; it's purely a way of grouping agents that belong together so you can tell them apart at a glance.\n\nAn agent can carry as many occasions as you like, or none. Occasions live in their own register, so one you've created stays available to tag onto a new agent even before anything currently carries it, and renaming or removing one there updates every agent tagged with it.\n\nOnce you've tagged two or more, an Occasion filter appears on Watch, letting you narrow the whole screen down to just the agents carrying whichever one you pick."},
   {slug:"your-services", title:"Your services",
-   summary:"Why membership ignores your services but no screen does.",
-   body:"Your services — the ones you've told Cascade you actually pay for — shape almost everything you see: what an agent lists when it's scoped to them, what a film's own “where to watch” line says, and what the notify and listing screens show you. They're the lens nearly every screen in the app looks through.\n\nMembership is the one thing that doesn't look through it. What you pay for Cascade itself is flat, whether you've told it about one service or ten — your services describe what you can watch, never what Cascade charges you to help you find it."},
+   summary:"Why membership ignores your services but no screen does, and the account-wide services-only switch.",
+   body:"Your services — the ones you've told Cascade you actually pay for — shape almost everything you see: what an agent lists when it's scoped to them, what a film's own “where to watch” line says, and what the notify and listing screens show you. They're the lens nearly every screen in the app looks through.\n\nAn agent can scope itself to your services window by window, but there's also one account-wide switch, “Only show films on my services” — turn that on and it governs every agent's listing regardless of what any single agent has scoped for itself.\n\nMembership is the one thing that doesn't look through it. What you pay for Cascade itself is flat, whether you've told it about one service or ten — your services describe what you can watch, never what Cascade charges you to help you find it."},
   {slug:"moving", title:"Moving",
    summary:"New versus Changed, and the two-week window.",
    body:"Moving is where Cascade tells you what's happened lately, split into two kinds of row. New is a film's first appearance for a given agent — something it's never found before. Changed is everything else: a film the agent already had, that's now moved to a different window. A film is never counted as both at once.\n\nYou choose how far back to look — Today, Week, 2 weeks or Month — and Moving shows only what falls inside that window, measured back from right now. Every row names the agent that actually owns the film today, so nothing is shown under an agent that no longer has it."},
   {slug:"notifications", title:"Notifications",
    summary:"Exactly what will reach you, by which channel, and when the daily report runs.",
-   body:"Cascade can tell you about a film in two ways: in-app, as a row waiting on the bell next time you open it, and by email, folded into one daily digest sent to the address on your account. Which of those exist for you at all is your account's own decision — an individual agent can only switch an available channel off for itself, never turn on one your account hasn't enabled.\n\nThe daily digest goes out once a day, gathering whatever every agent's channels found since the last one, rather than emailing you separately every time something is found."},
+   body:"Cascade can tell you about a film two ways: as a push notification, and by email, folded into one daily digest sent to the address on your account — both go out together, once a day, at 5pm Sydney time. Which of those exist for you at all is your account's own decision — an individual agent can only switch an available channel off for itself, never turn on one your account hasn't enabled.\n\nWhat actually triggers a notification is the Notify switch on each window in Where & when you'll watch — Upcoming, In cinema, Premium, Rent, Stream. Upcoming has two switches of its own, for a film that hasn't opened yet: When announced (the day it first reaches Cascade) and Opening next week (a week out from its published cinema date). Turn a window's Notify off there and nothing on it will alert you, however an agent tracking it is set up.\n\nThe daily digest gathers whatever every agent's channels found since the last one, rather than emailing or pushing to you separately every time something is found."},
   {slug:"your-account-and-data", title:"Your account and data",
    summary:"What is stored, where, and how to delete it.",
-   body:"Signed out, everything Cascade knows about you — your agents, what you've watched, your preferences — is stored only on this device, in this browser or app install. Nothing about it reaches anywhere else.\n\nSigned in, that same information is mirrored to your account so it's there again on another device you sign into. Signing out doesn't erase it — it's still on your account, waiting for you to sign back in.\n\nDeleting your account outright isn't built into this screen yet — the Account screen says so plainly rather than pretending the button works. Until it is, use Contact us (on the About screen) to ask, and it'll be done by hand."},
+   body:"Signed out, everything Cascade knows about you — your agents, what you've watched, your preferences — is stored only on this device, in this browser or app install. Nothing about it reaches anywhere else.\n\nSigned in, that same information is mirrored to your account so it's there again on another device you sign into. Signing out doesn't erase it — it's still on your account, waiting for you to sign back in.\n\nDeleting your account is on the Account screen itself: type DELETE to confirm, and it permanently removes your agents, everything they've found for you, what you've marked watched, your invites and friends, your notification history and your sign-in — there's nothing left to undo. It doesn't cancel an active App Store subscription, which you'll need to manage separately."},
 ];
 let helpView={mode:"index"}, helpQuery="";
 function helpArticlesFiltered(){
@@ -11822,7 +11842,6 @@ window.navMenuGo=key=>{
   else if(key==="whereWhen") openWhereWhen();
   else if(key==="occasions") openManageOccasionsScreen();
   else if(key==="recommend") openRecommend();
-  else if(key==="metrics") openMetrics();
   else if(key==="help") openHelp();
   else if(key==="about") openAbout();
 };
@@ -13288,7 +13307,7 @@ window.wwToggleSub=(key,sub)=>{
 // one it turns off disappears, and the agent's own answer for it is kept rather than erased, so turning the
 // account channel back on restores what this agent was set to.
 const NOTIFY_CHANNELS = [
-  {key:"inApp", label:"In-app notifications", sub:"A row on the bell, next time you open Cascade.",
+  {key:"inApp", label:"In-app notifications", sub:"A push notification to your device, once a day.",
    accountOn:()=>!!notifyPrefs.inApp},
   {key:"email", label:"Email notifications",  sub:"In the daily digest, to the address on your account.",
    accountOn:()=>!!notifyPrefs.emailOn},
@@ -17618,15 +17637,17 @@ const TUTORIAL_SEEN_KEY="cascade_tutorial_seen";
 function tutorialSeen(){ try{ return localStorage.getItem(acctKey(TUTORIAL_SEEN_KEY))==="1"; }catch(e){ return true; } }
 function markTutorialSeen(){ try{ localStorage.setItem(acctKey(TUTORIAL_SEEN_KEY),"1"); }catch(e){} }
 // The four anchored cards, in order; the fifth (closing, centred, no anchor) is appended in startTutorial.
-// Copy is verbatim per the ticket. Anchors are real listing controls: the agent rail the ticket names
-// doesn't exist in this build (agents are a vertical reorderable list, not a rail) — #agentsBtn is the one
-// real element that stands for "your agents" on the listing itself, the nav chip that opens them.
+// Copy was originally verbatim per the CAS-976 ticket; CAS-1013 corrected the Moving card and the closing
+// card below, which had drifted from shipped behaviour (Moving's rolling window, the 5pm Sydney alert
+// time). Anchors are real listing controls: the agent rail the ticket names doesn't exist in this build
+// (agents are a vertical reorderable list, not a rail) — #agentsBtn is the one real element that stands
+// for "your agents" on the listing itself, the nav chip that opens them.
 function tutorialCardDefs(){
   return [
     {sel:"#agentsBtn", text:"These are your agents. Each one watches for a different kind of film, all the time, so you don't have to."},
     {sel:"#groups .card .r-scores", text:"Two numbers: what people thought, and what critics thought. Your agent only speaks up when a film clears the bar you set."},
     {sel:"#groups .card .ctl.notify", text:"Films move — cinema, then rent, then streaming. Your agent follows each one and tells you when it reaches a window you actually use."},
-    {sel:"#movingBtn", text:"Moving is what changed since you last looked. That's the page to come back to."},
+    {sel:"#movingBtn", text:"Moving shows what's changed recently — Today, Week, 2 weeks or Month. It opens on 2 weeks, so that's the page to come back to."},
   ];
 }
 // A DOM match that's actually on screen — a condensed ("cinfo") card hides its own .r-scores via
@@ -17656,7 +17677,7 @@ function startTutorial(){
   // the four resolve, don't start at all — and don't mark it seen, so a later, better-populated listing
   // gets a real chance at it.
   if(anchored.length<2) return;
-  tutCards=anchored.concat([{text:"You're set. Nothing more to do today — your agents report in the morning.", el:null}]);
+  tutCards=anchored.concat([{text:"You're set. Nothing more to do today — your agents report at 5pm.", el:null}]);
   tutIdx=0;
   window.addEventListener("resize", tutorialReposition);
   window.addEventListener("scroll", tutorialReposition, true);
@@ -19406,7 +19427,7 @@ else if(dedupedN)
     friendsReady=false;
     Promise.allSettled([
       loadAccount(), loadAccountFilms(), loadNotifyPrefs(), loadRealAlerts(),
-      loadFilmPicks(), loadInvites(), loadFriends(), loadMetricsAdmin()
+      loadFilmPicks(), loadInvites(), loadFriends()
     ]).then(()=>{
       const t1 = performance.now();
       console.log('[CAS-460] account fan-out end (' + label + ')', t1, 'elapsed_ms', (t1-_t460fanout).toFixed(1));
@@ -19440,7 +19461,6 @@ else if(dedupedN)
       // on-device set that no longer exists; the bell stops showing another account's news.
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); realAlerts=[]; updateMovingBadge();
       invites=[]; invitesReady=true; updateInvitesBadge();   // CAS-886: same reasoning — a guest has no invites
-      isMetricsAdmin=false; updateMetricsNavItem();   // CAS-943: same reasoning — a guest is never an admin
       cascadeKnown=new Map(); saveCascadeKnown(); cascadeEditedAt=new Map(); saveCascadeEditedAt();
       filmBaseline=null; pickBaseline=null; watchBaseline=null;
       agentFilms={}; agentFilmsBaseline=null; agentFilmsReady=true;   // CAS-736: a guest has nothing to wait on
@@ -20008,105 +20028,6 @@ else if(dedupedN)
     friendsReady=true;
     if(typeof renderFriendsScreen==="function" && $("friendsScreen") && $("friendsScreen").classList.contains("open")) renderFriendsScreen();
   }
-  // CAS-943: probes analytics_admins for a row matching this signed-in user. RLS returns an empty result
-  // for a non-admin rather than an error, so isMetricsAdmin just reflects whether any row came back.
-  async function loadMetricsAdmin(){
-    if(!client()||!accountActive()){ isMetricsAdmin=false; updateMetricsNavItem(); return; }
-    const { data, error } = await client().from("analytics_admins").select("user_id").eq("user_id", uid());
-    if(error){ console.warn("analytics_admins probe", error); isMetricsAdmin=false; updateMetricsNavItem(); return; }
-    isMetricsAdmin = !!(data && data.length);
-    updateMetricsNavItem();
-  }
-  function fmtMetricsDay(d){
-    if(!d) return "—";
-    const dt=new Date(d+"T00:00:00");
-    return isNaN(dt) ? esc(d) : dt.toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"});
-  }
-  function metricsTableHTML(cols, rows, emptyMsg){
-    if(!rows || !rows.length) return `<div class="mlempty">${esc(emptyMsg)}</div>`;
-    return `<table class="mtable"><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}</tr></thead>
-      <tbody>${rows.map(r=>`<tr>${r.map(v=>`<td>${v}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-  }
-  // CAS-943: five plain tables, each read straight off its own analytics_* view — no charts, per Lee's
-  // stated preference. Fetched fresh on every open rather than pulled into the fanout, since the screen is
-  // reachable at all only for the small analytics_admins allowlist.
-  async function renderMetricsScreen(){
-    const el=$("metricsBody"); if(!el) return;
-    el.innerHTML=`
-      <div class="ostop"><button class="osback" type="button" onclick="closeMetrics()" aria-label="Back">←</button>
-        <h2 class="osh">Metrics</h2></div>
-      <p class="ossub">Acquisition, onboarding, activation, retention and feature usage — read straight off the analytics views.</p>
-      <div class="flabel">Acquisition</div><div id="metAcq" class="mlempty">Loading…</div>
-      <div class="flabel">Onboarding funnel</div><div id="metFunnel" class="mlempty">Loading…</div>
-      <div class="flabel">Activation</div><div id="metActivation" class="mlempty">Loading…</div>
-      <div class="flabel">Retention</div><div id="metRetention" class="mlempty">Loading…</div>
-      <div class="flabel">Feature usage</div><div id="metFeature" class="mlempty">Loading…</div>`;
-    const c=client();
-    if(!c){
-      ["metAcq","metFunnel","metActivation","metRetention","metFeature"].forEach(id=>{
-        const n=$(id); if(n) n.textContent="Not available.";
-      });
-      return;
-    }
-    const [acq, funnel, activation, retention, feature] = await Promise.all([
-      c.from("analytics_acquisition").select("day,source,medium,campaign,sessions,new_devices,new_devices_signed_up").order("day",{ascending:false}),
-      c.from("analytics_onboarding_funnel").select("step,shown,continued,skipped,drop_pct"),
-      c.from("analytics_activation").select("day,devices_app_open,devices_splash_cta,devices_finished_onboarding,devices_created_agent,devices_signed_up").order("day",{ascending:false}),
-      c.from("analytics_retention").select("cohort_week,plat,cohort_size,returned_d1,returned_d7,returned_d30").order("cohort_week",{ascending:false}),
-      c.from("analytics_feature_usage").select("feature,devices,users,events,last_seen_at").order("devices",{ascending:false}),
-    ]);
-
-    if(acq.error) console.warn("analytics_acquisition load", acq.error);
-    if($("metAcq")) $("metAcq").outerHTML = `<div id="metAcq">${metricsTableHTML(
-      ["Day","Source","Medium","Campaign","Sessions","New devices","Signups"],
-      (acq.data||[]).map(r=>[fmtMetricsDay(r.day), esc(r.source), esc(r.medium), esc(r.campaign), r.sessions, r.new_devices, r.new_devices_signed_up]),
-      "No acquisition data yet."
-    )}</div>`;
-
-    if(funnel.error) console.warn("analytics_onboarding_funnel load", funnel.error);
-    // Real step order starting at splash_shown: pinned first, the rest by reached (shown) descending —
-    // a funnel's per-step count only ever falls as you go deeper, so this recovers the real order without
-    // hardcoding a step list the app's own onboarding flow already owns.
-    const funnelRows=(funnel.data||[]).slice().sort((a,b)=>{
-      if(a.step==="splash_shown") return -1;
-      if(b.step==="splash_shown") return 1;
-      return (b.shown||0)-(a.shown||0);
-    });
-    if($("metFunnel")) $("metFunnel").outerHTML = `<div id="metFunnel">${metricsTableHTML(
-      ["Step","Reached","Continued","Skipped","Drop %"],
-      funnelRows.map(r=>[esc(r.step), r.shown, r.continued, r.skipped, r.drop_pct==null?"—":r.drop_pct+"%"]),
-      "No onboarding data yet."
-    )}</div>`;
-
-    if(activation.error) console.warn("analytics_activation load", activation.error);
-    if($("metActivation")) $("metActivation").outerHTML = `<div id="metActivation">${metricsTableHTML(
-      ["Day","Opens","Splash CTA","Finished onboarding","Created an agent","Signed up"],
-      (activation.data||[]).map(r=>[fmtMetricsDay(r.day), r.devices_app_open, r.devices_splash_cta, r.devices_finished_onboarding, r.devices_created_agent, r.devices_signed_up]),
-      "No activation data yet."
-    )}</div>`;
-
-    if(retention.error) console.warn("analytics_retention load", retention.error);
-    if($("metRetention")) $("metRetention").outerHTML = `<div id="metRetention">${metricsTableHTML(
-      ["Cohort week","Platform","Cohort size","D1","D7","D30"],
-      (retention.data||[]).map(r=>[fmtMetricsDay(r.cohort_week), esc(r.plat), r.cohort_size, r.returned_d1, r.returned_d7, r.returned_d30]),
-      "No retention data yet."
-    )}</div>`;
-
-    if(feature.error) console.warn("analytics_feature_usage load", feature.error);
-    if($("metFeature")) $("metFeature").outerHTML = `<div id="metFeature">${metricsTableHTML(
-      ["Event type","Devices","Users","Events","Last seen"],
-      (feature.data||[]).map(r=>[esc(r.feature), r.devices, r.users, r.events, r.last_seen_at ? new Date(r.last_seen_at).toLocaleString() : "—"]),
-      "No feature usage data yet."
-    )}</div>`;
-  }
-  window.openMetrics=()=>{
-    $("metricsScreen").scrollTop=0;
-    $("metricsScreen").classList.add("open"); lockBodyScroll(true);
-    syncWatchChip();
-    logEvent("metrics_opened",{});
-    renderMetricsScreen();
-  };
-  window.closeMetrics=()=>{ $("metricsScreen").classList.remove("open"); lockBodyScroll(false); syncWatchChip(); };
   // Opening the bell is reading it. The rows stay — "we told you about this" is a fact about the
   // past — they just stop counting toward the badge.
   window.markRealAlertsRead = async () => {

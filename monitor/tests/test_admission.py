@@ -26,20 +26,31 @@ def _load_movies():
     return data["movies"] if isinstance(data, dict) else data
 
 
-def _cascade_scores(tmdb_ids):
-    """cascadeScore(), off the same shipped engine admit_shim.mjs uses — the independent check
-    (a) below needs, since admission alone doesn't say what score a film cleared."""
-    ids = json.dumps([str(i) for i in tmdb_ids])
+def _cascade_scores(movies, tmdb_ids):
+    """cascadeScore(), off the same shipped engine admit_shim.mjs uses, computed on the EXACT
+    movie objects `movies` (the same ones passed to compute_admission()) — not a second, separate
+    lookup into E.MOVIES (the built index.html's own embedded catalogue). E.MOVIES is rederived
+    against the real wall-clock date every time the engine loads (deriveStatus(), CAS-227/CAS-237),
+    so a film whose cinema_date crosses a window boundary between when `movies` was read and when
+    this probe runs can carry a different `status` there than in `movies` — and since cascadeScore()
+    branches on status, that alone changes the score. Scoring the very objects admission was asked
+    about keeps this check comparing like with like."""
+    ids = {str(i) for i in tmdb_ids}
+    wanted = [m for m in movies if str(m.get("tmdb_id")) in ids]
     script = (
         "import { loadEngine } from './tests/js/engine.mjs';\n"
         "const E = loadEngine();\n"
-        f"const ids = new Set({ids});\n"
-        "const out = {};\n"
-        "for (const m of E.MOVIES) { if (ids.has(String(m.tmdb_id))) out[String(m.tmdb_id)] = E.cascadeScore(m); }\n"
-        "process.stdout.write(JSON.stringify(out));\n"
+        "let raw = '';\n"
+        "process.stdin.on('data', c => raw += c);\n"
+        "process.stdin.on('end', () => {\n"
+        "  const movies = JSON.parse(raw);\n"
+        "  const out = {};\n"
+        "  for (const m of movies) out[String(m.tmdb_id)] = E.cascadeScore(m);\n"
+        "  process.stdout.write(JSON.stringify(out));\n"
+        "});\n"
     )
     proc = subprocess.run(["node", "--input-type=module", "-e", script], cwd=_REPO_ROOT,
-                          capture_output=True, text=True, timeout=60)
+                          input=json.dumps(wanted), capture_output=True, text=True, timeout=60)
     if proc.returncode != 0:
         raise RuntimeError(f"score probe failed: {proc.stderr}")
     return json.loads(proc.stdout)
@@ -57,7 +68,7 @@ class ScoreFloorGate(unittest.TestCase):
         admission = compute_admission([cascade], {"today": movies})
         admitted = admission["c-floor"]["today"]
         self.assertTrue(admitted, "setup: the floor must admit at least one real film to be a test")
-        scores = _cascade_scores(admitted)
+        scores = _cascade_scores(movies, admitted)
         for mid in admitted:
             self.assertIn(mid, scores, f"movie {mid} was admitted but not found in MOVIES for scoring")
             self.assertNotEqual(scores[mid], -1, f"movie {mid} has no Cascade score but was admitted")

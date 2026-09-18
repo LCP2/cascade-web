@@ -34,6 +34,7 @@ to compare against. Output for the app front-end is written to movies.json.
 
 from __future__ import annotations
 import os, sys, csv, io, re, json, time, shutil, hashlib, base64, calendar, datetime, subprocess, urllib.parse, urllib.request, urllib.error
+from collections import Counter
 
 import runstats
 
@@ -244,11 +245,20 @@ def get_text(url: str, retries: int = 4, headers: dict | None = None) -> str:
 _LIMIT_MARKERS = ("limit reached", "request limit", "too many requests", "invalid api key")
 
 
-def _api_call(label: str, fn, *args):
-    """Run one enrichment call. Returns (value, outcome) with outcome in {'ok','skip','stop'}."""
+def _api_call(label: str, fn, *args, status_counts: "Counter | None" = None):
+    """Run one enrichment call. Returns (value, outcome) with outcome in {'ok','skip','stop'}.
+
+    CAS-1011: `status_counts`, when given, tallies the REAL response actually received for
+    this one call (HTTP status code, or 'other' for a non-HTTP exception) — a title skipped
+    because an earlier call already tripped `stop` never reaches here, so it can never inflate
+    this tally. This is what health.py's tmdb_fetch check now reads for its per-status
+    breakdown, rather than the per-title *_fails counters below (which also count untried
+    post-stop skips, and so are not a true error tally on their own)."""
     try:
         return fn(*args), "ok"
     except urllib.error.HTTPError as e:
+        if status_counts is not None:
+            status_counts[e.code] += 1
         body = ""
         try:
             body = (e.read() or b"").decode("utf-8", "replace")[:200].strip()
@@ -268,6 +278,8 @@ def _api_call(label: str, fn, *args):
               f"{f' — no further {label} calls this run' if stop else ' — skipping this title'}")
         return None, ("stop" if stop else "skip")
     except Exception as e:
+        if status_counts is not None:
+            status_counts["other"] += 1
         stop = any(k in str(e).lower() for k in _LIMIT_MARKERS)
         print(f"[warn] {label}: {type(e).__name__}: {e}"
               f"{f' — no further {label} calls this run' if stop else ' — skipping this title'}")
@@ -594,6 +606,10 @@ SCOREABILITY_PROBE_BUDGET = int(os.getenv("SCOREABILITY_PROBE_BUDGET", "200"))
 SCOREABILITY_STALE_DAYS = WATCHMODE_CACHE_TTL_DAYS          # tier 1, non-ladder: 30 days
 SCOREABILITY_LADDER_STALE_DAYS = WM_NIGHTLY_COHORT_TTL_DAYS  # tier 1, ladder cohort: 7 days
 SCOREABILITY_RECOVERY_DAYS = 90                              # tier 3: no_score re-probe wait
+# CAS-1024: the manual one-shot back-catalogue dispatch (watchmode-backfill.yml's
+# target=backcatalogue) stops spending once Watchmode's live remaining-credits figure drops below
+# this — the floor nightly upkeep (WM_NIGHTLY_MAX_CREDITS/CAS-987 pacing) still needs.
+WM_BACKCAT_UPKEEP_FLOOR = 300
 USER_HELD_IDS_FILE = os.path.join(STATE_DIR, "user_held_ids.json")   # CAS-986: monitor/store.py writes this
 SCOREABLE_SHIM = os.path.join(os.path.dirname(__file__), "scripts", "scoreable_shim.mjs")
 
@@ -604,6 +620,11 @@ WM_PUBLISH_FLOOR = int(os.getenv("WM_PUBLISH_FLOOR", "60"))
 # CAS-997 Defect 2: a title TMDB reports not-found (404) on this many CONSECUTIVE nightly runs is
 # gone for good, not a transient blip — dropped from candidates.json/publication unless user-held.
 TMDB_NOT_FOUND_DROP_STREAK = 3
+
+# CAS-1029: how often enrich_candidates_for_publication persists candidates.json mid-batch, so a
+# run that is killed before finishing its full eligible set (an external timeout, never a cap this
+# code imposes itself) keeps every enrichment it already completed. 0 disables mid-batch saving.
+PUBLISH_ENRICH_SAVE_EVERY = int(os.getenv("PUBLISH_ENRICH_SAVE_EVERY", "200"))
 
 
 def _invert_watchmode_idmap(idmap: dict) -> dict:
@@ -647,7 +668,16 @@ def enrich_watchmode_fields(movie: dict, wm_idmap: dict, budget: dict,
 
     Returns 'ok' (fetched and wrote fields), 'cached' (already fresh, no credit spent), 'no-id'
     (no Watchmode id resolves for this title), 'skip' (budget exhausted), or an `_api_call`
-    outcome ('skip'/'stop') on a failed fetch."""
+    outcome ('skip'/'stop') on a failed fetch.
+
+    CAS-1023: this is the one call every Watchmode-scoreable title must pass through (isScoreable
+    needs at least one of these fields), but a title ingested via `_watchmode_record` or
+    `merge_backcatalogue_candidates` never gets a TMDB detail call, so `popularity`/`budget`/
+    `worldwide_gross` (the scale dial's own fields, CAS-238) can otherwise stay null forever even
+    once the title is scoreable and published. A successful fetch backfills `popularity` from the
+    same percentile-to-TMDB-scale formula CAS-991's merge already uses, but only when the movie
+    carries no scale signal of its own yet — a real TMDB popularity/budget/gross is never
+    overwritten."""
     if not _watchmode_fields_stale(movie, ttl_days):
         return "cached"
     wm_id = wm_idmap.get(movie.get("tmdb_id"))
@@ -662,8 +692,13 @@ def enrich_watchmode_fields(movie: dict, wm_idmap: dict, budget: dict,
         return outcome
     movie["wm_user_rating"] = _num(detail.get("user_rating"))
     movie["wm_critic_score"] = _int(detail.get("critic_score"))
-    movie["wm_popularity_percentile"] = _num(detail.get("popularity_percentile"))
+    percentile = _num(detail.get("popularity_percentile"))
+    movie["wm_popularity_percentile"] = percentile
     movie["wm_fields_fetched_at"] = _RUN_DATE
+    has_scale_signal = ((movie.get("budget") or 0) > 0 or (movie.get("worldwide_gross") or 0) > 0
+                        or (movie.get("popularity") or 0) > 0)
+    if not has_scale_signal and percentile is not None:
+        movie["popularity"] = round(percentile / 10, 4)
     return "ok"
 
 
@@ -936,6 +971,203 @@ def probe_candidates(candidates: dict, today: datetime.date, budget: int, wm_idm
     return outcomes
 
 
+def run_backcatalogue_probe(candidates: dict, today: datetime.date, max_credits: int,
+                            wm_idmap: dict, backcat_ids: set, fetch_remaining_credits,
+                            upkeep_floor: int = WM_BACKCAT_UPKEEP_FLOOR) -> dict:
+    """CAS-1024: the one-shot manual back-catalogue probe (watchmode-backfill.yml's
+    target=backcatalogue mode). Probes only `backcat_ids` (tmdb_ids sourced from CAS-989's
+    state/wm_backcatalogue_candidates.json) that are still `outcome: unprobed`, most popular
+    first, reusing enrich_watchmode_fields for the actual per-title fetch — the SAME call
+    CAS-986's nightly probe_candidates() uses; never a second scoring/probe implementation. A
+    candidate already probed (scored/no_score/no_wm_id) is never revisited by this mode — unlike
+    probe_candidates' tier 3, there is no recovery window here (the ticket's own Change #2).
+
+    Deliberately NOT capped by wm_run_allowance/WM_RUN_MAX_CREDITS/the CAS-987 cycle pace: this is
+    the manual dispatch's own explicit spend decision, so `max_credits` is the only ceiling this
+    function itself enforces.
+
+    Stops before spending the next credit when: `max_credits` is exhausted, the candidate list is
+    exhausted, or `fetch_remaining_credits()` — Watchmode's live, 0-credit /status figure, called
+    before every probe — reports fewer than `upkeep_floor` credits remaining on the account (the
+    nightly upkeep path's own floor). `fetch_remaining_credits` is injected so callers/tests can
+    supply a live status source or a canned sequence without a real network call; `None` (a failed
+    status check) is treated as "unknown" and never stops the run on its own.
+
+    Mutates each probed candidate's own last_probed/probe_count/outcome in place, the same
+    bookkeeping probe_candidates() applies, so a second dispatch resumes correctly.
+
+    Returns the same {'ok','cached','no-id','skip','stop','probed','spent'} tally as
+    probe_candidates, plus 'stopped_on_floor' (bool) and this run's own 'no_score' count (an
+    'ok' fetch that resolved no usable score field — distinct from 'no-id')."""
+    bd = {"remaining": max_credits, "skipped": 0}
+    today_iso = today.isoformat()
+
+    targets = sorted(
+        (c for c in candidates.values()
+         if c.get("tmdb_id") in backcat_ids and c.get("outcome") == "unprobed"),
+        key=lambda c: c.get("popularity") or 0, reverse=True)
+
+    outcomes = {"ok": 0, "cached": 0, "no-id": 0, "skip": 0, "stop": 0, "probed": 0,
+                "no_score": 0}
+    stopped_on_floor = False
+    for c in targets:
+        if bd["remaining"] <= 0:
+            break
+        remaining_credits = fetch_remaining_credits()
+        if remaining_credits is not None and remaining_credits < upkeep_floor:
+            stopped_on_floor = True
+            break
+        ttl = SCOREABILITY_LADDER_STALE_DAYS if _is_ladder_cohort(c) else SCOREABILITY_STALE_DAYS
+        result = enrich_watchmode_fields(c, wm_idmap, bd, ttl)
+        outcomes[result] = outcomes.get(result, 0) + 1
+        if result in ("ok", "no-id"):
+            outcomes["probed"] += 1
+            c["last_probed"] = today_iso
+            c["probe_count"] = c.get("probe_count", 0) + 1
+            if result == "no-id":
+                c["outcome"] = "no_wm_id"
+            else:
+                has_score = (c.get("wm_user_rating") is not None
+                            or c.get("wm_critic_score") is not None
+                            or c.get("wm_popularity_percentile") is not None)
+                c["outcome"] = "scored" if has_score else "no_score"
+                if not has_score:
+                    outcomes["no_score"] += 1
+    outcomes["spent"] = max_credits - bd["remaining"]
+    outcomes["stopped_on_floor"] = stopped_on_floor
+    return outcomes
+
+
+# CAS-1027: the exact shape CAS-991's merge_backcatalogue_candidates writes for a genuinely new
+# tmdb_id — nothing else in the pipeline produces a record carrying ONLY these keys.
+_CANDIDATE_STUB_KEYS = frozenset({
+    "first_seen", "last_probed", "outcome", "popularity", "popularity_percentile",
+    "probe_count", "status", "title", "tmdb_id", "year",
+    "wm_user_rating", "wm_critic_score", "wm_popularity_percentile", "wm_fields_fetched_at",
+})
+
+
+def is_publishable_record(record: dict) -> bool:
+    """CAS-1027's publication guard — every path that decides movies.json's membership must run
+    each candidate through this before it publishes. Closes the defect CAS-1024's back-catalogue
+    dispatch hit: a candidate the Watchmode probe scored, but that never got TMDB enrichment,
+    published as a raw candidate-pool stub — an int `year` and none of the fields the app needs,
+    which crashed the app's own `(m.cinema_date || m.year || "").slice` read and every engine/data-
+    integrity check that assumes a string date.
+
+    Requires a STRING `year` or `cinema_date` (CAS-991's merge_backcatalogue_candidates writes an
+    int `year`, never a string), and rejects a record whose keys are ENTIRELY the candidate-pool
+    bookkeeping set (`_CANDIDATE_STUB_KEYS`) — a record that thin has had no TMDB enrichment at
+    all, even once the Watchmode probe has added every wm_* field it ever will."""
+    year = record.get("year")
+    cinema_date = record.get("cinema_date")
+    has_date = (isinstance(year, str) and year != "") or (isinstance(cinema_date, str) and cinema_date != "")
+    if not has_date:
+        return False
+    if set(record.keys()) <= _CANDIDATE_STUB_KEYS:
+        return False
+    return True
+
+
+def enrich_candidate_for_publication(candidate: dict, today: datetime.date) -> str:
+    """CAS-1027: give a stub candidate (CAS-991's merge_backcatalogue_candidates shape, or any
+    other thin candidate) the exact TMDB-only enrichment and record shape build_live_catalogue
+    gives every other title, in place, before select_publishable is allowed to publish it — never
+    a second enrichment implementation. Reuses revalidate_record for the detail call (_tmdb_record)
+    and tmdb_providers/derive_from_providers/apply_monotonic_status for availability, the same
+    calls build_live_catalogue's own per-title loop makes. Spends no Watchmode credits; a
+    candidate's existing wm_* fields (CAS-1023's scoreability probe) are untouched, since none of
+    these calls read or write them, and a brand-new candidate's status ([]) ranks below every real
+    tier so apply_monotonic_status always commits the fresh answer, never holds it back.
+
+    Returns an _api_call outcome ('ok', 'skip', 'stop' or 'not_found'). Anything but 'ok' leaves
+    `candidate` exactly as it was — still a stub, to retry next run."""
+    _, outcome = _api_call("TMDB detail (publication enrich)", revalidate_record, candidate, today)
+    if outcome != "ok":
+        return outcome
+
+    tier = ps.classify_tier(candidate, today)
+    candidate["poll_tier"] = tier
+    if tier == "none":
+        candidate["offers"] = []
+        candidate["status"] = ["upcoming"]
+        candidate["availability_confidence"] = "confirmed"
+        candidate["availability_source"] = "tmdb_date"
+        return "ok"
+
+    prov, prov_outcome = _api_call("TMDB providers (publication enrich)", tmdb_providers,
+                                   candidate["tmdb_id"])
+    if prov_outcome == "ok":
+        candidate["jw_link"] = prov.get("jw_link")
+        if has_provider_rows(prov):
+            candidate["offers"] = provider_offers(prov)
+            apply_monotonic_status(candidate, derive_from_providers(candidate, prov, today),
+                                   "confirmed", today)
+        else:
+            candidate["offers"] = []
+            apply_monotonic_status(candidate, derive_from_providers(candidate, {}, today),
+                                   "estimated", today)
+        candidate["last_polled"] = today.isoformat()
+        candidate["availability_source"] = "tmdb_providers"
+    else:
+        w, conf = ps.estimate_status(candidate, today)
+        candidate["offers"] = []
+        candidate["status"] = [w]
+        candidate["availability_confidence"] = conf
+        candidate["availability_source"] = "estimated_unpolled"
+    return "ok"
+
+
+def enrich_candidates_for_publication(candidates: dict, engine_scoreable_ids: set,
+                                      today: datetime.date) -> dict:
+    """CAS-1027: before select_publishable runs, give every candidate the engine says is
+    scoreable today — but that isn't yet a publishable record shape — the enrichment
+    enrich_candidate_for_publication describes. A candidate that already satisfies
+    is_publishable_record is left completely alone (no repeat TMDB calls for an already-enriched
+    title). Mutates `candidates` in place; the caller's own save_candidates persists the result,
+    so a candidate enriched here is never re-fetched on a later run.
+
+    CAS-1029: every eligible candidate is attempted, most popular first, in a single run — no cap
+    imposed here. save_candidates runs every PUBLISH_ENRICH_SAVE_EVERY titles so a run stopped
+    early by something outside this code (a workflow timeout) keeps its completed work; the next
+    run's eligible set naturally excludes anything already enriched. TMDB_PACING paces the calls,
+    same as the discovery loops. No Watchmode call is ever made here — see
+    enrich_candidate_for_publication.
+
+    Returns {'eligible': int, 'enriched': int, 'failed': int, 'reasons': dict} — 'eligible' is the
+    pre-loop count of scoreable-but-not-yet-publishable candidates; 'reasons' tallies every
+    non-'ok' outcome (skip/stop/not_found) by name. Printed as
+    `publish_guard_enriched=<n> publish_guard_failed=<n>`."""
+    eligible = [c for c in candidates.values()
+               if c["tmdb_id"] in engine_scoreable_ids and not is_publishable_record(c)]
+    eligible.sort(key=lambda c: c.get("popularity") or 0, reverse=True)
+
+    stats = {"eligible": len(eligible), "enriched": 0, "failed": 0, "reasons": {}}
+    for i, c in enumerate(eligible, start=1):
+        outcome = enrich_candidate_for_publication(c, today)
+        if outcome == "ok":
+            stats["enriched"] += 1
+        else:
+            stats["failed"] += 1
+            stats["reasons"][outcome] = stats["reasons"].get(outcome, 0) + 1
+        if PUBLISH_ENRICH_SAVE_EVERY > 0 and i % PUBLISH_ENRICH_SAVE_EVERY == 0:
+            save_candidates(candidates)
+        time.sleep(TMDB_PACING)
+    print(f"publish_guard_enriched={stats['enriched']} publish_guard_failed={stats['failed']}")
+    return stats
+
+
+def publish_enrich_log_line(enrich_stats: dict, published: int) -> str:
+    """CAS-1029's own required summary line, built once so both call sites (the nightly
+    apply_two_tier_publication step and cas1024_backcatalogue_load.py's watchmode-backfill.yml
+    target=backcatalogue dispatch) print it identically. `published` is select_publishable's own
+    'promoted' count for this run — how many of this run's candidates actually reached
+    movies.json, not the catalogue's whole published total."""
+    reasons = ", ".join(f"{k}={v}" for k, v in sorted(enrich_stats["reasons"].items())) or "none"
+    return (f"[enrich] eligible {enrich_stats['eligible']}, enriched {enrich_stats['enriched']}, "
+            f"published {published}, failed {enrich_stats['failed']} ({reasons})")
+
+
 def run_scoreability_probe(candidates: dict, today: datetime.date, budget: int,
                            published_ids: set) -> dict:
     """Fetch the Watchmode id map once, then run probe_candidates. Tolerates a missing/rejected
@@ -1023,15 +1255,21 @@ def select_publishable(candidates: dict, engine_scoreable_ids: set, previously_p
     or when `held_ids` is None (the tables were unreadable this run — demote nothing at all,
     per the ticket's own fail-safe).
 
+    CAS-1027: is_publishable_record gates every addition to `published_ids` below, ranked-in or
+    exempt — the engine's scoreable answer is necessary but not sufficient; a candidate scoreable
+    today that never got TMDB-enriched (a CAS-991 back-catalogue stub the enrichment pass upstream
+    failed to complete) must never reach movies.json.
+
     Returns (published_records, stats) where stats has published/promoted/demoted/exempt."""
-    scoreable = [c for c in candidates.values() if c["tmdb_id"] in engine_scoreable_ids]
+    scoreable = [c for c in candidates.values()
+                if c["tmdb_id"] in engine_scoreable_ids and is_publishable_record(c)]
     scoreable.sort(key=lambda m: m.get("popularity") or 0, reverse=True)
     ranked_in = {c["tmdb_id"] for c in scoreable[:catalogue_target]}
 
     published_ids = set(ranked_in)
     exempt_ids = set()
     for tid in previously_published_ids - ranked_in:
-        if str(tid) not in candidates:
+        if str(tid) not in candidates or not is_publishable_record(candidates[str(tid)]):
             continue
         if held_ids is None or tid in held_ids:
             published_ids.add(tid)
@@ -1087,14 +1325,25 @@ def apply_two_tier_publication(candidates: dict, today: datetime.date, discovery
         engine_ids = set(previously_published_ids)
         engine_ok = False
 
+    # CAS-1027: a candidate the engine calls scoreable today may still be a raw candidate-pool
+    # stub (CAS-991's merge_backcatalogue_candidates, or any other thin source) — give it the same
+    # TMDB enrichment any other published title carries before select_publishable's own guard
+    # (is_publishable_record) decides membership. No Watchmode credits spent; an already-enriched
+    # candidate is left untouched.
+    enrich_stats = enrich_candidates_for_publication(candidates, engine_ids, today)
+
     published_records, stats = select_publishable(candidates, engine_ids, previously_published_ids,
                                                    held_ids, CATALOGUE_TARGET)
+    print(publish_enrich_log_line(enrich_stats, stats["promoted"]))
     unprobed = sum(1 for c in candidates.values() if c.get("outcome") == "unprobed")
     report = {
         "candidates": len(candidates), "unprobed": unprobed,
         "probed_today": probe_outcomes["probed"], "engine_ok": engine_ok,
         "wm_spent": probe_outcomes.get("spent", 0),   # CAS-987: this pass's actual draw on probe_budget
         "not_found_dropped": not_found_dropped,
+        "publish_guard_eligible": enrich_stats["eligible"],
+        "publish_guard_enriched": enrich_stats["enriched"],
+        "publish_guard_failed": enrich_stats["failed"],
         **stats,
     }
     return published_records, report
@@ -1892,6 +2141,10 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
     ondemand_set = {m["tmdb_id"] for m in sched["ondemand"]}
     provider_calls = wm_calls = cinema_calls = 0
     provider_not_found = cinema_not_found = 0   # CAS-997 Defect 2: 404s, tallied apart from real errors
+    # CAS-1011: real per-status-code tally for the two TMDB call sites that feed provider_calls/
+    # cinema_calls below (not revalidate_record — that pass never counts toward calls/errors at
+    # all) — see _api_call's docstring for why this, not *_fails, is the true error tally.
+    tmdb_status_counts: Counter = Counter()
     # CAS-384: shrink today's pot by whatever an earlier run already spent against the SAME free-tier
     # day, so two runs sharing one real cap can't each claim a full allowance.
     ondemand_cap = ONDEMAND_WM_CAP if wm_budget_cap is None else wm_budget_cap
@@ -1913,7 +2166,8 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
         # CAS-379: back-fill pre-CAS-360 records regardless of poll tier — an upcoming title carried
         # forward from before the field existed is just as stuck as a released one.
         if "cinema_release" not in m and cinema_open and cinema_backfill > 0:
-            _, cinema_outcome = _api_call("TMDB release_dates", enrich_cinema_release, m)
+            _, cinema_outcome = _api_call("TMDB release_dates", enrich_cinema_release, m,
+                                          status_counts=tmdb_status_counts)
             cinema_calls += 1; cinema_backfill -= 1
             if cinema_outcome == "stop":
                 cinema_open = False
@@ -1934,7 +2188,8 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
             m["availability_source"] = "tmdb_date"
         else:
             # PRIMARY availability: free TMDB Watch Providers (AU), every released title, daily.
-            prov, prov_outcome = (_api_call("TMDB providers", tmdb_providers, m["tmdb_id"])
+            prov, prov_outcome = (_api_call("TMDB providers", tmdb_providers, m["tmdb_id"],
+                                            status_counts=tmdb_status_counts)
                                   if prov_open else (None, "skip"))
             if prov_open:
                 provider_calls += 1
@@ -2061,7 +2316,9 @@ def build_live_catalogue(today, base_records, wm_cache, offsets=None, ondemand_i
                   provider_not_found=provider_not_found, cinema_not_found=cinema_not_found,
                   wm_stopped=not wm_open, providers_stopped=not prov_open,
                   cinema_stopped=not cinema_open,
-                  revalidation_stopped=not revalidation_open)
+                  revalidation_stopped=not revalidation_open,
+                  # CAS-1011: real per-status-code tally, JSON-safe (string keys).
+                  tmdb_status_counts={str(k): v for k, v in tmdb_status_counts.items()})
     if wm_fails or prov_fails or cinema_fails:
         print(f"[warn] degraded enrichment: {prov_fails} TMDB-provider, {wm_fails} "
               f"Watchmode, {cinema_fails} TMDB-release_dates title(s) kept "
@@ -2315,10 +2572,20 @@ def run(simulate_day: bool = False):
         # CAS-974: this run's TMDB/Watchmode call+error tallies, for monitor.health's tmdb_fetch/
         # watchmode_fetch checks — a run with 0 keys never reaches this branch, so an "unknown"
         # (no run_stats.json entry) there is the honest answer, not a fabricated 0.
+        # CAS-1011: "errors" is now derived from the real per-status breakdown (every status other
+        # than 404), not provider_fails/cinema_fails — those also count titles skipped untried
+        # after an earlier call already tripped `stop`, which is not a per-call error.
+        tmdb_status_counts = counts["tmdb_status_counts"]
+        tmdb_errors = sum(v for status, v in tmdb_status_counts.items() if status != "404")
         runstats.bump("tmdb", calls=counts["provider_calls"] + counts["cinema_calls"],
-                      errors=counts["provider_fails"] + counts["cinema_fails"],
+                      errors=tmdb_errors,
                       not_found=counts["provider_not_found"] + counts["cinema_not_found"])
-        runstats.bump("watchmode", calls=counts["wm_calls"], errors=counts["wm_fails"])
+        runstats.bump_counts("tmdb", "status_counts", tmdb_status_counts)
+        # CAS-1033: run_stats.watchmode.calls is bumped once every credit-costing Watchmode path
+        # for this run is known (see the CAS-986 two-tier publication block below), not here —
+        # on-demand enrichment alone is routinely 0 on a run that still spent its whole nightly/
+        # scoreability-probe allowance, and bumping only counts["wm_calls"] here made monitor.
+        # health's watchmode_fetch report "0 calls made this run" on a run that did real work.
         prior_monthly = _load_monthly_wm_spend(today)
         monthly_spent = prior_monthly.get("wm_spent", 0) + counts["wm_calls"]
         _save_monthly_wm_spend(today, monthly_spent)
@@ -2390,6 +2657,11 @@ def run(simulate_day: bool = False):
         # scoreability probe) rather than overwrite it, in case a second run happens the same day.
         nightly_spent = nightly_cap - nightly_budget["remaining"]
         run_spent = counts["wm_calls"] + nightly_spent + cas986_report["wm_spent"]
+        # CAS-1033: the deferred watchmode run_stats bump — run_spent is this run's REAL total
+        # Watchmode activity (on-demand + nightly fields + the CAS-986 scoreability probe), so
+        # monitor.health's watchmode_fetch check (which reads run_stats.watchmode.calls) is
+        # measuring what it claims to measure instead of only the on-demand slice.
+        runstats.bump("watchmode", calls=run_spent, errors=counts["wm_fails"])
         today_total_spent = cycle["days"].get(today_iso, 0) + run_spent
         cycle["days"][today_iso] = today_total_spent
         _save_wm_cycle_budget(cycle, today)

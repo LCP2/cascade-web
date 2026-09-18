@@ -102,8 +102,12 @@ class TwoRepliesTwoTransitionsOrdering(unittest.TestCase):
         rc, out, _ = _run(argv)
         self.assertEqual(rc, 0)
         self.assertIn("2 alert(s), 2 invite reply(s)", out)
-        self.assertIn("Replies to your invites", out)
-        self.assertLess(out.index("Replies to your invites"), out.index("Rent Riser"))
+        # The catalogue-diff dump (every transition seen, matched or not) prints "Rent Riser" well
+        # before the digest itself — the ordering claim is about the RENDERED DIGEST, so it must be
+        # checked inside the "---- digest HTML ----" block, not the run's full stdout.
+        html = out[out.index("---- digest HTML ----"):]
+        self.assertIn("Replies to your invites", html)
+        self.assertLess(html.index("Replies to your invites"), html.index("Rent Riser"))
 
 
 class NeverWritesSeenAt(unittest.TestCase):
@@ -113,7 +117,10 @@ class NeverWritesSeenAt(unittest.TestCase):
     def test_running_the_digest_leaves_seen_at_untouched(self):
         replies = [{
             "id": 501, "sender_id": "user-A", "to_name": "Sam", "film_title": "Rent Riser",
-            "tmdb_id": 5001, "answer": "yes", "created_at": "2026-07-15T10:00:00Z",
+            # CAS-1015: --target-user only folds in a reply whose tmdb_id sits in the reserved
+            # fixture range (999000001-999000999) — anything else is treated as real correspondence
+            # and left untouched, so this fixture has to use one to be picked up at all.
+            "tmdb_id": 999000001, "answer": "yes", "created_at": "2026-07-15T10:00:00Z",
             "seen_at": "2026-01-01T00:00:00Z",
         }]
         argv = [

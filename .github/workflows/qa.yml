@@ -118,7 +118,9 @@ jobs:
       - run: python poc_pipeline.py --build-html
 
       - name: Engine invariants + data integrity
-        run: npm run test:engine 2>&1 | tee engine.log
+        run: |
+          set -o pipefail
+          npm run test:engine 2>&1 | tee engine.log
 
       - name: Capture failure detail
         if: failure()
@@ -161,11 +163,14 @@ jobs:
 
       - name: Pipeline invariants
         run: |
+          set -o pipefail
           MODULES=$(python -c "import pathlib; print(' '.join(f'tests.{p.stem}' for p in sorted(pathlib.Path('tests').glob('test_*.py')) if p.stem != 'test_data_quality'))")
           python -m unittest $MODULES 2>&1 | tee data.log
 
       - name: Catalogue data quality (blocking app-breakers; rest report-only)
-        run: python -m tests.run_data_quality 2>&1 | tee -a data.log
+        run: |
+          set -o pipefail
+          python -m tests.run_data_quality 2>&1 | tee -a data.log
 
       - name: Capture failure detail
         if: failure()
@@ -195,6 +200,7 @@ jobs:
       - name: Monitor
         timeout-minutes: 8
         run: |
+          set -o pipefail
           python -m unittest discover -s monitor/tests 2>&1 | tee monitor.log
           python -m monitor --dry-run 2>&1 | tee -a monitor.log
 
@@ -221,14 +227,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Device-parity lint (CAS-554)
-        run: node tests/lint/device-parity.mjs 2>&1 | tee lint.log
+      # CAS-1006: matches package.json's test:lint set (device-parity, xss-sinks, review-prompt-copy)
+      # so qa.yml and `npm run qa` gate on the same checks.
+      - name: Lint (CAS-554, CAS-945, CAS-969 AC5)
+        run: |
+          set -o pipefail
+          npm run test:lint 2>&1 | tee lint.log
 
       - name: Capture failure detail
         if: failure()
         run: |
           mkdir -p qa-failures
-          (grep -m1 -E '^\[R[0-9]\]' lint.log || tail -5 lint.log) \
+          (grep -m1 -E '^\[(R[0-9]+|ATTR-ESC|REVIEW-PROMPT-COPY)\]' lint.log || tail -5 lint.log) \
             > qa-failures/lint.txt
 
       - name: Upload failure detail
@@ -237,6 +247,37 @@ jobs:
         with:
           name: qa-failure-lint
           path: qa-failures/lint.txt
+          retention-days: 7
+
+  # CAS-1006: package.json's test:scheduler (the cloudflare/scheduler worker's unit tests) was not run
+  # in CI at all, so `npm run qa` and qa.yml gated on different sets. Pure node:test, no build/python
+  # needed - the worker under test has no external deps.
+  scheduler:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Scheduler worker unit tests (CAS-1000)
+        run: |
+          set -o pipefail
+          npm run test:scheduler 2>&1 | tee scheduler.log
+
+      - name: Capture failure detail
+        if: failure()
+        run: |
+          mkdir -p qa-failures
+          (grep -m1 -E 'not ok|AssertionError' scheduler.log || tail -5 scheduler.log) \
+            > qa-failures/scheduler.txt
+
+      - name: Upload failure detail
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-failure-scheduler
+          path: qa-failures/scheduler.txt
           retention-days: 7
 
   e2e:
@@ -293,7 +334,9 @@ jobs:
 
       - name: End to end (smoke gate)
         timeout-minutes: 20
-        run: npx playwright test tests/e2e/smoke.spec.mjs --max-failures=3 --retries=1 2>&1 | tee e2e.log
+        run: |
+          set -o pipefail
+          npx playwright test tests/e2e/smoke.spec.mjs --retries=1 2>&1 | tee e2e.log
 
       - name: Keep the report when it goes red
         if: failure()
@@ -321,7 +364,7 @@ jobs:
   # CAS-462: Jira checkpoint only — no build artefact depends on this, so it runs after the
   # other 5 jobs (not in parallel with them) and only on green, via `needs:`.
   mark-on-staging:
-    needs: [build-check, engine, data, monitor, e2e, lint]
+    needs: [build-check, engine, data, monitor, e2e, lint, scheduler]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -350,7 +393,7 @@ jobs:
   # promote.yml's own `workflow_run` trigger as before — without the guard every push would
   # dispatch promote twice.
   dispatch-promote:
-    needs: [build-check, engine, data, monitor, e2e, lint]
+    needs: [build-check, engine, data, monitor, e2e, lint, scheduler]
     if: success() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/staging'
     # Creating a workflow_dispatch event via the API needs actions:write, which the top-level
     # `permissions:` block above does not grant — this job (only) needs its own grant.
@@ -372,7 +415,7 @@ jobs:
   # default failure propagation. Each QA job already uploaded a qa-failure-<job> artifact with its
   # first failing line (see the "Capture failure detail" steps above) if it failed.
   on-failure:
-    needs: [build-check, engine, data, monitor, e2e, lint]
+    needs: [build-check, engine, data, monitor, e2e, lint, scheduler]
     if: failure()
     # download-artifact's `pattern` option lists this run's artifacts via the Actions API, which
     # needs actions:read — the top-level `permissions:` block above restricts every other scope to
@@ -406,10 +449,11 @@ jobs:
           MONITOR:     ${{ needs.monitor.result }}
           E2E:         ${{ needs.e2e.result }}
           LINT:        ${{ needs.lint.result }}
+          SCHEDULER:   ${{ needs.scheduler.result }}
         run: |
           FAILED=""
           DETAIL=""
-          for pair in "build-check:$BUILD_CHECK" "engine:$ENGINE" "data:$DATA" "monitor:$MONITOR" "e2e:$E2E" "lint:$LINT"; do
+          for pair in "build-check:$BUILD_CHECK" "engine:$ENGINE" "data:$DATA" "monitor:$MONITOR" "e2e:$E2E" "lint:$LINT" "scheduler:$SCHEDULER"; do
             name="${pair%%:*}"; result="${pair##*:}"
             if [ "$result" = "failure" ]; then
               FAILED="${FAILED:+$FAILED, }$name"
@@ -437,7 +481,7 @@ jobs:
   # noticed by whoever next opens the Actions tab. Separate concern from on-failure above
   # (which requeues the Jira ticket) — needs every other job so it fires whichever one broke.
   alert:
-    needs: [build-check, engine, data, monitor, lint, e2e, mark-on-staging, dispatch-promote, on-failure]
+    needs: [build-check, engine, data, monitor, lint, e2e, scheduler, mark-on-staging, dispatch-promote, on-failure]
     if: failure()
     permissions:
       contents: read

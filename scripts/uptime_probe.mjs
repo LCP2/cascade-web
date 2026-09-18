@@ -4,13 +4,13 @@
 // hours, where a Pages/Cloudflare/Supabase outage was previously invisible until a user
 // complained.
 //
-// Eight independent probes: site_up, movies_json, supabase_canary, signup, usage_events_insert,
-// pages_head, and (CAS-995) two dead-man checks — daily_refresh_fresh (has daily.yml actually
-// landed a commit in the last 30h) and alerts_ran (has alerts.yml completed successfully in the
-// last 30h) — so a dropped schedule or disabled Action is caught even though nothing "failed".
-// Each is split into a `probeX()` (real network I/O) and a `checkX()` (pure pass/fail decision
-// over the probe's result) — the same split monitor/health.py uses — so the decision logic is
-// unit-testable without a network.
+// Nine independent probes: site_up, movies_json, supabase_canary, signup, usage_events_insert,
+// pages_head, orphan_probe_accounts, and (CAS-995) two dead-man checks — daily_refresh_fresh (has
+// daily.yml actually landed a commit in the last 30h) and alerts_ran (has alerts.yml completed
+// successfully in the last 30h) — so a dropped schedule or disabled Action is caught even though
+// nothing "failed". Each is split into a `probeX()` (real network I/O) and a `checkX()` (pure
+// pass/fail decision over the probe's result) — the same split monitor/health.py uses — so the
+// decision logic is unit-testable without a network.
 //
 // Flap control: a single red probe must not page anyone, EXCEPT the three checks in
 // FAST_ALERT_CHECKS (site_up, movies_json, daily_refresh_fresh) — an outage or a silently
@@ -294,6 +294,52 @@ export function checkSignup(probe, pendingAfter) {
     };
   }
   return { ok: false, detail: `created ${probe.email} but could not remove it: ${probe.detail}` };
+}
+
+// ---------------------------------------------------------------------------
+// orphan_probe_accounts — CAS-1012: 16 signup-probe accounts from a broken cleanup path sat in
+// auth.users for hours before anyone noticed (RB-MON-02). Assert directly that no `probe` account
+// outlives its own throwaway lifetime, so a cleanup regression is caught within the hour instead
+// of at the next manual QA pass.
+// ---------------------------------------------------------------------------
+const ORPHAN_PROBE_AGE_MS = 2 * ONE_HOUR_MS;
+
+export async function probeOrphanAccounts(fetchImpl = fetch) {
+  const missing = missingNames(["SUPABASE_URL", SUPABASE_URL], ["SUPABASE_SERVICE_ROLE_KEY", SUPABASE_SERVICE_ROLE_KEY]);
+  if (missing.length) return { detail: `not configured: ${missing.join(", ")}` };
+
+  const headers = { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` };
+  const base = SUPABASE_URL.replace(/\/$/, "");
+  const users = [];
+  for (let page = 1; page <= 25; page++) {
+    let res;
+    try {
+      res = await fetchImpl(`${base}/auth/v1/admin/users?page=${page}&per_page=200`, withTimeout({ headers }));
+    } catch (err) {
+      return { detail: `GET admin/users -> ${err && err.message || err}` };
+    }
+    if (!res.ok) return { detail: `GET admin/users -> HTTP ${res.status}` };
+    const data = await res.json();
+    const pageUsers = Array.isArray(data) ? data : (data.users || []);
+    users.push(...pageUsers);
+    if (pageUsers.length < 200) break;
+  }
+  return { users };
+}
+
+export function checkOrphanAccounts(probe, now = Date.now()) {
+  if (!probe.users) return { ok: false, detail: probe.detail || "could not list auth.users" };
+  const stale = probe.users.filter(u =>
+    (u.email || "").toLowerCase().includes("probe")
+    && u.created_at
+    && (now - new Date(u.created_at).getTime()) > ORPHAN_PROBE_AGE_MS);
+  if (stale.length) {
+    return {
+      ok: false,
+      detail: `${stale.length} probe account(s) older than 2h: ${stale.map(u => u.email).join(", ")}`,
+    };
+  }
+  return { ok: true, detail: "no probe account older than 2h." };
 }
 
 // ---------------------------------------------------------------------------
@@ -594,6 +640,7 @@ export async function runAllProbes(fetchImpl = fetch, prevState = {}) {
     return checkSignup(probe, signupPendingAfter);
   }));
 
+  results.push(await timeProbe("orphan_probe_accounts", async () => checkOrphanAccounts(await probeOrphanAccounts(fetchImpl))));
   results.push(await timeProbe("usage_events_insert", async () => checkUsageEventsInsert(await probeUsageEventsInsert(fetchImpl))));
   results.push(await timeProbe("pages_head", async () => checkPagesHead(await probePagesHead(fetchImpl))));
   results.push(await timeProbe("daily_refresh_fresh", async () => checkDailyRefreshFresh(await probeDailyRefreshFresh(fetchImpl))));
