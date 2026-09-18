@@ -594,9 +594,21 @@
     transition:box-shadow .3s ease,border-color .3s ease;
     /* CAS-129: windowing. The browser skips layout+paint for cards outside the viewport, so only the
        visible handful of the ~2,000-card catalogue actually renders; contain-intrinsic-size:auto
-       remembers each card's real height once seen, keeping the scrollbar and offsets stable. */
-    content-visibility:auto;contain-intrinsic-size:auto 320px}
-  .card.expanded{border-color:#3a3560;box-shadow:0 8px 30px rgba(0,0,0,.55)}
+       remembers each card's real height once seen, keeping the scrollbar and offsets stable.
+       CAS-1036: .card:not(.expanded) below overrides this number for the collapsed case (the one that
+       matters — see its own comment for the measured values and why the authored number here is not the
+       same as the real pixel height), and .card.expanded turns content-visibility back off entirely,
+       which makes this number moot there. Kept the same as the collapsed default below rather than the
+       old 320px guess, so there's no separate mismatch in the instant before either override applies. */
+    content-visibility:auto;contain-intrinsic-size:auto 160px}
+  /* CAS-1036: synopsis/cast/credits length varies wildly film to film — measured 532px to 1394px across
+     80 real, varied films, more than 2.5x apart — so no single contain-intrinsic-size guess is ever
+     close, and the gap between guess and reality is exactly what this ticket's jolt bug is. Expanding a
+     card only ever happens while it's already on screen (the user just tapped it), so there is nothing to
+     window here in the first place: content-visibility:visible just stops a LATER off-screen skip/resume
+     (the user expanded it, then scrolled it out of view without collapsing it) from guessing a number
+     that has already been measured and proven it cannot be made stable. */
+  .card.expanded{border-color:#3a3560;box-shadow:0 8px 30px rgba(0,0,0,.55);content-visibility:visible}
   /* CAS-684: same fix as CAS-376's .stub.ratingopen, applied to the card popovers (Notify/Agent/Watched).
      .card's own overflow:hidden and content-visibility:auto (paint containment) both clip a .cpop that
      paints past the card's box — worse now the condensed card (CAS-617/624/630) is short enough that an
@@ -980,9 +992,18 @@
   /* CAS-133: the collapsed row wears the SAME outline as the full card (solid, same colour/radius),
      its title is bright and prominent, and it's only lightly dimmed so it reads as "collapsed", not
      "gone". The shrink itself is animated by keepRowInPlace on deselect — the card visibly folds. */
+  /* CAS-1036: measured for real (webkit, 390x844, --ui-scale zoom active) across 200 real, varied
+     catalogue titles rendered through stubHTML, every opinion kind included, content-visibility forced
+     visible while measuring — the row is a fixed 53.52px regardless of title length or which opinion icon
+     it shows (nowrap + ellipsis on both text spans, a fixed-size icon button), one true measured height,
+     not an estimate picked among several like the collapsed card's. The authored value below (28px) is not
+     that 53.52px figure itself — see the long note on .card:not(.expanded) above for why zoom:var(--ui-
+     scale) (CAS-157) means an off-screen placeholder's authored contain-intrinsic-size and its resulting
+     getBoundingClientRect are not in the same pixel space; 28px is what was solved, against this engine,
+     to make the placeholder actually land on 53.52px. */
   .stub{display:flex;align-items:center;gap:9px;background:var(--panel);border:1px solid var(--line);
     border-radius:16px;padding:9px 9px 9px 13px;margin-bottom:11px;opacity:.9;transition:opacity .18s;
-    content-visibility:auto;contain-intrinsic-size:auto 46px}   /* CAS-129: windowing (see .card) */
+    content-visibility:auto;contain-intrinsic-size:auto 28px}   /* CAS-129: windowing (see .card) */
   .stub:hover,.stub:focus-within{opacity:1}
   /* CAS-376: content-visibility:auto always applies paint containment (spec, not just the off-screen-skip
      part), which clips anything painted outside the row's own one-line box — the rating menu popup is many
@@ -3199,7 +3220,30 @@
      visibility:auto swaps an off-screen card's estimated height for its real one as it nears the viewport;
      with the estimate short, dozens of not-yet-rendered cards above the one under test all overshot by
      that same ~29px, and the accumulated jump landed as scroll drift once they resolved. */
-  .card:not(.expanded){border-radius:10px;margin-bottom:5px;contain-intrinsic-size:auto 108px}
+  /* CAS-1036: 108px went stale — "CONDENSED CARD, REV 2" (CAS-687 and its own follow-ups, further below
+     in this file) re-added the poster-left layout, the Style/meta line, the availability band and the
+     footer action row to the collapsed card, none of which the 108px estimate above ever accounted for.
+     Measured for real (webkit, 390x844, --ui-scale zoom active, 200 real catalogue titles rendered
+     through cardHTML, then forced content-visibility:visible so the browser could not fall back to any
+     placeholder while measuring): a plain collapsed card is 180.48–180.97px (rounding noise only — one
+     real height, not a range). A card whose .mrow.r-scores row wraps to two lines measures 218.55–219.03px
+     instead — see .densescores below for when that happens and why it needs its own value.
+     The authored contain-intrinsic-size below is NOT 181px, even though that is the real height just
+     measured — confirmed empirically (binary-searched against this exact engine/zoom combination): with
+     --ui-scale's zoom:1.12 (CAS-157) active on <html>, an OFF-SCREEN auto-sized placeholder's authored
+     length is not in the same pixel space its resulting getBoundingClientRect reports (zoom and
+     containment's intrinsic-size resolution compound differently to zoom's effect on normal layout, at
+     least in this WebKit build) — 181px authored measured back as a ~204.7px placeholder box, 24px taller
+     than the real card it's meant to estimate, which would just trade one jolt for a smaller one. 160px is
+     what a real off-screen card with this content actually settles the placeholder at 180.98px — solved
+     directly against the browser, not derived from the CSS value on paper. Same story for .densescores
+     and .stub below. */
+  .card:not(.expanded){border-radius:10px;margin-bottom:5px;contain-intrinsic-size:auto 160px}
+  /* CAS-1036: the taller measured height (see above) for a collapsed card whose scores row wraps to a
+     second line — cardHTML sets this class from the same badge data it already computes, so the estimate
+     is chosen from real per-card data, not guessed at build time. 194px (not 219px — see the note above on
+     .card:not(.expanded)) measured back as a 219.03px placeholder, matching the real height. */
+  .card:not(.expanded).densescores{contain-intrinsic-size:auto 194px}
   .card:not(.expanded) .cbody{padding:6px 10px}
   .card:not(.expanded) .ctop{
     grid-template-columns:30px minmax(0,1fr);
@@ -7548,6 +7592,15 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   // CAS-686: the condensed card shows the money row instead of the scores row when this film holds none
   // of IMDb/RT/Metacritic — see condensedShowsScores.
   const cinfoCard = !condensedShowsScores(m);
+  // CAS-1036: the condensed row's scores/badge/attribution items are flex-wrap:wrap (see .mrow.r-scores
+  // under .card:not(.expanded)), so on a 390px phone it settles at one line or two depending what's in
+  // it — measured across the real catalogue: a "Landmark" badge only ever appears on a film that also
+  // carries an award (isLandmark requires one), and that pairing wraps to two lines every time; a
+  // "Blockbuster" badge is the next-longest label and wraps on its own text most of the time even with no
+  // award mark. Both get the taller of the two measured contain-intrinsic-size values (.densescores)
+  // instead of the shorter default, so both the common one-line case and this one load close to their
+  // real height rather than one contain-intrinsic-size guess trying to cover both.
+  const denseScores = !!badge && (scaleTier(m)==="landmark" || scaleTier(m)==="blockbuster");
   // What's new is a fact about the film — the day Cascade first picked it up — so it is stated ON the film,
   // and nowhere else (CAS-107). It no longer decides where the film sits in the list, and the header no longer
   // dresses the whole list up as news; the chip just tells you which of these you haven't seen before.
@@ -7556,7 +7609,7 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   // for callers but no longer rendered.)
   // CAS-179: one grid, one order — title · genres·language · synopsis · money · scores · awards, with
   // the poster spanning down to the scores row and the scale badge tucked under it beside the awards.
-  return `<div class="card ${expandedSet.has(id)?'expanded':''} ${cinfoCard?'cinfo':''}" id="card-${id}">
+  return `<div class="card ${expandedSet.has(id)?'expanded':''} ${cinfoCard?'cinfo':''} ${denseScores?'densescores':''}" id="card-${id}">
     <div class="cbody" onclick="cardTap(event,${id})">
       <div class="ctop">
         <!-- CAS-276: the tombstone is the POSTER, and nothing else. The scale badge used to hang below it,

@@ -158,6 +158,103 @@ test.fixme("opening Notify, Tags or Watched leaves the card rendered and scroll 
   }
 });
 
+// CAS-1036: scrolling a long Watch list down was smooth, but scrolling back up became jumpy at an
+// unpredictable point. content-visibility:auto's contain-intrinsic-size is only ever a GUESS for an
+// off-screen row until it's actually laid out for real (CAS-129/CAS-897) — if the guess is wrong, the
+// swap from guess to real height is exactly the layout shift CAS-897's own history already names as the
+// cause of this kind of drift, and it had gone stale: "CONDENSED CARD, REV 2" (CAS-687 and its own
+// follow-ups) re-added a poster-left layout, a Style line, an availability band and a footer action row
+// to the collapsed card well after its contain-intrinsic-size was last measured.
+//
+// Two tests below, not one, because they check different things and only one of them can actually catch
+// a regression here:
+//
+// "the round trip" is the literal shape this ticket's AC2 describes — scroll to the bottom of a long list
+// and back, assert the position lands close to where it started. Kept because it is still a legitimate
+// coarse regression guard (a badly broken windowing change could still blow the scrollable height out
+// entirely), but by itself it is NOT what actually proves this ticket's fix: every variant tried here —
+// a discrete window.scrollTo walk, a small-step window.scrollBy walk, both with and without the fix
+// applied — measured a 0px correction either way in this Playwright/WebKit harness. That is the same dead
+// end CAS-1034's own quarantined test (test.fixme above) hit chasing a related WebKit scroll-anchor bug:
+// this harness does not reproduce the on-device drift from a script-driven scroll the way a real touch/
+// momentum gesture does. Forcing the round trip to fail on the old, broken CSS to "prove" it wasn't
+// possible without either flailing at gesture simulation this repo has already spent four tickets on
+// elsewhere, or asserting a tolerance so tight it would be flaky for reasons that have nothing to do with
+// this fix. So it stays as a coarse sanity check, not the real assertion.
+//
+// "the placeholder match" is what actually discriminates. Measured directly against this exact harness:
+// with the pre-fix 108px/46px estimates, an off-screen collapsed card's placeholder height was up to 96px
+// off its real height (a scale-badge-and-Oscar-mark row wrapping to two lines made the gap worse still);
+// with this ticket's measured values it is under a pixel. That is the actual mechanism a real scroll-back
+// -up drift is made of, checked without needing the drift itself to show up in a script-driven scroll.
+test("Watch listing scroll position survives a long scroll to the bottom and back (CAS-1036)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  // A freshly onboarded roster only matches a handful of films — not long enough to scroll meaningfully.
+  // Broadening with a few more real presets, the same "+ Add" flow a person uses from the Agents screen,
+  // gives an actually-scrollable list.
+  for(const name of ["Date Night", "Family Movies", "Totally Custom"]){
+    await page.locator("#agentsBtn").click();
+    await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
+    await page.locator(".ag-add").click();
+    await expect(page.locator(".scard").first()).toBeVisible();
+    await page.locator(".scard", { has: page.locator(".sc-name", { hasText: name }) }).first().click();
+    await expect(page.locator("#onbStepInner .osback")).toBeVisible();
+    await page.locator("#onbStepInner .osback").click();
+    await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
+  }
+  const rendered = await settleListing(page);
+  expect(rendered).toBeGreaterThan(15);
+
+  const scrollY = () => page.evaluate(() => window.scrollY);
+  const startY = await scrollY();
+  expect(startY).toBe(0);
+
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await page.waitForTimeout(400);
+  const bottomY = await scrollY();
+  expect(bottomY).toBeGreaterThan(400);   // actually a scrollable list, not one screen
+
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(400);
+  const endY = await scrollY();
+  expect(Math.abs(endY - startY), `started at ${startY}, ended at ${endY}`).toBeLessThan(3);
+});
+
+test("Watch listing rows' off-screen placeholder height matches their real height (CAS-1036)", async ({ page }) => {
+  await freshApp(page);   // exercises cardHTML() and the CSS directly, at real catalogue scale — no
+                           // onboarding needed for what this checks
+  const diffs = await page.evaluate(async () => {
+    const round = n => Math.round(n * 100) / 100;
+    const container = document.createElement("div");
+    container.id = "groups";
+    document.body.appendChild(container);
+    const sample = MOVIES.filter(m => m && m.tmdb_id).slice(0, 300);
+    container.innerHTML = sample.map(m => cardHTML(m)).join("");
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    // Rows more than two screens below the fold are the ones genuinely still resting on their
+    // content-visibility:auto placeholder — the population CAS-897's original bug, and this ticket's
+    // regression of it, actually affects.
+    const rows = [...container.querySelectorAll(".card:not(.expanded)")]
+      .filter(el => el.getBoundingClientRect().top > window.innerHeight * 2);
+    const sampled = rows.filter((_, i) => i % 15 === 0).slice(0, 12);
+    const out = [];
+    for(const el of sampled){
+      const before = round(el.getBoundingClientRect().height);
+      el.scrollIntoView({ block: "center" });
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      out.push(round(Math.abs(el.getBoundingClientRect().height - before)));
+    }
+    container.remove();
+    return out;
+  });
+  expect(diffs.length).toBeGreaterThan(5);   // actually sampled off-screen rows, not an empty list
+  const maxDiff = Math.max(...diffs);
+  expect(maxDiff, `placeholder→real height mismatches sampled: ${JSON.stringify(diffs)}`).toBeLessThan(10);
+});
+
 // CAS-933 reverses CAS-644: a cold load lands on Watch, never Moving. Moving stays reachable from its own
 // chip, so the CAS-649 regression this test also covers (Moving rendered at inset:0, z-index:84, covering
 // the header — a screen with no navigation and no way out) is now checked there instead of on cold load.
