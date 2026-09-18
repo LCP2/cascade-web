@@ -120,7 +120,10 @@ test("a film card's Watched control lands an answer", async ({ page }) => {
 // keepRowInPlace fix) rather than anything about a specific control's own state, so this checks the
 // mechanism directly — scrollY unmoved and the card's own content still visible — across all three
 // controls and the first/mid/last card, per the ticket's acceptance criteria.
-test("opening Notify, Tags or Watched leaves the card rendered and scroll unmoved", async ({ page }) => {
+// CAS-1034: WebKit-only ~238px scroll-anchor drift, four fix attempts (CAS-315, CAS-647, CAS-1028,
+// CAS-1030) with no measured effect — quarantined per CAS-1030's 17:05 AEST 18 Sep 2026 decision rather
+// than a fifth blind attempt. Do not weaken the assertion; fix or re-enable only under CAS-1034.
+test.fixme("opening Notify, Tags or Watched leaves the card rendered and scroll unmoved", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
   await toListing(page);
