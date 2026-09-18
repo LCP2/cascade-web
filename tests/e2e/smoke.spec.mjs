@@ -332,8 +332,11 @@ test("Mission screen: one score track, one marker per enabled window, Premium ad
 
   await openFirstAgentMission(page);
   await expect(page.locator(".msntrackwrap")).toHaveCount(1);
-  // Premium starts off (CAS-243/watchPrefsDefaults), so the default roster's marker count is the other three.
-  await expect(page.locator(".msnmark")).toHaveCount(3);
+  // CAS-911: the v2 roster's rank-0 agent (Massive Movies, onbMassiveCritV2) marks only its ONE active/big
+  // window (Cinema, from this test's toShortlist(page,"cinema")) — Rent and Stream are enabled but seeded
+  // with no marker of their own, so the baseline is one real marker, not three. (Premium also starts off,
+  // CAS-243/watchPrefsDefaults.)
+  await expect(page.locator(".msnmark")).toHaveCount(1);
 
   // Back out (nothing was actually changed on this visit), then switch Premium on for real through the
   // actual Where & when screen — the same mechanism the CAS-725 tab-strip test above already drives.
@@ -353,7 +356,16 @@ test("Mission screen: one score track, one marker per enabled window, Premium ad
   await expect(page.locator("#wwScreen")).not.toHaveClass(/open/);
 
   await openFirstAgentMission(page);
-  await expect(page.locator(".msnmark")).toHaveCount(4);
+  // CAS-917: Premium now ranks after Cinema (this agent's start window) with no marker of its own, so
+  // enabling it makes it a FOLLOWED window — msnChipsHTML's own "follows" chip, not a fourth track marker —
+  // exactly the case this ticket's start-window model added. The marker count is unchanged until the chip's
+  // own + (restoreWatchMarker) actually gives it a value, which is when it becomes the track's real fourth
+  // marker (a real one here, since Cinema is already marked).
+  await expect(page.locator(".msnmark")).toHaveCount(1);
+  const premiumChip = page.locator(".msnchip", { hasText: "Premium" });
+  await expect(premiumChip).toContainText("follows Cinema");
+  await premiumChip.locator('[data-act="restore"]').click();
+  await expect(page.locator(".msnmark")).toHaveCount(2);
 });
 
 test("Mission screen: dragging Cinema below Rental pushes Rental down, never crossing or stacking (CAS-729 AC3)", async ({ page }) => {
@@ -362,13 +374,17 @@ test("Mission screen: dragging Cinema below Rental pushes Rental down, never cro
   await toListing(page);
   await openFirstAgentMission(page);
 
-  // Arrange a known, staggered starting point — a fresh agent's four markers seed EQUAL (CAS-727's one-time
-  // scoreFloor migration), which is not itself what this AC is about. paintMsnTrack() is the same in-place
-  // repaint a real drag calls, so this only sets the scene; the drag itself still drives the real handle.
+  // Arrange a known, staggered starting point. CAS-911: Massive Movies (this roster's rank-0 agent) seeds
+  // only its one active/big window with a real marker — Rent and Stream start null (CAS-917's start-window
+  // model follows them off Cinema instead), so only one .msnmark exists in the DOM at this point. Give all
+  // three a real value here and rebuild through msnRebuild() — paintMsnTrack() is an in-place repaint that
+  // only updates marks that already exist in the DOM, so it can move Cinema's own handle but can never
+  // conjure the Rent/Stream handles this test then drags into being; msnRebuild() re-renders #msnTrackArea
+  // (and rewires it) the same way the real Never/restore chips do whenever the marker set itself changes.
   await page.evaluate(() => {
     const c = onbFlow.draft;
     c.watchMarkers.in_cinema = 90; c.watchMarkers.rent = 75; c.watchMarkers.stream = 60;
-    paintMsnTrack();
+    msnRebuild();
   });
   const before = await page.evaluate(() => ({ ...onbFlow.draft.watchMarkers }));
 
@@ -753,6 +769,10 @@ test("Watch Cinema tab leads with Upcoming; the Streaming tab does not (CAS-750)
 
   await trackAStreamingFilm(page);
   await page.locator(".wtabbtn", { hasText: "Streaming" }).click();
+  // CAS-753: "my services" defaults ON per tab, and this guest session never picks any — without turning it
+  // off here, trackAStreamingFilm's own film is filtered straight back out and the tab never carries anything
+  // to read a first group off (see disableMineOnlyOnCurrentTab's own comment above).
+  await disableMineOnlyOnCurrentTab(page);
   await settleListing(page);
   const streamFirst = await page.locator("#groups .group").first().getAttribute("data-g");
   expect(streamFirst).not.toBe("upcoming");
@@ -782,6 +802,10 @@ test("Watch jump bar entries follow the groups' own order, on both the Cinema an
   // tracked film before it carries anything to check order against.
   await trackAStreamingFilm(page);
   await page.locator(".wtabbtn", { hasText: "Streaming" }).click();
+  // CAS-753: "my services" defaults ON per tab, and this guest session never picks any — without turning it
+  // off here, trackAStreamingFilm's own film is filtered straight back out and the tab carries no group at
+  // all to check an order against (see disableMineOnlyOnCurrentTab's own comment above).
+  await disableMineOnlyOnCurrentTab(page);
   await settleListing(page);
   const stream = await readOrder();
   expect(stream.groupOrder.length).toBeGreaterThan(0);
@@ -1057,9 +1081,14 @@ test("CAS-919: a collapsed card's score row has no Cascade cell and no Pop cell,
   await expect(card).toBeVisible();
   const id = await card.evaluate(el => Number(el.id.replace("card-", "")));
 
+  // CAS-750/CAS-823: fastPatchFindRow bails out silently (no DOM write at all — "film left the list, let
+  // render() handle it") once filmInWatchRows(m) says the film no longer matches the CURRENT tab's own
+  // scope. This test never switches tabs off the default Cinema one, so forcing m.status to a home-window
+  // value here (the row's own gate needs no such thing — condensedShowsScores/scoresRowHTML read only
+  // wm_user_rating/wm_critic_score) silently no-oped the patch and left the assertions below reading a
+  // stale, unpatched card. Leave status alone, the same way the sibling People/Critics test above does.
   await page.evaluate((filmId) => {
     const m = MOVIES.find(x => x.tmdb_id === filmId);
-    m.status = ["included_streaming"];
     m.wm_user_rating = 4.0; m.wm_critic_score = 40;
     fastPatchFindRow(filmId);
   }, id);
@@ -1088,9 +1117,12 @@ test("CAS-900: collapsed-card score row is 12px/11px type with People/Critics la
   await expect(card).toBeVisible();
   const id = await card.evaluate(el => Number(el.id.replace("card-", "")));
 
+  // CAS-750/CAS-823: see the sibling "no Cascade cell and no Pop cell" test above — forcing m.status here
+  // pulls the film out of the current (Cinema) tab's own scope, so fastPatchFindRow's filmInWatchRows gate
+  // silently no-ops the patch instead of writing the new scores. Not needed anyway: the row's own type only
+  // depends on wm_user_rating/wm_critic_score being present.
   await page.evaluate((filmId) => {
     const m = MOVIES.find(x => x.tmdb_id === filmId);
-    m.status = ["included_streaming"];
     m.wm_user_rating = 4.0; m.wm_critic_score = 40;
     fastPatchFindRow(filmId);
   }, id);
