@@ -19063,19 +19063,34 @@ else if(dedupedN)
   let outbox = loadOutbox();   // target -> { rowKey -> row }
   // Replaces the WHOLE pending set for a target with exactly what's owed right now — a row this device no
   // longer wants to push (superseded by a later edit, or already cleared) is never carried forward stale.
+  // outboxPending() must see this the instant outboxMark returns (CAS-1035's own test: "scheduling the sync
+  // marks the row pending immediately"), so the in-memory assignment stays synchronous — only the expensive,
+  // not-synchronously-observed parts (the localStorage write and the banner repaint) are coalesced below.
   function outboxMark(target, rows, keyFn){
     const next={};
     (rows||[]).forEach(r=>{ next[keyFn(r)]=r; });
     outbox[target]=next;
-    saveOutboxLocal();
-    renderAcctBanner();   // AC3: must show the instant anything becomes unsent
+    outboxPersistSoon();
+  }
+  // A save chokepoint invoked in a tight synchronous loop (recomputeFound() touching every film in the
+  // catalogue on every sign-in) used to persist+repaint on every single iteration — re-serializing the whole
+  // outbox to localStorage and repainting the banner up to once per film turned an O(catalogue) loop into
+  // O(catalogue^2). Collapsing a synchronous burst down to one persist+repaint (a microtask always drains
+  // before the event loop can reach a real visibilitychange/pagehide, and before an `await`ed caller's own
+  // continuation runs) still shows/clears the banner and durably persists before any close event can fire —
+  // AC3 asked for "the instant", not "synchronously"; a microtask later is still well within that.
+  let outboxPersistQueued = false;
+  function outboxPersistSoon(){
+    if(outboxPersistQueued) return;
+    outboxPersistQueued = true;
+    Promise.resolve().then(()=>{ outboxPersistQueued=false; saveOutboxLocal(); renderAcctBanner(); });
   }
   function outboxClearKeys(target, keys){
     const bucket=outbox[target]; if(!bucket) return;
     let changed=false;
     (keys||[]).forEach(k=>{ if(k in bucket){ delete bucket[k]; changed=true; } });
     if(!Object.keys(bucket).length) delete outbox[target];
-    if(changed){ saveOutboxLocal(); renderAcctBanner(); }   // AC3: must clear the instant it drains
+    if(changed) outboxPersistSoon();   // AC3: must clear the instant it drains
   }
   function outboxPending(target){ return outbox[target]||{}; }
   function outboxHasAny(){ return Object.keys(outbox).some(t=>Object.keys(outbox[t]||{}).length); }
