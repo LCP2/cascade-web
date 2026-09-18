@@ -131,9 +131,19 @@ export async function finishFlow(page){
  * onboarded, with an agent, having never seen it — exactly what every caller here just built) — so by
  * default this also clears it, Skip-tour, the same way a person impatient to see their own listing would.
  * Every caller except CAS-976's own spec wants the plain, uninterrupted listing; pass
- * { skipTutorial: false } to see the tour as it actually first appears. */
+ * { skipTutorial: false } to see the tour as it actually first appears.
+ * CAS-1030: membStart() (app_template.html) only proceeds straight to the listing for a guest (or an
+ * already signed-in) device — membNeedsEmail() is also true for a device with a REAL (fake or not)
+ * Supabase config that hasn't signed in yet, in which case membScreen renders an #membEmail field and
+ * membStart() silently no-ops without it (an unfilled/invalid email just sets membEmailError and
+ * returns), leaving #membScreen.open forever and hanging every caller's own toBeHidden() wait. Every
+ * other spec here runs guest-mode (freshApp's config.js 404 keeps CascadeAuth.enabled false, so
+ * #membEmail never renders) — only cas913's own configured-but-signed-out scenario hits this, so
+ * filling it here when present costs the other callers nothing. */
 export async function toListing(page, opts = {}){
   const { skipTutorial = true } = opts;
+  const membEmail = page.locator("#membEmail");
+  if(await membEmail.count() > 0) await membEmail.fill("e2e-smoke@example.com");
   await page.locator(".membcta").click();
   await expect(page.locator("#membScreen.open")).toBeHidden({ timeout: 30_000 });
   await settleListing(page);

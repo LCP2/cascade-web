@@ -332,7 +332,7 @@ async function openFirstAgentMission(page){
   await expect(page.locator(".msntrackwrap")).toBeVisible();
 }
 
-test.fixme("Mission screen: one score track, one marker per enabled window, Premium adds a fourth (CAS-729 AC2)", async ({ page }) => {
+test("Mission screen: one score track, one marker per enabled window, Premium adds a fourth (CAS-729 AC2)", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
   await toListing(page);
@@ -375,7 +375,7 @@ test.fixme("Mission screen: one score track, one marker per enabled window, Prem
   await expect(page.locator(".msnmark")).toHaveCount(2);
 });
 
-test.fixme("Mission screen: dragging Cinema below Rental pushes Rental down, never crossing or stacking (CAS-729 AC3)", async ({ page }) => {
+test("Mission screen: dragging Cinema below Rental pushes Rental down, never crossing or stacking (CAS-729 AC3)", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
   await toListing(page);
@@ -540,7 +540,7 @@ test("Mission screen: dragging repaints segment colours to match their windows; 
   expect(mismatches, JSON.stringify(mismatches)).toEqual([]);
 });
 
-test.fixme("'Only show films on my services' changes what a new agent finds", async ({ page }) => {
+test("'Only show films on my services' changes what a new agent finds", async ({ page }) => {
   // Every window a streaming agent lists (Premium/Rent/Streaming) is service-scoped, so switching the
   // filter on with no services named must drop the count — this exercises the real mechanism the switch
   // controls, not just its own visible state.
@@ -797,7 +797,7 @@ async function disableMineOnlyOnCurrentTab(page){
 // CAS-750: order is a property of the Watch TAB now, not of an agent's retired `kind` — the Cinema tab
 // (the default tab a fresh listing lands on) leads with Upcoming, reading the same journey order as CASCADE;
 // every other tab is unchanged and still ends with Upcoming.
-test.fixme("Watch Cinema tab leads with Upcoming; the Streaming tab does not (CAS-750)", async ({ page }) => {
+test("Watch Cinema tab leads with Upcoming; the Streaming tab does not (CAS-750)", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
   await toListing(page);
@@ -822,7 +822,7 @@ test.fixme("Watch Cinema tab leads with Upcoming; the Streaming tab does not (CA
 // CAS-823: the rail's own element is now .nowstop, not .jchip (renderJumpBar's non-scrolling rewrite); the
 // Streaming tab's default is also narrowed to its own standing alone (Also-show starts empty), so it is no
 // longer guaranteed to carry more than one group the way Cinema's Upcoming+In cinema default always has.
-test.fixme("Watch jump bar entries follow the groups' own order, on both the Cinema and Streaming tabs (CAS-750)", async ({ page }) => {
+test("Watch jump bar entries follow the groups' own order, on both the Cinema and Streaming tabs (CAS-750)", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
   await toListing(page);
@@ -1016,24 +1016,20 @@ async function cas913WalkToShortlist(page){
   await expect(page.locator("#obSvcStores")).toBeVisible();                       // v2_services
 }
 
-test.fixme("CAS-913: signing out from the Account screen returns to the splash and survives a reload", async ({ page }) => {
+test("CAS-913: signing out from the Account screen returns to the splash and survives a reload", async ({ page }) => {
   await cas913GotoConfigured(page);
   await cas913WalkToShortlist(page);
   await finishFlow(page);
+  // CAS-1030: CAS-387's membNeedsEmail() gate means a configured, signed-out device (this test's whole
+  // premise) must supply an email to finish onboarding at all — toListing()'s own #membEmail fill (added
+  // for this exact scenario, since every other spec here runs guest-mode) drives that, and the fake
+  // client's signInWithPassword always succeeds, so the account is already "Signed in" the moment the
+  // listing paints. There is no signed-out account state left to demonstrate a manual sign-in from, so
+  // that step (this test used to walk it via the Account screen's "Not signed in" row) is gone — only the
+  // sign-out this test is actually about remains.
   await toListing(page);
 
-  // Sign in, from the Account screen's "Not signed in" row.
-  await page.locator("#navMenuBtn").click();
-  await page.locator("#navMenu .navitem", { hasText: "Account" }).click();
-  await expect(page.locator("#accountScreen")).toHaveClass(/open/);
-  await page.locator(".urow", { has: page.locator(".ut", { hasText: "Not signed in" }) }).click();
-  await expect(page.locator("#authModal")).toHaveClass(/open/);
-  await page.locator("#authEmail").fill("cas913@example.com");
-  await page.locator("#authContinue").click();
-  await page.waitForFunction(() => window.CascadeAuth.status === "signed-in", null, { timeout: 5000 });
-  await expect(page.locator("#authModal")).not.toHaveClass(/open/);   // SIGNED_IN auto-closes the modal
-
-  // Sign out again, from the same panel, reached the same way.
+  // Sign out, from the Account screen's own "Signed in" row.
   await page.locator("#navMenuBtn").click();
   await page.locator("#navMenu .navitem", { hasText: "Account" }).click();
   await expect(page.locator("#accountScreen")).toHaveClass(/open/);
@@ -1117,7 +1113,7 @@ test("CAS-919: the score row reads Watchmode fields as People/Critics, a missing
 // for every film), so there is nothing left to compare between two lines — the in-row Cascade cell is gone
 // and the score lives only in the title badge. Pop is removed, not relabelled (there was no popularity cell
 // before Watchmode).
-test.fixme("CAS-919: a collapsed card's score row has no Cascade cell and no Pop cell, only People/Critics", async ({ page }) => {
+test("CAS-919: a collapsed card's score row has no Cascade cell and no Pop cell, only People/Critics", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
   await toListing(page);
@@ -1153,7 +1149,7 @@ test.fixme("CAS-919: a collapsed card's score row has no Cascade cell and no Pop
 
 // CAS-900 (kept, re-targeted for CAS-919): the collapsed-card score row is 12px cells/values and 11px
 // labels, now over the single People/Critics row rather than two rows.
-test.fixme("CAS-900: collapsed-card score row is 12px/11px type with People/Critics labels", async ({ page }) => {
+test("CAS-900: collapsed-card score row is 12px/11px type with People/Critics labels", async ({ page }) => {
   await toShortlist(page, "cinema");
   await finishFlow(page);
   await toListing(page);
