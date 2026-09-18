@@ -115,6 +115,25 @@ test("a film card's Watched control lands an answer", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => watched.size), { timeout: 10_000 }).toBeGreaterThan(0);
 });
 
+// CAS-1037: toggleFilmOpt used to repaint the chip and leave the panel open — the one place a level pick
+// didn't dismiss its menu the way the Watched panel's pickWatch always has.
+test("a film card's Watch On control dismisses its panel after picking a level (CAS-1037)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  const first = page.locator("#groups .card").first();
+  await expect(first).toBeVisible();
+  await first.locator(".ctl.notify").click();
+  const row = page.locator(".cpop.npop .nopt[data-wk]:not(.spent)").first();
+  await expect(row).toBeVisible();
+  const key = await row.getAttribute("data-wk");
+  await row.click();
+  await expect(page.locator(".cpop")).toHaveCount(0);
+  const expectedLabel = await page.evaluate(k => WATCH_LEVEL_SHORT_LABEL[k], key);
+  await expect(first.locator(".ctl.notify")).toContainText(expectedLabel);
+});
+
 // CAS-647: opening Notify, Tags or Watched on a card left the card blank and cut the top of the list. The
 // actual mechanism was a scroll drift (Chromium's silent reveal-scroll on focus, same cause as CAS-315's
 // keepRowInPlace fix) rather than anything about a specific control's own state, so this checks the
