@@ -557,10 +557,15 @@ test("'Only show films on my services' changes what a new agent finds", async ({
   // c7ee37f, so it is not a regression from any ticket in this ticket's own window. Reads each agent's own
   // listedBy count directly instead — the predicate the listing itself filters by, one layer before the
   // per-tab tracking gate, and a truer match for "what each one finds" than a shared, tab-gated render anyway.
-  // Separately: onboarding's own "stream" recipe seeds a small starter roster (not one agent), whose members
-  // carry different doors/criteria and so aren't "otherwise identical" to addSecondAgent's own pick — the
-  // apples-to-apples comparison the original comment describes needs BOTH agents made the exact same way, so
-  // this calls addSecondAgent once before the switch too, instead of trusting any onboarding-seeded agent.
+  // CAS-1030: the two-otherwise-identical-agents design above (CAS-566) stopped working once CAS-72's own
+  // duplicate-template guard shipped in commitDraft — a second addSecondAgent() pick with the exact same
+  // criteria no longer creates a new agent at all, it reopens the FIRST one (the twin match), so
+  // newestAgentId found nothing new the second time and the comparison silently read whatever cascade
+  // happened to satisfy `id === undefined`. Confirmed against CI: the Agents screen carries only one
+  // "Blockbusters" entry after both picks, not two. CAS-853 already made prefs.on a live read inside
+  // matchesCriteria for every existing agent's whole life (no per-agent copy to go stale), so a second
+  // agent was never actually required to prove the switch's effect — one agent's own listedBy count is
+  // read before and after the switch instead.
   await toShortlist(page, "stream");
   await finishFlow(page);
   await toListing(page);
@@ -568,12 +573,11 @@ test("'Only show films on my services' changes what a new agent finds", async ({
     const c = cascades.find(x => x.id === id);
     return c ? MOVIES.filter(m => listedBy(m, c)).length : null;
   }, id);
-  const newestAgentId = ids => page.evaluate(ids => cascades.map(c => c.id).find(id => !ids.includes(id)), ids);
 
   const idsSeed = await page.evaluate(() => cascades.map(c => c.id));
   await addSecondAgent(page);
-  const beforeId = await newestAgentId(idsSeed);
-  const before = await listedCountFor(beforeId);
+  const agentId = await page.evaluate(ids => cascades.map(c => c.id).find(id => !ids.includes(id)), idsSeed);
+  const before = await listedCountFor(agentId);
   expect(before).toBeGreaterThan(0);
 
   await page.locator("#navMenuBtn").click();
@@ -585,10 +589,7 @@ test("'Only show films on my services' changes what a new agent finds", async ({
   await page.locator("#onbStep .osback").click();   // CAS-934: no Done button any more — back to the listing
   await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
 
-  const idsBefore = await page.evaluate(() => cascades.map(c => c.id));
-  await addSecondAgent(page);
-  const afterId = await newestAgentId(idsBefore);
-  const after = await listedCountFor(afterId);
+  const after = await listedCountFor(agentId);
   expect(after, `before=${before} after=${after}`).toBeLessThan(before);
 });
 
@@ -830,7 +831,15 @@ test("Watch jump bar entries follow the groups' own order, on both the Cinema an
   await settleListing(page);
   const stream = await readOrder();
   expect(stream.groupOrder.length).toBeGreaterThan(0);
-  expect(stream.jumpOrder).toEqual(stream.groupOrder);
+  // CAS-1030: renderJumpBar hides the bar (and renders no .nowstop chips at all) once there are fewer than
+  // 2 groups — its own long-standing rule, confirmed in CI: a lone-standing Streaming tab (this section's
+  // own single tracked film, no default bucket) hit exactly that gate, so jumpOrder was legitimately []
+  // rather than a broken order. The order check only applies once there is an order to have.
+  if(stream.groupOrder.length > 1){
+    expect(stream.jumpOrder).toEqual(stream.groupOrder);
+  }else{
+    expect(stream.jumpOrder).toEqual([]);
+  }
 });
 
 test("CAS-740 AC4: a signed-in user whose account already holds agents is never left in the onboarding flow", async ({ page }) => {
