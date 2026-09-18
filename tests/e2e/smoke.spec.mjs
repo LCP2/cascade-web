@@ -29,8 +29,12 @@ async function addSecondAgent(page){
   const cards = await shortlistCards(page);
   const card = page.locator(".scard", { has: page.locator(".sc-name", { hasText: cards[0].name }) }).first();
   await card.click();
-  await expect(page.locator("#onbStep .osback")).toBeVisible();
-  await page.locator("#onbStep .osback").click();
+  // CAS-1030/CAS-1018: scoped to #onbStepInner, not a bare "#onbStep .osback" — gotoStep's dual-pane
+  // slide leaves the outgoing step's .osback in the DOM alongside the incoming one for the length of
+  // the transition (intentional, see gotoStep's own comment), and #onbStepInner is the id it moves onto
+  // the incoming pane immediately, so this always resolves to exactly one element.
+  await expect(page.locator("#onbStepInner .osback")).toBeVisible();
+  await page.locator("#onbStepInner .osback").click();
   await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
 }
 
@@ -741,10 +745,27 @@ test("Watch listing: every group shows its agent divider, even a single-agent se
 // ticket in this ticket's own window. Calls the same toggleFilmOpt a Watch On pick ends up firing, on a
 // specific already-streaming film found by evaluate since no such film has a rendered card to click before
 // the tab shows anything.
+// CAS-1030: whether a real included_streaming film clears this roster's own admission gates (language,
+// age rating, release-recency, the account-wide "only show on my services" default) is a live-catalogue
+// coincidence, not what this helper needs — same "clone a real donor, only the gates under test overridden"
+// shape as CAS-723/CAS-725's fix above. Finds a real donor already carrying the included_streaming window
+// (so the window itself is genuine, untouched), then pins the fields Massive Movies' onboarding recipe
+// gates on so the donor's own identity can't matter.
 async function trackAStreamingFilm(page){
   await page.evaluate(() => {
-    const film = MOVIES.find(m => primaryStatus(m) === "included_streaming" && cascades.some(c => listedBy(m, c)));
-    if(!film) throw new Error("no included_streaming film listed by this agent");
+    let film = MOVIES.find(m => primaryStatus(m) === "included_streaming" && cascades.some(c => listedBy(m, c)));
+    if(!film){
+      const donor = MOVIES.find(m => primaryStatus(m) === "included_streaming");
+      if(donor){
+        film = {
+          ...donor, tmdb_id: -750001, wm_user_rating: 10, wm_critic_score: 100,
+          language: "en", age_rating: "M", cinema_date: TODAY,
+        };
+        MOVIES.push(film);
+        prefs.on = false;
+      }
+    }
+    if(!film || !cascades.some(c => listedBy(film, c))) throw new Error("no included_streaming film listed by this agent");
     toggleFilmOpt(film.tmdb_id, "stream");
     render();
   });
