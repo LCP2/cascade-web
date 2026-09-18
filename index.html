@@ -8029,7 +8029,7 @@ window.openAgentPanel=(id, btn)=>{
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
   const card=btn.closest(".card"); if(card) card.classList.add("popopen");   // CAS-684
-  watchPanelAnchorY=scrollY;   // CAS-647: see snapToWatchPanelAnchor
+  armPanelAnchor();   // CAS-1028: see captureEarlyPanelAnchor above; CAS-647: see snapToWatchPanelAnchor
   const pop=document.createElement("div");
   // CAS-374-style chrome: content-width, no in-panel close — the chip is the toggle. CAS-439: Agent sits in
   // the middle of the row, not an edge, so it gets .al-c (JS-anchored to the button) rather than .al-l/.al-r.
@@ -8090,7 +8090,7 @@ window.openNotifyPanel=(id, btn)=>{
   closeWatchPanel();
   if(mine) return;                       // tapping the chip again closes the panel it opened
   const card=btn.closest(".card"); if(card) card.classList.add("popopen");   // CAS-684
-  watchPanelAnchorY=scrollY;   // CAS-647: see snapToWatchPanelAnchor
+  armPanelAnchor();   // CAS-1028: see captureEarlyPanelAnchor above; CAS-647: see snapToWatchPanelAnchor
   const pop=document.createElement("div");
   // CAS-374: content-width, left-aligned under the Notify chip — no in-panel close, the chip is the toggle.
   pop.className="cpop npop al-l";
@@ -8316,6 +8316,27 @@ function snapToWatchPanelAnchor(){
   const chase=()=>{ fix(); if(++n<5) requestAnimationFrame(chase); };
   requestAnimationFrame(chase);
 }
+// CAS-1028 (build-chat decision, 18 Sep 2026): on WebKit, the reveal-scroll described above can already have
+// played out by the time an open*Panel below reads scrollY for itself — a tap on a card below the first
+// fires pointerdown/focus before the click that runs openWatchPanel/openNotifyPanel/openAgentPanel, and that
+// earlier moment is when the drift happens, not during the click. This capture-phase listener takes the same
+// "where were we" measurement at pointerdown/focus instead, ahead of the reveal-scroll it is meant to
+// precede — it only records a position: no scroll, no preventDefault, no stopPropagation, so no other
+// handler's behaviour changes. armPanelAnchor (called by every open*Panel in place of a bare
+// `watchPanelAnchorY=scrollY`) uses this measurement only while it's fresh — this same gesture — and
+// otherwise falls back to scrollY exactly as CAS-647 did, so a programmatic or delayed open still anchors
+// correctly.
+let earlyPanelAnchorY=null, earlyPanelAnchorAt=-Infinity;
+function captureEarlyPanelAnchor(e){
+  if(!e.target.closest || !e.target.closest(".ctl.watch, .ctl.notify, .ctl.casc")) return;
+  earlyPanelAnchorY=scrollY;
+  earlyPanelAnchorAt=performance.now();
+}
+document.addEventListener("pointerdown", captureEarlyPanelAnchor, true);
+document.addEventListener("focus", captureEarlyPanelAnchor, true);
+function armPanelAnchor(){
+  watchPanelAnchorY = (performance.now()-earlyPanelAnchorAt<1000) ? earlyPanelAnchorY : scrollY;
+}
 window.openWatchPanel=(id, btn)=>{
   // CAS-281: "was MY panel already open?", not "was ANY panel open?". The old test closed whatever was open
   // and returned, so tapping a second control while a first was open closed the first and opened nothing —
@@ -8326,7 +8347,7 @@ window.openWatchPanel=(id, btn)=>{
   if(mine){ watchPanelAnchorY=null; return; }    // tapping the chip again closes the panel it opened
   const stub=btn.closest(".stub"); if(stub) stub.classList.add("ratingopen");
   const card=btn.closest(".card"); if(card) card.classList.add("popopen");   // CAS-684
-  watchPanelAnchorY=scrollY;
+  armPanelAnchor();   // CAS-1028: see captureEarlyPanelAnchor above
   const cur=opinionOf(id);
   const pop=document.createElement("div");
   // CAS-374: content-width, right-aligned under the Watched chip — no in-panel close, the chip is the toggle.
