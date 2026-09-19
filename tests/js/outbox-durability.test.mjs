@@ -150,6 +150,49 @@ test("CAS-1035 AC3 regression: flushAccountSync durably persists the outbox befo
   signOut(E1);
 });
 
+// The real cause behind AC3's repeated WebKit-only failures (found from a real trace, not another guess):
+// fireAccountFanout sets filmWatchReady=false, then loadFilmWatches() clears `notify` (clearAccountNotify)
+// before its remote fetch resolves and applyWatchRows() repopulates it. In a real browser, the OTHER fan-out
+// loads (loadAccount/loadAccountFilms/loadNotifyPrefs/loadRealAlerts/loadFilmPicks/loadInvites/loadFriends)
+// race loadFilmWatches and can each trigger their own recomputeFound() while `notify` sits in that
+// transiently-empty window — recomputeFound's own unconditional saveNotify() (its last line) then calls
+// scheduleWatchSync(), which used to wholesale-replace outbox["film_watch"] from that empty `notify`,
+// wiping the very row loadFilmWatches' own outboxOverlay needed. A Node repro that calls
+// replayOutbox()/loadFilmWatches() directly (AC2 above) never hits this — it has no concurrent recompute
+// racing in the gap, which is exactly why the bug only ever showed up in a real browser.
+test("CAS-1035 AC3 real cause: a recomputeFound() racing in while filmWatchReady is false must not wipe a pending outbox row", () => {
+  const E = loadEngine();
+  const client = fakeClient({ upserts: { film_watch: { message: "network down" } } });
+  signIn(E, client);
+  try{
+    const film = pickStreamableFilm(E);
+    const movieId = String(film.tmdb_id);
+    E.toggleFilmOpt(film.tmdb_id, "stream");
+    assert.ok(movieId in E.CascadePersistence.outboxPending("film_watch"),
+      "sanity: the tick is pending before the race window opens");
+
+    // Simulate fireAccountFanout entering loadFilmWatches: filmWatchReady flips false, then
+    // clearAccountNotify() wipes `notify` — there is no direct handle on clearAccountNotify itself, but
+    // deleting the one entry under test has the same effect on what watchRows() would see.
+    E.CascadePersistence.filmWatchReady = false;
+    delete E.notify[film.tmdb_id];
+
+    // A different fan-out load (e.g. loadAccount) resolves first and triggers a render/recompute while
+    // this device's own film_watch answer is still in flight — recomputeFound's unconditional saveNotify()
+    // must not be allowed to mark the outbox from `notify` in this state.
+    E.recomputeFound();
+    assert.ok(movieId in E.CascadePersistence.outboxPending("film_watch"),
+      "a recompute racing ahead of this device's own film_watch load must not drop the still-pending row");
+
+    // loadFilmWatches' own applyWatchRows(outboxOverlay(...)) would now restore the tick from the still-
+    // pending row this test just proved survived — apply that exact row, the way the real overlay does.
+    E.CascadePersistence.applyWatchRows(Object.values(E.CascadePersistence.outboxPending("film_watch")));
+    E.CascadePersistence.filmWatchReady = true;
+    assert.equal(E.notify[film.tmdb_id].wins.stream, true,
+      "sanity: the tick is back once the device's own load resolves");
+  } finally{ signOut(E); }
+});
+
 test("CAS-1035: outboxPending clears once its push actually succeeds", async () => {
   const E = loadEngine();
   const client = fakeClient({ upserts: { film_watch: null } });   // succeeds

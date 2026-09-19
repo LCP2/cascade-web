@@ -20011,7 +20011,20 @@ else if(dedupedN)
   }
   let watchTimer=null, watchSyncing=false, watchAgain=false;
   let watchBaseline=null;   // CAS-408: same private-baseline diff as filmBaseline above
+  // CAS-1035 AC3's real cause: outboxMark("film_watch", watchRows(), ...) below REPLACES the whole pending
+  // set from `notify`'s CURRENT contents — and recomputeFound()'s own unconditional saveNotify() (its last
+  // line, covering every pass) calls this same function. loadFilmWatches() clears `notify` via
+  // clearAccountNotify() before its remote fetch resolves and applyWatchRows() repopulates it — exactly the
+  // window filmWatchReady=false spans (see fireAccountFanout). A recomputeFound() triggered by any of the
+  // OTHER concurrent fan-out loads resolving in that window (loadAccount/loadAccountFilms/loadNotifyPrefs/
+  // loadRealAlerts/loadFilmPicks/loadInvites/loadFriends all race loadFilmWatches — see fireAccountFanout)
+  // would otherwise mark from that transiently-empty `notify`, wholesale-wiping the very outbox row
+  // loadFilmWatches' own outboxOverlay is about to need — the real mechanism behind the WebKit-only AC3
+  // failure a Node-only repro (no concurrent fan-out) could never reproduce. Defer rather than drop, the
+  // same "not ready yet" convention runUserPrefsSync already uses — the watch itself is untouched, only the
+  // outbox mark and its debounce wait for `notify` to be a trustworthy snapshot again.
   function scheduleWatchSync(){
+    if(!filmWatchReady){ clearTimeout(watchTimer); watchTimer=setTimeout(scheduleWatchSync, 50); return; }
     outboxMark("film_watch", watchRows(), r=>r.movie_id);
     clearTimeout(watchTimer); watchTimer=setTimeout(runWatchSync, 500);
   }
