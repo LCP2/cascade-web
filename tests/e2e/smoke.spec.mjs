@@ -115,6 +115,25 @@ test("a film card's Watched control lands an answer", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => watched.size), { timeout: 10_000 }).toBeGreaterThan(0);
 });
 
+// CAS-1037: toggleFilmOpt used to repaint the chip and leave the panel open — the one place a level pick
+// didn't dismiss its menu the way the Watched panel's pickWatch always has.
+test("a film card's Watch On control dismisses its panel after picking a level (CAS-1037)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  const first = page.locator("#groups .card").first();
+  await expect(first).toBeVisible();
+  await first.locator(".ctl.notify").click();
+  const row = page.locator(".cpop.npop .nopt[data-wk]:not(.spent)").first();
+  await expect(row).toBeVisible();
+  const key = await row.getAttribute("data-wk");
+  await row.click();
+  await expect(page.locator(".cpop")).toHaveCount(0);
+  const expectedLabel = await page.evaluate(k => WATCH_LEVEL_SHORT_LABEL[k], key);
+  await expect(first.locator(".ctl.notify")).toContainText(expectedLabel);
+});
+
 // CAS-647: opening Notify, Tags or Watched on a card left the card blank and cut the top of the list. The
 // actual mechanism was a scroll drift (Chromium's silent reveal-scroll on focus, same cause as CAS-315's
 // keepRowInPlace fix) rather than anything about a specific control's own state, so this checks the
@@ -156,6 +175,103 @@ test.fixme("opening Notify, Tags or Watched leaves the card rendered and scroll 
       expect(Math.abs((await page.evaluate(() => scrollY)) - before)).toBeLessThan(2);
     }
   }
+});
+
+// CAS-1036: scrolling a long Watch list down was smooth, but scrolling back up became jumpy at an
+// unpredictable point. content-visibility:auto's contain-intrinsic-size is only ever a GUESS for an
+// off-screen row until it's actually laid out for real (CAS-129/CAS-897) — if the guess is wrong, the
+// swap from guess to real height is exactly the layout shift CAS-897's own history already names as the
+// cause of this kind of drift, and it had gone stale: "CONDENSED CARD, REV 2" (CAS-687 and its own
+// follow-ups) re-added a poster-left layout, a Style line, an availability band and a footer action row
+// to the collapsed card well after its contain-intrinsic-size was last measured.
+//
+// Two tests below, not one, because they check different things and only one of them can actually catch
+// a regression here:
+//
+// "the round trip" is the literal shape this ticket's AC2 describes — scroll to the bottom of a long list
+// and back, assert the position lands close to where it started. Kept because it is still a legitimate
+// coarse regression guard (a badly broken windowing change could still blow the scrollable height out
+// entirely), but by itself it is NOT what actually proves this ticket's fix: every variant tried here —
+// a discrete window.scrollTo walk, a small-step window.scrollBy walk, both with and without the fix
+// applied — measured a 0px correction either way in this Playwright/WebKit harness. That is the same dead
+// end CAS-1034's own quarantined test (test.fixme above) hit chasing a related WebKit scroll-anchor bug:
+// this harness does not reproduce the on-device drift from a script-driven scroll the way a real touch/
+// momentum gesture does. Forcing the round trip to fail on the old, broken CSS to "prove" it wasn't
+// possible without either flailing at gesture simulation this repo has already spent four tickets on
+// elsewhere, or asserting a tolerance so tight it would be flaky for reasons that have nothing to do with
+// this fix. So it stays as a coarse sanity check, not the real assertion.
+//
+// "the placeholder match" is what actually discriminates. Measured directly against this exact harness:
+// with the pre-fix 108px/46px estimates, an off-screen collapsed card's placeholder height was up to 96px
+// off its real height (a scale-badge-and-Oscar-mark row wrapping to two lines made the gap worse still);
+// with this ticket's measured values it is under a pixel. That is the actual mechanism a real scroll-back
+// -up drift is made of, checked without needing the drift itself to show up in a script-driven scroll.
+test("Watch listing scroll position survives a long scroll to the bottom and back (CAS-1036)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+  // A freshly onboarded roster only matches a handful of films — not long enough to scroll meaningfully.
+  // Broadening with a few more real presets, the same "+ Add" flow a person uses from the Agents screen,
+  // gives an actually-scrollable list.
+  for(const name of ["Date Night", "Family Movies", "Totally Custom"]){
+    await page.locator("#agentsBtn").click();
+    await expect(page.locator("#agentsScreen")).toHaveClass(/open/);
+    await page.locator(".ag-add").click();
+    await expect(page.locator(".scard").first()).toBeVisible();
+    await page.locator(".scard", { has: page.locator(".sc-name", { hasText: name }) }).first().click();
+    await expect(page.locator("#onbStepInner .osback")).toBeVisible();
+    await page.locator("#onbStepInner .osback").click();
+    await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
+  }
+  const rendered = await settleListing(page);
+  expect(rendered).toBeGreaterThan(15);
+
+  const scrollY = () => page.evaluate(() => window.scrollY);
+  const startY = await scrollY();
+  expect(startY).toBe(0);
+
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await page.waitForTimeout(400);
+  const bottomY = await scrollY();
+  expect(bottomY).toBeGreaterThan(400);   // actually a scrollable list, not one screen
+
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(400);
+  const endY = await scrollY();
+  expect(Math.abs(endY - startY), `started at ${startY}, ended at ${endY}`).toBeLessThan(3);
+});
+
+test("Watch listing rows' off-screen placeholder height matches their real height (CAS-1036)", async ({ page }) => {
+  await freshApp(page);   // exercises cardHTML() and the CSS directly, at real catalogue scale — no
+                           // onboarding needed for what this checks
+  const diffs = await page.evaluate(async () => {
+    const round = n => Math.round(n * 100) / 100;
+    const container = document.createElement("div");
+    container.id = "groups";
+    document.body.appendChild(container);
+    const sample = MOVIES.filter(m => m && m.tmdb_id).slice(0, 300);
+    container.innerHTML = sample.map(m => cardHTML(m)).join("");
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    // Rows more than two screens below the fold are the ones genuinely still resting on their
+    // content-visibility:auto placeholder — the population CAS-897's original bug, and this ticket's
+    // regression of it, actually affects.
+    const rows = [...container.querySelectorAll(".card:not(.expanded)")]
+      .filter(el => el.getBoundingClientRect().top > window.innerHeight * 2);
+    const sampled = rows.filter((_, i) => i % 15 === 0).slice(0, 12);
+    const out = [];
+    for(const el of sampled){
+      const before = round(el.getBoundingClientRect().height);
+      el.scrollIntoView({ block: "center" });
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      out.push(round(Math.abs(el.getBoundingClientRect().height - before)));
+    }
+    container.remove();
+    return out;
+  });
+  expect(diffs.length).toBeGreaterThan(5);   // actually sampled off-screen rows, not an empty list
+  const maxDiff = Math.max(...diffs);
+  expect(maxDiff, `placeholder→real height mismatches sampled: ${JSON.stringify(diffs)}`).toBeLessThan(10);
 });
 
 // CAS-933 reverses CAS-644: a cold load lands on Watch, never Moving. Moving stays reachable from its own
@@ -1065,6 +1181,96 @@ test("CAS-913: a device that has onboarded but never signed in boots into the ap
 
   await expect(page.locator("#splash")).not.toHaveClass(/open/);
   await expect(page.locator("#authModal")).not.toHaveClass(/open/);
+});
+
+// CAS-1035 AC3: a Watch On tick made just before the tab closes must survive a reload even though it never
+// reached the account — the observed bug (Lee, iPhone: two Stream ticks reverted after a swipe-close and
+// reopen). Same session-persists-across-a-real-reload technique as CAS913_FAKE_SUPABASE_GLOBAL above (a
+// fresh window.supabase per navigation, backed by one real localStorage session key), but film_watch's own
+// upsert ALWAYS fails here — the push this device makes never reaches the account, on this reload or the
+// next, so the only thing that can be keeping the tick alive across the reload below is the durable outbox
+// (CascadePersistence's outboxOverlay, applied inside loadFilmWatches ahead of clearAccountNotify's wipe).
+const CAS1035_FAKE_SUPABASE_GLOBAL = `
+  const SESSION_KEY = "cas1035-fake-session";
+  const readSession = () => {
+    try{ const raw = localStorage.getItem(SESSION_KEY); return raw ? JSON.parse(raw) : null; }catch(e){ return null; }
+  };
+  const writeSession = session => {
+    try{ session ? localStorage.setItem(SESSION_KEY, JSON.stringify(session)) : localStorage.removeItem(SESSION_KEY); }catch(e){}
+  };
+  let listeners = [];
+  function chain(){
+    return new Proxy(() => {}, {
+      get: (_t, prop) => prop === "then" ? (resolve) => resolve({ data: [], error: null }) : () => chain(),
+      apply: () => chain(),
+    });
+  }
+  function filmWatchTable(){
+    return {
+      select: () => ({ then: (resolve) => resolve({ data: [], error: null }) }),
+      upsert: () => ({ then: (resolve) => resolve({ data: null, error: { message: "network down" } }) }),
+      delete: () => chain(),
+    };
+  }
+  window.supabase = { createClient(){
+    return {
+      auth: {
+        getSession: async () => ({ data: { session: readSession() } }),
+        onAuthStateChange: (cb) => {
+          listeners.push(cb);
+          return { data: { subscription: { unsubscribe(){ listeners = listeners.filter(f => f !== cb); } } } };
+        },
+        signInWithPassword: async ({ email }) => {
+          const session = { user: { id: "cas1035-user", email }, access_token: "fake" };
+          writeSession(session);
+          listeners.forEach(cb => cb("SIGNED_IN", session));
+          return { data: { session }, error: null };
+        },
+        signUp: async () => ({ data: {}, error: null }),
+        signOut: async () => { writeSession(null); return { error: null }; },
+      },
+      from: (table) => table === "film_watch" ? filmWatchTable() : chain(),
+    };
+  } };
+`;
+test("CAS-1035 AC3: a Watch On tick survives being closed and reopened before it ever reaches the account", async ({ page }) => {
+  await page.route("**/config.js", route => route.fulfill({
+    contentType: "application/javascript",
+    body: `window.CASCADE_CONFIG = { SUPABASE_URL: "https://fake-project.supabase.test", SUPABASE_ANON_KEY: "fake-anon-key-not-a-real-secret" };`,
+  }));
+  await page.route("**/supabase-js.js", route => route.fulfill({
+    contentType: "application/javascript",
+    body: CAS1035_FAKE_SUPABASE_GLOBAL,
+  }));
+  await gotoFresh(page);
+  await page.waitForFunction(() => window.CascadeAuth && window.CascadeAuth.client);
+
+  // CAS-913's own walk (duplicated there, not imported from helpers.mjs, for the same reason: toShortlist's
+  // inner freshApp() would overwrite this test's own config.js/supabase-js.js routes with guest-mode's 404).
+  await cas913WalkToShortlist(page);
+  await finishFlow(page);
+  await toListing(page);   // CAS-1030: fills #membEmail — signs in via the fake, landing on the real listing
+  await page.waitForFunction(() => window.CascadeAuth.status === "signed-in", null, { timeout: 5000 });
+
+  // Tick a Watch On level the same way CAS-897's trackAStreamingFilm does — via the real toggleFilmOpt, on a
+  // film found by evaluate rather than a card on screen, which this roster isn't guaranteed to have.
+  const movieId = await page.evaluate(() => {
+    const film = MOVIES.find(m => watchLevelsFor(m.tmdb_id).some(l => l.key === "stream" && !l.spent));
+    if(!film) throw new Error("no fixture film has an available Stream level");
+    toggleFilmOpt(film.tmdb_id, "stream");
+    return film.tmdb_id;
+  });
+  expect(await page.evaluate(id => notify[id] && notify[id].wins && notify[id].wins.stream, movieId)).toBe(true);
+
+  // Reload now — inside the 500ms debounce, never having let the (deliberately always-failing) push land.
+  // A real navigation fires pagehide on the old document itself; nothing here needs to dispatch it by hand.
+  await page.reload();
+  await page.waitForFunction(() => typeof flowStart === "function" && Array.isArray(MOVIES));
+  await page.waitForFunction(() => window.CascadeAuth.status === "signed-in", null, { timeout: 5000 });
+
+  await expect.poll(() => page.evaluate(id => notify[id] && notify[id].wins && notify[id].wins.stream, movieId), {
+    timeout: 10_000,
+  }).toBe(true);
 });
 
 // CAS-919: Watchmode is now the Cascade score, and the card is back to one score row — People

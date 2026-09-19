@@ -2758,6 +2758,37 @@ test("CAS-735 AC2: applyWatchRows never lets a remote row with no manual claim o
   }
 });
 
+// CAS-1035 AC5(a): Lee's second observation ("came back after a long idle, no close, no swipe, and the
+// picked levels were unselected") named a plain reconcile — on focus/visibilitychange, not a reboot — as a
+// suspect alongside the debounce/pagehide gap this ticket otherwise fixes. applyWatchRows' own precedence
+// rule (~19989 above) already guards this: a remote row only ever outranks a local manual pick when it is
+// BOTH itself claiming manual AND genuinely newer than watchKnown (this device's own last-confirmed remote
+// state) — an older row, even one that also claims manual (e.g. a stale reconcile racing a real device
+// sync), must leave the local pick untouched. CAS-735 AC2 above already covers "remote claims no manual
+// rung at all"; this covers the other half of the same precedence rule, the one every prior test skipped.
+test("CAS-1035 AC5(a): applyWatchRows never lets an OLDER remote row overwrite a local manual pick, even one that also claims manual", () => {
+  const id = E.MOVIES[7].tmdb_id;
+  try {
+    const e = E.entryFor(id);
+    e.wins = { in_cinema: false, premium: false, rent: false, stream: true };
+    e.winsSource = { stream: "manual" };
+    // This device already confirmed the account as of a later timestamp than the "reconcile" row below —
+    // exactly the shape a routine focus/visibilitychange reconcile racing a slightly-stale read would have.
+    E.CascadePersistence.watchKnown.set(String(id), "2026-09-10T00:00:00.000Z");
+    E.CascadePersistence.applyWatchRows([
+      { movie_id: String(id), windows: ["rent"], sources: { rent: "manual" },
+        updated_at: "2026-09-01T00:00:00.000Z" },   // older than watchKnown above
+    ]);
+    const after = E.notify[id];
+    assert.equal(after.wins.stream, true,
+      "a local manual pick must survive an older remote row, even one that also claims manual on another rung");
+    assert.equal(after.winsSource.stream, "manual");
+  } finally {
+    delete E.notify[id];
+    E.CascadePersistence.watchKnown.delete(String(id));
+  }
+});
+
 test("CAS-735 AC3: a full recomputeFound() pass never changes an entry carrying a manual source on its currently-set key, for every window and marker configuration", () => {
   const film = scoredUnwatchedFilm(["in_cinema"]);
   const id = film.tmdb_id;

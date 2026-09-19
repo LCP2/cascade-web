@@ -594,9 +594,21 @@
     transition:box-shadow .3s ease,border-color .3s ease;
     /* CAS-129: windowing. The browser skips layout+paint for cards outside the viewport, so only the
        visible handful of the ~2,000-card catalogue actually renders; contain-intrinsic-size:auto
-       remembers each card's real height once seen, keeping the scrollbar and offsets stable. */
-    content-visibility:auto;contain-intrinsic-size:auto 320px}
-  .card.expanded{border-color:#3a3560;box-shadow:0 8px 30px rgba(0,0,0,.55)}
+       remembers each card's real height once seen, keeping the scrollbar and offsets stable.
+       CAS-1036: .card:not(.expanded) below overrides this number for the collapsed case (the one that
+       matters — see its own comment for the measured values and why the authored number here is not the
+       same as the real pixel height), and .card.expanded turns content-visibility back off entirely,
+       which makes this number moot there. Kept the same as the collapsed default below rather than the
+       old 320px guess, so there's no separate mismatch in the instant before either override applies. */
+    content-visibility:auto;contain-intrinsic-size:auto 160px}
+  /* CAS-1036: synopsis/cast/credits length varies wildly film to film — measured 532px to 1394px across
+     80 real, varied films, more than 2.5x apart — so no single contain-intrinsic-size guess is ever
+     close, and the gap between guess and reality is exactly what this ticket's jolt bug is. Expanding a
+     card only ever happens while it's already on screen (the user just tapped it), so there is nothing to
+     window here in the first place: content-visibility:visible just stops a LATER off-screen skip/resume
+     (the user expanded it, then scrolled it out of view without collapsing it) from guessing a number
+     that has already been measured and proven it cannot be made stable. */
+  .card.expanded{border-color:#3a3560;box-shadow:0 8px 30px rgba(0,0,0,.55);content-visibility:visible}
   /* CAS-684: same fix as CAS-376's .stub.ratingopen, applied to the card popovers (Notify/Agent/Watched).
      .card's own overflow:hidden and content-visibility:auto (paint containment) both clip a .cpop that
      paints past the card's box — worse now the condensed card (CAS-617/624/630) is short enough that an
@@ -980,9 +992,18 @@
   /* CAS-133: the collapsed row wears the SAME outline as the full card (solid, same colour/radius),
      its title is bright and prominent, and it's only lightly dimmed so it reads as "collapsed", not
      "gone". The shrink itself is animated by keepRowInPlace on deselect — the card visibly folds. */
+  /* CAS-1036: measured for real (webkit, 390x844, --ui-scale zoom active) across 200 real, varied
+     catalogue titles rendered through stubHTML, every opinion kind included, content-visibility forced
+     visible while measuring — the row is a fixed 53.52px regardless of title length or which opinion icon
+     it shows (nowrap + ellipsis on both text spans, a fixed-size icon button), one true measured height,
+     not an estimate picked among several like the collapsed card's. The authored value below (28px) is not
+     that 53.52px figure itself — see the long note on .card:not(.expanded) above for why zoom:var(--ui-
+     scale) (CAS-157) means an off-screen placeholder's authored contain-intrinsic-size and its resulting
+     getBoundingClientRect are not in the same pixel space; 28px is what was solved, against this engine,
+     to make the placeholder actually land on 53.52px. */
   .stub{display:flex;align-items:center;gap:9px;background:var(--panel);border:1px solid var(--line);
     border-radius:16px;padding:9px 9px 9px 13px;margin-bottom:11px;opacity:.9;transition:opacity .18s;
-    content-visibility:auto;contain-intrinsic-size:auto 46px}   /* CAS-129: windowing (see .card) */
+    content-visibility:auto;contain-intrinsic-size:auto 28px}   /* CAS-129: windowing (see .card) */
   .stub:hover,.stub:focus-within{opacity:1}
   /* CAS-376: content-visibility:auto always applies paint containment (spec, not just the off-screen-skip
      part), which clips anything painted outside the row's own one-line box — the rating menu popup is many
@@ -3199,7 +3220,30 @@
      visibility:auto swaps an off-screen card's estimated height for its real one as it nears the viewport;
      with the estimate short, dozens of not-yet-rendered cards above the one under test all overshot by
      that same ~29px, and the accumulated jump landed as scroll drift once they resolved. */
-  .card:not(.expanded){border-radius:10px;margin-bottom:5px;contain-intrinsic-size:auto 108px}
+  /* CAS-1036: 108px went stale — "CONDENSED CARD, REV 2" (CAS-687 and its own follow-ups, further below
+     in this file) re-added the poster-left layout, the Style/meta line, the availability band and the
+     footer action row to the collapsed card, none of which the 108px estimate above ever accounted for.
+     Measured for real (webkit, 390x844, --ui-scale zoom active, 200 real catalogue titles rendered
+     through cardHTML, then forced content-visibility:visible so the browser could not fall back to any
+     placeholder while measuring): a plain collapsed card is 180.48–180.97px (rounding noise only — one
+     real height, not a range). A card whose .mrow.r-scores row wraps to two lines measures 218.55–219.03px
+     instead — see .densescores below for when that happens and why it needs its own value.
+     The authored contain-intrinsic-size below is NOT 181px, even though that is the real height just
+     measured — confirmed empirically (binary-searched against this exact engine/zoom combination): with
+     --ui-scale's zoom:1.12 (CAS-157) active on <html>, an OFF-SCREEN auto-sized placeholder's authored
+     length is not in the same pixel space its resulting getBoundingClientRect reports (zoom and
+     containment's intrinsic-size resolution compound differently to zoom's effect on normal layout, at
+     least in this WebKit build) — 181px authored measured back as a ~204.7px placeholder box, 24px taller
+     than the real card it's meant to estimate, which would just trade one jolt for a smaller one. 160px is
+     what a real off-screen card with this content actually settles the placeholder at 180.98px — solved
+     directly against the browser, not derived from the CSS value on paper. Same story for .densescores
+     and .stub below. */
+  .card:not(.expanded){border-radius:10px;margin-bottom:5px;contain-intrinsic-size:auto 160px}
+  /* CAS-1036: the taller measured height (see above) for a collapsed card whose scores row wraps to a
+     second line — cardHTML sets this class from the same badge data it already computes, so the estimate
+     is chosen from real per-card data, not guessed at build time. 194px (not 219px — see the note above on
+     .card:not(.expanded)) measured back as a 219.03px placeholder, matching the real height. */
+  .card:not(.expanded).densescores{contain-intrinsic-size:auto 194px}
   .card:not(.expanded) .cbody{padding:6px 10px}
   .card:not(.expanded) .ctop{
     grid-template-columns:30px minmax(0,1fr);
@@ -7548,6 +7592,15 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   // CAS-686: the condensed card shows the money row instead of the scores row when this film holds none
   // of IMDb/RT/Metacritic — see condensedShowsScores.
   const cinfoCard = !condensedShowsScores(m);
+  // CAS-1036: the condensed row's scores/badge/attribution items are flex-wrap:wrap (see .mrow.r-scores
+  // under .card:not(.expanded)), so on a 390px phone it settles at one line or two depending what's in
+  // it — measured across the real catalogue: a "Landmark" badge only ever appears on a film that also
+  // carries an award (isLandmark requires one), and that pairing wraps to two lines every time; a
+  // "Blockbuster" badge is the next-longest label and wraps on its own text most of the time even with no
+  // award mark. Both get the taller of the two measured contain-intrinsic-size values (.densescores)
+  // instead of the shorter default, so both the common one-line case and this one load close to their
+  // real height rather than one contain-intrinsic-size guess trying to cover both.
+  const denseScores = !!badge && (scaleTier(m)==="landmark" || scaleTier(m)==="blockbuster");
   // What's new is a fact about the film — the day Cascade first picked it up — so it is stated ON the film,
   // and nowhere else (CAS-107). It no longer decides where the film sits in the list, and the header no longer
   // dresses the whole list up as news; the chip just tells you which of these you haven't seen before.
@@ -7556,7 +7609,7 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   // for callers but no longer rendered.)
   // CAS-179: one grid, one order — title · genres·language · synopsis · money · scores · awards, with
   // the poster spanning down to the scores row and the scale badge tucked under it beside the awards.
-  return `<div class="card ${expandedSet.has(id)?'expanded':''} ${cinfoCard?'cinfo':''}" id="card-${id}">
+  return `<div class="card ${expandedSet.has(id)?'expanded':''} ${cinfoCard?'cinfo':''} ${denseScores?'densescores':''}" id="card-${id}">
     <div class="cbody" onclick="cardTap(event,${id})">
       <div class="ctop">
         <!-- CAS-276: the tombstone is the POSTER, and nothing else. The scale badge used to hang below it,
@@ -8148,6 +8201,7 @@ window.toggleFilmOpt=(id,key)=>{
     saveNotify();
     logEvent("film_watch_claim",{level:key});
     repaintWatchControl(id);
+    closeWatchPanel();   // CAS-1037: dismiss on pick, matching the Watched panel's pickWatch
     return;
   }
   // CAS-716: Watch On is single-select — ticking a level clears every other key first, so at most one is ever
@@ -8167,6 +8221,7 @@ window.toggleFilmOpt=(id,key)=>{
   saveNotify();
   logEvent("film_watch_level",{level:key, on:!!e.wins[key]});
   repaintWatchControl(id);
+  closeWatchPanel();   // CAS-1037: dismiss on pick/clear, matching the Watched panel's pickWatch
 };
 // "Never" clears every future tick (the greyed/passed ones are left alone — they're a record, not a promise)
 // and sets the same `blocked` flag Watched's old "Won't Watch" always did. CAS-349 only moved and relabelled
@@ -18855,7 +18910,11 @@ else if(dedupedN)
   // another's own failure. acctTableFail is the single source of truth both the banner and every push
   // gate below read from.
   const ACCT_TABLE_SURFACE = { cascades:"agents" };
-  const ACCT_SURFACE_LABEL = { agents:"agents" };
+  // CAS-1035: watch_status/notify_settings/settings are read only by the outbox's own contribution to the
+  // "Not yet saved" line below (OUTBOX_TABLE_SURFACE) — acctTableFail/acctTablePending above stay scoped to
+  // cascades, the only table acctRead's retry-then-latch logic covers.
+  const ACCT_SURFACE_LABEL = { agents:"agents", watch_status:"watch status",
+    notify_settings:"notification settings", settings:"your settings" };
   const acctTableFail = { cascades:false };
   function setAcctTableFail(table, failed){
     if(acctTableFail[table]===failed) return;
@@ -18906,6 +18965,11 @@ else if(dedupedN)
     // A table already flagged "not connected" gets that message, not also "not yet saved" — the reader
     // has already been told nothing from this device is reaching the account right now.
     Object.keys(acctTablePending).forEach(t=>{ if(acctTablePending[t] && !acctTableFail[t]) pending.add(ACCT_TABLE_SURFACE[t]); });
+    // CAS-1035 AC3: the durable outbox is the other, more general source of "not yet saved" — a row still
+    // owed the account on any of the seven sync targets, cleared the instant it's confirmed pushed. Feeds
+    // the same line, the same surface vocabulary, independent of acctTablePending (which nothing besides
+    // cascades has ever actually set).
+    Object.keys(outbox).forEach(t=>{ if(Object.keys(outbox[t]||{}).length) pending.add(OUTBOX_TABLE_SURFACE[t]||t); });
     const parts=[];
     // CAS-764: softened copy — the account IS connected, one table's last read (after 3 retries) failed.
     // Says what actually happened and what it means, not an overstated "disconnected" alarm.
@@ -18969,6 +19033,89 @@ else if(dedupedN)
     return SYNC_TARGET_ORDER.map(target => ({ target,
       ...(syncOutcome[target] || { when:null, ok:null, error:null, schemaDrift:false }) }));
   }
+
+  // ---- CAS-1035: the durable outbox -----------------------------------------------------------------
+  // CAS-787/CAS-656 above catch a push that was ATTEMPTED and failed. Neither catches a push that never
+  // got attempted at all — closed inside its own debounce, or killed mid-flight by the page being frozen
+  // for backgrounding — because nothing durable ever recorded that a row was still owed. That's the hole
+  // behind the observed bug: a Watch On tick ticked, then the tab closed inside the 500ms debounce, never
+  // reached the account; the next boot's loadFilmWatches() (via clearAccountNotify) wipes local `notify`
+  // state and rebuilds it from the account's rows alone, so a tick the account never saw is gone, not
+  // merely delayed.
+  //
+  // One entry per (target, row key), written the instant a save chokepoint means to push a row — from
+  // the SAME schedule*Sync() functions below, not a new call site per edit — and cleared only once that
+  // exact row has actually reached the account. A tab that dies before the push lands still has the row
+  // here on its next boot: replayOutbox() (called from fireAccountFanout, before any load-from-account
+  // runs) retries every entry, and each load/apply function below now overlays whatever is STILL pending
+  // after that retry back over the rows it just read, so a genuinely unsent row can never be clobbered by
+  // an older (or absent) remote row either.
+  const OUTBOX_KEY = "cascade_outbox";
+  function loadOutbox(){
+    try{
+      const raw = JSON.parse(localStorage.getItem(acctKey(OUTBOX_KEY)) || "null");
+      return (raw && typeof raw==="object") ? raw : {};
+    }catch(e){ return {}; }
+  }
+  function saveOutboxLocal(){
+    try{ localStorage.setItem(acctKey(OUTBOX_KEY), JSON.stringify(outbox)); }catch(e){}
+  }
+  let outbox = loadOutbox();   // target -> { rowKey -> row }
+  // Replaces the WHOLE pending set for a target with exactly what's owed right now — a row this device no
+  // longer wants to push (superseded by a later edit, or already cleared) is never carried forward stale.
+  // outboxPending() must see this the instant outboxMark returns (CAS-1035's own test: "scheduling the sync
+  // marks the row pending immediately"), so the in-memory assignment stays synchronous — only the expensive,
+  // not-synchronously-observed parts (the localStorage write and the banner repaint) are coalesced below.
+  function outboxMark(target, rows, keyFn){
+    const next={};
+    (rows||[]).forEach(r=>{ next[keyFn(r)]=r; });
+    outbox[target]=next;
+    outboxPersistSoon();
+  }
+  // A save chokepoint invoked in a tight synchronous loop (recomputeFound() touching every film in the
+  // catalogue on every sign-in) used to persist+repaint on every single iteration — re-serializing the whole
+  // outbox to localStorage and repainting the banner up to once per film turned an O(catalogue) loop into
+  // O(catalogue^2). Collapsing a synchronous burst down to one persist+repaint (a microtask always drains
+  // before the event loop can reach a real visibilitychange/pagehide, and before an `await`ed caller's own
+  // continuation runs) still shows/clears the banner and durably persists before any close event can fire —
+  // AC3 asked for "the instant", not "synchronously"; a microtask later is still well within that.
+  let outboxPersistQueued = false;
+  // Split out so flushAccountSync (below) can force this immediately: a microtask is guaranteed to drain
+  // before the NEXT task, but a real pagehide fires as part of the SAME task that queued it — nothing
+  // forces the queued microtask to have run yet at that point, so a close/reload landing between the mark
+  // and its deferred persist would durably lose the row outboxMark just promised was safe.
+  function outboxPersistNow(){
+    outboxPersistQueued = false;
+    saveOutboxLocal();
+    renderAcctBanner();
+  }
+  function outboxPersistSoon(){
+    if(outboxPersistQueued) return;
+    outboxPersistQueued = true;
+    Promise.resolve().then(outboxPersistNow);
+  }
+  function outboxClearKeys(target, keys){
+    const bucket=outbox[target]; if(!bucket) return;
+    let changed=false;
+    (keys||[]).forEach(k=>{ if(k in bucket){ delete bucket[k]; changed=true; } });
+    if(!Object.keys(bucket).length) delete outbox[target];
+    if(changed) outboxPersistSoon();   // AC3: must clear the instant it drains
+  }
+  function outboxPending(target){ return outbox[target]||{}; }
+  function outboxHasAny(){ return Object.keys(outbox).some(t=>Object.keys(outbox[t]||{}).length); }
+  // Every row this device still owes the account, minus whatever the remote read just returned for the
+  // same keys (the pending copy is the newer, still-unconfirmed one) — the shape every load/apply site
+  // below applies instead of the raw remote rows.
+  function outboxOverlay(target, remoteRows, keyOf){
+    const pending=outboxPending(target);
+    const kept=(remoteRows||[]).filter(r=>!(keyOf(r) in pending));
+    return [...kept, ...Object.values(pending)];
+  }
+  // table -> surface key for acctBannerText's own "Not yet saved" line (ACCT_SURFACE_LABEL, above).
+  const OUTBOX_TABLE_SURFACE = { cascades:"agents", agent_films:"agents",
+    user_films:"watch_status", film_watch:"watch_status",
+    notify_prefs:"notify_settings", film_picks:"notify_settings",
+    user_prefs:"settings" };
 
   // ---- shape mapping: local Cascade <-> table row --------------------------
   // criteria (jsonb) carries the whole local Cascade minus the columns stored on their own
@@ -19120,6 +19267,11 @@ else if(dedupedN)
     loadOccasionReg().forEach(o=>occasionReg.push(o));
     Object.keys(movingSeen).forEach(k=>delete movingSeen[k]);
     Object.assign(movingSeen, loadMovingSeen());
+    // CAS-1035: outbox is namespaced the same as everything else above — loaded once at parse time
+    // (before any account is known, so always under "guest"), and never re-read since. Without this, a
+    // row this device recorded as still-owed under the real account's key is invisible to the in-memory
+    // `outbox` a reload rebuilds under "guest" first, so outboxOverlay has nothing to restore.
+    outbox = loadOutbox();
   }
   // CAS-734: every cascade whose content no longer matches what this device last confirmed the account
   // holds is, by definition, something THIS device just changed — stamp it now so a later load/reconcile
@@ -19152,7 +19304,10 @@ else if(dedupedN)
     const ids=new Set(cascades.map(c=>c.id).filter(isUuid));
     return [...cascadeKnown.keys()].filter(id=>!ids.has(id));
   };
-  function scheduleSync(){ clearTimeout(syncTimer); syncTimer=setTimeout(runSync, 400); }
+  function scheduleSync(){
+    outboxMark("cascades", cascadeDirtyRows().map(cascadeToRow), r=>r.id);
+    clearTimeout(syncTimer); syncTimer=setTimeout(runSync, 400);
+  }
   async function runSync(){
     if(!accountActive()) return;
     if(syncing){ syncAgain=true; return; }
@@ -19213,12 +19368,14 @@ else if(dedupedN)
         cascadeEditedAt.delete(x.id);   // pushed — the account now holds this device's edit
       });
       saveCascadeEditedAt();
+      outboxClearKeys("cascades", dirty.map(x=>x.id));   // CAS-1035
     }
     if(deletes.length){
       const { error } = await c.from("cascades").delete().eq("user_id", owner).in("id", deletes);
       if(error){ console.warn("Cascade delete", error); recordSyncOutcome("cascades", false, error); return; }
       deletes.forEach(id=>{ cascadeKnown.delete(id); cascadeEditedAt.delete(id); });
       saveCascadeEditedAt();
+      outboxClearKeys("cascades", deletes);   // CAS-1035
     }
     saveCascadeKnown();
     recordSyncOutcome("cascades", true);
@@ -19417,9 +19574,14 @@ else if(dedupedN)
   // ---- react to auth state --------------------------------------------------
   // CAS-460: additive-only timing around the account-data fan-out, so a real-device console can show
   // how long the six independent Supabase round trips take relative to boot/sign-in.
-  function fireAccountFanout(label){
+  async function fireAccountFanout(label){
     const _t460fanout = performance.now();
     console.log('[CAS-460] account fan-out start (' + label + ')', _t460fanout);
+    // CAS-1035 AC2: replay every outbox entry — a row this device owed the account before this boot —
+    // BEFORE any load below gets a chance to apply remote rows over it. Neither caller of
+    // fireAccountFanout awaits its return, so this delays nothing anyone was relying on finishing
+    // synchronously; it only reorders what already happens inside this one async function.
+    await replayOutbox();
     // CAS-741: set before loadNotifyPrefs() is invoked (inside the array below) — loadNotifyPrefs itself
     // flips this true on its own success path only, never on a failed load.
     notifyPrefsReady=false;
@@ -19554,7 +19716,10 @@ else if(dedupedN)
   }
   let filmTimer=null, filmSyncing=false, filmAgain=false;
   let filmBaseline=null;   // CAS-408: same private-baseline diff cascadeKnown (CAS-734) uses above
-  function scheduleFilmSync(){ clearTimeout(filmTimer); filmTimer=setTimeout(runFilmSync, 400); }
+  function scheduleFilmSync(){
+    outboxMark("user_films", filmRows(), r=>r.movie_id);
+    clearTimeout(filmTimer); filmTimer=setTimeout(runFilmSync, 400);
+  }
   async function runFilmSync(){
     if(!accountActive()) return;
     if(filmSyncing){ filmAgain=true; return; }
@@ -19569,6 +19734,7 @@ else if(dedupedN)
     if(rows.length){
       const { error } = await c.from("user_films").upsert(rows, { onConflict:"user_id,movie_id" });
       if(error){ console.warn("user_films upsert", error); recordSyncOutcome("user_films", false, error); return; }
+      outboxClearKeys("user_films", rows.map(r=>r.movie_id));   // CAS-1035
     }
     // CAS-408: delete only ids THIS device watched drop out of its own baseline (an opinion cleared
     // here) — never everything else the account has that isn't on this device's screen, which used to
@@ -19579,6 +19745,7 @@ else if(dedupedN)
       if(gone.length){
         const { error } = await c.from("user_films").delete().eq("user_id", owner).in("movie_id", gone);
         if(error){ console.warn("user_films delete", error); recordSyncOutcome("user_films", false, error); return; }
+        outboxClearKeys("user_films", gone);   // CAS-1035
       }
     }
     filmBaseline=ids;
@@ -19590,7 +19757,10 @@ else if(dedupedN)
     if(error){ console.warn("user_films load", error); logSyncFailed("user_films", error); return; }
     const remote=data||[];
     filmBaseline=new Set(remote.map(r=>String(r.movie_id)));
-    applyFilmRows(remote);
+    // CAS-1035: overlay this device's own still-unsent rows back over the remote read — applyFilmRows
+    // rebuilds every verdict set from scratch, so a status this device set but never got to push would
+    // otherwise be wiped the instant this load lands, not merely delayed.
+    applyFilmRows(outboxOverlay("user_films", remote, r=>String(r.movie_id)));
   }
   // CAS-408: background convergence, mirroring reconcileCascades — remote is the union of every
   // device's explicit answers, so it can just be re-applied; a not-yet-pushed local answer survives
@@ -19680,7 +19850,11 @@ else if(dedupedN)
   // a session is upsert-only — it deletes nothing until it has seen at least one prior push of its own
   // to diff against, rather than guessing from the live table.
   let pickBaseline=null;
-  function scheduleNotifySync(){ clearTimeout(notifyTimer); notifyTimer=setTimeout(runNotifySync, 500); }
+  function scheduleNotifySync(){
+    outboxMark("notify_prefs", [prefsRow()], ()=>"_");   // CAS-1035: a singleton row, one fixed key
+    outboxMark("film_picks", pickRows(), r=>r.movie_id);
+    clearTimeout(notifyTimer); notifyTimer=setTimeout(runNotifySync, 500);
+  }
   async function runNotifySync(){
     const c=client(), owner=uid(); if(!c||!owner) return;
     try{
@@ -19693,12 +19867,14 @@ else if(dedupedN)
         const { error:pe } = await c.from("notify_prefs").upsert([prefsRow()], { onConflict:"user_id" });
         if(pe) console.warn("notify_prefs upsert", pe);
         recordSyncOutcome("notify_prefs", !pe, pe);
+        if(!pe) outboxClearKeys("notify_prefs", ["_"]);   // CAS-1035
       }
       const rows=pickRows();
       let picksOk=true, picksErr=null;
       if(rows.length){
         const { error } = await c.from("film_picks").upsert(rows, { onConflict:"user_id,movie_id" });
         if(error){ console.warn("film_picks upsert", error); picksOk=false; picksErr=error; }
+        else outboxClearKeys("film_picks", rows.map(r=>r.movie_id));   // CAS-1035
       }
       const ids=new Set(rows.map(r=>r.movie_id));
       if(pickBaseline){
@@ -19706,6 +19882,7 @@ else if(dedupedN)
         if(gone.length){
           const { error:de } = await c.from("film_picks").delete().eq("user_id", owner).in("movie_id", gone);
           if(de){ console.warn("film_picks delete", de); picksOk=false; picksErr=de; }
+          else outboxClearKeys("film_picks", gone);   // CAS-1035
         }
       }
       pickBaseline=ids;
@@ -19719,11 +19896,18 @@ else if(dedupedN)
     // treat this device's local defaults as safe to send.
     if(error){ console.warn("notify_prefs load", error); return; }
     const row=(data||[])[0];
-    if(!row){ notifyPrefsReady=true; scheduleNotifySync(); return; }   // no row yet — seed it from this device's answer
+    // CAS-1035: a still-unsent local edit is a stronger claim than whatever the account currently holds —
+    // treat it exactly like "no row yet" (below): keep this device's own value and push it, rather than
+    // adopting a remote row that predates the edit still sitting in the outbox.
+    if(!row || outboxPending("notify_prefs")["_"]){ notifyPrefsReady=true; scheduleNotifySync(); return; }
     notifyPrefs.inApp   = row.in_app!==false;
     notifyPrefs.emailOn = !!row.email_on;
     notifyPrefs.email   = row.email_address || "";
-    saveNotifyPrefs();
+    // CAS-1035: the LOCAL-only persist, same convention loadUserPrefs already follows for every field it
+    // adopts — the wrapped saveNotifyPrefs() also arms scheduleNotifySync's outbox mark, which would make
+    // every future load distrust this just-adopted (already-current) row until a wholly redundant
+    // re-push happens to land, permanently blocking a real remote update from a different device.
+    saveNotifyPrefsLocal();
     notifyPrefsReady=true;
   }
   // CAS-609: film_picks was push-only (upsert+delete, no select) — a manual "notify me" pick never
@@ -19734,7 +19918,9 @@ else if(dedupedN)
     const { data, error } = await c.from("film_picks").select("movie_id,state,pinned_to,not_in");
     if(error){ console.warn("film_picks load", error); return; }
     const remote=data||[];
-    remote.forEach(r=>{
+    // CAS-1035: a movie still owed a push keeps its local pick/pin — the remote row (if any) predates it.
+    const pending=outboxPending("film_picks");
+    remote.filter(r=>!(String(r.movie_id) in pending)).forEach(r=>{
       const id=Number(r.movie_id); if(!isFinite(id)) return;
       const e=entryFor(id);
       // CAS-844: an "off" row is the old Pick ring's removal — a legacy suppression that must not
@@ -19825,7 +20011,23 @@ else if(dedupedN)
   }
   let watchTimer=null, watchSyncing=false, watchAgain=false;
   let watchBaseline=null;   // CAS-408: same private-baseline diff as filmBaseline above
-  function scheduleWatchSync(){ clearTimeout(watchTimer); watchTimer=setTimeout(runWatchSync, 500); }
+  // CAS-1035 AC3's real cause: outboxMark("film_watch", watchRows(), ...) below REPLACES the whole pending
+  // set from `notify`'s CURRENT contents — and recomputeFound()'s own unconditional saveNotify() (its last
+  // line, covering every pass) calls this same function. loadFilmWatches() clears `notify` via
+  // clearAccountNotify() before its remote fetch resolves and applyWatchRows() repopulates it — exactly the
+  // window filmWatchReady=false spans (see fireAccountFanout). A recomputeFound() triggered by any of the
+  // OTHER concurrent fan-out loads resolving in that window (loadAccount/loadAccountFilms/loadNotifyPrefs/
+  // loadRealAlerts/loadFilmPicks/loadInvites/loadFriends all race loadFilmWatches — see fireAccountFanout)
+  // would otherwise mark from that transiently-empty `notify`, wholesale-wiping the very outbox row
+  // loadFilmWatches' own outboxOverlay is about to need — the real mechanism behind the WebKit-only AC3
+  // failure a Node-only repro (no concurrent fan-out) could never reproduce. Defer rather than drop, the
+  // same "not ready yet" convention runUserPrefsSync already uses — the watch itself is untouched, only the
+  // outbox mark and its debounce wait for `notify` to be a trustworthy snapshot again.
+  function scheduleWatchSync(){
+    if(!filmWatchReady){ clearTimeout(watchTimer); watchTimer=setTimeout(scheduleWatchSync, 50); return; }
+    outboxMark("film_watch", watchRows(), r=>r.movie_id);
+    clearTimeout(watchTimer); watchTimer=setTimeout(runWatchSync, 500);
+  }
   async function runWatchSync(){
     if(!accountActive()) return;
     if(watchSyncing){ watchAgain=true; return; }
@@ -19840,6 +20042,7 @@ else if(dedupedN)
     if(rows.length){
       const { error } = await c.from("film_watch").upsert(rows, { onConflict:"user_id,movie_id" });
       if(error){ console.warn("film_watch upsert", error); recordSyncOutcome("film_watch", false, error); return; }
+      outboxClearKeys("film_watch", rows.map(r=>r.movie_id));   // CAS-1035
     }
     // CAS-408: delete only ids THIS device's watch ticks dropped out of its own baseline (every
     // window on that film untouched) — never every id the account has that this device hasn't
@@ -19850,6 +20053,7 @@ else if(dedupedN)
       if(gone.length){
         const { error } = await c.from("film_watch").delete().eq("user_id", owner).in("movie_id", gone);
         if(error){ console.warn("film_watch delete", error); recordSyncOutcome("film_watch", false, error); return; }
+        outboxClearKeys("film_watch", gone);   // CAS-1035
       }
     }
     watchBaseline=ids;
@@ -19869,7 +20073,12 @@ else if(dedupedN)
     const { data, error } = await c.from("film_watch").select("movie_id,windows,sources,updated_at");
     if(error){ console.warn("film_watch load", error); logSyncFailed("film_watch", error); return; }
     const remote=data||[];
-    applyWatchRows(remote);
+    // CAS-1035: clearAccountNotify just wiped every `notify` entry, including a Watch On tick this device
+    // never got to push — overlay this device's own still-unsent film_watch rows back in, or a tick that
+    // never reached the account (closed inside its own debounce) is gone, not merely delayed. This is the
+    // exact mechanism behind the observed bug: the account never saw the tick, so remote has no row for it
+    // to survive on, and applyWatchRows only ever touches films present in what it's handed.
+    applyWatchRows(outboxOverlay("film_watch", remote, r=>String(r.movie_id)));
     watchBaseline=new Set(remote.map(r=>String(r.movie_id)));
   }
   // CAS-408-style background convergence, mirroring reconcileFilms — remote is the union of every
@@ -19940,7 +20149,10 @@ else if(dedupedN)
     agentFilms=next;
   }
   let agentFilmsTimer=null, agentFilmsSyncing=false, agentFilmsAgain=false, agentFilmsBaseline=null;
-  function scheduleAgentFilmsSync(){ clearTimeout(agentFilmsTimer); agentFilmsTimer=setTimeout(runAgentFilmsSync, 500); }
+  function scheduleAgentFilmsSync(){
+    outboxMark("agent_films", agentFilmRows(), r=>agentFilmKey(r.cascade_id,r.movie_id));
+    clearTimeout(agentFilmsTimer); agentFilmsTimer=setTimeout(runAgentFilmsSync, 500);
+  }
   async function runAgentFilmsSync(){
     if(!accountActive()) return;
     if(agentFilmsSyncing){ agentFilmsAgain=true; return; }
@@ -19955,6 +20167,7 @@ else if(dedupedN)
     if(rows.length){
       const { error } = await c.from("agent_films").upsert(rows, { onConflict:"user_id,cascade_id,movie_id" });
       if(error){ console.warn("agent_films upsert", error); recordSyncOutcome("agent_films", false, error); return; }
+      outboxClearKeys("agent_films", rows.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));   // CAS-1035
     }
     const keys=new Set(rows.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));
     if(agentFilmsBaseline){
@@ -19966,6 +20179,7 @@ else if(dedupedN)
           return c.from("agent_films").delete().eq("user_id",owner)
             .eq("cascade_id",k.slice(0,sep)).eq("movie_id",k.slice(sep+2));
         }));
+        outboxClearKeys("agent_films", gone);   // CAS-1035
       }
     }
     agentFilmsBaseline=keys;
@@ -19977,7 +20191,9 @@ else if(dedupedN)
       .select("cascade_id,movie_id,admitted_at,admission_score,admission_status,agent_sig");
     if(error){ console.warn("agent_films load", error); logSyncFailed("agent_films", error); return; }
     const remote=data||[];
-    applyAgentFilmRows(remote);
+    // CAS-1035: same reasoning as loadAccountFilms/loadFilmWatches — applyAgentFilmRows rebuilds the whole
+    // ledger from what it's handed, so overlay this device's own still-unsent rows back in.
+    applyAgentFilmRows(outboxOverlay("agent_films", remote, r=>agentFilmKey(r.cascade_id,r.movie_id)));
     agentFilmsBaseline=new Set(remote.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));
   }
 
@@ -20123,7 +20339,16 @@ else if(dedupedN)
              occasions:JSON.parse(JSON.stringify(occasionReg)) };
   }
   let upTimer=null;
-  function scheduleUserPrefsSync(){ clearTimeout(upTimer); upTimer=setTimeout(runUserPrefsSync, 500); }
+  function scheduleUserPrefsSync(){
+    outboxMark("user_prefs", [userPrefsRow()], ()=>"_");   // CAS-1035: a singleton row, one fixed key
+    clearTimeout(upTimer); upTimer=setTimeout(runUserPrefsSync, 500);
+  }
+  // CAS-1035: loadUserPrefs' own carry-up self-heal (below) re-derives a row from what it just read PLUS
+  // whatever this device kept because the account's copy lacked it — not an unconfirmed edit the user is
+  // waiting to have protected. Arming the same outbox key it does would make every future load distrust
+  // the account until that backfill push happens to land, which can permanently block a real remote
+  // update (a different device's answer) from ever being adopted again. Push it, but don't gate on it.
+  function armUserPrefsPush(){ clearTimeout(upTimer); upTimer=setTimeout(runUserPrefsSync, 500); }
   async function runUserPrefsSync(){
     const c=client(), owner=uid(); if(!c||!owner) return;
     // CAS-740: this device's own load of the row (below) may still be in flight — pushing now would risk
@@ -20132,6 +20357,7 @@ else if(dedupedN)
     if(!userPrefsReady){ scheduleUserPrefsSync(); return; }
     const { error } = await c.from("user_prefs").upsert([userPrefsRow()], { onConflict:"user_id" });
     if(error) console.warn("user_prefs upsert", error);
+    else outboxClearKeys("user_prefs", ["_"]);   // CAS-1035
     recordSyncOutcome("user_prefs", !error, error);
   }
   // CAS-561 merge rule: user_prefs is one row per user holding whole-object fields (taste,
@@ -20161,7 +20387,10 @@ else if(dedupedN)
         if(error) console.warn("ref_code write", error);
       });
     }
-    if(!row){ scheduleUserPrefsSync(); return; }   // no row yet — seed it from this device
+    // CAS-1035: a still-unsent local edit outranks whatever the account currently holds — treat it exactly
+    // like "no row yet": keep this device's own values (every field below) and push again, rather than
+    // adopting a remote row that predates the edit still sitting in the outbox.
+    if(!row || outboxPending("user_prefs")["_"]){ scheduleUserPrefsSync(); return; }   // no row yet — seed it from this device
     setTo(prefs.sub, row.sub_services||[]);
     setTo(prefs.store, row.store_services||[]);
     prefs.on = !!row.services_only;
@@ -20211,7 +20440,7 @@ else if(dedupedN)
     savePrefsLocal();
     syncServiceChips(); updatePrefSwitch(); updatePrefBtn();
     if(typeof render==="function") render();
-    if(carryUp) scheduleUserPrefsSync();
+    if(carryUp) armUserPrefsPush();
   }
   const saveTasteBaseLocal = saveTasteBase;
   saveTasteBase = function(){ saveTasteBaseLocal(); if(accountActive()) scheduleUserPrefsSync(); };
@@ -20251,11 +20480,54 @@ else if(dedupedN)
     if(accountActive()) scheduleUserPrefsSync();
   };
 
+  // ---- CAS-1035: flush every pending account write the instant the tab is about to disappear ----------
+  // flushUsageEvents (analytics, wired the same way near the top of this file) was the only flush that
+  // existed before this ticket — every account sync above just waited out its own debounce, so a tab
+  // closed (or backgrounded and killed) inside that window lost the edit outright. Cancel every debounce
+  // and attempt the push right now — synchronously kicked off, never awaited here, so the request is
+  // already in flight before this function (and the event that called it) returns.
+  function flushAccountSync(){
+    if(!accountActive()) return;
+    // CAS-1035: force the outbox durably to localStorage right now — outboxMark's own persist is coalesced
+    // onto a microtask for perf (recomputeFound's bulk admission pass), which is not guaranteed to have run
+    // yet the instant a real pagehide/hidden fires; a reload landing in that gap must not lose the mark.
+    outboxPersistNow();
+    clearTimeout(syncTimer); runSync();
+    clearTimeout(filmTimer); runFilmSync();
+    clearTimeout(notifyTimer); runNotifySync();
+    clearTimeout(watchTimer); runWatchSync();
+    clearTimeout(agentFilmsTimer); runAgentFilmsSync();
+    clearTimeout(upTimer); runUserPrefsSync();
+  }
+  if(typeof document!=="undefined" && document.addEventListener){
+    document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="hidden") flushAccountSync(); });
+  }
+  if(typeof window!=="undefined" && window.addEventListener){
+    window.addEventListener("pagehide", flushAccountSync);
+  }
+  // CAS-1035 AC2: the boot-time counterpart — every outbox entry, retried and AWAITED (unlike
+  // flushAccountSync above) so fireAccountFanout can rely on "replayed" meaning "already attempted"
+  // before it fires the loads that would otherwise apply older remote rows over an unsent one.
+  async function replayOutbox(){
+    if(!accountActive()) return;
+    await Promise.allSettled([
+      runSync(), runFilmSync(), runNotifySync(), runWatchSync(), runAgentFilmsSync(), runUserPrefsSync()
+    ]);
+  }
+
   window.CascadePersistence = { loadAccount, syncNow: runSync, accountActive, isUuid,
                                 // CAS-957: loadGuest is the real sign-out chokepoint (the auth-change
                                 // listener below calls it directly) — exposed so a test can drive an actual
                                 // sign-out the same way it already drives a sign-in through loadAccount.
                                 loadGuest,
+                                // CAS-1035: the durable outbox's own seam — flushAccountSync/replayOutbox so
+                                // a test can drive the pagehide/reboot paths directly (mirrors the wire-code
+                                // listeners this module itself registers, same reasoning as
+                                // reconcileOnReturn/pollCatalogue below), outboxPending/outboxHasAny to
+                                // inspect state, and outbox itself by reference (like cascadeKnown) so a
+                                // test can seed/clear it without waiting on a real failed push.
+                                flushAccountSync, replayOutbox, outboxPending, outboxHasAny,
+                                get outbox(){ return outbox; },
                                 get acctSuffix(){ return acctSuffix; },
                                 dropRefusedCascade,
                                 loadAccountFilms, syncFilmsNow: runFilmSync, filmRows, applyFilmRows,
@@ -20458,7 +20730,14 @@ else if(dedupedN)
       // reachable to construct the client that signs a user in.
       const createClient = window.supabase && window.supabase.createClient;
       if (typeof createClient !== 'function') throw new Error('Supabase client library not loaded');
-      supa = api.client = createClient(url, key);   // defaults: persistSession + detectSessionInUrl
+      // CAS-1035: every request this client makes carries keepalive:true, so a push already under way
+      // survives the page being frozen (backgrounded, or the tab closing) instead of being killed
+      // mid-flight — the other half of the debounce-cancelling flush in flushAccountSync (app_template's
+      // classic script). The payloads here are small account-sync rows, well inside keepalive's request
+      // size limit.
+      supa = api.client = createClient(url, key, {
+        global: { fetch: (input, init) => fetch(input, { ...(init||{}), keepalive: true }) }
+      });   // defaults: persistSession + detectSessionInUrl
     } catch(err){
       console.warn('Cascade: Supabase client unavailable — staying in guest mode.', err);
       // CAS-765: this used to be a silent drop to guest mode — a paying user looking at an empty
