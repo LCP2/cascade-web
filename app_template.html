@@ -19130,11 +19130,16 @@ else if(dedupedN)
   // back-catalogue growth that broke bulk upserts network-side) — every push/delete against those three
   // tables goes out in requests of at most this many rows/ids, never the whole set in one call.
   const SYNC_CHUNK_SIZE = 200;
-  function chunkRows(list){
+  function chunkByN(list, size){
     const out=[];
-    for(let i=0;i<(list||[]).length;i+=SYNC_CHUNK_SIZE) out.push(list.slice(i,i+SYNC_CHUNK_SIZE));
+    for(let i=0;i<(list||[]).length;i+=size) out.push(list.slice(i,i+size));
     return out;
   }
+  function chunkRows(list){ return chunkByN(list, SYNC_CHUNK_SIZE); }
+  // CAS-1049: agent_films deletes are keyed by (cascade_id, movie_id) — grouped by cascade_id and sent as
+  // one .in("movie_id",...) request per group, capped smaller than SYNC_CHUNK_SIZE per the ticket's own
+  // number, since a fresh sign-in's pending-delete set can span many cascades at once.
+  const AGENT_DELETE_CHUNK_SIZE = 100;
   // Every row this device still owes the account, minus whatever the remote read just returned for the
   // same keys (the pending copy is the newer, still-unconfirmed one) — the shape every load/apply site
   // below applies instead of the raw remote rows.
@@ -20252,9 +20257,13 @@ else if(dedupedN)
     finally{ agentFilmsSyncing=false; if(agentFilmsAgain){ agentFilmsAgain=false; scheduleAgentFilmsSync(); } }
   }
   // CAS-1039: same dirty-only, chunked, per-chunk-isolated shape as syncFilmsToAccount/
-  // syncWatchesToAccount above. Deletes stay per-row (no composite .in() over two columns in
-  // supabase-js, same as before) but are now waved through in batches of at most SYNC_CHUNK_SIZE
-  // concurrent requests, and a single row's delete failing never stops its wave-mates or later waves.
+  // syncWatchesToAccount above.
+  // CAS-1049: the old delete phase fired one DELETE per pending row, all in flight at once via
+  // Promise.all — on a first sign-in with a large pending-delete set that's up to SYNC_CHUNK_SIZE
+  // concurrent requests, and production showed exactly this surfacing as a network-level
+  // "TypeError: Failed to fetch" (see ticket evidence). Deletes are now grouped by cascade_id and sent
+  // one .in("movie_id",...) request per AGENT_DELETE_CHUNK_SIZE ids, awaited sequentially — never more
+  // than one delete request in flight at a time. A failed chunk still never blocks another chunk.
   async function syncAgentFilmsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
     const rows=agentFilmDirtyRows();
@@ -20267,27 +20276,42 @@ else if(dedupedN)
       outboxClearKeys("agent_films", batch.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));   // CAS-1035
     }
     if(anyError){ recordSyncOutcome("agent_films", false, anyError); return; }
-    for(const batch of chunkRows(agentFilmPendingDeleteKeys())){
-      const results = await Promise.all(batch.map(async k=>{
-        const sep=k.indexOf("::");
+    const pendingByCascade=new Map();
+    agentFilmPendingDeleteKeys().forEach(k=>{
+      const sep=k.indexOf("::"), cascadeId=k.slice(0,sep), movieId=k.slice(sep+2);
+      if(!pendingByCascade.has(cascadeId)) pendingByCascade.set(cascadeId, []);
+      pendingByCascade.get(cascadeId).push(movieId);
+    });
+    for(const [cascadeId, movieIds] of pendingByCascade){
+      for(const batch of chunkByN(movieIds, AGENT_DELETE_CHUNK_SIZE)){
         const { error } = await c.from("agent_films").delete().eq("user_id",owner)
-          .eq("cascade_id",k.slice(0,sep)).eq("movie_id",k.slice(sep+2));
-        return { k, error };
-      }));
-      const okKeys=results.filter(r=>!r.error).map(r=>r.k);
-      const failed=results.find(r=>r.error);
-      if(okKeys.length){ okKeys.forEach(k=>agentFilmsKnown.delete(k)); outboxClearKeys("agent_films", okKeys); }   // CAS-1035
-      if(failed){ console.warn("agent_films delete", failed.error); anyError=failed.error; }
+          .eq("cascade_id",cascadeId).in("movie_id",batch);
+        if(error){ console.warn("agent_films delete", error); anyError=error; continue; }
+        const keys=batch.map(id=>agentFilmKey(cascadeId,id));
+        keys.forEach(k=>agentFilmsKnown.delete(k));
+        outboxClearKeys("agent_films", keys);   // CAS-1035
+      }
     }
     if(anyError){ recordSyncOutcome("agent_films", false, anyError); return; }
     recordSyncOutcome("agent_films", true);
   }
+  // CAS-1049: PostgREST caps an unranged select at 1,000 rows, so a real account's agent_films table
+  // (thousands of rows across several agents) could load incomplete and make the diff produce spurious
+  // upserts/deletes. Page with .range() until a page comes back short of the page size.
+  const AGENT_FILMS_LOAD_PAGE = 1000;
   async function loadAgentFilms(){
     const c=client(); if(!c||!accountActive()) return;
-    const { data, error } = await c.from("agent_films")
-      .select("cascade_id,movie_id,admitted_at,admission_score,admission_status,agent_sig");
-    if(error){ console.warn("agent_films load", error); logSyncFailed("agent_films", error); return; }
-    const remote=data||[];
+    let remote=[], from=0;
+    for(;;){
+      const { data, error } = await c.from("agent_films")
+        .select("cascade_id,movie_id,admitted_at,admission_score,admission_status,agent_sig")
+        .range(from, from+AGENT_FILMS_LOAD_PAGE-1);
+      if(error){ console.warn("agent_films load", error); logSyncFailed("agent_films", error); return; }
+      const page=data||[];
+      remote=remote.concat(page);
+      if(page.length<AGENT_FILMS_LOAD_PAGE) break;
+      from+=AGENT_FILMS_LOAD_PAGE;
+    }
     // CAS-1035: same reasoning as loadAccountFilms/loadFilmWatches — applyAgentFilmRows rebuilds the whole
     // ledger from what it's handed, so overlay this device's own still-unsent rows back in.
     applyAgentFilmRows(outboxOverlay("agent_films", remote, r=>agentFilmKey(r.cascade_id,r.movie_id)));
@@ -20712,6 +20736,9 @@ else if(dedupedN)
                                 loadAgentFilms, syncAgentFilmsNow: runAgentFilmsSync, agentFilmRows,
                                 applyAgentFilmRows, agentFilmsFor, setAgentFilm, clearAgentFilm, getAgentFilm,
                                 agentFilmDirtyRows, agentFilmPendingDeleteKeys,
+                                // CAS-1049: the delete-chunking seam so a test can assert the ≤100-id,
+                                // one-in-flight-at-a-time contract directly.
+                                AGENT_DELETE_CHUNK_SIZE,
                                 get agentFilmsKnown(){ return agentFilmsKnown; },
                                 // CAS-736: same read/write-primitive shape as filmWatchReady above, so a
                                 // test can drive recomputeFound's "this device's own ledger hasn't loaded
