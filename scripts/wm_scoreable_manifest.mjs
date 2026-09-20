@@ -31,14 +31,19 @@ const OUT = path.join(ROOT, "state", "wm_backfill_scoreable.txt");
 // rederiveStatuses()) advances an ESTIMATED in_cinema claim to pvod once CINEMA_ESTIMATE_RUN_DAYS
 // has passed, even with zero offers behind it, but nothing here ever re-ran that rule: a title
 // last confirmed in_cinema, then never re-polled, stayed cinema-buzz-exempt from the floor forever
-// server-side while cascademovies.com itself was already showing it as pvod. Running the SAME
-// deriveStatus the client runs (over a claimedStatus seeded from `m.status`, exactly like
-// captureClaimedStatus does client-side) before reading primaryStatus closes that gap — this floor
-// now judges the window the app actually displays, not the window the pipeline last wrote.
+// server-side while cascademovies.com itself was already showing it as pvod. Re-deriving is only
+// meaningful when the raw claim is CURRENTLY cinema (that's the one window deriveStatus can move a
+// stale estimate off) — a candidate stub (CAS-1029/CAS-1023: scored-only, pre-TMDB-enrichment, no
+// offers/cinema_date/claimedStatus at all) has no such claim, and running deriveStatus's offerless-
+// window fallback over it invents an "upcoming" window deriveStatus was never meant to guess for
+// something that isn't a real movie record yet, which wrongly exempted it from the wmQScore floor.
 export function isScoreable(E, m, floor = 0){
-  const claimedStatus = m.claimedStatus || (m.status || []).slice();
-  const status = E.deriveStatus({ ...m, claimedStatus });
-  const ps = E.primaryStatus({ ...m, status });
+  let ps = E.primaryStatus(m);
+  if(ps === "in_cinema" || ps === "opening_week"){
+    const claimedStatus = m.claimedStatus || (m.status || []).slice();
+    const status = E.deriveStatus({ ...m, claimedStatus });
+    ps = E.primaryStatus({ ...m, status });
+  }
   if(ps === "upcoming") return E.wmCinemaScore(m) >= 0;
   if(ps === "in_cinema" || ps === "opening_week") return E.wmCinemaScore(m) >= 0 || E.wmQScore(m) >= floor;
   return E.wmQScore(m) >= floor;

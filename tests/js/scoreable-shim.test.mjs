@@ -135,3 +135,26 @@ test("CAS-1040: the same claim is still scoreable while genuinely inside its est
   assert.ok(JSON.parse(result.stdout).scoreable_ids.includes(-1041),
     "a genuinely current in_cinema claim must still be cinema-exempt from the floor");
 });
+
+// CAS-1040 regression: the fix above must only re-derive status for a claim that is CURRENTLY
+// cinema. A CAS-1029/CAS-1023 candidate stub (scored-only, pre-TMDB-enrichment: no offers, no
+// cinema_date, no claimedStatus, status literally []) is not a real movie record — running
+// deriveStatus's offerless-window fallback over one invents an "upcoming" window and wrongly
+// exempts it from the wmQScore floor via the cinema-buzz path, which is exactly the bug that made
+// tests.test_cas1029_publish_backcatalogue fail once this file's fix first shipped.
+test("CAS-1040: a scored-only candidate stub with no cinema claim at all is still floored on wmQScore, not treated as upcoming", () => {
+  const aboveFloor = {
+    tmdb_id: -1042, title: "Scored Only Above Floor", year: 2019, popularity: 50,
+    status: [], wm_user_rating: 9.0, wm_critic_score: null, wm_popularity_percentile: 80,
+  };
+  const belowFloor = {
+    tmdb_id: -1043, title: "Scored Only Below Floor", year: 2019, popularity: 10,
+    status: [], wm_user_rating: 1.0, wm_critic_score: null, wm_popularity_percentile: 80,
+  };
+
+  const result = runShim([aboveFloor, belowFloor], 60);
+  assert.equal(result.status, 0, `shim must exit 0, got stderr: ${result.stderr}`);
+  const { scoreable_ids } = JSON.parse(result.stdout);
+  assert.ok(scoreable_ids.includes(-1042), "an above-floor scored-only stub must be scoreable");
+  assert.ok(!scoreable_ids.includes(-1043), "a below-floor scored-only stub must not be scoreable");
+});
