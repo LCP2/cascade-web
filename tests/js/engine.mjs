@@ -165,6 +165,11 @@ if(typeof window.CascadeAuth === "undefined"){
   // CAS-255: the my-services scope and the stage dates are both places the app makes a claim about what you
   // can watch and when, so the QA gate needs to reach them the same way the listing does.
   prefs, servicesPicked, matchesServices, scopeOf, anyScope, HOME_KEYS,
+  // CAS-1053 AC4: watchMineOnlyOn (the "Show only available on my services" per-tab switch) and
+  // watchMineOnlyEmptyKind (the pure loading-vs-dead-end decision behind the Watch list's mineOnly empty
+  // state) — exported so a test can assert the loading state wins while user_prefs hasn't loaded, without
+  // parsing the rendered HTML the DOM stub swallows.
+  watchMineOnlyOn, watchMineOnlyEmptyKind,
   svcCanon, svcName, SVC_LEAD, myService,
   SUB_SERVICES, STORE_SERVICES, stageDate, curSlot, cinemaState, EST_OFFSET, TODAY,
   inCinemaRun, CINEMA_RUN_DAYS, LISTING_ORDER, orderFor, listingOrder,
