@@ -19103,6 +19103,15 @@ else if(dedupedN)
   }
   function outboxPending(target){ return outbox[target]||{}; }
   function outboxHasAny(){ return Object.keys(outbox).some(t=>Object.keys(outbox[t]||{}).length); }
+  // CAS-1039: user_films/film_watch/agent_films can carry thousands of rows on a real account (the
+  // back-catalogue growth that broke bulk upserts network-side) — every push/delete against those three
+  // tables goes out in requests of at most this many rows/ids, never the whole set in one call.
+  const SYNC_CHUNK_SIZE = 200;
+  function chunkRows(list){
+    const out=[];
+    for(let i=0;i<(list||[]).length;i+=SYNC_CHUNK_SIZE) out.push(list.slice(i,i+SYNC_CHUNK_SIZE));
+    return out;
+  }
   // Every row this device still owes the account, minus whatever the remote read just returned for the
   // same keys (the pending copy is the newer, still-unconfirmed one) — the shape every load/apply site
   // below applies instead of the raw remote rows.
@@ -19624,8 +19633,8 @@ else if(dedupedN)
       currentUser = null; loadGuest(); loadGuestFilms(); loadGuestNotify(); realAlerts=[]; updateMovingBadge();
       invites=[]; invitesReady=true; updateInvitesBadge();   // CAS-886: same reasoning — a guest has no invites
       cascadeKnown=new Map(); saveCascadeKnown(); cascadeEditedAt=new Map(); saveCascadeEditedAt();
-      filmBaseline=null; pickBaseline=null; watchBaseline=null;
-      agentFilms={}; agentFilmsBaseline=null; agentFilmsReady=true;   // CAS-736: a guest has nothing to wait on
+      filmKnown=null; pickBaseline=null; watchPushKnown=null;
+      agentFilms={}; agentFilmsKnown=null; agentFilmsReady=true;   // CAS-736: a guest has nothing to wait on
       watchKnown=new Map(); saveWatchKnown(); filmWatchReady=true;   // CAS-735: a guest has nothing to wait on
       userPrefsReady=true;   // CAS-740: a guest has nothing to wait on
       notifyPrefsReady=true;   // CAS-741: a guest has nothing to wait on
@@ -19715,9 +19724,22 @@ else if(dedupedN)
     if(typeof render==="function") render();
   }
   let filmTimer=null, filmSyncing=false, filmAgain=false;
-  let filmBaseline=null;   // CAS-408: same private-baseline diff cascadeKnown (CAS-734) uses above
+  // CAS-1039: movie_id -> status this device last had CONFIRMED by the account (null before any
+  // load/push has ever landed) — the same known-value-diff shape cascadeKnown/cascadeFullSigOf give
+  // cascades above, replacing the old bare-id filmBaseline Set. filmRows() rebuilds the WHOLE local
+  // set on every call (it derives from watched/disliked/blocked/etc, not a diff-friendly log), so
+  // without this a debounced sync always re-pushed every row the device had ever opined on — fine at
+  // dozens of rows, but a real account can carry thousands, and CAS-1039's bulk upserts must only ever
+  // send what actually changed.
+  let filmKnown=null;
+  const filmDirtyRows = () => filmRows().filter(r => !filmKnown || filmKnown.get(r.movie_id)!==r.status);
+  const filmPendingDeleteIds = () => {
+    if(!filmKnown) return [];
+    const ids=new Set(filmRows().map(r=>r.movie_id));
+    return [...filmKnown.keys()].filter(id=>!ids.has(id));
+  };
   function scheduleFilmSync(){
-    outboxMark("user_films", filmRows(), r=>r.movie_id);
+    outboxMark("user_films", filmDirtyRows(), r=>r.movie_id);
     clearTimeout(filmTimer); filmTimer=setTimeout(runFilmSync, 400);
   }
   async function runFilmSync(){
@@ -19728,27 +19750,34 @@ else if(dedupedN)
     catch(err){ console.warn("Cascade: watch-status sync failed", err); }
     finally{ filmSyncing=false; if(filmAgain){ filmAgain=false; scheduleFilmSync(); } }
   }
+  // CAS-1039: pushes only the rows this device has actually changed (filmDirtyRows, diffed against
+  // filmKnown — including a first-ever sign-in's full resync, when filmKnown is still null), in
+  // requests of at most SYNC_CHUNK_SIZE rows. One chunk failing must not stop the others: every
+  // upsert chunk is attempted, filmKnown/outbox only advance for a chunk that actually succeeded, and
+  // a failure anywhere in the upsert phase skips the delete phase this pass (same as the old
+  // single-request code did) without losing already-applied chunks from earlier in the loop.
   async function syncFilmsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
-    const rows=filmRows();
-    if(rows.length){
-      const { error } = await c.from("user_films").upsert(rows, { onConflict:"user_id,movie_id" });
-      if(error){ console.warn("user_films upsert", error); recordSyncOutcome("user_films", false, error); return; }
-      outboxClearKeys("user_films", rows.map(r=>r.movie_id));   // CAS-1035
+    const rows=filmDirtyRows();
+    let anyError=null;
+    for(const batch of chunkRows(rows)){
+      const { error } = await c.from("user_films").upsert(batch, { onConflict:"user_id,movie_id" });
+      if(error){ console.warn("user_films upsert", error); anyError=error; continue; }
+      if(!filmKnown) filmKnown=new Map();
+      batch.forEach(r=>filmKnown.set(r.movie_id, r.status));
+      outboxClearKeys("user_films", batch.map(r=>r.movie_id));   // CAS-1035
     }
-    // CAS-408: delete only ids THIS device watched drop out of its own baseline (an opinion cleared
+    if(anyError){ recordSyncOutcome("user_films", false, anyError); return; }
+    // CAS-408: delete only ids THIS device watched drop out of its own known set (an opinion cleared
     // here) — never everything else the account has that isn't on this device's screen, which used to
     // sweep up watch statuses another device set and this one hadn't loaded yet.
-    const ids=new Set(rows.map(r=>r.movie_id));
-    if(filmBaseline){
-      const gone=[...filmBaseline].filter(id=>!ids.has(id));
-      if(gone.length){
-        const { error } = await c.from("user_films").delete().eq("user_id", owner).in("movie_id", gone);
-        if(error){ console.warn("user_films delete", error); recordSyncOutcome("user_films", false, error); return; }
-        outboxClearKeys("user_films", gone);   // CAS-1035
-      }
+    for(const batch of chunkRows(filmPendingDeleteIds())){
+      const { error } = await c.from("user_films").delete().eq("user_id", owner).in("movie_id", batch);
+      if(error){ console.warn("user_films delete", error); anyError=error; continue; }
+      batch.forEach(id=>filmKnown.delete(id));
+      outboxClearKeys("user_films", batch);   // CAS-1035
     }
-    filmBaseline=ids;
+    if(anyError){ recordSyncOutcome("user_films", false, anyError); return; }
     recordSyncOutcome("user_films", true);
   }
   async function loadAccountFilms(){
@@ -19756,7 +19785,7 @@ else if(dedupedN)
     const { data, error } = await c.from("user_films").select("movie_id,status");   // RLS: only mine
     if(error){ console.warn("user_films load", error); logSyncFailed("user_films", error); return; }
     const remote=data||[];
-    filmBaseline=new Set(remote.map(r=>String(r.movie_id)));
+    filmKnown=new Map(remote.map(r=>[String(r.movie_id), r.status]));
     // CAS-1035: overlay this device's own still-unsent rows back over the remote read — applyFilmRows
     // rebuilds every verdict set from scratch, so a status this device set but never got to push would
     // otherwise be wiped the instant this load lands, not merely delayed.
@@ -19773,7 +19802,7 @@ else if(dedupedN)
     const remoteIds=new Set(remote.map(r=>String(r.movie_id)));
     const localOnly=filmRows().filter(r=>!remoteIds.has(String(r.movie_id)));
     applyFilmRows([...remote, ...localOnly]);
-    filmBaseline=remoteIds;
+    filmKnown=new Map(remote.map(r=>[String(r.movie_id), r.status]));
   }
   function loadGuestFilms(){
     watched.clear();    loadSet(acctKey("cascade_watched")).forEach(id=>watched.add(id));
@@ -20010,7 +20039,20 @@ else if(dedupedN)
     if(typeof render==="function") render();
   }
   let watchTimer=null, watchSyncing=false, watchAgain=false;
-  let watchBaseline=null;   // CAS-408: same private-baseline diff as filmBaseline above
+  // CAS-1039: movie_id -> JSON.stringify([windows,sources]) this device last had CONFIRMED by the
+  // account (null before any load/push) — same known-value-diff shape as filmKnown above, replacing
+  // the old bare-id watchBaseline Set so a windows/sources change on an ALREADY-known film still
+  // counts as dirty, not just a brand new id. Distinct from watchKnown (CAS-735's per-film updated_at,
+  // used for the read-side manual-vs-auto conflict call) — that map answers "have I already applied
+  // this remote state", this one answers "does the account already have this exact row".
+  let watchPushKnown=null;
+  const watchRowSig = r => JSON.stringify([r.windows, r.sources]);
+  const watchDirtyRows = () => watchRows().filter(r => !watchPushKnown || watchPushKnown.get(r.movie_id)!==watchRowSig(r));
+  const watchPendingDeleteIds = () => {
+    if(!watchPushKnown) return [];
+    const ids=new Set(watchRows().map(r=>r.movie_id));
+    return [...watchPushKnown.keys()].filter(id=>!ids.has(id));
+  };
   // CAS-1035 AC3's real cause: outboxMark("film_watch", watchRows(), ...) below REPLACES the whole pending
   // set from `notify`'s CURRENT contents — and recomputeFound()'s own unconditional saveNotify() (its last
   // line, covering every pass) calls this same function. loadFilmWatches() clears `notify` via
@@ -20025,7 +20067,7 @@ else if(dedupedN)
   // outbox mark and its debounce wait for `notify` to be a trustworthy snapshot again.
   function scheduleWatchSync(){
     if(!filmWatchReady){ clearTimeout(watchTimer); watchTimer=setTimeout(scheduleWatchSync, 50); return; }
-    outboxMark("film_watch", watchRows(), r=>r.movie_id);
+    outboxMark("film_watch", watchDirtyRows(), r=>r.movie_id);
     clearTimeout(watchTimer); watchTimer=setTimeout(runWatchSync, 500);
   }
   async function runWatchSync(){
@@ -20036,27 +20078,29 @@ else if(dedupedN)
     catch(err){ console.warn("Cascade: watch sync failed", err); }
     finally{ watchSyncing=false; if(watchAgain){ watchAgain=false; scheduleWatchSync(); } }
   }
+  // CAS-1039: same dirty-only, chunked-both-ways, per-chunk-isolated shape as syncFilmsToAccount above.
   async function syncWatchesToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
-    const rows=watchRows();
-    if(rows.length){
-      const { error } = await c.from("film_watch").upsert(rows, { onConflict:"user_id,movie_id" });
-      if(error){ console.warn("film_watch upsert", error); recordSyncOutcome("film_watch", false, error); return; }
-      outboxClearKeys("film_watch", rows.map(r=>r.movie_id));   // CAS-1035
+    const rows=watchDirtyRows();
+    let anyError=null;
+    for(const batch of chunkRows(rows)){
+      const { error } = await c.from("film_watch").upsert(batch, { onConflict:"user_id,movie_id" });
+      if(error){ console.warn("film_watch upsert", error); anyError=error; continue; }
+      if(!watchPushKnown) watchPushKnown=new Map();
+      batch.forEach(r=>watchPushKnown.set(r.movie_id, watchRowSig(r)));
+      outboxClearKeys("film_watch", batch.map(r=>r.movie_id));   // CAS-1035
     }
-    // CAS-408: delete only ids THIS device's watch ticks dropped out of its own baseline (every
+    if(anyError){ recordSyncOutcome("film_watch", false, anyError); return; }
+    // CAS-408: delete only ids THIS device's watch ticks dropped out of its own known set (every
     // window on that film untouched) — never every id the account has that this device hasn't
     // loaded yet.
-    const ids=new Set(rows.map(r=>r.movie_id));
-    if(watchBaseline){
-      const gone=[...watchBaseline].filter(id=>!ids.has(id));
-      if(gone.length){
-        const { error } = await c.from("film_watch").delete().eq("user_id", owner).in("movie_id", gone);
-        if(error){ console.warn("film_watch delete", error); recordSyncOutcome("film_watch", false, error); return; }
-        outboxClearKeys("film_watch", gone);   // CAS-1035
-      }
+    for(const batch of chunkRows(watchPendingDeleteIds())){
+      const { error } = await c.from("film_watch").delete().eq("user_id", owner).in("movie_id", batch);
+      if(error){ console.warn("film_watch delete", error); anyError=error; continue; }
+      batch.forEach(id=>watchPushKnown.delete(id));
+      outboxClearKeys("film_watch", batch);   // CAS-1035
     }
-    watchBaseline=ids;
+    if(anyError){ recordSyncOutcome("film_watch", false, anyError); return; }
     recordSyncOutcome("film_watch", true);
   }
   // CAS-609: the account is the answer, not the union of it and whatever the previous account (or
@@ -20079,7 +20123,7 @@ else if(dedupedN)
     // exact mechanism behind the observed bug: the account never saw the tick, so remote has no row for it
     // to survive on, and applyWatchRows only ever touches films present in what it's handed.
     applyWatchRows(outboxOverlay("film_watch", remote, r=>String(r.movie_id)));
-    watchBaseline=new Set(remote.map(r=>String(r.movie_id)));
+    watchPushKnown=new Map(remote.map(r=>[String(r.movie_id), watchRowSig({windows:r.windows||[], sources:r.sources||{}})]));
   }
   // CAS-408-style background convergence, mirroring reconcileFilms — remote is the union of every
   // device's ticks, so it can just be re-applied; a not-yet-pushed local tick survives because it
@@ -20092,7 +20136,7 @@ else if(dedupedN)
     const remoteIds=new Set(remote.map(r=>String(r.movie_id)));
     const localOnly=watchRows().filter(r=>!remoteIds.has(String(r.movie_id)));
     applyWatchRows([...remote, ...localOnly]);
-    watchBaseline=remoteIds;
+    watchPushKnown=new Map(remote.map(r=>[String(r.movie_id), watchRowSig({windows:r.windows||[], sources:r.sources||{}})]));
   }
 
   // ==========================================================================
@@ -20148,9 +20192,24 @@ else if(dedupedN)
     });
     agentFilms=next;
   }
-  let agentFilmsTimer=null, agentFilmsSyncing=false, agentFilmsAgain=false, agentFilmsBaseline=null;
+  let agentFilmsTimer=null, agentFilmsSyncing=false, agentFilmsAgain=false;
+  // CAS-1039: key ("cascadeId::movieId") -> sig of the four written columns this device last had
+  // CONFIRMED by the account (null before any load/push) — same known-value-diff shape as
+  // filmKnown/watchPushKnown above, replacing the old bare-key agentFilmsBaseline Set so a
+  // score/status/sig change on an already-known admission still counts as dirty.
+  let agentFilmsKnown=null;
+  const agentFilmSig = r => JSON.stringify([r.admitted_at, r.admission_score, r.admission_status, r.agent_sig]);
+  const agentFilmDirtyRows = () => agentFilmRows().filter(r=>{
+    const known=agentFilmsKnown && agentFilmsKnown.get(agentFilmKey(r.cascade_id,r.movie_id));
+    return !known || known!==agentFilmSig(r);
+  });
+  const agentFilmPendingDeleteKeys = () => {
+    if(!agentFilmsKnown) return [];
+    const keys=new Set(agentFilmRows().map(r=>agentFilmKey(r.cascade_id,r.movie_id)));
+    return [...agentFilmsKnown.keys()].filter(k=>!keys.has(k));
+  };
   function scheduleAgentFilmsSync(){
-    outboxMark("agent_films", agentFilmRows(), r=>agentFilmKey(r.cascade_id,r.movie_id));
+    outboxMark("agent_films", agentFilmDirtyRows(), r=>agentFilmKey(r.cascade_id,r.movie_id));
     clearTimeout(agentFilmsTimer); agentFilmsTimer=setTimeout(runAgentFilmsSync, 500);
   }
   async function runAgentFilmsSync(){
@@ -20161,28 +20220,35 @@ else if(dedupedN)
     catch(err){ console.warn("Cascade: agent_films sync failed", err); }
     finally{ agentFilmsSyncing=false; if(agentFilmsAgain){ agentFilmsAgain=false; scheduleAgentFilmsSync(); } }
   }
+  // CAS-1039: same dirty-only, chunked, per-chunk-isolated shape as syncFilmsToAccount/
+  // syncWatchesToAccount above. Deletes stay per-row (no composite .in() over two columns in
+  // supabase-js, same as before) but are now waved through in batches of at most SYNC_CHUNK_SIZE
+  // concurrent requests, and a single row's delete failing never stops its wave-mates or later waves.
   async function syncAgentFilmsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
-    const rows=agentFilmRows();
-    if(rows.length){
-      const { error } = await c.from("agent_films").upsert(rows, { onConflict:"user_id,cascade_id,movie_id" });
-      if(error){ console.warn("agent_films upsert", error); recordSyncOutcome("agent_films", false, error); return; }
-      outboxClearKeys("agent_films", rows.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));   // CAS-1035
+    const rows=agentFilmDirtyRows();
+    let anyError=null;
+    for(const batch of chunkRows(rows)){
+      const { error } = await c.from("agent_films").upsert(batch, { onConflict:"user_id,cascade_id,movie_id" });
+      if(error){ console.warn("agent_films upsert", error); anyError=error; continue; }
+      if(!agentFilmsKnown) agentFilmsKnown=new Map();
+      batch.forEach(r=>agentFilmsKnown.set(agentFilmKey(r.cascade_id,r.movie_id), agentFilmSig(r)));
+      outboxClearKeys("agent_films", batch.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));   // CAS-1035
     }
-    const keys=new Set(rows.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));
-    if(agentFilmsBaseline){
-      const gone=[...agentFilmsBaseline].filter(k=>!keys.has(k));
-      if(gone.length){
-        // No composite .in() over two columns in supabase-js — mirrors list_films' own per-row deletes.
-        await Promise.all(gone.map(k=>{
-          const sep=k.indexOf("::");
-          return c.from("agent_films").delete().eq("user_id",owner)
-            .eq("cascade_id",k.slice(0,sep)).eq("movie_id",k.slice(sep+2));
-        }));
-        outboxClearKeys("agent_films", gone);   // CAS-1035
-      }
+    if(anyError){ recordSyncOutcome("agent_films", false, anyError); return; }
+    for(const batch of chunkRows(agentFilmPendingDeleteKeys())){
+      const results = await Promise.all(batch.map(async k=>{
+        const sep=k.indexOf("::");
+        const { error } = await c.from("agent_films").delete().eq("user_id",owner)
+          .eq("cascade_id",k.slice(0,sep)).eq("movie_id",k.slice(sep+2));
+        return { k, error };
+      }));
+      const okKeys=results.filter(r=>!r.error).map(r=>r.k);
+      const failed=results.find(r=>r.error);
+      if(okKeys.length){ okKeys.forEach(k=>agentFilmsKnown.delete(k)); outboxClearKeys("agent_films", okKeys); }   // CAS-1035
+      if(failed){ console.warn("agent_films delete", failed.error); anyError=failed.error; }
     }
-    agentFilmsBaseline=keys;
+    if(anyError){ recordSyncOutcome("agent_films", false, anyError); return; }
     recordSyncOutcome("agent_films", true);
   }
   async function loadAgentFilms(){
@@ -20194,7 +20260,7 @@ else if(dedupedN)
     // CAS-1035: same reasoning as loadAccountFilms/loadFilmWatches — applyAgentFilmRows rebuilds the whole
     // ledger from what it's handed, so overlay this device's own still-unsent rows back in.
     applyAgentFilmRows(outboxOverlay("agent_films", remote, r=>agentFilmKey(r.cascade_id,r.movie_id)));
-    agentFilmsBaseline=new Set(remote.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));
+    agentFilmsKnown=new Map(remote.map(r=>[agentFilmKey(r.cascade_id,r.movie_id), agentFilmSig(r)]));
   }
 
   // The bell's real contents. Newest first, and capped: a list nobody can reach the bottom of is
@@ -20530,7 +20596,15 @@ else if(dedupedN)
                                 get outbox(){ return outbox; },
                                 get acctSuffix(){ return acctSuffix; },
                                 dropRefusedCascade,
+                                // CAS-1039: SYNC_CHUNK_SIZE/chunkRows are the shared row/id-batching seam every
+                                // one of user_films/film_watch/agent_films' sync functions now goes through;
+                                // filmDirtyRows/filmPendingDeleteIds and filmKnown (by reference, like
+                                // cascadeKnown above) let a test assert the diff-only push and seed/inspect
+                                // what this device currently has confirmed, without a real account round trip.
+                                SYNC_CHUNK_SIZE, chunkRows,
                                 loadAccountFilms, syncFilmsNow: runFilmSync, filmRows, applyFilmRows,
+                                filmDirtyRows, filmPendingDeleteIds,
+                                get filmKnown(){ return filmKnown; },
                                 loadNotifyPrefs, loadRealAlerts, syncNotifyNow: runNotifySync,
                                 prefsRow, pickRows, loadFilmPicks,
                                 loadUserPrefs, syncUserPrefsNow: runUserPrefsSync, userPrefsRow,
@@ -20583,7 +20657,8 @@ else if(dedupedN)
                                 saveCascades, saveWatchStatus,
                                 // CAS-484: the per-film Watch-it tick's own load/sync/reconcile seam.
                                 loadFilmWatches, syncWatchesNow: runWatchSync, watchRows, applyWatchRows,
-                                reconcileFilmWatches,
+                                reconcileFilmWatches, watchDirtyRows, watchPendingDeleteIds,
+                                get watchPushKnown(){ return watchPushKnown; },
                                 // CAS-735: watchKnown (by reference, like cascadeKnown above) is the per-film
                                 // "have I already applied this remote state" baseline applyWatchRows uses to
                                 // tell a genuinely newer manual pick apart from a stale auto re-arm. filmWatchReady
@@ -20597,6 +20672,8 @@ else if(dedupedN)
                                 // read/write helpers CAS-728 writes through to make membership sticky.
                                 loadAgentFilms, syncAgentFilmsNow: runAgentFilmsSync, agentFilmRows,
                                 applyAgentFilmRows, agentFilmsFor, setAgentFilm, clearAgentFilm, getAgentFilm,
+                                agentFilmDirtyRows, agentFilmPendingDeleteKeys,
+                                get agentFilmsKnown(){ return agentFilmsKnown; },
                                 // CAS-736: same read/write-primitive shape as filmWatchReady above, so a
                                 // test can drive recomputeFound's "this device's own ledger hasn't loaded
                                 // yet" gate directly.
