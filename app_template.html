@@ -15840,6 +15840,12 @@ function flowStart(startKey){
   onbFlow.draft=null;          // no agent yet — nothing on the first two screens quotes a count
   onbFlow.workingAgents=null; onbFlow.reportStats=null;   // CAS-629: a fresh roster commits fresh every run
   onbV2CommittedClear();       // CAS-951: a genuinely new run may commit again
+  // CAS-1047: a genuinely new first run (splash/film-page signup) must not inherit a previous person's
+  // saved answers on a shared device — every v2_* step reloads onbFlow.answersV2 straight from this key.
+  // "+ New Cascade" (startKey "pickagent") is an already-onboarded user adding another agent, not a new
+  // person, and never walks the v2_* sequence at all (it jumps straight to the Briefing) — excluded so its
+  // saved answers, which other spokes (My services, Ages) still read, survive.
+  if(startKey!=="pickagent") onbAnswersV2Save(onbAnswersV2Default());
   $("onbStep").classList.add("open"); lockBodyScroll(true);
   logEvent("flow_start");
   gotoStep(startKey||"v2_about","none");   // CAS-953: the first-run entry is v2_about, ahead of v2_intro
@@ -17232,7 +17238,13 @@ function renderOnbStep(key){
   // CAS-958: an optional hook for content that must land AFTER the footer in DOM order — the four reveal
   // steps' poster grid, which the ticket wants below Continue now, not between the purpose line and it.
   // A hook rather than folding the grid into body() itself, since body() draws before osfoot unconditionally.
-  $("onbStepInner").innerHTML = `
+  // CAS-1047: keep the container this paint just wrote into — during a slide transition gotoStep() strips
+  // the OUTGOING pane's id but not its descendants' (its own #onbStepCta lives on until endSlide() removes
+  // the pane 460ms later), so a bare $("onbStepCta") lookup below would resolve to the stale outgoing
+  // button (first in document order) instead of the one this paint just drew, leaving the new step's
+  // Continue un-gated until the next repaint.
+  const stepInner=$("onbStepInner");
+  stepInner.innerHTML = `
     ${chromed ? "" : `<div class="ostop">
       <button class="osback" type="button" onclick="onbStepBack()" aria-label="Back">←</button>
       ${key==="briefing"
@@ -17252,7 +17264,7 @@ function renderOnbStep(key){
     ${step.afterFoot ? step.afterFoot() : ""}`;
   placeStepCount(step, n);
   if(step.wire) step.wire();
-  applyStepBlock(step, $("onbStepCta"));
+  applyStepBlock(step, stepInner.querySelector("#onbStepCta"));
   paintFlowChrome(key, step, n);
 }
 // CAS-180: the count belongs immediately above the FIRST thing you select, not above the screen's title —
