@@ -998,7 +998,11 @@ test("CAS-740 AC4: a signed-in user whose account already holds agents is never 
 
   // Now let the session restore resolve to an account that already holds an agent.
   await page.evaluate(() => window.__cas740ResolveSession());
-  await page.waitForFunction(() => window.CascadeAuth.status === "signed-in", null, { timeout: 5000 });
+  // CAS-1044: was 5000ms, well under this suite's own 15s expect timeout — under WebKit CI contention that
+  // budget was tight enough to intermittently time out even though the status flip itself is synchronous
+  // (setSignedIn runs in the same microtask __cas740ResolveSession's resolve() unblocks); matched to the
+  // suite's standard headroom instead.
+  await page.waitForFunction(() => window.CascadeAuth.status === "signed-in", null, { timeout: 15_000 });
   await expect(page.locator("#onbStep")).not.toHaveClass(/open/);
   const state = await page.evaluate(() => ({ flowOn, names: cascades.map(c => c.name) }));
   expect(state.flowOn, "the wizard must be exited once the account is known to already have agents").toBe(false);
@@ -1027,7 +1031,8 @@ test("CAS-765 AC5: reaches signed-in state for a stored session with every non-a
   await gotoFresh(page);
   await page.waitForFunction(() => window.CascadeAuth && window.CascadeAuth.client);
   await page.evaluate(() => window.__cas740ResolveSession());
-  await page.waitForFunction(() => window.CascadeAuth.status === "signed-in", null, { timeout: 5000 });
+  // CAS-1044: see the same wait in CAS-740 AC4 above — matched to the suite's standard 15s headroom.
+  await page.waitForFunction(() => window.CascadeAuth.status === "signed-in", null, { timeout: 15_000 });
   expect(await page.evaluate(() => window.CascadeAuth.user && window.CascadeAuth.user.email)).toBe("cas740@example.com");
 });
 
