@@ -154,7 +154,9 @@ class SelectPublishableDemotion(unittest.TestCase):
         self.assertNotIn(4, {m["tmdb_id"] for m in records})
 
     def test_a_demoted_title_a_user_holds_is_kept_and_counted_exempt(self):
-        records, stats = pp.select_publishable(self.candidates, {1, 2, 3}, {2, 4}, held_ids={4},
+        # held_ids mirrors state/user_held_ids.json on disk: a set of tmdb_id STRINGS, even
+        # though tid (from previously_published_ids/candidates) is an int (CAS-1032).
+        records, stats = pp.select_publishable(self.candidates, {1, 2, 3}, {2, 4}, held_ids={"4"},
                                                 catalogue_target=10)
         self.assertEqual(stats["demoted"], 0)
         self.assertEqual(stats["exempt"], 1)

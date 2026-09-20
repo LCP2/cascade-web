@@ -1273,7 +1273,7 @@ def select_publishable(candidates: dict, engine_scoreable_ids: set, previously_p
     for tid in previously_published_ids - ranked_in:
         if str(tid) not in candidates or not is_publishable_record(candidates[str(tid)]):
             continue
-        if held_ids is None or tid in held_ids:
+        if held_ids is None or str(tid) in held_ids:
             published_ids.add(tid)
             exempt_ids.add(tid)
 
