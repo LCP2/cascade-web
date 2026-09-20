@@ -118,6 +118,16 @@ create table if not exists public.user_films (
   primary key (user_id, movie_id)
 );
 
+-- CAS-1039: CAS-738 widened the CHECK to six values only inside this create-table statement, which never
+-- alters a table that already exists — the live constraint stayed at the original four values, so a single
+-- 'wow'/'enjoyed' row in a batched upsert made the WHOLE user_films sync fail every time (23514). Drop and
+-- re-add the constraint idempotently so a live table converges to the current six values on every re-run,
+-- the same pattern every other table on this file already follows for a column/constraint added after its
+-- table went live (e.g. user_prefs' watch_windows, film_picks' pinned_to/not_in below).
+alter table public.user_films drop constraint if exists user_films_status_check;
+alter table public.user_films add constraint user_films_status_check
+  check (status in ('liked','soso','disliked','notfor','wow','enjoyed'));
+
 alter table public.user_films enable row level security;
 
 -- A user can read and write only their own rows.
