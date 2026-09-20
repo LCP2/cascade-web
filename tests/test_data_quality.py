@@ -47,6 +47,11 @@ BLOCKING_TESTS = {
     # ingestion path applies) crashes index.html#engine's yearOf() at (m.cinema_date||m.year||"").
     # slice(). Blocking for the same reason test_no_record_is_a_raw_candidate_pool_stub is.
     "CatalogueShape.test_year_is_always_a_string",
+    # CAS-1048: TMDB's AU certification field carries both "MA15+"/"MA 15+" and "R18+"/"R 18+" for the
+    # same rating — the onboarding age step rendered a chip per spelling and silently dropped whichever
+    # one the default selection or an agent's saved criteria didn't happen to name. Blocking so a future
+    # ingestion path can't reintroduce the un-canonical spelling the way the back-catalogue merge above did.
+    "CatalogueShape.test_age_rating_is_canonical_spelling",
 }
 
 # The windows a film can hold, in journey order — the same list the front end calls CASCADE.
@@ -135,6 +140,14 @@ class CatalogueShape(unittest.TestCase):
         bad = [(m.get("title", m.get("tmdb_id")), m.get("year")) for m in self.movies
                if "year" in m and not isinstance(m["year"], str)]
         self.assertEqual(bad, [], f"films with a non-string year: {bad[:5]}")
+
+    def test_age_rating_is_canonical_spelling(self):
+        # CAS-1048: "MA15+"/"R18+" are TMDB's un-spaced duplicates of "MA 15+"/"R 18+" — the same
+        # rating, not a second one. pp.canon_age_rating is the one place that spelling is fixed on
+        # ingest; this proves nothing un-canonical reached the file that ships.
+        bad = [(m.get("title", m.get("tmdb_id")), m.get("age_rating")) for m in self.movies
+               if m.get("age_rating") in pp.AGE_RATING_CANON]
+        self.assertEqual(bad, [], f"films with a non-canonical age_rating spelling: {bad[:5]}")
 
 
 class AvailabilityIsBackedBySomething(unittest.TestCase):

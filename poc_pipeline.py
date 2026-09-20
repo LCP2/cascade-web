@@ -293,6 +293,20 @@ def _api_call(label: str, fn, *args, status_counts: "Counter | None" = None):
 # ---------------------------------------------------------------------------
 TMDB_BASE = "https://api.themoviedb.org/3"
 
+# CAS-1048: TMDB's AU certification field carries both "MA15+"/"MA 15+" and "R18+"/"R 18+" for the
+# same rating (a source-side spelling inconsistency, not two ratings) — the app rendered a chip per
+# spelling and the default onboarding selection silently missed whichever the user hadn't seen. One
+# canonical spelling per rating, applied the moment TMDB's cert string is read so no ingested record
+# is ever written the un-canonical way.
+AGE_RATING_CANON = {"MA15+": "MA 15+", "R18+": "R 18+"}
+
+
+def canon_age_rating(cert):
+    """The canonical spelling for a raw AU classification string, or `cert` unchanged if it is
+    already canonical (or not one of the known duplicate spellings)."""
+    return AGE_RATING_CANON.get(cert, cert)
+
+
 def _tmdb_record(detail: dict) -> dict:
     """Map one TMDB detail payload to our skeleton record."""
     cinema_date, age_rating = None, None
@@ -310,7 +324,7 @@ def _tmdb_record(detail: dict) -> dict:
                     cinema_date = rd["release_date"][:10]
                 cert = (rd.get("certification") or "").strip()
                 if cert and not age_rating:      # AU classification (G/PG/M/MA15+/R18+)
-                    age_rating = cert
+                    age_rating = canon_age_rating(cert)
     lang = detail.get("original_language")
     countries = [c["iso_3166_1"] for c in detail.get("production_countries", [])]
     vids = (detail.get("videos") or {}).get("results", [])

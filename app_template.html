@@ -4430,6 +4430,14 @@ function filmMatchesWatchTab(m, tab){
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const FMT_RANK = {SD:1, HD:2, "4K":3};
 const MATURE = new Set(["MA15+","MA 15+","R18+","R 18+","X18+","X 18+"]);
+// CAS-1048: the pipeline now writes only the spaced spelling, but a live catalogue swap (pollCatalogue)
+// can briefly serve an older build, and an agent saved before this fix may still hold the un-spaced
+// spelling in its own criteria (see normCascade). One canonical spelling in the app's memory means the
+// chip list never shows both and a stored agent's old spelling keeps matching new data.
+const AGE_RATING_CANON = {"MA15+":"MA 15+","R18+":"R 18+"};
+const canonAgeRating = a => AGE_RATING_CANON[a] || a;
+const canonMovieAgeRatings = movies => { movies.forEach(m=>{ if(m.age_rating) m.age_rating = canonAgeRating(m.age_rating); }); return movies; };
+canonMovieAgeRatings(MOVIES);   // fold the build baked in above (MOVIES is already live-swapped by pollCatalogue below)
 // CAS-425: the other end of the ladder — G/PG, the ratings a non-Family agent starts with OFF by default.
 const GENTLE = new Set(["G","PG"]);
 const LANG_NAMES = {en:"English",ja:"Japanese",ko:"Korean",zh:"Chinese",cn:"Chinese",yue:"Cantonese",
@@ -8612,7 +8620,7 @@ async function pollCatalogue(){
         try{ payload = await res.json(); }catch(e){}
         if(payload && Array.isArray(payload.movies)){
           catalogueEtag = etag;
-          MOVIES = payload.movies;
+          MOVIES = canonMovieAgeRatings(payload.movies);
           // CAS-742: _scaleInferCache/_awardRankCache are keyed off tmdb_id and read m.budget/m.award, both
           // properties of the REPLACED array's own films — nothing else in the swap touches them, so this is
           // the one point that must.
@@ -9945,7 +9953,10 @@ function normCascade(c, opts){
   // `||[]` would flatten null back to "off", which is the bug CAS-165 fixed on the baseline: the user
   // clears every chip, the row reads back as "all", and every chip lights up again.
   c.genre = (c.genre===null) ? null : (c.genre||[]);
-  c.age   = (c.age===null)   ? null : (c.age||[]);
+  // CAS-1048: an agent saved before the age-rating spellings were unified may still hold the
+  // un-spaced form ("MA15+"/"R18+") — canonicalise here so it keeps matching the catalogue's
+  // now-single spelling instead of silently going dark against every film in that rating.
+  c.age   = (c.age===null)   ? null : (c.age||[]).map(canonAgeRating);
   // CAS-560: language is retired as a per-agent field — Preferences' tasteBase.langs is the only language
   // filter now (see passesTasteBase). Every agent, new or loaded, is forced to [] here regardless of what
   // it carries (a pre-CAS-560 agent's stray ["en"], a stale template literal), which both migrates old
@@ -18660,7 +18671,7 @@ function sanitiseShared(o){
     status:keepKnown(o.status, ALL_WINDOWS),
     genre:keepKnown(o.genre, ALL_GENRES),
     exclude:keepKnown(o.exclude, ALL_GENRES),
-    age:keepKnown(o.age, AGE_LEVELS),
+    age:keepKnown(Array.isArray(o.age) ? o.age.map(canonAgeRating) : o.age, AGE_LEVELS),
     culture:keepKnown(o.culture, ALL_CULTURES),
     year:keepKnown(o.year, ALL_YEARS),
     imdb:num(o.imdb,0,10,0), rt:num(o.rt,0,100,0),
