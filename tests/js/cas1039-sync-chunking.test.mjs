@@ -12,7 +12,7 @@ import { loadEngine } from "./engine.mjs";
 // A fake client whose upsert/delete behaviour is driven per table by an optional failure predicate —
 // upsert predicates see the rows in that one request; delete predicates see the accumulated .eq() filters
 // (plus an `in` array when the call chains .in(), the way user_films/film_watch's own deletes do; agent_films'
-// composite per-row delete never calls .in() and is awaited directly off the .eq() chain instead).
+// deletes are grouped per cascade_id and chunked through .in("movie_id",...) too, per CAS-1049).
 function makeFakeClient({ shouldFailUpsert = {}, shouldFailDelete = {} } = {}){
   const upsertCalls = [];
   const deleteCalls = [];
@@ -30,6 +30,7 @@ function makeFakeClient({ shouldFailUpsert = {}, shouldFailDelete = {} } = {}){
         select(){
           const thenable = { then(resolve){ return Promise.resolve({ data: [], error: null }).then(resolve); } };
           thenable.order = () => thenable; thenable.limit = () => thenable; thenable.eq = () => thenable;
+          thenable.range = () => thenable;
           return thenable;
         },
         delete(){
@@ -166,22 +167,24 @@ test("CAS-1039 AC3: a forced failure in one film_watch chunk leaves the other ch
   } finally{ signOut(E); }
 });
 
-test("CAS-1039 AC3: a forced failure deleting one agent_films row leaves its sibling rows' deletes applied", async () => {
+test("CAS-1039/CAS-1049 AC3: a forced failure deleting one agent_films chunk leaves the other chunk's deletes applied", async () => {
   const E = loadEngine();
   const cascadeId = "cas1039-delete-agent";
+  // 150 rows in one cascade -> two delete chunks under AGENT_DELETE_CHUNK_SIZE (100 + 50). Force the
+  // chunk containing this id to fail; the other chunk must still go through.
   const FAIL_MOVIE_ID = String(9600000+37);
   const client = makeFakeClient({
-    shouldFailDelete: { agent_films: eq => eq.movie_id===FAIL_MOVIE_ID },
+    shouldFailDelete: { agent_films: eq => Array.isArray(eq.movie_id) && eq.movie_id.includes(FAIL_MOVIE_ID) },
   });
   signIn(E, client);
   try{
-    for(let i=0;i<250;i++){
+    for(let i=0;i<150;i++){
       E.CascadePersistence.setAgentFilm(cascadeId, 9600000+i,
         { admission_score: 50, admission_status: "stream", agent_sig: "sig-"+i });
     }
-    await E.CascadePersistence.syncAgentFilmsNow();   // full resync — seeds agentFilmsKnown for all 250
+    await E.CascadePersistence.syncAgentFilmsNow();   // full resync — seeds agentFilmsKnown for all 150
 
-    for(let i=0;i<250;i++) E.CascadePersistence.clearAgentFilm(cascadeId, 9600000+i);   // every row now "gone"
+    for(let i=0;i<150;i++) E.CascadePersistence.clearAgentFilm(cascadeId, 9600000+i);   // every row now "gone"
     client.upsertCalls.length = 0; client.deleteCalls.length = 0;
 
     await E.CascadePersistence.syncAgentFilmsNow();
@@ -190,10 +193,13 @@ test("CAS-1039 AC3: a forced failure deleting one agent_films row leaves its sib
     // from the row surviving in agentFilmsKnown (so the NEXT sync's agentFilmPendingDeleteKeys() re-derives
     // and retries it), not from an outbox entry — a delete was never marked into the outbox to begin with,
     // upstream of this ticket, the same as cascades' own delete path.
-    const key = cascadeId+"::"+FAIL_MOVIE_ID;
     const known = E.CascadePersistence.agentFilmsKnown;
-    assert.ok(known.has(key), "the row whose delete failed must still be known, so the next sync retries it");
-    assert.equal(known.size, 1, "every OTHER row's delete must have succeeded and left agentFilmsKnown");
+    const failedChunkIds = client.deleteCalls.find(c => c.table==="agent_films" &&
+      Array.isArray(c.eq.movie_id) && c.eq.movie_id.includes(FAIL_MOVIE_ID)).eq.movie_id;
+    failedChunkIds.forEach(id => assert.ok(known.has(cascadeId+"::"+id),
+      `${id} was in the chunk whose delete failed and must still be known, so the next sync retries it`));
+    assert.equal(known.size, failedChunkIds.length,
+      "the other chunk's deletes must have succeeded and left agentFilmsKnown");
     assert.equal(E.CascadePersistence.syncOutcome.agent_films.ok, false);
   } finally{ signOut(E); }
 });

@@ -2084,9 +2084,11 @@ function fakeCas726Supabase(seed){
   const keyOf = { film_watch: r => `${r.user_id}:${r.movie_id}`,
                   agent_films: r => `${r.user_id}:${r.cascade_id}:${r.movie_id}` };
   function selectBuilder(rows){
-    return { then(resolve, reject){
+    const builder = { then(resolve, reject){
       return Promise.resolve({ data: rows.map(r => ({ ...r })), error: null }).then(resolve, reject);
     } };
+    builder.range = () => builder;   // CAS-1049: loadAgentFilms pages with .range(); one page covers this fixture
+    return builder;
   }
   function deleteBuilder(table){
     const conds = [];
