@@ -68,7 +68,9 @@ jobs:
         # No --cascades/--notifications/--emails fixtures here — this deliberately uses the real
         # Supabase store (via SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY) so email, the in-app ledger and
         # push all fire for real, exactly as they would from daily.yml. --target-user (CAS-486) is
-        # what keeps that scoped to one account instead of every real user.
+        # what keeps that scoped to one account instead of every real user. CAS-1052: the previous
+        # step also armed a temporary Watch-it tick for this user/scenario, so this run is guaranteed
+        # a match even when none of the user's real agents would otherwise catch the fixture film.
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -89,3 +91,19 @@ jobs:
             --yesterday "$RUNNER_TEMP/notify-test/yesterday.json" \
             --date "$RUN_DATE" \
             --target-user "${{ inputs.target_user }}"
+
+      - name: Verify delivery, then clean up the temporary Watch-it tick (CAS-1052)
+        # Proves the run above actually delivered something for target_user (a ledger row per
+        # channel that succeeded) instead of trusting a green step that may have matched nobody;
+        # fails the job (non-zero exit) when nothing was recorded. Also tears down the Watch-it tick
+        # the first step armed, and the ledger rows this run just wrote, so the same scenario can be
+        # run again immediately.
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python -m monitor.notify_test \
+            --scenario "${{ inputs.scenario }}" \
+            --target-user "${{ inputs.target_user }}" \
+            --out-dir "$RUNNER_TEMP/notify-test" \
+            --verify
