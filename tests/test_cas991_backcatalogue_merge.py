@@ -52,6 +52,24 @@ class MergeBackcatalogueCandidatesTestCase(unittest.TestCase):
                 self.assertEqual(rec["probe_count"], 0)
                 self.assertEqual(rec["popularity_percentile"], 50)
 
+    def test_year_is_written_as_a_string_not_the_raw_watchmode_int(self):
+        # CAS-1026: this merge path wrote row.get("year") verbatim — a raw int from Watchmode's
+        # /list-titles — while the other two ingestion paths both normalise to a string. An int
+        # year with no cinema_date crashes index.html#engine's yearOf() at .slice().
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp, [_backcat_row(1, year=2018)])
+            candidates = {}
+            pp.merge_backcatalogue_candidates(candidates, "2026-09-15", path=path)
+            self.assertEqual(candidates["1"]["year"], "2018")
+            self.assertIsInstance(candidates["1"]["year"], str)
+
+    def test_a_missing_year_falls_back_to_the_placeholder_string(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp, [_backcat_row(1, year=None)])
+            candidates = {}
+            pp.merge_backcatalogue_candidates(candidates, "2026-09-15", path=path)
+            self.assertEqual(candidates["1"]["year"], "----")
+
     def test_an_entry_with_no_tmdb_id_is_skipped_and_counted(self):
         with tempfile.TemporaryDirectory() as tmp:
             rows = [_backcat_row(10), {"id": 999, "title": "No tmdb id", "year": 2020,

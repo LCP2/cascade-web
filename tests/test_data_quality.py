@@ -43,6 +43,10 @@ BLOCKING_TESTS = {
     # it), but nothing before this proved that in CI, so a real regression would have shipped
     # unnoticed the same way. Blocking for the same reason the checks above are.
     "OnlyFloorQualifyingTitlesPublish.test_every_published_film_clears_the_publish_floor",
+    # CAS-1026: a raw int `year` (one back-catalogue merge path skipped the str() every other
+    # ingestion path applies) crashes index.html#engine's yearOf() at (m.cinema_date||m.year||"").
+    # slice(). Blocking for the same reason test_no_record_is_a_raw_candidate_pool_stub is.
+    "CatalogueShape.test_year_is_always_a_string",
 }
 
 # The windows a film can hold, in journey order — the same list the front end calls CASCADE.
@@ -123,6 +127,14 @@ class CatalogueShape(unittest.TestCase):
         stubs = [m.get("title", m.get("tmdb_id")) for m in self.movies
                 if not pp.is_publishable_record(m)]
         self.assertEqual(stubs, [], f"films that are still raw, un-enriched candidate-pool stubs: {stubs[:5]}")
+
+    def test_year_is_always_a_string(self):
+        # CAS-1026: engine's yearOf() does (m.cinema_date||m.year||"").slice(...) — an int year
+        # with no cinema_date throws. Every ingestion path but one already writes str(year); this
+        # proves the file that ships never carries the raw-int exception.
+        bad = [(m.get("title", m.get("tmdb_id")), m.get("year")) for m in self.movies
+               if "year" in m and not isinstance(m["year"], str)]
+        self.assertEqual(bad, [], f"films with a non-string year: {bad[:5]}")
 
 
 class AvailabilityIsBackedBySomething(unittest.TestCase):

@@ -842,7 +842,7 @@ def merge_backcatalogue_candidates(candidates: dict, today_iso: str, path: str |
         candidates[key] = {
             "tmdb_id": tmdb_id,
             "title": row.get("title"),
-            "year": row.get("year"),
+            "year": str(row.get("year") or "----"),
             "popularity_percentile": row.get("popularity_percentile"),
             "popularity": round(percentile / 10, 4),
             "status": [],
