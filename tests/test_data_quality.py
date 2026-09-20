@@ -384,12 +384,26 @@ class DataCompleteness(unittest.TestCase):
     # for ordinary daily drift and tight enough that a real regression trips them.
     # CAS-938: imdb_rating's ceiling is retired along with the OMDb field itself — the pipeline no
     # longer populates it on any record, so "missing" is now the field's permanent, correct state.
+    # CAS-1043: age_rating/cinema_date both come from TMDB's AU release_dates entries, which only
+    # ever exist for a title that had (or is booked for) an AU theatrical release. CAS-1024's
+    # back-catalogue dispatch has since made VOD-only titles the majority of the showable catalogue
+    # (4,104 of 5,578 showable on 2026-09-20, 73.6%), and those titles structurally cannot carry
+    # either field — no amount of backfill will find an AU classification for a film that was never
+    # classified for an AU cinema release. Split by cohort on that same date: titles that ever had
+    # an AU cinema release (or are upcoming toward one) are missing age_rating 12.5% (184/1,474) and
+    # cinema_date 5.6% (88/1,571) — in line with the old baseline; back-catalogue-only titles are
+    # missing them 84.2% (3,454/4,104) and 97.9% (3,923/4,007). The ceilings below are raised to the
+    # new blended baseline (with headroom), not the old cinema-only one, since the failure is a
+    # population shift CAS-986/CAS-1024 already intended, not a backfill regression.
     CEILINGS = {
-        "age_rating": 25.0,    # 16.2% today — the age dial silently passes films it cannot judge
+        "age_rating": 70.0,    # 65.2% today (was 16.2% pre-back-catalogue) — see CAS-1043 above
         "genres": 3.0,         # 1.1%  — a film with no genre can never match a genre-led recipe
         "poster": 3.0,         # 1.0%  — the card falls back to a placeholder
         "synopsis": 2.0,       # 0.1%  — the card has nothing to say about the film
-        "cinema_date": 2.0,    # 0.3%  — every estimated window date is derived from this one
+        "cinema_date": 77.0,   # 71.9% today (was 0.3% pre-back-catalogue) — see CAS-1043 above;
+                               # every estimated window date is derived from this one, but a
+                               # back-catalogue title has real (not estimated) window_dates the
+                               # moment an offer is observed, so it needs no estimate to fall back to
     }
 
     @classmethod

@@ -1886,6 +1886,22 @@ def update_window_dates(records: list[dict], wd: dict, prev_by_id: dict, tstamp:
             rec.setdefault(w, tstamp)                  # earliest date this window was ever earned
         for w in (prev_status - status) & HOME_WINDOWS:
             rec.pop(w, None)                           # confirmed departure — the stamp isn't current history
+        # CAS-1043: TMDB occasionally corrects a title's cinema_date to a later date after a window
+        # was already stamped against the old (earlier) one, leaving a stamp that now predates the
+        # film's own opening — an impossible date (test_no_window_is_stamped_before_the_film_opened).
+        # "upcoming" is exempt: it is deliberately the pre-release stamp. A window `status` still
+        # holds today is re-stamped as first seen today (re-stamping to a still-future opening date
+        # would only trade one impossible date for another); a window `status` no longer holds is a
+        # stale leftover the correction has invalidated outright, so it is dropped, the same as a
+        # confirmed departure above.
+        opened = m.get("cinema_date")
+        if opened:
+            for w in list(rec):
+                if w != "upcoming" and rec[w] < opened:
+                    if w in status:
+                        rec[w] = tstamp
+                    else:
+                        rec.pop(w, None)
         wd[key] = rec
         m["window_dates"] = rec
     return wd
