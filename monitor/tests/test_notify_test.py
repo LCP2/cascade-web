@@ -15,8 +15,8 @@ from contextlib import redirect_stdout
 
 from monitor import compute_transitions
 from monitor.__main__ import main
-from monitor.notify_test import (DEFAULT_FIXTURES, FIXTURE_MARKER, build_catalogues,
-                                  load_fixture_films, validate_target_user)
+from monitor.notify_test import (DEFAULT_FIXTURES, FIXTURE_MARKER, arm_watch, build_catalogues,
+                                  load_fixture_films, report_and_verify, validate_target_user)
 from monitor.store import FIXTURE_ID_MAX, FIXTURE_ID_MIN, InMemoryStore
 
 
@@ -248,6 +248,118 @@ class CleanupScope(unittest.TestCase):
         store = InMemoryStore(notifications=[{"cascade_id": "c1", "movie_id": "42", "moment": "hits_rent"}])
         removed = store.delete_notifications_for_movie_ids(["42", "'; drop table notifications; --", None, ""])
         self.assertEqual(removed, 0)
+
+
+class GuaranteedMatchViaWatchIt(unittest.TestCase):
+    """CAS-1052 AC1: a target user whose agents match none of the fixture films (here: no agents at
+    all) still gets exactly one alert for the scenario via the temporary Watch-it row arm_watch()
+    ticks — proven through the real `python -m monitor` pipeline, same as DeliverySourceProof above
+    — and cleanup (delete_film_watch_for_movie_ids) removes the row afterwards."""
+
+    TARGET_USER = "5ef56b23-cdec-5c0a-af6d-3bea00000004"
+    DATE = "2026-08-13"
+    SCENARIO = "hits_stream"
+
+    def setUp(self):
+        self.films = load_fixture_films(DEFAULT_FIXTURES)
+        self.target = next(f for f in self.films if f["scenario"] == self.SCENARIO)
+        self.yesterday, self.today = build_catalogues(self.films, self.SCENARIO, self.DATE)
+
+    def test_no_agents_still_delivers_via_the_armed_watch_it_tick_then_cleanup_removes_it(self):
+        store = InMemoryStore()   # zero cascades — nothing could match this user on taste
+        arm_watch(store, self.TARGET_USER, self.films, self.SCENARIO)
+        watches = store.fetch_film_watches()
+        self.assertEqual(len(watches), 1)
+        self.assertEqual(watches[0]["windows"], ["stream"])
+
+        with tempfile.TemporaryDirectory() as d:
+            paths = {}
+            for name, doc in (("yesterday", {"movies": self.yesterday}), ("today", {"movies": self.today}),
+                               ("cascades", []), ("notifications", []), ("watches", watches)):
+                paths[name] = os.path.join(d, f"{name}.json")
+                with open(paths[name], "w", encoding="utf-8") as fh:
+                    json.dump(doc, fh)
+            argv = ["--today", paths["today"], "--yesterday", paths["yesterday"], "--date", self.DATE,
+                    "--dry-run", "--cascades", paths["cascades"], "--notifications", paths["notifications"],
+                    "--watches", paths["watches"], "--target-user", self.TARGET_USER]
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = main(argv)
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("1 new alert(s)", out)
+        self.assertNotIn("no new alerts for anyone", out)
+        self.assertIn(self.target["title"], out)
+
+        removed = store.delete_film_watch_for_movie_ids([self.target["tmdb_id"]])
+        self.assertEqual(removed, 1)
+        self.assertEqual(store.fetch_film_watches(), [])
+
+    def test_announced_has_no_window_so_arm_watch_is_a_no_op(self):
+        store = InMemoryStore()
+        arm_watch(store, self.TARGET_USER, self.films, "announced")
+        self.assertEqual(store.fetch_film_watches(), [])
+
+
+class VerifyExitCode(unittest.TestCase):
+    """CAS-1052 AC2: 0 alerts created for --target-user -> report_and_verify (the core of
+    `notify_test.py --verify`) returns a non-zero returncode, so the harness exits non-zero rather
+    than reporting green over silence."""
+
+    TARGET_USER = "5ef56b23-cdec-5c0a-af6d-3bea00000005"
+
+    def setUp(self):
+        self.films = load_fixture_films(DEFAULT_FIXTURES)
+        self.target = next(f for f in self.films if f["scenario"] == "hits_stream")
+
+    def test_zero_alerts_fails_closed(self):
+        store = InMemoryStore(notifications=[], watches=[], push_tokens=[])
+        rc, message = report_and_verify(store, self.TARGET_USER, self.films, {}, {})
+        self.assertEqual(rc, 1)
+        self.assertIn("FAILED", message)
+        self.assertIn("0 registered push token", message)
+
+    def test_at_least_one_alert_recorded_passes_and_reports_push_tokens(self):
+        store = InMemoryStore(
+            notifications=[{"cascade_id": None, "user_id": self.TARGET_USER,
+                            "movie_id": str(self.target["tmdb_id"]), "moment": "hits_stream"}],
+            watches=[{"user_id": self.TARGET_USER, "movie_id": str(self.target["tmdb_id"]),
+                      "windows": ["stream"]}],
+            push_tokens=[{"user_id": self.TARGET_USER, "device_token": "abc"}],
+        )
+        rc, message = report_and_verify(store, self.TARGET_USER, self.films, {}, {})
+        self.assertEqual(rc, 0)
+        self.assertNotIn("FAILED", message)
+        self.assertIn("1 registered push token", message)
+
+    def test_verify_tears_down_the_temporary_watch_row_either_way(self):
+        store = InMemoryStore(
+            notifications=[],
+            watches=[{"user_id": self.TARGET_USER, "movie_id": str(self.target["tmdb_id"]),
+                      "windows": ["stream"]}],
+        )
+        report_and_verify(store, self.TARGET_USER, self.films, {}, {})
+        self.assertEqual(store.fetch_film_watches(), [])
+
+    def test_run_stats_deltas_isolate_this_runs_own_contribution(self):
+        before = {"date": "2026-09-20", "email": {"attempted": 5, "delivered": 5, "errors": 0}}
+        after = {"date": "2026-09-20", "email": {"attempted": 6, "delivered": 6, "errors": 0}}
+        store = InMemoryStore(notifications=[{"cascade_id": None, "user_id": self.TARGET_USER,
+                                              "movie_id": str(self.target["tmdb_id"]),
+                                              "moment": "hits_stream"}])
+        rc, message = report_and_verify(store, self.TARGET_USER, self.films, before, after)
+        self.assertEqual(rc, 0)
+        self.assertIn("email attempted 1/delivered 1", message)
+
+    def test_a_stale_snapshot_from_a_different_date_is_not_subtracted(self):
+        before = {"date": "2026-09-19", "email": {"attempted": 5, "delivered": 5, "errors": 0}}
+        after = {"date": "2026-09-20", "email": {"attempted": 1, "delivered": 1, "errors": 0}}
+        store = InMemoryStore(notifications=[{"cascade_id": None, "user_id": self.TARGET_USER,
+                                              "movie_id": str(self.target["tmdb_id"]),
+                                              "moment": "hits_stream"}])
+        rc, message = report_and_verify(store, self.TARGET_USER, self.films, before, after)
+        self.assertEqual(rc, 0)
+        self.assertIn("email attempted 1/delivered 1", message)
 
 
 if __name__ == "__main__":

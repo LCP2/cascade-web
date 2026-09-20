@@ -20,6 +20,8 @@ Interface:
   fetch_film_watches() -> [{user_id, movie_id, windows, sources}]                # CAS-484/CAS-918
   fetch_watch_notification_keys() -> set[(user_id, movie_id, moment)]  # de-dupe, null-cascade rows
   delete_notifications_for_movie_ids(ids) -> int          # CAS-486: fixture-range-only, for notify-test
+  upsert_film_watch(user_id, movie_id, window) -> None    # CAS-1052: notify-test's guaranteed-match tick
+  delete_film_watch_for_movie_ids(ids) -> int             # CAS-1052: fixture-range-only, for notify-test
   fetch_user_prefs() -> {user_id: {sub_services, store_services, taste, services_only}}    # CAS-825/CAS-853
   fetch_user_films() -> [{user_id, movie_id, status}]                                      # CAS-825
   fetch_user_held_ids() -> set[str]  # every tmdb_id a user holds state on                  # CAS-986
@@ -153,6 +155,29 @@ class InMemoryStore:
         before = len(self._notifications)
         self._notifications = [n for n in self._notifications if str(n.get("movie_id")) not in ids]
         return before - len(self._notifications)
+
+    def upsert_film_watch(self, user_id, movie_id, window: str) -> None:
+        """CAS-1052: write (or overwrite) ONE film_watch row keyed on (user_id, movie_id), same
+        upsert semantics as the real table's primary key — a second arm for the same user/fixture
+        film replaces the previous tick rather than duplicating it."""
+        key = (str(user_id), str(movie_id))
+        for w in self._watches:
+            if (str(w.get("user_id")), str(w.get("movie_id"))) == key:
+                w["windows"] = [window]
+                w["sources"] = {window: "manual"}
+                return
+        self._watches.append({"user_id": user_id, "movie_id": str(movie_id), "windows": [window],
+                              "sources": {window: "manual"}})
+
+    def delete_film_watch_for_movie_ids(self, movie_ids) -> int:
+        """CAS-1052: teardown for notify-test's temporary Watch-it tick — same fixture-range guard
+        as delete_notifications_for_movie_ids, so this can never remove a real per-film tick."""
+        ids = set(_fixture_ids_only(movie_ids))
+        if not ids:
+            return 0
+        before = len(self._watches)
+        self._watches = [w for w in self._watches if str(w.get("movie_id")) not in ids]
+        return before - len(self._watches)
 
     def fetch_user_prefs(self) -> dict:
         return dict(self._user_prefs)
@@ -614,6 +639,46 @@ class SupabaseStore:
         quoted = ",".join(ids)
         req = urllib.request.Request(
             self._base + f"/notifications?movie_id=in.({quoted})",
+            headers=self._headers({"Prefer": "return=representation"}),
+            method="DELETE",
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            body = resp.read().decode("utf-8")
+        try:
+            return len(json.loads(body))
+        except (json.JSONDecodeError, TypeError):
+            return 0
+
+    def upsert_film_watch(self, user_id, movie_id, window: str) -> None:
+        """CAS-1052: write ONE temporary film_watch row so notify_test.py can guarantee a match for
+        --target-user's chosen scenario without touching their real agents — matching.
+        match_film_watches() fires on this table independently of any cascade's own criteria.
+        Upserts on the table's own (user_id, movie_id) primary key (supabase/schema.sql), so a
+        repeat arm for the same user/fixture film overwrites the previous tick rather than
+        duplicating or erroring."""
+        row = {"user_id": user_id, "movie_id": str(movie_id), "windows": [window],
+              "sources": {window: "manual"}}
+        data = json.dumps([row]).encode("utf-8")
+        req = urllib.request.Request(
+            self._base + "/film_watch?on_conflict=user_id,movie_id",
+            data=data,
+            headers=self._headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout):
+            pass
+
+    def delete_film_watch_for_movie_ids(self, movie_ids) -> int:
+        """CAS-1052: DELETE the temporary film_watch row(s) notify_test.py's --verify pass tears
+        down after a run. `movie_ids` is re-filtered to the reserved fixture range here, the same
+        belt-and-braces guard delete_notifications_for_movie_ids uses, so this can never touch a
+        real user's per-film Watch-it tick no matter what a caller passes in."""
+        ids = _fixture_ids_only(movie_ids)
+        if not ids:
+            return 0
+        quoted = ",".join(ids)
+        req = urllib.request.Request(
+            self._base + f"/film_watch?movie_id=in.({quoted})",
             headers=self._headers({"Prefer": "return=representation"}),
             method="DELETE",
         )
