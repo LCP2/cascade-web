@@ -19133,6 +19133,29 @@ else if(dedupedN)
   // one .in("movie_id",...) request per group, capped smaller than SYNC_CHUNK_SIZE per the ticket's own
   // number, since a fresh sign-in's pending-delete set can span many cascades at once.
   const AGENT_DELETE_CHUNK_SIZE = 100;
+  // CAS-1054: agent_films rows are not the same size as user_films/film_watch's — every row carries
+  // agent_sig, the WHOLE cascade signature (cascSigOf) stringified, ~400-500 bytes on a real agent — so a
+  // row-count-only cap (SYNC_CHUNK_SIZE) let a chunk's JSON body run past the browser's 64KiB
+  // keepalive-fetch quota (CAS-1035 wraps every fetch this client makes with keepalive:true) and get
+  // rejected client-side before it ever reached the network. Chunk by cumulative JSON byte size, still
+  // never over SYNC_CHUNK_SIZE rows either (CAS-1039's own contract), capped well under the browser's
+  // quota so it stays safe even with several other tables' keepalive syncs in flight at once (replayOutbox
+  // runs all of them concurrently on boot).
+  const AGENT_FILMS_UPSERT_BYTE_CAP = 48000;
+  const jsonByteLen = v => new TextEncoder().encode(JSON.stringify(v)).length;
+  function chunkAgentFilmRows(rows){
+    const out=[];
+    let cur=[], curBytes=0;
+    for(const r of (rows||[])){
+      const bytes=jsonByteLen(r);
+      if(cur.length && (curBytes+bytes>AGENT_FILMS_UPSERT_BYTE_CAP || cur.length>=SYNC_CHUNK_SIZE)){
+        out.push(cur); cur=[]; curBytes=0;
+      }
+      cur.push(r); curBytes+=bytes;
+    }
+    if(cur.length) out.push(cur);
+    return out;
+  }
   // Every row this device still owes the account, minus whatever the remote read just returned for the
   // same keys (the pending copy is the newer, still-unconfirmed one) — the shape every load/apply site
   // below applies instead of the raw remote rows.
@@ -20261,11 +20284,23 @@ else if(dedupedN)
   // "TypeError: Failed to fetch" (see ticket evidence). Deletes are now grouped by cascade_id and sent
   // one .in("movie_id",...) request per AGENT_DELETE_CHUNK_SIZE ids, awaited sequentially — never more
   // than one delete request in flight at a time. A failed chunk still never blocks another chunk.
+  // CAS-1054: that concurrency fix did not stop production's "TypeError: Failed to fetch"/"Load failed"
+  // on agent_films upserts, because concurrency was never the real limit for THIS table. Every row
+  // carries agent_sig — cascSigOf(cascade) JSON.stringify'd whole, ~400-500 bytes on real agents — so a
+  // row-count chunk of SYNC_CHUNK_SIZE (200) routinely produces a 100-150KB request body (measured live
+  // against the real project: a realistic 200-row chunk was 144.5KB). Every fetch this client makes
+  // carries keepalive:true (CAS-1035), and browsers (Chrome and Safari both) reject a keepalive fetch
+  // outright — client-side, before it ever reaches the network, hence a bare network-level TypeError —
+  // once its body exceeds a 64KiB quota shared across in-flight keepalive requests. A live-reproduction
+  // POST of an identical chunk shape straight from Node (no keepalive) against the real project succeeded
+  // every time (201), which rules out every server-side candidate: gateway size limits, a bad row value,
+  // the on_conflict target (it matches agent_films' own primary key), a trigger (there is none), and a
+  // missing cascade_id FK. Upsert chunks are now bounded by cumulative JSON byte size, not row count.
   async function syncAgentFilmsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
     const rows=agentFilmDirtyRows();
     let anyError=null;
-    for(const batch of chunkRows(rows)){
+    for(const batch of chunkAgentFilmRows(rows)){
       const { error } = await c.from("agent_films").upsert(batch, { onConflict:"user_id,cascade_id,movie_id" });
       if(error){ console.warn("agent_films upsert", error); anyError=error; continue; }
       if(!agentFilmsKnown) agentFilmsKnown=new Map();
@@ -20740,6 +20775,10 @@ else if(dedupedN)
                                 // CAS-1049: the delete-chunking seam so a test can assert the ≤100-id,
                                 // one-in-flight-at-a-time contract directly.
                                 AGENT_DELETE_CHUNK_SIZE,
+                                // CAS-1054: the byte-size upsert-chunking seam, so a test can assert every
+                                // chunk this device would actually send stays under the browser's
+                                // keepalive-fetch quota, not just under a row count.
+                                AGENT_FILMS_UPSERT_BYTE_CAP, chunkAgentFilmRows,
                                 get agentFilmsKnown(){ return agentFilmsKnown; },
                                 // CAS-736: same read/write-primitive shape as filmWatchReady above, so a
                                 // test can drive recomputeFound's "this device's own ledger hasn't loaded
