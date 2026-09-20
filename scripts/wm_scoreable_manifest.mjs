@@ -25,8 +25,25 @@ const OUT = path.join(ROOT, "state", "wm_backfill_scoreable.txt");
 // `upcoming` never takes a floor — a genuinely upcoming title is admitted on cinema buzz alone,
 // which has no quality signal yet to floor. The cinema statuses (in_cinema/opening_week) still
 // pass on cinema buzz alone too; the floor only gates their OR'd wmQScore alternative.
+//
+// CAS-1040: `m.status` (the pipeline's own persisted claim) can lag what the app itself would show
+// today — CAS-289/CAS-318's own client-side rule (deriveStatus, run by every page load's
+// rederiveStatuses()) advances an ESTIMATED in_cinema claim to pvod once CINEMA_ESTIMATE_RUN_DAYS
+// has passed, even with zero offers behind it, but nothing here ever re-ran that rule: a title
+// last confirmed in_cinema, then never re-polled, stayed cinema-buzz-exempt from the floor forever
+// server-side while cascademovies.com itself was already showing it as pvod. Re-deriving is only
+// meaningful when the raw claim is CURRENTLY cinema (that's the one window deriveStatus can move a
+// stale estimate off) — a candidate stub (CAS-1029/CAS-1023: scored-only, pre-TMDB-enrichment, no
+// offers/cinema_date/claimedStatus at all) has no such claim, and running deriveStatus's offerless-
+// window fallback over it invents an "upcoming" window deriveStatus was never meant to guess for
+// something that isn't a real movie record yet, which wrongly exempted it from the wmQScore floor.
 export function isScoreable(E, m, floor = 0){
-  const ps = E.primaryStatus(m);
+  let ps = E.primaryStatus(m);
+  if(ps === "in_cinema" || ps === "opening_week"){
+    const claimedStatus = m.claimedStatus || (m.status || []).slice();
+    const status = E.deriveStatus({ ...m, claimedStatus });
+    ps = E.primaryStatus({ ...m, status });
+  }
   if(ps === "upcoming") return E.wmCinemaScore(m) >= 0;
   if(ps === "in_cinema" || ps === "opening_week") return E.wmCinemaScore(m) >= 0 || E.wmQScore(m) >= floor;
   return E.wmQScore(m) >= floor;

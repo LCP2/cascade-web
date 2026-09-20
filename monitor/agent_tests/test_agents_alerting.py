@@ -190,7 +190,10 @@ class G7RatingCrossPlusARealWindowTransitionSameDay(unittest.TestCase):
 
         window_hits = match(cascade, transitions, admission=admission,
                             film_watches=_auto_placements(cascade, transitions))
-        covered = {(h.cascade_id, h.transition.movie_id)
+        # CAS-1041: covered is keyed by user_id, not cascade_id — see match_newly_qualified's own
+        # docstring (a re-attributed Hit's owner cascade can differ from the one whose criteria
+        # changed) — mirrors monitor/__main__.py's own window_covered construction.
+        covered = {(h.user_id, h.transition.movie_id)
                   for hits in window_hits.values() for h in hits}
         nq_hits = match_newly_qualified(cascade, prev, today, admission=admission, covered=covered)
         total = sum(len(v) for v in window_hits.values()) + sum(len(v) for v in nq_hits.values())
@@ -220,7 +223,7 @@ class G7RatingCrossPlusARealWindowTransitionSameDay(unittest.TestCase):
         window_hits = match(cascade, transitions, admission=admission,
                             film_watches=_auto_placements(cascade, transitions))
         self.assertEqual(window_hits, {}, "setup: no real window transition this day")
-        covered = {(h.cascade_id, h.transition.movie_id)
+        covered = {(h.user_id, h.transition.movie_id)
                   for hits in window_hits.values() for h in hits}
         nq_hits = match_newly_qualified(cascade, prev, today, admission=admission, covered=covered)
 
@@ -244,7 +247,7 @@ class G7RatingCrossPlusARealWindowTransitionSameDay(unittest.TestCase):
 
         window_hits = match(cascade, transitions, admission=admission,
                             film_watches=_auto_placements(cascade, transitions))
-        covered = {(h.cascade_id, h.transition.movie_id)
+        covered = {(h.user_id, h.transition.movie_id)
                   for hits in window_hits.values() for h in hits}
         nq_hits = match_newly_qualified(cascade, prev, today, admission=admission, covered=covered)
         total = sum(len(v) for v in window_hits.values()) + sum(len(v) for v in nq_hits.values())

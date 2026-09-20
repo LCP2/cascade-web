@@ -47,6 +47,42 @@ test("CAS-910 AC: v2_cinema's Continue is disabled on load and enabled after pic
   await expect(page.locator("#onbStepCta")).toBeEnabled();
 });
 
+// CAS-1047: openStep()'s ?step= preview renders straight through renderOnbStep() with no gotoStep() slide
+// involved, so it never exercised the bug — the wired flow's own forward transition leaves the OUTGOING
+// pane's #onbStepCta in the DOM (gotoStep only strips the id off the pane container, not its descendants;
+// endSlide() removes it 460ms later), so applyStepBlock's own $("onbStepCta") lookup could resolve to that
+// stale button instead of the one this paint just drew, leaving the real, freshly-entered step un-gated.
+// Scoped to #onbStepInner for the same reason CAS-1018 scoped .obhd this way (see openStep above).
+test("CAS-1047 AC: v2_cinema's Continue is disabled on arrival via the wired flow (slide transition), not only via a ?step= preview", async ({ page }) => {
+  await freshApp(page);
+  await page.locator("#splashCta").click();
+  await expect(page.locator("#onbStepInner .obhd")).toContainText("Cascade finds your movies for you.");   // v2_about
+  await page.locator("#onbStepInner #onbStepCta").click();
+  await expect(page.locator("#onbStepInner .obhd")).toContainText("Massive Movies");   // v2_intro
+  await page.locator("#onbStepInner #onbStepCta").click();   // slides into v2_cinema
+  await expect(page.locator("#obCinemaOpts")).toBeVisible();
+  await expect(page.locator("#onbStepInner #onbStepCta")).toBeDisabled();
+});
+
+// CAS-1047: flowStart() previously left a prior run's saved answers in place, so a second person onboarding
+// on the same device (after sign-out) found every blocked question already answered from the first person's
+// run — the opposite of ONB-04's fresh flow.
+test("CAS-1047 AC: flowStart() resets a previous person's saved v2 answers for a genuinely new run", async ({ page }) => {
+  await freshApp(page);
+  await page.evaluate(() => {
+    localStorage.setItem("cascade_onb_answers_v2", JSON.stringify({
+      cinema: "yes", rent: "yes", styles: ["Comedy"], selScale: 15000000, ages: ["M"],
+      partner: "yes", partnerDiff: "no", partnerStyles: [], kids: "yes", kidAges: ["G"], services: ["Netflix"],
+    }));
+  });
+  await page.locator("#splashCta").click();
+  await expect(page.locator("#onbStepInner .obhd")).toContainText("Cascade finds your movies for you.");   // v2_about
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("cascade_onb_answers_v2")));
+  expect(stored.cinema).toBeNull();
+  expect(stored.partner).toBeNull();
+  expect(stored.services).toEqual([]);
+});
+
 test("CAS-910 AC: v2_rent's Continue is disabled on load and enabled after picking Yes", async ({ page }) => {
   await openStep(page, "v2_rent");
   await expect(page.locator("#onbStepCta")).toBeDisabled();

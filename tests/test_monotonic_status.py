@@ -542,6 +542,38 @@ class WindowDatesAreCorrectableNotPermanent(unittest.TestCase):
         wd = pp.update_window_dates([m], {}, {}, "2026-08-18")
         self.assertEqual(wd["1"]["in_cinema"], "2026-08-18")
 
+    def test_a_later_cinema_date_correction_drops_a_stale_window_it_strands(self):
+        # CAS-1043: Man of Valor's exact shape — in_cinema was stamped 2026-08-12, TMDB then
+        # corrected cinema_date to a FUTURE 2026-11-12, and status reverted to upcoming. Re-stamping
+        # to today wouldn't satisfy the invariant either (today is still before a future opening),
+        # so a stamp for a window `status` no longer holds is dropped outright.
+        m = {"tmdb_id": 1, "title": "Man of Valor", "status": ["upcoming"], "offers": [],
+             "cinema_date": "2026-11-12"}
+        wd = pp.update_window_dates([m], {"1": {"in_cinema": "2026-08-12"}}, {}, "2026-09-20")
+        self.assertNotIn("in_cinema", wd["1"])
+
+    def test_a_later_cinema_date_correction_restamps_a_window_still_held(self):
+        # CAS-1043: Mr Adidos/Paroxysm's shape — in_cinema was stamped against an earlier
+        # cinema_date, the date was corrected to a later (but already-past) date, and the film is
+        # still, correctly, in_cinema today. The stale stamp is re-dated to today rather than left
+        # stranded before the corrected opening.
+        m = {"tmdb_id": 1, "title": "Mr Adidos", "status": ["in_cinema"], "offers": [],
+             "cinema_date": "2026-08-27"}
+        wd = pp.update_window_dates([m], {"1": {"in_cinema": "2026-07-22"}}, {}, "2026-09-20")
+        self.assertEqual(wd["1"]["in_cinema"], "2026-09-20")
+
+    def test_the_pre_release_upcoming_stamp_is_exempt_from_correction(self):
+        m = {"tmdb_id": 1, "title": "X", "status": ["upcoming"], "offers": [],
+             "cinema_date": "2026-11-12"}
+        wd = pp.update_window_dates([m], {"1": {"upcoming": "2026-07-21"}}, {}, "2026-09-20")
+        self.assertEqual(wd["1"]["upcoming"], "2026-07-21")   # legitimately before the film opened
+
+    def test_a_window_stamped_after_cinema_date_is_left_alone(self):
+        m = {"tmdb_id": 1, "title": "X", "status": ["in_cinema"], "offers": [],
+             "cinema_date": "2026-08-01"}
+        wd = pp.update_window_dates([m], {"1": {"in_cinema": "2026-08-05"}}, {}, "2026-09-20")
+        self.assertEqual(wd["1"]["in_cinema"], "2026-08-05")   # already consistent — not touched
+
 
 class MassStampGuardCatchesABadRun(unittest.TestCase):
     """CAS-578 R6/AC7: the guard that would have caught D1 before it ever reached the catalogue."""

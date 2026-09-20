@@ -265,8 +265,10 @@ def main(argv=None) -> int:
     # moment is computed straight from the prev/today records rather than from `transitions`.
     # CAS-796: match()'s own hits are passed in as `covered` so a film that both newly qualifies and
     # hits a real window on the same day resolves to the one window hit, not two — the same
-    # `covered` shape match_new_to_agent already uses below.
-    window_covered = {(h.cascade_id, h.transition.movie_id)
+    # `covered` shape match_new_to_agent already uses below. Keyed by user_id, not cascade_id
+    # (CAS-1041): CAS-925 can re-attribute a Hit to a different owner cascade than the one whose own
+    # criteria actually changed, so a cascade_id-keyed set can miss a same-user, same-film overlap.
+    window_covered = {(h.user_id, h.transition.movie_id)
                       for hits in agent_hits.values() for h in hits}
     newly_qualified_hits = match_newly_qualified(cascades, prev_movies, today_movies, already=already,
                                                  admission=admission, excluded=muted,
@@ -284,7 +286,7 @@ def main(argv=None) -> int:
     # the same day as a real window transition still alerts once, not twice (CAS-785 AC1c).
     previous_run_start = _dt.datetime.combine(
         run_date - _dt.timedelta(days=1), _dt.time.min, tzinfo=_dt.timezone.utc)
-    covered_films = {(h.cascade_id, h.transition.movie_id)
+    covered_films = {(h.user_id, h.transition.movie_id)
                      for hits in agent_hits.values() for h in hits}
     new_to_agent_hits = match_new_to_agent(cascades, prev_movies, today_movies, previous_run_start,
                                            already=already, admission=admission, excluded=muted,

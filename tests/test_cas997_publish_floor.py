@@ -42,8 +42,10 @@ class SelectPublishableKeepsAHeldBelowFloorTitle(unittest.TestCase):
         # answer, same as this ticket's Defect 1 wires it in apply_two_tier_publication.
         engine_scoreable_ids = {1, 3}
         previously_published_ids = {1, 2, 3}
+        # held_ids mirrors state/user_held_ids.json on disk: a set of tmdb_id STRINGS, even
+        # though tid (an int) is what's actually compared against it (CAS-1032).
         records, stats = pp.select_publishable(candidates, engine_scoreable_ids,
-                                                previously_published_ids, held_ids={2},
+                                                previously_published_ids, held_ids={"2"},
                                                 catalogue_target=10)
         self.assertEqual(stats["demoted"], 0)
         self.assertEqual(stats["exempt"], 1)

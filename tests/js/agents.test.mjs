@@ -109,6 +109,27 @@ function pickMatchingFilm(c, exclude){
   if(!m) throw new Error("no film in the harness catalogue matches this agent — this test would prove nothing");
   return m;
 }
+// CAS-762's "need an unscored film this agent admits" fixtures used to find a REAL unscored film in the
+// live catalogue (E.MOVIES.find(m => E.cascadeScore(m) === -1 && ...)) — CAS-1029/1031's publish floor
+// now requires every published film to clear a score to publish at all, so that supply dried up
+// (CAS-1042). Clone a real, currently-matching donor and strip its score fields instead — the same
+// technique CAS-724's own test (invariants.test.mjs) already uses for this exact problem — and remove it
+// again afterwards so nothing leaks into a later test.
+function withUnscoredMatch(c, fn){
+  const donor = E.MOVIES.find(m => E.matchesCriteria(m, c));
+  if(!donor) throw new Error("no film in the harness catalogue matches this agent — this test would prove nothing");
+  const unscored = { ...donor, tmdb_id: -900000000 - donor.tmdb_id,
+    wm_user_rating: null, wm_critic_score: null, wm_popularity_percentile: null };
+  if(E.cascadeScore(unscored) !== -1) throw new Error("test setup: cloned fixture should be unscored");
+  E.MOVIES.push(unscored);
+  E.invalidateComputeCaches();
+  try{ return fn(unscored); }
+  finally{
+    const i = E.MOVIES.indexOf(unscored);
+    if(i !== -1) E.MOVIES.splice(i, 1);
+    E.invalidateComputeCaches();
+  }
+}
 // A cleared film may keep a bare notify entry or be pruned out entirely by recomputeFound's own
 // noise-gc — both are valid ways of saying "no Watch On", so assertions go through this rather
 // than assuming notify[id] still exists (same helper shape as agents-watched.test.mjs).
@@ -267,10 +288,17 @@ test("B4: a film leaving an agent loses an auto Watch On but keeps a manual one"
 }));
 
 test("B5: a film admitted while in_cinema, now stream, survives an agent edit — retested against its stored admission_score, not today's", () => withAgentState(() => {
-  const film = E.MOVIES.find(x => !E.watched.has(x.tmdb_id) && !E.blocked.has(x.tmdb_id) && E.primaryStatus(x) === "included_streaming");
-  if(!film) throw new Error("no unwatched 'included_streaming' film in the harness catalogue — this test would prove nothing");
-  const id = film.tmdb_id;
   const c = broadCascade("cas790-b5", 0);
+  // CAS-1042: must also pass the retest recomputeFound itself runs on an edit (matchesCriteria against
+  // this SAME cascade, status/myServices ignored, score gate ignored — see the app's own r.admission_score
+  // branch) — not merely be "included_streaming" — or the retest below legitimately drops it for a taste
+  // reason (e.g. language) unrelated to what this test is about, and the film silently isn't on the agent
+  // any more when the assertion reads it back.
+  const film = E.MOVIES.find(x => !E.watched.has(x.tmdb_id) && !E.blocked.has(x.tmdb_id)
+    && E.primaryStatus(x) === "included_streaming"
+    && E.matchesCriteria(x, {...c, status: [], myServices: false}, false, true));
+  if(!film) throw new Error("no unwatched 'included_streaming' film in the harness catalogue matches this broad agent — this test would prove nothing");
+  const id = film.tmdb_id;
   E.cascades.push(c);
   const sig = E.cascSigOf(c);
   E.CascadePersistence.setAgentFilm(c.id, id, { admission_score: 90, admission_status: "in_cinema", agent_sig: sig });
@@ -395,15 +423,16 @@ test("CAS-762 items 1/2: a marker of 0 (Off) stays usable, and floors the agent 
 
 test("CAS-762 item 3: matchesCriteria admits an unscored film once the agent's floor is Off, and still excludes it at any real floor", () => withAgentState(() => {
   const cOff = broadCascade("cas762-item3-off", 0, { in_cinema: null, premium: null, rent: null, stream: 0 });
-  const unscored = E.MOVIES.find(m => E.cascadeScore(m) === -1 && E.matchesCriteria(m, cOff));
-  assert.ok(unscored, "CAS-762 setup: need an unscored film the Off agent otherwise admits");
-  const cFloor = broadCascade("cas762-item3-floor", 1, { in_cinema: null, premium: null, rent: null, stream: 50 });
-  assert.equal(E.matchesCriteria(unscored, cFloor), false,
-    "CAS-762: a real floor (50) must still exclude an unscored film — rule 4 survives everywhere but Off");
-  // and a scored film below 50 is denied by the real floor exactly as before — this ticket touches only -1.
-  const scoredBelow = E.MOVIES.find(m => { const s = E.cascadeScore(m); return s >= 0 && s < 50; });
-  if(scoredBelow) assert.equal(E.matchesCriteria(scoredBelow, cFloor), false,
-    "CAS-762: a scored-but-below-floor film must still be excluded by a real floor");
+  withUnscoredMatch(cOff, unscored => {
+    assert.equal(E.matchesCriteria(unscored, cOff), true, "CAS-762: an unscored film must be admitted once the floor is Off");
+    const cFloor = broadCascade("cas762-item3-floor", 1, { in_cinema: null, premium: null, rent: null, stream: 50 });
+    assert.equal(E.matchesCriteria(unscored, cFloor), false,
+      "CAS-762: a real floor (50) must still exclude an unscored film — rule 4 survives everywhere but Off");
+    // and a scored film below 50 is denied by the real floor exactly as before — this ticket touches only -1.
+    const scoredBelow = E.MOVIES.find(m => { const s = E.cascadeScore(m); return s >= 0 && s < 50; });
+    if(scoredBelow) assert.equal(E.matchesCriteria(scoredBelow, cFloor), false,
+      "CAS-762: a scored-but-below-floor film must still be excluded by a real floor");
+  });
 }));
 
 test("CAS-762 item 4/AC7: setWatchMarker never pushes a neighbour at Off, never pushes INTO an Off neighbour, and two windows may both sit at Off", () => withAgentState(() => {
@@ -443,12 +472,12 @@ test("CAS-762 item 5: sticky re-admission accepts a stored unscored admission (-
 test("CAS-762 item 6/AC5: an unscored film admitted by an Off-floor agent still earns a Watch On value, in the Off window's own tab", () => withAgentState(() => {
   const cOff = broadCascade("cas762-item6", 0, { in_cinema: null, premium: null, rent: null, stream: 0 });
   E.cascades.push(cOff);
-  const unscored = E.MOVIES.find(m => E.cascadeScore(m) === -1 && E.matchesCriteria(m, cOff));
-  assert.ok(unscored, "CAS-762 setup: need an unscored film this Off agent admits");
-  const id = unscored.tmdb_id;
-  E.recomputeFound();
-  assert.equal(E.notify[id].wins.stream, true,
-    "CAS-762 AC5: an unscored film admitted at Off must receive a Watch On value, not land in no tab");
+  withUnscoredMatch(cOff, unscored => {
+    const id = unscored.tmdb_id;
+    E.recomputeFound();
+    assert.equal(E.notify[id].wins.stream, true,
+      "CAS-762 AC5: an unscored film admitted at Off must receive a Watch On value, not land in no tab");
+  });
 }));
 
 test("CAS-762 item 7: scoreHeldBackCount is 0 once the agent's floor is Off — no score requirement, nothing held back", () => withAgentState(() => {
@@ -1367,14 +1396,14 @@ test("L2: agentFloor(c) returns 0 when the lowest usable marker is Off — not I
 
 test("L3: an unscored film is admitted once the agent's floor is Off, and rejected at every numeric floor", () => withAgentState(() => {
   const cOff = broadCascade("cas833-l3-off", 0, { in_cinema: null, premium: null, rent: null, stream: 0 });
-  const unscored = E.MOVIES.find(m => E.cascadeScore(m) === -1 && E.matchesCriteria(m, cOff));
-  assert.ok(unscored, "L3 setup: need an unscored film the Off agent otherwise admits");
-  assert.equal(E.matchesCriteria(unscored, cOff), true, "L3: an unscored film must be admitted once the floor is Off");
-  for(let floor = 50; floor <= 100; floor += 10){
-    const cNum = broadCascade("cas833-l3-" + floor, 1, { in_cinema: null, premium: null, rent: null, stream: floor });
-    assert.equal(E.matchesCriteria(unscored, cNum), false,
-      `L3: an unscored film must be rejected at every numeric floor (got in at ${floor})`);
-  }
+  withUnscoredMatch(cOff, unscored => {
+    assert.equal(E.matchesCriteria(unscored, cOff), true, "L3: an unscored film must be admitted once the floor is Off");
+    for(let floor = 50; floor <= 100; floor += 10){
+      const cNum = broadCascade("cas833-l3-" + floor, 1, { in_cinema: null, premium: null, rent: null, stream: floor });
+      assert.equal(E.matchesCriteria(unscored, cNum), false,
+        `L3: an unscored film must be rejected at every numeric floor (got in at ${floor})`);
+    }
+  });
 }));
 
 test("L4: a stored agent_films row with admission_score -1, re-reviewed after an agent edit at floor Off, stays admitted", () => withAgentState(() => {
@@ -1397,12 +1426,12 @@ test("L4: a stored agent_films row with admission_score -1, re-reviewed after an
 test("L5: Watch On for an unscored film on an Off window resolves to that window — Off admits but does not skip alerting", () => withAgentState(() => {
   const cOff = broadCascade("cas833-l5", 0, { in_cinema: null, premium: null, rent: null, stream: 0 });
   E.cascades.push(cOff);
-  const unscored = E.MOVIES.find(m => E.cascadeScore(m) === -1 && E.matchesCriteria(m, cOff));
-  assert.ok(unscored, "L5 setup: need an unscored film this Off agent admits");
-  const id = unscored.tmdb_id;
-  E.recomputeFound();
-  assert.equal(E.notify[id].wins.stream, true,
-    "L5: an unscored film admitted at Off must earn a Watch On value in the Off window's own tab, not go unarmed");
+  withUnscoredMatch(cOff, unscored => {
+    const id = unscored.tmdb_id;
+    E.recomputeFound();
+    assert.equal(E.notify[id].wins.stream, true,
+      "L5: an unscored film admitted at Off must earn a Watch On value in the Off window's own tab, not go unarmed");
+  });
 }));
 
 test("L6: two windows both set to Off — calling setWatchMarker on one leaves both at Off, neither pushes the other", () => withAgentState(() => {

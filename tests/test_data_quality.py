@@ -43,6 +43,15 @@ BLOCKING_TESTS = {
     # it), but nothing before this proved that in CI, so a real regression would have shipped
     # unnoticed the same way. Blocking for the same reason the checks above are.
     "OnlyFloorQualifyingTitlesPublish.test_every_published_film_clears_the_publish_floor",
+    # CAS-1026: a raw int `year` (one back-catalogue merge path skipped the str() every other
+    # ingestion path applies) crashes index.html#engine's yearOf() at (m.cinema_date||m.year||"").
+    # slice(). Blocking for the same reason test_no_record_is_a_raw_candidate_pool_stub is.
+    "CatalogueShape.test_year_is_always_a_string",
+    # CAS-1048: TMDB's AU certification field carries both "MA15+"/"MA 15+" and "R18+"/"R 18+" for the
+    # same rating — the onboarding age step rendered a chip per spelling and silently dropped whichever
+    # one the default selection or an agent's saved criteria didn't happen to name. Blocking so a future
+    # ingestion path can't reintroduce the un-canonical spelling the way the back-catalogue merge above did.
+    "CatalogueShape.test_age_rating_is_canonical_spelling",
 }
 
 # The windows a film can hold, in journey order — the same list the front end calls CASCADE.
@@ -123,6 +132,22 @@ class CatalogueShape(unittest.TestCase):
         stubs = [m.get("title", m.get("tmdb_id")) for m in self.movies
                 if not pp.is_publishable_record(m)]
         self.assertEqual(stubs, [], f"films that are still raw, un-enriched candidate-pool stubs: {stubs[:5]}")
+
+    def test_year_is_always_a_string(self):
+        # CAS-1026: engine's yearOf() does (m.cinema_date||m.year||"").slice(...) — an int year
+        # with no cinema_date throws. Every ingestion path but one already writes str(year); this
+        # proves the file that ships never carries the raw-int exception.
+        bad = [(m.get("title", m.get("tmdb_id")), m.get("year")) for m in self.movies
+               if "year" in m and not isinstance(m["year"], str)]
+        self.assertEqual(bad, [], f"films with a non-string year: {bad[:5]}")
+
+    def test_age_rating_is_canonical_spelling(self):
+        # CAS-1048: "MA15+"/"R18+" are TMDB's un-spaced duplicates of "MA 15+"/"R 18+" — the same
+        # rating, not a second one. pp.canon_age_rating is the one place that spelling is fixed on
+        # ingest; this proves nothing un-canonical reached the file that ships.
+        bad = [(m.get("title", m.get("tmdb_id")), m.get("age_rating")) for m in self.movies
+               if m.get("age_rating") in pp.AGE_RATING_CANON]
+        self.assertEqual(bad, [], f"films with a non-canonical age_rating spelling: {bad[:5]}")
 
 
 class AvailabilityIsBackedBySomething(unittest.TestCase):
@@ -384,12 +409,26 @@ class DataCompleteness(unittest.TestCase):
     # for ordinary daily drift and tight enough that a real regression trips them.
     # CAS-938: imdb_rating's ceiling is retired along with the OMDb field itself — the pipeline no
     # longer populates it on any record, so "missing" is now the field's permanent, correct state.
+    # CAS-1043: age_rating/cinema_date both come from TMDB's AU release_dates entries, which only
+    # ever exist for a title that had (or is booked for) an AU theatrical release. CAS-1024's
+    # back-catalogue dispatch has since made VOD-only titles the majority of the showable catalogue
+    # (4,104 of 5,578 showable on 2026-09-20, 73.6%), and those titles structurally cannot carry
+    # either field — no amount of backfill will find an AU classification for a film that was never
+    # classified for an AU cinema release. Split by cohort on that same date: titles that ever had
+    # an AU cinema release (or are upcoming toward one) are missing age_rating 12.5% (184/1,474) and
+    # cinema_date 5.6% (88/1,571) — in line with the old baseline; back-catalogue-only titles are
+    # missing them 84.2% (3,454/4,104) and 97.9% (3,923/4,007). The ceilings below are raised to the
+    # new blended baseline (with headroom), not the old cinema-only one, since the failure is a
+    # population shift CAS-986/CAS-1024 already intended, not a backfill regression.
     CEILINGS = {
-        "age_rating": 25.0,    # 16.2% today — the age dial silently passes films it cannot judge
+        "age_rating": 70.0,    # 65.2% today (was 16.2% pre-back-catalogue) — see CAS-1043 above
         "genres": 3.0,         # 1.1%  — a film with no genre can never match a genre-led recipe
         "poster": 3.0,         # 1.0%  — the card falls back to a placeholder
         "synopsis": 2.0,       # 0.1%  — the card has nothing to say about the film
-        "cinema_date": 2.0,    # 0.3%  — every estimated window date is derived from this one
+        "cinema_date": 77.0,   # 71.9% today (was 0.3% pre-back-catalogue) — see CAS-1043 above;
+                               # every estimated window date is derived from this one, but a
+                               # back-catalogue title has real (not estimated) window_dates the
+                               # moment an offer is observed, so it needs no estimate to fall back to
     }
 
     @classmethod

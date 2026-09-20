@@ -93,6 +93,8 @@ WM_CACHE_FILE = os.path.join(STATE_DIR, "watchmode_ids.json")   # imdb_id -> wat
 WINDOW_DATES_FILE = os.path.join(STATE_DIR, "window_dates.json")  # tmdb_id -> {window: first_seen_date}
 API_BUDGET_FILE = os.path.join(STATE_DIR, "api_budget.json")    # CAS-384: today's cross-run provider spend
 WM_MONTHLY_FILE = os.path.join(STATE_DIR, "watchmode_monthly.json")   # CAS-974: cumulative spend this month
+REFRESH_LOG_FILE = os.path.join(STATE_DIR, "refresh_log.json")   # CAS-1046: per-run history for the admin site
+REFRESH_LOG_CAP = 120
 # Watchmode's own quoted allowance (see the REVALIDATION_DAILY_BUDGET comment above) — reused here
 # rather than re-guessed, so monitor.health's remaining-credits check has a real number to compare
 # this month's cumulative on-demand spend against.
@@ -291,6 +293,20 @@ def _api_call(label: str, fn, *args, status_counts: "Counter | None" = None):
 # ---------------------------------------------------------------------------
 TMDB_BASE = "https://api.themoviedb.org/3"
 
+# CAS-1048: TMDB's AU certification field carries both "MA15+"/"MA 15+" and "R18+"/"R 18+" for the
+# same rating (a source-side spelling inconsistency, not two ratings) — the app rendered a chip per
+# spelling and the default onboarding selection silently missed whichever the user hadn't seen. One
+# canonical spelling per rating, applied the moment TMDB's cert string is read so no ingested record
+# is ever written the un-canonical way.
+AGE_RATING_CANON = {"MA15+": "MA 15+", "R18+": "R 18+"}
+
+
+def canon_age_rating(cert):
+    """The canonical spelling for a raw AU classification string, or `cert` unchanged if it is
+    already canonical (or not one of the known duplicate spellings)."""
+    return AGE_RATING_CANON.get(cert, cert)
+
+
 def _tmdb_record(detail: dict) -> dict:
     """Map one TMDB detail payload to our skeleton record."""
     cinema_date, age_rating = None, None
@@ -308,7 +324,7 @@ def _tmdb_record(detail: dict) -> dict:
                     cinema_date = rd["release_date"][:10]
                 cert = (rd.get("certification") or "").strip()
                 if cert and not age_rating:      # AU classification (G/PG/M/MA15+/R18+)
-                    age_rating = cert
+                    age_rating = canon_age_rating(cert)
     lang = detail.get("original_language")
     countries = [c["iso_3166_1"] for c in detail.get("production_countries", [])]
     vids = (detail.get("videos") or {}).get("results", [])
@@ -840,7 +856,7 @@ def merge_backcatalogue_candidates(candidates: dict, today_iso: str, path: str |
         candidates[key] = {
             "tmdb_id": tmdb_id,
             "title": row.get("title"),
-            "year": row.get("year"),
+            "year": str(row.get("year") or "----"),
             "popularity_percentile": row.get("popularity_percentile"),
             "popularity": round(percentile / 10, 4),
             "status": [],
@@ -1271,7 +1287,7 @@ def select_publishable(candidates: dict, engine_scoreable_ids: set, previously_p
     for tid in previously_published_ids - ranked_in:
         if str(tid) not in candidates or not is_publishable_record(candidates[str(tid)]):
             continue
-        if held_ids is None or tid in held_ids:
+        if held_ids is None or str(tid) in held_ids:
             published_ids.add(tid)
             exempt_ids.add(tid)
 
@@ -1778,6 +1794,185 @@ def diff_and_alert(today_records: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# CAS-1046 — per-run refresh log for the admin site (cascade-admin.pages.dev, a separate repo),
+# served from state/refresh_log.json. daily.yml already commits everything under state/, so this
+# needs no workflow change.
+# ---------------------------------------------------------------------------
+REFRESH_LOG_BOOKKEEPING_FIELDS = {
+    "last_polled", "last_probed", "probe_count", "cache_stamped_at",
+    "wm_fields_fetched_at", "poll_tier", "tmdb_not_found_streak",
+}
+REFRESH_LOG_WATCHMODE_FIELDS = {"wm_user_rating", "wm_critic_score", "wm_popularity_percentile"}
+REFRESH_LOG_OSCARBASE_FIELDS = {"award", "award_text"}
+REFRESH_LOG_STATUSES = ("upcoming", "in_cinema", "pvod", "rental", "included_streaming", "released")
+REFRESH_LOG_AGE_BUCKETS = ("unreleased", "under_1y", "1_to_5y", "5_to_20y", "over_20y", "unknown")
+
+
+def _refresh_log_changed_fields(prev_m: dict, today_m: dict) -> set:
+    """Field names that differ between the same title's yesterday/today record, ignoring the
+    bookkeeping fields a poll can touch with no real content change (CAS-1046 spec)."""
+    keys = (set(prev_m) | set(today_m)) - REFRESH_LOG_BOOKKEEPING_FIELDS
+    return {k for k in keys if prev_m.get(k) != today_m.get(k)}
+
+
+def _refresh_log_sources_for_update(changed: set, availability_source) -> set:
+    """Which provider(s) a title's `changed` field set counts against. A title can count for more
+    than one source. offers/status changes are TMDB's (the daily availability poll) UNLESS this
+    title's current availability_source is watchmode_enriched, in which case they are Watchmode's."""
+    sources = set()
+    if changed & REFRESH_LOG_WATCHMODE_FIELDS:
+        sources.add("watchmode")
+    if changed & REFRESH_LOG_OSCARBASE_FIELDS:
+        sources.add("oscarbase")
+    rest = changed - REFRESH_LOG_WATCHMODE_FIELDS - REFRESH_LOG_OSCARBASE_FIELDS
+    if availability_source == "watchmode_enriched" and (rest & {"offers", "status"}):
+        sources.add("watchmode")
+        rest -= {"offers", "status"}
+    if rest:
+        sources.add("tmdb")
+    return sources
+
+
+def _refresh_log_age_bucket(m: dict, run_date: datetime.date) -> str:
+    """Age is measured from run_date to cinema_date (falling back to 1 July of `year`).
+    unreleased = that date is in the future, or the title's status is upcoming;
+    unknown = no usable date at all (CAS-1046 spec)."""
+    d = None
+    cinema_date = m.get("cinema_date")
+    if cinema_date:
+        try:
+            d = datetime.date.fromisoformat(cinema_date)
+        except ValueError:
+            d = None
+    if d is None:
+        try:
+            d = datetime.date(int(m.get("year")), 7, 1)
+        except (TypeError, ValueError):
+            d = None
+    if d is None:
+        return "unknown"
+    status0 = (m.get("status") or [None])[0]
+    if d > run_date or status0 == "upcoming":
+        return "unreleased"
+    age_days = (run_date - d).days
+    if age_days < 365:
+        return "under_1y"
+    if age_days < 5 * 365:
+        return "1_to_5y"
+    if age_days < 20 * 365:
+        return "5_to_20y"
+    return "over_20y"
+
+
+def build_refresh_log_entry(prev_records: list[dict], today_records: list[dict], run_stats: dict,
+                             run_at: datetime.datetime, github_run_id: str | None = None) -> dict:
+    """CAS-1046: the pure counting function behind state/refresh_log.json — previous records,
+    today's records, today's run_stats.json contents and the run's own timestamp go in; one
+    refresh_log.json entry comes out. No file I/O, no network, so it is unit-testable in isolation.
+
+    new/removed/updated/unchanged and the per-title source attribution are exactly the definitions
+    in the ticket: see REFRESH_LOG_BOOKKEEPING_FIELDS (never counts as an update on its own) and
+    _refresh_log_sources_for_update (a title may count for more than one source)."""
+    prev = {m["tmdb_id"]: m for m in prev_records}
+    today = {m["tmdb_id"]: m for m in today_records}
+    prev_ids, today_ids = set(prev), set(today)
+    new_ids = today_ids - prev_ids
+    removed_ids = prev_ids - today_ids
+    common_ids = prev_ids & today_ids
+
+    updated_ids, unchanged_ids = set(), set()
+    status_changes: dict = {}
+    source_updated = {"tmdb": 0, "watchmode": 0, "oscarbase": 0}
+    for tid in common_ids:
+        p, t = prev[tid], today[tid]
+        changed = _refresh_log_changed_fields(p, t)
+        if changed:
+            updated_ids.add(tid)
+            for src in _refresh_log_sources_for_update(changed, t.get("availability_source")):
+                source_updated[src] += 1
+        else:
+            unchanged_ids.add(tid)
+        old_status = (p.get("status") or [None])[0]
+        new_status = (t.get("status") or [None])[0]
+        if old_status != new_status:
+            key = f"{old_status}->{new_status}"
+            status_changes[key] = status_changes.get(key, 0) + 1
+
+    new_by_status = {s: 0 for s in REFRESH_LOG_STATUSES}
+    new_by_status["other"] = 0
+    new_by_age = {b: 0 for b in REFRESH_LOG_AGE_BUCKETS}
+    source_new = {"tmdb": 0, "watchmode": 0}
+    notes = []
+    if new_ids:
+        # Hypothesis (CAS-1046): discovery path isn't recorded separately from the fields that
+        # already land on the record, so a new title's own availability_source is the reliable
+        # attribution — tmdb_date/tmdb_providers/estimated_unpolled -> tmdb, watchmode_enriched
+        # -> watchmode. Disproving this (and picking a more accurate method) is left as a TODO.
+        notes.append("films_new attributed by each new title's availability_source "
+                     "(discovery path is not separately recorded on the record).")
+    for tid in new_ids:
+        m = today[tid]
+        status0 = (m.get("status") or [None])[0]
+        new_by_status[status0 if status0 in new_by_status else "other"] += 1
+        new_by_age[_refresh_log_age_bucket(m, run_at.date())] += 1
+        if m.get("availability_source") == "watchmode_enriched":
+            source_new["watchmode"] += 1
+        else:
+            source_new["tmdb"] += 1
+
+    tmdb_stats = run_stats.get("tmdb", {}) or {}
+    wm_stats = run_stats.get("watchmode", {}) or {}
+    ob_stats = run_stats.get("oscarbase", {}) or {}
+
+    return {
+        "run_at": run_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "run_date": run_at.date().isoformat(),
+        "github_run_id": github_run_id,
+        "catalogue": {
+            "before": len(prev_ids), "after": len(today_ids),
+            "new": len(new_ids), "removed": len(removed_ids),
+            "updated": len(updated_ids), "unchanged": len(unchanged_ids),
+        },
+        "new_by_status": new_by_status,
+        "new_by_age": new_by_age,
+        "status_changes": status_changes,
+        "sources": {
+            "tmdb": {"calls": tmdb_stats.get("calls", 0), "errors": tmdb_stats.get("errors", 0),
+                     "not_found": tmdb_stats.get("not_found", 0),
+                     "films_new": source_new["tmdb"], "films_updated": source_updated["tmdb"]},
+            "watchmode": {"calls": wm_stats.get("calls", 0), "errors": wm_stats.get("errors", 0),
+                          "films_new": source_new["watchmode"], "films_updated": source_updated["watchmode"]},
+            "oscarbase": {"calls": ob_stats.get("calls", 0), "errors": ob_stats.get("errors", 0),
+                          "films_updated": source_updated["oscarbase"]},
+        },
+        "notes": notes,
+    }
+
+
+def _load_refresh_log() -> dict:
+    """{"runs": [...]} — or a fresh, empty one if the file is missing OR corrupt (CAS-1046:
+    a bad file must never fail the run; it just loses its own history and starts over)."""
+    if os.path.exists(REFRESH_LOG_FILE):
+        try:
+            data = json.load(open(REFRESH_LOG_FILE, encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("runs"), list):
+                return data
+        except Exception:
+            pass
+    return {"runs": []}
+
+
+def append_refresh_log(entry: dict) -> None:
+    """Prepend `entry` to state/refresh_log.json, newest first, capped at the REFRESH_LOG_CAP
+    most recent runs."""
+    data = _load_refresh_log()
+    data["runs"] = [entry] + data["runs"]
+    data["runs"] = data["runs"][:REFRESH_LOG_CAP]
+    os.makedirs(STATE_DIR, exist_ok=True)
+    json.dump(data, open(REFRESH_LOG_FILE, "w", encoding="utf-8"), indent=2)
+
+
+# ---------------------------------------------------------------------------
 # CAS-578 R6 — the guard that would have caught D1. A real release schedule staggers arrivals
 # across the year; three bad runs (2026-07-22/07-23/08-02) each mass-stamped the SAME window onto
 # ~2% of the whole catalogue in one day. 5% is comfortably above any legitimate single-day
@@ -1886,6 +2081,22 @@ def update_window_dates(records: list[dict], wd: dict, prev_by_id: dict, tstamp:
             rec.setdefault(w, tstamp)                  # earliest date this window was ever earned
         for w in (prev_status - status) & HOME_WINDOWS:
             rec.pop(w, None)                           # confirmed departure — the stamp isn't current history
+        # CAS-1043: TMDB occasionally corrects a title's cinema_date to a later date after a window
+        # was already stamped against the old (earlier) one, leaving a stamp that now predates the
+        # film's own opening — an impossible date (test_no_window_is_stamped_before_the_film_opened).
+        # "upcoming" is exempt: it is deliberately the pre-release stamp. A window `status` still
+        # holds today is re-stamped as first seen today (re-stamping to a still-future opening date
+        # would only trade one impossible date for another); a window `status` no longer holds is a
+        # stale leftover the correction has invalidated outright, so it is dropped, the same as a
+        # confirmed departure above.
+        opened = m.get("cinema_date")
+        if opened:
+            for w in list(rec):
+                if w != "upcoming" and rec[w] < opened:
+                    if w in status:
+                        rec[w] = tstamp
+                    else:
+                        rec.pop(w, None)
         wd[key] = rec
         m["window_dates"] = rec
     return wd
@@ -2715,6 +2926,13 @@ def run(simulate_day: bool = False):
     os.makedirs(STATE_DIR, exist_ok=True)     # this run's changes, for the email step / CI
     json.dump(events, open(os.path.join(STATE_DIR, "last_run_events.json"), "w", encoding="utf-8"), indent=2)
     build_html(records)                       # regenerate the double-clickable app
+
+    # CAS-1046: movies.json is final as of the writes above — log this run's counts for the
+    # admin site. prev_snapshot is the same pre-overwrite "yesterday" set diff_and_alert used.
+    refresh_entry = build_refresh_log_entry(
+        list(prev_snapshot.values()), records, runstats.load(today),
+        datetime.datetime.now(datetime.timezone.utc), github_run_id=os.getenv("GITHUB_RUN_ID"))
+    append_refresh_log(refresh_entry)
 
     n_up = sum(1 for m in records if "upcoming" in m.get("status", []))
     print(f"\n{len(records)} titles written to movies.json  ({'LIVE' if LIVE else 'sample'} data)"
