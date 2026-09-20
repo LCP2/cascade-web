@@ -938,7 +938,7 @@ class NewToAgentTests(unittest.TestCase):
         window_admission = _admit([cascade], today=[t.movie for t in transitions])
         window_hits = match([cascade], transitions, admission=window_admission,
                            film_watches=_auto_placements([cascade], transitions))
-        covered = {(h.cascade_id, h.transition.movie_id)
+        covered = {(h.user_id, h.transition.movie_id)
                    for hits in window_hits.values() for h in hits}
         new_admission = _admit([cascade], today=today, yesterday=prev)
         new_hits = match_new_to_agent([cascade], prev, today, self.PREV_RUN_START,
@@ -946,6 +946,39 @@ class NewToAgentTests(unittest.TestCase):
         total = sum(len(v) for v in window_hits.values()) + sum(len(v) for v in new_hits.values())
         self.assertEqual(total, 1)
         self.assertEqual(window_hits["u1"][0].transition.moment, "hits_cinema")
+
+    # ---- CAS-1041 ----
+    def test_newly_qualifies_and_new_to_agent_for_two_agents_of_one_user_fire_once_not_twice(self):
+        # Reproduces QA-260920-1: user has two active cascades and the SAME film crosses both bars
+        # on the same day. Within match_newly_qualified() alone, CAS-784's own collapse already
+        # reduces the two cascades' hits to one (owned by the lower-`order` cascade, CAS-925). But
+        # match_new_to_agent() is a separate call with its own local collapse, blind to what
+        # match_newly_qualified() already produced except via `covered` — and `covered` used to be
+        # keyed by the OWNER's cascade_id, not the id of whichever cascade's own criteria actually
+        # changed. That let the second cascade's own transition slip past the covered check, get
+        # re-attributed to the same owner by CAS-925, and fire a second, redundant alert.
+        prev = [self._movie(6.5, tmdb_id=9103, title="Split Alert")]
+        today = [self._movie(7.5, tmdb_id=9103, title="Split Alert")]
+        owner = {"id": "c-owner", "user_id": "u1", "name": "Massive Movies", "active": True,
+                 "alert_moments": ["hits_rent"], "criteria": _criteria(genre=["Drama"], imdb=7.0, order=0),
+                 "updated_at": self.STABLE}
+        other = {"id": "c-other", "user_id": "u1", "name": "Other Radar", "active": True,
+                 "alert_moments": ["hits_rent"], "criteria": _criteria(genre=["Drama"], imdb=7.0, order=1),
+                 "updated_at": self.STABLE}
+        cascades = [owner, other]
+        admission = _admit(cascades, today=today, yesterday=prev)
+
+        newly_qualified_hits = match_newly_qualified(cascades, prev, today, admission=admission)
+        self.assertEqual(sum(len(v) for v in newly_qualified_hits.values()), 1)
+        self.assertEqual(newly_qualified_hits["u1"][0].cascade_id, "c-owner")
+
+        covered = {(h.user_id, h.transition.movie_id)
+                   for hits in newly_qualified_hits.values() for h in hits}
+        new_to_agent_hits = match_new_to_agent(cascades, prev, today, self.PREV_RUN_START,
+                                               admission=admission, covered=covered)
+        total = (sum(len(v) for v in newly_qualified_hits.values()) +
+                 sum(len(v) for v in new_to_agent_hits.values()))
+        self.assertEqual(total, 1, "same (agent, film) pair must not alert twice across the two paths")
 
     # ---- CAS-785 AC1(d) ----
     def test_second_run_with_the_same_ledger_is_silent(self):

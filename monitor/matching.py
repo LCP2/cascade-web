@@ -494,10 +494,15 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
     admission           : {cascade_id: {"today": {...}, "yesterday": {...}}} from compute_admission()
                           (CAS-825) — both snapshots are read here, since "newly" means "admitted
                           today, was not admitted in this same film's yesterday record".
-    covered            : iterable of (cascade_id, movie_id) already alerted THIS run by ``match()``
-                         — a real window transition landing the same day as this film's own
+    covered            : iterable of (user_id, movie_id) already alerted THIS run by ``match()`` —
+                         a real window transition landing the same day as this film's own
                          newly-qualifies wins; the newly-qualifies hit for that pair is dropped
                          (CAS-796), the same shape ``match_new_to_agent``'s `covered` param uses.
+                         Keyed by user_id rather than the firing cascade's own id: CAS-925 can
+                         re-attribute a Hit to a different (lower-ranked) owner cascade than the one
+                         whose criteria actually changed, so two different cascades of the same user
+                         transitioning on the same film both resolve to the same owner — a
+                         cascade_id-keyed set would miss that (CAS-1041).
     picks              : same film_picks rows ``match()`` takes (CAS-925) — a Hit here is attributed
                          to the film's owner exactly as ``match()``'s are.
 
@@ -529,7 +534,7 @@ def match_newly_qualified(cascades: list, prev_movies: list, today_movies: list,
                 continue                       # a first sighting is `announced`'s job, not this one
             if (str(c["user_id"]), mid) in off:
                 continue                       # your answer outranks your Cascade
-            if (c["id"], mid) in covered:
+            if (str(c["user_id"]), mid) in covered:
                 continue                       # a real window transition this run wins (CAS-796)
             if matches_criteria(mid, c["id"], "yesterday", admission):
                 continue                       # already matched yesterday -> not a NEW qualification
@@ -598,9 +603,11 @@ def match_new_to_agent(cascades: list, prev_movies: list, today_movies: list, pr
     previous_run_start : datetime — the start of the run before this one. Missing/unparsable
                          `updated_at` counts as "not proven stable" (fails closed, same caution as
                          the edit-window check itself).
-    covered            : iterable of (cascade_id, movie_id) already alerted THIS run by match() /
+    covered            : iterable of (user_id, movie_id) already alerted THIS run by match() /
                          match_newly_qualified() — a real window transition landing the same day as
-                         a first appearance still produces ONE alert, not two (CAS-785 AC1c).
+                         a first appearance still produces ONE alert, not two (CAS-785 AC1c). Keyed
+                         by user_id, not the firing cascade's own id — see match_newly_qualified's
+                         `covered` docstring for why (CAS-1041).
     already, suppressed, excluded : same meaning as match_newly_qualified.
     admission          : same {cascade_id: {"today": {...}, "yesterday": {...}}} shape as
                          match_newly_qualified takes (CAS-825) — both snapshots are read here too.
@@ -628,7 +635,7 @@ def match_new_to_agent(cascades: list, prev_movies: list, today_movies: list, pr
         if updated_at is None or updated_at >= previous_run_start:
             continue                       # edited inside the window, or unprovable -> silent
         for mid, today_record in today_by_id.items():
-            if (c["id"], mid) in covered:
+            if (str(c["user_id"]), mid) in covered:
                 continue                   # already alerted this run some other way
             prev_record = prev_by_id.get(mid)
             if prev_record is None:
