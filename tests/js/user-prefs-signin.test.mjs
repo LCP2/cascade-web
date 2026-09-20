@@ -125,3 +125,51 @@ test("CAS-1045: replayOutbox still replays a user_prefs edit this device genuine
 
   signOut(E);
 });
+
+// CAS-1053: production reported Rental/Streaming both showing "you haven't picked any services yet" for an
+// account that has had services for weeks — watchMineOnlyDeadEndHTML's own gate (mineOnly && !servicesPicked())
+// has no idea whether "no services" means the account genuinely has none, or user_prefs simply hasn't loaded
+// yet on this boot. A fresh device (or one whose local cache doesn't yet carry this account's prefs) reads as
+// the former until loadUserPrefs resolves, so it showed the dead end instead of waiting.
+test("CAS-1053 AC1/AC4: the loading state wins the race while user_prefs is unresolved, and the real services are adopted once it loads", async () => {
+  const E = loadEngine();   // a fresh engine == a fresh device's empty local storage, per CAS-1045's own tests
+  const acctId = "cas1053-acct-fresh";
+  const client = fakeClient({ selects: { user_prefs: () => ({ data: [serverRow(acctId)], error: null }) } });
+  signIn(E, acctId, client);
+  await E.CascadePersistence.loadAccount();
+
+  // Mid-flight: user_prefs hasn't resolved yet, so prefs.sub/store are still this fresh device's empty
+  // defaults — exactly the moment the false dead end used to render.
+  E.CascadePersistence.userPrefsReady = false;
+  assert.equal(E.servicesPicked(), false, "sanity: a fresh device has no services loaded yet");
+  assert.equal(E.watchMineOnlyEmptyKind(true, true), "loading",
+    "AC4: must show the loading state, not the dead end, while user_prefs is still unresolved");
+
+  await E.CascadePersistence.loadUserPrefs();
+
+  assert.deepEqual([...E.prefs.sub].sort(), ["Netflix", "Stan"], "AC1: the account's real services are adopted");
+  assert.equal(E.servicesPicked(), true);
+  assert.equal(E.watchMineOnlyEmptyKind(true, true), null,
+    "AC1: with services picked, neither empty variant applies — the real listing shows instead");
+
+  signOut(E);
+});
+
+// CAS-1053 AC3: syncOutcome (CAS-787) used to be written only by runUserPrefsSync (a push), so a device that
+// only ever reads a clean, fully-populated row — the common case — left the diagnostics panel reporting
+// user_prefs "not yet attempted" forever, indistinguishable from a load that never ran.
+test("CAS-1053 AC3: a clean sign-in load records user_prefs OK in diagnostics", async () => {
+  const E = loadEngine();
+  const acctId = "cas1053-acct-diag";
+  const client = fakeClient({ selects: { user_prefs: () => ({ data: [serverRow(acctId)], error: null }) } });
+  signIn(E, acctId, client);
+  await E.CascadePersistence.loadAccount();
+  await E.CascadePersistence.loadUserPrefs();
+
+  const report = E.CascadePersistence.syncOutcomeReport().find(r => r.target === "user_prefs");
+  assert.ok(report, "user_prefs must appear in the sync outcome report");
+  assert.equal(report.ok, true, "a clean load with nothing to push must record success, not stay 'not yet attempted'");
+  assert.notEqual(report.when, null);
+
+  signOut(E);
+});

@@ -10812,6 +10812,25 @@ function watchMineOnlyDeadEndHTML(){
     <div class="ebtns">${pickServicesCTA()}</div>
   </div>`;
 }
+// CAS-1053: while this device's own user_prefs load is still in flight, prefs.sub/prefs.store may still be
+// whatever the previous account (or a fresh device's defaults) left behind — reading that as "the account
+// genuinely has no services" and showing the dead end above is exactly the false empty state this ticket is
+// about. Say so honestly instead; loadUserPrefs's own post-load render() (or its readiness flip) replaces
+// this with the real answer the moment the load resolves.
+function watchPrefsLoadingHTML(){
+  return `<div class="empty">
+    <div class="emoji">📺</div>
+    <div class="eh">Loading your services…</div>
+    <div class="ep">Hang on while we load your account.</div>
+  </div>`;
+}
+// CAS-1053 AC4: the pure decision behind the branch above — split out so a test can assert the loading
+// state wins the race against a not-yet-applied user_prefs answer without parsing rendered HTML.
+function watchMineOnlyEmptyKind(mineOnlyOn, hasPreMineOnlyRows){
+  if(!mineOnlyOn || servicesPicked() || !hasPreMineOnlyRows) return null;
+  const cp = window.CascadePersistence;
+  return (cp && cp.userPrefsReady===false) ? "loading" : "deadend";
+}
 function scopeEmptyHTML(){
   return `<div class="empty">
     <div class="emoji">🍿</div>
@@ -18169,7 +18188,10 @@ function render(){
     // not a criteria problem and the relax options would be a lie — say the discerning line instead.
     // CAS-753 AC4: a THIRD empty — mineOnly, on, with nothing picked, is a dead end this tab would
     // otherwise have content for (preMineOnlyRows), so it gets its own honest explanation ahead of either.
-    wrap.innerHTML = (mineOnly && !servicesPicked() && preMineOnlyRows.length) ? watchMineOnlyDeadEndHTML()
+    // CAS-1053 AC4: unless user_prefs hasn't loaded yet — see watchMineOnlyEmptyKind.
+    const mineOnlyEmptyKind = watchMineOnlyEmptyKind(mineOnly, preMineOnlyRows.length>0);
+    wrap.innerHTML = mineOnlyEmptyKind==="loading" ? watchPrefsLoadingHTML()
+      : mineOnlyEmptyKind==="deadend" ? watchMineOnlyDeadEndHTML()
       : emptyResultsHTML();
     renderJumpBar();          // CAS-275: no sections, so no jump rail — and no stale one left behind
     syncHeaderHeight();       // CAS-761: the empty states above can still change #cascbar's height
@@ -19646,7 +19668,11 @@ else if(dedupedN)
     // CAS-740: blocked the same way, for user_prefs — a save chokepoint firing before this device's own
     // load resolves must not push a stale local default over whatever the account actually holds.
     userPrefsReady=false;
-    loadUserPrefs().finally(()=>{ userPrefsReady=true; });
+    // CAS-1053: loadUserPrefs already re-renders on its own successful-apply path, but a branch that
+    // returns early (no row yet, or a genuinely pending local edit) never does — without this, a device
+    // that took one of those branches would be stuck on watchPrefsLoadingHTML() until some unrelated
+    // render() happened to fire.
+    loadUserPrefs().finally(()=>{ userPrefsReady=true; if(typeof render==="function") render(); });
     // CAS-736: blocked the same way, for the same reason — this device's own agent_films fetch must land
     // before recomputeFound trusts any admission it derives placement from.
     agentFilmsReady=false;
@@ -20491,7 +20517,11 @@ else if(dedupedN)
   async function loadUserPrefs(){
     const c=client(); if(!c||!accountActive()) return;
     const { data, error } = await c.from("user_prefs").select("*").limit(1);   // RLS: only mine
-    if(error){ console.warn("user_prefs load", error); return; }
+    // CAS-1053 AC3: syncOutcome (CAS-787) used to be a write-only ledger, so a device that only ever reads a
+    // clean, fully-populated row (the common case) left user_prefs reading "not yet attempted" in diagnostics
+    // forever — indistinguishable from a load that never ran at all. Record the read outcome here too.
+    if(error){ console.warn("user_prefs load", error); recordSyncOutcome("user_prefs", false, error); return; }
+    recordSyncOutcome("user_prefs", true);
     const row=(data||[])[0];
     // CAS-837: ref_code is an account fact with no local-device counterpart to carry up, and — unlike
     // every field below — has to resolve even before the account's first user_prefs row exists (a
