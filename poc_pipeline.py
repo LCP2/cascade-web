@@ -1074,7 +1074,15 @@ def is_publishable_record(record: dict) -> bool:
     Requires a STRING `year` or `cinema_date` (CAS-991's merge_backcatalogue_candidates writes an
     int `year`, never a string), and rejects a record whose keys are ENTIRELY the candidate-pool
     bookkeeping set (`_CANDIDATE_STUB_KEYS`) — a record that thin has had no TMDB enrichment at
-    all, even once the Watchmode probe has added every wm_* field it ever will."""
+    all, even once the Watchmode probe has added every wm_* field it ever will.
+
+    CAS-1055: also canonicalises `age_rating` in place, since this guard is the one boundary every
+    publication path runs a candidate through. `canon_age_rating` already runs at fetch time
+    (`_tmdb_record`), but a record cached before that canonicalisation existed keeps its raw TMDB
+    spelling indefinitely (TTL-gated revalidation means it may not be re-fetched for months) — this
+    is what stops that stale spelling from reaching movies.json regardless."""
+    if "age_rating" in record:
+        record["age_rating"] = canon_age_rating(record["age_rating"])
     year = record.get("year")
     cinema_date = record.get("cinema_date")
     has_date = (isinstance(year, str) and year != "") or (isinstance(cinema_date, str) and cinema_date != "")
