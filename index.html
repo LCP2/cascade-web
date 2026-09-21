@@ -7164,9 +7164,11 @@ window.sendFilmInvite = async()=>{
   btn.disabled=true;
   const sender_name=(a.user && a.user.email) ? a.user.email.split("@")[0] : null;
   const sent=[];
+  const newInvites=[];
   try{
     for(const r of recipients){
       const token=genInviteToken();
+      const created_at=new Date().toISOString();
       const {error}=await c.from("invites").insert([{
         token, sender_id:uid, sender_name, tmdb_id:m.tmdb_id, film_title:m.title, to_name:r.friend.name,
       }]);
@@ -7181,6 +7183,7 @@ window.sendFilmInvite = async()=>{
         if(emErr) throw emErr;
       }
       sent.push({friend:r.friend, channel:r.channel, token});
+      newInvites.push({token, tmdb_id:m.tmdb_id, film_title:m.title, to_name:r.friend.name, created_at, invite_replies:[]});
       logEvent("invite_created",{n:recipients.length, channel:r.channel});
     }
   }catch(e){
@@ -7189,6 +7192,11 @@ window.sendFilmInvite = async()=>{
     errEl.hidden=false;
     return;
   }
+  // CAS-1058: loadInvites() only runs on sign-in fanout, so a send made mid-session never reached the
+  // in-memory invites array until the next reload — mirror loadInvites' own badge/render calls here.
+  invites=[...newInvites, ...invites];
+  updateInvitesBadge();
+  if(typeof renderInvitesScreen==="function" && $("invitesScreen") && $("invitesScreen").classList.contains("open")) renderInvitesScreen();
   inviteFriendSel=new Map();
   inviteSentInfo={count:sent.length, line:inviteSentLineFor(sent)};
   renderFilmInviteSheet(m);
