@@ -1072,13 +1072,16 @@ const CAS913_FAKE_SUPABASE_GLOBAL = `
           listeners.push(cb);
           return { data: { subscription: { unsubscribe(){ listeners = listeners.filter(f => f !== cb); } } } };
         },
-        signInWithPassword: async ({ email }) => {
+        // CAS-1056: email OTP replaces the derived-password scheme — signInWithOtp only "sends" a code
+        // (there is nothing to actually deliver here), and verifyOtp is what lands the session, same as
+        // the real client's contract.
+        signInWithOtp: async () => ({ data: {}, error: null }),
+        verifyOtp: async ({ email }) => {
           const session = { user: { id: "cas913-user", email }, access_token: "fake" };
           writeSession(session);
           listeners.forEach(cb => cb("SIGNED_IN", session));
           return { data: { session }, error: null };
         },
-        signUp: async () => ({ data: {}, error: null }),
         signOut: async () => {
           writeSession(null);
           listeners.forEach(cb => cb("SIGNED_OUT", null));
@@ -1143,11 +1146,12 @@ test("CAS-913: signing out from the Account screen returns to the splash and sur
   await finishFlow(page);
   // CAS-1030: CAS-387's membNeedsEmail() gate means a configured, signed-out device (this test's whole
   // premise) must supply an email to finish onboarding at all — toListing()'s own #membEmail fill (added
-  // for this exact scenario, since every other spec here runs guest-mode) drives that, and the fake
-  // client's signInWithPassword always succeeds, so the account is already "Signed in" the moment the
-  // listing paints. There is no signed-out account state left to demonstrate a manual sign-in from, so
-  // that step (this test used to walk it via the Account screen's "Not signed in" row) is gone — only the
-  // sign-out this test is actually about remains.
+  // for this exact scenario, since every other spec here runs guest-mode) drives that. CAS-1056:
+  // toListing() now also confirms the code on the account modal's own #authVerify step (the fake client's
+  // verifyOtp always succeeds), so the account is "Signed in" by the time the listing paints. There is no
+  // signed-out account state left to demonstrate a manual sign-in from, so that step (this test used to
+  // walk it via the Account screen's "Not signed in" row) is gone — only the sign-out this test is
+  // actually about remains.
   await toListing(page);
 
   // Sign out, from the Account screen's own "Signed in" row.
@@ -1225,13 +1229,14 @@ const CAS1035_FAKE_SUPABASE_GLOBAL = `
           listeners.push(cb);
           return { data: { subscription: { unsubscribe(){ listeners = listeners.filter(f => f !== cb); } } } };
         },
-        signInWithPassword: async ({ email }) => {
+        // CAS-1056: email OTP replaces the derived-password scheme (see CAS913_FAKE_SUPABASE_GLOBAL above).
+        signInWithOtp: async () => ({ data: {}, error: null }),
+        verifyOtp: async ({ email }) => {
           const session = { user: { id: "cas1035-user", email }, access_token: "fake" };
           writeSession(session);
           listeners.forEach(cb => cb("SIGNED_IN", session));
           return { data: { session }, error: null };
         },
-        signUp: async () => ({ data: {}, error: null }),
         signOut: async () => { writeSession(null); return { error: null }; },
       },
       from: (table) => table === "film_watch" ? filmWatchTable() : chain(),
@@ -1254,7 +1259,7 @@ test("CAS-1035 AC3: a Watch On tick survives being closed and reopened before it
   // inner freshApp() would overwrite this test's own config.js/supabase-js.js routes with guest-mode's 404).
   await cas913WalkToShortlist(page);
   await finishFlow(page);
-  await toListing(page);   // CAS-1030: fills #membEmail — signs in via the fake, landing on the real listing
+  await toListing(page);   // CAS-1030/CAS-1056: fills #membEmail, confirms the code — signs in via the fake, landing on the real listing
   await page.waitForFunction(() => window.CascadeAuth.status === "signed-in", null, { timeout: 5000 });
 
   // Tick a Watch On level the same way CAS-897's trackAStreamingFilm does — via the real toggleFilmOpt, on a
