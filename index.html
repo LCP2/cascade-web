@@ -6629,12 +6629,10 @@ function estimateHTML(m){
 // It's the factual where-to-watch line, so it shows regardless of the UX flag — a price and a service are
 // facts, not persuasion. The A/B flag still adds the psychology on top: the endowment nudge when it's a
 // service you already pay for, and the buy-vs-rent contrast where a genuinely cheaper path exists.
-function savingsHTML(m, canExpand){
-  // CAS-110: never a price against a window nobody confirmed. An estimated title has no offers today, and if
-  // one ever arrives on a title still marked estimated it is not evidence of anything — the price line waits
-  // for the poll that confirms the window it belongs to.
-  if(isEstimated(m)) return "";
-  const offers=dedupOffers(m.offers||[]);
+// CAS-1062: takes the card's already-deduped, already-service-filtered offer list (the same one wtw
+// renders from) instead of re-deriving one from m.offers — so the capsule can never name a service the
+// expanded where-to-watch list doesn't contain.
+function savingsHTML(offers, canExpand){
   if(!offers.length) return "";
   const subs =offers.filter(o=>o.type==="sub"||o.type==="free");
   // CAS-423: a rent/buy offer without a price is still an offer — TMDB routinely supplies a rent row with
@@ -7576,7 +7574,7 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
     : "";
   // CAS-426: the fused capsule's services half — nested inside bandHTML's current-window capsule rather
   // than standing alone as its own bar. Same function, same colours, same toggle; just repositioned.
-  const svcLine = savingsHTML(m, offers.length>0);
+  const svcLine = savingsHTML(offers, offers.length>0);
   const wtw = offers.length ? `<div class="wtw">${windowsLineHTML(m)}${offers.map(o=>`<div class="wtwrow">
       <span class="svc"><span class="tt ${o.type}">${TYPE_LABEL[o.type]||o.type}</span>${svcName(o.service)}</span>
       <span class="off">${o.price!=null?"$"+o.price.toFixed(2):""}${o.fmt?" · "+o.fmt:""}</span></div>`).join("")}${jwLink?`<div class="wtwrow jwrow">${jwLink}</div>`:""}</div>` : "";
