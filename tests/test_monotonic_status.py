@@ -646,12 +646,15 @@ class MassStampGuardAcknowledgement(unittest.TestCase):
                 pp.check_mass_stamp_guard(records, prev, today=datetime.date(2026, 9, 16))
 
     def test_the_committed_acknowledgement_file_has_the_tickets_own_values(self):
-        self.assertEqual(pp._load_mass_stamp_ack(), self._ACK)
+        self.assertIsNone(pp._load_mass_stamp_ack())
 
-    def test_the_real_committed_file_lets_run_76s_own_numbers_through_today(self):
-        # End-to-end: no injected `ack`/`today` — reads the real committed file and _RUN_DATE.
+    def test_with_no_committed_acknowledgement_run_76s_own_numbers_still_trip(self):
+        # CAS-1060: the waiver was retired — state/mass_stamp_ack.json no longer exists, so the
+        # guard is live again. End-to-end: no injected `ack`/`today` — reads the real (absent)
+        # committed file and _RUN_DATE.
         records, prev = self._run76_records(837)
-        pp.check_mass_stamp_guard(records, prev)   # must not raise
+        with self.assertRaises(pp.MassStampGuardTripped):
+            pp.check_mass_stamp_guard(records, prev)
 
 
 if __name__ == "__main__":

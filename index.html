@@ -378,8 +378,12 @@
      deliberately opens WHILE the splash (z-index 80) is still showing behind it, so backing out lands you
      exactly where you were. At the shared z-index:50 every other .modal uses, the still-open splash simply
      sat on top and ate every click and tap in the panel — sign-in from the front door was unusable. Every
-     other .modal only ever opens over the plain listing, so this is scoped to #authModal, not the class. */
-  #authModal.open{z-index:81}
+     other .modal only ever opens over the plain listing, so this is scoped to #authModal, not the class.
+     CAS-1056: membStart()'s email gate now also opens #authModal's #authVerify step (openVerify) while
+     .memb (z-index:86) is still up — membScreen doesn't close until the listing behind it is ready. 81
+     only cleared the splash, so .memb's own content sat on top and intercepted every tap on #authVerifyBtn.
+     Raised to the same 91 used below for a panel that has to clear an already-open surface. */
+  #authModal.open{z-index:91}
   /* CAS-838: the contact sheet opens from #aboutPage (z-index:90) and from renderAbout()'s #aboutScreen
      (a .uscreen, z-index:84) — the highest of either, so it stacks over both rather than opening behind
      the surface that launched it, same reasoning as #authModal.open above. */
@@ -3776,6 +3780,22 @@
     </div>
   </div>
 
+  <!-- code sent → verify (CAS-1056: email OTP, replacing the derived-password scheme). continueWithEmail()
+       only requests the code; verifyEmailCode() confirms it and lands the signed-in session the
+       onAuthStateChange listener below already reflects into the UI. -->
+  <div id="authVerify" style="display:none">
+    <div class="pnote" id="authVerifyMsg">Enter the code we sent to your email.</div>
+    <div class="flabel">Code</div>
+    <input id="authCode" class="namein" type="text" inputmode="numeric" autocomplete="one-time-code"
+           placeholder="123456">
+    <div id="authVerifyErr" class="pnote" style="margin-top:10px"></div>
+    <div class="cascfoot" style="margin-top:12px">
+      <button class="applybtn" id="authVerifyBtn">Verify</button>
+    </div>
+    <p class="pnote" style="margin-top:10px">Didn't get it?
+      <button type="button" class="linkbtn" id="authResend" style="vertical-align:baseline">Resend code</button></p>
+  </div>
+
   <!-- signed in → who, and sign out -->
   <div id="authSignedIn" style="display:none">
     <div class="pnote">Signed in as <b id="authWho"></b>. Your Cascades sync to this account.</div>
@@ -7148,9 +7168,11 @@ window.sendFilmInvite = async()=>{
   btn.disabled=true;
   const sender_name=(a.user && a.user.email) ? a.user.email.split("@")[0] : null;
   const sent=[];
+  const newInvites=[];
   try{
     for(const r of recipients){
       const token=genInviteToken();
+      const created_at=new Date().toISOString();
       const {error}=await c.from("invites").insert([{
         token, sender_id:uid, sender_name, tmdb_id:m.tmdb_id, film_title:m.title, to_name:r.friend.name,
       }]);
@@ -7165,6 +7187,7 @@ window.sendFilmInvite = async()=>{
         if(emErr) throw emErr;
       }
       sent.push({friend:r.friend, channel:r.channel, token});
+      newInvites.push({token, tmdb_id:m.tmdb_id, film_title:m.title, to_name:r.friend.name, created_at, invite_replies:[]});
       logEvent("invite_created",{n:recipients.length, channel:r.channel});
     }
   }catch(e){
@@ -7173,6 +7196,11 @@ window.sendFilmInvite = async()=>{
     errEl.hidden=false;
     return;
   }
+  // CAS-1058: loadInvites() only runs on sign-in fanout, so a send made mid-session never reached the
+  // in-memory invites array until the next reload — mirror loadInvites' own badge/render calls here.
+  invites=[...newInvites, ...invites];
+  updateInvitesBadge();
+  if(typeof renderInvitesScreen==="function" && $("invitesScreen") && $("invitesScreen").classList.contains("open")) renderInvitesScreen();
   inviteFriendSel=new Map();
   inviteSentInfo={count:sent.length, line:inviteSentLineFor(sent)};
   renderFilmInviteSheet(m);
@@ -17687,12 +17715,12 @@ window.membStart=()=>{
     finally{ idle(); }
   }));
   if(needsEmail){
+    // CAS-1056: continueWithEmail only requests a code now — it never signs in on its own. The code is
+    // entered in the account modal's own verify step (this screen carries no code-entry UI of its own),
+    // which runs proceed() itself once that code confirms; idle() just hands this button back meanwhile.
     window.CascadeAuth.continueWithEmail(email).then(result=>{
-      if(result.ok && !result.otpSent) proceed();
-      // CAS-411: otpSent means a magic link went out but there's no session yet — don't proceed
-      // as if signed in; tell the user what to do next and hand the button back.
-      else if(result.ok) { membEmailError("We've sent a sign-in link to that email — click it, then try again."); idle(); }
-      else{ membEmailError(result.error||"Could not create your account — try again."); idle(); }
+      if(result.ok){ window.CascadeAuth.openVerify(email, proceed); idle(); }
+      else{ membEmailError(result.error||"Could not send a sign-in code — try again."); idle(); }
     });
   } else proceed();
 };
@@ -20797,20 +20825,22 @@ else if(dedupedN)
 })();
 </script>
 
-<!-- ACCOUNT / EMAIL-ONLY AUTH (CAS-82 / spec 26771457 §4; email-only per CAS-387 — Supabase password
-     requirement switched off 2026-08-05, superseding CAS-317's email+password).
+<!-- ACCOUNT / EMAIL-ONLY AUTH (CAS-82 / spec 26771457 §4; email OTP per CAS-1056 — replacing CAS-387's
+     derived-password scheme, itself superseding CAS-317's email+password).
      Self-contained ES module (deferred, runs after the DOM + the classic script above).
-     - Reads window.CASCADE_CONFIG from the optional git-ignored config.js.
+     - Reads window.CASCADE_CONFIG from the optional config.js, which is tracked and committed (it carries
+       only the public anon key — see below).
      - NO network import in guest mode (no/placeholder config) → the page works fully offline,
        which is what lets CI and the dry-run build pass without keys.
      - Only the anon key is ever used here (public-safe; RLS protects the data). The service_role
        key must never reach the front-end.
-     - Exposes window.CascadeAuth { enabled, client, user, session, status, continueWithEmail } and
-       dispatches a 'cascade-auth-change' event so the persistence story (CAS-83) can hook in without
-       edits here. continueWithEmail(email) is the one entry point both this panel and the membership
-       step's email gate call: it signs in, falling back to signUp when no account exists yet, using a
-       password the caller never sees or chooses (see derivePassword below). Test-phase only — anyone
-       who knows/guesses an email can enter that account; a real credential is a later ticket. -->
+     - Exposes window.CascadeAuth { enabled, client, user, session, status, continueWithEmail,
+       verifyEmailCode, openVerify } and dispatches a 'cascade-auth-change' event so the persistence story
+       (CAS-83) can hook in without edits here. continueWithEmail(email) requests a one-time code by email
+       (Supabase signInWithOtp) — no password of any kind is ever computed, stored or sent. verifyEmailCode
+       (email, code) confirms it and lands the session. Both this panel and the membership step's email
+       gate call continueWithEmail, then verify the code through this panel's own #authVerify step (see
+       openVerify below) rather than each owning a code-entry UI of its own. -->
 <script type="module">
 (() => {
   const gid = id => document.getElementById(id);
@@ -20823,14 +20853,16 @@ else if(dedupedN)
   const closeAuth = () => {
     modal.classList.remove('open');
     if(!document.querySelector('.modal.open') && typeof window.lockBodyScroll==='function') window.lockBodyScroll(false); };
-  const showPanel = which => ['authGuest','authSignedOut','authSignedIn']
+  const showPanel = which => ['authGuest','authSignedOut','authVerify','authSignedIn']
     .forEach(p => gid(p).style.display = (p === which ? 'block' : 'none'));
 
   // CAS-206: the header's 👤 opened the ACCOUNT SCREEN, not this panel — the panel is one row inside it.
   // CAS-345 moved that entry point off its own header icon into the top menu's "Account" item, which
   // gets its Enter/Space handling for free from armSwitches() (every .iconbtn is wired there), so this
   // module no longer needs its own keydown shim for a button it never owned the click of anyway.
-  gid('authDone').addEventListener('click', closeAuth);
+  // CAS-1056: Cancel/Done also abandons a code entry in progress — a pending membership-flow
+  // continuation must not fire later off some unrelated sign-in.
+  gid('authDone').addEventListener('click', () => { verifyResolve = null; closeAuth(); });
 
   // A config is only "real" if both fields are filled and not the example placeholders.
   const cfg = window.CASCADE_CONFIG || {};
@@ -20838,20 +20870,28 @@ else if(dedupedN)
   const placeholder = v => !v || /YOUR|your-|example/i.test(v);
   const configured = !placeholder(url) && !placeholder(key);
 
+  const unavailable = async () => ({ ok: false, error: 'Account sync is not available right now.' });
   const api = window.CascadeAuth = { enabled: configured, client: null, user: null, session: null, status: 'guest',
-    continueWithEmail: async () => ({ ok: false, error: 'Account sync is not available right now.' }) };
+    continueWithEmail: unavailable, verifyEmailCode: unavailable,
+    openVerify: () => { toastSafe("Account sync is not available right now."); } };
   const announce = () => window.dispatchEvent(new CustomEvent('cascade-auth-change',
     { detail: { user: api.user, session: api.session, status: api.status } }));
 
-  // CAS-387: a deterministic, hidden password derived from the email itself — Supabase's signUp/
-  // signInWithPassword still take a password server-side even with the project's password requirement
-  // off, and this is the simplest mechanism that lets the SAME made-up email always reach the SAME
-  // account on any device, with nothing for the user to set or remember.
-  const derivePassword = async email => {
-    const bytes = new TextEncoder().encode('cascade-cas387::' + email.trim().toLowerCase());
-    const digest = await crypto.subtle.digest('SHA-256', bytes);
-    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+  // CAS-1056: which email the #authVerify panel is confirming a code for, and — when this panel was
+  // opened by the membership step's email gate rather than pressing Continue here — the one-shot
+  // continuation to run once that code verifies. Neither survives a Cancel/Done (see authDone above).
+  let verifyEmail = null, verifyResolve = null;
+  const enterVerify = (email, onVerified) => {
+    verifyEmail = email; verifyResolve = onVerified || null;
+    gid('authVerifyMsg').textContent = 'Enter the code we sent to ' + email + '.';
+    gid('authVerifyErr').textContent = '';
+    gid('authCode').value = '';
+    showPanel('authVerify');
   };
+  // The membership step's email gate has no code-entry UI of its own (CAS-1056: that lives only in this
+  // panel) — it hands off here instead: open this modal straight onto the verify step for the code it
+  // just requested, and run its own continuation once that code is confirmed.
+  api.openVerify = (email, onVerified) => { openAuth(); enterVerify(email, onVerified); };
 
   // CAS-317: found while verifying this module — setSignedIn/Out/Guest each referenced an undefined
   // `btn` (the header account icon CAS-345 removed in favour of the top-menu Account item), throwing
@@ -20932,48 +20972,53 @@ else if(dedupedN)
       setGuest(); announce(); return;
     }
 
-    // CAS-387: try signing in first — the common case once an email has been used once — and only
-    // fall back to creating the account when no account exists yet. Either path lands the same
-    // signed-in session, which onAuthStateChange below picks up and reflects into the UI.
+    // CAS-1056: requests a one-time code by email — Supabase creates the account on first use
+    // (shouldCreateUser, its own default) or reaches the existing one, either way with no password of
+    // any kind computed, stored or sent. Signing in only actually completes in verifyEmailCode below,
+    // once the emailed code comes back confirmed.
     api.continueWithEmail = async email => {
-      // CAS-460: additive-only timing — logs how long the sign-in/sign-up/OTP round trip actually takes.
+      // CAS-460: additive-only timing — logs how long the OTP request round trip actually takes.
       const _t460signIn = performance.now();
-      console.log('[CAS-460] sign-in start', _t460signIn);
+      console.log('[CAS-460] code request start', _t460signIn);
       try {
-        const password = await derivePassword(email);
-        const signIn = await supa.auth.signInWithPassword({ email, password });
-        if(!signIn.error) return { ok: true };
-        const signUp = await supa.auth.signUp({ email, password });
-        if(!signUp.error){
+        const { error } = await supa.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+        if(!error){
           // CAS-837: this is the "account creation" moment an invite's arrival converts on — one event,
           // never a table row (CAS-808 owns any reward/record; this stays stateless apart from the ref
-          // itself and the events).
-          try{
-            const code = localStorage.getItem("cascade_inv");
-            if(code){ logEvent("invite_signup", {code}); localStorage.removeItem("cascade_inv"); }
-          }catch(e){}
+          // itself and the events). A code being sent can't yet distinguish sign-in from sign-up, so
+          // this still only fires once the code is actually confirmed, from verifyEmailCode below.
           return { ok: true };
         }
-        // CAS-411: an account can exist but still fail signInWithPassword — Supabase's "Confirm
-        // email" leaving it unconfirmed, or a password derived under an older scheme (pre-CAS-387).
-        // signUp then reports "already registered", which used to dead-end here with neither path
-        // working. Fall back to a one-off magic link so an existing user always has a way in.
-        if(/already registered/i.test(signUp.error.message || '')){
-          const otp = await supa.auth.signInWithOtp({ email });
-          if(!otp.error) return { ok: true, otpSent: true };
-          logClientHealthEvent("auth_failed", authFailedPayload(otp.error));
-          return { ok: false, error: otp.error.message };
-        }
-        // CAS-985: sign-in AND sign-up both failed.
-        logClientHealthEvent("auth_failed", authFailedPayload(signUp.error));
-        return { ok: false, error: signUp.error.message };
+        logClientHealthEvent("auth_failed", authFailedPayload(error));
+        return { ok: false, error: error.message };
       } catch(err){
         logClientHealthEvent("auth_failed", authFailedPayload(err));
         return { ok: false, error: (err && err.message) || String(err) };
       }
       finally {
         const _t460signInEnd = performance.now();
-        console.log('[CAS-460] sign-in end', _t460signInEnd, 'elapsed_ms', (_t460signInEnd-_t460signIn).toFixed(1));
+        console.log('[CAS-460] code request end', _t460signInEnd, 'elapsed_ms', (_t460signInEnd-_t460signIn).toFixed(1));
+      }
+    };
+
+    // CAS-1056: confirms the code continueWithEmail requested. Success lands the session the
+    // onAuthStateChange listener below picks up; that's also where the CAS-837 invite-conversion event
+    // now fires, since this is the first point a session — sign-in or fresh sign-up — actually exists.
+    api.verifyEmailCode = async (email, code) => {
+      const _t460verify = performance.now();
+      console.log('[CAS-460] code verify start', _t460verify);
+      try {
+        const { error } = await supa.auth.verifyOtp({ email, token: code, type: 'email' });
+        if(!error) return { ok: true };
+        logClientHealthEvent("auth_failed", authFailedPayload(error));
+        return { ok: false, error: error.message };
+      } catch(err){
+        logClientHealthEvent("auth_failed", authFailedPayload(err));
+        return { ok: false, error: (err && err.message) || String(err) };
+      }
+      finally {
+        const _t460verifyEnd = performance.now();
+        console.log('[CAS-460] code verify end', _t460verifyEnd, 'elapsed_ms', (_t460verifyEnd-_t460verify).toFixed(1));
       }
     };
 
@@ -21001,10 +21046,21 @@ else if(dedupedN)
       api.session = session || null;
       if(session){
         setSignedIn(session.user);
-        // CAS-387: continueWithEmail() also fires this from the membership step's own gate, where this
-        // modal was never opened — only react here (toast + close) when it actually is.
-        if(event === 'SIGNED_IN' && modal.classList.contains('open')){
-          toastSafe('Signed in — your Cascades now sync to your account.'); closeAuth();
+        if(event === 'SIGNED_IN'){
+          // CAS-837: the "account creation" moment an invite's arrival converts on — one event, never a
+          // table row (CAS-808 owns any reward/record; this stays stateless apart from the ref itself
+          // and the events). An OTP session can't cheaply tell fresh sign-up from a returning sign-in,
+          // but cascade_inv is only ever present the first time a session lands after the invite link
+          // set it, and is removed immediately below — so this can only fire once per invite.
+          try{
+            const code = localStorage.getItem("cascade_inv");
+            if(code){ logEvent("invite_signup", {code}); localStorage.removeItem("cascade_inv"); }
+          }catch(e){}
+          // CAS-387: continueWithEmail() also fires this from the membership step's own gate, where this
+          // modal was never opened — only react here (toast + close) when it actually is.
+          if(modal.classList.contains('open')){
+            toastSafe('Signed in — your Cascades now sync to your account.'); closeAuth();
+          }
         }
       }
       else setSignedOut();
@@ -21021,24 +21077,47 @@ else if(dedupedN)
 
     gid('authContinue').addEventListener('click', async () => {
       const email = readEmail(); if(!email) return;
-      msg.textContent = 'Signing in…';
+      msg.textContent = 'Sending a code…';
+      const result = await api.continueWithEmail(email);
+      if(!result.ok){
+        msg.textContent = 'Could not send a code: ' + result.error;
+        return;
+      }
+      msg.textContent = '';
+      enterVerify(email, null);
+    });
+
+    gid('authVerifyBtn').addEventListener('click', async () => {
+      const code = (gid('authCode').value || '').trim();
+      if(!code){ gid('authVerifyErr').textContent = 'Enter the code first.'; return; }
+      gid('authVerifyErr').textContent = '';
       // CAS-409: afterSignIn() only hid the splash once loadAccount()'s network round trip had finished,
-      // so every sign-in visibly flashed splash -> app. Hide it the moment Continue is pressed instead —
-      // restoring it whenever this attempt did NOT land a signed-in session (a hard failure, or the
-      // CAS-411 magic-link fallback still waiting on the user's inbox), since neither has anywhere to
-      // have arrived at yet.
+      // so every sign-in visibly flashed splash -> app. Hide it the moment the code is submitted instead
+      // — restoring it if this attempt did NOT land a signed-in session, since a failed/wrong code has
+      // nowhere to have arrived at yet.
       const splash = gid('splash');
       const splashWasOpen = splash.classList.contains('open');
       if(splashWasOpen) splash.classList.remove('open');
-      const result = await api.continueWithEmail(email);
+      const result = await api.verifyEmailCode(verifyEmail, code);
       if(!result.ok){
-        msg.textContent = 'Could not sign in: ' + result.error;
+        gid('authVerifyErr').textContent = 'Wrong or expired code — check it and try again, or resend.';
         if(splashWasOpen) splash.classList.add('open');
+        return;
       }
-      else if(result.otpSent){
-        msg.textContent = "We've sent a sign-in link to that email — click it to finish.";
-        if(splashWasOpen) splash.classList.add('open');
-      }
+      // onAuthStateChange (SIGNED_IN) has already picked this up: api.session/user, the repaint, and —
+      // when this modal is open — the toast + close. Run this panel's own pending continuation (the
+      // membership step's email gate, if that's who opened this) once, then clear it.
+      const resolve = verifyResolve; verifyResolve = null;
+      if(typeof resolve === 'function') resolve();
+    });
+
+    gid('authResend').addEventListener('click', async () => {
+      if(!verifyEmail) return;
+      gid('authVerifyErr').textContent = '';
+      gid('authVerifyMsg').textContent = 'Sending a new code…';
+      const result = await api.continueWithEmail(verifyEmail);
+      gid('authVerifyMsg').textContent = 'Enter the code we sent to ' + verifyEmail + '.';
+      if(!result.ok) gid('authVerifyErr').textContent = 'Could not resend: ' + result.error;
     });
 
     gid('authSignOut').addEventListener('click', async () => {
