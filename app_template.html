@@ -193,6 +193,14 @@
   .brandrow{display:flex;align-items:center;justify-content:space-between;gap:8px}
   .brandrow>div:first-child{min-width:0}
   .brandrow .updated{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* CAS-1063: the freshness line's own row, now sharing it with the saving dot. min-width:0 so the
+     ellipsis above still works with a flex sibling in the row. */
+  .updated-row{display:flex;align-items:center;gap:5px;min-width:0}
+  /* Fixed size, always present — only .show toggles visibility (never display), so the dot can never
+     change the header's measured height (see syncHeaderHeight) or move the listing under it. */
+  .savedot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:var(--amber,#F0A63C);
+    visibility:hidden}
+  .savedot.show{visibility:visible}
   .hdr-actions{flex:0 0 auto}
   .brandlockup{display:inline-flex;align-items:center;gap:8px;vertical-align:middle}
   /* CAS-689: the CASCADE text wordmark is gone — it and the "Updated" freshness line were overlapping the
@@ -3414,7 +3422,15 @@
              so a chip that never says anything else is a label, not information, and it was competing for
              room on the one row that also has to hold the wordmark and four controls. The freshness date
              below stays: that DOES change, every day, and it is the thing people check. -->
-        <div class="updated" id="updated"></div>
+        <div class="updated-row">
+          <div class="updated" id="updated"></div>
+          <!-- CAS-1063: replaces the old account-banner "not yet saved" line. Fixed-size and always in the
+               layout — only .show toggles CSS visibility, never display — so showing or hiding it can never
+               move the listing underneath the header (see paintSavingIndicator/updateSavingIndicator). Not
+               aria-live: it only ever confirms an ordinary save already in progress, nothing the reader
+               needs announced. -->
+          <span class="savedot" id="savingDot" aria-hidden="true" title="Saving…"></span>
+        </div>
       </div>
       <div class="hdr-actions">
         <!-- Agents (was the Find chip; repurposed CAS-616, v0.9.5). The id stays #agentsBtn because six CSS
@@ -18953,11 +18969,9 @@ else if(dedupedN)
   // another's own failure. acctTableFail is the single source of truth both the banner and every push
   // gate below read from.
   const ACCT_TABLE_SURFACE = { cascades:"agents" };
-  // CAS-1035: watch_status/notify_settings/settings are read only by the outbox's own contribution to the
-  // "Not yet saved" line below (OUTBOX_TABLE_SURFACE) — acctTableFail/acctTablePending above stay scoped to
-  // cascades, the only table acctRead's retry-then-latch logic covers.
-  const ACCT_SURFACE_LABEL = { agents:"agents", watch_status:"watch status",
-    notify_settings:"notification settings", settings:"your settings" };
+  // acctTableFail/acctTablePending stay scoped to cascades, the only table acctRead's retry-then-latch
+  // logic covers — the ACCT_SURFACE_LABEL below only ever needs to name that one surface.
+  const ACCT_SURFACE_LABEL = { agents:"agents" };
   const acctTableFail = { cascades:false };
   function setAcctTableFail(table, failed){
     if(acctTableFail[table]===failed) return;
@@ -19003,23 +19017,13 @@ else if(dedupedN)
     // that's the same fact, restated as an alarm. The "online" listener below re-renders on reconnect, so
     // a genuinely still-failing table reappears the moment connectivity returns.
     if(typeof navigator!=="undefined" && navigator.onLine===false) return null;
-    const down=new Set(), pending=new Set();
+    const down=new Set();
     Object.keys(acctTableFail).forEach(t=>{ if(acctTableFail[t]) down.add(ACCT_TABLE_SURFACE[t]); });
-    // A table already flagged "not connected" gets that message, not also "not yet saved" — the reader
-    // has already been told nothing from this device is reaching the account right now.
-    Object.keys(acctTablePending).forEach(t=>{ if(acctTablePending[t] && !acctTableFail[t]) pending.add(ACCT_TABLE_SURFACE[t]); });
-    // CAS-1035 AC3: the durable outbox is the other, more general source of "not yet saved" — a row still
-    // owed the account on any of the seven sync targets, cleared the instant it's confirmed pushed. Feeds
-    // the same line, the same surface vocabulary, independent of acctTablePending (which nothing besides
-    // cascades has ever actually set).
-    Object.keys(outbox).forEach(t=>{ if(Object.keys(outbox[t]||{}).length) pending.add(OUTBOX_TABLE_SURFACE[t]||t); });
     const parts=[];
     // CAS-764: softened copy — the account IS connected, one table's last read (after 3 retries) failed.
     // Says what actually happened and what it means, not an overstated "disconnected" alarm.
     if(down.size) parts.push("Couldn't refresh your account just now — showing what's on this device for: "
       + [...down].map(k=>ACCT_SURFACE_LABEL[k]).join(", ") + ". Changes will save when it reconnects.");
-    if(pending.size) parts.push("Not yet saved to your account — still on this device only: "
-      + [...pending].map(k=>ACCT_SURFACE_LABEL[k]).join(", ") + ".");
     // CAS-787 AC5/AC6: a WRITE that has now failed twice in a row for the same target — quiet, states the
     // fact, offers no fix (the fix, an applied migration or similar, is never the user's to make).
     if(anySyncTargetDegraded()) parts.push("Account sync isn't working right now — changes are only being saved on this device.");
@@ -19031,6 +19035,7 @@ else if(dedupedN)
     if(!text){ el.hidden=true; el.textContent=""; }
     else{ el.textContent=text; el.hidden=false; }
     syncHeaderHeight();   // the banner is part of the header's own measured height (see .acctbanner CSS)
+    updateSavingIndicator();   // CAS-1063: the same state changes that can flip the banner can flip the dot
   }
   // CAS-764: connectivity coming back is the one event that can make the banner's answer change without
   // any table's fail/pending state changing — reconnecting must re-show a genuinely still-failing table.
@@ -19146,6 +19151,51 @@ else if(dedupedN)
   }
   function outboxPending(target){ return outbox[target]||{}; }
   function outboxHasAny(){ return Object.keys(outbox).some(t=>Object.keys(outbox[t]||{}).length); }
+
+  // ---- CAS-1063: the "saving" indicator ---------------------------------------------------------------
+  // Replaces the removed account-banner "not yet saved" line (see acctBannerText, above). A user
+  // expects their changes to be saved; announcing that a save is merely in flight is not useful to them,
+  // and the old line's presence in the measured header meant an ordinary save reflowed the listing under
+  // it (renderAcctBanner's own syncHeaderHeight() call). #savingDot's box is ALWAYS in the layout — only
+  // its CSS visibility toggles (see .savedot/.savedot.show) — so showing or hiding it can never move
+  // anything else on the page, and it only ever appears once a save has been outstanding long enough to
+  // be worth mentioning at all, per AC3.
+  // acctSavePending mirrors the same two sources acctBannerText's old pending line read: a table push
+  // still in flight (and not already flagged failed — a failed table gets the "couldn't refresh" banner
+  // instead, not also a saving dot) and the durable outbox (CAS-1035) having any row still owed.
+  function acctSavePending(){
+    if(Object.keys(acctTablePending).some(t => acctTablePending[t] && !acctTableFail[t])) return true;
+    return outboxHasAny();
+  }
+  let SAVING_INDICATOR_DELAY_MS = 2000;   // exposed (like ACCT_READ_DELAYS) so a test can shrink this
+  let savingPendingSince = null;          // start of the current unbroken run of acctSavePending()===true
+  let savingIndicatorTimer = null;
+  let savingIndicatorArmed = false;       // the pure decision: should the dot actually be visible right now
+  // Pure decision half, DOM-free — the same split acctBannerText/renderAcctBanner already use — so a test
+  // can assert it directly without reaching into the DOM.
+  function savingIndicatorVisible(){ return savingIndicatorArmed; }
+  // Wire half: called from renderAcctBanner, the same chokepoint every state change that can flip
+  // acctSavePending() already routes through.
+  function updateSavingIndicator(){
+    if(acctSavePending()){
+      if(savingPendingSince==null){
+        savingPendingSince = Date.now();
+        clearTimeout(savingIndicatorTimer);
+        savingIndicatorTimer = setTimeout(() => {
+          if(acctSavePending()){ savingIndicatorArmed = true; paintSavingIndicator(); }
+        }, SAVING_INDICATOR_DELAY_MS);
+      }
+    } else {
+      savingPendingSince = null;
+      clearTimeout(savingIndicatorTimer);
+      savingIndicatorTimer = null;
+      if(savingIndicatorArmed){ savingIndicatorArmed = false; paintSavingIndicator(); }
+    }
+  }
+  function paintSavingIndicator(){
+    const el = $("savingDot"); if(!el) return;
+    el.classList.toggle("show", savingIndicatorArmed);
+  }
   // CAS-1039: user_films/film_watch/agent_films can carry thousands of rows on a real account (the
   // back-catalogue growth that broke bulk upserts network-side) — every push/delete against those three
   // tables goes out in requests of at most this many rows/ids, never the whole set in one call.
@@ -19191,12 +19241,6 @@ else if(dedupedN)
     const kept=(remoteRows||[]).filter(r=>!(keyOf(r) in pending));
     return [...kept, ...Object.values(pending)];
   }
-  // table -> surface key for acctBannerText's own "Not yet saved" line (ACCT_SURFACE_LABEL, above).
-  const OUTBOX_TABLE_SURFACE = { cascades:"agents", agent_films:"agents",
-    user_films:"watch_status", film_watch:"watch_status",
-    notify_prefs:"notify_settings", film_picks:"notify_settings",
-    user_prefs:"settings" };
-
   // ---- shape mapping: local Cascade <-> table row --------------------------
   // criteria (jsonb) carries the whole local Cascade minus the columns stored on their own
   // (id, name, paused->active). alert_moments (text[]) is DERIVED from the account's own Where & when
@@ -20720,6 +20764,14 @@ else if(dedupedN)
                                 // test can seed/clear it without waiting on a real failed push.
                                 flushAccountSync, replayOutbox, outboxPending, outboxHasAny,
                                 get outbox(){ return outbox; },
+                                // CAS-1063: the saving-dot's own decision/wire split, exposed the same way
+                                // acctBannerText/renderAcctBanner are above — acctSavePending/
+                                // savingIndicatorVisible so a test can assert the pure decision directly,
+                                // SAVING_INDICATOR_DELAY_MS read/write (like ACCT_READ_DELAYS) so a test can
+                                // shrink the real 2s delay rather than sleep for it.
+                                acctSavePending, savingIndicatorVisible,
+                                get SAVING_INDICATOR_DELAY_MS(){ return SAVING_INDICATOR_DELAY_MS; },
+                                set SAVING_INDICATOR_DELAY_MS(v){ SAVING_INDICATOR_DELAY_MS=v; },
                                 get acctSuffix(){ return acctSuffix; },
                                 dropRefusedCascade,
                                 // CAS-1039: SYNC_CHUNK_SIZE/chunkRows are the shared row/id-batching seam every
