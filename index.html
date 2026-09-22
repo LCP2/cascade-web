@@ -10387,7 +10387,12 @@ function matchesCriteria(m,c,ignoreBlocked,ignoreScoreGate){
   // norm for an unreleased film rather than the exception. Same shape as ratingOK just above: below/outside
   // the bar is one thing, genuinely unknown is another, and includeUnrated is what decides the unknown case.
   if(!ageOpen(c)){
-    if(!m.age_rating){ if(!c.includeUnrated) return false; }
+    // CAS-1065: a pre-release film is normally unclassified -- 132 of the 196 upcoming titles carry no
+    // age_rating at all -- so a maturity cap that excludes the unknown case silently empties Upcoming.
+    // Same exemption shape as Awards and "released since" below/above: the requirement is a claim about a
+    // classification that does not exist yet, so it cannot be applied until one does. includeUnrated still
+    // decides the unknown case for a RELEASED film, which is the case it was written for.
+    if(!m.age_rating){ if(!preRelease && !c.includeUnrated) return false; }
     else if(!c.age.includes(m.age_rating)) return false;
   }
   if((c.year||[]).length && !c.year.includes(yearOf(m))) return false;

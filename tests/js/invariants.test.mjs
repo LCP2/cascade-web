@@ -3403,7 +3403,9 @@ test("CAS-742: movingSeen persists through user_prefs — save/load round trip, 
 // about the age gate alone with the unrelated score gate.
 test("CAS-744 AC2: includeUnrated decides an unrated film's fate under a narrowed age list", () => {
   const openAge = missionCase({ scoreFloor: 0 });   // age:[] here — open, so an unrated film clears on its own merits
-  const unrated = E.MOVIES.find(m => !m.age_rating && E.matchesCriteria(m, openAge));
+  // CAS-1065 exempted pre-release films from the age gate entirely, so an unrated pick must be RELEASED —
+  // otherwise it clears regardless of includeUnrated and this test proves nothing about the flag.
+  const unrated = E.MOVIES.find(m => !m.age_rating && !isPreRelease(m) && E.matchesCriteria(m, openAge));
   assert.ok(unrated, "no unrated film clearing the open baseline — this test would prove nothing");
   const allowed = E.AGE_LEVELS[0];
 
