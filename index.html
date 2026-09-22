@@ -20367,16 +20367,65 @@ else if(dedupedN)
   // every time (201), which rules out every server-side candidate: gateway size limits, a bad row value,
   // the on_conflict target (it matches agent_films' own primary key), a trigger (there is none), and a
   // missing cascade_id FK. Upsert chunks are now bounded by cumulative JSON byte size, not row count.
+  //
+  // CAS-1064: a row whose cascade_id names an agent THIS DEVICE currently holds but has not yet had
+  // confirmed by the account (cascadeKnown has no entry for it) waits rather than being pushed and
+  // rejected by the FK the instant it races ahead of that agent's own cascades upsert — replayOutbox
+  // (below) sequences cascades first so this resolves within one replay pass. A cascade_id this device
+  // does NOT hold at all is a different case entirely (deleted locally, or genuinely orphaned) — nothing
+  // here will ever confirm it, so it is sent anyway and left to the permanent-failure classification below.
+  function agentFilmRowReady(row){
+    return !cascades.some(cc=>cc.id===row.cascade_id) || cascadeKnown.has(row.cascade_id);
+  }
+  // 23503 (foreign-key violation) and 42501 (RLS refusal) can never succeed by retrying — the row names an
+  // agent the account will never accept from this device. Anything else is presumed transient (network,
+  // 5xx, timeout) and stays queued.
+  function isPermanentAgentFilmError(err){
+    const code = err && err.code;
+    return code === "23503" || code === "42501";
+  }
+  // Backstop: whatever the error, a row that has failed this many consecutive rounds is dropped anyway —
+  // nothing may wedge the outbox permanently again, even a failure mode this ticket didn't anticipate.
+  const AGENT_FILM_MAX_ATTEMPTS = 5;
+  const agentFilmAttempts = new Map();   // key -> consecutive failed attempts, cleared on success/drop
+  // Returns true if the row was dropped from the outbox (permanent or over the retry ceiling); false if
+  // it was left queued for a future retry. Either way the failure is recorded via the usual sync_failed/
+  // degraded-banner path (CAS-985/CAS-787) — a genuinely failing write must still be visible.
+  function agentFilmRowFailed(row, err){
+    const key = agentFilmKey(row.cascade_id, row.movie_id);
+    const attempts = (agentFilmAttempts.get(key)||0) + 1;
+    const permanent = isPermanentAgentFilmError(err) || attempts >= AGENT_FILM_MAX_ATTEMPTS;
+    if(permanent){
+      agentFilmAttempts.delete(key);
+      outboxClearKeys("agent_films", [key]);
+    } else {
+      agentFilmAttempts.set(key, attempts);
+    }
+    recordSyncOutcome("agent_films", false, err);
+    return permanent;
+  }
+  function agentFilmRowSucceeded(row){
+    agentFilmAttempts.delete(agentFilmKey(row.cascade_id, row.movie_id));
+    if(!agentFilmsKnown) agentFilmsKnown=new Map();
+    agentFilmsKnown.set(agentFilmKey(row.cascade_id,row.movie_id), agentFilmSig(row));
+    outboxClearKeys("agent_films", [agentFilmKey(row.cascade_id,row.movie_id)]);   // CAS-1035
+  }
   async function syncAgentFilmsToAccount(){
     const c=client(), owner=uid(); if(!c||!owner) return;
-    const rows=agentFilmDirtyRows();
+    const rows=agentFilmDirtyRows().filter(agentFilmRowReady);
     let anyError=null;
     for(const batch of chunkAgentFilmRows(rows)){
       const { error } = await c.from("agent_films").upsert(batch, { onConflict:"user_id,cascade_id,movie_id" });
-      if(error){ console.warn("agent_films upsert", error); anyError=error; continue; }
-      if(!agentFilmsKnown) agentFilmsKnown=new Map();
-      batch.forEach(r=>agentFilmsKnown.set(agentFilmKey(r.cascade_id,r.movie_id), agentFilmSig(r)));
-      outboxClearKeys("agent_films", batch.map(r=>agentFilmKey(r.cascade_id,r.movie_id)));   // CAS-1035
+      if(!error){ batch.forEach(agentFilmRowSucceeded); continue; }
+      // A real FK/RLS rejection fails the WHOLE multi-row statement, not just the offending row — retry
+      // singly (same shape as cascades' own 42501 handling above) so the specific bad row(s) can be told
+      // apart from the rest of a genuine batch. A batch of one already IS the single-row attempt.
+      console.warn("agent_films upsert", error);
+      for(const row of batch){
+        const r = (batch.length===1) ? { error } : await c.from("agent_films").upsert([row], { onConflict:"user_id,cascade_id,movie_id" });
+        if(r.error){ if(!agentFilmRowFailed(row, r.error)) anyError = r.error; }
+        else agentFilmRowSucceeded(row);
+      }
     }
     if(anyError){ recordSyncOutcome("agent_films", false, anyError); return; }
     const pendingByCascade=new Map();
@@ -20733,14 +20782,32 @@ else if(dedupedN)
   if(typeof window!=="undefined" && window.addEventListener){
     window.addEventListener("pagehide", flushAccountSync);
   }
+  // CAS-1064: an agent_films outbox entry naming a cascade_id this device no longer has at all (the agent
+  // was deleted on this device after the row was queued) can never succeed — drop it before replay even
+  // attempts the always-doomed round trip. A cascade_id this device DOES still hold is a different case
+  // (see agentFilmRowReady above) and is left alone here.
+  function pruneOrphanAgentFilmOutbox(){
+    const orphanKeys = Object.keys(outboxPending("agent_films")).filter(k=>{
+      const cascadeId = k.slice(0, k.indexOf("::"));
+      return !cascades.some(cc=>cc.id===cascadeId);
+    });
+    if(orphanKeys.length) outboxClearKeys("agent_films", orphanKeys);
+  }
   // CAS-1035 AC2: the boot-time counterpart — every outbox entry, retried and AWAITED (unlike
   // flushAccountSync above) so fireAccountFanout can rely on "replayed" meaning "already attempted"
   // before it fires the loads that would otherwise apply older remote rows over an unsent one.
   async function replayOutbox(){
     if(!accountActive()) return;
+    pruneOrphanAgentFilmOutbox();
+    // CAS-1064: cascades must land (and be confirmed into cascadeKnown) before agent_films is even
+    // attempted — a new agent and one of its agent_films rows queued together used to race these two
+    // pushes concurrently, and the films side would lose that race and get rejected by the FK the ordering
+    // below now avoids entirely (agentFilmRowReady, above, still applies as a second line of defence for
+    // any row scheduleAgentFilmsSync's own 500ms timer sends outside of a replay).
+    await runSync();
     await Promise.allSettled([
-      runSync(), runFilmSync(), runNotifySync(), runWatchSync(), runAgentFilmsSync(),
-      // CAS-1045: unlike the five syncs above (each diffs against its own known-confirmed baseline, so
+      runFilmSync(), runNotifySync(), runWatchSync(), runAgentFilmsSync(),
+      // CAS-1045: unlike the four syncs above (each diffs against its own known-confirmed baseline, so
       // replaying with nothing genuinely dirty is a no-op), runUserPrefsSync is a whole-row "last write
       // wins" upsert with no diff at all — replaying it unconditionally pushed this device's current
       // user_prefs answer over the account's every single sign-in, stale local copy or not. Only replay it
@@ -20851,6 +20918,9 @@ else if(dedupedN)
                                 loadAgentFilms, syncAgentFilmsNow: runAgentFilmsSync, agentFilmRows,
                                 applyAgentFilmRows, agentFilmsFor, setAgentFilm, clearAgentFilm, getAgentFilm,
                                 agentFilmDirtyRows, agentFilmPendingDeleteKeys,
+                                // CAS-1064: the orphan-pruning/permanent-failure seam, so a test can drive
+                                // the boot-time prune and the FK/RLS drop-and-log classification directly.
+                                pruneOrphanAgentFilmOutbox, agentFilmRowReady, isPermanentAgentFilmError,
                                 // CAS-1049: the delete-chunking seam so a test can assert the ≤100-id,
                                 // one-in-flight-at-a-time contract directly.
                                 AGENT_DELETE_CHUNK_SIZE,
