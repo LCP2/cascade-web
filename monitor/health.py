@@ -641,8 +641,14 @@ def merge_report(existing: dict | None, checks: list, checked_at: str) -> dict:
     UTC) and alerts.yml (~07:00 UTC) always straddle a date boundary, so that gate discarded
     daily's 12 checks on every single alerts run. Each check now carries its own `checked_at`, so
     there's no need for a report-level date gate at all: merge by check name unconditionally,
-    freshest entry per name wins."""
-    prior_checks = existing.get("checks", []) if existing else []
+    freshest entry per name wins. Prior checks written before per-check `checked_at` existed (or
+    read from a report where the check itself never carried one) fall back to the report's own
+    `checked_at`, so every merged check always has one."""
+    existing_checked_at = existing.get("checked_at") if existing else None
+    prior_checks = [
+        c if "checked_at" in c else dict(c, checked_at=existing_checked_at)
+        for c in (existing.get("checks", []) if existing else [])
+    ]
     fresh_names = {c["name"] for c in checks}
     stamped = [dict(c, checked_at=checked_at) for c in checks]
     merged = [c for c in prior_checks if c["name"] not in fresh_names] + stamped
