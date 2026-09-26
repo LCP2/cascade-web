@@ -646,13 +646,44 @@ class MergeReport(unittest.TestCase):
         self.assertEqual(len(merged["checks"]), 1)
         self.assertTrue(merged["checks"][0]["ok"])
 
-    def test_earlier_calendar_day_starts_fresh(self):
+    def test_earlier_calendar_day_still_merges_by_name(self):
+        """CAS-1075: a report from an earlier UTC calendar date used to be discarded wholesale —
+        the exact shape of daily.yml (~20:00 UTC) followed by alerts.yml (~07:00 UTC next day)."""
         existing = {"checked_at": "2026-09-14T20:00:00+00:00",
-                    "checks": [health.check_catalogue_size(_movies(100), _movies(100))]}  # fail
+                    "checks": [health.check_catalogue_size(_movies(5600), _movies(5580))]}  # pass
         new_checks = [health.check_email_send({"attempted": 1, "delivered": 1, "errors": 0})]
         merged = health.merge_report(existing, new_checks, "2026-09-15T03:17:00+00:00")
-        self.assertEqual([c["name"] for c in merged["checks"]], ["email_send"])
+        self.assertEqual({c["name"] for c in merged["checks"]}, {"catalogue_size", "email_send"})
         self.assertTrue(merged["ok"])
+
+    def test_each_merged_check_carries_its_own_checked_at(self):
+        existing = {"checked_at": "2026-09-14T20:00:00+00:00",
+                    "checks": [health.check_catalogue_size(_movies(5600), _movies(5580))]}
+        new_checks = [health.check_email_send({"attempted": 1, "delivered": 1, "errors": 0})]
+        merged = health.merge_report(existing, new_checks, "2026-09-15T03:17:00+00:00")
+        by_name = {c["name"]: c["checked_at"] for c in merged["checks"]}
+        self.assertEqual(by_name["catalogue_size"], "2026-09-14T20:00:00+00:00")
+        self.assertEqual(by_name["email_send"], "2026-09-15T03:17:00+00:00")
+
+    def test_daily_then_next_day_alerts_keeps_all_14_checks(self):
+        """AC1: the real sequence — a daily report written at 20:00Z on day N with its 12 checks,
+        then an alerts report at 07:00Z on day N+1 with email_send and push_send. The merged report
+        must contain all 14 checks, each with its own checked_at."""
+        daily_checks = health.run_checks(
+            today_movies=_movies(5600), prev_movies=_movies(5580), stats={},
+            usage_probe=None, auth_probe=None, apns_configured=False,
+            wm_cycle={"quota": 40000}, today=datetime.date(2026, 9, 15), usage_window=None,
+            names=health.DAILY_CHECK_NAMES)
+        daily_report = health.build_report(daily_checks, "2026-09-15T20:00:00+00:00")
+
+        alert_checks = health.run_checks(
+            stats={"email": {"attempted": 1, "delivered": 1, "errors": 0},
+                  "push": {"attempted": 1, "delivered": 1, "errors": 0}},
+            apns_configured=True, names=health.ALERT_CHECK_NAMES)
+        merged = health.merge_report(daily_report, alert_checks, "2026-09-16T07:00:00+00:00")
+
+        self.assertEqual({c["name"] for c in merged["checks"]}, set(health.CHECK_NAMES))
+        self.assertTrue(all("checked_at" in c for c in merged["checks"]))
 
     def test_no_existing_report_starts_fresh(self):
         new_checks = [health.check_email_send({"attempted": 1, "delivered": 1, "errors": 0})]
