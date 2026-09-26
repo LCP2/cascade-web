@@ -21017,6 +21017,13 @@ else if(dedupedN)
   const placeholder = v => !v || /YOUR|your-|example/i.test(v);
   const configured = !placeholder(url) && !placeholder(key);
 
+  // CAS-1073: the one allowlisted App Review account. Apple's reviewer can never receive an emailed
+  // OTP, so this address alone exchanges a fixed password (the reviewer code, set directly on the
+  // Supabase user — never in this repo) on the same code screen everyone else uses. Every other
+  // email is completely unaffected.
+  const REVIEW_SIGNIN_EMAIL = 'appreview@codynamics.com.au';
+  const isReviewEmail = email => (email || '').trim().toLowerCase() === REVIEW_SIGNIN_EMAIL;
+
   const unavailable = async () => ({ ok: false, error: 'Account sync is not available right now.' });
   const api = window.CascadeAuth = { enabled: configured, client: null, user: null, session: null, status: 'guest',
     continueWithEmail: unavailable, verifyEmailCode: unavailable,
@@ -21028,9 +21035,12 @@ else if(dedupedN)
   // opened by the membership step's email gate rather than pressing Continue here — the one-shot
   // continuation to run once that code verifies. Neither survives a Cancel/Done (see authDone above).
   let verifyEmail = null, verifyResolve = null;
+  // CAS-1073 AC3: the review address must never render as UI text — the review code screen shows
+  // the same generic copy as every other state on this panel.
+  const verifyMsgFor = email => isReviewEmail(email) ? 'Enter your code.' : 'Enter the code we sent to ' + email + '.';
   const enterVerify = (email, onVerified) => {
     verifyEmail = email; verifyResolve = onVerified || null;
-    gid('authVerifyMsg').textContent = 'Enter the code we sent to ' + email + '.';
+    gid('authVerifyMsg').textContent = verifyMsgFor(email);
     gid('authVerifyErr').textContent = '';
     gid('authCode').value = '';
     showPanel('authVerify');
@@ -21124,6 +21134,9 @@ else if(dedupedN)
     // any kind computed, stored or sent. Signing in only actually completes in verifyEmailCode below,
     // once the emailed code comes back confirmed.
     api.continueWithEmail = async email => {
+      // CAS-1073: the review address skips the OTP round trip entirely — Apple's reviewer would
+      // never receive that email — going straight to the same code screen as everyone else.
+      if(isReviewEmail(email)) return { ok: true };
       // CAS-460: additive-only timing — logs how long the OTP request round trip actually takes.
       const _t460signIn = performance.now();
       console.log('[CAS-460] code request start', _t460signIn);
@@ -21155,7 +21168,12 @@ else if(dedupedN)
       const _t460verify = performance.now();
       console.log('[CAS-460] code verify start', _t460verify);
       try {
-        const { error } = await supa.auth.verifyOtp({ email, token: code, type: 'email' });
+        // CAS-1073: the review address exchanges the reviewer code as a Supabase password instead
+        // of an OTP token — the only account this project ever sets a password for. Every other
+        // address is unaffected.
+        const { error } = isReviewEmail(email)
+          ? await supa.auth.signInWithPassword({ email, password: code })
+          : await supa.auth.verifyOtp({ email, token: code, type: 'email' });
         if(!error) return { ok: true };
         logClientHealthEvent("auth_failed", authFailedPayload(error));
         return { ok: false, error: error.message };
@@ -21263,7 +21281,7 @@ else if(dedupedN)
       gid('authVerifyErr').textContent = '';
       gid('authVerifyMsg').textContent = 'Sending a new code…';
       const result = await api.continueWithEmail(verifyEmail);
-      gid('authVerifyMsg').textContent = 'Enter the code we sent to ' + verifyEmail + '.';
+      gid('authVerifyMsg').textContent = verifyMsgFor(verifyEmail);
       if(!result.ok) gid('authVerifyErr').textContent = 'Could not resend: ' + result.error;
     });
 
