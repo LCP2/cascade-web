@@ -11825,6 +11825,12 @@ window.openAbout=()=>{
 };
 window.closeAbout=()=>{ $("aboutScreen").classList.remove("open"); lockBodyScroll(false); syncWatchChip(); };
 
+// CAS-1076: v1.0.0 ships free — paid membership returns after launch via In-App Purchase (CAS-970/971/972).
+// Every price/free-month/subscription-management/cancellation mention in the template is gated on this one
+// flag so it returns by flipping it, rather than being re-authored from scratch. Declared here (ahead of its
+// first use in HELP_ARTICLES below) because that array is built eagerly at load, not lazily inside a
+// function, so a later declaration would throw on the temporal dead zone.
+const MEMBERSHIP_ENABLED = false;
 // ================= Help (CAS-977) =================
 // Not an external wiki, not a hosted site — a static array shipped with the build, so it works offline and
 // in the iOS app with no second source of truth to keep in sync. Each body is written from the behaviour in
@@ -11859,7 +11865,7 @@ const HELP_ARTICLES = [
    body:"Cascade can tell you about a film two ways: as a push notification, and by email, folded into one daily digest sent to the address on your account — both go out together, once a day, at 5pm Sydney time. Which of those exist for you at all is your account's own decision — an individual agent can only switch an available channel off for itself, never turn on one your account hasn't enabled.\n\nWhat actually triggers a notification is the Notify switch on each window in Where & when you'll watch — Upcoming, In cinema, Premium, Rent, Stream. Upcoming has two switches of its own, for a film that hasn't opened yet: When announced (the day it first reaches Cascade) and Opening next week (a week out from its published cinema date). Turn a window's Notify off there and nothing on it will alert you, however an agent tracking it is set up.\n\nThe daily digest gathers whatever every agent's channels found since the last one, rather than emailing or pushing to you separately every time something is found."},
   {slug:"your-account-and-data", title:"Your account and data",
    summary:"What is stored, where, and how to delete it.",
-   body:"Signed out, everything Cascade knows about you — your agents, what you've watched, your preferences — is stored only on this device, in this browser or app install. Nothing about it reaches anywhere else.\n\nSigned in, that same information is mirrored to your account so it's there again on another device you sign into. Signing out doesn't erase it — it's still on your account, waiting for you to sign back in.\n\nDeleting your account is on the Account screen itself: type DELETE to confirm, and it permanently removes your agents, everything they've found for you, what you've marked watched, your invites and friends, your notification history and your sign-in — there's nothing left to undo. It doesn't cancel an active App Store subscription, which you'll need to manage separately."},
+   body:`Signed out, everything Cascade knows about you — your agents, what you've watched, your preferences — is stored only on this device, in this browser or app install. Nothing about it reaches anywhere else.\n\nSigned in, that same information is mirrored to your account so it's there again on another device you sign into. Signing out doesn't erase it — it's still on your account, waiting for you to sign back in.\n\nDeleting your account is on the Account screen itself: type DELETE to confirm, and it permanently removes your agents, everything they've found for you, what you've marked watched, your invites and friends, your notification history and your sign-in — there's nothing left to undo.${MEMBERSHIP_ENABLED ? " It doesn't cancel an active App Store subscription, which you'll need to manage separately." : ""}`},
 ];
 let helpView={mode:"index"}, helpQuery="";
 function helpArticlesFiltered(){
@@ -15251,6 +15257,7 @@ const SHARP_STEPS = {
       return `<p class="kflead">Don't worry if your selections are so precise that few movies are found right
           now.</p>
         <p class="kflead">Your agent will keep searching — and tell you about movies as they appear.</p>
+        ${MEMBERSHIP_ENABLED ? `
         <!-- CAS-226: two tiers now, per the prototype's .exprice. This reverses the CAS-188 note that used to
              live here, which kept the price as ONE sentence on ONE source line because that sentence had been
              called out as exact and a string called out as exact has to be findable in the shipped page. That
@@ -15260,7 +15267,7 @@ const SHARP_STEPS = {
         <div class="kfprice">
           <div class="big">Cascade Membership is free for your first month</div>
           <div class="sub">then <b>$4.99 / month</b> · cancel any time</div>
-        </div>`;
+        </div>` : ""}`;
     },
   },
   // ---- CAS-188 #7: how it tells you -----------------------------------------------------------------
@@ -16988,13 +16995,13 @@ function renderAccount(){
     <div class="ucard">
       ${who.in ? acctRow("👤","Signed in", esc(who.email), "openAccountAuth()")
                : acctRow("👤","Not signed in", "Sign in to sync across devices", "openAccountAuth()")}
-      ${acctRow("💳","Plan", "Free for your first month · then $4.99/month · cancel any time", null, false)}
-      ${(typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform())
+      ${MEMBERSHIP_ENABLED ? acctRow("💳","Plan", "Free for your first month · then $4.99/month · cancel any time", null, false) : ""}
+      ${MEMBERSHIP_ENABLED ? ((typeof Capacitor!=="undefined" && Capacitor.isNativePlatform && Capacitor.isNativePlatform())
           ? acctRow("⚙️","Manage or cancel", "A subscription bought in the app is cancelled in the App Store.", "openManageSubscription()")
-          : acctLink("⚙️","Manage or cancel", "A subscription bought in the app is cancelled in the App Store.", MANAGE_SUB_URL)}
+          : acctLink("⚙️","Manage or cancel", "A subscription bought in the app is cancelled in the App Store.", MANAGE_SUB_URL)) : ""}
       ${who.in ? acctRow("🗑️","Delete account", "This can't be undone.", "openDeleteAccount()") : acctSoon("🗑️","Delete account")}
     </div>
-    <p class="unone" style="margin:10px 2px 0">Prototype — no card is held and nothing is ever charged.</p>
+    ${MEMBERSHIP_ENABLED ? `<p class="unone" style="margin:10px 2px 0">Prototype — no card is held and nothing is ever charged.</p>` : ""}
 
     <div class="usec">Help &amp; feedback</div>
     <div class="ucard">
@@ -17023,8 +17030,8 @@ function renderDeleteAcctForm(){
   $("deleteAcctBody").innerHTML=`
     <p class="pnote">This deletes your agents, everything they've found for you, what you've marked watched,
       your invites and friends, your notification history, and your sign-in itself. It can't be undone.</p>
-    <p class="pnote">Deleting your account does not cancel an active App Store subscription — you'll need to
-      ${subLink}.</p>
+    ${MEMBERSHIP_ENABLED ? `<p class="pnote">Deleting your account does not cancel an active App Store
+      subscription — you'll need to ${subLink}.</p>` : ""}
     <div class="flabel">Type ${DELETE_CONFIRM_WORD} to confirm</div>
     <input id="deleteAcctWord" class="namein" type="text" autocomplete="off" autocapitalize="characters"
       autocorrect="off" spellcheck="false" placeholder="${DELETE_CONFIRM_WORD}" oninput="deleteAcctGate()">
@@ -17992,10 +17999,10 @@ function renderInvite(){
       <div class="invh">Turn your search into an agent.</div>
       <p class="invp">Right now it's watching for you. Keep it on and it never stops — it finds new films the
         moment they match, in every window, every day, so you don't have to look.</p>
-      <div class="invprice">
+      ${MEMBERSHIP_ENABLED ? `<div class="invprice">
         <span class="free">Free for a month</span><span class="then">then $3/month</span>
         <span class="anchor">≈ less than half a rental</span>
-      </div>
+      </div>` : ""}
       <p class="invnote">A preview — no card needed, and we'd always ask before anything is ever charged.</p>
       <div class="invrow"><div class="ir-main"><div class="ir-name">🔔 App alerts</div>
         <div class="ir-sub">A nudge here when one of your films moves.</div></div>${tglHTML("alerts","App alerts")}</div>
@@ -18032,7 +18039,7 @@ function renderInvite(){
       <div class="invstatus">
         ${row("🔔 Alerts", agentState.alerts)}
         ${row("🎯 Learning", agentState.learning)}
-        ${row("🎁 Free month", true)}
+        ${MEMBERSHIP_ENABLED ? row("🎁 Free month", true) : ""}
       </div>
       <button class="invnext" type="button" onclick="inviteFinish()">See what it found</button>`;
   }
