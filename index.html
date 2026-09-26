@@ -3270,6 +3270,15 @@
   .card:not(.expanded) .mrow.r-scores .m b{font-size:12px}
   .card:not(.expanded) .mrow.r-scores .lab{font-size:11px}
   .card:not(.expanded) .mrow.r-scores .dot{width:6px;height:6px}
+  /* CAS-1068: a scale badge (.condbadge) on this row sat right at the row's own width, so whether it wrapped
+     to a second line came down to sub-pixel differences between one film's score digits and another's — two
+     films with the same badge (e.g. both Must-see) could measure a fraction of a px apart and land on
+     opposite sides of the wrap, which is exactly the "37px real-vs-placeholder" gap CAS-1036's per-tier
+     contain-intrinsic-size guess (below, denseScores) cannot follow. flex-basis:100% forces the badge (and
+     anything after it) onto its own line whenever it's present, so wrapping is a fact about the row's
+     CONTENT (does it carry a badge) rather than a coin-flip on exact digit widths — deterministic, and
+     matching what denseScores now assumes for every badge, not just Landmark/Blockbuster. */
+  .card:not(.expanded) .mrow.r-scores .condbadge{flex-basis:100%}
   /* CAS-686: a condensed card for a film with none of IMDb/RT/Metacritic shows badge + money instead of
      the scores line — same grid-area:scores slot, same compacted-to-plain-text treatment as .mrow.r-scores
      just above. Decided per film (condensedShowsScores), not per listing — was #groups.cinema-listing. */
@@ -7612,15 +7621,18 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   // CAS-686: the condensed card shows the money row instead of the scores row when this film holds none
   // of IMDb/RT/Metacritic — see condensedShowsScores.
   const cinfoCard = !condensedShowsScores(m);
-  // CAS-1036: the condensed row's scores/badge/attribution items are flex-wrap:wrap (see .mrow.r-scores
-  // under .card:not(.expanded)), so on a 390px phone it settles at one line or two depending what's in
-  // it — measured across the real catalogue: a "Landmark" badge only ever appears on a film that also
-  // carries an award (isLandmark requires one), and that pairing wraps to two lines every time; a
-  // "Blockbuster" badge is the next-longest label and wraps on its own text most of the time even with no
-  // award mark. Both get the taller of the two measured contain-intrinsic-size values (.densescores)
-  // instead of the shorter default, so both the common one-line case and this one load close to their
-  // real height rather than one contain-intrinsic-size guess trying to cover both.
-  const denseScores = !!badge && (scaleTier(m)==="landmark" || scaleTier(m)==="blockbuster");
+  // CAS-1036/CAS-1068: the condensed row's scores/badge/attribution items are flex-wrap:wrap (see
+  // .mrow.r-scores under .card:not(.expanded)), so on a 390px phone a badge pushes the row to two lines.
+  // CAS-1036 only sent "Landmark" and "Blockbuster" films to the taller contain-intrinsic-size (.densescores)
+  // — the two badge kinds it had measured — but every scale tier shows the same badge on this row (scaleBadge
+  // is one function for all four), so an "Anticipated" or "Must-see" card wrapped the same way and got the
+  // shorter placeholder anyway (CAS-1068: measured 37px off on a live "Must-see" film). CAS-1068's own CSS
+  // fix (.mrow.r-scores .condbadge{flex-basis:100%}) makes ANY badge on this row wrap it, every time, rather
+  // than leaving it to how many characters happen to be in that film's score digits — so any badge at all
+  // means the taller placeholder, not just two of the four tiers. cinfoCard is excluded: its row is
+  // .mrow.r-cinfo, a different flex row (badge + budget + gross) that measured as never wrapping regardless
+  // of badge, so giving it the taller placeholder would itself create the same mismatch in reverse.
+  const denseScores = !!badge && !cinfoCard;
   // What's new is a fact about the film — the day Cascade first picked it up — so it is stated ON the film,
   // and nowhere else (CAS-107). It no longer decides where the film sits in the list, and the header no longer
   // dresses the whole list up as news; the chip just tells you which of these you haven't seen before.
