@@ -379,11 +379,16 @@ class OnlyFloorQualifyingTitlesPublish(unittest.TestCase):
         cls.movies = load()["movies"]
 
     def test_every_published_film_clears_the_publish_floor(self):
+        # CAS-1067: a below-floor title can stay published indefinitely by design when a user
+        # holds state on it (select_publishable's own held_ids exemption) — encode that same
+        # exemption, from the same source of truth, rather than treating it as an offender.
         scoreable = pp.scoreable_ids(self.movies, floor=pp.WM_PUBLISH_FLOOR)
+        held_ids = pp.load_user_held_ids()
         offenders = [m.get("title", m.get("tmdb_id")) for m in self.movies
-                    if m["tmdb_id"] not in scoreable]
+                    if m["tmdb_id"] not in scoreable
+                    and not (held_ids is None or str(m["tmdb_id"]) in held_ids)]
         self.assertEqual(offenders, [],
-                         f"published films that fail WM_PUBLISH_FLOOR={pp.WM_PUBLISH_FLOOR}: {offenders[:5]}")
+                         f"published films that fail WM_PUBLISH_FLOOR={pp.WM_PUBLISH_FLOOR} and aren't user-held: {offenders[:5]}")
 
 
 class DataCompleteness(unittest.TestCase):

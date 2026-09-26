@@ -98,7 +98,7 @@ class RenderTests(unittest.TestCase):
 
     def test_site_url_default_is_the_live_site(self):
         d = render_digest(self.hits)
-        self.assertIn("lcp2.github.io/cascade-web", d["html"])
+        self.assertIn("codynamics.github.io/cascade-web", d["html"])
 
 
 class SectioningTests(unittest.TestCase):

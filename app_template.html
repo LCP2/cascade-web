@@ -2033,7 +2033,6 @@
   .memben .t b{font-family:var(--font-display);font-size:14.5px;font-weight:600;color:var(--ink)}
   .memben .t p{margin:2px 0 0;color:var(--dim);font-size:12px;line-height:1.45}
 
-  .membproto{color:var(--faint);font-size:10px;text-align:center;margin-top:14px;line-height:1.5}
   /* ---- CAS-201: the condensed membership page ---- */
   .cascpill{display:inline-block;align-self:flex-start;width:max-content;background:var(--grad);color:#fff;
     font-family:var(--font-display);font-weight:700;font-size:12px;letter-spacing:.08em;
@@ -3271,6 +3270,15 @@
   .card:not(.expanded) .mrow.r-scores .m b{font-size:12px}
   .card:not(.expanded) .mrow.r-scores .lab{font-size:11px}
   .card:not(.expanded) .mrow.r-scores .dot{width:6px;height:6px}
+  /* CAS-1068: a scale badge (.condbadge) on this row sat right at the row's own width, so whether it wrapped
+     to a second line came down to sub-pixel differences between one film's score digits and another's — two
+     films with the same badge (e.g. both Must-see) could measure a fraction of a px apart and land on
+     opposite sides of the wrap, which is exactly the "37px real-vs-placeholder" gap CAS-1036's per-tier
+     contain-intrinsic-size guess (below, denseScores) cannot follow. flex-basis:100% forces the badge (and
+     anything after it) onto its own line whenever it's present, so wrapping is a fact about the row's
+     CONTENT (does it carry a badge) rather than a coin-flip on exact digit widths — deterministic, and
+     matching what denseScores now assumes for every badge, not just Landmark/Blockbuster. */
+  .card:not(.expanded) .mrow.r-scores .condbadge{flex-basis:100%}
   /* CAS-686: a condensed card for a film with none of IMDb/RT/Metacritic shows badge + money instead of
      the scores line — same grid-area:scores slot, same compacted-to-plain-text treatment as .mrow.r-scores
      just above. Decided per film (condensedShowsScores), not per listing — was #groups.cinema-listing. */
@@ -7613,15 +7621,18 @@ function cardHTML(m, markNew=false, {hideDismiss=false}={}){
   // CAS-686: the condensed card shows the money row instead of the scores row when this film holds none
   // of IMDb/RT/Metacritic — see condensedShowsScores.
   const cinfoCard = !condensedShowsScores(m);
-  // CAS-1036: the condensed row's scores/badge/attribution items are flex-wrap:wrap (see .mrow.r-scores
-  // under .card:not(.expanded)), so on a 390px phone it settles at one line or two depending what's in
-  // it — measured across the real catalogue: a "Landmark" badge only ever appears on a film that also
-  // carries an award (isLandmark requires one), and that pairing wraps to two lines every time; a
-  // "Blockbuster" badge is the next-longest label and wraps on its own text most of the time even with no
-  // award mark. Both get the taller of the two measured contain-intrinsic-size values (.densescores)
-  // instead of the shorter default, so both the common one-line case and this one load close to their
-  // real height rather than one contain-intrinsic-size guess trying to cover both.
-  const denseScores = !!badge && (scaleTier(m)==="landmark" || scaleTier(m)==="blockbuster");
+  // CAS-1036/CAS-1068: the condensed row's scores/badge/attribution items are flex-wrap:wrap (see
+  // .mrow.r-scores under .card:not(.expanded)), so on a 390px phone a badge pushes the row to two lines.
+  // CAS-1036 only sent "Landmark" and "Blockbuster" films to the taller contain-intrinsic-size (.densescores)
+  // — the two badge kinds it had measured — but every scale tier shows the same badge on this row (scaleBadge
+  // is one function for all four), so an "Anticipated" or "Must-see" card wrapped the same way and got the
+  // shorter placeholder anyway (CAS-1068: measured 37px off on a live "Must-see" film). CAS-1068's own CSS
+  // fix (.mrow.r-scores .condbadge{flex-basis:100%}) makes ANY badge on this row wrap it, every time, rather
+  // than leaving it to how many characters happen to be in that film's score digits — so any badge at all
+  // means the taller placeholder, not just two of the four tiers. cinfoCard is excluded: its row is
+  // .mrow.r-cinfo, a different flex row (badge + budget + gross) that measured as never wrapping regardless
+  // of badge, so giving it the taller placeholder would itself create the same mismatch in reverse.
+  const denseScores = !!badge && !cinfoCard;
   // What's new is a fact about the film — the day Cascade first picked it up — so it is stated ON the film,
   // and nowhere else (CAS-107). It no longer decides where the film sits in the list, and the header no longer
   // dresses the whole list up as news; the chip just tells you which of these you haven't seen before.
@@ -11795,6 +11806,11 @@ function renderAbout(){
       <h2 class="osh">About</h2></div>
     <div class="flabel">Contact</div>
     <button class="applybtn" id="aboutScreenContact" type="button" style="width:100%;margin:0 0 8px">Contact us</button>
+    <div class="flabel">Legal</div>
+    <div class="ucard">
+      ${acctLink("🔒","Privacy policy", null, "https://www.codynamics.com.au/privacy")}
+      ${acctLink("🛟","Support", null, "https://www.codynamics.com.au/support")}
+    </div>
     <div class="flabel">Build</div>
     <div class="pnote" id="aboutBuild">—</div>`;
   stampAboutBuild();
@@ -17583,8 +17599,7 @@ function openMembership(agentKey, nameOverride, cascade){
     <span class="cascpill">CASCADE</span>
     <h2 class="membh">Cascade Membership</h2>
     ${haul}
-    <p class="memfine">Free for your first month · then <b>$4.99/month</b> · cancel any time. No card needed —
-      we'll always ask before anything is ever charged.</p>
+    <p class="memfine">Save your agents to an account so they keep working for you and sync across your devices.</p>
     <div class="membenefits">
       ${MEMB_BENEFITS.map(b=>`<div class="mbrow"><span class="mbic">${b.ic}</span>
         <span class="mbtx"><span class="mbt">${esc(b.name)}</span><span class="mbd">${esc(b.sub)}</span></span>
@@ -17594,10 +17609,11 @@ function openMembership(agentKey, nameOverride, cascade){
     <div class="flabel">Email</div>
     <input id="membEmail" class="namein" type="email" inputmode="email" autocomplete="email"
            placeholder="you@example.com">
-    <p class="fielderr" id="membEmailErr" role="alert" hidden></p>` : ""}
-    <button class="membcta" type="button" onclick="membStart()">Start my free month</button>
-    ${posters?`<div class="rvgrid membgrid">${posters}</div>`:""}
-    <p class="membproto">Prototype — no account, no payment, no real charge.</p>`;
+    <p class="fielderr" id="membEmailErr" role="alert" hidden></p>
+    <p class="pnote">By continuing you agree to our
+      <a href="https://www.codynamics.com.au/privacy" target="_blank" rel="noopener">Privacy policy</a>.</p>` : ""}
+    <button class="membcta" type="button" onclick="membStart()">Save my agents</button>
+    ${posters?`<div class="rvgrid membgrid">${posters}</div>`:""}`;
   $("membScreen").scrollTop=0;
   $("membScreen").classList.add("open"); lockBodyScroll(true);
   logEvent("membership_shown",{agent:agentKey||null, haul:n});
@@ -17653,16 +17669,16 @@ function openOnbMembership(){
       ${OB_MEMB_BENEFITS.map(b=>`<div class="mbrow"><span class="mbic">✓</span>
         <span class="mbtx"><span class="mbt">${esc(b)}</span></span></div>`).join("")}
     </div>
-    <p class="memfine">Free for your first month · then <b>$4.99/month</b> · cancel any time. No card needed —
-      we'll always ask before anything is ever charged.</p>
+    <p class="memfine">Save your agents to an account so they keep working for you and sync across your devices.</p>
     ${needsEmail ? `
     <div class="flabel">Email</div>
     <input id="membEmail" class="namein" type="email" inputmode="email" autocomplete="email"
            placeholder="you@example.com">
-    <p class="fielderr" id="membEmailErr" role="alert" hidden></p>` : ""}
-    <button class="membcta" type="button" onclick="membStart()">Start my free month</button>
-    ${posters?`<div class="rvgrid membgrid">${posters}</div>`:""}
-    <p class="membproto">Prototype — no account, no payment, no real charge.</p>`;
+    <p class="fielderr" id="membEmailErr" role="alert" hidden></p>
+    <p class="pnote">By continuing you agree to our
+      <a href="https://www.codynamics.com.au/privacy" target="_blank" rel="noopener">Privacy policy</a>.</p>` : ""}
+    <button class="membcta" type="button" onclick="membStart()">Save my agents</button>
+    ${posters?`<div class="rvgrid membgrid">${posters}</div>`:""}`;
   $("membScreen").scrollTop=0;
   $("membScreen").classList.add("open"); lockBodyScroll(true);
   logEvent("membership_shown",{onboarding:true, agents:n});
@@ -17720,12 +17736,12 @@ window.membStart=()=>{
     // than leaving a spinner that can never resolve.
     if($("membScreen").classList.contains("open") && btn){
       btn.disabled=false; btn.classList.remove("busy"); btn.removeAttribute("aria-busy");
-      btn.textContent="Start my free month";
+      btn.textContent="Save my agents";
     }
   };
   if(btn){
     btn.disabled=true; btn.classList.add("busy"); btn.setAttribute("aria-busy","true");
-    btn.innerHTML=`<span class="btnspin"></span>${needsEmail?"Setting up your account…":"Starting your free month…"}`;
+    btn.innerHTML=`<span class="btnspin"></span>${needsEmail?"Setting up your account…":"Saving your agents…"}`;
   }
   logEvent("membership_start");
   // The membership screen stays up until the listing is ready, so the spinner is what the user watches
@@ -17985,7 +18001,7 @@ function renderInvite(){
         <div class="ir-sub">A nudge here when one of your films moves.</div></div>${tglHTML("alerts","App alerts")}</div>
       <div class="invrow"><div class="ir-main"><div class="ir-name">✉️ Email</div>
         <div class="ir-sub">The same alerts, in your inbox.</div></div>${tglHTML("email","Email")}</div>
-      <button class="invnext" type="button" onclick="inviteGo(1)">Start my free month</button>
+      <button class="invnext" type="button" onclick="inviteGo(1)">Continue</button>
       <button class="invskip" type="button" onclick="inviteFinish()">Not now — keep it as it is</button>
       <p class="invnote" style="margin-top:12px;text-align:center">Prototype — these switches are for the demo only:
         no account, no payment, no real notifications.</p>`;
@@ -18271,6 +18287,11 @@ function render(){
   });
   renderJumpBar();     // after the groups exist — it is built FROM them, never from a fixed menu
   syncHeaderHeight();  // CAS-761: tabs/filters/jump bar above are all part of #cascbar's measured height
+  // CAS-1066: the Agents screen is a layer on top of home and was rendered only by openAgentsScreen(), so
+  // an agent added, edited or deleted behind it changed `cascades` and re-rendered home while the screen
+  // the user was actually looking at kept its previous HTML — a new agent only appeared after a reload.
+  // render() already runs on every one of those paths, so re-render the layer here if it is open.
+  if($("agentsScreen")?.classList.contains("open")) renderAgentsScreen();
   // You are looking at it — so the next visit's "since you last looked" counts from here.
   markFoundSeen();
 }

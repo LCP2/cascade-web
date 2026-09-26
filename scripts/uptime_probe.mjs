@@ -57,7 +57,7 @@ const EMAIL_FROM = process.env.CASCADE_EMAIL_FROM || "Cascade <onboarding@resend
 const ALERT_TO = process.env.CASCADE_ALERT_TO;
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const GITHUB_REPOSITORY = process.env.GITHUB_REPOSITORY || "LCP2/cascade-web";
+const GITHUB_REPOSITORY = process.env.GITHUB_REPOSITORY || "codynamics/cascade-web";
 const GITHUB_API = "https://api.github.com";
 
 const APNS_KEY_ID = process.env.APNS_KEY_ID;

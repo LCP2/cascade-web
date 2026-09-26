@@ -7,7 +7,7 @@ calling `workflow_dispatch` is not subject to the same delay.
 ## What it triggers
 
 Four Cron Triggers (UTC, declared in `wrangler.toml`), each calling
-`POST /repos/LCP2/cascade-web/actions/workflows/<file>/dispatches` with `{"ref":"main"}`:
+`POST /repos/codynamics/cascade-web/actions/workflows/<file>/dispatches` with `{"ref":"main"}`:
 
 | Cron | Fires | Dispatches |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ body. Every outcome is also logged with `console.log`, visible in the Worker's C
 
 The Worker reads these at runtime — never checked into this repo:
 
-- `GH_DISPATCH_TOKEN` — a GitHub fine-grained PAT scoped to `LCP2/cascade-web`, Actions: Read
+- `GH_DISPATCH_TOKEN` — a GitHub fine-grained PAT scoped to `codynamics/cascade-web`, Actions: Read
   and write. Sourced from the GitHub Actions secret `SCHEDULER_GH_TOKEN`.
 - `RESEND_API_KEY` — sourced from the GitHub Actions secret of the same name.
 - `ALERT_TO` — sourced from the GitHub Actions secret `CASCADE_ALERT_TO`.

@@ -10,7 +10,7 @@
 // Exactly one of the last two fires per day across the daylight-saving switch, computed with
 // Intl.DateTimeFormat rather than a fixed UTC offset.
 
-export const REPO = "LCP2/cascade-web";
+export const REPO = "codynamics/cascade-web";
 export const GITHUB_API = "https://api.github.com";
 export const RESEND_API = "https://api.resend.com/emails";
 export const USER_AGENT = "cascade-scheduler-worker/1.0 (+https://cascademovies.com)";
