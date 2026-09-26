@@ -1192,6 +1192,35 @@ test("CAS-913: a device that has onboarded but never signed in boots into the ap
   await expect(page.locator("#authModal")).not.toHaveClass(/open/);
 });
 
+// CAS-1076: v1.0.0 ships free (Lee, 24-26 Sep 2026) — paid membership returns after launch via In-App
+// Purchase (CAS-970/971/972). Every price/free-month/subscription-management/cancellation mention is
+// gated behind the one MEMBERSHIP_ENABLED flag (app_template.html) rather than deleted outright, so it can
+// come back by flipping it. Checks both screens the production QA run found still carrying it: Account
+// (the Plan row and the "Manage or cancel" row) and the keepfinding onboarding step (?step=keepfinding
+// preview, CAS-226's own $4.99/cancel-any-time copy).
+const CAS1076_BANNED_PHRASES = ["$4.99", "free month", "manage or cancel", "cancel any time"];
+function expectNoCas1076MembershipCopy(text){
+  const lower = (text || "").toLowerCase();
+  for(const phrase of CAS1076_BANNED_PHRASES) expect(lower, text).not.toContain(phrase);
+}
+
+test("Account and the keepfinding onboarding step carry no paid-membership copy, and Delete account still shows (CAS-1076)", async ({ page }) => {
+  await toShortlist(page, "cinema");
+  await finishFlow(page);
+  await toListing(page);
+
+  await page.locator("#navMenuBtn").click();
+  await page.locator("#navMenu .navitem", { hasText: "Account" }).click();
+  await expect(page.locator("#accountScreen")).toHaveClass(/open/);
+  expectNoCas1076MembershipCopy(await page.locator("#accountScreen").innerText());
+  await expect(page.locator("#accountScreen .ut", { hasText: "Delete account" })).toBeVisible();
+
+  await page.goto("/index.html?step=keepfinding");
+  await page.waitForFunction(() => typeof flowStart === "function" && Array.isArray(MOVIES));
+  await expect(page.locator("#onbStep")).toHaveClass(/open/);
+  expectNoCas1076MembershipCopy(await page.locator("#onbStep").innerText());
+});
+
 // CAS-1035 AC3: a Watch On tick made just before the tab closes must survive a reload even though it never
 // reached the account — the observed bug (Lee, iPhone: two Stream ticks reverted after a swipe-close and
 // reopen). Same session-persists-across-a-real-reload technique as CAS913_FAKE_SUPABASE_GLOBAL above (a

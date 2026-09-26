@@ -628,20 +628,30 @@ def run_checks(*, today_movies=None, prev_movies=None, stats=None, usage_probe=N
 
 
 def build_report(checks: list, checked_at: str) -> dict:
-    ok = all(c["ok"] is not False for c in checks)
-    return {"checked_at": checked_at, "checks": checks, "ok": ok}
+    stamped = [dict(c, checked_at=checked_at) for c in checks]
+    ok = all(c["ok"] is not False for c in stamped)
+    return {"checked_at": checked_at, "checks": stamped, "ok": ok}
 
 
 def merge_report(existing: dict | None, checks: list, checked_at: str) -> dict:
     """CAS-993: daily.yml and alerts.yml each assert a different subset of CHECK_NAMES now, in
-    separate jobs — this lets the second job's write add its checks to the first job's same-day
-    report instead of overwriting it down to just its own subset. `existing` is dropped (a fresh
-    report starts) when there isn't one yet or it's from an earlier calendar day."""
-    prior_checks = []
-    if existing and existing.get("checked_at", "")[:10] == checked_at[:10]:
-        prior_checks = existing.get("checks", [])
+    separate jobs — this lets the second job's write add its checks to the first job's own report
+    rather than overwriting it down to just its own subset. CAS-1075: this used to only keep
+    `existing`'s checks when it was written on the same UTC calendar date, but daily.yml (~20:00
+    UTC) and alerts.yml (~07:00 UTC) always straddle a date boundary, so that gate discarded
+    daily's 12 checks on every single alerts run. Each check now carries its own `checked_at`, so
+    there's no need for a report-level date gate at all: merge by check name unconditionally,
+    freshest entry per name wins. Prior checks written before per-check `checked_at` existed (or
+    read from a report where the check itself never carried one) fall back to the report's own
+    `checked_at`, so every merged check always has one."""
+    existing_checked_at = existing.get("checked_at") if existing else None
+    prior_checks = [
+        c if "checked_at" in c else dict(c, checked_at=existing_checked_at)
+        for c in (existing.get("checks", []) if existing else [])
+    ]
     fresh_names = {c["name"] for c in checks}
-    merged = [c for c in prior_checks if c["name"] not in fresh_names] + checks
+    stamped = [dict(c, checked_at=checked_at) for c in checks]
+    merged = [c for c in prior_checks if c["name"] not in fresh_names] + stamped
     ok = all(c["ok"] is not False for c in merged)
     return {"checked_at": checked_at, "checks": merged, "ok": ok}
 
