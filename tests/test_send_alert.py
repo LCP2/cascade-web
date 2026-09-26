@@ -82,7 +82,7 @@ class MainTests(unittest.TestCase):
             "CASCADE_ALERT_TO": "lee@example.test",
             "RESEND_API_KEY": "key",
             "WORKFLOW_NAME": "daily",
-            "GITHUB_REPOSITORY": "LCP2/cascade-web",
+            "GITHUB_REPOSITORY": "codynamics/cascade-web",
             "GITHUB_RUN_ID": "42",
             "GITHUB_SERVER_URL": "https://github.com",
             "GITHUB_TOKEN": "tok",
